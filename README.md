@@ -50,13 +50,15 @@ app-auto-action dispatch unity "Create a test scene with three labeled cubes" --
 app-auto-action web --port 8787 --open
 ```
 
-The web app now has a chat panel, artifact canvas, scene editor, and backend settings. It can:
+The web app now has a bright-by-default theme, chat panel, artifact canvas, scene editor, and backend settings. It can:
 
 - Generate exact `NxM` SVG paper-figure grids with black panel boundaries.
 - Prepare AgInTi image-generation dry-run payloads for scientific icon concepts.
 - Store BioRender MCP settings without storing secrets.
 - Export the current scene to OpenSCAD for mechanical layout planning.
 - Render the scene through Blender and preview PNG, `.blend`, `.scad`, JSON, and text artifacts.
+- Toggle Blender, OpenSCAD, AgInTi image generation, BioRender MCP, and target-registry routing settings.
+- Dry-run any configured target from the studio and save the dispatch envelope as a canvas artifact.
 
 Artifacts are tracked under `output/webapp/artifacts.json` and served in the canvas rail. See [docs/PAPER_FIGURE_STUDIO.md](docs/PAPER_FIGURE_STUDIO.md) and [docs/WEBAPP.md](docs/WEBAPP.md).
 

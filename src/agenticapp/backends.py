@@ -30,7 +30,9 @@ DEFAULT_BACKEND_SETTINGS: dict[str, Any] = {
     "toolchain": {
         "blender": True,
         "openscad": True,
+        "aginti_image": True,
         "biorender": False,
+        "target_registry": True,
     },
     "figure": {
         "rows": 2,

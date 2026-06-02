@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -11,9 +12,11 @@ import threading
 from typing import Any
 import webbrowser
 
+from .adapters import DispatchError, dispatch_target
 from .artifacts import ArtifactStore, content_type_for_path
 from .backends import backend_status, load_backend_settings, run_aginti_image_request, save_backend_settings
 from .blender_render import BlenderRenderError, render_scene_spec
+from .config import load_config
 from .openscad_export import export_scene_to_openscad
 from .paper_figures import generate_icon_grid, parse_grid_size
 from .scene_spec import built_in_scene_template, slugify, validate_scene_spec
@@ -70,6 +73,8 @@ class AppAutoActionHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True})
         elif route == "/api/artifacts":
             self.send_json(ArtifactStore(self.storage_dir).bundle())
+        elif route == "/api/targets":
+            self.send_json(target_list_response())
         elif route in {"/api/settings", "/api/backends"}:
             settings = load_backend_settings(self.settings_path())
             self.send_json({"ok": True, "settings": settings, "status": backend_status(settings, ROOT)})
@@ -118,9 +123,12 @@ class AppAutoActionHandler(BaseHTTPRequestHandler):
                 payload = self.read_json()
                 spec = payload.get("spec") or default_scene_spec()
                 self.send_json(export_web_openscad(spec, self.storage_dir))
+            elif route == "/api/dispatch":
+                payload = self.read_json()
+                self.send_json(dispatch_web_target(payload, self.storage_dir))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
-        except (BlenderRenderError, ValueError, KeyError) as exc:
+        except (BlenderRenderError, DispatchError, ValueError, KeyError) as exc:
             self.send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 
     def read_json(self) -> dict[str, Any]:
@@ -344,6 +352,48 @@ def plan_web_scene(spec: dict[str, Any], storage_dir: Path) -> dict[str, Any]:
     result = render_scene_spec(spec_path, output_dir, dry_run=True)
     result["message"] = "Render plan is valid."
     return result
+
+
+def target_list_response() -> dict[str, Any]:
+    config = load_config()
+    targets = [
+        {
+            "name": target.name,
+            "kind": target.kind,
+            "description": target.description,
+            "transport": str(target.transport.get("type", "noop")),
+            "enabled": target.enabled,
+        }
+        for target in config.targets
+    ]
+    return {"ok": True, "targets": targets}
+
+
+def dispatch_web_target(payload: dict[str, Any], storage_dir: Path) -> dict[str, Any]:
+    target_name = str(payload.get("target") or "").strip()
+    instruction = str(payload.get("instruction") or "").strip()
+    dry_run = bool(payload.get("dry_run", True))
+    timeout = float(payload.get("timeout") or 30)
+    extra_payload = payload.get("payload") or {}
+    if not isinstance(extra_payload, dict):
+        raise ValueError("payload must be a JSON object")
+    config = load_config()
+    target = config.get_target(target_name)
+    result = dispatch_target(target, instruction, extra_payload, dry_run=dry_run, timeout=timeout)
+    output_dir = storage_dir / "dispatch"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output = output_dir / f"{stamp}-{slugify(target.name)}.dispatch.json"
+    output.write_text(json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    store = ArtifactStore(storage_dir)
+    item = store.register(
+        output,
+        title=f"Dispatch: {target.name}",
+        kind="json",
+        source="target-registry",
+        preview=f"{result.status} via {result.transport}: {instruction[:96]}",
+    )
+    return {"ok": result.ok, "dispatch": result.to_dict(), "artifact": item, "artifacts": store.bundle()}
 
 
 def generate_web_figure_grid(payload: dict[str, Any], storage_dir: Path, settings: dict[str, Any]) -> dict[str, Any]:

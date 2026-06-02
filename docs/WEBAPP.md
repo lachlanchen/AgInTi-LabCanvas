@@ -1,6 +1,6 @@
 # Web App
 
-AppAutoAction includes a local chat, artifact canvas, and preview workspace for 3D experiment design and paper figures.
+AppAutoAction includes a bright-by-default local chat, artifact canvas, and preview workspace for 3D experiment design and paper figures. Use the top-bar theme button to switch to dark mode.
 
 ```bash
 app-auto-action web --port 8787 --open
@@ -26,6 +26,10 @@ AgInTi image generation defaults to `--dry-run`, which writes a redacted prompt,
 - BioRender: configured with the official MCP URL `https://mcp.services.biorender.com/mcp` and an auth environment variable name. The app does not store BioRender secrets.
 - OpenSCAD: exports the current scene spec to a simplified `.scad` mechanical-layout proxy.
 - Blender: renders the scene spec to PNG and `.blend` artifacts.
+- Target registry: the CLI still routes configured targets such as Blender, BioRender, Unity, and Unreal through `agenticapp.targets.json`.
+
+The Backends panel exposes toolchain toggles for Blender, OpenSCAD, AgInTi image generation, BioRender MCP, and the target registry. Toggles are saved as non-secret settings and are intended as routing controls for future workflows; current button actions still run their matching local workflow directly.
+The target dispatch box lists configured AppAutoAction targets and defaults to dry-run. Use it to test Blender, BioRender, Unity, Unreal, or custom targets from `agenticapp.targets.json`; each dispatch result is saved as a JSON artifact in the canvas.
 
 ## API
 
@@ -36,7 +40,9 @@ AgInTi image generation defaults to `--dry-run`, which writes a redacted prompt,
 | `GET /api/settings` | Load backend settings and detected status. |
 | `POST /api/settings` | Save non-secret backend settings under `output/webapp/settings.json`. |
 | `GET /api/artifacts` | List the project-local artifact manifest. |
+| `GET /api/targets` | List configured target-registry entries. |
 | `POST /api/chat` | Apply a chat instruction to the current scene spec. |
+| `POST /api/dispatch` | Dry-run or send an instruction to a configured target and register the result artifact. |
 | `POST /api/figure-grid` | Generate an exact SVG paper-figure grid and AgInTi image dry-run payloads. |
 | `POST /api/openscad-export` | Export the current scene spec as OpenSCAD. |
 | `POST /api/plan` | Validate and return a dry-run render plan. |

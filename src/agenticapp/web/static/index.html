@@ -4,6 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>AppAutoAction</title>
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem("appautoaction-theme") || "light";
+    </script>
     <link rel="stylesheet" href="/static/app.css">
   </head>
   <body>
@@ -14,6 +17,7 @@
           <h1>Paper Figure Studio</h1>
         </div>
         <div class="top-actions">
+          <button id="themeBtn" class="ghost" type="button">Dark</button>
           <button id="templateBtn" class="ghost">Reset</button>
           <button id="openscadBtn" class="ghost">OpenSCAD</button>
           <button id="figureBtn" class="ghost">Figure Grid</button>
@@ -140,7 +144,27 @@
               </label>
               <div class="toggle-row">
                 <label><input id="agintiDryRun" type="checkbox"> AgInTi dry run</label>
-                <label><input id="toolBioRender" type="checkbox"> BioRender tool</label>
+              </div>
+              <div class="toolchain-grid">
+                <label><input id="toolBlender" type="checkbox"> Blender render</label>
+                <label><input id="toolOpenScad" type="checkbox"> OpenSCAD export</label>
+                <label><input id="toolAgintiImage" type="checkbox"> AgInTi image</label>
+                <label><input id="toolBioRender" type="checkbox"> BioRender MCP</label>
+                <label><input id="toolTargetRegistry" type="checkbox"> Target registry</label>
+              </div>
+              <div class="dispatch-box">
+                <label>
+                  Registry target
+                  <select id="targetSelect"></select>
+                </label>
+                <label>
+                  Target instruction
+                  <textarea id="targetInstruction" rows="2" placeholder="Dry-run an instruction for any configured target."></textarea>
+                </label>
+                <div class="dispatch-actions">
+                  <label><input id="dispatchDryRun" type="checkbox" checked> Dry run</label>
+                  <button id="dispatchTargetBtn" class="ghost" type="button">Dispatch Target</button>
+                </div>
               </div>
               <div class="spec-actions">
                 <button id="saveSettingsBtn" class="ghost" type="submit">Save Settings</button>

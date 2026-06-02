@@ -5,7 +5,7 @@ import threading
 import unittest
 from urllib import request
 
-from agenticapp.webapp import chat_update, create_server, default_scene_spec, plan_web_scene
+from agenticapp.webapp import chat_update, create_server, default_scene_spec, dispatch_web_target, plan_web_scene, target_list_response
 
 
 class WebAppTests(unittest.TestCase):
@@ -39,6 +39,23 @@ class WebAppTests(unittest.TestCase):
             thread.join(timeout=3)
 
         self.assertTrue(data["ok"])
+
+    def test_target_dispatch_registers_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            targets = target_list_response()
+            target_name = targets["targets"][0]["name"]
+            result = dispatch_web_target(
+                {
+                    "target": target_name,
+                    "instruction": "Prepare a paper figure workflow",
+                    "dry_run": True,
+                },
+                Path(tmp),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["dispatch"]["status"], "dry-run")
+        self.assertEqual(result["artifact"]["kind"], "json")
 
 
 if __name__ == "__main__":

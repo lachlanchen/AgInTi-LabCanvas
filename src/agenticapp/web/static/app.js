@@ -1,6 +1,7 @@
 let spec = null;
 let settings = null;
 let artifacts = [];
+let targets = [];
 let selectedArtifactId = "";
 let rendering = false;
 
@@ -22,11 +23,14 @@ const pngLink = document.getElementById("pngLink");
 const blendLink = document.getElementById("blendLink");
 const specLink = document.getElementById("specLink");
 const backendStatus = document.getElementById("backendStatus");
+const themeButton = document.getElementById("themeBtn");
+const targetSelect = document.getElementById("targetSelect");
+const targetInstruction = document.getElementById("targetInstruction");
 
 init();
 
 async function init() {
-  const [specResponse] = await Promise.all([fetch("/api/spec"), loadSettings(), loadArtifacts()]);
+  const [specResponse] = await Promise.all([fetch("/api/spec"), loadSettings(), loadTargets(), loadArtifacts()]);
   const data = await specResponse.json();
   spec = data.spec;
   syncSpecView();
@@ -72,6 +76,8 @@ document.getElementById("dryRunBtn").addEventListener("click", dryRunScene);
 document.getElementById("figureBtn").addEventListener("click", generateFigureGrid);
 document.getElementById("openscadBtn").addEventListener("click", exportOpenScad);
 document.getElementById("templateBtn").addEventListener("click", init);
+document.getElementById("dispatchTargetBtn").addEventListener("click", dispatchRegistryTarget);
+themeButton.addEventListener("click", toggleTheme);
 document.getElementById("openBioRenderBtn").addEventListener("click", () => {
   const url = document.getElementById("biorenderUrl").value.trim() || "https://app.biorender.com/";
   window.open(url.includes("/mcp") ? "https://app.biorender.com/" : url, "_blank", "noopener");
@@ -192,6 +198,51 @@ async function loadArtifacts() {
   setArtifacts(data);
 }
 
+async function loadTargets() {
+  const response = await fetch("/api/targets");
+  const data = await response.json();
+  targets = Array.isArray(data.targets) ? data.targets : [];
+  renderTargetOptions();
+}
+
+async function dispatchRegistryTarget() {
+  const target = targetSelect.value;
+  const instruction = targetInstruction.value.trim();
+  if (!target || !instruction) {
+    addMessage("assistant", "Choose a target and enter an instruction first.");
+    return;
+  }
+  renderStatus.textContent = "Dispatching";
+  try {
+    const data = await postJson("/api/dispatch", {
+      target,
+      instruction,
+      dry_run: document.getElementById("dispatchDryRun").checked,
+    });
+    setArtifacts(data.artifacts);
+    const status = data.dispatch?.status || "done";
+    addMessage("assistant", `Target dispatch ${status}: ${target}.`);
+    renderStatus.textContent = "Dispatch ready";
+  } catch (error) {
+    renderStatus.textContent = "Dispatch error";
+    addMessage("assistant", error.message);
+  }
+}
+
+function renderTargetOptions() {
+  targetSelect.innerHTML = "";
+  targets.forEach((target) => {
+    const option = document.createElement("option");
+    option.value = target.name;
+    option.textContent = `${target.name} (${target.transport})`;
+    option.disabled = !target.enabled;
+    targetSelect.appendChild(option);
+  });
+  if (targets.length && !targetInstruction.value) {
+    targetInstruction.value = "Prepare a paper figure workflow for this target";
+  }
+}
+
 function setArtifacts(bundle) {
   artifacts = Array.isArray(bundle?.items) ? bundle.items : [];
   selectedArtifactId = bundle?.selected_id || artifacts.find((item) => item.selected)?.id || selectedArtifactId;
@@ -278,10 +329,15 @@ function syncSettingsView(status = {}) {
   document.getElementById("agintiDryRun").checked = Boolean(settings.aginti?.dry_run);
   document.getElementById("biorenderUrl").value = settings.biorender?.mcp_url || "https://mcp.services.biorender.com/mcp";
   document.getElementById("biorenderEnv").value = settings.biorender?.auth_env || "BIORENDER_API_KEY";
+  document.getElementById("toolBlender").checked = settings.toolchain?.blender !== false;
+  document.getElementById("toolOpenScad").checked = settings.toolchain?.openscad !== false;
+  document.getElementById("toolAgintiImage").checked = settings.toolchain?.aginti_image !== false;
   document.getElementById("toolBioRender").checked = Boolean(settings.toolchain?.biorender);
+  document.getElementById("toolTargetRegistry").checked = settings.toolchain?.target_registry !== false;
   const agintiReady = status.aginti?.command_path ? "AgInTi ready" : "AgInTi missing";
   const bioReady = status.biorender?.auth_env_present ? "BioRender key present" : "BioRender key via env";
   backendStatus.textContent = `${agintiReady} · ${bioReady}`;
+  syncThemeButton();
 }
 
 function collectSettings() {
@@ -302,9 +358,26 @@ function collectSettings() {
     },
     toolchain: {
       ...settings.toolchain,
+      blender: document.getElementById("toolBlender").checked,
+      openscad: document.getElementById("toolOpenScad").checked,
+      aginti_image: document.getElementById("toolAgintiImage").checked,
       biorender: document.getElementById("toolBioRender").checked,
+      target_registry: document.getElementById("toolTargetRegistry").checked,
     },
   };
+}
+
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("appautoaction-theme", next);
+  syncThemeButton();
+}
+
+function syncThemeButton() {
+  const isDark = document.documentElement.dataset.theme === "dark";
+  themeButton.textContent = isDark ? "Light" : "Dark";
+  themeButton.setAttribute("aria-label", isDark ? "Switch to bright theme" : "Switch to dark theme");
 }
 
 function addMessage(role, text) {

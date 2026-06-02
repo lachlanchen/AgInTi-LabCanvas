@@ -1,6 +1,6 @@
 # Paper Figure Studio
 
-The web app turns AppAutoAction into a small studio for academic setup figures. It combines deterministic layout, 3D rendering, CAD export, and backend handoff without requiring API keys for the local demo.
+The web app turns AppAutoAction into a small studio for academic setup figures. It uses a bright theme by default, with a top-bar toggle for dark mode. The studio combines deterministic layout, 3D rendering, CAD export, and backend handoff without requiring API keys for the local demo.
 
 ## Artifact Canvas
 
@@ -49,6 +49,16 @@ https://mcp.services.biorender.com/mcp
 ```
 
 Store credentials in an environment variable such as `BIORENDER_API_KEY`; the web app stores only the variable name.
+
+## Tool Support
+
+| Tool | Studio support | Notes |
+| --- | --- | --- |
+| Blender | Active local render workflow | Produces PNG and `.blend` artifacts from the scene spec. |
+| OpenSCAD | Active local export workflow | Produces a simplified `.scad` layout proxy. |
+| AgInTi image generation | Active dry-run workflow by default | Writes redacted prompts, request payloads, and manifests; live image calls need provider keys. |
+| BioRender | Configured MCP handoff | Uses the official remote MCP endpoint and browser handoff; credentials stay in env vars. |
+| Unity/Unreal/other registry targets | Studio dry-run dispatch plus CLI/registry support | Add endpoints in `agenticapp.targets.json`; the Backends panel can dry-run any configured target and save the result to the canvas. |
 
 ## OpenSCAD And Blender
 
