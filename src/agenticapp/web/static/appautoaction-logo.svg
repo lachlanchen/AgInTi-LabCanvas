@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">AppAutoAction logo</title>
+  <desc id="desc">A compact mark with connected tool nodes and an optical beam for agent-driven creative automation.</desc>
+  <defs>
+    <linearGradient id="plate" x1="12" x2="84" y1="18" y2="82" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f8fbff"/>
+      <stop offset="1" stop-color="#dce8f4"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="15" x2="80" y1="53" y2="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f0a72f"/>
+      <stop offset="0.5" stop-color="#ff6b35"/>
+      <stop offset="1" stop-color="#1d5fd1"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="76" height="76" rx="20" fill="url(#plate)" stroke="#ccd6e0" stroke-width="3"/>
+  <path d="M22 61 C34 43 48 51 61 31" fill="none" stroke="url(#beam)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M31 69 L44 26 L57 69" fill="none" stroke="#111827" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M39 51 H51" fill="none" stroke="#111827" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="23" cy="61" r="8" fill="#087f78" stroke="#ffffff" stroke-width="3"/>
+  <circle cx="62" cy="31" r="8" fill="#1d5fd1" stroke="#ffffff" stroke-width="3"/>
+  <circle cx="72" cy="68" r="7" fill="#f0a72f" stroke="#ffffff" stroke-width="3"/>
+  <path d="M58 43 L72 68" fill="none" stroke="#087f78" stroke-width="4" stroke-linecap="round"/>
+</svg>

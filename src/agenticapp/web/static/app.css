@@ -110,10 +110,10 @@ button:disabled {
 
 .app-shell {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100vh;
   overflow: hidden;
-  gap: 14px;
+  gap: 12px;
   padding: 18px;
 }
 
@@ -124,6 +124,21 @@ button:disabled {
   justify-content: space-between;
   gap: 18px;
   padding: 0 4px;
+}
+
+.brand-lockup,
+.footer-mark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand-logo {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  filter: drop-shadow(0 10px 18px rgba(15, 23, 42, 0.14));
 }
 
 .eyebrow {
@@ -179,6 +194,36 @@ h3 {
   min-height: 0;
   grid-template-columns: minmax(280px, 350px) minmax(520px, 1fr) minmax(310px, 410px);
   gap: 14px;
+}
+
+.app-footer {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.app-footer a {
+  color: var(--teal);
+  text-decoration: none;
+}
+
+.app-footer a:hover {
+  text-decoration: underline;
+}
+
+.footer-mark img {
+  width: 20px;
+  height: 20px;
+}
+
+.footer-divider {
+  color: var(--line);
 }
 
 .panel {

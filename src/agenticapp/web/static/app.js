@@ -87,6 +87,7 @@ const TRANSLATIONS = {
     "aria.switchLight": "Switch to bright theme",
     "aria.switchDark": "Switch to dark theme",
     "count.elements": "{count} elements",
+    "footer.poweredBy": "Powered by",
   },
   ar: {
     "app.title": "استوديو أشكال الأوراق",
@@ -156,6 +157,7 @@ const TRANSLATIONS = {
     "backend.bioPresent": "مفتاح BioRender موجود",
     "backend.bioEnv": "مفتاح BioRender عبر البيئة",
     "count.elements": "{count} عناصر",
+    "footer.poweredBy": "مدعوم من",
   },
   es: {
     "app.title": "Estudio de Figuras",
@@ -225,6 +227,7 @@ const TRANSLATIONS = {
     "backend.bioPresent": "Clave BioRender presente",
     "backend.bioEnv": "Clave BioRender por env",
     "count.elements": "{count} elementos",
+    "footer.poweredBy": "Con tecnología de",
   },
   fr: {
     "app.title": "Studio de Figures",
@@ -292,6 +295,7 @@ const TRANSLATIONS = {
     "backend.bioPresent": "Clé BioRender présente",
     "backend.bioEnv": "Clé BioRender via env",
     "count.elements": "{count} éléments",
+    "footer.poweredBy": "Propulsé par",
   },
   ja: {
     "app.title": "論文図版スタジオ",
@@ -359,6 +363,7 @@ const TRANSLATIONS = {
     "backend.bioPresent": "BioRenderキーあり",
     "backend.bioEnv": "BioRenderキーはenv経由",
     "count.elements": "{count}要素",
+    "footer.poweredBy": "Powered by",
   },
   ko: {
     "app.title": "논문 그림 스튜디오",
@@ -426,6 +431,7 @@ const TRANSLATIONS = {
     "backend.bioPresent": "BioRender 키 있음",
     "backend.bioEnv": "BioRender 키 env",
     "count.elements": "{count}개 요소",
+    "footer.poweredBy": "Powered by",
   },
   vi: {
     "app.title": "Studio Hình Bài Báo",
@@ -493,6 +499,7 @@ const TRANSLATIONS = {
     "backend.bioPresent": "Có khóa BioRender",
     "backend.bioEnv": "Khóa BioRender qua env",
     "count.elements": "{count} phần tử",
+    "footer.poweredBy": "Powered by",
   },
   "zh-Hans": {
     "app.title": "论文图形工作室",
@@ -560,6 +567,7 @@ const TRANSLATIONS = {
     "backend.bioPresent": "BioRender 密钥存在",
     "backend.bioEnv": "BioRender 密钥来自环境变量",
     "count.elements": "{count} 个元素",
+    "footer.poweredBy": "由以下驱动：",
   },
   "zh-Hant": {
     "app.title": "論文圖形工作室",
@@ -627,6 +635,7 @@ const TRANSLATIONS = {
     "backend.bioPresent": "BioRender 密鑰存在",
     "backend.bioEnv": "BioRender 密鑰來自環境變數",
     "count.elements": "{count} 個元素",
+    "footer.poweredBy": "由以下驅動：",
   },
   de: {
     "app.title": "Paper Figure Studio",
@@ -694,6 +703,7 @@ const TRANSLATIONS = {
     "backend.bioPresent": "BioRender-Schlüssel vorhanden",
     "backend.bioEnv": "BioRender-Schlüssel via env",
     "count.elements": "{count} Elemente",
+    "footer.poweredBy": "Bereitgestellt von",
   },
   ru: {
     "app.title": "Студия Фигур",
@@ -761,6 +771,7 @@ const TRANSLATIONS = {
     "backend.bioPresent": "Ключ BioRender найден",
     "backend.bioEnv": "Ключ BioRender через env",
     "count.elements": "{count} элементов",
+    "footer.poweredBy": "Работает на",
   },
 };
 

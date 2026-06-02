@@ -57,6 +57,23 @@ class WebAppTests(unittest.TestCase):
 
         self.assertTrue(data["ok"])
 
+    def test_server_serves_static_logo_svg(self):
+        server = create_server("127.0.0.1", 0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address
+            with request.urlopen(f"http://{host}:{port}/static/appautoaction-logo.svg", timeout=3) as response:
+                body = response.read().decode("utf-8")
+                content_type = response.headers["Content-Type"]
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+        self.assertIn("image/svg+xml", content_type)
+        self.assertIn("<svg", body)
+
     def test_webapp_language_selector_has_profile_locales(self):
         html = (ROOT / "src" / "agenticapp" / "web" / "static" / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "src" / "agenticapp" / "web" / "static" / "app.js").read_text(encoding="utf-8")
@@ -64,6 +81,9 @@ class WebAppTests(unittest.TestCase):
 
         self.assertIn('id="localeSelect"', html)
         self.assertNotIn(">Language</", html)
+        self.assertIn('src="/static/appautoaction-logo.svg"', html)
+        self.assertIn("Powered by", html)
+        self.assertIn("LazyingArt LLC", html)
         for locale in expected:
             self.assertIn(f'value="{locale}"', html)
         for key in set(re.findall(r'data-i18n(?:-[a-z]+)?="([^"]+)"', html)):

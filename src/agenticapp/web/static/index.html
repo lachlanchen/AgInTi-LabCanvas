@@ -13,9 +13,12 @@
   <body>
     <main class="app-shell">
       <section class="topbar">
-        <div>
-          <div class="eyebrow">AppAutoAction</div>
-          <h1 data-i18n="app.title">Paper Figure Studio</h1>
+        <div class="brand-lockup">
+          <img class="brand-logo" src="/static/appautoaction-logo.svg" alt="AppAutoAction logo">
+          <div>
+            <div class="eyebrow">AppAutoAction</div>
+            <h1 data-i18n="app.title">Paper Figure Studio</h1>
+          </div>
         </div>
         <div class="top-actions">
           <select id="localeSelect" class="locale-select" aria-label="Interface language">
@@ -192,6 +195,16 @@
           </div>
         </aside>
       </section>
+      <footer class="app-footer">
+        <span class="footer-mark">
+          <img src="/static/appautoaction-logo.svg" alt="" aria-hidden="true">
+          <span>AppAutoAction</span>
+        </span>
+        <span class="footer-divider">·</span>
+        <span><span data-i18n="footer.poweredBy">Powered by</span> <a href="https://github.com/lachlanchen/AgInTiFlow">AgInTi Flow</a></span>
+        <span class="footer-divider">·</span>
+        <a href="https://lazying.art">LazyingArt LLC</a>
+      </footer>
     </main>
     <script src="/static/app.js"></script>
   </body>

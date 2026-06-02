@@ -157,6 +157,8 @@ class AppAutoActionHandler(BaseHTTPRequestHandler):
             content_type = "text/css; charset=utf-8"
         elif path.suffix == ".js":
             content_type = "text/javascript; charset=utf-8"
+        elif path.suffix == ".svg":
+            content_type = "image/svg+xml; charset=utf-8"
         body = path.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
