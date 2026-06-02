@@ -1,31 +1,86 @@
-# AgenticApp
+<p align="center">
+  <a href="https://lazying.art"><img alt="Homepage" src="https://img.shields.io/badge/home-lazying.art-111827?style=for-the-badge"></a>
+  <a href="https://github.com/lachlanchen/AppAutoAction/actions"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/lachlanchen/AppAutoAction/test.yml?branch=master&style=for-the-badge&label=tests"></a>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge">
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-ready-0F766E?style=for-the-badge">
+</p>
 
-AgenticApp is a lightweight control hub for routing agent instructions to creative and scientific design tools. It is designed to sit between an agent such as Codex, AgInTiFlow, Claude, or another MCP client and tool-specific bridges for Blender, BioRender, Unity, and Unreal Engine.
+<h1 align="center">AppAutoAction</h1>
 
-The app does not replace the editor plugins. It keeps a target registry, validates bridge configuration, sends JSON instruction envelopes to local adapters, and emits MCP client configuration.
+<p align="center">
+  Agent routing for Blender, BioRender, Unity, Unreal, and future creative tools.
+  AppAutoAction gives Codex, AgInTiFlow, Claude, local LLMs, and other MCP-aware agents one practical control plane for app automation.
+</p>
 
-## Current Targets
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#targets">Targets</a> ·
+  <a href="#research-backed-design">Research</a> ·
+  <a href="#multilingual">11 Languages</a>
+</p>
 
-- Blender: local HTTP bridge or Blender MCP add-on.
-- Unity: local HTTP bridge or Unity MCP package.
-- Unreal: local HTTP bridge, Unreal MCP plugin, or Python remote execution proxy.
-- BioRender: official remote MCP endpoint with browser-launch fallback.
+## Why This Exists
+
+Creative tools are gaining agent bridges, but each bridge has a different install path, port, protocol, and safety model. AppAutoAction keeps those targets in one registry, validates them, emits MCP client config, and dispatches dry-run or live JSON envelopes to the right adapter.
+
+It is intentionally small: Python standard library, explicit config, no hidden editor automation.
 
 ## Quick Start
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests
 PYTHONPATH=src python -m agenticapp list
 PYTHONPATH=src python -m agenticapp doctor
 PYTHONPATH=src python -m agenticapp dispatch blender "Create a red cube at the origin" --dry-run
 PYTHONPATH=src python -m agenticapp mcp-config
+PYTHONPATH=src python -m unittest discover -s tests
 ```
 
-To customize endpoints, copy `configs/targets.example.json` to `agenticapp.targets.json` and edit the `transport` and `mcp` blocks.
+After installation, the console command is also available as:
 
-## Dispatch Envelope
+```bash
+app-auto-action list
+app-auto-action dispatch unity "Create a test scene with three labeled cubes" --dry-run
+```
 
-HTTP and command transports receive the same JSON shape:
+## Targets
+
+| Target | Current adapter | Best bridge shape | Notes |
+| --- | --- | --- | --- |
+| Blender | `http_json` | Blender MCP add-on, local HTTP, or command bridge | Good for scene generation, materials, rendering, export. |
+| BioRender | `browser` plus MCP metadata | Official remote MCP connector | Use OAuth/API-supported flows; avoid scraping. |
+| Unity | `http_json` | Unity package, WebSocket proxy, or C# editor bridge | Good for scenes, assets, scripts, tests, play mode. |
+| Unreal | `http_json` | Unreal MCP plugin or Python remote execution proxy | Treat as privileged editor access. |
+
+Copy `configs/targets.example.json` to `agenticapp.targets.json` for local ports, commands, and tokens. This override file is ignored by git.
+
+## Research-Backed Design
+
+The design follows the MCP split between tools, resources, and prompts, then adapts it to live editor bridges. The research brief is in [docs/RESEARCH.md](docs/RESEARCH.md), covering:
+
+- Blender MCP projects with headless and live-GUI modes.
+- Unity MCP packages with scene, asset, script, and play-mode control.
+- Unreal MCP servers using plugins or Python Remote Execution.
+- BioRender's documented MCP connector endpoint.
+- Security tradeoffs for agents with editor write access.
+
+## Architecture
+
+```text
+Agent or MCP client
+        |
+        | command / dry-run / MCP config
+        v
+AppAutoAction CLI
+        |
+        | target registry
+        v
+Transport adapter: http_json | local_command | browser | noop
+        |
+        v
+Blender / BioRender / Unity / Unreal bridge
+```
+
+Every dispatch receives the same envelope:
 
 ```json
 {
@@ -39,8 +94,27 @@ HTTP and command transports receive the same JSON shape:
 }
 ```
 
-## Bridge Notes
+## Multilingual
 
-Use `http_json` when a local editor bridge accepts `POST` requests. Use `local_command` when a bridge is a script or CLI that reads JSON from standard input. Use `browser` only for tools that need a manual or hosted UI handoff.
+| Language | One-line description |
+| --- | --- |
+| English | AppAutoAction routes AI agents to creative and scientific design tools through explicit, reviewable adapters. |
+| 中文 | AppAutoAction 通过清晰可审查的适配器，把 AI 代理连接到创意和科研设计工具。 |
+| 日本語 | AppAutoAction は、確認しやすいアダプターで AI エージェントを制作・科学図解ツールへ接続します。 |
+| 한국어 | AppAutoAction은 검토 가능한 어댑터로 AI 에이전트를 창작 및 과학 설계 도구에 연결합니다. |
+| Español | AppAutoAction conecta agentes de IA con herramientas creativas y científicas mediante adaptadores revisables. |
+| Français | AppAutoAction relie les agents IA aux outils créatifs et scientifiques avec des adaptateurs explicites. |
+| Deutsch | AppAutoAction verbindet KI-Agenten über prüfbare Adapter mit Kreativ- und Wissenschaftswerkzeugen. |
+| Português | AppAutoAction conecta agentes de IA a ferramentas criativas e científicas por adaptadores auditáveis. |
+| Русский | AppAutoAction подключает ИИ-агентов к творческим и научным инструментам через проверяемые адаптеры. |
+| العربية | يربط AppAutoAction وكلاء الذكاء الاصطناعي بأدوات التصميم العلمي والإبداعي عبر محولات قابلة للمراجعة. |
+| हिन्दी | AppAutoAction समीक्षा योग्य एडेप्टरों से AI एजेंटों को रचनात्मक और वैज्ञानिक डिजाइन टूल से जोड़ता है। |
 
-BioRender automation should go through its MCP connector or documented APIs. Avoid browser scraping unless you have explicit permission and a stable workflow.
+## Development
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests
+PYTHONPATH=src python -m agenticapp doctor
+```
+
+Keep transport behavior covered by tests before adding live editor features. See [AGENTS.md](AGENTS.md) for contributor guidance and [SECURITY.md](SECURITY.md) for the editor-automation security model.

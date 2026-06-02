@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agenticapp"
+name = "app-auto-action"
 version = "0.1.0"
 description = "A lightweight agent control hub for creative and scientific design tools."
 readme = "README.md"
@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
+app-auto-action = "agenticapp.cli:main"
 agenticapp = "agenticapp.cli:main"
 
 [tool.setuptools.packages.find]

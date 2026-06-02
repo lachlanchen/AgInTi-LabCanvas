@@ -2,11 +2,12 @@
 
 ## Project Structure & Module Organization
 
-AgenticApp is a small Python CLI package. Production code lives in `src/agenticapp/`, with `cli.py` handling commands, `config.py` loading target registries, and `adapters.py` dispatching instructions. Tests live in `tests/`. Example target configuration lives in `configs/targets.example.json`; copy it to `agenticapp.targets.json` for local overrides.
+AppAutoAction is a small Python CLI package. Production code lives in `src/agenticapp/`, with `cli.py` handling commands, `config.py` loading target registries, and `adapters.py` dispatching instructions. Tests live in `tests/`. Example target configuration lives in `configs/targets.example.json`; copy it to `agenticapp.targets.json` for local overrides.
 
 ## Build, Test, and Development Commands
 
 - `PYTHONPATH=src python -m agenticapp list`: list configured Blender, BioRender, Unity, and Unreal targets.
+- `app-auto-action list`: run the installed console command.
 - `PYTHONPATH=src python -m agenticapp doctor`: validate target configuration without sending commands.
 - `PYTHONPATH=src python -m agenticapp dispatch blender "Create a cube" --dry-run`: inspect the JSON envelope for a target.
 - `PYTHONPATH=src python -m agenticapp mcp-config`: emit MCP client configuration.
