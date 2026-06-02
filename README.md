@@ -52,12 +52,13 @@ app-auto-action dispatch unity "Create a test scene with three labeled cubes" --
 AppAutoAction now includes a systematic Blender workflow for paper setup figures, optical benches, device concepts, and experiment design:
 
 ```bash
+app-auto-action web --port 8787 --open
 app-auto-action scene-template experiment-setup --output my-setup.scene.json
 app-auto-action render-scene my-setup.scene.json --dry-run
 app-auto-action render-scene my-setup.scene.json --output-dir output/scenes
 ```
 
-The source of truth is a JSON scene spec. Blender runs headless and produces a `.png` preview plus a `.blend` scene. Start from [examples/paper-optics-setup.scene.json](examples/paper-optics-setup.scene.json), inspect the generated [example render](examples/renders/paper-optics-setup.png), or read the schema guide in [docs/SCENE_SPEC.md](docs/SCENE_SPEC.md).
+The web app provides chat, JSON scene editing, dry-run planning, and render preview. The source of truth is a JSON scene spec. Blender runs headless and produces a `.png` preview plus a `.blend` scene. Start from [examples/paper-optics-setup.scene.json](examples/paper-optics-setup.scene.json), inspect the generated [example render](examples/renders/paper-optics-setup.png), or read [docs/WEBAPP.md](docs/WEBAPP.md) and [docs/SCENE_SPEC.md](docs/SCENE_SPEC.md).
 
 ## Local Blender Test
 

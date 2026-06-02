@@ -62,6 +62,12 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--dry-run", action="store_true", help="Validate and print the render plan without launching Blender.")
     render_parser.add_argument("--timeout", type=float, default=180, help="Blender timeout in seconds.")
     render_parser.set_defaults(func=cmd_render_scene)
+
+    web_parser = subparsers.add_parser("web", help="Start the local chat-and-preview web app.")
+    web_parser.add_argument("--host", default="127.0.0.1", help="Bind host. Default: 127.0.0.1.")
+    web_parser.add_argument("--port", type=int, default=8787, help="Bind port. Uses the next free port if busy.")
+    web_parser.add_argument("--open", action="store_true", help="Open the app in the default browser.")
+    web_parser.set_defaults(func=cmd_web)
     return parser
 
 
@@ -137,6 +143,13 @@ def cmd_render_scene(args: argparse.Namespace) -> int:
         timeout=args.timeout,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_web(args: argparse.Namespace) -> int:
+    from .webapp import run_web_app
+
+    run_web_app(args.host, args.port, open_browser=args.open)
     return 0
 
 

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AppAutoAction</title>
+    <link rel="stylesheet" href="/static/app.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="topbar">
+        <div>
+          <div class="eyebrow">AppAutoAction</div>
+          <h1>Scene Studio</h1>
+        </div>
+        <div class="top-actions">
+          <button id="templateBtn" class="ghost">Reset</button>
+          <button id="renderBtn" class="primary">Render</button>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="panel chat-panel">
+          <header class="panel-head">
+            <h2>Chat</h2>
+            <span id="chatStatus" class="status">Ready</span>
+          </header>
+          <div id="messages" class="messages"></div>
+          <div class="chips">
+            <button data-prompt="Make it a V-SPICE experiment setup">V-SPICE</button>
+            <button data-prompt="Make it brighter and vivid">Vivid</button>
+            <button data-prompt="Add lens">Add lens</button>
+            <button data-prompt="Add filter">Add filter</button>
+          </div>
+          <form id="chatForm" class="composer">
+            <textarea id="messageInput" rows="3" placeholder="Ask for a paper setup, optical bench, device concept, labels, colors, or components."></textarea>
+            <button type="submit">Send</button>
+          </form>
+        </aside>
+
+        <section class="panel preview-panel">
+          <header class="panel-head">
+            <h2>Preview</h2>
+            <span id="renderStatus" class="status">Idle</span>
+          </header>
+          <div class="preview-frame">
+            <img id="previewImage" alt="Rendered scene preview" hidden>
+            <div id="emptyPreview" class="empty-preview">
+              <strong>No render yet</strong>
+              <span>Use Render when the scene is ready.</span>
+            </div>
+          </div>
+          <div class="artifact-row">
+            <a id="pngLink" href="#" hidden>PNG</a>
+            <a id="blendLink" href="#" hidden>Blend</a>
+            <a id="specLink" href="#" hidden>Spec</a>
+          </div>
+        </section>
+
+        <aside class="panel spec-panel">
+          <header class="panel-head">
+            <h2>Scene</h2>
+            <span id="specMeta" class="status">0 elements</span>
+          </header>
+          <div class="scene-summary">
+            <label>
+              Title
+              <input id="titleInput" type="text">
+            </label>
+            <label>
+              Slug
+              <input id="slugInput" type="text">
+            </label>
+          </div>
+          <textarea id="specEditor" class="spec-editor" spellcheck="false"></textarea>
+          <div class="spec-actions">
+            <button id="applySpecBtn" class="ghost">Apply JSON</button>
+            <button id="dryRunBtn" class="ghost">Dry Run</button>
+          </div>
+        </aside>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
