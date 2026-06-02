@@ -65,6 +65,7 @@ app-auto-action web --port 8787 --open
 
 The web app now has a bright-by-default theme, chat panel, artifact canvas, scene editor, and backend settings. It can:
 
+- Switch the visible studio UI across the same 11 languages as the localized READMEs.
 - Treat generated overview images as concepts, then decompose them into editable atomic parts.
 - Generate exact `NxM` SVG paper-figure grids with black panel boundaries.
 - Prepare AgInTi image-generation dry-run payloads for scientific icon concepts.

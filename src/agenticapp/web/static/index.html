@@ -6,6 +6,7 @@
     <title>AppAutoAction</title>
     <script>
       document.documentElement.dataset.theme = localStorage.getItem("appautoaction-theme") || "light";
+      document.documentElement.lang = localStorage.getItem("appautoaction-locale") || "en";
     </script>
     <link rel="stylesheet" href="/static/app.css">
   </head>
@@ -14,56 +15,69 @@
       <section class="topbar">
         <div>
           <div class="eyebrow">AppAutoAction</div>
-          <h1>Paper Figure Studio</h1>
+          <h1 data-i18n="app.title">Paper Figure Studio</h1>
         </div>
         <div class="top-actions">
+          <select id="localeSelect" class="locale-select" aria-label="Interface language">
+            <option value="en">English</option>
+            <option value="ar">العربية</option>
+            <option value="es">Español</option>
+            <option value="fr">Français</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="vi">Tiếng Việt</option>
+            <option value="zh-Hans">中文 (简体)</option>
+            <option value="zh-Hant">中文（繁體）</option>
+            <option value="de">Deutsch</option>
+            <option value="ru">Русский</option>
+          </select>
           <button id="themeBtn" class="ghost" type="button">Dark</button>
-          <button id="templateBtn" class="ghost">Reset</button>
-          <button id="openscadBtn" class="ghost">OpenSCAD</button>
-          <button id="figureBtn" class="ghost">Figure Grid</button>
-          <button id="renderBtn" class="primary">Render</button>
+          <button id="templateBtn" class="ghost" data-i18n="button.reset">Reset</button>
+          <button id="openscadBtn" class="ghost" data-i18n="button.openscad">OpenSCAD</button>
+          <button id="figureBtn" class="ghost" data-i18n="button.figureGrid">Figure Grid</button>
+          <button id="renderBtn" class="primary" data-i18n="button.render">Render</button>
         </div>
       </section>
 
       <section class="workspace">
         <aside class="panel chat-panel">
           <header class="panel-head">
-            <h2>Chat</h2>
-            <span id="chatStatus" class="status">Ready</span>
+            <h2 data-i18n="section.chat">Chat</h2>
+            <span id="chatStatus" class="status" data-i18n="status.ready">Ready</span>
           </header>
           <div id="messages" class="messages"></div>
           <div class="chips">
             <button data-prompt="Make it a V-SPICE experiment setup">V-SPICE</button>
-            <button data-prompt="Generate a 2x3 paper figure grid for optical experiment icons">Figure 2x3</button>
+            <button data-prompt="Generate a 2x3 paper figure grid for optical experiment icons" data-i18n="chip.figure2x3">Figure 2x3</button>
             <button data-prompt="Export this setup to OpenSCAD">OpenSCAD</button>
             <button data-prompt="Use BioRender settings for academic drawings">BioRender</button>
-            <button data-prompt="Make it brighter and vivid">Vivid</button>
-            <button data-prompt="Add lens">Add lens</button>
-            <button data-prompt="Add filter">Add filter</button>
+            <button data-prompt="Make it brighter and vivid" data-i18n="chip.vivid">Vivid</button>
+            <button data-prompt="Add lens" data-i18n="chip.addLens">Add lens</button>
+            <button data-prompt="Add filter" data-i18n="chip.addFilter">Add filter</button>
           </div>
           <form id="chatForm" class="composer">
-            <textarea id="messageInput" rows="3" placeholder="Ask for a paper setup, optical bench, device concept, labels, colors, or generated figure panels."></textarea>
-            <button type="submit">Send</button>
+            <textarea id="messageInput" rows="3" placeholder="Ask for a paper setup, optical bench, device concept, labels, colors, or generated figure panels." data-i18n-placeholder="placeholder.message"></textarea>
+            <button type="submit" data-i18n="button.send">Send</button>
           </form>
         </aside>
 
         <section class="panel preview-panel">
           <header class="panel-head">
-            <h2>Canvas</h2>
-            <span id="renderStatus" class="status">Idle</span>
+            <h2 data-i18n="section.canvas">Canvas</h2>
+            <span id="renderStatus" class="status" data-i18n="status.idle">Idle</span>
           </header>
           <div class="canvas-toolbar">
             <label>
-              Prompt
+              <span data-i18n="label.prompt">Prompt</span>
               <input id="figurePrompt" type="text" value="optical experiment and device setup icons">
             </label>
             <div class="mini-grid">
               <label>
-                Rows
+                <span data-i18n="label.rows">Rows</span>
                 <input id="figureRows" type="number" min="1" max="8" value="2">
               </label>
               <label>
-                Cols
+                <span data-i18n="label.cols">Cols</span>
                 <input id="figureCols" type="number" min="1" max="8" value="3">
               </label>
             </div>
@@ -73,22 +87,22 @@
             <section class="artifact-viewer">
               <div class="artifact-viewer-head">
                 <div>
-                  <h3 id="artifactTitle">Nothing selected</h3>
-                  <p id="artifactMeta" class="status">Generated artifacts appear here.</p>
+                  <h3 id="artifactTitle" data-i18n="artifact.noneSelected">Nothing selected</h3>
+                  <p id="artifactMeta" class="status" data-i18n="artifact.metaEmpty">Generated artifacts appear here.</p>
                 </div>
                 <span id="artifactKind" class="kind-pill"></span>
               </div>
               <div id="artifactViewer" class="preview-frame">
-                <img id="previewImage" alt="Selected artifact preview" hidden>
+                <img id="previewImage" alt="Selected artifact preview" data-i18n-alt="artifact.previewAlt" hidden>
                 <div id="emptyPreview" class="empty-preview">
-                  <strong>No artifact yet</strong>
-                  <span>Render, export, or generate a figure grid.</span>
+                  <strong data-i18n="artifact.noneYet">No artifact yet</strong>
+                  <span data-i18n="artifact.emptyHint">Render, export, or generate a figure grid.</span>
                 </div>
               </div>
               <div class="artifact-row">
-                <a id="pngLink" href="#" hidden>Image</a>
-                <a id="blendLink" href="#" hidden>Blend</a>
-                <a id="specLink" href="#" hidden>Spec</a>
+                <a id="pngLink" href="#" hidden data-i18n="link.image">Image</a>
+                <a id="blendLink" href="#" hidden data-i18n="link.blend">Blend</a>
+                <a id="specLink" href="#" hidden data-i18n="link.spec">Spec</a>
               </div>
             </section>
           </div>
@@ -96,85 +110,85 @@
 
         <aside class="panel spec-panel">
           <header class="panel-head">
-            <h2>Scene</h2>
+            <h2 data-i18n="section.scene">Scene</h2>
             <span id="specMeta" class="status">0 elements</span>
           </header>
           <div class="scene-summary">
             <label>
-              Title
+              <span data-i18n="label.title">Title</span>
               <input id="titleInput" type="text">
             </label>
             <label>
-              Slug
+              <span data-i18n="label.slug">Slug</span>
               <input id="slugInput" type="text">
             </label>
           </div>
           <textarea id="specEditor" class="spec-editor" spellcheck="false"></textarea>
           <section class="settings-panel">
             <header class="settings-head">
-              <h2>Backends</h2>
-              <span id="backendStatus" class="status">Loading</span>
+              <h2 data-i18n="section.backends">Backends</h2>
+              <span id="backendStatus" class="status" data-i18n="status.loading">Loading</span>
             </header>
             <form id="settingsForm" class="settings-form">
               <label>
-                AgInTi command
+                <span data-i18n="label.agintiCommand">AgInTi command</span>
                 <input id="agintiCommand" type="text" autocomplete="off">
               </label>
               <label>
-                AgInTi workspace
+                <span data-i18n="label.agintiWorkspace">AgInTi workspace</span>
                 <input id="agintiWorkspace" type="text" autocomplete="off">
               </label>
               <div class="mini-grid">
                 <label>
-                  Provider
+                  <span data-i18n="label.provider">Provider</span>
                   <input id="agintiProvider" type="text" autocomplete="off">
                 </label>
                 <label>
-                  Model
+                  <span data-i18n="label.model">Model</span>
                   <input id="agintiModel" type="text" autocomplete="off">
                 </label>
               </div>
               <label>
-                BioRender MCP URL
+                <span data-i18n="label.biorenderUrl">BioRender MCP URL</span>
                 <input id="biorenderUrl" type="url" autocomplete="off">
               </label>
               <label>
-                BioRender auth env
+                <span data-i18n="label.biorenderEnv">BioRender auth env</span>
                 <input id="biorenderEnv" type="text" autocomplete="off">
               </label>
               <div class="toggle-row">
-                <label><input id="agintiDryRun" type="checkbox"> AgInTi dry run</label>
+                <label><input id="agintiDryRun" type="checkbox"> <span data-i18n="label.agintiDryRun">AgInTi dry run</span></label>
               </div>
               <div class="toolchain-grid">
-                <label><input id="toolBlender" type="checkbox"> Blender render</label>
-                <label><input id="toolOpenScad" type="checkbox"> OpenSCAD export</label>
-                <label><input id="toolAgintiImage" type="checkbox"> AgInTi image</label>
-                <label><input id="toolBioRender" type="checkbox"> BioRender MCP</label>
-                <label><input id="toolTargetRegistry" type="checkbox"> Target registry</label>
+                <label><input id="toolBlender" type="checkbox"> <span data-i18n="label.blenderRender">Blender render</span></label>
+                <label><input id="toolOpenScad" type="checkbox"> <span data-i18n="label.openscadExport">OpenSCAD export</span></label>
+                <label><input id="toolAgintiImage" type="checkbox"> <span data-i18n="label.agintiImage">AgInTi image</span></label>
+                <label><input id="toolBioRender" type="checkbox"> <span data-i18n="label.biorenderMcp">BioRender MCP</span></label>
+                <label><input id="toolTargetRegistry" type="checkbox"> <span data-i18n="label.targetRegistry">Target registry</span></label>
               </div>
               <div class="dispatch-box">
                 <label>
-                  Registry target
+                  <span data-i18n="label.registryTarget">Registry target</span>
                   <select id="targetSelect"></select>
                 </label>
                 <label>
-                  Target instruction
-                  <textarea id="targetInstruction" rows="2" placeholder="Dry-run an instruction for any configured target."></textarea>
+                  <span data-i18n="label.targetInstruction">Target instruction</span>
+                  <textarea id="targetInstruction" rows="2" placeholder="Dry-run an instruction for any configured target." data-i18n-placeholder="placeholder.targetInstruction"></textarea>
                 </label>
                 <div class="dispatch-actions">
-                  <label><input id="dispatchDryRun" type="checkbox" checked> Dry run</label>
-                  <button id="dispatchTargetBtn" class="ghost" type="button">Dispatch Target</button>
+                  <label><input id="dispatchDryRun" type="checkbox" checked> <span data-i18n="label.dryRun">Dry run</span></label>
+                  <button id="dispatchTargetBtn" class="ghost" type="button" data-i18n="button.dispatchTarget">Dispatch Target</button>
                 </div>
               </div>
               <div class="spec-actions">
-                <button id="saveSettingsBtn" class="ghost" type="submit">Save Settings</button>
-                <button id="openBioRenderBtn" class="ghost" type="button">Open BioRender</button>
+                <button id="saveSettingsBtn" class="ghost" type="submit" data-i18n="button.saveSettings">Save Settings</button>
+                <button id="openBioRenderBtn" class="ghost" type="button" data-i18n="button.openBioRender">Open BioRender</button>
               </div>
             </form>
           </section>
           <div class="spec-actions">
-            <button id="applySpecBtn" class="ghost">Apply JSON</button>
-            <button id="dryRunBtn" class="ghost">Dry Run</button>
+            <button id="applySpecBtn" class="ghost" data-i18n="button.applyJson">Apply JSON</button>
+            <button id="dryRunBtn" class="ghost" data-i18n="button.dryRun">Dry Run</button>
           </div>
         </aside>
       </section>

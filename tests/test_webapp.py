@@ -1,11 +1,14 @@
 import json
 from pathlib import Path
+import re
 import tempfile
 import threading
 import unittest
 from urllib import request
 
 from agenticapp.webapp import chat_update, create_server, default_scene_spec, dispatch_web_target, plan_web_scene, target_list_response
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class WebAppTests(unittest.TestCase):
@@ -53,6 +56,18 @@ class WebAppTests(unittest.TestCase):
             thread.join(timeout=3)
 
         self.assertTrue(data["ok"])
+
+    def test_webapp_language_selector_has_profile_locales(self):
+        html = (ROOT / "src" / "agenticapp" / "web" / "static" / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "src" / "agenticapp" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+        expected = ["en", "ar", "es", "fr", "ja", "ko", "vi", "zh-Hans", "zh-Hant", "de", "ru"]
+
+        self.assertIn('id="localeSelect"', html)
+        self.assertNotIn(">Language</", html)
+        for locale in expected:
+            self.assertIn(f'value="{locale}"', html)
+        for key in set(re.findall(r'data-i18n(?:-[a-z]+)?="([^"]+)"', html)):
+            self.assertIn(f'"{key}"', script)
 
     def test_target_dispatch_registers_artifact(self):
         with tempfile.TemporaryDirectory() as tmp:

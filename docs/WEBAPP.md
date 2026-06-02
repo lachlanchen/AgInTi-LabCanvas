@@ -1,6 +1,6 @@
 # Web App
 
-AppAutoAction includes a bright-by-default local chat, artifact canvas, and preview workspace for 3D experiment design and paper figures. Use the top-bar theme button to switch to dark mode.
+AppAutoAction includes a bright-by-default local chat, artifact canvas, and preview workspace for 3D experiment design and paper figures. Use the top-bar theme button to switch to dark mode, and use the adjacent language dropdown to localize the interface.
 
 ```bash
 app-auto-action web --port 8787 --open
@@ -18,6 +18,7 @@ The app runs on `127.0.0.1` by default. If the requested port is busy, it choose
 6. Save backend settings for AgInTi image generation and BioRender MCP handoff.
 
 The web app uses the same scene spec renderer documented in [SCENE_SPEC.md](SCENE_SPEC.md). It does not require API keys; chat edits are deterministic scene-spec mutations.
+The language dropdown supports English, Arabic, Spanish, French, Japanese, Korean, Vietnamese, Simplified Chinese, Traditional Chinese, German, and Russian. The visible UI chrome is localized while backend-facing prompt payloads remain stable for deterministic routing.
 AgInTi image generation defaults to `--dry-run`, which writes a redacted prompt, request payload, and manifest without calling an image provider.
 The editable figure direction is documented in [EDITABLE_FIGURE_PIPELINE.md](EDITABLE_FIGURE_PIPELINE.md): use generated images for overview concepts, keep atomic editable parts, assemble final paper figures with TeX clipping/layering, and expose both overview and editable views in the canvas.
 The matching terminal workflow is documented in [STUDIO_CLI.md](STUDIO_CLI.md). CLI and web actions share the same artifact manifest and backend helpers.

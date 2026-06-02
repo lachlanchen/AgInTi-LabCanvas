@@ -165,6 +165,15 @@ h3 {
   gap: 8px;
 }
 
+.locale-select {
+  width: auto;
+  min-height: 38px;
+  min-width: 132px;
+  max-width: 170px;
+  background: var(--button-bg);
+  font-weight: 750;
+}
+
 .workspace {
   display: grid;
   min-height: 0;
