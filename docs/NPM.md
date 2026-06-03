@@ -2,6 +2,8 @@
 
 AppAutoAction is packaged for npm as `@lazyingart/app-auto-action`.
 
+Current published version: `0.1.0`.
+
 ## Install
 
 ```bash
@@ -37,9 +39,11 @@ Trusted Publisher settings on npm:
 Equivalent setup command:
 
 ```bash
-npm install -g npm@^11.5.1
+npm install -g npm@^11.10.0
 npm trust github @lazyingart/app-auto-action --repo lachlanchen/AppAutoAction --file npm-publish.yml
 ```
+
+If the CLI reports that 2FA is required without opening a browser flow, configure the trusted publisher from the npm package settings page using the same package, repository, and workflow filename above.
 
 For local bootstrap publishing, use a temporary npm config generated from an uncommitted env file:
 

@@ -2,6 +2,7 @@
 
 <p align="center">
   <a href="https://lazying.art"><img alt="Homepage" src="https://img.shields.io/badge/home-lazying.art-111827?style=for-the-badge"></a>
+  <a href="https://www.npmjs.com/package/@lazyingart/app-auto-action"><img alt="npm" src="https://img.shields.io/npm/v/@lazyingart/app-auto-action?style=for-the-badge&label=npm"></a>
   <a href="https://github.com/lachlanchen/AppAutoAction/actions"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/lachlanchen/AppAutoAction/test.yml?branch=master&style=for-the-badge&label=tests"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge">
   <img alt="MCP" src="https://img.shields.io/badge/MCP-ready-0F766E?style=for-the-badge">
