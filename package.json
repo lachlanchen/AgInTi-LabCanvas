@@ -18,7 +18,8 @@
     "examples/",
     "i18n/",
     "scripts/",
-    "src/",
+    "src/agenticapp/**/*.py",
+    "src/agenticapp/web/static/*",
     "pyproject.toml"
   ],
   "scripts": {

@@ -14,7 +14,8 @@ class NpmPackageTests(unittest.TestCase):
         self.assertEqual(package["name"], "@lazyingart/app-auto-action")
         self.assertEqual(package["bin"]["app-auto-action"], "bin/app-auto-action.js")
         self.assertEqual(package["bin"]["agenticapp"], "bin/agenticapp.js")
-        self.assertIn("src/", package["files"])
+        self.assertIn("src/agenticapp/**/*.py", package["files"])
+        self.assertIn("src/agenticapp/web/static/*", package["files"])
         self.assertIn("configs/", package["files"])
         self.assertIn("examples/", package["files"])
 
