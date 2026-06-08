@@ -1,0 +1,61 @@
+{
+  "component_family": "HYBEC / Hybec HBL-273 HBL-667 G4 tungsten halogen instrument lamp",
+  "dataset_created": "2026-06-08",
+  "intended_pcb": "pcb/hybec-hbl-273-g4/hybec-hbl-273-g4.kicad_pcb",
+  "models": [
+    {
+      "model": "HYB-273 / HBL-273 vertical photometer type",
+      "voltage_v": 12,
+      "power_w": 20,
+      "estimated_current_a": 1.667,
+      "base": "G4 bi-pin",
+      "lamp_shape": "T8 capsule",
+      "filament": "C-6 / vertical photometer type",
+      "luminous_flux_lm": 350,
+      "flux_tolerance_lm": 50,
+      "life_hours": 2000,
+      "color_temperature_k": 3000,
+      "total_length_mm": 28,
+      "reference_equivalent": "Osram 64258",
+      "notes": "Non-polar tungsten halogen lamp. Design uses 4.00 mm G4 pin pitch and 1.20 mm plated holes for direct pin insertion."
+    },
+    {
+      "model": "HBL-667 / horizontal biochemical analyzer type",
+      "voltage_v": 12,
+      "power_w": 20,
+      "estimated_current_a": 1.667,
+      "base": "G4 bi-pin",
+      "luminous_flux_lm": 300,
+      "life_hours": 2000,
+      "color_temperature_k": 2900,
+      "total_length_mm": 30,
+      "notes": "Seller listings describe this as horizontal filament / biochemical analyzer variant."
+    }
+  ],
+  "pcb_assumptions": {
+    "board_style": "matches existing NHI LED carrier family: circular 24 mm diameter board outline around center 150,100 with four M2 mounting holes",
+    "lamp_hole_pitch_mm": 4.0,
+    "lamp_hole_drill_mm": 1.2,
+    "lamp_pad_diameter_mm": 3.4,
+    "copper_track_width_mm": 1.2,
+    "external_connector": "rear-side 1x02 2.54 mm pin header footprint retained from earlier LED boards",
+    "thermal_warning": "12 V 20 W halogen lamps dissipate substantial heat; verify FR4 temperature, standoff distance, and enclosure airflow before use."
+  },
+  "sources": [
+    {
+      "title": "Miyakawa Corporation HYBEC halogen lamp table",
+      "url": "https://mcp-hybec.co.jp/en/products/halogen-lamp-xenon-lamp/",
+      "used_for": "HYB-273 12V20W T8 G4 C-6 350±50 lm, 2000 h, Osram 64258 reference"
+    },
+    {
+      "title": "Made-in-China product listing for HBL-273/HBL-667",
+      "url": "https://molight-led.en.made-in-china.com/product/cZOTFHLvSPVD/China-Japan-Hybec-Biochemical-Lamp-Beads-Hbl-273-Hbl-667-12V-20W-G4-Spectrophotometer-Tungsten-Lamp.html",
+      "used_for": "vertical/horizontal variant description, color temperature, lumen and length claims"
+    },
+    {
+      "title": "Grandado HBL-273 listing",
+      "url": "https://gbr.grandado.com/products/hybec-hbl-273-12v20w-g4-biochemical-analyzer-lamp-bead-replace-for-kls-jc-ch-12v20w",
+      "used_for": "cross-check voltage, base type, life, color temperature, CRI and luminous flux listing"
+    }
+  ]
+}

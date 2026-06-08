@@ -1,0 +1,4 @@
+Id,Designator,Footprint,Quantity,Designation,Notes
+1,"H1,H2,H3,H4",MountingHole_2.2mm_M2,4,M2 mounting holes,matches previous NHI LED carriers
+2,L1,HYBEC_HBL_273_G4_DirectPins,1,HYBEC HBL-273/HBL-667 12V20W G4 lamp,"direct inserted lamp pins, non-polar"
+3,J1,PinHeader_1x02_P2.54mm_Horizontal,1,12V input connector,rear-side connector retained from old boards

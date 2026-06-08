@@ -1,0 +1,13 @@
+(kicad_sch
+	(version 20231120)
+	(generator "appautoaction-hybec-halogen-generator")
+	(generator_version "1.0")
+	(uuid "384babef-78af-5185-b863-a70a8c8c43cf")
+	(paper "A4")
+	(lib_symbols)
+	(text "Board-only schematic stub. The PCB connects J1 directly to two non-polar G4 halogen lamp holes." (at 87.63 76.2 0)
+		(effects (font (size 1.27 1.27)) (justify left bottom))
+		(uuid "a9da176d-72d0-5d52-8449-600199c25e5c")
+	)
+	(sheet_instances (path "/" (page "1")))
+)
