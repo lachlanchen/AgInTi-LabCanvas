@@ -105,6 +105,8 @@ app-auto-action render-scene my-setup.scene.json --output-dir output/scenes
 
 The web app provides chat, JSON scene editing, dry-run planning, and render preview. The source of truth is a JSON scene spec. Blender runs headless and produces a `.png` preview plus a `.blend` scene. Start from [examples/paper-optics-setup.scene.json](examples/paper-optics-setup.scene.json), inspect the generated [example render](examples/renders/paper-optics-setup.png), or read [docs/WEBAPP.md](docs/WEBAPP.md) and [docs/SCENE_SPEC.md](docs/SCENE_SPEC.md).
 
+CAD hardware notes now live in [cad/README.md](cad/README.md), including the OpenHI/Nature STEP import notes and a parametric [C-mount reflector adapter](cad/designs/cmount_reflector_adapter/README.md). JLCPCB/Jialichuang automation research is documented in [pcb/jlcpcb-jialichuang-automation.md](pcb/jlcpcb-jialichuang-automation.md).
+
 ## Local Blender Test
 
 For a no-sudo local Blender install and a real headless scene generation test:

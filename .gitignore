@@ -12,3 +12,5 @@ output/
 .aginti/.env
 .aginti/.env.*
 !.aginti/.env.example
+cad/sources/*.zip
+cad/extracted/

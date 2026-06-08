@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="360" viewBox="0 0 920 360" role="img" aria-labelledby="title desc">
+  <title id="title">C-mount reflector adapter cross-section</title>
+  <desc id="desc">Dimension sketch showing a male C-mount threaded cylinder connected to a reflector cube with 20 millimetre internal cavity and 3 millimetre walls.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#111827"/>
+    </marker>
+  </defs>
+  <rect width="920" height="360" fill="#f8fafc"/>
+  <line x1="70" y1="250" x2="850" y2="250" stroke="#94a3b8" stroke-width="2"/>
+  <rect x="110" y="128" width="100" height="104" fill="#dbeafe" stroke="#111827" stroke-width="3"/>
+  <path d="M110,128 L110,232" stroke="#111827" stroke-width="3"/>
+  <path d="M120,118 L130,242 M140,118 L150,242 M160,118 L170,242 M180,118 L190,242" stroke="#2563eb" stroke-width="3"/>
+  <rect x="210" y="118" width="220" height="124" fill="#e0f2fe" stroke="#111827" stroke-width="3"/>
+  <rect x="430" y="80" width="260" height="208" fill="#dcfce7" stroke="#111827" stroke-width="3"/>
+  <rect x="460" y="110" width="230" height="148" fill="#f8fafc" stroke="#16a34a" stroke-width="3" stroke-dasharray="8 8"/>
+  <rect x="110" y="150" width="580" height="60" fill="#f8fafc" stroke="#0f172a" stroke-width="2"/>
+  <line x1="70" y1="180" x2="850" y2="180" stroke="#ef4444" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="118" y="104" font-family="Arial, sans-serif" font-size="18" fill="#111827">male C-mount-like thread</text>
+  <text x="238" y="104" font-family="Arial, sans-serif" font-size="18" fill="#111827">hollow cylinder</text>
+  <text x="480" y="66" font-family="Arial, sans-serif" font-size="18" fill="#111827">reflector cube</text>
+  <text x="503" y="182" font-family="Arial, sans-serif" font-size="16" fill="#166534">20 x 20 x 20 mm inner cavity</text>
+  <line x1="430" y1="306" x2="690" y2="306" stroke="#111827" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="518" y="332" font-family="Arial, sans-serif" font-size="16" fill="#111827">outer cube 26 mm</text>
+  <line x1="705" y1="80" x2="705" y2="288" stroke="#111827" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="718" y="188" font-family="Arial, sans-serif" font-size="16" fill="#111827">26 mm</text>
+  <line x1="456" y1="80" x2="456" y2="110" stroke="#111827" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="470" y="100" font-family="Arial, sans-serif" font-size="15" fill="#111827">3 mm wall</text>
+  <line x1="110" y1="268" x2="210" y2="268" stroke="#111827" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="128" y="293" font-family="Arial, sans-serif" font-size="15" fill="#111827">5.5 mm</text>
+  <line x1="210" y1="268" x2="430" y2="268" stroke="#111827" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="296" y="293" font-family="Arial, sans-serif" font-size="15" fill="#111827">18 mm</text>
+  <text x="96" y="330" font-family="Arial, sans-serif" font-size="15" fill="#475569">bottom of cylinder and cube are coplanar</text>
+</svg>
