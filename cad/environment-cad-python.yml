@@ -1,0 +1,14 @@
+name: appautoaction-cad
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - cadquery=2.7
+  - build123d=0.9
+  - trimesh
+  - meshio
+  - numpy
+  - matplotlib
+  - pillow
+  - ipykernel
+  - scipy

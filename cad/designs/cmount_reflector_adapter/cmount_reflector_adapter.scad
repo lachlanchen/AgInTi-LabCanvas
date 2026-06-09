@@ -9,6 +9,7 @@ thread_major_d = 24.4;        // Printed-fit value inferred from local STEP file
 thread_pitch = 25.4 / 32;     // 0.79375 mm.
 thread_length = 5.5;
 thread_depth = 0.42;
+thread_overlap = 0.12;        // Slight root overlap so thread and core fuse.
 
 body_d = 26;
 body_length = 18;
@@ -21,6 +22,7 @@ cube_length = outer_cube;
 
 clearance = 0.05;
 render_thread = true;
+join_overlap = 0.2;
 
 axis_z = body_d / 2;
 cube_x0 = thread_length + body_length;
@@ -35,6 +37,7 @@ module x_cylinder(d, h, x0) {
 module approximate_external_thread() {
     turns = thread_length / thread_pitch;
     tooth_w = thread_pitch * 0.55;
+    root_r = thread_major_d / 2 - thread_depth - thread_overlap;
 
     translate([0, 0, axis_z])
         rotate([0, 90, 0])
@@ -44,17 +47,17 @@ module approximate_external_thread() {
                 slices = max(32, ceil(turns * 36)),
                 convexity = 10
             )
-                translate([thread_major_d / 2 - thread_depth, 0])
+                translate([root_r, 0])
                     polygon(points = [
                         [0, -tooth_w / 2],
-                        [thread_depth, 0],
+                        [thread_depth + thread_overlap, 0],
                         [0, tooth_w / 2]
                     ]);
 }
 
 module adapter_solid() {
     union() {
-        x_cylinder(thread_major_d - 2 * thread_depth, thread_length, 0);
+        x_cylinder(thread_major_d - 2 * thread_depth + 2 * thread_overlap, thread_length, 0);
 
         if (render_thread) {
             approximate_external_thread();
@@ -62,7 +65,7 @@ module adapter_solid() {
             x_cylinder(thread_major_d, thread_length, 0);
         }
 
-        x_cylinder(body_d, body_length, thread_length);
+        x_cylinder(body_d, body_length + 2 * join_overlap, thread_length - join_overlap);
 
         translate([cube_x0, -outer_cube / 2, 0])
             cube([cube_length, outer_cube, outer_cube]);

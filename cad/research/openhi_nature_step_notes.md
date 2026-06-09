@@ -55,3 +55,5 @@ Requirements captured:
 - cylinder bottom and cube bottom are coplanar for flat printing or fixture alignment.
 
 The OpenSCAD file keeps these as named parameters so print compensation can be tuned after test fitting.
+
+Detailed 1:1 scale parameters and print-check dimensions are consolidated in `cad/references/cmount-reflector-adapter-scale.md`.

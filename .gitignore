@@ -14,3 +14,4 @@ output/
 !.aginti/.env.example
 cad/sources/*.zip
 cad/extracted/
+cad/.conda/

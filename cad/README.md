@@ -24,7 +24,21 @@ These raw zip and STEP dumps are intentionally ignored by git. Keep them local u
 ## Research Notes
 
 - `research/openhi_nature_step_notes.md`: inventory and inferred C-mount dimensions from the OpenHI/Nature STEP examples.
+- `references/cmount-reflector-adapter-scale.md`: 1:1 scale table for the C-mount reflector adapter.
+- `references/cad-toolchain.md`: installed CAD tools, local Python CAD kernel, and render commands.
+- `environment-cad-python.yml`: reproducible conda environment spec for CadQuery/build123d/OCP work.
 - `../pcb/jlcpcb-jialichuang-automation.md`: JLCPCB/Jialichuang order automation research and safe automation boundary.
+
+## Scale Convention
+
+CAD source files are authored in millimetres at 1:1 scale. For the C-mount reflector adapter, the expected slicer/CAD bounding box is `49.5 x 26 x 26 mm`. Tune thread fit by changing the named thread parameters, not by scaling the whole model.
+
+Current verified render/export path:
+
+```bash
+openscad -o cad/designs/cmount_reflector_adapter/artifacts/cmount_reflector_adapter.stl cad/designs/cmount_reflector_adapter/cmount_reflector_adapter.scad
+blender --background --python cad/designs/cmount_reflector_adapter/blender_render.py
+```
 
 ## Preferred Shapr3D Export Formats
 
