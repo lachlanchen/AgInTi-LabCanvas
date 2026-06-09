@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360">
+<rect width="100%" height="100%" fill="#f8fafc"/>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#111827"/></marker></defs>
+<text x="60" y="36" font-family="Arial, sans-serif" font-size="18" fill="#111827">Top view: holder is top-open and left-open through the threaded socket</text>
+<rect x="60" y="92.4" width="160.0" height="195.2" fill="#bfdbfe" stroke="#111827" stroke-width="2"/>
+<rect x="220.0" y="86" width="80.0" height="208" fill="#93c5fd" stroke="#111827" stroke-width="2"/>
+<rect x="300.0" y="92.4" width="160.0" height="195.2" fill="#bfdbfe" stroke="#111827" stroke-width="2"/>
+<rect x="300.0" y="62" width="176.0" height="256" fill="#bbf7d0" stroke="#111827" stroke-width="2"/>
+<rect x="476.0" y="86" width="184.0" height="208" fill="#dcfce7" stroke="#111827" stroke-width="2"/>
+<rect x="476.0" y="110" width="160.0" height="160" fill="#f8fafc" stroke="#16a34a" stroke-width="2" stroke-dasharray="7 6"/>
+<rect x="636.0" y="86" width="24.0" height="208" fill="#86efac" stroke="#111827" stroke-width="2"/>
+<line x1="60" y1="190" x2="830" y2="190" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="8 6"/>
+<text x="490.0" y="94" font-family="Arial, sans-serif" font-size="13" fill="#166534">left side opens to tube</text>
+<text x="490.0" y="306" font-family="Arial, sans-serif" font-size="13" fill="#166534">top is open; no lid modeled</text>
+<line x1="476.0" y1="324" x2="636.0" y2="324" stroke="#111827" stroke-width="1.6"/>
+<line x1="476.0" y1="324" x2="636.0" y2="324" stroke="#111827" stroke-width="1.6" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<text x="521.0" y="348" font-family="Arial, sans-serif" font-size="14" fill="#111827">inner 20 mm</text>
+<line x1="300.0" y1="54" x2="476.0" y2="54" stroke="#111827" stroke-width="1.6"/>
+<line x1="300.0" y1="54" x2="476.0" y2="54" stroke="#111827" stroke-width="1.6" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<text x="335.0" y="42" font-family="Arial, sans-serif" font-size="14" fill="#111827">female socket 22 mm</text>
+</svg>

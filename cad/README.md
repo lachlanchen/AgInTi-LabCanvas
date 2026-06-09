@@ -20,11 +20,13 @@ These raw zip and STEP dumps are intentionally ignored by git. Keep them local u
 ## Designs
 
 - `designs/cmount_reflector_adapter/`: printable C-mount male to reflector-cube adapter draft. One end uses a printer-compensated external C-mount-like thread; the other end is a 20 x 20 x 20 mm internal reflector chamber with 3 mm walls.
+- `designs/cmount_threaded_reflector_assembly/`: newer two-part design with a 50 mm male-male C-mount tube, 20 mm threads on each end, and a top-open 20 x 20 x 20 mm reflector holder with a female threaded left socket.
 
 ## Research Notes
 
 - `research/openhi_nature_step_notes.md`: inventory and inferred C-mount dimensions from the OpenHI/Nature STEP examples.
 - `references/cmount-reflector-adapter-scale.md`: 1:1 scale table for the C-mount reflector adapter.
+- `references/cmount-threaded-reflector-assembly-scale.md`: scale table and old A/B/C 4f branch evidence for the newer two-part reflector assembly.
 - `references/cad-toolchain.md`: installed CAD tools, local Python CAD kernel, and render commands.
 - `environment-cad-python.yml`: reproducible conda environment spec for CadQuery/build123d/OCP work.
 - `../pcb/jlcpcb-jialichuang-automation.md`: JLCPCB/Jialichuang order automation research and safe automation boundary.

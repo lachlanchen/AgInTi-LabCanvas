@@ -17,6 +17,7 @@ The files include named solids that expose the designer's intended thread diamet
 
 - `OpenHI_STEP/C.step`: `Thread camera 24.4`, `Thread lens 29.6`
 - `OpenHI_STEP/B.step`: `Thread camera 24.4`, `Thread lens 29.6*`
+- `OpenHI_STEP/A.step`: `Thread top`
 - `OpenHI_STEP/Collimator tube.step`: `Outer thread`, `Thread left 24.8`
 - `OpenHI_STEP/Collimator cap.step`: `Cap thread 24.8`
 - `Nature_STEP/BS lateral.step.step`: repeated `Thread camera 24.4`, `Thread lens 29.6`, `Thread top`, `Thread BS`
@@ -57,3 +58,5 @@ Requirements captured:
 The OpenSCAD file keeps these as named parameters so print compensation can be tuned after test fitting.
 
 Detailed 1:1 scale parameters and print-check dimensions are consolidated in `cad/references/cmount-reflector-adapter-scale.md`.
+
+The newer threaded tube plus top-open reflector holder is documented separately in `cad/references/cmount-threaded-reflector-assembly-scale.md`.

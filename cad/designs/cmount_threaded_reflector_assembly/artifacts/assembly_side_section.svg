@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="380" viewBox="0 0 900 380">
+<rect width="100%" height="100%" fill="#f8fafc"/>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#111827"/></marker></defs>
+<text x="60" y="36" font-family="Arial, sans-serif" font-size="18" fill="#111827">Side section: 50 mm male-male C-mount tube into top-open reflector holder</text>
+<line x1="45" y1="270" x2="840" y2="270" stroke="#94a3b8" stroke-width="1"/>
+<rect x="60" y="68.4" width="160.0" height="195.2" fill="#bfdbfe" stroke="#111827" stroke-width="2"/>
+<rect x="220.0" y="62" width="80.0" height="208" fill="#93c5fd" stroke="#111827" stroke-width="2"/>
+<rect x="300.0" y="68.4" width="160.0" height="195.2" fill="#bfdbfe" stroke="#111827" stroke-width="2"/>
+<rect x="300.0" y="38" width="176.0" height="232" fill="#bbf7d0" stroke="#111827" stroke-width="2"/>
+<rect x="476.0" y="86.0" width="184.0" height="184.0" fill="#dcfce7" stroke="#111827" stroke-width="2"/>
+<rect x="476.0" y="86.0" width="160.0" height="160.0" fill="#f8fafc" stroke="#16a34a" stroke-width="2" stroke-dasharray="7 6"/>
+<rect x="636.0" y="86.0" width="24.0" height="184.0" fill="#86efac" stroke="#111827" stroke-width="2"/>
+<line x1="60" y1="166.0" x2="820" y2="166.0" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="8 6"/>
+<text x="76" y="96" font-family="Arial, sans-serif" font-size="13" fill="#1e40af">left 20 mm thread</text>
+<text x="236" y="96" font-family="Arial, sans-serif" font-size="12" fill="#1e40af">body 10</text>
+<text x="326" y="96" font-family="Arial, sans-serif" font-size="13" fill="#1e40af">right 20 mm thread</text>
+<text x="490.0" y="80" font-family="Arial, sans-serif" font-size="13" fill="#166534">20 x 20 x 20 mm reflector pocket, top open</text>
+<line x1="60" y1="298" x2="460.0" y2="298" stroke="#111827" stroke-width="1.6"/>
+<line x1="60" y1="298" x2="460.0" y2="298" stroke="#111827" stroke-width="1.6" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<text x="210" y="322" font-family="Arial, sans-serif" font-size="14" fill="#111827">tube total 50 mm</text>
+<line x1="60" y1="328" x2="220.0" y2="328" stroke="#111827" stroke-width="1.6"/>
+<line x1="60" y1="328" x2="220.0" y2="328" stroke="#111827" stroke-width="1.6" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<text x="118" y="352" font-family="Arial, sans-serif" font-size="14" fill="#111827">20 mm</text>
+<line x1="300.0" y1="328" x2="460.0" y2="328" stroke="#111827" stroke-width="1.6"/>
+<line x1="300.0" y1="328" x2="460.0" y2="328" stroke="#111827" stroke-width="1.6" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+<text x="352" y="352" font-family="Arial, sans-serif" font-size="14" fill="#111827">20 mm</text>
+</svg>
