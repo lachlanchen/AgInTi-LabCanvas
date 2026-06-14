@@ -24,6 +24,15 @@ profile: ~/.cache/wenext-3d-order/chrome-profile
 
 ## Commands
 
+Preferred unified wrapper with blocker packets:
+
+```bash
+python3 agentic_tools/order_assistant.py --provider wenext --site china status
+python3 agentic_tools/order_assistant.py --provider wenext --site china --allow-submit place
+```
+
+If the website is difficult, the wrapper writes a private agent handoff packet under `~/.config/manufacturing-order-assistant/packets/`.
+
 List active Wenext browser targets:
 
 ```bash

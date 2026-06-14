@@ -37,6 +37,15 @@ Set `order.confirm_mode` to `manual` for `手动确认订单` or `auto` for `系
 
 ## Commands
 
+Preferred unified wrapper with blocker packets:
+
+```bash
+python3 agentic_tools/order_assistant.py --provider jlc --site china status
+python3 agentic_tools/order_assistant.py --provider jlc --site china --allow-submit place path/to/gerber.zip
+```
+
+If the website is difficult, the wrapper writes a private agent handoff packet under `~/.config/manufacturing-order-assistant/packets/`.
+
 Launch or reuse the persistent browser:
 
 ```bash

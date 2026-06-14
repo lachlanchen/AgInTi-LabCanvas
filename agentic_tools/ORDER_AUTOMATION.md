@@ -2,6 +2,24 @@
 
 This repository keeps guarded, browser-assisted order tools for manufacturing workflows. The tools attach to logged-in Chrome sessions through CDP, store private state outside git, and stop at review/payment boundaries unless explicitly authorized.
 
+## Unified Agent-Assisted Entry Point
+
+Use the shared wrapper when you want a resilient run that creates an agent handoff packet if the website blocks automation:
+
+```bash
+python3 agentic_tools/order_assistant.py --provider wenext --site china status
+python3 agentic_tools/order_assistant.py --provider wenext --site china --allow-submit place
+python3 agentic_tools/order_assistant.py --provider jlc --site china --allow-submit place path/to/gerber.zip
+```
+
+Failure or blocker packets are written privately under:
+
+```text
+~/.config/manufacturing-order-assistant/packets/
+```
+
+Each packet includes the provider/site, command, redacted stdout/stderr tails, parsed state where available, diagnosis, and a concise agent prompt for the next Codex/AgInTi run. The wrapper delegates to the provider-specific scripts below; maintain provider DOM fixes there first, then keep this wrapper as the common safety layer.
+
 ## JLCPCB / JiaLiChuang PCB
 
 Tool path:
