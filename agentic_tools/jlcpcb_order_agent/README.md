@@ -31,6 +31,7 @@ Set `order.confirm_mode` to `manual` for `手动确认订单` or `auto` for `系
 - Python `playwright`: attaches to the existing Chrome DevTools Protocol port.
 - Google Chrome shared profile: keeps the JLC login persistent without launching a no-sandbox browser.
 - JLC China order page: `https://www.jlc.com/newOrder/#/pcb/newOnlinePlaceOrder`.
+- JLC global quote page: `https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006`.
 - JLC desktop assistant: optional fallback installed at `/opt/jlc-assistant/jlc-assistant`.
 - `xdotool` and ImageMagick `import`: manual UI fallback and screenshots when CDP selectors are unstable.
 
@@ -76,6 +77,42 @@ python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py prepare
 
 `prepare` reuses an existing JLC order tab when present; otherwise it uploads the configured Gerber ZIP, opens the parsed order form, fills settings/address, and runs `检查订单`.
 
+Quick China-site wrapper, defaulting to free `OSP` finish and separate shipment:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh \
+  pcb/hybec-hbl-273-g4/jlcpcb_order/hybec-hbl-273-g4-jlcpcb-gerber.zip
+```
+
+It records a private SQLite snapshot and stops before final submit. To submit only after manual review:
+
+```bash
+JLCPCB_ALLOW_SUBMIT=1 agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh
+```
+
+Important: JLC's China form rejected `OSP` for the current `2.4 cm x 2.4 cm` HYBEC board because any side is under `7 cm`. The script now blocks submit when JLC shows this warning. Use a larger board for OSP or explicitly choose another valid finish after review.
+
+Open the global quote flow and snapshot its DOM:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/quick_order_global.sh \
+  pcb/hybec-hbl-273-g4/jlcpcb_order/hybec-hbl-273-g4-jlcpcb-gerber.zip
+```
+
+Submit the currently selected global cart item only after review:
+
+```bash
+JLCPCB_ALLOW_SUBMIT=1 agentic_tools/jlcpcb_order_agent/scripts/quick_order_global.sh
+```
+
+The global path selects the cart item, fills the China checkout address from private config, chooses `Review Before Payment`, submits for review, and stops before payment.
+
+Prepare the cheaper assistant handoff:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/quick_order_assistant.sh
+```
+
 Fill address/contact from private config:
 
 ```bash
@@ -110,12 +147,14 @@ The database is `~/.config/jlcpcb-order/orders.sqlite3` with mode `600`. It stor
 
 - `特价` is JLC's promotional base PCB fabrication price.
 - `喷镀费` is the pad surface-finish/plating fee. For this order it came from `无铅喷锡`; switching to `OSP 免费` usually removes this fee, but OSP is less robust for storage and repeated handling.
+- `OSP` can be invalid on very small China-site boards. The HYBEC `2.4 cm x 2.4 cm` board triggered JLC's warning that OSP is unsupported when any side is under `7 cm`.
+- `品质赔付费` is caused by paid quality-compensation options such as `元器件移植全额赔付`. Bare PCB orders should use `按标准合同常规处理` unless component-transfer compensation is intentionally needed.
 - `并单发货` means combining multiple orders into one shipment. If the chosen SF service says it does not support combined shipment, choose `不同交期订单不一起发货`.
 - The assistant price can be cheaper, but it changes the flow to `下载下单助手`; use it later only when intentionally continuing in the desktop assistant.
 
 ## HYBEC Live Order State
 
-The live order was submitted on the JLC webpage and is pending JLC review/payment confirmation. Submitted settings:
+The first China web order was submitted on the JLC webpage and is pending JLC review/payment confirmation. Submitted settings:
 
 - FR-4, 2 layers, `2.4 cm x 2.4 cm`.
 - Quantity `5`.
@@ -132,6 +171,10 @@ The live order was submitted on the JLC webpage and is pending JLC review/paymen
 - Price breakdown observed before submission: base special price `￥30.00`, plating fee `￥30.09`, shipping `包邮`, web total `￥60.09`.
 
 Private snapshots and the completion log are stored under `~/.config/jlcpcb-order/`.
+
+A separate global-site test order was also submitted successfully through `https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006` using `Review Before Payment`. It used the global cart/checkout flow and stopped before payment. The global quote page did not expose OSP for this configuration; it used the valid global finish option visible in that flow.
+
+The assistant-channel China test was not submitted because the requested `OSP` finish produced JLC's small-board incompatibility warning for this `2.4 cm x 2.4 cm` board. The script now treats that as a blocker.
 
 After JLC review, finish payment manually from the order list or JLC notification:
 

@@ -26,6 +26,8 @@ CHINA_UPLOAD_URL = "https://www.jlc.com/newOrder/#/pcb/newOnlinePlaceOrder?spm=j
 GLOBAL_QUOTE_URL = "https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006"
 DEFAULT_LOG_DIR = Path("~/.config/jlcpcb-order/submissions").expanduser()
 DEFAULT_DB_PATH = Path("~/.config/jlcpcb-order/orders.sqlite3").expanduser()
+_PLAYWRIGHT = None
+_BROWSER = None
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -56,9 +58,13 @@ def port_from_config(config: dict[str, Any]) -> int:
 
 
 def connect_page(config: dict[str, Any], prefer_order: bool = True) -> Page:
+    global _PLAYWRIGHT, _BROWSER
     port = port_from_config(config)
-    playwright = sync_playwright().start()
-    browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+    if _PLAYWRIGHT is None:
+        _PLAYWRIGHT = sync_playwright().start()
+    if _BROWSER is None or not _BROWSER.is_connected():
+        _BROWSER = _PLAYWRIGHT.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+    browser = _BROWSER
     context = browser.contexts[0]
     pages = list(context.pages)
     if prefer_order:
@@ -96,6 +102,123 @@ def click_button(page: Page, text: str, occurrence: int = 0) -> bool:
     page.wait_for_timeout(600)
     print(f"clicked button: {text}")
     return True
+
+
+def visible_contains_button(page: Page, fragments: list[str]) -> list[dict[str, Any]]:
+    return page.evaluate(
+        """(fragments) => [...document.querySelectorAll('button')].map((el, i) => {
+            const r = el.getBoundingClientRect();
+            const label = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            return {i, text: label, cls: String(el.className), x: r.x, y: r.y, w: r.width, h: r.height};
+        }).filter(x => x.w > 0 && x.h > 0 && fragments.every((fragment) => x.text.includes(fragment)))""",
+        fragments,
+    )
+
+
+def click_button_containing(page: Page, fragments: list[str], occurrence: int = 0) -> bool:
+    matches = visible_contains_button(page, fragments)
+    if not matches:
+        print(f"button not found containing: {' / '.join(fragments)}")
+        return False
+    row = matches[min(occurrence, len(matches) - 1)]
+    page.mouse.click(row["x"] + row["w"] / 2, row["y"] + row["h"] / 2)
+    page.wait_for_timeout(600)
+    print(f"clicked button containing: {row['text']}")
+    return True
+
+
+def click_first_button_text(page: Page, text: str) -> bool:
+    buttons = page.locator("button").filter(has_text=text)
+    for idx in range(buttons.count()):
+        try:
+            button = buttons.nth(idx)
+            box = button.bounding_box(timeout=500)
+            if box:
+                button.scroll_into_view_if_needed(timeout=3000)
+                button.click(timeout=5000, force=True)
+                page.wait_for_timeout(800)
+                print(f"clicked button text: {text}")
+                return True
+        except PlaywrightTimeoutError:
+            continue
+    return click_button_containing(page, [text], 0)
+
+
+def select_material_modal_fr4(page: Page) -> None:
+    text = page.locator("body").inner_text(timeout=10000)
+    if "请选择板材类别" not in text:
+        return
+    rows = page.evaluate(
+        """() => [...document.querySelectorAll('*')].map((el) => {
+            const r = el.getBoundingClientRect();
+            const text = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            return {text, x: r.x, y: r.y, w: r.width, h: r.height};
+        }).filter((row) => row.text === 'FR-4' && row.w > 0 && row.h > 0)"""
+    )
+    target = next((row for row in rows if 300 < row["x"] < 1500 and 100 < row["y"] < 700), None)
+    if not target and rows:
+        target = rows[-1]
+    if target:
+        page.mouse.click(target["x"] + target["w"] / 2, target["y"] + target["h"] / 2)
+        page.wait_for_timeout(1500)
+        print("selected material modal: FR-4")
+
+
+def select_standard_compensation(page: Page) -> None:
+    label = "按标准合同常规处理【仅赔偿PCB，但不负责PCBA移植及元器件赔偿】"
+    if not click_first_button_text(page, label):
+        print("standard compensation button not found")
+        return
+    page.wait_for_timeout(1000)
+    has_modal = page.evaluate(
+        """() => [...document.querySelectorAll('.el-dialog,.el-dialog__wrapper')].some((el) => {
+            const r = el.getBoundingClientRect();
+            const text = (el.innerText || el.textContent || '');
+            return r.width > 0 && r.height > 0 && text.includes('按标准合约常规处理') && text.includes('元器件移植全额赔付');
+        })"""
+    )
+    if has_modal:
+        # JLC opens a comparison modal. The left card is normal PCB-only
+        # compensation, without component-transfer compensation.
+        page.mouse.click(760, 748)
+        page.wait_for_timeout(1200)
+        print("confirmed standard compensation modal")
+
+
+def assert_clean_for_submit(page: Page, require_surface_finish: str | None = None) -> None:
+    text = page.locator("body").inner_text(timeout=10000)
+    blockers = ["去填写", "系统未检测到", "充值", "余额不足"]
+    if any(blocker in text for blocker in blockers):
+        raise SystemExit("submit blocked: order check still shows missing fields or payment/wallet blocker")
+    compact = " ".join(text.split())
+    if "品质赔付费" in compact or "品质赔付服务 元器件移植全额赔付" in compact:
+        raise SystemExit("submit blocked: paid quality compensation is still selected")
+    if require_surface_finish and require_surface_finish.upper() == "OSP":
+        if "选择OSP工艺生产不能支持" in text or "当前订单尺寸过小" in text:
+            raise SystemExit("submit blocked: JLC says OSP is not supported for this board size")
+
+
+def shipping_mode_label(mode: str | bool | None) -> str:
+    if isinstance(mode, bool):
+        return "不同交期订单一起发货(省运费)" if mode else "不同交期订单不一起发货"
+    normalized = str(mode or "separate").strip().lower()
+    if normalized in {"separate", "split", "no-combine", "no_combine", "not-together"} or "不一起发货" in normalized:
+        return "不同交期订单不一起发货"
+    if normalized in {"combine", "combined", "together", "same", "省运费"} or "一起发货" in normalized:
+        return "不同交期订单一起发货(省运费)"
+    return "不同交期订单不一起发货"
+
+
+def select_order_channel_on_page(page: Page, channel: str | None) -> None:
+    if not channel:
+        return
+    normalized = channel.strip().lower()
+    if normalized in {"assistant", "helper", "desktop", "下单助手"}:
+        click_button_containing(page, ["下单助手"], 0)
+    elif normalized in {"web", "browser", "网页版下单", "网页版"}:
+        click_button_containing(page, ["网页版下单"], 0)
+    else:
+        raise RuntimeError(f"unknown order channel: {channel}")
 
 
 def dismiss_guides(page: Page) -> None:
@@ -191,13 +314,12 @@ def set_quantity(page: Page, quantity: int) -> None:
 def fill_settings(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     order = config.get("order", {})
+    shipping = config.get("shipping", {})
     page = connect_page(config)
     page.set_viewport_size({"width": 1800, "height": 1000})
     dismiss_guides(page)
     # Material chooser sometimes appears as a modal on first use.
-    if "请选择板材类别" in page.locator("body").inner_text(timeout=10000):
-        page.mouse.click(860, 255)
-        page.wait_for_timeout(1200)
+    select_material_modal_fr4(page)
     set_quantity(page, int(order.get("quantity", 5)))
     click_button(page, "不需要", 0)  # confirm production proof: no
     click_button(page, "1.6", 0)
@@ -206,21 +328,28 @@ def fill_settings(args: argparse.Namespace) -> None:
     click_button(page, "白色", 0)
     page.evaluate("window.scrollTo(0, 900)")
     page.wait_for_timeout(600)
-    click_button(page, order.get("surface_finish", "无铅喷锡"), 0)
-    click_button(page, "按标准合同常规处理【仅赔偿PCB，但不负责PCBA移植及元器件赔偿】", 0)
-    if "按标准合约常规处理" in page.locator("body").inner_text(timeout=10000):
-        # JLC may open a comparison modal when switching away from the paid
-        # compensation option. The left card is the normal/standard handling.
-        page.mouse.click(760, 748)
-        page.wait_for_timeout(1000)
+    surface_finish = getattr(args, "surface_finish", None) or order.get("surface_finish", "OSP")
+    click_button(page, surface_finish, 0)
+    if surface_finish.upper() == "OSP":
+        body_text = page.locator("body").inner_text(timeout=10000)
+        if "选择OSP工艺生产不能支持" in body_text or "当前订单尺寸过小" in body_text:
+            raise SystemExit("OSP is not supported for this board size; choose a valid finish before submit")
+    select_standard_compensation(page)
     page.evaluate("window.scrollTo(0, 2760)")
     page.wait_for_timeout(600)
     click_button(page, "不需要", 0)  # SMT
     click_button(page, "不需要", 1)  # stencil
-    confirm_mode = order.get("confirm_mode", "manual")
+    confirm_mode = getattr(args, "confirm_mode", None) or order.get("confirm_mode", "manual")
     click_button(page, "系统自动扣款并确认" if confirm_mode == "auto" else "手动确认订单", 0)
     click_button(page, "电子收据/送货单", 0)
-    click_button(page, "不同交期订单一起发货(省运费)", 0)
+    shipping_mode = (
+        getattr(args, "shipping_mode", None)
+        or order.get("shipping_mode")
+        or shipping.get("shipping_mode")
+        or shipping.get("combine_orders")
+    )
+    click_button(page, shipping_mode_label(shipping_mode), 0)
+    select_order_channel_on_page(page, getattr(args, "order_channel", None) or order.get("order_channel", "web"))
     page.screenshot(path=args.screenshot, full_page=False)
     print(f"screenshot={args.screenshot}")
 
@@ -323,10 +452,8 @@ def submit(args: argparse.Namespace) -> None:
         raise SystemExit("refusing final submit without --allow-submit")
     config = load_config(args.config)
     page = connect_page(config)
-    text = page.locator("body").inner_text(timeout=10000)
-    blockers = ["去填写", "系统未检测到", "充值", "支付", "余额不足"]
-    if any(blocker in text for blocker in blockers):
-        raise SystemExit("submit blocked by missing data or payment/wallet state")
+    order = config.get("order", {})
+    assert_clean_for_submit(page, order.get("surface_finish"))
     click_button(page, "确认并提交", 0)
     page.wait_for_timeout(2500)
     page.screenshot(path=args.screenshot, full_page=False)
@@ -342,6 +469,233 @@ def prepare(args: argparse.Namespace) -> None:
     fill_address(args)
     check_order(args)
     print("prepare complete; review order-check drawer before submit")
+
+
+def open_site(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    current = connect_page(config, prefer_order=False)
+    page = current.context.new_page()
+    if args.site == "global":
+        url = args.url or config.get("global_quote_url") or GLOBAL_QUOTE_URL
+    else:
+        url = args.url or config.get("china_upload_url") or CHINA_UPLOAD_URL
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(2000)
+    page.screenshot(path=args.screenshot, full_page=False)
+    print(f"opened={url}")
+    print(f"title={page.title()}")
+    print(f"screenshot={args.screenshot}")
+
+
+def global_upload(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    zip_path = resolve_path(args.zip or config.get("gerber_zip"))
+    if not zip_path or not zip_path.exists():
+        raise SystemExit(f"missing Gerber ZIP: {zip_path}")
+    current = connect_page(config, prefer_order=False)
+    page = current.context.new_page()
+    page.goto(args.url or config.get("global_quote_url") or GLOBAL_QUOTE_URL, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(2500)
+    file_inputs = page.locator("input[type=file]")
+    count = file_inputs.count()
+    if count:
+        file_inputs.first.set_input_files(str(zip_path))
+        print(f"uploaded={zip_path}")
+    else:
+        print("global page has no visible file input yet; log in or choose the upload control manually")
+    page.wait_for_timeout(1500)
+    page.screenshot(path=args.screenshot, full_page=False)
+    print(f"url={page.url}")
+    print(f"file_inputs={count}")
+    print(f"screenshot={args.screenshot}")
+
+
+def select_finish(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    page = connect_page(config)
+    page.set_viewport_size({"width": 1800, "height": 1000})
+    page.evaluate("window.scrollTo(0, 900)")
+    page.wait_for_timeout(600)
+    click_button(page, args.finish, 0)
+    page.screenshot(path=args.screenshot, full_page=False)
+    print(f"surface_finish={args.finish}")
+    print(f"screenshot={args.screenshot}")
+
+
+def select_channel(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    page = connect_page(config)
+    select_order_channel_on_page(page, args.channel)
+    page.screenshot(path=args.screenshot, full_page=False)
+    print(f"order_channel={args.channel}")
+    print(f"screenshot={args.screenshot}")
+
+
+def split_name_for_global_checkout(name: str) -> tuple[str, str]:
+    name = name.strip()
+    if len(name) >= 2 and all(ord(ch) > 127 for ch in name.replace(" ", "")):
+        return name[1:].strip(), name[0]
+    parts = name.split()
+    if len(parts) >= 2:
+        return " ".join(parts[:-1]), parts[-1]
+    return name, name
+
+
+def select_global_dropdown_option(page: Page, input_placeholder: str, option_parts: list[str]) -> None:
+    field = page.locator(f"input[placeholder='{input_placeholder}']").first
+    field.click(timeout=5000)
+    page.wait_for_timeout(500)
+    for _ in range(16):
+        rows = page.evaluate(
+            """(parts) => [...document.querySelectorAll('.el-select-dropdown__item')].map((el) => {
+                const r = el.getBoundingClientRect();
+                const text = (el.innerText || el.textContent || '').trim();
+                return {text, x: r.x, y: r.y, w: r.width, h: r.height};
+            }).filter((row) => row.w > 0 && row.h > 0 && parts.every((part) => row.text.includes(part)))""",
+            option_parts,
+        )
+        if rows:
+            row = rows[0]
+            page.mouse.click(row["x"] + 20, max(5, min(990, row["y"] + row["h"] / 2)))
+            page.wait_for_timeout(700)
+            return
+        page.evaluate(
+            """() => {
+                const wraps = [...document.querySelectorAll('.el-select-dropdown__wrap')]
+                    .filter((el) => el.getBoundingClientRect().width > 0);
+                const wrap = wraps[wraps.length - 1];
+                if (wrap) wrap.scrollTop += 8 * 34;
+            }"""
+        )
+        page.wait_for_timeout(200)
+    raise RuntimeError(f"could not select global dropdown option: {input_placeholder} / {option_parts}")
+
+
+def global_submit_current_cart(args: argparse.Namespace) -> None:
+    if not args.allow_submit:
+        raise SystemExit("refusing global submit without --allow-submit")
+    config = load_config(args.config)
+    shipping = config.get("shipping", {})
+    recipient = shipping.get("recipient_name") or config.get("recipient_name") or ""
+    phone = str(shipping.get("phone") or config.get("phone") or "")
+    detail = shipping.get("detail") or config.get("address") or ""
+    postal_code = str(shipping.get("postal_code") or "518055")
+    if not all([recipient, phone, detail]):
+        raise SystemExit("global checkout requires recipient_name, phone, and address/detail in private config")
+    first_name, last_name = split_name_for_global_checkout(recipient)
+    current = connect_page(config, prefer_order=False)
+    page = next((p for p in current.context.pages if "shopcart/cart" in p.url), None) or current.context.new_page()
+    page.goto("https://cart.jlcpcb.com/shopcart/cart/", wait_until="domcontentloaded", timeout=60000)
+    page.set_viewport_size({"width": 1800, "height": 1000})
+    page.wait_for_timeout(3000)
+    checkbox = page.locator(".data-choice-list .el-checkbox__inner").first
+    checkbox.click(timeout=5000, force=True)
+    page.wait_for_timeout(2000)
+    text = page.locator("body").inner_text(timeout=10000)
+    if "Subtotal\n$0.00" in text or "Subtotal $0.00" in text:
+        raise SystemExit("global cart item was not selected; refusing empty checkout")
+    page.get_by_text("Secure Checkout", exact=True).click(timeout=5000)
+    page.wait_for_timeout(8000)
+    page.screenshot(path=args.screenshot, full_page=False)
+    text = page.locator("body").inner_text(timeout=10000)
+    if "0 items" in text:
+        raise SystemExit("global checkout opened with 0 items; refusing empty submit")
+    if "First Name" in text:
+        page.locator("input[placeholder='First Name']").first.fill(first_name)
+        page.locator("input[placeholder='Last Name']").first.fill(last_name)
+        country = page.locator("input[placeholder='Country / Region']").first
+        if "China" not in country.input_value():
+            country.click(timeout=5000)
+            page.wait_for_timeout(500)
+            country.press("Control+A")
+            country.type("China")
+            page.wait_for_timeout(500)
+            page.get_by_text("China", exact=False).first.click(timeout=5000, force=True)
+            page.wait_for_timeout(500)
+        if not page.locator("input[placeholder='State']").first.input_value():
+            select_global_dropdown_option(page, "State", ["Guangdong"])
+        if not page.locator("input[placeholder='City']").first.input_value():
+            select_global_dropdown_option(page, "City", ["Shenzhen"])
+        page.locator("input[placeholder='Street Address']").first.fill(detail)
+        page.locator("input[placeholder='Postal Code']").first.fill(postal_code)
+        page.locator("input[placeholder='Cell/Mobile number']").first.fill(phone)
+        page.get_by_text("Save", exact=True).click(timeout=5000)
+        page.wait_for_timeout(7000)
+    text = page.locator("body").inner_text(timeout=10000)
+    if "Shipping Method" in text and "Submit Order" in text and "Review Before Payment" not in text:
+        page.get_by_text("Continue", exact=True).click(timeout=5000)
+        page.wait_for_timeout(6000)
+    if page.get_by_text("Review Before Payment", exact=True).count():
+        page.get_by_text("Review Before Payment", exact=True).first.click(timeout=5000)
+        page.wait_for_timeout(800)
+    page.get_by_text("Submit Order", exact=True).last.click(timeout=5000)
+    page.wait_for_timeout(10000)
+    page.screenshot(path=args.screenshot, full_page=False)
+    final_text = page.locator("body").inner_text(timeout=10000)
+    if "Your order has been submitted" not in final_text:
+        raise SystemExit("global submit did not reach success page")
+    print("global order submitted; payment still waits for review/approval")
+    print(f"screenshot={args.screenshot}")
+
+
+def dump_dom(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    page = connect_page(config, prefer_order=False)
+    url_contains = getattr(args, "url_contains", None)
+    if url_contains:
+        for candidate in reversed(page.context.pages):
+            if url_contains in candidate.url:
+                page = candidate
+                page.bring_to_front()
+                break
+        else:
+            raise SystemExit(f"no open page URL contains: {url_contains}")
+    data = page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const label = (el) => (el.innerText || el.textContent || el.value || '').trim().replace(/\\s+/g, ' ');
+            return {
+                url: location.href,
+                title: document.title,
+                fileInputs: [...document.querySelectorAll('input[type=file]')].map((el, i) => ({
+                    index: i,
+                    accept: el.getAttribute('accept') || '',
+                    name: el.getAttribute('name') || '',
+                    visible: visible(el),
+                })),
+                inputs: [...document.querySelectorAll('input, textarea, select')].slice(0, 160).map((el, i) => ({
+                    index: i,
+                    tag: el.tagName.toLowerCase(),
+                    type: el.getAttribute('type') || '',
+                    placeholder: el.getAttribute('placeholder') || '',
+                    name: el.getAttribute('name') || '',
+                    value: String(el.value || '').slice(0, 80),
+                    visible: visible(el),
+                })),
+                buttons: [...document.querySelectorAll('button')].map((el, i) => ({
+                    index: i,
+                    text: label(el).slice(0, 160),
+                    className: String(el.className).slice(0, 160),
+                    visible: visible(el),
+                })).filter((row) => row.text || row.visible),
+                frames: [...document.querySelectorAll('iframe')].map((el, i) => ({
+                    index: i,
+                    src: el.getAttribute('src') || '',
+                    visible: visible(el),
+                })),
+            };
+        }"""
+    )
+    output = json.dumps(data, ensure_ascii=False, indent=2)
+    if args.output:
+        args.output.expanduser().write_text(output + "\n", encoding="utf-8")
+        print(f"wrote={args.output.expanduser()}")
+    else:
+        print(output)
 
 
 def ensure_order_db(path: Path) -> sqlite3.Connection:
@@ -679,11 +1033,33 @@ def main() -> None:
     parser.add_argument("--screenshot", default="/tmp/jlcpcb-order-agent.png")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(func=status)
+    p_open_site = sub.add_parser("open-site")
+    p_open_site.add_argument("--site", choices=["china", "global"], default="china")
+    p_open_site.add_argument("--url")
+    p_open_site.set_defaults(func=open_site)
+    p_global_upload = sub.add_parser("global-upload")
+    p_global_upload.add_argument("--zip")
+    p_global_upload.add_argument("--url")
+    p_global_upload.set_defaults(func=global_upload)
+    p_global_submit = sub.add_parser("global-submit-current-cart")
+    p_global_submit.add_argument("--allow-submit", action="store_true")
+    p_global_submit.set_defaults(func=global_submit_current_cart)
     p_upload = sub.add_parser("upload")
     p_upload.add_argument("--zip")
     p_upload.set_defaults(func=upload)
     sub.add_parser("open-order-form").set_defaults(func=open_order_form)
-    sub.add_parser("fill-settings").set_defaults(func=fill_settings)
+    p_fill = sub.add_parser("fill-settings")
+    p_fill.add_argument("--surface-finish")
+    p_fill.add_argument("--shipping-mode", choices=["separate", "combined"], default=None)
+    p_fill.add_argument("--order-channel", choices=["web", "assistant"], default=None)
+    p_fill.add_argument("--confirm-mode", choices=["manual", "auto"], default=None)
+    p_fill.set_defaults(func=fill_settings)
+    p_finish = sub.add_parser("select-finish")
+    p_finish.add_argument("--finish", default="OSP")
+    p_finish.set_defaults(func=select_finish)
+    p_channel = sub.add_parser("select-channel")
+    p_channel.add_argument("--channel", choices=["web", "assistant"], default="web")
+    p_channel.set_defaults(func=select_channel)
     p_addr = sub.add_parser("fill-address")
     p_addr.add_argument("--save-address", action="store_true")
     p_addr.set_defaults(func=fill_address)
@@ -691,6 +1067,10 @@ def main() -> None:
     p_prepare = sub.add_parser("prepare")
     p_prepare.add_argument("--zip")
     p_prepare.add_argument("--save-address", action="store_true")
+    p_prepare.add_argument("--surface-finish")
+    p_prepare.add_argument("--shipping-mode", choices=["separate", "combined"], default=None)
+    p_prepare.add_argument("--order-channel", choices=["web", "assistant"], default=None)
+    p_prepare.add_argument("--confirm-mode", choices=["manual", "auto"], default=None)
     p_prepare.set_defaults(func=prepare)
     p_submit = sub.add_parser("submit")
     p_submit.add_argument("--allow-submit", action="store_true")
@@ -703,6 +1083,10 @@ def main() -> None:
     p_log = sub.add_parser("post-submit-log")
     p_log.add_argument("--output-dir", type=Path, default=DEFAULT_LOG_DIR)
     p_log.set_defaults(func=post_submit_log)
+    p_dump = sub.add_parser("dump-dom")
+    p_dump.add_argument("--output", type=Path)
+    p_dump.add_argument("--url-contains")
+    p_dump.set_defaults(func=dump_dom)
     sub.add_parser("snapshot").set_defaults(func=snapshot_cmd)
     args = parser.parse_args()
     args.func(args)

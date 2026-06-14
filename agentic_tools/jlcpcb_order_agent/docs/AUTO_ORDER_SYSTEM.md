@@ -67,6 +67,8 @@ Current live state: submitted and pending JLC review. JLC states that review usu
 
 - `特价`: promotional base PCB manufacturing price.
 - `喷镀费`: surface-finish/plating fee for the selected pad finish. In the HYBEC order this was charged for `无铅喷锡`. Selecting `OSP 免费` can remove the fee, but OSP is less durable for storage/handling.
+- `OSP`: blocked by the China order form for the current `2.4 cm x 2.4 cm` board because JLC states that OSP cannot be used when any side is under `7 cm`.
+- `品质赔付费`: paid quality-compensation fee. For bare PCB orders, keep `按标准合同常规处理`; do not use `元器件移植全额赔付` unless PCBA/component-transfer compensation is intentionally required.
 - `快递费 包邮`: shipping is free for the selected prepaid courier.
 - `并单发货`: combined shipment, meaning multiple orders wait and ship together. If SF says it does not support this, use `不同交期订单不一起发货`.
 - `下单助手(优惠10.00元)`: cheaper assistant workflow. It changes the page action to downloading/opening the desktop assistant, so keep `网页版下单` unless intentionally using the assistant app.
@@ -124,6 +126,59 @@ python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py prepare
 4. runs `检查订单`;
 5. stops before final submission.
 
+For new low-cost prototypes, use the wrapper defaults:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh path/to/gerber.zip
+```
+
+The wrapper sets `OSP`, separate shipment, web order channel, manual confirmation, and records a private `china_checked` SQLite snapshot. To intentionally use the assistant discount path instead:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/quick_order_assistant.sh path/to/gerber.zip
+```
+
+This selects the `下单助手` price card and opens `/opt/jlc-assistant/jlc-assistant` when present. It is a handoff; continue manually in the assistant and verify the CAM preview.
+
+For the global site, use the provided global quote URL:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/quick_order_global.sh path/to/gerber.zip
+```
+
+This opens `https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006`, uploads the Gerber if a file input is present, writes `~/.config/jlcpcb-order/dom/global-quote-latest.json`, and stops before order submission.
+
+To submit an already-correct global cart item for review:
+
+```bash
+JLCPCB_ALLOW_SUBMIT=1 agentic_tools/jlcpcb_order_agent/scripts/quick_order_global.sh
+```
+
+The global submit path used successfully in the live run:
+
+1. select `.data-choice-list .el-checkbox__inner` on the cart page;
+2. confirm the selected subtotal is nonzero;
+3. click `Secure Checkout`;
+4. fill the China address fields from private config, with postal code from `shipping.postal_code` or `518055`;
+5. save the address and use `SF Express (Within Guangdong)`;
+6. click `Continue`;
+7. choose `Review Before Payment`;
+8. click `Submit Order`.
+
+Observed success URL:
+
+```text
+https://trade.jlcpcb.com/checkout/orderSuccess?systemType=order_pcb&spm=Jlcpcb.Confirmorder.1001
+```
+
+Observed success text:
+
+```text
+Your order has been submitted.
+```
+
+The assistant-channel China path was tested to order-check but was not submitted, because OSP was requested and JLC rejected OSP for this small board size. The correct next action is either enlarge the board beyond the OSP limit or explicitly select a valid finish such as HASL, then rerun `检查订单`.
+
 If address contact values are complete and the order-check drawer is clean:
 
 ```bash
@@ -148,3 +203,13 @@ The completion log is private by default and saved under `~/.config/jlcpcb-order
 - JLC assistant: `/opt/jlc-assistant/jlc-assistant`.
 - `xdotool`: click stubborn visible controls when selectors are blocked by overlays.
 - ImageMagick `import`: capture visible desktop screenshots for manual verification.
+
+## DOM Reference
+
+The maintained DOM map is in `docs/DOM_MAP.md`. Refresh it from the live browser with:
+
+```bash
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py dump-dom \
+  --url-contains www.jlc.com \
+  --output ~/.config/jlcpcb-order/dom/current-page.json
+```
