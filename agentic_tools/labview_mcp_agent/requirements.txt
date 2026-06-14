@@ -1,0 +1,2 @@
+# Optional helper if using an HTTP-to-MCP proxy for LabVIEW-hosted JSON-RPC.
+mcp>=1.9.0

@@ -1,0 +1,17 @@
+{
+  "labview": {
+    "launcher": "labview",
+    "use_xvfb": false,
+    "display": ":99"
+  },
+  "mcp": {
+    "candidate": "nineman",
+    "host": "127.0.0.1",
+    "port": 36987,
+    "endpoint": "/mcp/server"
+  },
+  "paths": {
+    "candidate_root": "~/.local/share/labview-mcp-agent/candidates",
+    "installer_search_dir": "~/Downloads"
+  }
+}

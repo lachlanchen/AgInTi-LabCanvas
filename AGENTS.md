@@ -20,6 +20,9 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m unittest discover -s tests`: run the full test suite.
 - `scripts/install_blender_portable.sh`: install a no-sudo Blender binary under `~/.local/share/labcanvas/blender`.
 - `labcanvas --config configs/blender-local-command.example.json dispatch blender "Draw a building"`: run the local Blender bridge.
+- `agentic_tools/labview_mcp_agent/scripts/probe_labview.sh`: check local LabVIEW/NI package state.
+- `agentic_tools/labview_mcp_agent/scripts/install_mcp_candidate.sh nineman`: clone/update the recommended LabVIEW-hosted MCP toolkit outside git.
+- `agentic_tools/labview_mcp_agent/scripts/install_labview_linux.sh --dry-run`: verify NI installer availability before attempting a proprietary LabVIEW install.
 
 ## Coding Style & Naming Conventions
 
@@ -33,7 +36,7 @@ For web changes, keep tests focused on API behavior, artifact registration, and 
 
 ## Figure Pipeline Rules
 
-Paper figure generation must stay editable and atomic. Do not treat a generated bitmap as the final source of truth. Use image generation for overview concepts, then split figures into named parts with their own prompts, source files, tool settings, previews, and edit history. Prefer BioRender for academic assets, OpenSCAD for device geometry, Blender for rendered setups, and TeX for clipping and final assembly. Preserve part IDs and rebuild exports from manifests.
+Paper figure generation must stay editable and atomic. Do not treat a generated bitmap as the final source of truth. Use image generation for overview concepts, then split figures into named parts with their own prompts, source files, tool settings, previews, and edit history. Prefer BioRender for academic assets, OpenSCAD for device geometry, Blender for rendered setups, LabVIEW for instrument/control workflows, and TeX for clipping and final assembly. Preserve part IDs and rebuild exports from manifests.
 
 ## Commit & Pull Request Guidelines
 

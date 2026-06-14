@@ -38,6 +38,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | 3D setup renders | JSON scene specs to Blender PNG and `.blend` output | [docs/SCENE_SPEC.md](docs/SCENE_SPEC.md) |
 | CAD devices | OpenSCAD exports and C-mount reflector adapter CAD | [cad/README.md](cad/README.md) |
 | PCB manufacturing | KiCad HYBEC lamp board, DRC/ERC, JLCPCB Gerber ZIP | [pcb/hybec-hbl-273-g4](pcb/hybec-hbl-273-g4) |
+| LabVIEW automation | Linux install probe, MCP candidate research, stdio-to-HTTP bridge | [agentic_tools/labview_mcp_agent](agentic_tools/labview_mcp_agent) |
 | App routing | Blender, BioRender, Unity, Unreal, and custom target dispatch | [docs/RESEARCH.md](docs/RESEARCH.md) |
 
 ## Quick Start
@@ -98,7 +99,7 @@ AgInTi LabCanvas
         |
         | target registry + artifact manifest
         v
-Blender · OpenSCAD · BioRender · AgInTi · KiCad · Unity · Unreal
+Blender · OpenSCAD · BioRender · AgInTi · KiCad · LabVIEW · Unity · Unreal
 ```
 
 Every target dispatch receives a reviewable JSON envelope:
