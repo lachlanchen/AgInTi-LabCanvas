@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
@@ -21,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG = Path("~/.config/jlcpcb-order/private.json").expanduser()
 CHINA_UPLOAD_URL = "https://www.jlc.com/newOrder/#/pcb/newOnlinePlaceOrder?spm=jlc-pc.newcenterpage.business"
 GLOBAL_QUOTE_URL = "https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006"
+DEFAULT_LOG_DIR = Path("~/.config/jlcpcb-order/submissions").expanduser()
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -108,6 +110,11 @@ def status(args: argparse.Namespace) -> None:
     for p in page.context.pages:
         if "jlc" in p.url:
             print(f"tab: {p.title()} :: {p.url}")
+
+
+def has_order_tab(config: dict[str, Any]) -> bool:
+    page = connect_page(config, prefer_order=False)
+    return any("pcbPlaceOrder" in p.url for p in page.context.pages)
 
 
 def upload(args: argparse.Namespace) -> None:
@@ -315,6 +322,73 @@ def submit(args: argparse.Namespace) -> None:
     print(f"screenshot={args.screenshot}")
 
 
+def prepare(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    if not has_order_tab(config):
+        upload(args)
+        open_order_form(args)
+    fill_settings(args)
+    fill_address(args)
+    check_order(args)
+    print("prepare complete; review order-check drawer before submit")
+
+
+def post_submit_log(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    page = connect_page(config)
+    text = page.locator("body").inner_text(timeout=10000)
+    order = config.get("order", {})
+    shipping = config.get("shipping", {})
+    log_dir = args.output_dir.expanduser()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    out = log_dir / f"jlcpcb-order-{stamp}.md"
+    visible_lines = []
+    for line in text.splitlines():
+        s = " ".join(line.split())
+        if s and any(
+            key in s
+            for key in [
+                "订单",
+                "总价",
+                "板子数量",
+                "板材类别",
+                "板子尺寸",
+                "快递",
+                "支付",
+                "余额",
+                "审核",
+            ]
+        ):
+            visible_lines.append(s[:240])
+    content = [
+        "# JLCPCB Order Completion Log",
+        "",
+        f"- Created: {datetime.now().isoformat(timespec='seconds')}",
+        f"- Page URL: {page.url}",
+        f"- Gerber ZIP: {config.get('gerber_zip', '')}",
+        f"- Quantity: {order.get('quantity', '')}",
+        f"- Surface finish: {order.get('surface_finish', '')}",
+        f"- Compensation: {order.get('compensation', '')}",
+        f"- Confirm mode: {order.get('confirm_mode', '')}",
+        f"- Shipping region: {' / '.join(shipping.get('region', []))}",
+        f"- Shipping detail: {shipping.get('detail', '')}",
+        "",
+        "## Visible Order Lines",
+        "",
+        *[f"- {line}" for line in visible_lines[:80]],
+        "",
+        "## Follow-Up Checklist",
+        "",
+        "- Confirm JLC engineering review result.",
+        "- Download final production files or CAM preview if JLC modifies anything.",
+        "- Record payment status, tracking number, and arrival inspection notes.",
+    ]
+    out.write_text("\n".join(content) + "\n", encoding="utf-8")
+    os.chmod(out, 0o600)
+    print(f"wrote private completion log: {out}")
+
+
 def snapshot_cmd(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     page = connect_page(config, prefer_order=False)
@@ -337,9 +411,16 @@ def main() -> None:
     p_addr.add_argument("--save-address", action="store_true")
     p_addr.set_defaults(func=fill_address)
     sub.add_parser("check-order").set_defaults(func=check_order)
+    p_prepare = sub.add_parser("prepare")
+    p_prepare.add_argument("--zip")
+    p_prepare.add_argument("--save-address", action="store_true")
+    p_prepare.set_defaults(func=prepare)
     p_submit = sub.add_parser("submit")
     p_submit.add_argument("--allow-submit", action="store_true")
     p_submit.set_defaults(func=submit)
+    p_log = sub.add_parser("post-submit-log")
+    p_log.add_argument("--output-dir", type=Path, default=DEFAULT_LOG_DIR)
+    p_log.set_defaults(func=post_submit_log)
     sub.add_parser("snapshot").set_defaults(func=snapshot_cmd)
     args = parser.parse_args()
     args.func(args)

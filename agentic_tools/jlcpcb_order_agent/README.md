@@ -23,6 +23,8 @@ profile: ~/.cache/jlcpcb-order-shared
 
 Do not commit `~/.config/jlcpcb-order/private.json`; it may contain address, recipient, phone, and login preferences.
 
+Set `order.confirm_mode` to `manual` for `手动确认订单` or `auto` for `系统自动扣款并确认`. The tool keeps `manual` as the public example default.
+
 ## Tools Used
 
 - `kicad-cli 10.0.3`: DRC/ERC, Gerber/drill export, render/STEP validation.
@@ -66,6 +68,14 @@ Apply standard bare-PCB settings:
 python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py fill-settings
 ```
 
+Fast path for the next order:
+
+```bash
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py prepare
+```
+
+`prepare` reuses an existing JLC order tab when present; otherwise it uploads the configured Gerber ZIP, opens the parsed order form, fills settings/address, and runs `检查订单`.
+
 Fill address/contact from private config:
 
 ```bash
@@ -77,6 +87,14 @@ Run JLC order validation:
 ```bash
 python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py check-order
 ```
+
+After final submission, write a private completion log:
+
+```bash
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py post-submit-log
+```
+
+The log is written under `~/.config/jlcpcb-order/submissions/` with mode `600`.
 
 ## HYBEC Live Order State
 
@@ -91,3 +109,12 @@ The live order reached JLC's order-check drawer with:
 - Shipping address partially filled as Guangdong/Shenzhen/Nanshan/Xili plus the provided detail line.
 
 Remaining required live fields: recipient name and mobile phone number.
+
+Once those are added to the private config, the live finish sequence is:
+
+```bash
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py fill-address --save-address
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py check-order
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py submit --allow-submit
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py post-submit-log
+```

@@ -51,6 +51,33 @@ This avoids the earlier one-off Playwright persistent-context path that triggere
 
 Remaining live blocker: JLC requires recipient name and mobile phone before the address can be saved and the order can be submitted.
 
+## Fast Next-Time Flow
+
+For the same kind of bare-PCB prototype order, update `~/.config/jlcpcb-order/private.json`, then run:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py prepare
+```
+
+`prepare` is the one-command path for routine orders. It:
+
+1. reuses the existing `pcbPlaceOrder` tab when one is open;
+2. otherwise uploads the configured Gerber ZIP and opens the parsed order form;
+3. fills board settings and address/contact fields;
+4. runs `检查订单`;
+5. stops before final submission.
+
+If address contact values are complete and the order-check drawer is clean:
+
+```bash
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py fill-address --save-address
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py submit --allow-submit
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py post-submit-log
+```
+
+The completion log is private by default and saved under `~/.config/jlcpcb-order/submissions/`.
+
 ## Safety Rules
 
 - Keep `~/.config/jlcpcb-order/private.json` mode `600`.
