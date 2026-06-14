@@ -145,6 +145,8 @@ python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py record-order \
 
 The database is `~/.config/jlcpcb-order/orders.sqlite3` with mode `600`. It stores board options, Gerber path, order page URL, shipping/contact fields, JLC validation count, price breakdown, and visible order-check lines. Do not store one-time SMS codes, browser cookies, or payment secrets.
 
+For the detailed next-time checklist, exact DOM labels, script methods, and problem/fix table, see `docs/FAST_ORDERING_PLAYBOOK.md`.
+
 ## Price and Shipping Notes
 
 - `特价` is JLC's promotional base PCB fabrication price.

@@ -1,0 +1,128 @@
+# Fast JLC Ordering Playbook
+
+This document records the problems, DOM elements, scripts, and fixes from the successful China web order so the next Gerber order can be completed faster.
+
+## Fast Path
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
+agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh path/to/gerber.zip
+```
+
+Submit only after reviewing the clean order-check drawer:
+
+```bash
+JLCPCB_ALLOW_SUBMIT=1 agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh path/to/gerber.zip
+```
+
+Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600` and never commit it.
+
+## Script Map
+
+- `launch_shared_chrome.sh`: opens the persistent logged-in Chrome profile on CDP port `49237`.
+- `quick_order_china.sh`: wraps upload, setting fill, address/courier fill, order check, private DB record, optional submit.
+- `quick_order_global.sh`: opens global quote/cart flow, snapshots DOM, optionally submits selected cart item for review.
+- `quick_order_assistant.sh`: selects the China `下单助手` channel and opens `/opt/jlc-assistant/jlc-assistant` as a handoff.
+- `jlc_order_cdp.py status`: lists open JLC tabs.
+- `jlc_order_cdp.py dump-dom --url-contains www.jlc.com --output ~/.config/jlcpcb-order/dom/current-page.json`: saves selectors/buttons/inputs.
+- `jlc_order_cdp.py record-order`: writes a private SQLite snapshot to `~/.config/jlcpcb-order/orders.sqlite3`.
+- `jlc_order_cdp.py post-submit-log`: writes a private completion log after success.
+
+## Code Methods To Reuse
+
+- `connect_page()`: attaches to existing Chrome over CDP and prefers `pcbPlaceOrder`, then `pcbPlaceSuccess`.
+- `click_button()` / `click_first_button_text()`: click visible buttons by exact text.
+- `click_option_near_label()`: safest way to choose a field option; it finds an exact label and clicks the matching option on the same row.
+- `select_standard_compensation()`: selects `按标准合同常规处理` and handles the comparison modal.
+- `select_courier()`: selects configured courier text, default `顺丰电商标快`.
+- `selected_order_check_text()`: reads only the visible order-check drawer instead of the whole page.
+- `visible_price_text()`: reads the right price panel for fee blockers.
+- `assert_clean_for_submit()`: blocks submit on missing fields, payment/recharge blockers, OSP incompatibility, or paid quality fee.
+- `fill_settings()`: fills board defaults and uses row-label selection for SMT/stencil.
+- `fill_address()`: fills private address/contact and then selects courier.
+- `global_submit_current_cart()`: global checkout path through `Review Before Payment`.
+
+## Problems And Fixes
+
+| Problem | Symptom | Fix |
+| --- | --- | --- |
+| OSP not allowed on small board | Modal says `当前订单尺寸过小（任意边＜7cm），选择OSP工艺生产不能支持` | Choose `选择无铅喷锡`, `选择有铅喷锡`, or `选择沉金`; do not force OSP. |
+| False paid-compensation blocker | Full page still contains unselected `元器件移植全额赔付` text | Check selected drawer text and price panel only. Block only if price has `品质赔付费` or drawer lacks `按标准合同常规处理`. |
+| Stencil missing after “no SMT” | Drawer says `是否需要钢网 去填写` | Actual form label is `是否开钢网`; click `是否开钢网 -> 不需要`. |
+| Generic `不需要` clicked wrong row | Automation clicked SMT or another option | Use `click_option_near_label(label, option)` instead of occurrence-based clicks. |
+| Courier still unfilled | Drawer says `快递方式 去填写` | Select exact text `顺丰电商标快`. This is the default China courier. |
+| Combined shipping rejected by SF | Page indicates SF does not support `并单发货` | Use `不同交期订单不一起发货`. |
+| Browser no-sandbox/unsupported banner | One-off Playwright browser created warnings | Use the persistent Chrome profile and CDP attach via `launch_shared_chrome.sh`. |
+| Success not detected | Submit stays ambiguous if only `pcbPlaceOrder` is recognized | Treat `pcbPlaceSuccess` and text `订单提交成功，请等待审核` as China success. |
+
+## China DOM Elements
+
+Entry URL:
+
+```text
+https://www.jlc.com/newOrder/#/pcb/newOnlinePlaceOrder?spm=jlc-pc.newcenterpage.business
+```
+
+Stable page markers:
+
+- Upload page: URL contains `newOnlinePlaceOrder`.
+- Order form: URL contains `pcbPlaceOrder`.
+- Success page: URL contains `pcbPlaceSuccess`.
+- Upload input: first `input[type=file]`.
+- Uploaded file action: `立即下单`.
+- Order check drawer: `.selectedParamsCompCheck` or visible `.el-drawer`.
+- Price panel: `#rightcontent` or `.rightcontentBox`.
+
+Important labels/buttons:
+
+- Quantity: `input[placeholder='数量'], input.listInput`, then visible quantity `5`.
+- Production proof: `确认生产稿 -> 不需要`.
+- Finish: `焊盘喷镀 -> OSP 免费 / 有铅喷锡 / 无铅喷锡 / 沉金`.
+- OSP modal buttons: `选择沉金`, `选择有铅喷锡`, `选择无铅喷锡`, `取消`.
+- Compensation: `品质赔付服务 -> 按标准合同常规处理【仅赔偿PCB，但不负责PCBA移植及元器件赔偿】`.
+- Edge polish: `是否需要磨边 -> 不需要`.
+- SMT: `是否SMT贴片 -> 不需要`.
+- Stencil: `是否开钢网 -> 不需要`.
+- Confirmation: `手动确认订单` unless the user explicitly wants auto confirmation.
+- Receipt: `电子收据/送货单`.
+- Shipping mode: `不同交期订单不一起发货`.
+- Courier: `顺丰电商标快`.
+- Check: `检查订单`.
+- Submit from clean drawer: `确认并提交`.
+
+## Submit Gate
+
+Before clicking `确认并提交`, the visible drawer must not contain:
+
+- `检测到您的订单还有`
+- `去填写`
+- `系统未检测到`
+- `余额不足`
+- `充值`
+- OSP small-board warning
+
+The selected drawer should contain:
+
+- `品质赔付服务 按标准合同常规处理`
+- `是否需要钢网 不需要` or `是否开钢网 不需要`
+- `快递方式 顺丰电商标快`
+
+The price panel must not contain `品质赔付费`. After success, record the page and stop before payment.
+
+## Global DOM Elements
+
+- Quote URL: `https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006`.
+- Gerber input: hidden `input[type=file][name=file]`.
+- Cart URL: `https://cart.jlcpcb.com/shopcart/cart/`.
+- Cart checkbox: `.data-choice-list .el-checkbox__inner`.
+- Checkout button: `Secure Checkout`.
+- Address placeholders: `First Name`, `Last Name`, `Country / Region`, `State`, `City`, `Street Address`, `Postal Code`, `Cell/Mobile number`.
+- Submit mode: `Review Before Payment`.
+- Final button: `Submit Order`.
+- Success text: `Your order has been submitted.`
+
+## Data Hygiene
+
+- Commit scripts/docs only.
+- Keep config, SQLite DB, DOM snapshots, completion logs, cookies, OTP codes, and screenshots with private fields outside git.
+- Use public summaries with redacted or generic address/contact language.

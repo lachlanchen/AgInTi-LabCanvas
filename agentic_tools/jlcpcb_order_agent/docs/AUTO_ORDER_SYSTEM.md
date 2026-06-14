@@ -211,7 +211,9 @@ Treat `pcbPlaceSuccess` as the submitted-success page for China orders. The orde
 
 ## DOM Reference
 
-The maintained DOM map is in `docs/DOM_MAP.md`. Refresh it from the live browser with:
+The maintained DOM map is in `docs/DOM_MAP.md`. The faster next-order problem/method/script checklist is in `docs/FAST_ORDERING_PLAYBOOK.md`.
+
+Refresh DOM evidence from the live browser with:
 
 ```bash
 python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py dump-dom \
