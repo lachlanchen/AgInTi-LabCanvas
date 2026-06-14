@@ -92,6 +92,23 @@ pcb/hybec-hbl-273-g4/jlcpcb_order/hybec-hbl-273-g4-jlcpcb-gerber.zip
 
 That order pack is bare-PCB only and includes an order-settings JSON, preflight manifest, DRC/ERC reports, renders, and a back-side `JLCJLCJLCJLC` marker for JLCPCB's order number placement.
 
+## Implemented Local Tool
+
+The reusable implementation now lives in:
+
+```text
+agentic_tools/jlcpcb_order_agent/
+```
+
+It provides:
+
+- `scripts/launch_shared_chrome.sh`: launches or reuses a normal Chrome profile with CDP on port `49237`.
+- `scripts/jlc_order_cdp.py`: attaches to the logged-in browser, uploads Gerbers, opens the parsed order form, fills prototype settings, fills shipping address/contact from private config, runs `检查订单`, and optionally submits with `--allow-submit`.
+- `config.example.json`: public non-secret schema for order, browser, and shipping settings.
+- `docs/AUTO_ORDER_SYSTEM.md`: detailed runbook for the tools, scripts, browser state, fallback utilities, and live HYBEC order state.
+
+The live HYBEC order used this flow successfully through JLC order check. The blocking fields are recipient name and mobile phone; the address region/detail is already entered in the page but cannot be saved without those required contact values.
+
 ## Safety Boundary
 
 The agent may automate:

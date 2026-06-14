@@ -18,6 +18,8 @@ output/
 .aginti/.env
 .aginti/.env.*
 !.aginti/.env.example
+agentic_tools/**/.private/
+agentic_tools/**/private*.json
 cad/sources/*.zip
 cad/extracted/
 cad/.conda/

@@ -12,6 +12,25 @@ hybec-hbl-273-g4-jlcpcb-gerber.zip
 
 Do not upload the whole repository folder. JLCPCB expects a ZIP containing the Gerber and drill files.
 
+## Agent-Assisted Ordering
+
+The reusable browser automation tool is in:
+
+```text
+../../../agentic_tools/jlcpcb_order_agent/
+```
+
+It attaches to the shared Chrome profile on CDP port `49237`, uploads the Gerber ZIP, fills the JLC China order form, takes screenshots, and runs `检查订单`. Private recipient, phone, address, and login state stay outside git in `~/.config/jlcpcb-order/private.json`.
+
+Example:
+
+```bash
+python3 ../../../agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py fill-settings
+python3 ../../../agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py check-order
+```
+
+The live order currently has the address region/detail filled, but still needs recipient name and mobile phone before JLC can save the address and accept final submission.
+
 ## Recommended Order Settings
 
 - Product type: Industrial / Consumer electronics.
@@ -43,6 +62,8 @@ Do not upload the whole repository folder. JLCPCB expects a ZIP containing the G
 4. Confirm PCB assembly is disabled.
 5. Confirm quantity, color, surface finish, and shipping address.
 6. Pay only after the preview matches the render in `../artifacts/`.
+
+The automation should stop at JLC's final order-check/payment boundary unless the user explicitly authorizes final submission.
 
 ## Thermal Warning
 
