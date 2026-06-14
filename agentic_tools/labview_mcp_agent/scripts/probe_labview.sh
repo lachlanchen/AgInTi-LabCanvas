@@ -19,11 +19,13 @@ fi
 
 echo
 echo "== LabVIEW launcher =="
-if command -v labview >/dev/null 2>&1; then
-  command -v labview
-else
-  echo "labview is not in PATH."
-fi
+for candidate in labview labview64 LabVIEWCLI; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    printf '%s: %s\n' "$candidate" "$(command -v "$candidate")"
+  else
+    printf '%s: not in PATH\n' "$candidate"
+  fi
+done
 
 echo
 echo "== Likely LabVIEW files =="

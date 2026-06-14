@@ -97,6 +97,17 @@ if [[ "${#feed_debs[@]}" -eq 0 ]]; then
   exit 4
 fi
 
+if [[ -r /etc/os-release ]]; then
+  # Prefer the feed matching the host Ubuntu release when NI ships multiple
+  # distro feeds in one archive, for example ubuntu2204 and ubuntu2404.
+  . /etc/os-release
+  os_tag="ubuntu${VERSION_ID//./}"
+  mapfile -t matching_feed_debs < <(printf '%s\n' "${feed_debs[@]}" | grep -i -- "$os_tag" || true)
+  if [[ "${#matching_feed_debs[@]}" -gt 0 ]]; then
+    feed_debs=("${matching_feed_debs[@]}")
+  fi
+fi
+
 echo "Installing NI feed packages:"
 printf '  %s\n' "${feed_debs[@]}"
 for deb in "${feed_debs[@]}"; do
@@ -108,7 +119,7 @@ run need_sudo apt-get update
 echo "Candidate LabVIEW apt packages after feed install:"
 apt-cache search '^ni-labview' | sed -n '1,80p' || true
 
-mapfile -t packages < <(apt-cache search '^ni-labview' | awk '{print $1}' | grep -E '^ni-labview-[0-9].*-(community|pro|full|base)$|^ni-labview-[0-9].*$' | sort -Vr | sed -n '1,8p')
+mapfile -t packages < <(apt-cache search '^ni-labview' | awk '{print $1}' | grep -E '^ni-labview-[0-9]{4}-(community|pro|full|base)$' | sort -Vr | sed -n '1,8p')
 
 if [[ "${#packages[@]}" -eq 0 ]]; then
   echo "No installable ni-labview package was visible to apt." >&2

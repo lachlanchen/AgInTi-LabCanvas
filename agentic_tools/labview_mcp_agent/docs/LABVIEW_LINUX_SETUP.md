@@ -15,7 +15,18 @@ Installed support packages:
 - `libopenal1`
 - `libncurses6`
 
-No NI/LabVIEW packages are currently installed.
+Installed NI/LabVIEW packages:
+
+- `ni-labview-2026-community`
+- `ni-labview-2026-core`
+- `labview-2026-community-exe`
+- `ni-labview-command-line-interface`
+
+Launcher paths:
+
+- `/usr/local/bin/labview64`
+- `/usr/local/natinst/LabVIEW-2026-64/labview`
+- `/usr/local/bin/LabVIEWCLI`
 
 ## NI Download Boundary
 
@@ -42,16 +53,16 @@ Suggested selection for this server:
 agentic_tools/labview_mcp_agent/scripts/install_labview_linux.sh
 ```
 
-The script searches for LabVIEW installer archives in `~/Downloads`, extracts a zip when needed, installs NI feed `.deb` packages, runs `apt update`, and then tries the likely LabVIEW package names for the discovered version/edition.
+The script searches for LabVIEW installer archives in `~/Downloads`, extracts a zip when needed, installs the NI feed `.deb` matching the host Ubuntu release, runs `apt update`, and installs the discovered edition meta package.
 
 ## Expected Package Pattern
 
 Recent Linux installers commonly install a feed package first, then use apt for the IDE package. Example pattern:
 
 ```bash
-sudo dpkg -i ni-labview-*-ubuntu*.deb
+sudo dpkg -i ni-labview-2026-community_*ubuntu2404_all.deb
 sudo apt update
-sudo apt install ni-labview-*-pro
+sudo apt install ni-labview-2026-community
 ```
 
 Exact package names vary by NI release and edition. The script intentionally prints candidate packages before installing.
@@ -64,7 +75,8 @@ LabVIEW may require NI License Manager activation after installation. For remote
 
 ```bash
 agentic_tools/labview_mcp_agent/scripts/probe_labview.sh
-labview --version  # if the NI launcher provides this
+labview64  # starts the LabVIEW GUI; first run may request activation
+LabVIEWCLI -help # command-line automation entry point
 ```
 
 If `labview` is not in `PATH`, check likely install directories:

@@ -12,8 +12,10 @@ LabVIEW itself is proprietary NI software. The scripts can install dependencies 
 
 - OS: Ubuntu 24.04.4 LTS, x86_64.
 - Already present: `xvfb`, `libopenal1`, `libncurses6`.
-- Not installed yet: LabVIEW / NI feed packages.
-- No LabVIEW installer was found in `/home/lachlan/Downloads` during setup.
+- Installed: LabVIEW 2026 Q1 Community via NI Ubuntu 24.04 feed.
+- Main launcher: `/usr/local/bin/labview64`.
+- CLI launcher: `/usr/local/bin/LabVIEWCLI`.
+- First GUI launch may still require NI activation/sign-in.
 
 ## Quick Commands
 
@@ -22,6 +24,7 @@ agentic_tools/labview_mcp_agent/scripts/probe_labview.sh
 agentic_tools/labview_mcp_agent/scripts/install_labview_linux.sh --dry-run
 agentic_tools/labview_mcp_agent/scripts/install_mcp_candidate.sh nineman
 agentic_tools/labview_mcp_agent/scripts/launch_labview.sh
+LabVIEWCLI -help
 ```
 
 After downloading a Linux LabVIEW installer from NI, place the `.zip` or `.deb` in `~/Downloads` and run:
@@ -38,7 +41,7 @@ Use `nineman-YU/Labview_mcp` first for Linux. It hosts an MCP server from LabVIE
 
 ## Files
 
-- `docs/LABVIEW_LINUX_SETUP.md` - installation notes and current blocker.
+- `docs/LABVIEW_LINUX_SETUP.md` - installation notes and current machine status.
 - `docs/MCP_CANDIDATES.md` - GitHub research and recommendation.
 - `scripts/install_labview_linux.sh` - dependency and NI feed installer.
 - `scripts/install_mcp_candidate.sh` - clone/update MCP candidates under `~/.local/share/labview-mcp-agent`.

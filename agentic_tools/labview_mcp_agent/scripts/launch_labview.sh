@@ -3,10 +3,19 @@ set -euo pipefail
 
 USE_XVFB="${LABVIEW_USE_XVFB:-0}"
 DISPLAY_ID="${LABVIEW_DISPLAY:-:99}"
-LABVIEW_BIN="${LABVIEW_BIN:-labview}"
+LABVIEW_BIN="${LABVIEW_BIN:-}"
 
-if ! command -v "$LABVIEW_BIN" >/dev/null 2>&1; then
-  echo "LabVIEW launcher not found: $LABVIEW_BIN" >&2
+if [[ -z "$LABVIEW_BIN" ]]; then
+  for candidate in labview64 labview /usr/local/natinst/LabVIEW-2026-64/labview; do
+    if command -v "$candidate" >/dev/null 2>&1 || [[ -x "$candidate" ]]; then
+      LABVIEW_BIN="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$LABVIEW_BIN" ]] || { ! command -v "$LABVIEW_BIN" >/dev/null 2>&1 && [[ ! -x "$LABVIEW_BIN" ]]; }; then
+  echo "LabVIEW launcher not found: ${LABVIEW_BIN:-<auto>}" >&2
   echo "Install LabVIEW first or set LABVIEW_BIN=/path/to/labview." >&2
   exit 3
 fi
