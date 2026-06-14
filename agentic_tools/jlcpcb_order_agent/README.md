@@ -32,7 +32,7 @@ Set `order.confirm_mode` to `manual` for `手动确认订单` or `auto` for `系
 - Google Chrome shared profile: keeps the JLC login persistent without launching a no-sandbox browser.
 - JLC China order page: `https://www.jlc.com/newOrder/#/pcb/newOnlinePlaceOrder`.
 - JLC global quote page: `https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006`.
-- JLC desktop assistant: optional fallback installed at `/opt/jlc-assistant/jlc-assistant`.
+- JLC desktop assistant: optional fallback, preferably installed locally at `~/.local/bin/jlc-assistant`.
 - `xdotool` and ImageMagick `import`: manual UI fallback and screenshots when CDP selectors are unstable.
 
 ## Commands
@@ -115,6 +115,24 @@ Prepare the cheaper assistant handoff:
 agentic_tools/jlcpcb_order_agent/scripts/quick_order_assistant.sh
 ```
 
+Install the official Linux desktop assistant locally from the downloaded JLC ZIP:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/install_assistant_local.sh \
+  ~/Downloads/JLCPcAssit-linux-x64-5.0.69.zip
+```
+
+This installs the unpacked app under `~/.local/opt/jlc-assistant-5.0.69/` and writes a wrapper to `~/.local/bin/jlc-assistant`. The assistant stores its own login/session under `~/.config/jlc-assistant`; keep that profile private and out of git.
+
+Start or check the local assistant with the health-checked launcher:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/launch_assistant_local.sh --restart
+agentic_tools/jlcpcb_order_agent/scripts/launch_assistant_local.sh --status
+```
+
+On this remote Ubuntu desktop, the Electron sandbox helper was installed but the desktop namespace still blocked normal startup. The launcher therefore starts the app in a separate `setsid` session, defaults to remote-safe no-sandbox mode plus `--disable-gpu`, writes logs to `~/.cache/jlcpcb-order/assistant/assistant.log`, and verifies the process stays alive after startup. Avoid adding generic Chromium flags unless needed; the assistant's own command-line parser can crash on some flags. Set `JLCPCB_ASSISTANT_USE_SANDBOX=1` only when testing a normal local desktop session.
+
 Fill address/contact from private config:
 
 ```bash
@@ -156,6 +174,7 @@ For the detailed next-time checklist, exact DOM labels, script methods, and prob
 - `并单发货` means combining multiple orders into one shipment. If the chosen SF service says it does not support combined shipment, choose `不同交期订单不一起发货`.
 - `顺丰电商标快` is the default prepaid courier for China web orders.
 - The assistant price can be cheaper, but it changes the flow to `下载下单助手`; use it later only when intentionally continuing in the desktop assistant.
+- The assistant login is separate from Chrome login. Run `~/.local/bin/jlc-assistant` once and confirm the customer center opens before relying on assistant handoff.
 
 ## HYBEC Live Order State
 

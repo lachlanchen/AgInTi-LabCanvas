@@ -8,7 +8,15 @@ SHIPPING_MODE="${JLCPCB_SHIPPING_MODE:-separate}"
 CONFIRM_MODE="${JLCPCB_CONFIRM_MODE:-manual}"
 SCREENSHOT="${JLCPCB_SCREENSHOT:-/tmp/jlcpcb-assistant-handoff.png}"
 ZIP_ARG="${1:-}"
-ASSISTANT_BIN="${JLCPCB_ASSISTANT_BIN:-/opt/jlc-assistant/jlc-assistant}"
+ASSISTANT_LOG="${JLCPCB_ASSISTANT_LOG:-$HOME/.cache/jlcpcb-order/assistant/assistant.log}"
+
+LOCAL_ASSISTANT="${HOME}/.local/bin/jlc-assistant"
+SYSTEM_ASSISTANT="/opt/jlc-assistant/jlc-assistant"
+ASSISTANT_BIN="${JLCPCB_ASSISTANT_BIN:-$LOCAL_ASSISTANT}"
+
+if [[ ! -x "$ASSISTANT_BIN" && -x "$SYSTEM_ASSISTANT" ]]; then
+  ASSISTANT_BIN="$SYSTEM_ASSISTANT"
+fi
 
 "$SCRIPT_DIR/launch_shared_chrome.sh"
 
@@ -34,8 +42,9 @@ python3 "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" record-order \
   --note "Assistant channel selected after order check; continue manually in JLC desktop assistant."
 
 if [[ -x "$ASSISTANT_BIN" ]]; then
-  nohup "$ASSISTANT_BIN" >/tmp/jlcpcb-assistant.log 2>&1 &
-  echo "Opened JLC assistant: $ASSISTANT_BIN"
+  JLCPCB_ASSISTANT_BIN="$ASSISTANT_BIN" \
+  JLCPCB_ASSISTANT_LOG="$ASSISTANT_LOG" \
+    "$SCRIPT_DIR/launch_assistant_local.sh"
 else
   echo "JLC assistant binary not found or not executable at $ASSISTANT_BIN"
 fi

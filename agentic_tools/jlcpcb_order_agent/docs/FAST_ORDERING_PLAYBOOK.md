@@ -22,7 +22,9 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 - `launch_shared_chrome.sh`: opens the persistent logged-in Chrome profile on CDP port `49237`.
 - `quick_order_china.sh`: wraps upload, setting fill, address/courier fill, order check, private DB record, optional submit.
 - `quick_order_global.sh`: opens global quote/cart flow, snapshots DOM, optionally submits selected cart item for review.
-- `quick_order_assistant.sh`: selects the China `下单助手` channel and opens `/opt/jlc-assistant/jlc-assistant` as a handoff.
+- `install_assistant_local.sh`: installs the official Linux assistant ZIP into `~/.local/opt/` and creates `~/.local/bin/jlc-assistant`.
+- `launch_assistant_local.sh`: starts/stops/status-checks the local assistant as a detached process with remote-session stability flags and health checks.
+- `quick_order_assistant.sh`: selects the China `下单助手` channel and opens `~/.local/bin/jlc-assistant` through `launch_assistant_local.sh`, falling back to `/opt/jlc-assistant/jlc-assistant` only if local is absent.
 - `jlc_order_cdp.py status`: lists open JLC tabs.
 - `jlc_order_cdp.py dump-dom --url-contains www.jlc.com --output ~/.config/jlcpcb-order/dom/current-page.json`: saves selectors/buttons/inputs.
 - `jlc_order_cdp.py record-order`: writes a private SQLite snapshot to `~/.config/jlcpcb-order/orders.sqlite3`.
@@ -109,6 +111,28 @@ The selected drawer should contain:
 
 The price panel must not contain `品质赔付费`. After success, record the page and stop before payment.
 
+## Desktop Assistant Path
+
+Preferred local install:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/install_assistant_local.sh \
+  ~/Downloads/JLCPcAssit-linux-x64-5.0.69.zip
+```
+
+The app path is `~/.local/opt/jlc-assistant-5.0.69/jlc-assistant/jlc-assistant`, with wrapper `~/.local/bin/jlc-assistant`. It keeps assistant cookies and account state in `~/.config/jlc-assistant`; do not commit or copy that directory into a repo.
+
+Run the assistant once and confirm it reaches `嘉立创客户中心`. The Chrome login profile does not automatically authenticate the desktop assistant. In this remote desktop, the setuid sandbox helper can be present yet still fail because namespaces are blocked. Use the stable launcher instead of a foreground terminal:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/launch_assistant_local.sh --restart
+agentic_tools/jlcpcb_order_agent/scripts/launch_assistant_local.sh --status
+```
+
+The launcher starts the assistant in a separate `setsid` session so it survives after the Codex shell command exits. It defaults to `JLC_ASSISTANT_NO_SANDBOX=1` with only `--disable-gpu`, logs to `~/.cache/jlcpcb-order/assistant/assistant.log`, and verifies the app stays alive. Keep extra Chromium flags empty unless debugging; this assistant can crash in its own command-line parser on some otherwise normal Chromium flags. If raw CDP inspection is needed, set `JLCPCB_ASSISTANT_DEBUG_PORT=51369`; do not use Playwright's browser-level `connect_over_cdp` against this Electron build because it can fail on browser-context management.
+
+Use the assistant channel only after a clean China order-check drawer. It may show a lower price, but it is a separate desktop continuation and should be reviewed again before any final submit/payment.
+
 ## Global DOM Elements
 
 - Quote URL: `https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006`.
@@ -124,5 +148,5 @@ The price panel must not contain `品质赔付费`. After success, record the pa
 ## Data Hygiene
 
 - Commit scripts/docs only.
-- Keep config, SQLite DB, DOM snapshots, completion logs, cookies, OTP codes, and screenshots with private fields outside git.
+- Keep config, SQLite DB, DOM snapshots, completion logs, assistant profile data, cookies, OTP codes, and screenshots with private fields outside git.
 - Use public summaries with redacted or generic address/contact language.
