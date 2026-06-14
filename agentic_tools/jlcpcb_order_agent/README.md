@@ -165,6 +165,8 @@ The database is `~/.config/jlcpcb-order/orders.sqlite3` with mode `600`. It stor
 
 For the detailed next-time checklist, exact DOM labels, script methods, and problem/fix table, see `docs/FAST_ORDERING_PLAYBOOK.md`.
 
+For the shared manufacturing-order automation index covering both JLCPCB PCB orders and Wenext 3D-print orders, see `../ORDER_AUTOMATION.md`.
+
 ## Price and Shipping Notes
 
 - `特价` is JLC's promotional base PCB fabrication price.

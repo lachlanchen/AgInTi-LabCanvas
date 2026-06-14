@@ -1,0 +1,36 @@
+{
+  "browser_debug_port": 53729,
+  "browser_profile": "~/.cache/wenext-3d-order/chrome-profile",
+  "files": [
+    "cad/designs/cmount_threaded_reflector_assembly/artifacts/v2_15mm_threads_print_fit/2026-06-09_v2_printable_assembly/male_male_cmount_tube.stl",
+    "cad/designs/cmount_threaded_reflector_assembly/artifacts/v2_15mm_threads_print_fit/2026-06-09_v2_printable_assembly/top_open_reflector_holder.stl"
+  ],
+  "shipping": {
+    "company": "PRIVATE_COMPANY_OR_LAB",
+    "recipient_name": "PRIVATE_RECIPIENT",
+    "phone": "PRIVATE_PHONE",
+    "country": "China",
+    "country_code": "+86",
+    "province_cn": "广东省",
+    "city_cn": "深圳市",
+    "district_cn": "南山区",
+    "state_global": "Guangdong",
+    "city_global": "Shenzhen",
+    "zip": "518055",
+    "address_line1": "PRIVATE_ADDRESS_LINE_1",
+    "address_line2": "",
+    "address_line3": ""
+  },
+  "order": {
+    "material": "Future R4600 Resin",
+    "accuracy": "+/-200um or +/-0.2%",
+    "lead_time": "72h",
+    "auto_charge": false,
+    "stop_before_payment": true
+  },
+  "invoice": {
+    "type": "none",
+    "title": "PRIVATE_PERSON_OR_COMPANY",
+    "email": "PRIVATE_EMAIL"
+  }
+}
