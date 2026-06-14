@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import sqlite3
 from pathlib import Path
 from datetime import datetime
 from typing import Any
@@ -23,12 +25,21 @@ DEFAULT_CONFIG = Path("~/.config/jlcpcb-order/private.json").expanduser()
 CHINA_UPLOAD_URL = "https://www.jlc.com/newOrder/#/pcb/newOnlinePlaceOrder?spm=jlc-pc.newcenterpage.business"
 GLOBAL_QUOTE_URL = "https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006"
 DEFAULT_LOG_DIR = Path("~/.config/jlcpcb-order/submissions").expanduser()
+DEFAULT_DB_PATH = Path("~/.config/jlcpcb-order/orders.sqlite3").expanduser()
 
 
 def load_config(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def redact_phone(text: str) -> str:
+    return re.sub(r"1\d{10}", lambda m: f"{m.group(0)[:3]}****{m.group(0)[-4:]}", text)
+
+
+def json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def resolve_path(value: str | None) -> Path | None:
@@ -333,6 +344,272 @@ def prepare(args: argparse.Namespace) -> None:
     print("prepare complete; review order-check drawer before submit")
 
 
+def ensure_order_db(path: Path) -> sqlite3.Connection:
+    path = path.expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS order_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            note TEXT,
+            project_name TEXT,
+            gerber_zip TEXT,
+            page_url TEXT,
+            page_title TEXT,
+            recipient_name TEXT,
+            phone TEXT,
+            region_json TEXT,
+            address_detail TEXT,
+            quantity INTEGER,
+            material TEXT,
+            layers INTEGER,
+            board_size TEXT,
+            thickness_mm TEXT,
+            copper_weight TEXT,
+            solder_mask TEXT,
+            silkscreen TEXT,
+            surface_finish TEXT,
+            compensation TEXT,
+            confirm_mode TEXT,
+            smt TEXT,
+            stencil TEXT,
+            invoice_status TEXT,
+            base_special_price TEXT,
+            plating_fee TEXT,
+            shipping_fee TEXT,
+            web_total TEXT,
+            assistant_total TEXT,
+            selected_order_channel TEXT,
+            price_lines_json TEXT,
+            missing_count INTEGER,
+            order_check_lines_json TEXT,
+            visible_lines_json TEXT,
+            snapshot_json TEXT NOT NULL
+        )
+        """
+    )
+    existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(order_snapshots)")}
+    migrations = {
+        "base_special_price": "TEXT",
+        "plating_fee": "TEXT",
+        "shipping_fee": "TEXT",
+        "web_total": "TEXT",
+        "assistant_total": "TEXT",
+        "selected_order_channel": "TEXT",
+        "price_lines_json": "TEXT",
+    }
+    for column, col_type in migrations.items():
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE order_snapshots ADD COLUMN {column} {col_type}")
+    os.chmod(path, 0o600)
+    return conn
+
+
+def visible_order_lines(text: str) -> list[str]:
+    keys = [
+        "订单",
+        "总价",
+        "板子数量",
+        "板材类别",
+        "板子尺寸",
+        "板子层数",
+        "成品板厚",
+        "外层铜厚",
+        "阻焊颜色",
+        "字符颜色",
+        "焊盘喷镀",
+        "品质赔付服务",
+        "是否需要SMT",
+        "是否需要钢网",
+        "发票信息",
+        "收货地址",
+        "联系方式",
+        "快递方式",
+        "检测到",
+        "审核",
+        "支付",
+        "余额",
+    ]
+    lines: list[str] = []
+    for line in text.splitlines():
+        s = " ".join(line.split())
+        if s and any(key in s for key in keys):
+            lines.append(s[:300])
+    return lines
+
+
+def infer_missing_count(text: str) -> int | None:
+    match = re.search(r"检测到您的订单还有\s*(\d+)\s*项未填写", text)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def next_line_after(lines: list[str], label: str) -> str:
+    for index, line in enumerate(lines):
+        if line == label and index + 1 < len(lines):
+            return lines[index + 1]
+    return ""
+
+
+def extract_price_breakdown(page: Page) -> dict[str, Any]:
+    text = page.evaluate(
+        """() => {
+            const el = document.querySelector('#rightcontent') || document.querySelector('.rightcontentBox');
+            return el ? (el.innerText || el.textContent || '') : '';
+        }"""
+    )
+    lines = [" ".join(line.split()) for line in text.splitlines() if " ".join(line.split())]
+    buttons = page.evaluate(
+        """() => [...document.querySelectorAll('button')].map((button) => {
+            const rect = button.getBoundingClientRect();
+            const text = (button.innerText || button.textContent || '').trim().replace(/\\s+/g, ' ');
+            return {text, cls: String(button.className), visible: rect.width > 0 && rect.height > 0};
+        }).filter((row) => row.visible && /网页版下单|下单助手/.test(row.text))"""
+    )
+    selected_channel = ""
+    for button in buttons:
+        if "checked" in button.get("cls", ""):
+            selected_channel = "assistant" if "下单助手" in button.get("text", "") else "web"
+            break
+    joined = "\n".join(lines)
+    web_match = re.search(r"[¥￥]\s*([0-9]+(?:\.[0-9]+)?)\s*网页版下单", joined)
+    assistant_match = re.search(r"[¥￥]\s*([0-9]+(?:\.[0-9]+)?)\s*下单助手", joined)
+    return {
+        "lines": lines,
+        "base_special_price": next_line_after(lines, "特价"),
+        "plating_fee": next_line_after(lines, "喷镀费"),
+        "shipping_fee": next_line_after(lines, "快递费"),
+        "web_total": web_match.group(1) if web_match else "",
+        "assistant_total": assistant_match.group(1) if assistant_match else "",
+        "selected_order_channel": selected_channel,
+    }
+
+
+def build_order_snapshot(config: dict[str, Any], page: Page, status: str, note: str | None) -> dict[str, Any]:
+    order = config.get("order", {})
+    shipping = config.get("shipping", {})
+    text = page.locator("body").inner_text(timeout=10000)
+    lines = visible_order_lines(text)
+    missing_count = infer_missing_count(text)
+    price = extract_price_breakdown(page)
+    snapshot = {
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "status": status,
+        "note": note or "",
+        "project_name": config.get("project_name") or order.get("project_name") or "",
+        "gerber_zip": config.get("gerber_zip", ""),
+        "page_url": page.url,
+        "page_title": page.title(),
+        "shipping": {
+            "recipient_name": shipping.get("recipient_name") or config.get("recipient_name") or "",
+            "phone": str(shipping.get("phone") or config.get("phone") or ""),
+            "region": shipping.get("region", []),
+            "detail": shipping.get("detail") or config.get("address") or "",
+        },
+        "order": {
+            "quantity": order.get("quantity"),
+            "material": order.get("material", "FR-4"),
+            "layers": order.get("layers", 2),
+            "board_size": order.get("board_size", "2.4 cm x 2.4 cm"),
+            "thickness_mm": order.get("thickness_mm", "1.6"),
+            "copper_weight": order.get("copper_weight", "1 oz"),
+            "solder_mask": order.get("solder_mask", "green"),
+            "silkscreen": order.get("silkscreen", "white"),
+            "surface_finish": order.get("surface_finish", "无铅喷锡"),
+            "compensation": order.get("compensation", "按标准合同常规处理"),
+            "confirm_mode": order.get("confirm_mode", "manual"),
+            "smt": order.get("smt", "not_needed"),
+            "stencil": order.get("stencil", "not_needed"),
+            "invoice_status": order.get("invoice_status", "unfilled_or_not_selected"),
+        },
+        "jlc_validation": {
+            "missing_count": missing_count,
+            "visible_lines": lines[:120],
+        },
+        "price": price,
+    }
+    return snapshot
+
+
+def insert_order_snapshot(db_path: Path, snapshot: dict[str, Any]) -> int:
+    conn = ensure_order_db(db_path)
+    shipping = snapshot["shipping"]
+    order = snapshot["order"]
+    validation = snapshot["jlc_validation"]
+    price = snapshot["price"]
+    with conn:
+        cur = conn.execute(
+            """
+            INSERT INTO order_snapshots (
+                created_at, status, note, project_name, gerber_zip, page_url, page_title,
+                recipient_name, phone, region_json, address_detail, quantity, material,
+                layers, board_size, thickness_mm, copper_weight, solder_mask, silkscreen,
+                surface_finish, compensation, confirm_mode, smt, stencil, invoice_status,
+                base_special_price, plating_fee, shipping_fee, web_total, assistant_total,
+                selected_order_channel, price_lines_json, missing_count, order_check_lines_json,
+                visible_lines_json, snapshot_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot["created_at"],
+                snapshot["status"],
+                snapshot["note"],
+                snapshot["project_name"],
+                snapshot["gerber_zip"],
+                snapshot["page_url"],
+                snapshot["page_title"],
+                shipping["recipient_name"],
+                shipping["phone"],
+                json_dumps(shipping["region"]),
+                shipping["detail"],
+                order["quantity"],
+                order["material"],
+                order["layers"],
+                order["board_size"],
+                order["thickness_mm"],
+                order["copper_weight"],
+                order["solder_mask"],
+                order["silkscreen"],
+                order["surface_finish"],
+                order["compensation"],
+                order["confirm_mode"],
+                order["smt"],
+                order["stencil"],
+                order["invoice_status"],
+                price["base_special_price"],
+                price["plating_fee"],
+                price["shipping_fee"],
+                price["web_total"],
+                price["assistant_total"],
+                price["selected_order_channel"],
+                json_dumps(price["lines"]),
+                validation["missing_count"],
+                json_dumps(validation["visible_lines"]),
+                json_dumps(validation["visible_lines"]),
+                json_dumps(snapshot),
+            ),
+        )
+    conn.close()
+    return int(cur.lastrowid)
+
+
+def record_order(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    page = connect_page(config)
+    snapshot = build_order_snapshot(config, page, args.status, args.note)
+    row_id = insert_order_snapshot(args.db, snapshot)
+    print(f"recorded order snapshot id={row_id}")
+    print(f"db={args.db.expanduser()}")
+    print(f"status={snapshot['status']}")
+    print(f"missing_count={snapshot['jlc_validation']['missing_count']}")
+    for line in snapshot["jlc_validation"]["visible_lines"][:20]:
+        print(redact_phone(line))
+
+
 def post_submit_log(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     page = connect_page(config)
@@ -418,6 +695,11 @@ def main() -> None:
     p_submit = sub.add_parser("submit")
     p_submit.add_argument("--allow-submit", action="store_true")
     p_submit.set_defaults(func=submit)
+    p_record = sub.add_parser("record-order")
+    p_record.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
+    p_record.add_argument("--status", default="draft_pending_invoice")
+    p_record.add_argument("--note", default="")
+    p_record.set_defaults(func=record_order)
     p_log = sub.add_parser("post-submit-log")
     p_log.add_argument("--output-dir", type=Path, default=DEFAULT_LOG_DIR)
     p_log.set_defaults(func=post_submit_log)

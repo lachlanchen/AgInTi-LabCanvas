@@ -96,9 +96,26 @@ python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py post-submit-lo
 
 The log is written under `~/.config/jlcpcb-order/submissions/` with mode `600`.
 
+Record the current live order state into the private SQLite database:
+
+```bash
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py record-order \
+  --status draft_pending_invoice \
+  --note "HYBEC G4 order after SMS ownership verification; invoice still unselected."
+```
+
+The database is `~/.config/jlcpcb-order/orders.sqlite3` with mode `600`. It stores board options, Gerber path, order page URL, shipping/contact fields, JLC validation count, price breakdown, and visible order-check lines. Do not store one-time SMS codes, browser cookies, or payment secrets.
+
+## Price and Shipping Notes
+
+- `特价` is JLC's promotional base PCB fabrication price.
+- `喷镀费` is the pad surface-finish/plating fee. For this order it came from `无铅喷锡`; switching to `OSP 免费` usually removes this fee, but OSP is less robust for storage and repeated handling.
+- `并单发货` means combining multiple orders into one shipment. If the chosen SF service says it does not support combined shipment, choose `不同交期订单不一起发货`.
+- The assistant price can be cheaper, but it changes the flow to `下载下单助手`; use it later only when intentionally continuing in the desktop assistant.
+
 ## HYBEC Live Order State
 
-The live order reached JLC's order-check drawer with:
+The live order was submitted on the JLC webpage and is pending JLC review/payment confirmation. Submitted settings:
 
 - FR-4, 2 layers, `2.4 cm x 2.4 cm`.
 - Quantity `5`.
@@ -106,15 +123,19 @@ The live order reached JLC's order-check drawer with:
 - `无铅喷锡` lead-free HASL.
 - Normal compensation: `按标准合同常规处理`.
 - No SMT, no stencil.
-- Shipping address partially filled as Guangdong/Shenzhen/Nanshan/Xili plus the provided detail line.
+- Free JLC customer-code mark selected.
+- No edge polishing.
+- Electronic receipt/delivery note.
+- Shipping address/contact saved from private config.
+- Account ownership verified as personal through SMS.
+- Shipping mode changed to `不同交期订单不一起发货` to avoid SF combined-shipment incompatibility.
+- Price breakdown observed before submission: base special price `￥30.00`, plating fee `￥30.09`, shipping `包邮`, web total `￥60.09`.
 
-Remaining required live fields: recipient name and mobile phone number.
+Private snapshots and the completion log are stored under `~/.config/jlcpcb-order/`.
 
-Once those are added to the private config, the live finish sequence is:
+After JLC review, finish payment manually from the order list or JLC notification:
 
 ```bash
-python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py fill-address --save-address
-python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py check-order
-python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py submit --allow-submit
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py record-order --status paid_or_reviewed
 python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py post-submit-log
 ```

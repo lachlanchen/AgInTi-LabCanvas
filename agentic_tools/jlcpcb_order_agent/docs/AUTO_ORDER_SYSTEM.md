@@ -48,8 +48,64 @@ This avoids the earlier one-off Playwright persistent-context path that triggere
 6. Filled address region/detail:
    - `广东省 / 深圳市 / 南山区 / 西丽街道`.
    - detail line from the private address.
+7. Filled recipient/contact from private config for shipping, order contact, and technical contact.
+8. Explicitly set:
+   - no SMT;
+   - no stencil;
+   - free JLC customer-code board mark;
+   - no edge polishing;
+   - electronic receipt/delivery note;
+   - manual order confirmation.
+9. Completed JLC account ownership setup as a personal account through SMS verification.
+10. Selected the personal ordinary electronic invoice profile created by JLC after ownership verification.
+11. Changed shipping mode from `不同交期订单一起发货` to `不同交期订单不一起发货` after SF showed combined-shipment incompatibility.
+12. Submitted the order on the web page and stopped at the JLC review/payment boundary.
 
-Remaining live blocker: JLC requires recipient name and mobile phone before the address can be saved and the order can be submitted.
+Current live state: submitted and pending JLC review. JLC states that review usually takes 10-60 minutes, then payment/confirmation is required.
+
+## Price and Shipping Terms
+
+- `特价`: promotional base PCB manufacturing price.
+- `喷镀费`: surface-finish/plating fee for the selected pad finish. In the HYBEC order this was charged for `无铅喷锡`. Selecting `OSP 免费` can remove the fee, but OSP is less durable for storage/handling.
+- `快递费 包邮`: shipping is free for the selected prepaid courier.
+- `并单发货`: combined shipment, meaning multiple orders wait and ship together. If SF says it does not support this, use `不同交期订单不一起发货`.
+- `下单助手(优惠10.00元)`: cheaper assistant workflow. It changes the page action to downloading/opening the desktop assistant, so keep `网页版下单` unless intentionally using the assistant app.
+
+Observed web price before submission:
+
+```text
+特价: ￥30.00
+喷镀费: ￥30.09
+快递费: 包邮
+网页版下单总价: ￥60.09
+下单助手价: ￥50.09
+```
+
+## Private Order Database
+
+Order snapshots are stored in SQLite for repeatable handoff and audit:
+
+```bash
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py record-order \
+  --status draft_pending_invoice \
+  --note "HYBEC G4 order after SMS ownership verification; invoice still unselected."
+```
+
+Default database:
+
+```text
+~/.config/jlcpcb-order/orders.sqlite3
+```
+
+The database file is chmod `600` and is not committed. It stores Gerber path, board settings, shipping/contact fields, page URL, validation count, price breakdown, visible order-check lines, and a JSON snapshot. Do not store one-time SMS codes, browser cookies, payment credentials, or screenshots with private data.
+
+Useful inspection commands:
+
+```bash
+sqlite3 ~/.config/jlcpcb-order/orders.sqlite3 ".schema order_snapshots"
+sqlite3 ~/.config/jlcpcb-order/orders.sqlite3 \
+  "SELECT id, created_at, status, web_total, plating_fee, selected_order_channel FROM order_snapshots ORDER BY id DESC LIMIT 5;"
+```
 
 ## Fast Next-Time Flow
 
@@ -73,6 +129,7 @@ If address contact values are complete and the order-check drawer is clean:
 ```bash
 python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py fill-address --save-address
 python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py submit --allow-submit
+python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py record-order --status submitted
 python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py post-submit-log
 ```
 
