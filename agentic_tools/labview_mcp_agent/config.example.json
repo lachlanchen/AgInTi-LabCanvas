@@ -1,6 +1,7 @@
 {
   "labview": {
-    "launcher": "labview",
+    "launcher": "labview64",
+    "path": "/usr/local/natinst/LabVIEW-2026-64/labview",
     "use_xvfb": false,
     "display": ":99"
   },

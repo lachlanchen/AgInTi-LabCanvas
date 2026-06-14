@@ -24,6 +24,7 @@ agentic_tools/labview_mcp_agent/scripts/probe_labview.sh
 agentic_tools/labview_mcp_agent/scripts/install_labview_linux.sh --dry-run
 agentic_tools/labview_mcp_agent/scripts/install_mcp_candidate.sh nineman
 agentic_tools/labview_mcp_agent/scripts/launch_labview.sh
+python agentic_tools/labview_mcp_agent/scripts/test_mcp_bridge.py
 LabVIEWCLI -help
 ```
 
@@ -43,10 +44,13 @@ Use `nineman-YU/Labview_mcp` first for Linux. It hosts an MCP server from LabVIE
 
 - `docs/LABVIEW_LINUX_SETUP.md` - installation notes and current machine status.
 - `docs/POST_INSTALL_REPORT_2026-06-14.md` - completed install audit trail and maintenance notes.
+- `docs/MCP_BRIDGE_TEST_REPORT_2026-06-14.md` - MCP bridge smoke-test results and live-server boundary.
+- `docs/TOOLING_REFERENCE.md` - scripts, configs, external tools, and usage commands.
 - `docs/MCP_CANDIDATES.md` - GitHub research and recommendation.
 - `scripts/install_labview_linux.sh` - dependency and NI feed installer.
 - `scripts/install_mcp_candidate.sh` - clone/update MCP candidates under `~/.local/share/labview-mcp-agent`.
 - `scripts/labview_http_mcp_bridge.py` - stdio MCP frame bridge to a LabVIEW HTTP JSON-RPC endpoint.
+- `scripts/test_mcp_bridge.py` - mock-endpoint smoke test for the MCP bridge.
 - `scripts/probe_labview.sh` - local health check.
 - `scripts/launch_labview.sh` - launch helper with optional Xvfb support.
 - `mcp.example.json` - example MCP client configuration.

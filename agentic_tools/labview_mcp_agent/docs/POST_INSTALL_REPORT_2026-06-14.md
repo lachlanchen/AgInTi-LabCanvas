@@ -163,6 +163,12 @@ Next steps:
 3. Run the LabVIEW HTTP/JSON-RPC server VI.
 4. Connect through `agentic_tools/labview_mcp_agent/scripts/labview_http_mcp_bridge.py`.
 
+Bridge test details:
+
+```text
+agentic_tools/labview_mcp_agent/docs/MCP_BRIDGE_TEST_REPORT_2026-06-14.md
+```
+
 ## Maintenance Commands
 
 Check package status:

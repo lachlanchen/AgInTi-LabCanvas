@@ -72,6 +72,7 @@ def main() -> int:
     args = parser.parse_args()
 
     while True:
+        request_id = None
         try:
             payload = read_frame()
             if payload is None:
@@ -81,9 +82,10 @@ def main() -> int:
             if request_id is not None:
                 write_frame(response)
         except (urllib.error.URLError, TimeoutError) as exc:
-            write_frame(error_response(locals().get("request_id", None), -32000, f"LabVIEW endpoint unavailable: {exc}"))
+            if request_id is not None:
+                write_frame(error_response(request_id, -32000, f"LabVIEW endpoint unavailable: {exc}"))
         except Exception as exc:  # Keep the MCP process alive for client diagnostics.
-            write_frame(error_response(locals().get("request_id", None), -32603, str(exc)))
+            write_frame(error_response(request_id, -32603, str(exc)))
 
 
 if __name__ == "__main__":
