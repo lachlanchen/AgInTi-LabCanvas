@@ -15,6 +15,7 @@ Stable selectors:
 - Gerber upload: first `input[type=file]`.
 - Uploaded-file action: `button:has-text('立即下单')`.
 - Existing order tab detection: page URL contains `pcbPlaceOrder`.
+- Submitted-success page detection: page URL contains `pcbPlaceSuccess`.
 - Quantity input: `input[placeholder='数量'], input.listInput`.
 - Final action button: `#submitBtn`, after a clean check drawer.
 
@@ -27,10 +28,12 @@ Verified visible labels:
 - Silkscreen: `白色`.
 - Surface finish: `OSP`, `无铅喷锡`, `有铅喷锡`, `沉金`.
 - Compensation: `按标准合同常规处理【仅赔偿PCB，但不负责PCBA移植及元器件赔偿】`.
-- SMT and stencil: `不需要`.
+- SMT: label `是否SMT贴片`, option `不需要`.
+- Stencil: label `是否开钢网`, option `不需要`.
 - Confirmation: `手动确认订单` or `系统自动扣款并确认`.
 - Receipt: `电子收据/送货单`.
 - Shipping mode: `不同交期订单不一起发货` or `不同交期订单一起发货(省运费)`.
+- Default courier: `顺丰电商标快`.
 - Order check: `检查订单`.
 - Order-check drawer submit: `确认并提交`.
 
@@ -103,3 +106,4 @@ The current script opens the assistant and records an `assistant_handoff` snapsh
 - `品质赔付费`: paid quality-compensation fee; select `按标准合同常规处理` to avoid it for bare PCB.
 - `OSP` limit: the China site rejected OSP for the `2.4 cm x 2.4 cm` board because any side under `7 cm` is unsupported.
 - `并单发货`: combined shipment. If SF rejects it, choose `不同交期订单不一起发货`.
+- `顺丰电商标快`: default prepaid China courier used for the corrected successful web order.

@@ -92,6 +92,8 @@ JLCPCB_ALLOW_SUBMIT=1 agentic_tools/jlcpcb_order_agent/scripts/quick_order_china
 
 Important: JLC's China form rejected `OSP` for the current `2.4 cm x 2.4 cm` HYBEC board because any side is under `7 cm`. The script now blocks submit when JLC shows this warning. Use a larger board for OSP or explicitly choose another valid finish after review.
 
+The China flow defaults to `顺丰电商标快` through `shipping.courier` in the private config and reselects it before `检查订单`.
+
 Open the global quote flow and snapshot its DOM:
 
 ```bash
@@ -150,6 +152,7 @@ The database is `~/.config/jlcpcb-order/orders.sqlite3` with mode `600`. It stor
 - `OSP` can be invalid on very small China-site boards. The HYBEC `2.4 cm x 2.4 cm` board triggered JLC's warning that OSP is unsupported when any side is under `7 cm`.
 - `品质赔付费` is caused by paid quality-compensation options such as `元器件移植全额赔付`. Bare PCB orders should use `按标准合同常规处理` unless component-transfer compensation is intentionally needed.
 - `并单发货` means combining multiple orders into one shipment. If the chosen SF service says it does not support combined shipment, choose `不同交期订单不一起发货`.
+- `顺丰电商标快` is the default prepaid courier for China web orders.
 - The assistant price can be cheaper, but it changes the flow to `下载下单助手`; use it later only when intentionally continuing in the desktop assistant.
 
 ## HYBEC Live Order State
@@ -168,9 +171,12 @@ The first China web order was submitted on the JLC webpage and is pending JLC re
 - Shipping address/contact saved from private config.
 - Account ownership verified as personal through SMS.
 - Shipping mode changed to `不同交期订单不一起发货` to avoid SF combined-shipment incompatibility.
+- Default courier selected: `顺丰电商标快`.
 - Price breakdown observed before submission: base special price `￥30.00`, plating fee `￥30.09`, shipping `包邮`, web total `￥60.09`.
 
 Private snapshots and the completion log are stored under `~/.config/jlcpcb-order/`.
+
+The latest China web submission reached `嘉立创-下单成功` and is waiting for JLC review/payment. No payment or recharge action was performed by the automation.
 
 A separate global-site test order was also submitted successfully through `https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006` using `Review Before Payment`. It used the global cart/checkout flow and stopped before payment. The global quote page did not expose OSP for this configuration; it used the valid global finish option visible in that flow.
 

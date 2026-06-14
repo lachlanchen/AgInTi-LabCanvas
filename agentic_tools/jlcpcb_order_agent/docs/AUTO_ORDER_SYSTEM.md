@@ -54,14 +54,16 @@ This avoids the earlier one-off Playwright persistent-context path that triggere
    - no stencil;
    - free JLC customer-code board mark;
    - no edge polishing;
+   - no laser stencil through `是否开钢网 -> 不需要`;
    - electronic receipt/delivery note;
    - manual order confirmation.
 9. Completed JLC account ownership setup as a personal account through SMS verification.
 10. Selected the personal ordinary electronic invoice profile created by JLC after ownership verification.
 11. Changed shipping mode from `不同交期订单一起发货` to `不同交期订单不一起发货` after SF showed combined-shipment incompatibility.
-12. Submitted the order on the web page and stopped at the JLC review/payment boundary.
+12. Selected `顺丰电商标快` as the default prepaid courier.
+13. Submitted the order on the web page and stopped at the JLC review/payment boundary.
 
-Current live state: submitted and pending JLC review. JLC states that review usually takes 10-60 minutes, then payment/confirmation is required.
+Current live state: `嘉立创-下单成功`, submitted and pending JLC review/payment. JLC states that review usually takes 10-60 minutes, then payment/confirmation is required.
 
 ## Price and Shipping Terms
 
@@ -70,6 +72,7 @@ Current live state: submitted and pending JLC review. JLC states that review usu
 - `OSP`: blocked by the China order form for the current `2.4 cm x 2.4 cm` board because JLC states that OSP cannot be used when any side is under `7 cm`.
 - `品质赔付费`: paid quality-compensation fee. For bare PCB orders, keep `按标准合同常规处理`; do not use `元器件移植全额赔付` unless PCBA/component-transfer compensation is intentionally required.
 - `快递费 包邮`: shipping is free for the selected prepaid courier.
+- `顺丰电商标快`: default prepaid courier for China web orders.
 - `并单发货`: combined shipment, meaning multiple orders wait and ship together. If SF says it does not support this, use `不同交期订单不一起发货`.
 - `下单助手(优惠10.00元)`: cheaper assistant workflow. It changes the page action to downloading/opening the desktop assistant, so keep `网页版下单` unless intentionally using the assistant app.
 
@@ -122,7 +125,7 @@ python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py prepare
 
 1. reuses the existing `pcbPlaceOrder` tab when one is open;
 2. otherwise uploads the configured Gerber ZIP and opens the parsed order form;
-3. fills board settings and address/contact fields;
+3. fills board settings, address/contact fields, and the configured default courier;
 4. runs `检查订单`;
 5. stops before final submission.
 
@@ -132,7 +135,7 @@ For new low-cost prototypes, use the wrapper defaults:
 agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh path/to/gerber.zip
 ```
 
-The wrapper sets `OSP`, separate shipment, web order channel, manual confirmation, and records a private `china_checked` SQLite snapshot. To intentionally use the assistant discount path instead:
+The wrapper sets `OSP`, separate shipment, web order channel, manual confirmation, `顺丰电商标快`, and records a private `china_checked` SQLite snapshot. To intentionally use the assistant discount path instead:
 
 ```bash
 agentic_tools/jlcpcb_order_agent/scripts/quick_order_assistant.sh path/to/gerber.zip
@@ -189,6 +192,8 @@ python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py post-submit-lo
 ```
 
 The completion log is private by default and saved under `~/.config/jlcpcb-order/submissions/`.
+
+Treat `pcbPlaceSuccess` as the submitted-success page for China orders. The order agent records that page into the private SQLite database after submission.
 
 ## Safety Rules
 

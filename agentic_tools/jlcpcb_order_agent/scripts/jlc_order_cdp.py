@@ -72,6 +72,10 @@ def connect_page(config: dict[str, Any], prefer_order: bool = True) -> Page:
             if "pcbPlaceOrder" in page.url:
                 page.bring_to_front()
                 return page
+        for page in pages:
+            if "pcbPlaceSuccess" in page.url:
+                page.bring_to_front()
+                return page
     for page in pages:
         if "jlc.com/newOrder" in page.url:
             page.bring_to_front()
@@ -185,14 +189,42 @@ def select_standard_compensation(page: Page) -> None:
         print("confirmed standard compensation modal")
 
 
+def selected_order_check_text(page: Page) -> str:
+    return page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const drawer = [...document.querySelectorAll('.selectedParamsCompCheck,.el-drawer')]
+                .find((el) => visible(el) && text(el).includes('参数检查'));
+            return drawer ? text(drawer) : '';
+        }"""
+    )
+
+
+def visible_price_text(page: Page) -> str:
+    return page.evaluate(
+        """() => {
+            const el = document.querySelector('#rightcontent') || document.querySelector('.rightcontentBox');
+            return el ? (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ') : '';
+        }"""
+    )
+
+
 def assert_clean_for_submit(page: Page, require_surface_finish: str | None = None) -> None:
     text = page.locator("body").inner_text(timeout=10000)
-    blockers = ["去填写", "系统未检测到", "充值", "余额不足"]
-    if any(blocker in text for blocker in blockers):
+    check_text = selected_order_check_text(page) or " ".join(text.split())
+    blockers = ["去填写", "系统未检测到", "充值", "余额不足", "检测到您的订单还有"]
+    if any(blocker in check_text for blocker in blockers):
         raise SystemExit("submit blocked: order check still shows missing fields or payment/wallet blocker")
-    compact = " ".join(text.split())
-    if "品质赔付费" in compact or "品质赔付服务 元器件移植全额赔付" in compact:
+    price_text = visible_price_text(page)
+    if "品质赔付费" in price_text:
         raise SystemExit("submit blocked: paid quality compensation is still selected")
+    if "品质赔付服务" in check_text and "品质赔付服务 按标准合同常规处理" not in check_text:
+        raise SystemExit("submit blocked: order check does not confirm standard quality compensation")
     if require_surface_finish and require_surface_finish.upper() == "OSP":
         if "选择OSP工艺生产不能支持" in text or "当前订单尺寸过小" in text:
             raise SystemExit("submit blocked: JLC says OSP is not supported for this board size")
@@ -219,6 +251,77 @@ def select_order_channel_on_page(page: Page, channel: str | None) -> None:
         click_button_containing(page, ["网页版下单"], 0)
     else:
         raise RuntimeError(f"unknown order channel: {channel}")
+
+
+def click_option_near_label(page: Page, label: str, option: str) -> bool:
+    row = page.evaluate(
+        """({label, option}) => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const labelEl = [...document.querySelectorAll('label,span,div')]
+                .find((el) => visible(el) && text(el) === label);
+            if (!labelEl) return null;
+            labelEl.scrollIntoView({block: 'center', inline: 'nearest'});
+            const labelRect = labelEl.getBoundingClientRect();
+            const buttons = [...document.querySelectorAll('button')]
+                .map((el, i) => ({el, i, text: text(el), rect: el.getBoundingClientRect()}))
+                .filter((row) => visible(row.el)
+                    && row.text === option
+                    && row.rect.x > labelRect.x
+                    && Math.abs((row.rect.y + row.rect.height / 2) - (labelRect.y + labelRect.height / 2)) < 55)
+                .sort((a, b) => a.rect.x - b.rect.x);
+            if (!buttons.length) return null;
+            const target = buttons[0];
+            target.el.click();
+            const rect = target.el.getBoundingClientRect();
+            return {index: target.i, text: target.text, x: rect.x, y: rect.y, w: rect.width, h: rect.height};
+        }""",
+        {"label": label, "option": option},
+    )
+    page.wait_for_timeout(900)
+    if row:
+        print(f"clicked option near {label}: {option}")
+        return True
+    print(f"option not found near {label}: {option}")
+    return False
+
+
+def select_courier(page: Page, courier: str | None) -> bool:
+    if not courier:
+        return False
+    row = page.evaluate(
+        """(courier) => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const label = [...document.querySelectorAll('*')]
+                .find((el) => visible(el) && text(el) === '选择快递');
+            if (label) label.scrollIntoView({block: 'center', inline: 'nearest'});
+            const matches = [...document.querySelectorAll('div,span,label,tr')]
+                .map((el, i) => ({el, i, text: text(el), rect: el.getBoundingClientRect()}))
+                .filter((row) => visible(row.el) && row.text === courier)
+                .sort((a, b) => (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height));
+            if (!matches.length) return null;
+            const target = matches[0];
+            target.el.click();
+            const rect = target.el.getBoundingClientRect();
+            return {index: target.i, text: target.text, x: rect.x, y: rect.y, w: rect.width, h: rect.height};
+        }""",
+        courier,
+    )
+    page.wait_for_timeout(1200)
+    if row:
+        print(f"selected courier: {courier}")
+        return True
+    print(f"courier not found: {courier}")
+    return False
 
 
 def dismiss_guides(page: Page) -> None:
@@ -337,8 +440,8 @@ def fill_settings(args: argparse.Namespace) -> None:
     select_standard_compensation(page)
     page.evaluate("window.scrollTo(0, 2760)")
     page.wait_for_timeout(600)
-    click_button(page, "不需要", 0)  # SMT
-    click_button(page, "不需要", 1)  # stencil
+    click_option_near_label(page, "是否SMT贴片", "不需要")
+    click_option_near_label(page, "是否开钢网", "不需要")
     confirm_mode = getattr(args, "confirm_mode", None) or order.get("confirm_mode", "manual")
     click_button(page, "系统自动扣款并确认" if confirm_mode == "auto" else "手动确认订单", 0)
     click_button(page, "电子收据/送货单", 0)
@@ -410,6 +513,7 @@ def fill_address(args: argparse.Namespace) -> None:
         print("saved address")
     else:
         print("filled address form; not saved")
+    select_courier(page, shipping.get("courier") or config.get("courier") or "顺丰电商标快")
     page.screenshot(path=args.screenshot, full_page=False)
     print(f"screenshot={args.screenshot}")
 
