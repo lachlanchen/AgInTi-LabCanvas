@@ -1,9 +1,11 @@
 [English](README.md) · [العربية](i18n/README.ar.md) · [Español](i18n/README.es.md) · [Français](i18n/README.fr.md) · [日本語](i18n/README.ja.md) · [한국어](i18n/README.ko.md) · [Tiếng Việt](i18n/README.vi.md) · [中文 (简体)](i18n/README.zh-Hans.md) · [中文（繁體）](i18n/README.zh-Hant.md) · [Deutsch](i18n/README.de.md) · [Русский](i18n/README.ru.md)
 
+[![LazyingArt banner](https://github.com/lachlanchen/lachlanchen/raw/main/figs/banner.png)](https://lazying.art)
+
 <p align="center">
   <a href="https://lazying.art"><img alt="Homepage" src="https://img.shields.io/badge/home-lazying.art-111827?style=for-the-badge"></a>
-  <a href="https://www.npmjs.com/package/@lazyingart/labcanvas"><img alt="npm" src="https://img.shields.io/npm/v/@lazyingart/labcanvas?style=for-the-badge&label=npm"></a>
   <a href="https://github.com/lachlanchen/AgInTi-LabCanvas/actions"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/lachlanchen/AgInTi-LabCanvas/test.yml?branch=master&style=for-the-badge&label=tests"></a>
+  <img alt="npm package target" src="https://img.shields.io/badge/npm-%40lazyingart%2Flabcanvas-0F766E?style=for-the-badge">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=for-the-badge">
   <img alt="MCP" src="https://img.shields.io/badge/MCP-ready-0F766E?style=for-the-badge">
 </p>
@@ -11,105 +13,73 @@
 <h1 align="center">AgInTi LabCanvas</h1>
 
 <p align="center">
-  Agent routing for Blender, BioRender, Unity, Unreal, and future creative tools.
-  AgInTi LabCanvas gives Codex, AgInTiFlow, Claude, local LLMs, and other MCP-aware agents one practical control plane for app automation.
+  <strong>Editable scientific figure and experiment-design studio for agent workflows.</strong><br>
+  Chat, preview, decompose, route, and rebuild paper figures through Blender, OpenSCAD, BioRender, AgInTi, KiCad, Unity, Unreal, and MCP-style tool bridges.
 </p>
+
+| Donate | PayPal | Stripe |
+| --- | --- | --- |
+| [![Donate](https://img.shields.io/badge/Donate-LazyingArt-0EA5E9?style=for-the-badge&logo=kofi&logoColor=white)](https://chat.lazying.art/donate) | [![PayPal](https://img.shields.io/badge/PayPal-RongzhouChen-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/RongzhouChen) | [![Stripe](https://img.shields.io/badge/Stripe-Donate-635BFF?style=for-the-badge&logo=stripe&logoColor=white)](https://buy.stripe.com/aFadR8gIaflgfQV6T4fw400) |
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#paper-figure-studio">Paper Figures</a> ·
-  <a href="#3d-experiment-design">3D Design</a> ·
-  <a href="#targets">Targets</a> ·
-  <a href="#research-backed-design">Research</a> ·
-  <a href="#languages">Languages</a>
+  <img src="docs/assets/aginti-labcanvas-vspice-studio.png" alt="AgInTi LabCanvas showing a V-SPICE chat task with a Blender-rendered experiment setup in the canvas" width="1100">
 </p>
 
-<p align="center">
-  <img src="docs/assets/aginti-labcanvas-vspice-studio.png" alt="AgInTi LabCanvas Paper Figure Studio showing a V-SPICE chat task with OpenSCAD, Blender, and rendered canvas artifacts" width="1100">
-</p>
+## What It Does
 
-<p align="center">
-  Live studio demo: chat asks for a V-SPICE experiment setup, OpenSCAD exports the CAD proxy, and Blender renders the selected right-side canvas artifact.
-</p>
+AgInTi LabCanvas is a small local control plane for agent-assisted scientific visuals and app automation. It keeps generated figures editable: an overview image can start an idea, but final outputs are rebuilt from atomic parts, scene specs, CAD files, manifests, and tool-specific artifacts.
 
-## Why This Exists
+## Current Highlights
 
-Creative tools are gaining agent bridges, but each bridge has a different install path, port, protocol, and safety model. AgInTi LabCanvas keeps those targets in one registry, validates them, emits MCP client config, and dispatches dry-run or live JSON envelopes to the right adapter.
-
-It is intentionally small: Python standard library, explicit config, no hidden editor automation.
+| Area | What is ready | Entry point |
+| --- | --- | --- |
+| Web studio | Chat, bright UI, artifact canvas, backend settings, multilingual UI | `labcanvas web --port 8787 --open` |
+| Paper figures | Exact `NxM` SVG grids, AgInTi image dry-run payloads, editable artifact manifest | [docs/EDITABLE_FIGURE_PIPELINE.md](docs/EDITABLE_FIGURE_PIPELINE.md) |
+| 3D setup renders | JSON scene specs to Blender PNG and `.blend` output | [docs/SCENE_SPEC.md](docs/SCENE_SPEC.md) |
+| CAD devices | OpenSCAD exports and C-mount reflector adapter CAD | [cad/README.md](cad/README.md) |
+| PCB manufacturing | KiCad HYBEC lamp board, DRC/ERC, JLCPCB Gerber ZIP | [pcb/hybec-hbl-273-g4](pcb/hybec-hbl-273-g4) |
+| App routing | Blender, BioRender, Unity, Unreal, and custom target dispatch | [docs/RESEARCH.md](docs/RESEARCH.md) |
 
 ## Quick Start
 
-Install from npm:
+Run from a source checkout:
 
 ```bash
+PYTHONPATH=src python -m agenticapp list
+PYTHONPATH=src python -m agenticapp doctor
+PYTHONPATH=src python -m agenticapp web --port 8787 --open
+PYTHONPATH=src python -m agenticapp studio figure-grid "optical device icons 2x3" --rows 2 --cols 3
+PYTHONPATH=src python -m unittest discover -s tests
+```
+
+The npm package has been renamed in this repository to `@lazyingart/labcanvas`, with `labcanvas` as the primary CLI and `app-auto-action` / `agenticapp` kept as compatibility aliases. The new npm package still needs a fresh authenticated publish; until then, use the source checkout or the previously published package name.
+
+```bash
+# After the renamed npm package is published:
 npm install -g @lazyingart/labcanvas
 labcanvas --version
 labcanvas webapp start --port 19473
 ```
 
-Or run from a source checkout:
+## Studio Workflow
+
+1. Start with chat or a saved JSON scene spec.
+2. Generate overview concepts through AgInTi image payloads or another image backend.
+3. Split the figure into editable atoms: panels, icons, labels, CAD parts, renders, and TeX assembly layers.
+4. Use BioRender for academic assets, OpenSCAD for mechanical layout, Blender for 3D setup renders, and KiCad for PCB artifacts.
+5. Keep every artifact in the canvas manifest so later chat edits can target one part instead of flattening the whole figure.
+
+## Example Commands
 
 ```bash
-PYTHONPATH=src python -m agenticapp list
-PYTHONPATH=src python -m agenticapp doctor
-PYTHONPATH=src python -m agenticapp dispatch blender "Create a red cube at the origin" --dry-run
-PYTHONPATH=src python -m agenticapp mcp-config
-PYTHONPATH=src python -m agenticapp studio status
-PYTHONPATH=src python -m unittest discover -s tests
-```
-
-After installation, the console command is also available as:
-
-```bash
-labcanvas list
-labcanvas dispatch unity "Create a test scene with three labeled cubes" --dry-run
-labcanvas studio figure-grid "optical device icons 2x3" --rows 2 --cols 3
-labcanvas webapp start --port 19473
-```
-
-## Paper Figure Studio
-
-```bash
-labcanvas web --port 8787 --open
-```
-
-The web app now has a bright-by-default theme, chat panel, artifact canvas, scene editor, and backend settings. It can:
-
-- Switch the visible studio UI across the same 11 languages as the localized READMEs.
-- Treat generated overview images as concepts, then decompose them into editable atomic parts.
-- Generate exact `NxM` SVG paper-figure grids with black panel boundaries.
-- Prepare AgInTi image-generation dry-run payloads for scientific icon concepts.
-- Store BioRender MCP settings without storing secrets.
-- Export the current scene to OpenSCAD for mechanical layout planning.
-- Render the scene through Blender and preview PNG, `.blend`, `.scad`, JSON, and text artifacts.
-- Toggle Blender, OpenSCAD, AgInTi image generation, BioRender MCP, and target-registry routing settings.
-- Dry-run any configured target from the studio and save the dispatch envelope as a canvas artifact.
-
-Artifacts are tracked under `output/webapp/artifacts.json` and served in the canvas rail. The intended figure architecture is documented in [docs/EDITABLE_FIGURE_PIPELINE.md](docs/EDITABLE_FIGURE_PIPELINE.md). See also [docs/PAPER_FIGURE_STUDIO.md](docs/PAPER_FIGURE_STUDIO.md), [docs/STUDIO_CLI.md](docs/STUDIO_CLI.md), [docs/WEBAPP.md](docs/WEBAPP.md), and [docs/NPM.md](docs/NPM.md).
-
-## 3D Experiment Design
-
-<p align="center">
-  <img src="examples/renders/paper-optics-setup.png" alt="Paper-ready optical experiment setup render" width="900">
-</p>
-
-AgInTi LabCanvas now includes a systematic Blender workflow for paper setup figures, optical benches, device concepts, and experiment design:
-
-```bash
-labcanvas web --port 8787 --open
 labcanvas scene-template experiment-setup --output my-setup.scene.json
 labcanvas render-scene my-setup.scene.json --dry-run
 labcanvas render-scene my-setup.scene.json --output-dir output/scenes
+labcanvas studio openscad examples/paper-optics-setup.scene.json
+labcanvas studio dispatch blender "Prepare an editable paper figure setup"
 ```
 
-The web app provides chat, JSON scene editing, dry-run planning, and render preview. The source of truth is a JSON scene spec. Blender runs headless and produces a `.png` preview plus a `.blend` scene. Start from [examples/paper-optics-setup.scene.json](examples/paper-optics-setup.scene.json), inspect the generated [example render](examples/renders/paper-optics-setup.png), or read [docs/WEBAPP.md](docs/WEBAPP.md) and [docs/SCENE_SPEC.md](docs/SCENE_SPEC.md).
-
-CAD hardware notes now live in [cad/README.md](cad/README.md), including the OpenHI/Nature STEP import notes and a parametric [C-mount reflector adapter](cad/designs/cmount_reflector_adapter/README.md). JLCPCB/Jialichuang automation research is documented in [pcb/jlcpcb-jialichuang-automation.md](pcb/jlcpcb-jialichuang-automation.md).
-
-## Local Blender Test
-
-For a no-sudo local Blender install and a real headless scene generation test:
+For a local Blender bridge test:
 
 ```bash
 scripts/install_blender_portable.sh
@@ -117,48 +87,21 @@ labcanvas --config configs/blender-local-command.example.json doctor
 labcanvas --config configs/blender-local-command.example.json dispatch blender "Draw a welcoming modern building with a tower"
 ```
 
-The command bridge is [bridges/codex_exec_blender.sh](bridges/codex_exec_blender.sh). It reads the AgInTi LabCanvas JSON envelope from stdin, runs Blender in background mode, stores Blender logs under `output/blender/`, and returns clean JSON with `.blend` and `.png` artifact paths.
-
-## Targets
-
-| Target | Current adapter | Best bridge shape | Notes |
-| --- | --- | --- | --- |
-| Blender | `http_json` | Blender MCP add-on, local HTTP, or command bridge | Good for scene generation, materials, rendering, export. |
-| AgInTi | `local_command` via web settings | `aginti image --json` | Dry-run image payloads for figure concepts; live calls require provider keys. |
-| BioRender | `browser` plus MCP metadata | Official remote MCP connector | Use OAuth/API-supported flows; avoid scraping. |
-| Unity | `http_json` | Unity package, WebSocket proxy, or C# editor bridge | Good for scenes, assets, scripts, tests, play mode. |
-| Unreal | `http_json` | Unreal MCP plugin or Python remote execution proxy | Treat as privileged editor access. |
-
-Copy `configs/targets.example.json` to `labcanvas.targets.json` for local ports, commands, and tokens. This override file is ignored by git.
-
-## Research-Backed Design
-
-The design follows the MCP split between tools, resources, and prompts, then adapts it to live editor bridges. The research brief is in [docs/RESEARCH.md](docs/RESEARCH.md), covering:
-
-- Blender MCP projects with headless and live-GUI modes.
-- Unity MCP packages with scene, asset, script, and play-mode control.
-- Unreal MCP servers using plugins or Python Remote Execution.
-- BioRender's documented MCP connector endpoint.
-- Security tradeoffs for agents with editor write access.
-
 ## Architecture
 
 ```text
-Agent or MCP client
+Agent / MCP client / CLI / web chat
         |
-        | command / dry-run / MCP config
+        | dry-run, render, export, dispatch
         v
-LabCanvas CLI
+AgInTi LabCanvas
         |
-        | target registry
+        | target registry + artifact manifest
         v
-Transport adapter: http_json | local_command | browser | noop
-        |
-        v
-Blender / BioRender / Unity / Unreal bridge
+Blender · OpenSCAD · BioRender · AgInTi · KiCad · Unity · Unreal
 ```
 
-Every dispatch receives the same envelope:
+Every target dispatch receives a reviewable JSON envelope:
 
 ```json
 {
@@ -172,17 +115,14 @@ Every dispatch receives the same envelope:
 }
 ```
 
-## Languages
+Copy `configs/targets.example.json` to `labcanvas.targets.json` for local ports, commands, and tokens. This override file is ignored by git.
 
-Localized READMEs live under `i18n/` and use the same profile-style language switcher as this root README:
-
-[العربية](i18n/README.ar.md) · [Español](i18n/README.es.md) · [Français](i18n/README.fr.md) · [日本語](i18n/README.ja.md) · [한국어](i18n/README.ko.md) · [Tiếng Việt](i18n/README.vi.md) · [中文 (简体)](i18n/README.zh-Hans.md) · [中文（繁體）](i18n/README.zh-Hant.md) · [Deutsch](i18n/README.de.md) · [Русский](i18n/README.ru.md)
-
-## Development
+## Validation
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests
+npm test
+npm run pack:dry-run
 PYTHONPATH=src python -m agenticapp doctor
 ```
 
-Keep transport behavior covered by tests before adding live editor features. See [AGENTS.md](AGENTS.md) for contributor guidance and [SECURITY.md](SECURITY.md) for the editor-automation security model.
+Keep transport behavior covered by tests before adding live editor features. Review [SECURITY.md](SECURITY.md) before enabling live dispatch to editor bridges or browser sessions.
