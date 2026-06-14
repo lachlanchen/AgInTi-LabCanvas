@@ -1,0 +1,75 @@
+{
+  "created_at": "2026-06-14T03:06:59.066276+00:00",
+  "upload_file": "hybec-hbl-273-g4-jlcpcb-gerber.zip",
+  "sha256": "35f8044b087daf58b116dd462fed1c6ed3f057bc6b18ae6eab57b005aff5b158",
+  "size_bytes": 17885,
+  "files": [
+    {
+      "name": "hybec-hbl-273-g4-B_Cu.gbl",
+      "size_bytes": 979,
+      "crc32": "27c75502"
+    },
+    {
+      "name": "hybec-hbl-273-g4-B_Fab.gbr",
+      "size_bytes": 730,
+      "crc32": "3bad0a3e"
+    },
+    {
+      "name": "hybec-hbl-273-g4-B_Mask.gbs",
+      "size_bytes": 1550,
+      "crc32": "caf1d154"
+    },
+    {
+      "name": "hybec-hbl-273-g4-B_Silkscreen.gbo",
+      "size_bytes": 5104,
+      "crc32": "a9593d63"
+    },
+    {
+      "name": "hybec-hbl-273-g4-Edge_Cuts.gm1",
+      "size_bytes": 690,
+      "crc32": "01f05732"
+    },
+    {
+      "name": "hybec-hbl-273-g4-F_Cu.gtl",
+      "size_bytes": 1295,
+      "crc32": "922796bf"
+    },
+    {
+      "name": "hybec-hbl-273-g4-F_Fab.gbr",
+      "size_bytes": 67784,
+      "crc32": "382d2212"
+    },
+    {
+      "name": "hybec-hbl-273-g4-F_Mask.gts",
+      "size_bytes": 1550,
+      "crc32": "246d3a27"
+    },
+    {
+      "name": "hybec-hbl-273-g4-F_Silkscreen.gto",
+      "size_bytes": 1123,
+      "crc32": "0f8ac4fb"
+    },
+    {
+      "name": "hybec-hbl-273-g4-job.gbrjob",
+      "size_bytes": 2734,
+      "crc32": "065b7832"
+    },
+    {
+      "name": "hybec-hbl-273-g4.drl",
+      "size_bytes": 597,
+      "crc32": "d5ca2d9e"
+    }
+  ],
+  "excluded_review_files": [
+    "../gerber/hybec-hbl-273-g4-drl_map.svg"
+  ],
+  "validation_reports": {
+    "drc": "../artifacts/drc.json",
+    "erc": "../artifacts/erc.json",
+    "drill_report": "../artifacts/drill-report.txt"
+  },
+  "renders": {
+    "close": "../artifacts/hybec-hbl-273-g4-render.png",
+    "full": "../artifacts/hybec-hbl-273-g4-render-full.png"
+  }
+}

@@ -25,6 +25,7 @@ airflow, and enclosure clearance before powering it in an instrument.
 - `artifacts/hybec-hbl-273-g4-render-full.png`: zoomed-out full-board render.
 - `artifacts/hybec-hbl-273-g4.step`: STEP export.
 - `gerber/`: Gerber and Excellon drill outputs.
+- `jlcpcb_order/`: ready-to-upload JLCPCB/JiaLiChuang fabrication pack.
 
 ## Gerber Outputs
 
@@ -34,6 +35,19 @@ airflow, and enclosure clearance before powering it in an instrument.
 - `hybec-hbl-273-g4-Edge_Cuts.gm1`
 - `hybec-hbl-273-g4-job.gbrjob`
 - `hybec-hbl-273-g4.drl`
+
+## JLCPCB / JiaLiChuang Order Pack
+
+Use this file for bare PCB fabrication:
+
+```text
+jlcpcb_order/hybec-hbl-273-g4-jlcpcb-gerber.zip
+```
+
+The order pack includes `jlcpcb_order/README.md`, `order-settings.json`, and
+`preflight-manifest.json`. The board has a back-side `JLCJLCJLCJLC` marker, so
+select **Specify a location** for the order number on JLCPCB. Do not enable PCB
+assembly; the HYBEC lamp and connector are manually installed.
 
 ## Reproduce
 

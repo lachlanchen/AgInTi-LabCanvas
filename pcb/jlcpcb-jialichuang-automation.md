@@ -1,6 +1,6 @@
 # JLCPCB / Jialichuang Order Automation Research
 
-Date: 2026-06-09
+Date: 2026-06-14
 
 ## Short Answer
 
@@ -46,18 +46,23 @@ Source:
 
 ## MCP and GitHub Options
 
-Current public MCP-style tools are more useful for component search, BOM validation, KiCad editing, and fabrication package generation than for final paid order submission.
+Current public MCP-style tools are more useful for component search, BOM validation, KiCad editing, and fabrication package generation than for final paid order submission. I did not find a safe public MCP that can log into JLCPCB/JiaLiChuang, submit a paid PCB fabrication order, and stop at the correct payment boundary for arbitrary accounts.
 
 Relevant options:
 
+- `@jlcpcb/mcp` / `l3wi/jlc-cli`: JLC/EasyEDA component sourcing, library fetching, and KiCad-format conversion. Useful for PCBA component workflows, not needed for the bare through-hole HYBEC carrier.
 - `jlcmcp.dev`: independent JLCPCB component search MCP, BOM export, stock/pricing checks. It states it is not affiliated with JLCPCB.
 - `mixelpixx/KiCAD-MCP-Server`: KiCad MCP server with JLCPCB parts catalog and Freerouting integration.
+- `BeckhamLabsLLC/kicad-jlcpcb`: Claude Code plugin plus MCP server that sources LCSC/JLCPCB parts and hands off a wired KiCad PCB to EasyEDA/JLCPCB-style workflows.
 - `asukiaaa/gerber_to_order`: KiCad plugin to generate Gerber zip packages for vendors including JLCPCB.
 
 Sources:
 
+- https://www.npmjs.com/package/@jlcpcb/mcp
+- https://github.com/l3wi/jlc-cli
 - https://jlcmcp.dev/
 - https://github.com/mixelpixx/KiCAD-MCP-Server
+- https://github.com/BeckhamLabsLLC/kicad-jlcpcb
 - https://github.com/asukiaaa/gerber_to_order
 
 ## Recommended AgInTi LabCanvas Workflow
@@ -78,6 +83,14 @@ Then:
 3. Upload through official API if approved.
 4. Otherwise use browser/app automation to upload and fill quote settings.
 5. Stop before final submit/payment and ask for human confirmation.
+
+For the HYBEC HBL-273/HBL-667 carrier in this repository, the ready upload file is:
+
+```text
+pcb/hybec-hbl-273-g4/jlcpcb_order/hybec-hbl-273-g4-jlcpcb-gerber.zip
+```
+
+That order pack is bare-PCB only and includes an order-settings JSON, preflight manifest, DRC/ERC reports, renders, and a back-side `JLCJLCJLCJLC` marker for JLCPCB's order number placement.
 
 ## Safety Boundary
 

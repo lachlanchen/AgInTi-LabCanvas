@@ -162,6 +162,7 @@ def board_text() -> str:
 \t(gr_circle (center 150 100) (end 157.2 100) (stroke (width 0.10) (type solid)) (fill none) (layer "F.Fab") (uuid "{uid("keepout-silk")}"))
 \t(gr_text "HYBEC HBL-273/HBL-667 12V 20W G4" (at 150 110.3 0) (layer "F.Fab") (uuid "{uid("text:title")}") (effects (font (size 0.72 0.72) (thickness 0.10))))
 \t(gr_text "non-polar tungsten halogen" (at 150 89.7 0) (layer "F.Fab") (uuid "{uid("text:nonpolar")}") (effects (font (size 0.68 0.68) (thickness 0.10))))
+\t(gr_text "JLCJLCJLCJLC" (at 150 109.2 0) (layer "B.SilkS") (uuid "{uid("text:jlc-order")}") (effects (font (size 0.8 0.8) (thickness 0.10)) (justify mirror)))
 \t(segment (start 160 98.46) (end 154.6 98.46) (width 1.2) (layer "F.Cu") (net 1) (uuid "{uid("seg:a1")}"))
 \t(segment (start 154.6 98.46) (end 150 98) (width 1.2) (layer "F.Cu") (net 1) (uuid "{uid("seg:a2")}"))
 \t(segment (start 160 101) (end 154.4 101) (width 1.2) (layer "F.Cu") (net 2) (uuid "{uid("seg:b1")}"))

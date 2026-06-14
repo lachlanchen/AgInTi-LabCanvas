@@ -1,0 +1,43 @@
+{
+  "manufacturer": "JLCPCB / JiaLiChuang",
+  "order_type": "bare PCB fabrication only",
+  "upload_file": "hybec-hbl-273-g4-jlcpcb-gerber.zip",
+  "board": {
+    "name": "hybec-hbl-273-g4",
+    "layers": 2,
+    "shape": "round",
+    "expected_size_mm": {
+      "x": 24,
+      "y": 24
+    },
+    "material": "FR-4",
+    "thickness_mm": 1.6,
+    "copper_weight": "1 oz prototype; consider 2 oz for extra current/heat margin",
+    "surface_finish": "Lead-free HASL prototype; ENIG optional",
+    "solder_mask": "Green recommended for fastest turnaround",
+    "silkscreen": "Default",
+    "quantity": 5,
+    "delivery_format": "Single PCB"
+  },
+  "disabled_options": {
+    "pcb_assembly": true,
+    "smt_stencil": true,
+    "castellated_holes": true,
+    "edge_plating": true
+  },
+  "order_number": {
+    "setting": "Specify a location",
+    "marker": "JLCJLCJLCJLC",
+    "layer": "B.SilkS"
+  },
+  "validation": {
+    "erc_violations": 0,
+    "drc_violations": 0,
+    "unconnected_items": 0
+  },
+  "notes": [
+    "Do not enable PCBA for this order; the halogen lamp is installed manually.",
+    "Verify the Gerber preview before payment.",
+    "The 12 V 20 W halogen lamp needs thermal validation before use."
+  ]
+}
