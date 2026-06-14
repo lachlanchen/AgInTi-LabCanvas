@@ -9,6 +9,12 @@ Ubuntu 24.04.4 LTS x86_64
 Kernel 6.8.0-107-generic
 ```
 
+Detailed post-install record:
+
+```text
+agentic_tools/labview_mcp_agent/docs/POST_INSTALL_REPORT_2026-06-14.md
+```
+
 Installed support packages:
 
 - `xvfb`

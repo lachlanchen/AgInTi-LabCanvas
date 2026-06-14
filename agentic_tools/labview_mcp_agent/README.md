@@ -42,6 +42,7 @@ Use `nineman-YU/Labview_mcp` first for Linux. It hosts an MCP server from LabVIE
 ## Files
 
 - `docs/LABVIEW_LINUX_SETUP.md` - installation notes and current machine status.
+- `docs/POST_INSTALL_REPORT_2026-06-14.md` - completed install audit trail and maintenance notes.
 - `docs/MCP_CANDIDATES.md` - GitHub research and recommendation.
 - `scripts/install_labview_linux.sh` - dependency and NI feed installer.
 - `scripts/install_mcp_candidate.sh` - clone/update MCP candidates under `~/.local/share/labview-mcp-agent`.

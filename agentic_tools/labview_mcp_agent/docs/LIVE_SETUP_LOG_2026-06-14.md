@@ -77,6 +77,7 @@ Result:
 
 - `probe_labview.sh` detects `labview64` and `LabVIEWCLI`.
 - `LabVIEWCLI -help` prints the expected operation syntax, including `RunVI`, `CloseLabVIEW`, and `-Headless`.
+- Full post-install details are recorded in `POST_INSTALL_REPORT_2026-06-14.md`.
 
 ## MCP Candidate Install
 
