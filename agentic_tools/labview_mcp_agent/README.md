@@ -51,6 +51,19 @@ Use `nineman-YU/Labview_mcp` first for Linux. It hosts an MCP server from LabVIE
 - `scripts/install_mcp_candidate.sh` - clone/update MCP candidates under `~/.local/share/labview-mcp-agent`.
 - `scripts/labview_http_mcp_bridge.py` - stdio MCP frame bridge to a LabVIEW HTTP JSON-RPC endpoint.
 - `scripts/test_mcp_bridge.py` - mock-endpoint smoke test for the MCP bridge.
+- `scripts/camera_mcp_simulator.py` - camera MCP endpoint with simulator and V4L2 capture tools.
+- `scripts/test_camera_mcp_simulator.py` - smoke test for camera MCP tools through the bridge.
 - `scripts/probe_labview.sh` - local health check.
 - `scripts/launch_labview.sh` - launch helper with optional Xvfb support.
 - `mcp.example.json` - example MCP client configuration.
+
+## Camera MCP Test Endpoint
+
+This machine currently exposes a Logitech C922 as `/dev/video0`. Use the simulator endpoint for repeatable camera tests while the LabVIEW VI server is not running:
+
+```bash
+python agentic_tools/labview_mcp_agent/scripts/camera_mcp_simulator.py serve \
+  --host 127.0.0.1 --port 36988 --device /dev/video0
+```
+
+Then point the bridge at `http://127.0.0.1:36988/mcp/server`. The tools are `camera.capture_simulator` and `camera.capture_v4l2`.

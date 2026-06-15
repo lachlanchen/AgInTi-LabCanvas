@@ -8,6 +8,15 @@
         "http://127.0.0.1:36987/mcp/server"
       ],
       "env": {}
+    },
+    "labcanvas-camera-sim": {
+      "command": "python3",
+      "args": [
+        "agentic_tools/labview_mcp_agent/scripts/labview_http_mcp_bridge.py",
+        "--url",
+        "http://127.0.0.1:36988/mcp/server"
+      ],
+      "env": {}
     }
   }
 }

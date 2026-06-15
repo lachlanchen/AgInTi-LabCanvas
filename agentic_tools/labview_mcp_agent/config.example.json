@@ -11,6 +11,13 @@
     "port": 36987,
     "endpoint": "/mcp/server"
   },
+  "camera": {
+    "simulator_port": 36988,
+    "device": "/dev/video0",
+    "width": 1280,
+    "height": 720,
+    "output_dir": "output/labview_mcp_camera"
+  },
   "paths": {
     "candidate_root": "~/.local/share/labview-mcp-agent/candidates",
     "installer_search_dir": "~/Downloads"
