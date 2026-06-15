@@ -1,0 +1,76 @@
+{
+  "created_at": "2026-06-15T06:52:15.439611+00:00",
+  "project_name": "lumileds-no-resistor",
+  "upload_file": "lumileds-no-resistor-jlcpcb-gerber.zip",
+  "sha256": "96b2d99a83f87ff361178ba3010c3493337450d1ed42ced292b384a331e67487",
+  "size_bytes": 12902,
+  "files": [
+    {
+      "name": "lumileds-no-resistor-B_Cu.gbl",
+      "size_bytes": 794,
+      "crc32": "766edb7d"
+    },
+    {
+      "name": "lumileds-no-resistor-B_Fab.gbr",
+      "size_bytes": 8278,
+      "crc32": "932e4c3a"
+    },
+    {
+      "name": "lumileds-no-resistor-B_Mask.gbs",
+      "size_bytes": 840,
+      "crc32": "6d4741bc"
+    },
+    {
+      "name": "lumileds-no-resistor-B_Silkscreen.gbo",
+      "size_bytes": 2273,
+      "crc32": "62318038"
+    },
+    {
+      "name": "lumileds-no-resistor-Edge_Cuts.gm1",
+      "size_bytes": 694,
+      "crc32": "13656837"
+    },
+    {
+      "name": "lumileds-no-resistor-F_Cu.gtl",
+      "size_bytes": 3324,
+      "crc32": "0a64fad0"
+    },
+    {
+      "name": "lumileds-no-resistor-F_Fab.gbr",
+      "size_bytes": 31274,
+      "crc32": "3a0637ed"
+    },
+    {
+      "name": "lumileds-no-resistor-F_Mask.gts",
+      "size_bytes": 974,
+      "crc32": "054f77a8"
+    },
+    {
+      "name": "lumileds-no-resistor-F_Silkscreen.gto",
+      "size_bytes": 3663,
+      "crc32": "d27db5b8"
+    },
+    {
+      "name": "lumileds-no-resistor-job.gbrjob",
+      "size_bytes": 2775,
+      "crc32": "8381f6bb"
+    },
+    {
+      "name": "lumileds-no-resistor.drl",
+      "size_bytes": 510,
+      "crc32": "2e18bc9c"
+    }
+  ],
+  "excluded_review_files": [
+    "../gerber/lumileds-no-resistor-drl_map.svg"
+  ],
+  "validation_reports": {
+    "erc": "../artifacts/erc.json",
+    "drc": "../artifacts/drc.json",
+    "drill_report": "../artifacts/drill-report.txt"
+  },
+  "renders": {
+    "close": "../artifacts/lumileds-no-resistor-render.png",
+    "full": "../artifacts/lumileds-no-resistor-render-full.png"
+  }
+}

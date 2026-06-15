@@ -32,6 +32,7 @@ Primary commands:
 
 ```bash
 agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
+python3 agentic_tools/jlcpcb_order_agent/scripts/submit_board_order.py --config path/to/jlcpcb_order/order-settings.json --site china place
 agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh path/to/gerber.zip
 agentic_tools/jlcpcb_order_agent/scripts/quick_order_global.sh path/to/gerber.zip
 agentic_tools/jlcpcb_order_agent/scripts/quick_order_assistant.sh path/to/gerber.zip
@@ -44,7 +45,7 @@ Private config and logs:
 ~/.config/jlcpcb-order/orders.sqlite3
 ```
 
-The JLC tool handles Gerber upload, conservative PCB defaults, OSP/surface-finish checks, standard compensation, address/courier selection, and submit-to-review/payment boundaries.
+The JLC tool handles Gerber packaging, KiCad ERC/DRC preflight, Gerber upload, conservative PCB defaults, OSP/surface-finish checks, standard compensation, address/courier selection, JLC customer-code modal handling, and submit-to-review/payment boundaries.
 
 ## Wenext / 未来工场 3D Printing
 

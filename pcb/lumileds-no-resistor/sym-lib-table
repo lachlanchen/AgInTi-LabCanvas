@@ -1,0 +1,6 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "Connector") (type "KiCad") (uri "/usr/share/kicad/symbols/Connector.kicad_sym") (options "") (descr "KiCad connector symbols"))
+  (lib (name "Mechanical") (type "KiCad") (uri "/usr/share/kicad/symbols/Mechanical.kicad_sym") (options "") (descr "KiCad mechanical symbols"))
+  (lib (name "Custom_Symbol_Library") (type "KiCad") (uri "${KIPRJMOD}/symbols.kicad_sym") (options "") (descr "Project-local Lumileds symbol"))
+)

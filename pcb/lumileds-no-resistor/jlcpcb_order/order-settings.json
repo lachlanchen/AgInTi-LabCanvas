@@ -1,0 +1,64 @@
+{
+  "schema": "agentic_tools/jlcpcb_order_agent/board-order-settings.v1",
+  "manufacturer": "JLCPCB / JiaLiChuang",
+  "project_name": "lumileds-no-resistor",
+  "order_type": "bare PCB fabrication only",
+  "board_dir": "..",
+  "gerber_dir": "../gerber",
+  "gerber_zip": "lumileds-no-resistor-jlcpcb-gerber.zip",
+  "board": {
+    "name": "lumileds-no-resistor",
+    "layers": 2,
+    "shape": "round",
+    "expected_size_mm": {
+      "x": 24,
+      "y": 24
+    },
+    "delivery_format": "Single PCB"
+  },
+  "order": {
+    "quantity": 5,
+    "material": "FR-4",
+    "layers": 2,
+    "thickness_mm": 1.6,
+    "copper_weight": "1 oz",
+    "surface_finish": "auto-china-size-aware",
+    "surface_finish_china": "auto",
+    "surface_finish_global": "Lead-free HASL",
+    "solder_mask": "green",
+    "silkscreen": "white",
+    "confirm_mode": "manual",
+    "shipping_mode": "separate",
+    "order_channel": "web",
+    "compensation": "按标准合同常规处理",
+    "smt": "not_needed",
+    "stencil": "not_needed"
+  },
+  "disabled_options": {
+    "pcb_assembly": true,
+    "smt_stencil": true,
+    "castellated_holes": true,
+    "edge_plating": true
+  },
+  "validation": {
+    "allow_drc_warnings": true,
+    "allowed_drc_warning_types": [
+      "lib_footprint_mismatch",
+      "silk_edge_clearance"
+    ]
+  },
+  "validation_reports": {
+    "erc": "../artifacts/erc.json",
+    "drc": "../artifacts/drc.json",
+    "drill_report": "../artifacts/drill-report.txt"
+  },
+  "renders": {
+    "close": "../artifacts/lumileds-no-resistor-render.png",
+    "full": "../artifacts/lumileds-no-resistor-render-full.png"
+  },
+  "notes": [
+    "OSP is selected only when the target JLC site supports it for the board size.",
+    "For the China site this 24 mm x 24 mm board should use lead-free HASL because OSP is rejected when any side is under 70 mm.",
+    "No SMT, no stencil, and no PCB assembly are needed; the LED is represented by the board footprint only."
+  ]
+}

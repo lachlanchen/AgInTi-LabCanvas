@@ -9,10 +9,22 @@ agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
 agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh path/to/gerber.zip
 ```
 
+For generated board folders with a public order config, prefer the config-driven
+wrapper:
+
+```bash
+python3 -u agentic_tools/jlcpcb_order_agent/scripts/submit_board_order.py \
+  --config pcb/lumileds-no-resistor/jlcpcb_order/order-settings.json \
+  --site china place
+```
+
 Submit only after reviewing the clean order-check drawer:
 
 ```bash
 JLCPCB_ALLOW_SUBMIT=1 agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh path/to/gerber.zip
+python3 -u agentic_tools/jlcpcb_order_agent/scripts/submit_board_order.py \
+  --config pcb/lumileds-no-resistor/jlcpcb_order/order-settings.json \
+  --site china --allow-submit place
 ```
 
 Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600` and never commit it.
@@ -21,6 +33,7 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 
 - `launch_shared_chrome.sh`: opens the persistent logged-in Chrome profile on CDP port `49237`.
 - `quick_order_china.sh`: wraps upload, setting fill, address/courier fill, order check, private DB record, optional submit.
+- `submit_board_order.py`: board-config wrapper that packages Gerbers, validates ERC/DRC, chooses size-aware finish, merges public board config with private recipient config, and delegates to the quick China/global flow.
 - `quick_order_global.sh`: opens global quote/cart flow, snapshots DOM, optionally submits selected cart item for review.
 - `install_assistant_local.sh`: installs the official Linux assistant ZIP into `~/.local/opt/` and creates `~/.local/bin/jlc-assistant`.
 - `launch_assistant_local.sh`: starts/stops/status-checks the local assistant as a detached process with remote-session stability flags and health checks.
@@ -43,6 +56,7 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 - `fill_settings()`: fills board defaults and uses row-label selection for SMT/stencil.
 - `fill_address()`: fills private address/contact and then selects courier.
 - `global_submit_current_cart()`: global checkout path through `Review Before Payment`.
+- `handle_customer_code_modal()`: handles the `加客编` modal by selecting `每个单片内增加` and confirming after the free customer-code mark is selected.
 
 ## Problems And Fixes
 
@@ -56,6 +70,10 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 | Combined shipping rejected by SF | Page indicates SF does not support `并单发货` | Use `不同交期订单不一起发货`. |
 | Browser no-sandbox/unsupported banner | One-off Playwright browser created warnings | Use the persistent Chrome profile and CDP attach via `launch_shared_chrome.sh`. |
 | Success not detected | Submit stays ambiguous if only `pcbPlaceOrder` is recognized | Treat `pcbPlaceSuccess` and text `订单提交成功，请等待审核` as China success. |
+| Board dimensions not parsed | Drawer shows `板子尺寸 去填写` | Fill `input[placeholder='长']` and `input[placeholder='宽']` from board config in centimeters. |
+| Page retains old material/layer state | Drawer shows wrong material or layer count | Set `板材类别`, `板子层数`, and `出货方式` by row label every run. |
+| JLC customer-code mark remains missing | Drawer shows `板上加标志 去填写` | Select `标志增加方式 -> 每个单片内增加`, choose `加嘉立创客编（免费）`, then confirm the `加客编` modal. |
+| Existing default address opens as modal | Address iframe blocks earlier fields on rerun | Reuse the selected address from the main order page when address/contact text is already present. |
 
 ## China DOM Elements
 
@@ -79,10 +97,13 @@ Important labels/buttons:
 
 - Quantity: `input[placeholder='数量'], input.listInput`, then visible quantity `5`.
 - Production proof: `确认生产稿 -> 不需要`.
+- Board size: fill `长` and `宽` in centimeters from the board config when JLC does not parse dimensions.
+- Delivery format: `出货方式 -> 单片` for single-board Gerbers.
 - Finish: `焊盘喷镀 -> OSP 免费 / 有铅喷锡 / 无铅喷锡 / 沉金`.
 - OSP modal buttons: `选择沉金`, `选择有铅喷锡`, `选择无铅喷锡`, `取消`.
 - Compensation: `品质赔付服务 -> 按标准合同常规处理【仅赔偿PCB，但不负责PCBA移植及元器件赔偿】`.
 - Edge polish: `是否需要磨边 -> 不需要`.
+- Board mark: `标志增加方式 -> 每个单片内增加`, `板上加标志 -> 加嘉立创客编（免费）`, then modal `每个单片内增加 -> 确认`.
 - SMT: `是否SMT贴片 -> 不需要`.
 - Stencil: `是否开钢网 -> 不需要`.
 - Confirmation: `手动确认订单` unless the user explicitly wants auto confirmation.

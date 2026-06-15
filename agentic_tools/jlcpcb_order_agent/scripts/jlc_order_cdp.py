@@ -338,6 +338,59 @@ def dismiss_guides(page: Page) -> None:
                 continue
 
 
+def close_blocking_address_dialogs(page: Page) -> None:
+    closed = page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            let count = 0;
+            for (const dialog of [...document.querySelectorAll('.el-dialog__wrapper,.el-dialog')]) {
+                const text = (dialog.innerText || dialog.textContent || '').trim();
+                if (!visible(dialog)) continue;
+                if (!/收货地址|地址标签|新增收货地址|联系人/.test(text)) continue;
+                const close = dialog.querySelector('.el-dialog__headerbtn,.el-dialog__close,button[aria-label="Close"]');
+                if (close) {
+                    close.click();
+                    count += 1;
+                }
+            }
+            return count;
+        }"""
+    )
+    if closed:
+        page.wait_for_timeout(1200)
+        print(f"closed blocking address dialog(s): {closed}")
+
+
+def close_order_check_drawer(page: Page) -> None:
+    closed = page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const drawers = [...document.querySelectorAll('.el-drawer__wrapper,.el-drawer')]
+                .filter((el) => visible(el) && (el.innerText || el.textContent || '').includes('订单检查'));
+            let count = 0;
+            for (const drawer of drawers) {
+                const close = drawer.querySelector('.el-drawer__close-btn,.el-icon-close,button[aria-label="Close"]');
+                if (close) {
+                    close.click();
+                    count += 1;
+                }
+            }
+            return count;
+        }"""
+    )
+    if closed:
+        page.wait_for_timeout(1000)
+        print(f"closed order-check drawer(s): {closed}")
+
+
 def status(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     page = connect_page(config, prefer_order=False)
@@ -414,6 +467,92 @@ def set_quantity(page: Page, quantity: int) -> None:
     raise RuntimeError(f"could not select quantity {quantity}")
 
 
+def board_size_cm_from_order(order: dict[str, Any]) -> tuple[str, str] | None:
+    value = str(order.get("board_size") or "")
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*cm\s*x\s*([0-9]+(?:\.[0-9]+)?)\s*cm", value, re.I)
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+def fill_board_dimensions(page: Page, order: dict[str, Any]) -> None:
+    size = board_size_cm_from_order(order)
+    if not size:
+        print("board size not configured; keeping JLC parsed dimensions")
+        return
+    length, width = size
+    ok = page.evaluate(
+        """({length, width}) => {
+            const setValue = (placeholder, value) => {
+                const input = document.querySelector(`input[placeholder="${placeholder}"]`);
+                if (!input) return false;
+                input.scrollIntoView({block: 'center', inline: 'nearest'});
+                input.value = value;
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+                input.dispatchEvent(new Event('blur', {bubbles: true}));
+                return true;
+            };
+            return setValue('长', length) && setValue('宽', width);
+        }""",
+        {"length": length, "width": width},
+    )
+    page.wait_for_timeout(900)
+    if not ok:
+        print("board size inputs not found; keeping JLC parsed dimensions")
+        return
+    print(f"board_size_cm={length}x{width}")
+
+
+def click_option_near_any_label(page: Page, labels: list[str], option: str) -> bool:
+    for label in labels:
+        if click_option_near_label(page, label, option):
+            return True
+    return False
+
+
+def handle_customer_code_modal(page: Page) -> None:
+    has_modal = page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            return [...document.querySelectorAll('.el-dialog')].some((el) => visible(el) && (el.innerText || el.textContent || '').includes('加客编'));
+        }"""
+    )
+    if not has_modal:
+        return
+    for label in ("每个单片内增加", "确认"):
+        row = page.evaluate(
+            """(label) => {
+                const visible = (el) => {
+                    const r = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+                const dialog = [...document.querySelectorAll('.el-dialog')]
+                    .find((el) => visible(el) && text(el).includes('加客编'));
+                if (!dialog) return null;
+                const buttons = [...dialog.querySelectorAll('button')]
+                    .map((el, i) => ({el, i, text: text(el), rect: el.getBoundingClientRect(), cls: String(el.className)}))
+                    .filter((row) => visible(row.el) && row.text === label);
+                if (!buttons.length) return null;
+                const target = buttons[buttons.length - 1];
+                target.el.click();
+                return {index: target.i, text: target.text, x: target.rect.x, y: target.rect.y, w: target.rect.width, h: target.rect.height, cls: target.cls};
+            }""",
+            label,
+        )
+        page.wait_for_timeout(900)
+        if row:
+            print(f"customer-code modal clicked: {label}")
+        else:
+            print(f"customer-code modal option not found: {label}")
+
+
 def fill_settings(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     order = config.get("order", {})
@@ -421,18 +560,26 @@ def fill_settings(args: argparse.Namespace) -> None:
     page = connect_page(config)
     page.set_viewport_size({"width": 1800, "height": 1000})
     dismiss_guides(page)
+    close_order_check_drawer(page)
+    close_blocking_address_dialogs(page)
     # Material chooser sometimes appears as a modal on first use.
     select_material_modal_fr4(page)
+    click_option_near_label(page, "板材类别", order.get("material", "FR-4"))
+    click_option_near_label(page, "板子层数", str(order.get("layers", 2)))
+    fill_board_dimensions(page, order)
     set_quantity(page, int(order.get("quantity", 5)))
     click_button(page, "不需要", 0)  # confirm production proof: no
-    click_button(page, "1.6", 0)
-    click_button(page, "1盎司", 0)
-    click_button(page, "绿色", 0)
-    click_button(page, "白色", 0)
+    click_option_near_label(page, "出货方式", "单片")
+    click_option_near_label(page, "成品板厚", str(order.get("thickness_mm", "1.6")))
+    if not click_option_near_any_label(page, ["外层铜厚", "铜厚"], str(order.get("copper_weight", "1 oz")).replace(" oz", "盎司")):
+        print("copper weight control not visible; keeping JLC default")
+    click_option_near_label(page, "阻焊颜色", "绿色" if order.get("solder_mask", "green") == "green" else str(order.get("solder_mask")))
+    click_option_near_label(page, "字符颜色", "白色" if order.get("silkscreen", "white") == "white" else str(order.get("silkscreen")))
     page.evaluate("window.scrollTo(0, 900)")
     page.wait_for_timeout(600)
     surface_finish = getattr(args, "surface_finish", None) or order.get("surface_finish", "OSP")
-    click_button(page, surface_finish, 0)
+    if not click_option_near_label(page, "焊盘喷镀", surface_finish):
+        click_button(page, surface_finish, 0)
     if surface_finish.upper() == "OSP":
         body_text = page.locator("body").inner_text(timeout=10000)
         if "选择OSP工艺生产不能支持" in body_text or "当前订单尺寸过小" in body_text:
@@ -440,7 +587,11 @@ def fill_settings(args: argparse.Namespace) -> None:
     select_standard_compensation(page)
     page.evaluate("window.scrollTo(0, 2760)")
     page.wait_for_timeout(600)
-    click_option_near_label(page, "是否SMT贴片", "不需要")
+    click_option_near_label(page, "是否需要磨边", "不需要")
+    click_option_near_label(page, "标志增加方式", "每个单片内增加")
+    click_option_near_label(page, "板上加标志", "加嘉立创客编（免费）")
+    handle_customer_code_modal(page)
+    click_option_near_any_label(page, ["是否SMT贴片", "是否需要SMT"], "不需要")
     click_option_near_label(page, "是否开钢网", "不需要")
     confirm_mode = getattr(args, "confirm_mode", None) or order.get("confirm_mode", "manual")
     click_button(page, "系统自动扣款并确认" if confirm_mode == "auto" else "手动确认订单", 0)
@@ -473,13 +624,28 @@ def fill_address(args: argparse.Namespace) -> None:
     shipping = config.get("shipping", {})
     page = connect_page(config)
     page.set_viewport_size({"width": 1800, "height": 1000})
+    recipient = shipping.get("recipient_name") or config.get("recipient_name") or ""
+    phone = shipping.get("phone") or config.get("phone") or ""
+    phone_tail = str(phone)[-4:] if phone else ""
+    body_text = page.locator("body").inner_text(timeout=10000)
+    if "收货地址" in body_text and "联系方式" in body_text and (not phone_tail or phone_tail in body_text):
+        print("address already selected on JLC order page")
+        select_courier(page, shipping.get("courier") or config.get("courier") or "顺丰电商标快")
+        page.screenshot(path=args.screenshot, full_page=False)
+        print(f"screenshot={args.screenshot}")
+        return
     frame = address_frame(page)
     if not frame:
         raise SystemExit("address iframe not found")
     region = shipping.get("region") or []
     detail = shipping.get("detail") or config.get("address") or ""
-    recipient = shipping.get("recipient_name") or config.get("recipient_name") or ""
-    phone = shipping.get("phone") or config.get("phone") or ""
+    frame_text = frame.locator("body").inner_text(timeout=10000)
+    if ("已用" in frame_text or "默认地址" in frame_text) and (not phone_tail or phone_tail in frame_text):
+        print("address already selected in JLC address iframe")
+        select_courier(page, shipping.get("courier") or config.get("courier") or "顺丰电商标快")
+        page.screenshot(path=args.screenshot, full_page=False)
+        print(f"screenshot={args.screenshot}")
+        return
     if recipient:
         fill_labeled_input(frame, "联系人：", recipient)
     if phone:
@@ -559,8 +725,17 @@ def submit(args: argparse.Namespace) -> None:
     order = config.get("order", {})
     assert_clean_for_submit(page, order.get("surface_finish"))
     click_button(page, "确认并提交", 0)
-    page.wait_for_timeout(2500)
+    success = False
+    for _ in range(20):
+        page.wait_for_timeout(1000)
+        text = page.locator("body").inner_text(timeout=10000)
+        if "pcbPlaceSuccess" in page.url or "订单提交成功" in text or "请等待审核" in text:
+            success = True
+            break
     page.screenshot(path=args.screenshot, full_page=False)
+    if not success:
+        raise SystemExit("submit click did not reach JLC order-success/review page")
+    print("china order submitted; payment still waits for review/approval")
     print(f"screenshot={args.screenshot}")
 
 

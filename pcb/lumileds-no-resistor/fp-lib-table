@@ -1,0 +1,6 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "MountingHole") (type "KiCad") (uri "/usr/share/kicad/footprints/MountingHole.pretty") (options "") (descr "KiCad mounting holes"))
+  (lib (name "Connector_PinHeader_2.54mm") (type "KiCad") (uri "/usr/share/kicad/footprints/Connector_PinHeader_2.54mm.pretty") (options "") (descr "KiCad 2.54 mm pin headers"))
+  (lib (name "Custom_Footprint_Library") (type "KiCad") (uri "${KIPRJMOD}/footprints.pretty") (options "") (descr "Project-local Lumileds footprint"))
+)

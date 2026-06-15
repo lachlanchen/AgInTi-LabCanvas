@@ -39,6 +39,7 @@ if [[ "$ALLOW_SUBMIT" == "1" ]]; then
   python3 "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" record-order \
     --status "submitted_pending_review" \
     --note "Quick China flow submitted after explicit JLCPCB_ALLOW_SUBMIT=1."
+  python3 "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" post-submit-log
 else
   echo "Prepared and checked. Final submit was not run; set JLCPCB_ALLOW_SUBMIT=1 only after manual review."
 fi

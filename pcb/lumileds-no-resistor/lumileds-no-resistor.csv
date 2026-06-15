@@ -1,0 +1,4 @@
+Id,Designator,Footprint,Quantity,Designation,Supplier and ref
+1,"H1,H2,H3,H4",MountingHole_2.2mm_M2,4,MountingHole,
+2,U1,LXCL_MN08_4000,1,LXCL_MN08_4000,
+3,J1,PinHeader_1x02_P2.54mm_Horizontal,1,Conn_01x02_Pin,
