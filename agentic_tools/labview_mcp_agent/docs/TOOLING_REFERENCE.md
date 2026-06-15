@@ -88,6 +88,23 @@ Defaults:
 
 The script reports display depth, visible LabVIEW windows, and listening ports. It detaches Xvfb and LabVIEW with `setsid` so they survive after the launcher exits. Seeing `127.0.0.1:23520` means LabVIEW Community is waiting for the official NI activation callback. Seeing port `3363` means the VI Server listener is available for `LabVIEWCLI`, although the Community activation dialog can still block useful operations until activation is complete.
 
+For the more general clean-desktop pattern that also starts localhost-only
+`x11vnc` and noVNC for browser viewing, use:
+
+```bash
+agentic_tools/virtual_desktop/launch_virtual_desktop.sh \
+  --name labview \
+  --display :98 \
+  --screen 1920x1080x24 \
+  --vnc-port 5908 \
+  --novnc-port 6099 \
+  --app-match /usr/local/natinst/LabVIEW-2026-64/labview \
+  --open-browser \
+  -- /usr/local/natinst/LabVIEW-2026-64/labview
+```
+
+The same pattern is documented in `references/remote-virtual-desktop-vnc-runbook.md`.
+
 ### `scripts/install_mcp_candidate.sh`
 
 Clones or updates known LabVIEW MCP candidate repositories under:
