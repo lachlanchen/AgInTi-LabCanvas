@@ -3,6 +3,7 @@ set -euo pipefail
 
 USE_XVFB="${LABVIEW_USE_XVFB:-0}"
 DISPLAY_ID="${LABVIEW_DISPLAY:-:99}"
+XVFB_SCREEN="${LABVIEW_XVFB_SCREEN:-1920x1080x24}"
 LABVIEW_BIN="${LABVIEW_BIN:-}"
 
 if [[ -z "$LABVIEW_BIN" ]]; then
@@ -25,11 +26,18 @@ if [[ "$USE_XVFB" == 1 ]]; then
     echo "Xvfb is missing; install xvfb or launch with LABVIEW_USE_XVFB=0." >&2
     exit 4
   fi
-  if ! pgrep -f "Xvfb $DISPLAY_ID" >/dev/null 2>&1; then
-    Xvfb "$DISPLAY_ID" -screen 0 1920x1080x24 >/tmp/labview-xvfb.log 2>&1 &
+  display_number="${DISPLAY_ID#:}"
+  display_number="${display_number%%.*}"
+  socket_path="/tmp/.X11-unix/X$display_number"
+  if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1; then
+    if [[ -S "$socket_path" ]] && ! pgrep -u "$USER" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
+      rm -f "$socket_path"
+    fi
+    XAUTHORITY= Xvfb "$DISPLAY_ID" -screen 0 "$XVFB_SCREEN" -ac >/tmp/labview-xvfb.log 2>&1 &
     sleep 1
   fi
   export DISPLAY="$DISPLAY_ID"
+  unset XAUTHORITY
 fi
 
 exec "$LABVIEW_BIN" "$@"

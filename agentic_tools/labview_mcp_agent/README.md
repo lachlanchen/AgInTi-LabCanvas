@@ -24,6 +24,7 @@ agentic_tools/labview_mcp_agent/scripts/probe_labview.sh
 agentic_tools/labview_mcp_agent/scripts/install_labview_linux.sh --dry-run
 agentic_tools/labview_mcp_agent/scripts/install_mcp_candidate.sh nineman
 agentic_tools/labview_mcp_agent/scripts/launch_labview.sh
+agentic_tools/labview_mcp_agent/scripts/start_labview_local_server.sh
 python agentic_tools/labview_mcp_agent/scripts/test_mcp_bridge.py
 LabVIEWCLI -help
 ```
@@ -49,6 +50,8 @@ Use `nineman-YU/Labview_mcp` first for Linux. It hosts an MCP server from LabVIE
 - `docs/MCP_CANDIDATES.md` - GitHub research and recommendation.
 - `scripts/install_labview_linux.sh` - dependency and NI feed installer.
 - `scripts/install_mcp_candidate.sh` - clone/update MCP candidates under `~/.local/share/labview-mcp-agent`.
+- `scripts/configure_labview_local_server.sh` - write local VI Server preferences for LabVIEW Community.
+- `scripts/start_labview_local_server.sh` - start a dedicated 24-bit local Xvfb display and LabVIEW Community.
 - `scripts/labview_http_mcp_bridge.py` - stdio MCP frame bridge to a LabVIEW HTTP JSON-RPC endpoint.
 - `scripts/test_mcp_bridge.py` - mock-endpoint smoke test for the MCP bridge.
 - `scripts/camera_mcp_simulator.py` - camera MCP endpoint with simulator and V4L2 capture tools.
@@ -67,3 +70,13 @@ python agentic_tools/labview_mcp_agent/scripts/camera_mcp_simulator.py serve \
 ```
 
 Then point the bridge at `http://127.0.0.1:36988/mcp/server`. The tools are `camera.capture_simulator` and `camera.capture_v4l2`.
+
+## Local Community Server
+
+The default remote desktop is TigerVNC `:10` with a 32-bit root visual, which can trigger LabVIEW X11 `BadMatch` errors. Use the local 24-bit display launcher instead:
+
+```bash
+agentic_tools/labview_mcp_agent/scripts/start_labview_local_server.sh
+```
+
+It configures VI Server preferences, starts Xvfb on `:98`, launches LabVIEW Community, and reports the activation callback, VI Server, and MCP HTTP ports. LabVIEW Community still must be activated through the official NI account flow before `LabVIEWCLI` and the LabVIEW-hosted MCP VI can run.

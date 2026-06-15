@@ -51,6 +51,43 @@ LABVIEW_USE_XVFB=1 agentic_tools/labview_mcp_agent/scripts/launch_labview.sh
 LABVIEW_BIN=/usr/local/natinst/LabVIEW-2026-64/labview agentic_tools/labview_mcp_agent/scripts/launch_labview.sh
 ```
 
+When `LABVIEW_USE_XVFB=1`, the helper starts a 24-bit Xvfb server with `-ac`, clears stale X11 sockets when no server is reachable, unsets `XAUTHORITY`, and then launches LabVIEW on that display.
+
+### `scripts/configure_labview_local_server.sh`
+
+Writes local LabVIEW 2026 Community preferences under:
+
+```text
+/home/lachlan/natinst/.config/LabVIEW-2026/labview.conf
+```
+
+Example:
+
+```bash
+LABVIEW_VI_SERVER_PORT=3363 agentic_tools/labview_mcp_agent/scripts/configure_labview_local_server.sh
+```
+
+The script preserves `UDCInstallID` when present, creates a timestamped backup, and writes VI Server TCP settings for localhost access.
+
+### `scripts/start_labview_local_server.sh`
+
+Starts the repeatable local Community server path:
+
+```bash
+agentic_tools/labview_mcp_agent/scripts/start_labview_local_server.sh
+```
+
+Defaults:
+
+- X display: `:98`
+- Xvfb screen: `1920x1080x24`
+- LabVIEW binary: `/usr/local/natinst/LabVIEW-2026-64/labview`
+- VI Server port: `3363`
+- Candidate MCP VI HTTP port: `36987`
+- Activation callback port: `23520`
+
+The script reports display depth, visible LabVIEW windows, and listening ports. Seeing `127.0.0.1:23520` means LabVIEW Community is waiting for the official NI activation callback. Seeing `127.0.0.1:3363` means the VI Server listener is available for `LabVIEWCLI`.
+
 ### `scripts/install_mcp_candidate.sh`
 
 Clones or updates known LabVIEW MCP candidate repositories under:
