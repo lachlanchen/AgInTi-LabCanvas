@@ -6,7 +6,7 @@ import threading
 import unittest
 from urllib import request
 
-from agenticapp.webapp import chat_update, create_server, default_scene_spec, dispatch_web_target, plan_web_scene, target_list_response
+from agenticapp.webapp import chat_update, create_server, default_scene_spec, dispatch_web_target, plan_web_scene, run_web_lab_task, target_list_response
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -105,6 +105,33 @@ class WebAppTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["dispatch"]["status"], "dry-run")
         self.assertEqual(result["artifact"]["kind"], "json")
+
+    def test_web_lab_task_registers_plan_and_preview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_web_lab_task(
+                {
+                    "prompt": "Prepare the Lumileds no-resistor PCB and C-mount reflector CAD task",
+                    "mode": "auto",
+                },
+                Path(tmp),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["task"]["kind"], "mixed")
+        self.assertTrue(any(item["source"] == "lab-task" for item in result["artifacts"]["items"]))
+
+    def test_chat_update_routes_board_cad_prompt_to_lab_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = chat_update(
+                default_scene_spec(),
+                "Prepare the Lumileds no-resistor PCB and C-mount reflector CAD task",
+                storage_dir=Path(tmp),
+                settings={},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("reusable", result["reply"])
+        self.assertIn("artifacts", result)
 
 
 if __name__ == "__main__":

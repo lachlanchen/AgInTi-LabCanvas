@@ -17,6 +17,7 @@ from .artifacts import ArtifactStore, content_type_for_path
 from .backends import backend_status, load_backend_settings, run_aginti_image_request, save_backend_settings
 from .blender_render import BlenderRenderError, render_scene_spec
 from .config import load_config
+from .lab_tasks import looks_like_lab_task_prompt, run_lab_task
 from .openscad_export import export_scene_to_openscad
 from .paper_figures import generate_icon_grid, parse_grid_size
 from .scene_spec import built_in_scene_template, slugify, validate_scene_spec
@@ -124,6 +125,9 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
                 payload = self.read_json()
                 spec = payload.get("spec") or default_scene_spec()
                 self.send_json(export_web_openscad(spec, self.storage_dir))
+            elif route == "/api/lab-task":
+                payload = self.read_json()
+                self.send_json(run_web_lab_task(payload, self.storage_dir))
             elif route == "/api/dispatch":
                 payload = self.read_json()
                 self.send_json(dispatch_web_target(payload, self.storage_dir))
@@ -302,6 +306,11 @@ def chat_update(
         artifact_bundle = export.get("artifacts")
         actions.append("Exported the scene as an OpenSCAD planning artifact.")
 
+    if storage_dir and looks_like_lab_task_prompt(text):
+        lab_task = run_web_lab_task({"prompt": text, "mode": "auto", "execute": False}, storage_dir)
+        artifact_bundle = lab_task.get("artifacts")
+        actions.append(lab_task["reply"])
+
     if "biorender" in lowered:
         actions.append("BioRender settings are ready for the official MCP connector endpoint.")
 
@@ -477,6 +486,10 @@ def export_web_openscad(spec: dict[str, Any], storage_dir: Path) -> dict[str, An
         preview="Simplified CAD proxy for mechanical layout planning.",
     )
     return {"ok": True, "export": result.to_dict(), "artifact": item, "artifacts": store.bundle()}
+
+
+def run_web_lab_task(payload: dict[str, Any], storage_dir: Path) -> dict[str, Any]:
+    return run_lab_task(payload, storage_dir, root=ROOT)
 
 
 def register_aginti_outputs(store: ArtifactStore, result: dict[str, Any]) -> None:

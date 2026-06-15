@@ -12,10 +12,16 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 MIME_BY_SUFFIX = {
     ".blend": "application/octet-stream",
     ".json": "application/json; charset=utf-8",
+    ".kicad_pcb": "text/plain; charset=utf-8",
+    ".kicad_sch": "text/plain; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
     ".png": "image/png",
     ".scad": "text/plain; charset=utf-8",
+    ".step": "model/step",
+    ".stl": "model/stl",
     ".svg": "image/svg+xml; charset=utf-8",
     ".txt": "text/plain; charset=utf-8",
+    ".zip": "application/zip",
 }
 
 

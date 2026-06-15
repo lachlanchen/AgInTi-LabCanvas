@@ -40,6 +40,7 @@
           <button id="templateBtn" class="ghost" data-i18n="button.reset">Reset</button>
           <button id="openscadBtn" class="ghost" data-i18n="button.openscad">OpenSCAD</button>
           <button id="figureBtn" class="ghost" data-i18n="button.figureGrid">Figure Grid</button>
+          <button id="labTaskBtn" class="ghost" data-i18n="button.labTask">Board/CAD</button>
           <button id="renderBtn" class="primary" data-i18n="button.render">Render</button>
         </div>
       </section>
@@ -53,6 +54,7 @@
           <div id="messages" class="messages"></div>
           <div class="chips">
             <button data-prompt="Make it a V-SPICE experiment setup">V-SPICE</button>
+            <button data-prompt="Prepare the Lumileds no-resistor PCB and C-mount reflector CAD task" data-i18n="chip.boardCad">Board/CAD task</button>
             <button data-prompt="Generate a 2x3 paper figure grid for optical experiment icons" data-i18n="chip.figure2x3">Figure 2x3</button>
             <button data-prompt="Export this setup to OpenSCAD">OpenSCAD</button>
             <button data-prompt="Use BioRender settings for academic drawings">BioRender</button>
@@ -61,7 +63,7 @@
             <button data-prompt="Add filter" data-i18n="chip.addFilter">Add filter</button>
           </div>
           <form id="chatForm" class="composer">
-            <textarea id="messageInput" rows="3" placeholder="Ask for a paper setup, optical bench, device concept, labels, colors, or generated figure panels." data-i18n-placeholder="placeholder.message"></textarea>
+            <textarea id="messageInput" rows="3" placeholder="Ask for a paper setup, board, CAD device, optical bench, labels, colors, or generated figure panels." data-i18n-placeholder="placeholder.message"></textarea>
             <button type="submit" data-i18n="button.send">Send</button>
           </form>
         </aside>

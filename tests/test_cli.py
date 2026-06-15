@@ -89,6 +89,35 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["dispatch"]["status"], "dry-run")
         self.assertEqual(payload["artifact"]["kind"], "json")
 
+    def test_studio_lab_task_registers_board_and_cad_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "studio",
+                        "lab-task",
+                        "prepare",
+                        "lumileds",
+                        "pcb",
+                        "and",
+                        "cmount",
+                        "reflector",
+                        "cad",
+                        "--storage-dir",
+                        tmp,
+                        "--json",
+                    ]
+                )
+
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["task"]["kind"], "mixed")
+        self.assertGreaterEqual(len(payload["task"]["steps"]), 2)
+        self.assertTrue(any(item["source"] == "lab-task" for item in payload["artifacts"]["items"]))
+
 
 if __name__ == "__main__":
     unittest.main()

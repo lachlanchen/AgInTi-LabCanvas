@@ -116,6 +116,13 @@ def build_parser() -> argparse.ArgumentParser:
     studio_openscad.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     studio_openscad.set_defaults(func=cmd_studio_openscad)
 
+    studio_lab_task = studio_subparsers.add_parser("lab-task", parents=[studio_common], help="Plan or execute a reusable PCB/CAD generation task.")
+    studio_lab_task.add_argument("prompt", nargs="+", help="Task prompt, such as 'prepare Lumileds PCB and C-mount CAD'.")
+    studio_lab_task.add_argument("--mode", choices=["auto", "pcb", "cad", "mixed"], default="auto", help="Workflow family to select. Default: auto.")
+    studio_lab_task.add_argument("--execute", action="store_true", help="Run safe local steps marked for default execution. Does not submit manufacturing orders.")
+    studio_lab_task.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    studio_lab_task.set_defaults(func=cmd_studio_lab_task)
+
     studio_dispatch = studio_subparsers.add_parser("dispatch", parents=[studio_common], help="Dry-run or send an instruction to a configured target.")
     studio_dispatch.add_argument("target", help="Target name, such as blender, biorender, unity, or unreal.")
     studio_dispatch.add_argument("instruction", help="Instruction for the target bridge.")
@@ -317,6 +324,21 @@ def cmd_studio_openscad(args: argparse.Namespace) -> int:
 
     result = export_web_openscad(load_scene_spec(args.spec), Path(args.storage_dir))
     _print_payload(result, args.json, f"openscad: {result['artifact']['url']}")
+    return 0 if result.get("ok") else 1
+
+
+def cmd_studio_lab_task(args: argparse.Namespace) -> int:
+    from .lab_tasks import run_lab_task
+
+    result = run_lab_task(
+        {
+            "prompt": " ".join(args.prompt),
+            "mode": args.mode,
+            "execute": args.execute,
+        },
+        Path(args.storage_dir),
+    )
+    _print_payload(result, args.json, f"lab-task: {result['task']['kind']} -> {result['artifact']['url']}")
     return 0 if result.get("ok") else 1
 
 

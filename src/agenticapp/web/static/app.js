@@ -4,6 +4,7 @@ const TRANSLATIONS = {
     "button.reset": "Reset",
     "button.openscad": "OpenSCAD",
     "button.figureGrid": "Figure Grid",
+    "button.labTask": "Board/CAD",
     "button.render": "Render",
     "button.dark": "Dark",
     "button.light": "Light",
@@ -31,15 +32,19 @@ const TRANSLATIONS = {
     "status.exportingCad": "Exporting CAD",
     "status.cadReady": "CAD ready",
     "status.cadError": "CAD error",
+    "status.labTaskRunning": "Planning Board/CAD",
+    "status.labTaskReady": "Board/CAD ready",
+    "status.labTaskError": "Board/CAD error",
     "status.dispatching": "Dispatching",
     "status.dispatchReady": "Dispatch ready",
     "status.dispatchError": "Dispatch error",
     "status.loading": "Loading",
     "chip.figure2x3": "Figure 2x3",
+    "chip.boardCad": "Board/CAD task",
     "chip.vivid": "Vivid",
     "chip.addLens": "Add lens",
     "chip.addFilter": "Add filter",
-    "placeholder.message": "Ask for a paper setup, optical bench, device concept, labels, colors, or generated figure panels.",
+    "placeholder.message": "Ask for a paper setup, board, CAD device, optical bench, labels, colors, or generated figure panels.",
     "placeholder.targetInstruction": "Dry-run an instruction for any configured target.",
     "label.prompt": "Prompt",
     "label.rows": "Rows",
@@ -79,6 +84,7 @@ const TRANSLATIONS = {
     "message.planOk": "Plan OK: {path}",
     "message.gridGenerated": "Generated a {rows}x{cols} paper figure grid.",
     "message.exportedOpenScad": "Exported OpenSCAD: {path}",
+    "message.labTaskReady": "Prepared {kind} task with {steps} command steps.",
     "message.targetDispatch": "Target dispatch {status}: {target}.",
     "backend.agintiReady": "AgInTi ready",
     "backend.agintiMissing": "AgInTi missing",
@@ -858,6 +864,7 @@ document.getElementById("renderBtn").addEventListener("click", renderScene);
 document.getElementById("dryRunBtn").addEventListener("click", dryRunScene);
 document.getElementById("figureBtn").addEventListener("click", generateFigureGrid);
 document.getElementById("openscadBtn").addEventListener("click", exportOpenScad);
+document.getElementById("labTaskBtn").addEventListener("click", runLabTask);
 document.getElementById("templateBtn").addEventListener("click", init);
 document.getElementById("dispatchTargetBtn").addEventListener("click", dispatchRegistryTarget);
 themeButton.addEventListener("click", toggleTheme);
@@ -965,6 +972,32 @@ async function exportOpenScad() {
     renderStatus.textContent = t("status.cadReady");
   } catch (error) {
     renderStatus.textContent = t("status.cadError");
+    addMessage("assistant", error.message);
+  }
+}
+
+async function runLabTask() {
+  renderStatus.textContent = t("status.labTaskRunning");
+  const input = document.getElementById("messageInput");
+  const prompt = input.value.trim() || "Prepare the Lumileds no-resistor PCB and C-mount reflector CAD task";
+  if (input.value.trim()) {
+    input.value = "";
+  }
+  addMessage("user", prompt);
+  try {
+    const data = await postJson("/api/lab-task", { prompt, mode: "auto", execute: false });
+    if (!data.ok) throw new Error(data.error || "Board/CAD task failed");
+    setArtifacts(data.artifacts);
+    addMessage(
+      "assistant",
+      interpolate(t("message.labTaskReady"), {
+        kind: data.task?.kind || "lab",
+        steps: data.task?.steps?.length || 0,
+      }),
+    );
+    renderStatus.textContent = t("status.labTaskReady");
+  } catch (error) {
+    renderStatus.textContent = t("status.labTaskError");
     addMessage("assistant", error.message);
   }
 }
