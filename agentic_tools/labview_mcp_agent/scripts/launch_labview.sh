@@ -29,11 +29,15 @@ if [[ "$USE_XVFB" == 1 ]]; then
   display_number="${DISPLAY_ID#:}"
   display_number="${display_number%%.*}"
   socket_path="/tmp/.X11-unix/X$display_number"
+  lock_path="/tmp/.X$display_number-lock"
   if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1; then
     if [[ -S "$socket_path" ]] && ! pgrep -u "$USER" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
       rm -f "$socket_path"
     fi
-    XAUTHORITY= Xvfb "$DISPLAY_ID" -screen 0 "$XVFB_SCREEN" -ac >/tmp/labview-xvfb.log 2>&1 &
+    if [[ -f "$lock_path" ]] && ! pgrep -u "$USER" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
+      rm -f "$lock_path"
+    fi
+    env XAUTHORITY= setsid Xvfb "$DISPLAY_ID" -screen 0 "$XVFB_SCREEN" -ac >/tmp/labview-xvfb.log 2>&1 < /dev/null &
     sleep 1
   fi
   export DISPLAY="$DISPLAY_ID"

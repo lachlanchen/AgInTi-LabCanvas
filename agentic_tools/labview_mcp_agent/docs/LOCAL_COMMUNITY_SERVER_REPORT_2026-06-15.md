@@ -22,10 +22,12 @@ agentic_tools/labview_mcp_agent/scripts/start_labview_local_server.sh
 - LabVIEW Community starts successfully on `:98`.
 - The LabVIEW activation dialog appears on `:98`.
 - LabVIEW opens the official local activation callback listener at `127.0.0.1:23520` after the activation button is clicked.
-- `127.0.0.1:3363` is not listening yet, so `LabVIEWCLI` cannot attach to VI Server.
+- `0.0.0.0:3363` is listening from LabVIEW after the local launcher writes VI Server preferences and starts LabVIEW on `:98`.
 - `127.0.0.1:36987` is not listening yet, because the LabVIEW-hosted MCP VI has not been started.
 
 The activation flow reached NI login, but NI returned a `500 Internal Server Error` after login. The page also stated that the NI user account profile must be completed on `ni.com` before activation can finish. After that failed browser flow, the callback listener closed until activation is started again from the LabVIEW dialog.
+
+`LabVIEWCLI` can now launch against the local display without the old VI Server connection error. A non-destructive `AddTwoNumbers` CLI sample still timed out, which matches the visible Community activation dialog blocking useful execution until activation is complete.
 
 ## Local Configuration
 
@@ -35,7 +37,7 @@ VI Server preferences are written to:
 /home/lachlan/natinst/.config/LabVIEW-2026/labview.conf
 ```
 
-The config includes localhost-only VI Server TCP settings for port `3363`. LabVIEW Community must still complete official activation before those settings produce a live listener.
+The config includes localhost-only VI Server TCP settings for port `3363`. The listener is live on this machine, but LabVIEW Community must still complete official activation before CLI operations and the LabVIEW-hosted MCP VI can run normally.
 
 ## Next Steps
 

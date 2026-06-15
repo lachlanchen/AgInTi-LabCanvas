@@ -86,7 +86,7 @@ Defaults:
 - Candidate MCP VI HTTP port: `36987`
 - Activation callback port: `23520`
 
-The script reports display depth, visible LabVIEW windows, and listening ports. Seeing `127.0.0.1:23520` means LabVIEW Community is waiting for the official NI activation callback. Seeing `127.0.0.1:3363` means the VI Server listener is available for `LabVIEWCLI`.
+The script reports display depth, visible LabVIEW windows, and listening ports. It detaches Xvfb and LabVIEW with `setsid` so they survive after the launcher exits. Seeing `127.0.0.1:23520` means LabVIEW Community is waiting for the official NI activation callback. Seeing port `3363` means the VI Server listener is available for `LabVIEWCLI`, although the Community activation dialog can still block useful operations until activation is complete.
 
 ### `scripts/install_mcp_candidate.sh`
 

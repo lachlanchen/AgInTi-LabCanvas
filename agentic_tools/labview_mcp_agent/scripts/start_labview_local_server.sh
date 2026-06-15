@@ -24,24 +24,30 @@ fi
 display_number="${DISPLAY_ID#:}"
 display_number="${display_number%%.*}"
 socket_path="/tmp/.X11-unix/X$display_number"
+lock_path="/tmp/.X$display_number-lock"
 
 if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1; then
   if [[ -S "$socket_path" ]] && ! pgrep -u "$USER" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
     rm -f "$socket_path"
   fi
+  if [[ -f "$lock_path" ]] && ! pgrep -u "$USER" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
+    rm -f "$lock_path"
+  fi
   echo "Starting local Xvfb display $DISPLAY_ID with screen $SCREEN"
-  XAUTHORITY= nohup Xvfb "$DISPLAY_ID" -screen 0 "$SCREEN" -ac >"$LOG_DIR/xvfb.log" 2>&1 &
+  env XAUTHORITY= setsid Xvfb "$DISPLAY_ID" -screen 0 "$SCREEN" -ac >"$LOG_DIR/xvfb.log" 2>&1 < /dev/null &
   sleep 2
 fi
 
 if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1; then
   echo "Display $DISPLAY_ID is not reachable after Xvfb startup." >&2
+  echo "Xvfb log:"
+  tail -n 80 "$LOG_DIR/xvfb.log" 2>/dev/null || true
   exit 4
 fi
 
 if ! pgrep -u "$USER" -f "$LABVIEW_BIN" >/dev/null 2>&1; then
   echo "Starting LabVIEW Community on $DISPLAY_ID"
-  DISPLAY="$DISPLAY_ID" XAUTHORITY= nohup "$LABVIEW_BIN" >"$LOG_DIR/labview.log" 2>&1 &
+  env DISPLAY="$DISPLAY_ID" XAUTHORITY= setsid "$LABVIEW_BIN" >"$LOG_DIR/labview.log" 2>&1 < /dev/null &
   sleep 8
 else
   echo "LabVIEW is already running for user $USER"
