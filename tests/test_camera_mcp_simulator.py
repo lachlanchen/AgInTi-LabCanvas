@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import unittest
@@ -9,6 +10,7 @@ class CameraMcpSimulatorTests(unittest.TestCase):
         script = Path("agentic_tools/labview_mcp_agent/scripts/test_camera_mcp_simulator.py")
         result = subprocess.run(
             [sys.executable, str(script)],
+            env={**os.environ, "LABCANVAS_CAMERA_NO_PIL": "1"},
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

@@ -9,13 +9,15 @@ activated or debugged.
 from __future__ import annotations
 
 import argparse
+import binascii
 import json
+import os
+import struct
+import zlib
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-
-from PIL import Image, ImageDraw, ImageFont, ImageStat
 
 
 DEFAULT_OUTPUT_DIR = Path("output/labview_mcp_camera") / datetime.now().strftime("%Y-%m-%d")
@@ -35,16 +37,123 @@ def ensure_output_path(path: str | Path | None, output_dir: Path, suffix: str) -
 
 
 def image_summary(path: Path) -> dict[str, Any]:
+    try:
+        from PIL import Image, ImageStat
+    except ImportError:
+        width, height = read_png_dimensions(path)
+        return {
+            "path": str(path.resolve()),
+            "width": width,
+            "height": height,
+            "mode": "RGB",
+            "mean_rgb": None,
+        }
+
     with Image.open(path) as image:
         rgb = image.convert("RGB")
         stat = ImageStat.Stat(rgb)
-        return {
-            "path": str(path.resolve()),
-            "width": rgb.width,
-            "height": rgb.height,
-            "mode": rgb.mode,
-            "mean_rgb": [round(value, 2) for value in stat.mean],
-        }
+    return {
+        "path": str(path.resolve()),
+        "width": rgb.width,
+        "height": rgb.height,
+        "mode": rgb.mode,
+        "mean_rgb": [round(value, 2) for value in stat.mean],
+    }
+
+
+def read_png_dimensions(path: Path) -> tuple[int, int]:
+    with path.open("rb") as handle:
+        header = handle.read(24)
+    if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
+        raise RuntimeError(f"Cannot summarize image without Pillow: {path}")
+    return struct.unpack(">II", header[16:24])
+
+
+def png_chunk(kind: bytes, data: bytes) -> bytes:
+    checksum = binascii.crc32(kind)
+    checksum = binascii.crc32(data, checksum) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", checksum)
+
+
+def write_rgb_png(path: Path, width: int, height: int, rows: list[bytes]) -> None:
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    raw = b"".join(b"\x00" + row for row in rows)
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", ihdr)
+        + png_chunk(b"IDAT", zlib.compress(raw, level=6))
+        + png_chunk(b"IEND", b"")
+    )
+
+
+def fallback_simulator_frame(output: Path, width: int, height: int) -> dict[str, Any]:
+    colors = [
+        (225, 52, 62),
+        (245, 166, 35),
+        (245, 226, 78),
+        (44, 177, 99),
+        (43, 134, 238),
+        (112, 82, 195),
+    ]
+    grid = max(40, width // 20)
+    bar_height = max(1, height // 7)
+    cx = width // 2
+    cy = height // 2
+    radius = max(1, min(width, height) // 5)
+    totals = [0, 0, 0]
+    rows: list[bytes] = []
+
+    for y in range(height):
+        row = bytearray()
+        for x in range(width):
+            tone = int(238 + 14 * y / max(height - 1, 1))
+            pixel = (tone, min(255, tone + 4), min(255, tone + 8))
+
+            if y < bar_height:
+                pixel = colors[min(len(colors) - 1, x * len(colors) // max(width, 1))]
+            elif x % grid == 0 or y % grid == 0:
+                pixel = (207, 214, 218)
+
+            dx = x - cx
+            dy = y - cy
+            distance_sq = dx * dx + dy * dy
+            if abs(distance_sq - radius * radius) <= max(width, height) * 2:
+                pixel = (20, 20, 20)
+            if abs(y - cy) <= 1 and abs(dx) <= radius + 60:
+                pixel = (20, 20, 20)
+            if abs(x - cx) <= 1 and abs(dy) <= radius + 60:
+                pixel = (20, 20, 20)
+
+            for dot_offset, dot_color in [
+                (-260, colors[0]),
+                (-130, colors[1]),
+                (0, colors[3]),
+                (130, colors[4]),
+                (260, colors[5]),
+            ]:
+                dot_x = cx + dot_offset
+                dot_y = cy + radius + 85
+                if (x - dot_x) * (x - dot_x) + (y - dot_y) * (y - dot_y) <= 30 * 30:
+                    pixel = dot_color
+
+            row.extend(pixel)
+            totals[0] += pixel[0]
+            totals[1] += pixel[1]
+            totals[2] += pixel[2]
+        rows.append(bytes(row))
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    write_rgb_png(output, width, height, rows)
+    total_pixels = max(1, width * height)
+    return {
+        "path": str(output.resolve()),
+        "width": width,
+        "height": height,
+        "mode": "RGB",
+        "mean_rgb": [round(value / total_pixels, 2) for value in totals],
+        "source": "simulator",
+        "renderer": "stdlib-png",
+    }
 
 
 def create_simulator_frame(
@@ -53,6 +162,14 @@ def create_simulator_frame(
     height: int = 720,
     label: str = "AgInTi LabCanvas simulated camera",
 ) -> dict[str, Any]:
+    if os.environ.get("LABCANVAS_CAMERA_NO_PIL") == "1":
+        return fallback_simulator_frame(output, width, height)
+
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return fallback_simulator_frame(output, width, height)
+
     image = Image.new("RGB", (width, height), (246, 248, 244))
     draw = ImageDraw.Draw(image)
 
@@ -101,6 +218,7 @@ def create_simulator_frame(
     image.save(output)
     summary = image_summary(output)
     summary["source"] = "simulator"
+    summary["renderer"] = "pillow"
     return summary
 
 
@@ -136,10 +254,17 @@ def capture_v4l2_frame(
     finally:
         capture.release()
 
-    summary = image_summary(output)
-    summary["source"] = "v4l2"
-    summary["device"] = device
-    return summary
+    height_actual, width_actual = frame.shape[:2]
+    mean_bgr = frame.mean(axis=(0, 1)).tolist()
+    return {
+        "path": str(output.resolve()),
+        "width": int(width_actual),
+        "height": int(height_actual),
+        "mode": "RGB",
+        "mean_rgb": [round(float(value), 2) for value in reversed(mean_bgr[:3])],
+        "source": "v4l2",
+        "device": device,
+    }
 
 
 def mcp_result(payload: dict[str, Any], is_error: bool = False) -> dict[str, Any]:
