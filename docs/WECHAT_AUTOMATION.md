@@ -26,7 +26,9 @@ labcanvas wechat doctor
 labcanvas wechat init-config --chat "example group"
 labcanvas wechat desktop start
 labcanvas wechat hold start
+labcanvas wechat stack start --web-port 19474
 labcanvas wechat queue --json
+labcanvas wechat approve <task-id> --note "approved"
 ```
 
 `hold start` launches tmux session `labcanvas-wechat` with panes for the virtual
@@ -34,12 +36,18 @@ desktop, direct monitor, worker loop, and media sync loop. The monitor, worker,
 and media panes run through a restart wrapper, so they come back after a crash
 or transient failure.
 
+`stack start` keeps both the WeChat supervisor and the LabCanvas web control
+panel alive. It starts `labcanvas-wechat` plus a web tmux session named
+`labcanvas-web-wechat` by default. The web port is preferred, not fixed; if the
+port is busy, the web app moves to the next free port and prints the actual URL.
+
 Install user launchers:
 
 ```bash
 labcanvas wechat install-user-scripts
 ~/scripts/labcanvas-wechat-hold.sh start
 ~/scripts/create-labcanvas-wechat-tmux.sh
+~/scripts/create-labcanvas-wechat-stack.sh
 ```
 
 ## Private Config
@@ -89,6 +97,17 @@ immediately, and enqueue the backend task directly. If the worker needs an
 important decision before continuing, it returns `confirmation`, sends that
 question to chat, and marks the task `waiting_confirmation`.
 
+Approve or cancel confirmation tasks from the CLI:
+
+```bash
+labcanvas wechat approve <task-id> --note "use the cheaper material"
+labcanvas wechat reject <task-id> --note "wait for manual review"
+```
+
+If no task id is supplied, the newest `waiting_confirmation` task is selected.
+Approval returns the task to `pending` so the worker can continue with the note
+attached.
+
 ## Media Sync
 
 Copy recent downloads into the private workspace. Use `--auto-source` to scan
@@ -102,21 +121,34 @@ labcanvas wechat media-sync --chat "example group" \
 
 Set `WECHAT_MEDIA_SOURCES` to a colon-separated override before `hold start` if
 you want to add explicit folders. The default tmux media pane uses auto-source.
+Copied files are organized as:
+
+```text
+agentic_tools/wechat_gui_agent/.private/downloads/<chat>/<wechat-profile>/<category>/<file>
+```
+
+This keeps files/images from different local WeChat profiles separate while
+keeping them out of git.
 
 ## Web App
 
 The LabCanvas web app exposes a compact WeChat Ops card for:
 
+- starting the complete WeChat + web stack
 - checking desktop/supervisor status
 - starting and stopping the persistent tmux supervisor
+- opening the noVNC desktop
 - viewing pending queue count, recent mirrored messages, and media sources
+- approving or rejecting the newest waiting confirmation task
 - processing one queued worker task manually
 - sending a short message to the currently visible chat
+
+The card auto-refreshes status every 10 seconds.
 
 Run:
 
 ```bash
-labcanvas webapp start --port 19473
+labcanvas wechat stack start --web-port 19474
 ```
 
 ## Group Rename

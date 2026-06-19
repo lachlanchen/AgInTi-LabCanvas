@@ -152,6 +152,53 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["counts"]["pending"], 1)
         self.assertEqual(payload["recent"][0]["request"], "render a device")
 
+    def test_wechat_approve_promotes_newest_waiting_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"id": "old", "chat": "demo", "request": "old task", "status": "waiting_confirmation"}),
+                        json.dumps({"id": "new", "chat": "demo", "request": "new task", "status": "waiting_confirmation"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(["wechat", "approve", "--queue", str(queue), "--note", "go ahead", "--json"])
+
+            payload = json.loads(stdout.getvalue())
+            rows = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["task"]["id"], "new")
+        self.assertEqual(rows[0]["status"], "waiting_confirmation")
+        self.assertEqual(rows[1]["status"], "pending")
+        self.assertIn("go ahead", rows[1]["request"])
+
+    def test_wechat_reject_cancels_named_waiting_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps({"id": "task-1", "chat": "demo", "request": "submit order", "status": "waiting_confirmation"}) + "\n",
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(["wechat", "reject", "task-1", "--queue", str(queue), "--note", "not now", "--json"])
+
+            payload = json.loads(stdout.getvalue())
+            row = json.loads(queue.read_text(encoding="utf-8").splitlines()[0])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["task"]["status"], "canceled")
+        self.assertEqual(row["status"], "canceled")
+        self.assertEqual(row["cancel_note"], "not now")
+
 
 if __name__ == "__main__":
     unittest.main()

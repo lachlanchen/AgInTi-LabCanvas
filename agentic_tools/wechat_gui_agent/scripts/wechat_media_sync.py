@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import shutil
+import re
 
 from wechat_mirror import DEFAULT_DB, record_event
 
@@ -48,7 +49,7 @@ def main() -> int:
             if datetime.fromtimestamp(path.stat().st_mtime) < cutoff:
                 continue
             rel = safe_relative(source, path)
-            target = args.dest / source.name / rel
+            target = args.dest / safe_component(args.chat) / source_bucket(source) / rel
             item = {"source": str(path), "target": str(target), "bytes": path.stat().st_size}
             copied.append(item)
             if not args.dry_run:
@@ -83,6 +84,7 @@ def main() -> int:
             "file_count": len(copied if args.dry_run else changed),
             "error_count": len(errors),
             "dest": str(args.dest),
+            "layout": "<dest>/<chat>/<wechat-profile>/<category>/<relative-file>",
         },
     )
     if args.summary_only:
@@ -113,6 +115,21 @@ def discover_sources() -> list[Path]:
             if path.is_dir():
                 candidates.append(path)
     return candidates
+
+
+def source_bucket(source: Path) -> Path:
+    parts = source.expanduser().resolve().parts
+    if "xwechat_files" in parts:
+        index = parts.index("xwechat_files")
+        profile = parts[index + 1] if len(parts) > index + 1 else "profile"
+        relative = Path(*parts[index + 2 :]) if len(parts) > index + 2 else Path(source.name)
+        return Path(safe_component(profile)) / Path(*[safe_component(part) for part in relative.parts])
+    return Path(safe_component(source.name))
+
+
+def safe_component(value: str) -> str:
+    cleaned = re.sub(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+", "-", value.strip())
+    return cleaned.strip("-") or "wechat"
 
 
 def unique_existing_dirs(paths: list[Path]) -> list[Path]:

@@ -599,6 +599,24 @@ label input[type="checkbox"] {
   flex-wrap: wrap;
 }
 
+.ghost-link {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 750;
+  padding: 0 10px;
+  text-decoration: none;
+}
+
+.ghost-link[aria-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 .mini-log {
   max-height: 120px;
   overflow: auto;

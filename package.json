@@ -36,7 +36,10 @@
     "release:npm:dry-run": "node scripts/npm-release.js patch --dry-run",
     "publish:npm:current": "node scripts/npm-release.js current",
     "publish:env": "node scripts/npm-publish-from-env.js publish --access public",
-    "publish:env:whoami": "node scripts/npm-publish-from-env.js whoami"
+    "publish:env:whoami": "node scripts/npm-publish-from-env.js whoami",
+    "wechat:status": "labcanvas wechat status",
+    "wechat:start": "labcanvas wechat stack start",
+    "wechat:stop": "labcanvas wechat stack stop"
   },
   "keywords": [
     "agents",

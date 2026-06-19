@@ -49,6 +49,7 @@ self account ID. Then start the full supervisor:
 
 ```bash
 labcanvas wechat hold start
+labcanvas wechat stack start --web-port 19474
 labcanvas wechat status
 tmux attach -t labcanvas-wechat
 ```
@@ -65,7 +66,13 @@ Install a reusable launcher:
 labcanvas wechat install-user-scripts
 ~/scripts/labcanvas-wechat-hold.sh start
 ~/scripts/create-labcanvas-wechat-tmux.sh
+~/scripts/create-labcanvas-wechat-stack.sh
 ```
+
+`stack start` keeps the WeChat supervisor and the LabCanvas browser control
+panel alive together. The default web session is `labcanvas-web-wechat` on port
+`19474`; if that port is busy, the web app uses the next free port and prints
+the actual URL.
 
 ## Send Messages
 
@@ -159,6 +166,13 @@ labcanvas wechat worker once --send
 labcanvas wechat queue --json
 ```
 
+Approve or cancel work that is waiting on a confirmation:
+
+```bash
+labcanvas wechat approve <task-id> --note "continue with the default option"
+labcanvas wechat reject <task-id> --note "do not submit this action"
+```
+
 Send a manual message or attachment to the currently visible chat:
 
 ```bash
@@ -173,6 +187,10 @@ labcanvas wechat media-sync --chat "example group" \
   --auto-source \
   --since-minutes 60
 ```
+
+Synced files are stored under
+`.private/downloads/<chat>/<wechat-profile>/<category>/` so images, PDFs, and
+videos from different profiles do not collide.
 
 ## Group Creation
 

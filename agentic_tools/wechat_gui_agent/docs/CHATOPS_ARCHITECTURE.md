@@ -79,6 +79,13 @@ Run the full persistent supervisor in tmux:
 agentic_tools/wechat_gui_agent/scripts/wechat_supervisor_tmux.sh start
 ```
 
+Run the complete operator stack, including the LabCanvas web control panel:
+
+```bash
+agentic_tools/wechat_gui_agent/scripts/wechat_stack_tmux.sh start
+labcanvas wechat stack start --web-port 19474
+```
+
 The supervisor creates panes for:
 
 - virtual desktop / Linux WeChat relaunch
@@ -109,8 +116,14 @@ Sync received downloads from known WeChat download folders:
 ```bash
 python3 agentic_tools/wechat_gui_agent/scripts/wechat_media_sync.py \
   --chat "懒人科研" \
-  --source /path/to/wechat/downloads \
+  --auto-source \
   --since-minutes 60
+```
+
+The default destination layout is:
+
+```text
+.private/downloads/<chat>/<wechat-profile>/<category>/<relative-file>
 ```
 
 ## Worker Queue
@@ -132,6 +145,14 @@ Run it continuously:
 
 ```bash
 python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --loop --send
+```
+
+If a worker returns a `confirmation` field, the task is marked
+`waiting_confirmation`. Approve or cancel it from the CLI or web panel:
+
+```bash
+labcanvas wechat approve <task-id> --note "approved settings"
+labcanvas wechat reject <task-id> --note "manual review needed"
 ```
 
 Worker output may be plain text or JSON:

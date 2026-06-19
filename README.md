@@ -85,6 +85,7 @@ labcanvas studio lab-task "prepare Lumileds no-resistor PCB" --mode pcb --execut
 labcanvas studio dispatch blender "Prepare an editable paper figure setup"
 labcanvas wechat status
 labcanvas wechat hold start
+labcanvas wechat stack start --web-port 19474
 ```
 
 For a local Blender bridge test:

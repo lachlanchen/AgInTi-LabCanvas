@@ -66,6 +66,13 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     hold.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     hold.set_defaults(func=cmd_hold)
 
+    stack = nested.add_parser("stack", help="Control the WeChat supervisor plus LabCanvas web control panel.")
+    stack.add_argument("action", choices=["start", "stop", "restart", "status"], nargs="?", default="start")
+    stack.add_argument("--web-port", type=int, default=19474)
+    stack.add_argument("--web-session", default="labcanvas-web-wechat")
+    stack.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    stack.set_defaults(func=cmd_stack)
+
     send = nested.add_parser("send", help="Send a message or file to the currently visible chat.")
     send.add_argument("--config", type=Path, default=DEFAULT_CHAT_CONFIG)
     send.add_argument("--message")
@@ -85,6 +92,20 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     queue.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
     queue.add_argument("--limit", type=int, default=10)
     queue.set_defaults(func=cmd_queue)
+
+    approve = nested.add_parser("approve", help="Approve a worker task that is waiting for confirmation.")
+    approve.add_argument("task_id", nargs="?", help="Task id. Defaults to the newest waiting_confirmation task.")
+    approve.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
+    approve.add_argument("--note", default="")
+    approve.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    approve.set_defaults(func=cmd_approve)
+
+    reject = nested.add_parser("reject", help="Reject/cancel a worker task that is waiting for confirmation.")
+    reject.add_argument("task_id", nargs="?", help="Task id. Defaults to the newest waiting_confirmation task.")
+    reject.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
+    reject.add_argument("--note", default="")
+    reject.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    reject.set_defaults(func=cmd_reject)
 
     media = nested.add_parser("media-sync", help="Copy recent WeChat downloads/cache files into the private workspace.")
     media.add_argument("--chat", required=True)
@@ -137,6 +158,11 @@ def run_wechat_action(action: str, payload: dict[str, Any] | None = None) -> dic
         result = status_payload()
         result.update({"action": action, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip(), "returncode": proc.returncode})
         return result
+    if action == "start-stack":
+        proc = run_command([str(SCRIPTS / "wechat_stack_tmux.sh"), "start"], capture=True)
+        result = status_payload()
+        result.update({"action": action, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip(), "returncode": proc.returncode})
+        return result
     if action == "stop-hold":
         proc = run_command([str(SCRIPTS / "wechat_supervisor_tmux.sh"), "stop"], capture=True)
         result = status_payload()
@@ -155,6 +181,13 @@ def run_wechat_action(action: str, payload: dict[str, Any] | None = None) -> dic
         proc = run_command([sys.executable, str(SCRIPTS / "wechat_task_worker.py"), "--queue", str(DEFAULT_QUEUE), "--once", "--send"], capture=True)
         result = status_payload()
         result.update({"action": action, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip(), "returncode": proc.returncode})
+        return result
+    if action in {"approve-next", "reject-next"}:
+        decision = "approve" if action == "approve-next" else "reject"
+        note = str(payload.get("note") or "").strip()
+        task = update_waiting_task(DEFAULT_QUEUE, None, decision=decision, note=note)
+        result = status_payload()
+        result.update({"action": action, "task": task})
         return result
     return {"ok": False, "error": f"Unsupported WeChat action: {action}"}
 
@@ -273,6 +306,30 @@ def cmd_hold(args: argparse.Namespace) -> int:
     return proc.returncode
 
 
+def cmd_stack(args: argparse.Namespace) -> int:
+    env = os.environ.copy()
+    env["WECHAT_WEB_PORT"] = str(args.web_port)
+    env["WECHAT_WEB_SESSION"] = args.web_session
+    proc = run_command([str(SCRIPTS / "wechat_stack_tmux.sh"), args.action], capture=True, env=env)
+    web_status = labcanvas_web_status(args.web_session)
+    payload = {
+        "ok": proc.returncode == 0,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "wechat": status_payload(),
+        "webapp": web_status,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, file=sys.stderr, end="")
+        if web_status.get("url"):
+            print(f"webapp: {web_status['url']}")
+    return proc.returncode
+
+
 def cmd_send(args: argparse.Namespace) -> int:
     if not args.message and not args.file:
         raise SystemExit("Use --message or --file")
@@ -300,6 +357,18 @@ def cmd_worker(args: argparse.Namespace) -> int:
 def cmd_queue(args: argparse.Namespace) -> int:
     payload = queue_summary(args.queue, limit=args.limit)
     print_payload(payload, args.json, f"queue: pending={payload['counts'].get('pending', 0)} total={payload['total']}")
+    return 0
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    task = update_waiting_task(args.queue, args.task_id, decision="approve", note=args.note)
+    print_payload({"ok": True, "task": task}, args.json, f"approved task: {task['id']}")
+    return 0
+
+
+def cmd_reject(args: argparse.Namespace) -> int:
+    task = update_waiting_task(args.queue, args.task_id, decision="reject", note=args.note)
+    print_payload({"ok": True, "task": task}, args.json, f"rejected task: {task['id']}")
     return 0
 
 
@@ -360,8 +429,61 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     create_wrapper.chmod(0o755)
-    print_payload({"ok": True, "installed": [str(wrapper), str(create_wrapper)]}, args.json, f"installed {wrapper} and {create_wrapper}")
+    stack_wrapper = scripts_dir / "create-labcanvas-wechat-stack.sh"
+    stack_wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "cd " + shlex.quote(str(PACKAGE_ROOT)) + "\n"
+        "export WECHAT_SUPERVISOR_SESSION=${WECHAT_SUPERVISOR_SESSION:-labcanvas-wechat}\n"
+        "export WECHAT_WEB_SESSION=${WECHAT_WEB_SESSION:-labcanvas-web-wechat}\n"
+        "export WECHAT_WEB_PORT=${WECHAT_WEB_PORT:-19474}\n"
+        "export PYTHONPATH=" + shlex.quote(str(PACKAGE_ROOT / "src")) + ":${PYTHONPATH:-}\n"
+        "exec python3 -m agenticapp wechat stack \"${1:-start}\"\n",
+        encoding="utf-8",
+    )
+    stack_wrapper.chmod(0o755)
+    print_payload(
+        {"ok": True, "installed": [str(wrapper), str(create_wrapper), str(stack_wrapper)]},
+        args.json,
+        f"installed {wrapper}, {create_wrapper}, and {stack_wrapper}",
+    )
     return 0
+
+
+def update_waiting_task(path: Path, task_id: str | None, *, decision: str, note: str = "") -> dict[str, Any]:
+    tasks = read_jsonl(path)
+    if not tasks:
+        raise ValueError(f"No task queue found at {path}")
+    target_index = None
+    if task_id:
+        for index, task in enumerate(tasks):
+            if str(task.get("id")) == task_id:
+                target_index = index
+                break
+    else:
+        for index in range(len(tasks) - 1, -1, -1):
+            if tasks[index].get("status") == "waiting_confirmation":
+                target_index = index
+                break
+    if target_index is None:
+        raise ValueError("No matching waiting_confirmation task found")
+    task = tasks[target_index]
+    if decision == "approve":
+        task["status"] = "pending"
+        task["approved_at"] = datetime.now().isoformat(timespec="seconds")
+        task["approval_note"] = note
+        if note:
+            task["request"] = f"{task.get('request', '')}\n\nUser approval note: {note}".strip()
+    elif decision == "reject":
+        task["status"] = "canceled"
+        task["canceled_at"] = datetime.now().isoformat(timespec="seconds")
+        task["cancel_note"] = note
+    else:
+        raise ValueError(f"Unsupported decision: {decision}")
+    tasks[target_index] = task
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in tasks), encoding="utf-8")
+    return task
 
 
 def queue_summary(path: Path, *, limit: int = 8) -> dict[str, Any]:
@@ -486,6 +608,19 @@ def tmux_status(session: str) -> dict[str, Any]:
         return {"session": session, "running": False, "status": "not-running"}
     panes = run_command(["tmux", "list-panes", "-t", session, "-F", "#{pane_index}: #{pane_current_command} #{pane_pid}"], capture=True)
     return {"session": session, "running": True, "status": "running", "panes": panes.stdout.splitlines()}
+
+
+def labcanvas_web_status(session: str) -> dict[str, Any]:
+    proc = run_command([sys.executable, "-m", "agenticapp", "webapp", "status", "--session", session, "--json"], capture=True)
+    if proc.returncode != 0 and not proc.stdout.strip():
+        return {"ok": False, "status": "not-running", "session": session, "url": "", "stderr": proc.stderr.strip()}
+    try:
+        payload = json.loads(proc.stdout)
+        if isinstance(payload, dict):
+            return payload
+    except json.JSONDecodeError:
+        pass
+    return {"ok": proc.returncode == 0, "status": "unknown", "session": session, "url": "", "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()}
 
 
 def kill_tmux(session: str) -> bool:

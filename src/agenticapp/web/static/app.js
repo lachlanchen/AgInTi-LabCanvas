@@ -12,11 +12,15 @@ const TRANSLATIONS = {
     "button.dispatchTarget": "Dispatch Target",
     "button.saveSettings": "Save Settings",
     "button.openBioRender": "Open BioRender",
+    "button.startStack": "Start Stack",
     "button.startHold": "Start Hold",
     "button.stopHold": "Stop Hold",
     "button.status": "Status",
+    "button.desktop": "Desktop",
     "button.sendWechat": "Send to WeChat",
     "button.workerOnce": "Process One",
+    "button.approveTask": "Approve Next",
+    "button.rejectTask": "Reject Next",
     "button.applyJson": "Apply JSON",
     "button.dryRun": "Dry Run",
     "section.chat": "Chat",
@@ -53,6 +57,7 @@ const TRANSLATIONS = {
     "placeholder.message": "Ask for a paper setup, board, CAD device, optical bench, labels, colors, or generated figure panels.",
     "placeholder.targetInstruction": "Dry-run an instruction for any configured target.",
     "placeholder.wechatMessage": "Send a short message to the currently visible chat.",
+    "placeholder.confirmationNote": "Optional approval/rejection note.",
     "label.prompt": "Prompt",
     "label.rows": "Rows",
     "label.cols": "Cols",
@@ -73,6 +78,7 @@ const TRANSLATIONS = {
     "label.registryTarget": "Registry target",
     "label.targetInstruction": "Target instruction",
     "label.wechatMessage": "WeChat message",
+    "label.confirmationNote": "Confirmation note",
     "label.dryRun": "Dry run",
     "artifact.noneSelected": "Nothing selected",
     "artifact.metaEmpty": "Generated artifacts appear here.",
@@ -800,6 +806,7 @@ let artifacts = [];
 let targets = [];
 let selectedArtifactId = "";
 let rendering = false;
+let wechatStatusTimer = null;
 
 const messages = document.getElementById("messages");
 const chatStatus = document.getElementById("chatStatus");
@@ -826,6 +833,8 @@ const targetInstruction = document.getElementById("targetInstruction");
 const wechatStatus = document.getElementById("wechatStatus");
 const wechatOutput = document.getElementById("wechatOutput");
 const wechatMessage = document.getElementById("wechatMessage");
+const wechatConfirmNote = document.getElementById("wechatConfirmNote");
+const wechatDesktopLink = document.getElementById("wechatDesktopLink");
 
 setupLocale();
 init();
@@ -839,6 +848,7 @@ async function init() {
     showPreview(data.preview_url);
   }
   addMessage("assistant", t("message.sceneLoaded"));
+  startWeChatStatusTimer();
 }
 
 document.getElementById("chatForm").addEventListener("submit", async (event) => {
@@ -880,10 +890,13 @@ document.getElementById("labTaskBtn").addEventListener("click", runLabTask);
 document.getElementById("templateBtn").addEventListener("click", init);
 document.getElementById("dispatchTargetBtn").addEventListener("click", dispatchRegistryTarget);
 document.getElementById("wechatRefreshBtn").addEventListener("click", loadWeChatStatus);
+document.getElementById("wechatStackBtn").addEventListener("click", () => runWeChatAction("start-stack"));
 document.getElementById("wechatStartBtn").addEventListener("click", () => runWeChatAction("start-hold"));
 document.getElementById("wechatStopBtn").addEventListener("click", () => runWeChatAction("stop-hold"));
 document.getElementById("wechatWorkerBtn").addEventListener("click", () => runWeChatAction("worker-once"));
 document.getElementById("wechatSendBtn").addEventListener("click", () => runWeChatAction("send-message", { message: wechatMessage.value.trim() }));
+document.getElementById("wechatApproveBtn").addEventListener("click", () => runWeChatAction("approve-next", { note: wechatConfirmNote.value.trim() }));
+document.getElementById("wechatRejectBtn").addEventListener("click", () => runWeChatAction("reject-next", { note: wechatConfirmNote.value.trim() }));
 themeButton.addEventListener("click", toggleTheme);
 localeSelect.addEventListener("change", () => applyLocale(localeSelect.value, true));
 document.getElementById("openBioRenderBtn").addEventListener("click", () => {
@@ -1064,6 +1077,9 @@ async function runWeChatAction(action, extra = {}) {
     if (action === "send-message") {
       wechatMessage.value = "";
     }
+    if (action === "approve-next" || action === "reject-next") {
+      wechatConfirmNote.value = "";
+    }
   } catch (error) {
     wechatStatus.textContent = t("status.error");
     wechatOutput.textContent = error.message;
@@ -1074,24 +1090,39 @@ function renderWeChatStatus(data) {
   const desktop = data.desktop?.status || "unknown";
   const supervisor = data.sessions?.supervisor?.status || "unknown";
   const pending = data.queue?.counts?.pending || 0;
+  const waiting = data.queue?.counts?.waiting_confirmation || 0;
   const messages = data.mirror?.message_count || 0;
-  wechatStatus.textContent = `${desktop} · ${supervisor}`;
+  const novnc = data.novnc_url || data.desktop?.novnc_url || "";
+  wechatStatus.textContent = `${desktop} · ${supervisor} · ${pending}/${waiting}`;
+  if (novnc) {
+    wechatDesktopLink.href = novnc;
+    wechatDesktopLink.setAttribute("aria-disabled", "false");
+  } else {
+    wechatDesktopLink.href = "#";
+    wechatDesktopLink.setAttribute("aria-disabled", "true");
+  }
   wechatOutput.textContent = JSON.stringify(
     {
       desktop,
       supervisor,
       direct_monitor: data.sessions?.direct_monitor?.status || "unknown",
       pending_tasks: pending,
+      waiting_confirmation: waiting,
       mirrored_messages: messages,
       recent_tasks: data.queue?.recent || [],
       recent_messages: data.mirror?.recent || [],
       media_sources: data.media_sources || [],
       config: data.direct_config_exists ? "private config present" : "private config missing",
-      novnc: data.novnc_url || data.desktop?.novnc_url || "",
+      novnc,
     },
     null,
     2,
   );
+}
+
+function startWeChatStatusTimer() {
+  if (wechatStatusTimer) return;
+  wechatStatusTimer = window.setInterval(loadWeChatStatus, 10000);
 }
 
 function summarizeWeChatResult(data) {

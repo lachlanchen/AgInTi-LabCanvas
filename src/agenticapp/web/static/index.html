@@ -179,10 +179,12 @@
                   <span id="wechatStatus" class="status" data-i18n="status.loading">Loading</span>
                 </div>
                 <div class="wechat-actions">
+                  <button id="wechatStackBtn" class="ghost" type="button" data-i18n="button.startStack">Start Stack</button>
                   <button id="wechatStartBtn" class="ghost" type="button" data-i18n="button.startHold">Start Hold</button>
                   <button id="wechatStopBtn" class="ghost" type="button" data-i18n="button.stopHold">Stop Hold</button>
                   <button id="wechatWorkerBtn" class="ghost" type="button" data-i18n="button.workerOnce">Process One</button>
                   <button id="wechatRefreshBtn" class="ghost" type="button" data-i18n="button.status">Status</button>
+                  <a id="wechatDesktopLink" class="ghost-link" href="#" target="_blank" rel="noopener" data-i18n="button.desktop">Desktop</a>
                 </div>
                 <label>
                   <span data-i18n="label.wechatMessage">WeChat message</span>
@@ -190,6 +192,14 @@
                 </label>
                 <div class="wechat-actions">
                   <button id="wechatSendBtn" class="ghost" type="button" data-i18n="button.sendWechat">Send to WeChat</button>
+                </div>
+                <label>
+                  <span data-i18n="label.confirmationNote">Confirmation note</span>
+                  <input id="wechatConfirmNote" type="text" autocomplete="off" placeholder="Optional approval/rejection note." data-i18n-placeholder="placeholder.confirmationNote">
+                </label>
+                <div class="wechat-actions">
+                  <button id="wechatApproveBtn" class="ghost" type="button" data-i18n="button.approveTask">Approve Next</button>
+                  <button id="wechatRejectBtn" class="ghost" type="button" data-i18n="button.rejectTask">Reject Next</button>
                 </div>
                 <pre id="wechatOutput" class="mini-log"></pre>
               </div>

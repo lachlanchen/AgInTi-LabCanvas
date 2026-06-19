@@ -13,6 +13,15 @@ agentic_tools/wechat_gui_agent/scripts/wechat_virtual_desktop.sh
 Open the printed noVNC URL. If WeChat shows a QR code, approve login on the
 phone. Keep the browser visible while automating so screenshots can be checked.
 
+For normal long-running operation, start the complete stack instead:
+
+```bash
+labcanvas wechat stack start --web-port 19474
+```
+
+This starts the isolated WeChat desktop, the direct monitor, the worker, media
+sync, and the LabCanvas web panel in tmux-managed sessions.
+
 ## 2. Prepare Targets
 
 Create an ignored plan under `.private/`:
@@ -100,3 +109,5 @@ visually confirmed. Creating a group is a real WeChat action and notifies users.
   `open_click` for the visible chat list or update the offset from a screenshot.
 - If OCR is empty, install the needed Tesseract language pack or rely on the
   saved screenshot.
+- If a task is waiting for approval, use `labcanvas wechat approve` or
+  `labcanvas wechat reject`; without a task id the newest waiting task is used.

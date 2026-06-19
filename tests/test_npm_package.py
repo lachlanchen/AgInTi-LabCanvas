@@ -22,6 +22,7 @@ class NpmPackageTests(unittest.TestCase):
         self.assertIn("agentic_tools/virtual_desktop/", package["files"])
         self.assertIn("configs/", package["files"])
         self.assertIn("examples/", package["files"])
+        self.assertEqual(package["scripts"]["wechat:start"], "labcanvas wechat stack start")
 
     def test_npm_bin_wrappers_are_executable_and_set_pythonpath(self):
         wrapper = ROOT / "bin" / "labcanvas.js"
