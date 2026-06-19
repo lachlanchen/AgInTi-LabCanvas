@@ -200,6 +200,7 @@ def send_message(message: str, chat: str, send_targets: Path) -> None:
                 ],
                 cwd=ROOT,
                 check=True,
+                timeout=60,
             )
         finally:
             target_file.unlink(missing_ok=True)
@@ -236,6 +237,7 @@ def send_file(file_path: Path, chat: str, send_targets: Path) -> None:
                 ],
                 cwd=ROOT,
                 check=True,
+                timeout=60,
             )
         finally:
             target_file.unlink(missing_ok=True)

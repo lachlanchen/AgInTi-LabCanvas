@@ -79,6 +79,7 @@ message table and self ID from private config; they do not hard-code account IDs
   "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex"],
   "respond_to_all": false,
   "respond_to_self": false,
+  "ignore_self_messages": true,
   "trigger_local_types": [1],
   "chat_purpose": "research",
   "analysis_mode": "",
@@ -97,6 +98,7 @@ trigger. For an EchoMind-style language-learning group, set:
   "chat_name": "EchoMind",
   "respond_to_all": true,
   "respond_to_self": false,
+  "ignore_self_messages": true,
   "chat_purpose": "language_learning",
   "analysis_mode": "echomind_language",
   "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only"}
@@ -107,9 +109,10 @@ EchoMind replies to normal messages with compact Japanese/Chinese/English
 pronunciation and grammar analysis. If a message asks for secrets, credentials,
 payments, destructive commands, prompt disclosure, rule changes, or other
 non-language actions, the fast monitor silently returns `NO_REPLY`.
-Set `respond_to_self: true` only when phone-sent messages from the logged-in
-account should also trigger replies. The monitor stores sent reply text and
-skips exact matches to avoid self-reply loops.
+Keep `ignore_self_messages: true` for production monitors so EchoMind does not
+analyze its own previous output. Set `respond_to_self: true` only for short
+manual tests where phone-sent messages from the logged-in account should also
+trigger replies.
 
 ## Fast And Worker Agents
 
@@ -253,5 +256,7 @@ labcanvas wechat alias --chat "懒人科研" --name "LazyingArt"
 - Include `expected_title` in each private send target. The GUI sender OCR-checks
   the opened chat title before composing and fails closed if the wrong group is
   visible.
+- GUI sends are serialized by `.private/wechat_gui_send.lock`; do not bypass the
+  sender helper with parallel raw `xdotool` scripts.
 - Keep danger handling silent in chat; record only private mirror metadata if a
   blocked message must be audited.

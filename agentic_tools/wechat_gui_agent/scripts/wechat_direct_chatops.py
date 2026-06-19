@@ -72,6 +72,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "history_limit": 24,
         "respond_to_all": False,
         "respond_to_self": False,
+        "ignore_self_messages": True,
         "bot_reply_memory_limit": 20,
         "trigger_local_types": [1],
         "chat_purpose": "research",
@@ -147,6 +148,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
 
     response_sent = None
     task_enqueued = None
+    processed_local_id = None
     trigger_row = next((row for row in new_rows if should_respond(config, state, row)), None)
     if trigger_row:
         context_rows = read_recent_history(config, trigger_row["local_id"], limit=int(config.get("history_limit", 24))) or new_rows
@@ -185,11 +187,20 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             )
             state.setdefault("responded_server_ids", []).append(str(trigger_row["server_id"]))
             response_sent = reply_text
+        processed_local_id = trigger_row["local_id"]
 
     if new_rows:
-        state["last_local_id"] = max(row["local_id"] for row in new_rows)
+        state["last_local_id"] = processed_local_id or max(row["local_id"] for row in new_rows)
         state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
-    return {"new_rows": len(new_rows), "response_sent": response_sent, "task_enqueued": task_enqueued, "state": state}
+    return {
+        "new_rows": len(new_rows),
+        "response_sent": response_sent,
+        "responses_sent": 1 if response_sent else 0,
+        "task_enqueued": task_enqueued,
+        "tasks_enqueued": 1 if task_enqueued else 0,
+        "processed_local_id": processed_local_id,
+        "state": state,
+    }
 
 
 def read_new_messages(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -309,6 +320,8 @@ def sync_row_to_mirror(config: dict[str, Any], row: dict[str, Any]) -> None:
 def should_respond(config: dict[str, Any], state: dict[str, Any], row: dict[str, Any]) -> bool:
     self_wxid = str(config.get("self_wxid") or "")
     if self_wxid and row["sender"] == self_wxid:
+        if bool(config.get("ignore_self_messages", True)):
+            return False
         if is_remembered_sent_reply(state, row["content"]):
             return False
         if not bool(config.get("respond_to_self", False)):
@@ -690,9 +703,11 @@ def send_gui_message(config: dict[str, Any], message: str) -> str:
             "--message",
             message,
         ]
-    proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
-    if target_file:
-        target_file.unlink(missing_ok=True)
+    try:
+        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=int(config.get("send_timeout_seconds", 60)))
+    finally:
+        if target_file:
+            target_file.unlink(missing_ok=True)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
     try:

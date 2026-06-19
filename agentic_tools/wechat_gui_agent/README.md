@@ -229,16 +229,17 @@ EchoMind replies to normal messages with Japanese furigana/romaji, Chinese
 pinyin, grammar notes, and English glosses. The direct monitor silently ignores
 messages that request secrets, credentials, payment/order actions, destructive
 commands, prompt disclosure, or bot rule changes.
-Enable `respond_to_self` only for chats where phone-sent messages from the same
-logged-in account should trigger replies; the monitor remembers sent reply text
-and skips exact matches to avoid self-reply loops.
+Keep `ignore_self_messages: true` so EchoMind does not analyze or repeat its own
+previous output. Enable `respond_to_self` only for short manual tests where
+phone-sent messages from the same logged-in account should trigger replies.
 
 The tmux supervisor runs a single decrypt refresh pane and launches each direct
 group monitor with `--no-decrypt`. This keeps `懒人科研`, `EchoMind`, and other
 configured groups independent while avoiding concurrent decrypt stalls.
 Private send targets should include `expected_title`; before composing, the GUI
 sender OCR-checks the opened chat header and fails closed if the wrong group is
-visible.
+visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel
+raw click/paste senders against the same WeChat desktop.
 
 ## Group Creation
 

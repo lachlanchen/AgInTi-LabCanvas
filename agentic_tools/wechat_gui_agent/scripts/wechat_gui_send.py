@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ from wechat_mirror import DEFAULT_DB, record_event
 
 
 ROOT = Path(__file__).resolve().parents[3]
+PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 
 
 @dataclass(frozen=True)
@@ -78,26 +80,32 @@ def main() -> int:
     window = find_wechat_window(env)
     if not window:
         raise SystemExit(f"No visible WeChat window found on DISPLAY={args.display}. Log in first.")
+    close_secondary_wechat_windows(env, window)
     if window.width < 500 or window.height < 500:
         screenshot(env, args.output_dir / "login_or_small_window.png")
         raise SystemExit("WeChat is visible but not in the main chat UI; approve login on phone first.")
 
+    PRIVATE.mkdir(parents=True, exist_ok=True)
+    lock_path = PRIVATE / "wechat_gui_send.lock"
     results = []
-    for index, target in enumerate(targets, start=1):
-        result = send_one(
-            env,
-            window,
-            target,
-            args.message,
-            args.send,
-            args.compose_dry_run,
-            args.pause,
-            args.skip_title_guard,
-            args.output_dir,
-            args.mirror_db,
-            index,
-        )
-        results.append(result)
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for index, target in enumerate(targets, start=1):
+            result = send_one(
+                env,
+                window,
+                target,
+                args.message,
+                args.send,
+                args.compose_dry_run,
+                args.pause,
+                args.skip_title_guard,
+                args.output_dir,
+                args.mirror_db,
+                index,
+            )
+            results.append(result)
+        fcntl.flock(lock, fcntl.LOCK_UN)
 
     manifest = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -247,7 +255,7 @@ def open_target(
     skip_title_guard: bool,
 ) -> dict[str, Any]:
     def verify(label: str) -> dict[str, Any]:
-        time.sleep(max(pause, 1.8))
+        time.sleep(max(pause, 3.2))
         opened = out_dir / f"{shot_prefix}-opened.png"
         screenshot(env, opened)
         if skip_title_guard:
@@ -346,6 +354,28 @@ def find_wechat_window(env: dict[str, str]) -> Window | None:
     return max(candidates, key=lambda item: item.width * item.height)
 
 
+def close_secondary_wechat_windows(env: dict[str, str], main: Window) -> None:
+    ids = run(["xdotool", "search", "--onlyvisible", "--class", "wechat"], env=env, check=False).stdout.split()
+    main_area = main.width * main.height
+    for wid in ids:
+        if wid == main.wid:
+            continue
+        geom = run(["xdotool", "getwindowgeometry", "--shell", wid], env=env, check=False).stdout
+        values: dict[str, int] = {}
+        for line in geom.splitlines():
+            if "=" not in line:
+                continue
+            key_name, raw = line.split("=", 1)
+            try:
+                values[key_name] = int(raw)
+            except ValueError:
+                pass
+        area = values.get("WIDTH", 0) * values.get("HEIGHT", 0)
+        if 20_000 <= area < main_area:
+            run(["xdotool", "windowclose", wid], env=env, check=False)
+    time.sleep(0.5)
+
+
 def focus(env: dict[str, str], window: Window) -> None:
     run(["xdotool", "windowfocus", window.wid], env=env, check=False)
     run(["xdotool", "windowraise", window.wid], env=env, check=False)
@@ -365,10 +395,30 @@ def hotkey(env: dict[str, str], name: str) -> None:
 
 
 def paste_text(env: dict[str, str], text: str) -> None:
-    proc = subprocess.run(["xclip", "-selection", "clipboard"], input=text, text=True, env=env, check=False)
-    if proc.returncode != 0:
-        raise RuntimeError("xclip failed to set clipboard")
+    proc = subprocess.Popen(
+        ["xclip", "-selection", "clipboard"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    assert proc.stdin is not None
+    proc.stdin.write(text)
+    proc.stdin.close()
+    time.sleep(0.2)
     run(["xdotool", "key", "ctrl+v"], env=env)
+    time.sleep(0.2)
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+    if proc.returncode not in (0, -15, None):
+        stderr = proc.stderr.read() if proc.stderr else ""
+        raise RuntimeError(f"xclip failed to set clipboard: {stderr.strip()}")
 
 
 def screenshot(env: dict[str, str], path: Path) -> None:

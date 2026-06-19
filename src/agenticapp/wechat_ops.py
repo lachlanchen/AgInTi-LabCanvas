@@ -260,6 +260,7 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "max_reply_chars": 1200,
         "respond_to_all": False,
         "respond_to_self": False,
+        "ignore_self_messages": True,
         "trigger_local_types": [1],
         "chat_purpose": "research",
         "analysis_mode": "",
