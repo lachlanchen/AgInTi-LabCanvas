@@ -1,0 +1,392 @@
+from __future__ import annotations
+
+import argparse
+from datetime import datetime
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+from typing import Any
+
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+TOOL_ROOT = PACKAGE_ROOT / "agentic_tools" / "wechat_gui_agent"
+SCRIPTS = TOOL_ROOT / "scripts"
+PRIVATE = TOOL_ROOT / ".private"
+DEFAULT_DIRECT_CONFIG = PRIVATE / "lazy-research-direct-chatops.local.json"
+DEFAULT_CHAT_CONFIG = PRIVATE / "lazy-research-chatops.local.json"
+DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
+DEFAULT_DISPLAY = ":97"
+DEFAULT_VNC_PORT = 5917
+DEFAULT_NOVNC_PORT = 6107
+
+
+def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("wechat", help="Control WeChat GUI/direct chatops automation.")
+    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON where supported.")
+    nested = parser.add_subparsers(dest="wechat_command", required=True)
+
+    status = nested.add_parser("status", help="Show desktop, tmux, and private config status.")
+    status.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    status.set_defaults(func=cmd_status)
+
+    doctor = nested.add_parser("doctor", help="Check local commands and WeChat tool files.")
+    doctor.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    doctor.set_defaults(func=cmd_doctor)
+
+    init_config = nested.add_parser("init-config", help="Write ignored private config templates.")
+    init_config.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    init_config.add_argument("--chat", default="wechat-chat")
+    init_config.add_argument("--display", default=DEFAULT_DISPLAY)
+    init_config.add_argument("--chatroom-id", default="")
+    init_config.add_argument("--message-table", default="")
+    init_config.add_argument("--self-wxid", default="")
+    init_config.add_argument("--force", action="store_true")
+    init_config.set_defaults(func=cmd_init_config)
+
+    desktop = nested.add_parser("desktop", help="Start or inspect the isolated WeChat desktop.")
+    desktop.add_argument("action", choices=["start", "status"], nargs="?", default="status")
+    desktop.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    desktop.set_defaults(func=cmd_desktop)
+
+    monitor = nested.add_parser("monitor", help="Control the fast direct chat monitor tmux session.")
+    monitor.add_argument("action", choices=["start", "stop", "restart", "status", "once"], nargs="?", default="status")
+    monitor.add_argument("--config", type=Path, default=DEFAULT_DIRECT_CONFIG)
+    monitor.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
+    monitor.add_argument("--send", action="store_true", help="Allow live replies for one-shot mode.")
+    monitor.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    monitor.set_defaults(func=cmd_monitor)
+
+    hold = nested.add_parser("hold", help="Control the full tmux supervisor: desktop, fast monitor, worker, media sync.")
+    hold.add_argument("action", choices=["start", "stop", "restart", "status"], nargs="?", default="start")
+    hold.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    hold.set_defaults(func=cmd_hold)
+
+    send = nested.add_parser("send", help="Send a message or file to the currently visible chat.")
+    send.add_argument("--config", type=Path, default=DEFAULT_CHAT_CONFIG)
+    send.add_argument("--message")
+    send.add_argument("--file", type=Path)
+    send.set_defaults(func=cmd_send)
+
+    worker = nested.add_parser("worker", help="Enqueue or process slower backend tasks.")
+    worker.add_argument("action", choices=["enqueue", "once", "loop"])
+    worker.add_argument("request", nargs="*", help="Task text for enqueue.")
+    worker.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
+    worker.add_argument("--chat", default="wechat-chat")
+    worker.add_argument("--send", action="store_true")
+    worker.set_defaults(func=cmd_worker)
+
+    media = nested.add_parser("media-sync", help="Copy recent WeChat downloads/cache files into the private workspace.")
+    media.add_argument("--chat", required=True)
+    media.add_argument("--source", action="append", type=Path, required=True)
+    media.add_argument("--since-minutes", type=float, default=60)
+    media.add_argument("--dry-run", action="store_true")
+    media.set_defaults(func=cmd_media_sync)
+
+    rename = nested.add_parser("rename", help="Best-effort group rename through the visible WeChat GUI.")
+    rename.add_argument("--chat", default="wechat-chat")
+    rename.add_argument("--name", required=True)
+    rename.add_argument("--display", default=DEFAULT_DISPLAY)
+    rename.add_argument("--dry-run", action="store_true")
+    rename.set_defaults(func=cmd_rename)
+
+    install = nested.add_parser("install-user-scripts", help="Install small launch wrappers into ~/scripts.")
+    install.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    install.set_defaults(func=cmd_install_user_scripts)
+
+
+def status_payload() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+        "tool_root": str(TOOL_ROOT),
+        "private_dir_exists": PRIVATE.exists(),
+        "chat_config_exists": DEFAULT_CHAT_CONFIG.exists(),
+        "direct_config_exists": DEFAULT_DIRECT_CONFIG.exists(),
+        "desktop": desktop_status(),
+        "sessions": {
+            "supervisor": tmux_status("labcanvas-wechat"),
+            "direct_monitor": tmux_status("labcanvas-wechat-direct-chatops"),
+            "gui_monitor": tmux_status("labcanvas-wechat-chatops"),
+        },
+        "novnc_url": f"http://127.0.0.1:{DEFAULT_NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port={DEFAULT_NOVNC_PORT}&autoconnect=1&resize=remote",
+    }
+
+
+def run_wechat_action(action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = payload or {}
+    if action == "status":
+        return status_payload()
+    if action == "start-hold":
+        proc = run_command([str(SCRIPTS / "wechat_supervisor_tmux.sh"), "start"], capture=True)
+        result = status_payload()
+        result.update({"action": action, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip(), "returncode": proc.returncode})
+        return result
+    if action == "stop-hold":
+        proc = run_command([str(SCRIPTS / "wechat_supervisor_tmux.sh"), "stop"], capture=True)
+        result = status_payload()
+        result.update({"action": action, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip(), "returncode": proc.returncode})
+        return result
+    if action == "send-message":
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            raise ValueError("message is required")
+        proc = run_command(
+            [sys.executable, str(SCRIPTS / "wechat_chatops_bridge.py"), "--config", str(DEFAULT_CHAT_CONFIG), "--message", message],
+            capture=True,
+        )
+        return {"ok": proc.returncode == 0, "action": action, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()}
+    return {"ok": False, "error": f"Unsupported WeChat action: {action}"}
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    payload = status_payload()
+    print_payload(payload, args.json, f"wechat: {payload['desktop']['status']} {payload['novnc_url']}")
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    commands = ["tmux", "Xvfb", "x11vnc", "websockify", "xdotool", "xclip", "import", "tesseract", "codex"]
+    checks = {name: shutil.which(name) or "" for name in commands}
+    scripts = {
+        path.name: path.exists()
+        for path in (
+            SCRIPTS / "wechat_virtual_desktop.sh",
+            SCRIPTS / "wechat_supervisor_tmux.sh",
+            SCRIPTS / "wechat_direct_chatops.py",
+            SCRIPTS / "wechat_task_worker.py",
+            SCRIPTS / "wechat_chatops_bridge.py",
+            SCRIPTS / "wechat_media_sync.py",
+        )
+    }
+    missing = [name for name, found in checks.items() if not found]
+    payload = {"ok": not missing and all(scripts.values()), "commands": checks, "scripts": scripts, "missing": missing}
+    print_payload(payload, args.json, "wechat doctor: " + ("ok" if payload["ok"] else "missing " + ", ".join(missing)))
+    return 0 if payload["ok"] else 1
+
+
+def cmd_init_config(args: argparse.Namespace) -> int:
+    PRIVATE.mkdir(parents=True, exist_ok=True)
+    chat_config = {
+        "chat_name": args.chat,
+        "display": args.display,
+        "poll_seconds": 8,
+        "reply_enabled": True,
+        "respond_to_all": False,
+        "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
+        "max_reply_chars": 1200,
+        "state_path": str(PRIVATE / f"{safe_slug(args.chat)}-chatops.state.json"),
+        "db_path": str(PRIVATE / "wechat_mirror.sqlite"),
+        "output_dir": str(PACKAGE_ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F")),
+        "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "workdir": str(PACKAGE_ROOT)},
+    }
+    direct_config = {
+        "chat_name": args.chat,
+        "chatroom_id": args.chatroom_id,
+        "message_table": args.message_table,
+        "self_wxid": args.self_wxid,
+        "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
+        "mirror_db": str(PRIVATE / "wechat_mirror.sqlite"),
+        "max_reply_chars": 1200,
+        "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 180},
+    }
+    written = []
+    for path, data in ((DEFAULT_CHAT_CONFIG, chat_config), (DEFAULT_DIRECT_CONFIG, direct_config)):
+        if path.exists() and not args.force:
+            continue
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        path.chmod(0o600)
+        written.append(str(path))
+    print_payload({"ok": True, "written": written}, args.json, "wechat init-config: " + (", ".join(written) or "kept existing files"))
+    return 0
+
+
+def cmd_desktop(args: argparse.Namespace) -> int:
+    if args.action == "start":
+        proc = run_command([str(SCRIPTS / "wechat_virtual_desktop.sh")], capture=True)
+        if args.json:
+            print(json.dumps({"ok": proc.returncode == 0, "stdout": proc.stdout, "stderr": proc.stderr, "desktop": desktop_status()}, indent=2))
+        else:
+            print(proc.stdout, end="")
+            if proc.stderr:
+                print(proc.stderr, file=sys.stderr, end="")
+        return proc.returncode
+    payload = desktop_status()
+    print_payload(payload, args.json, f"wechat desktop: {payload['status']} {payload.get('novnc_url', '')}")
+    return 0
+
+
+def cmd_monitor(args: argparse.Namespace) -> int:
+    if args.action in {"start", "restart"}:
+        if args.action == "restart":
+            kill_tmux("labcanvas-wechat-direct-chatops")
+        proc = run_command([str(SCRIPTS / "wechat_direct_chatops_tmux.sh"), str(args.config)], capture=True)
+        print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, file=sys.stderr, end="")
+        return proc.returncode
+    if args.action == "stop":
+        stopped = kill_tmux("labcanvas-wechat-direct-chatops")
+        print("stopped" if stopped else "not running")
+        return 0
+    if args.action == "once":
+        command = [sys.executable, str(SCRIPTS / "wechat_direct_chatops.py"), "--config", str(args.config), "--worker-queue", str(args.queue)]
+        if args.send:
+            command.append("--send")
+        return run_command(command, capture=False).returncode
+    payload = tmux_status("labcanvas-wechat-direct-chatops")
+    print_payload(payload, args.json, f"wechat monitor: {payload['status']}")
+    return 0 if payload["running"] else 1
+
+
+def cmd_hold(args: argparse.Namespace) -> int:
+    proc = run_command([str(SCRIPTS / "wechat_supervisor_tmux.sh"), args.action], capture=True)
+    if args.json:
+        print(json.dumps({"ok": proc.returncode == 0, "stdout": proc.stdout, "stderr": proc.stderr, "status": status_payload()}, indent=2))
+    else:
+        print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, file=sys.stderr, end="")
+    return proc.returncode
+
+
+def cmd_send(args: argparse.Namespace) -> int:
+    if not args.message and not args.file:
+        raise SystemExit("Use --message or --file")
+    command = [sys.executable, str(SCRIPTS / "wechat_chatops_bridge.py"), "--config", str(args.config)]
+    if args.message:
+        command += ["--message", args.message]
+    if args.file:
+        command += ["--file", str(args.file)]
+    return run_command(command, capture=False).returncode
+
+
+def cmd_worker(args: argparse.Namespace) -> int:
+    command = [sys.executable, str(SCRIPTS / "wechat_task_worker.py"), "--queue", str(args.queue), "--chat", args.chat]
+    if args.action == "enqueue":
+        command += ["--enqueue", " ".join(args.request).strip()]
+    elif args.action == "once":
+        command.append("--once")
+    elif args.action == "loop":
+        command.append("--loop")
+    if args.send:
+        command.append("--send")
+    return run_command(command, capture=False).returncode
+
+
+def cmd_media_sync(args: argparse.Namespace) -> int:
+    command = [sys.executable, str(SCRIPTS / "wechat_media_sync.py"), "--chat", args.chat, "--since-minutes", str(args.since_minutes)]
+    for source in args.source:
+        command += ["--source", str(source)]
+    if args.dry_run:
+        command.append("--dry-run")
+    return run_command(command, capture=False).returncode
+
+
+def cmd_rename(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_group_admin.py"),
+        "--display",
+        args.display,
+        "--chat",
+        args.chat,
+        "--rename",
+        args.name,
+    ]
+    if args.dry_run:
+        command.append("--dry-run")
+    return run_command(command, capture=False).returncode
+
+
+def cmd_install_user_scripts(args: argparse.Namespace) -> int:
+    scripts_dir = Path.home() / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    wrapper = scripts_dir / "labcanvas-wechat-hold.sh"
+    wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "cd " + shlex.quote(str(PACKAGE_ROOT)) + "\n"
+        "if command -v labcanvas >/dev/null 2>&1; then\n"
+        "  exec labcanvas wechat hold \"${1:-start}\"\n"
+        "fi\n"
+        "export PYTHONPATH=" + shlex.quote(str(PACKAGE_ROOT / "src")) + ":${PYTHONPATH:-}\n"
+        "exec python3 -m agenticapp wechat hold \"${1:-start}\"\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    print_payload({"ok": True, "installed": [str(wrapper)]}, args.json, f"installed {wrapper}")
+    return 0
+
+
+def desktop_status() -> dict[str, Any]:
+    display_ok = run_command(["xdpyinfo"], capture=True, env=display_env(DEFAULT_DISPLAY)).returncode == 0
+    wechat_window = run_command(["xdotool", "search", "--onlyvisible", "--class", "wechat"], capture=True, env=display_env(DEFAULT_DISPLAY))
+    ports = {str(port): port_listening(port) for port in (DEFAULT_VNC_PORT, DEFAULT_NOVNC_PORT)}
+    status = "ready" if display_ok and wechat_window.returncode == 0 and ports[str(DEFAULT_NOVNC_PORT)] else "partial" if display_ok else "offline"
+    return {
+        "status": status,
+        "display": DEFAULT_DISPLAY,
+        "display_ok": display_ok,
+        "wechat_window": wechat_window.stdout.split(),
+        "ports": ports,
+        "novnc_url": f"http://127.0.0.1:{DEFAULT_NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port={DEFAULT_NOVNC_PORT}&autoconnect=1&resize=remote",
+    }
+
+
+def tmux_status(session: str) -> dict[str, Any]:
+    if shutil.which("tmux") is None:
+        return {"session": session, "running": False, "status": "missing-tmux"}
+    check = run_command(["tmux", "has-session", "-t", session], capture=True)
+    if check.returncode != 0:
+        return {"session": session, "running": False, "status": "not-running"}
+    panes = run_command(["tmux", "list-panes", "-t", session, "-F", "#{pane_index}: #{pane_current_command} #{pane_pid}"], capture=True)
+    return {"session": session, "running": True, "status": "running", "panes": panes.stdout.splitlines()}
+
+
+def kill_tmux(session: str) -> bool:
+    if shutil.which("tmux") is None:
+        return False
+    if run_command(["tmux", "has-session", "-t", session], capture=True).returncode != 0:
+        return False
+    run_command(["tmux", "kill-session", "-t", session], capture=True)
+    return True
+
+
+def port_listening(port: int) -> bool:
+    proc = run_command(["ss", "-ltn"], capture=True)
+    if proc.returncode != 0:
+        return False
+    return any(line.split()[3].endswith(f":{port}") for line in proc.stdout.splitlines() if len(line.split()) >= 4)
+
+
+def display_env(display: str) -> dict[str, str]:
+    env = os.environ.copy()
+    env["DISPLAY"] = display
+    env["XAUTHORITY"] = env.get("XAUTHORITY", "")
+    return env
+
+
+def run_command(command: list[str], *, capture: bool, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    kwargs: dict[str, Any] = {"cwd": PACKAGE_ROOT, "env": env or os.environ.copy(), "text": True, "check": False}
+    if capture:
+        kwargs.update({"capture_output": True})
+    try:
+        return subprocess.run(command, **kwargs)
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(command, 127, "", str(exc))
+
+
+def print_payload(payload: dict[str, Any], as_json: bool, summary: str) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(summary)
+
+
+def safe_slug(value: str) -> str:
+    keep = [char.lower() if char.isalnum() else "-" for char in value]
+    return "-".join("".join(keep).strip("-").split("-")) or "wechat"

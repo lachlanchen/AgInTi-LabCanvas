@@ -12,12 +12,17 @@ const TRANSLATIONS = {
     "button.dispatchTarget": "Dispatch Target",
     "button.saveSettings": "Save Settings",
     "button.openBioRender": "Open BioRender",
+    "button.startHold": "Start Hold",
+    "button.stopHold": "Stop Hold",
+    "button.status": "Status",
+    "button.sendWechat": "Send to WeChat",
     "button.applyJson": "Apply JSON",
     "button.dryRun": "Dry Run",
     "section.chat": "Chat",
     "section.canvas": "Canvas",
     "section.scene": "Scene",
     "section.backends": "Backends",
+    "section.wechat": "WeChat Ops",
     "status.ready": "Ready",
     "status.thinking": "Thinking",
     "status.idle": "Idle",
@@ -46,6 +51,7 @@ const TRANSLATIONS = {
     "chip.addFilter": "Add filter",
     "placeholder.message": "Ask for a paper setup, board, CAD device, optical bench, labels, colors, or generated figure panels.",
     "placeholder.targetInstruction": "Dry-run an instruction for any configured target.",
+    "placeholder.wechatMessage": "Send a short message to the currently visible chat.",
     "label.prompt": "Prompt",
     "label.rows": "Rows",
     "label.cols": "Cols",
@@ -65,6 +71,7 @@ const TRANSLATIONS = {
     "label.targetRegistry": "Target registry",
     "label.registryTarget": "Registry target",
     "label.targetInstruction": "Target instruction",
+    "label.wechatMessage": "WeChat message",
     "label.dryRun": "Dry run",
     "artifact.noneSelected": "Nothing selected",
     "artifact.metaEmpty": "Generated artifacts appear here.",
@@ -86,6 +93,7 @@ const TRANSLATIONS = {
     "message.exportedOpenScad": "Exported OpenSCAD: {path}",
     "message.labTaskReady": "Prepared {kind} task with {steps} command steps.",
     "message.targetDispatch": "Target dispatch {status}: {target}.",
+    "message.wechatAction": "WeChat {action}: {status}.",
     "backend.agintiReady": "AgInTi ready",
     "backend.agintiMissing": "AgInTi missing",
     "backend.bioPresent": "BioRender key present",
@@ -814,12 +822,15 @@ const themeButton = document.getElementById("themeBtn");
 const localeSelect = document.getElementById("localeSelect");
 const targetSelect = document.getElementById("targetSelect");
 const targetInstruction = document.getElementById("targetInstruction");
+const wechatStatus = document.getElementById("wechatStatus");
+const wechatOutput = document.getElementById("wechatOutput");
+const wechatMessage = document.getElementById("wechatMessage");
 
 setupLocale();
 init();
 
 async function init() {
-  const [specResponse] = await Promise.all([fetch("/api/spec"), loadSettings(), loadTargets(), loadArtifacts()]);
+  const [specResponse] = await Promise.all([fetch("/api/spec"), loadSettings(), loadTargets(), loadArtifacts(), loadWeChatStatus()]);
   const data = await specResponse.json();
   spec = data.spec;
   syncSpecView();
@@ -867,6 +878,10 @@ document.getElementById("openscadBtn").addEventListener("click", exportOpenScad)
 document.getElementById("labTaskBtn").addEventListener("click", runLabTask);
 document.getElementById("templateBtn").addEventListener("click", init);
 document.getElementById("dispatchTargetBtn").addEventListener("click", dispatchRegistryTarget);
+document.getElementById("wechatRefreshBtn").addEventListener("click", loadWeChatStatus);
+document.getElementById("wechatStartBtn").addEventListener("click", () => runWeChatAction("start-hold"));
+document.getElementById("wechatStopBtn").addEventListener("click", () => runWeChatAction("stop-hold"));
+document.getElementById("wechatSendBtn").addEventListener("click", () => runWeChatAction("send-message", { message: wechatMessage.value.trim() }));
 themeButton.addEventListener("click", toggleTheme);
 localeSelect.addEventListener("change", () => applyLocale(localeSelect.value, true));
 document.getElementById("openBioRenderBtn").addEventListener("click", () => {
@@ -1020,6 +1035,61 @@ async function loadTargets() {
   const data = await response.json();
   targets = Array.isArray(data.targets) ? data.targets : [];
   renderTargetOptions();
+}
+
+async function loadWeChatStatus() {
+  try {
+    const response = await fetch("/api/wechat/status");
+    const data = await response.json();
+    renderWeChatStatus(data);
+  } catch (error) {
+    wechatStatus.textContent = t("status.error");
+    wechatOutput.textContent = error.message;
+  }
+}
+
+async function runWeChatAction(action, extra = {}) {
+  if (action === "send-message" && !extra.message) {
+    wechatOutput.textContent = "Message is empty.";
+    return;
+  }
+  wechatStatus.textContent = t("status.thinking");
+  try {
+    const data = await postJson("/api/wechat/action", { action, ...extra });
+    renderWeChatStatus(data.status || data);
+    wechatOutput.textContent = summarizeWeChatResult(data);
+    addMessage("assistant", interpolate(t("message.wechatAction"), { action, status: data.ok === false ? "error" : "ok" }));
+    if (action === "send-message") {
+      wechatMessage.value = "";
+    }
+  } catch (error) {
+    wechatStatus.textContent = t("status.error");
+    wechatOutput.textContent = error.message;
+  }
+}
+
+function renderWeChatStatus(data) {
+  const desktop = data.desktop?.status || "unknown";
+  const supervisor = data.sessions?.supervisor?.status || "unknown";
+  wechatStatus.textContent = `${desktop} · ${supervisor}`;
+  wechatOutput.textContent = JSON.stringify(
+    {
+      desktop,
+      supervisor,
+      direct_monitor: data.sessions?.direct_monitor?.status || "unknown",
+      config: data.direct_config_exists ? "private config present" : "private config missing",
+      novnc: data.novnc_url || data.desktop?.novnc_url || "",
+    },
+    null,
+    2,
+  );
+}
+
+function summarizeWeChatResult(data) {
+  if (data.stdout || data.stderr) {
+    return [data.stdout, data.stderr].filter(Boolean).join("\n").trim();
+  }
+  return JSON.stringify(data, null, 2);
 }
 
 async function dispatchRegistryTarget() {

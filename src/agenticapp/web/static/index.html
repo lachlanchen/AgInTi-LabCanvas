@@ -173,6 +173,25 @@
                 <label><input id="toolBioRender" type="checkbox"> <span data-i18n="label.biorenderMcp">BioRender MCP</span></label>
                 <label><input id="toolTargetRegistry" type="checkbox"> <span data-i18n="label.targetRegistry">Target registry</span></label>
               </div>
+              <div class="wechat-box">
+                <div class="wechat-box-head">
+                  <strong data-i18n="section.wechat">WeChat Ops</strong>
+                  <span id="wechatStatus" class="status" data-i18n="status.loading">Loading</span>
+                </div>
+                <div class="wechat-actions">
+                  <button id="wechatStartBtn" class="ghost" type="button" data-i18n="button.startHold">Start Hold</button>
+                  <button id="wechatStopBtn" class="ghost" type="button" data-i18n="button.stopHold">Stop Hold</button>
+                  <button id="wechatRefreshBtn" class="ghost" type="button" data-i18n="button.status">Status</button>
+                </div>
+                <label>
+                  <span data-i18n="label.wechatMessage">WeChat message</span>
+                  <textarea id="wechatMessage" rows="2" placeholder="Send a short message to the currently visible chat." data-i18n-placeholder="placeholder.wechatMessage"></textarea>
+                </label>
+                <div class="wechat-actions">
+                  <button id="wechatSendBtn" class="ghost" type="button" data-i18n="button.sendWechat">Send to WeChat</button>
+                </div>
+                <pre id="wechatOutput" class="mini-log"></pre>
+              </div>
               <div class="dispatch-box">
                 <label>
                   <span data-i18n="label.registryTarget">Registry target</span>

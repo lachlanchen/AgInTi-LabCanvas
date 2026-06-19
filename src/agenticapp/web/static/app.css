@@ -577,6 +577,41 @@ label input[type="checkbox"] {
   padding: 10px;
 }
 
+.wechat-box {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 10px;
+}
+
+.wechat-box-head,
+.wechat-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wechat-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.mini-log {
+  max-height: 120px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--muted);
+  padding: 8px;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+}
+
 .dispatch-box textarea {
   min-height: 66px;
   resize: vertical;

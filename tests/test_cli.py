@@ -118,6 +118,19 @@ class CliTests(unittest.TestCase):
         self.assertGreaterEqual(len(payload["task"]["steps"]), 2)
         self.assertTrue(any(item["source"] == "lab-task" for item in payload["artifacts"]["items"]))
 
+    def test_wechat_status_json_has_reusable_command_surface(self):
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(["wechat", "--json", "status"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertIn("desktop", payload)
+        self.assertIn("sessions", payload)
+        self.assertIn("novnc_url", payload)
+
 
 if __name__ == "__main__":
     unittest.main()

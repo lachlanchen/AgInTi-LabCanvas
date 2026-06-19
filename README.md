@@ -40,6 +40,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | Board/CAD tasks | Shared CLI and web-chat workflow for KiCad, OpenSCAD, renders, and manufacturing prep | [docs/BOARD_CAD_TASKS.md](docs/BOARD_CAD_TASKS.md) |
 | PCB manufacturing | KiCad HYBEC and Lumileds boards, DRC/ERC, JLCPCB Gerber ZIPs | [pcb](pcb) |
 | LabVIEW automation | Linux install probe, MCP candidate research, stdio-to-HTTP bridge | [agentic_tools/labview_mcp_agent](agentic_tools/labview_mcp_agent) |
+| WeChat chatops | Isolated Linux GUI, direct local message mirror, fast ACK agent, worker queue, file/PDF return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md) |
 | App routing | Blender, BioRender, Unity, Unreal, and custom target dispatch | [docs/RESEARCH.md](docs/RESEARCH.md) |
 
 ## Quick Start
@@ -82,6 +83,8 @@ labcanvas studio openscad examples/paper-optics-setup.scene.json
 labcanvas studio lab-task "prepare Lumileds no-resistor PCB and C-mount reflector CAD"
 labcanvas studio lab-task "prepare Lumileds no-resistor PCB" --mode pcb --execute
 labcanvas studio dispatch blender "Prepare an editable paper figure setup"
+labcanvas wechat status
+labcanvas wechat hold start
 ```
 
 For a local Blender bridge test:

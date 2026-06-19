@@ -10,6 +10,8 @@ Use the wrapper for the shared WeChat desktop:
 
 ```bash
 agentic_tools/wechat_gui_agent/scripts/wechat_virtual_desktop.sh
+# or, through the installed/source LabCanvas CLI:
+labcanvas wechat desktop start
 ```
 
 Manual launch:
@@ -33,6 +35,35 @@ http://127.0.0.1:6107/vnc_lite.html?host=127.0.0.1&port=6107&autoconnect=1&resiz
 
 The Linux WeChat client is single-instance. If it is already running on another
 desktop, close that instance before launching it on the virtual display.
+
+## Persistent ChatOps
+
+Create ignored private configs first:
+
+```bash
+labcanvas wechat init-config --chat "example group"
+```
+
+Fill the direct config under `.private/` with the decrypted message table and
+self account ID. Then start the full supervisor:
+
+```bash
+labcanvas wechat hold start
+labcanvas wechat status
+tmux attach -t labcanvas-wechat
+```
+
+The supervisor keeps four panes alive: virtual desktop, fast direct monitor,
+worker queue, and optional media sync. Incoming mentions can get an immediate
+ACK while longer work is queued for `wechat_task_worker.py`, which can send a
+final message plus PDFs/images/files back through the official WeChat GUI.
+
+Install a reusable launcher:
+
+```bash
+labcanvas wechat install-user-scripts
+~/scripts/labcanvas-wechat-hold.sh start
+```
 
 ## Send Messages
 
@@ -103,6 +134,42 @@ python3 agentic_tools/wechat_gui_agent/scripts/wechat_mirror.py export-json \
 ```
 
 See `docs/MIRROR_SCHEMA.md` for the database layout.
+
+## Direct Monitor And Worker
+
+Run one fast direct pass:
+
+```bash
+labcanvas wechat monitor once --send
+```
+
+Start only the direct monitor:
+
+```bash
+labcanvas wechat monitor start
+```
+
+Queue slower backend work:
+
+```bash
+labcanvas wechat worker enqueue "Download the public PDF for <paper title>"
+labcanvas wechat worker once --send
+```
+
+Send a manual message or attachment to the currently visible chat:
+
+```bash
+labcanvas wechat send --message "Bridge online."
+labcanvas wechat send --file /absolute/path/to/report.pdf
+```
+
+Sync recent downloaded files/images into the private workspace:
+
+```bash
+labcanvas wechat media-sync --chat "example group" \
+  --source "$HOME/Documents/xwechat_files/<WXID>/file" \
+  --since-minutes 60
+```
 
 ## Group Creation
 

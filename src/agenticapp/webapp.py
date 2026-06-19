@@ -80,6 +80,10 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
         elif route in {"/api/settings", "/api/backends"}:
             settings = load_backend_settings(self.settings_path())
             self.send_json({"ok": True, "settings": settings, "status": backend_status(settings, ROOT)})
+        elif route == "/api/wechat/status":
+            from .wechat_ops import status_payload
+
+            self.send_json(status_payload())
         elif route == "/example-render":
             self.send_example_render()
         elif route.startswith("/artifacts/"):
@@ -131,6 +135,12 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
             elif route == "/api/dispatch":
                 payload = self.read_json()
                 self.send_json(dispatch_web_target(payload, self.storage_dir))
+            elif route == "/api/wechat/action":
+                from .wechat_ops import run_wechat_action
+
+                payload = self.read_json()
+                action = str(payload.get("action") or "status")
+                self.send_json(run_wechat_action(action, payload))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except (BlenderRenderError, DispatchError, ValueError, KeyError) as exc:

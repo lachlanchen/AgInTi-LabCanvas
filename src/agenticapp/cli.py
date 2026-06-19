@@ -131,6 +131,10 @@ def build_parser() -> argparse.ArgumentParser:
     studio_dispatch.add_argument("--timeout", type=float, default=30, help="Transport timeout in seconds.")
     studio_dispatch.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     studio_dispatch.set_defaults(func=cmd_studio_dispatch)
+
+    from .wechat_ops import add_wechat_parser
+
+    add_wechat_parser(subparsers)
     return parser
 
 
