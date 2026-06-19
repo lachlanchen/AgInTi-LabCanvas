@@ -39,6 +39,14 @@ private target configs.
 
 ## Main Commands
 
+Install or verify the optional external decrypt backend:
+
+```bash
+labcanvas wechat backend install --skip-deps
+labcanvas wechat backend status --json
+labcanvas wechat backend probe --json
+```
+
 Initialize direct backend config:
 
 ```bash
@@ -55,8 +63,14 @@ sudo agentic_tools/wechat_gui_agent/.private/wechat_decrypt/.venv/bin/python \
 Decrypt DBs:
 
 ```bash
-agentic_tools/wechat_gui_agent/.private/wechat_decrypt/.venv/bin/python \
-  agentic_tools/wechat_gui_agent/.private/external/wechat-decrypt/decrypt_db.py
+labcanvas wechat backend decrypt --incremental
+```
+
+Run the external Web UI/SSE monitor on a localhost-only port:
+
+```bash
+labcanvas wechat backend monitor-web --port 5679
+labcanvas wechat backend api-history --port 5679 --json
 ```
 
 Run one direct chatops pass:

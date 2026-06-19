@@ -110,7 +110,26 @@ python3 agentic_tools/wechat_gui_agent/scripts/wechat_mirror.py export-json \
   --output agentic_tools/wechat_gui_agent/.private/wechat_mirror_export.json
 ```
 
-## 7. Group Creation
+## 7. External Decrypt Backend
+
+Probe the optional second receive path:
+
+```bash
+labcanvas wechat backend probe --json
+labcanvas wechat backend decrypt --incremental
+```
+
+For local Web UI/SSE inspection, bind the imported upstream monitor to localhost:
+
+```bash
+labcanvas wechat backend monitor-web --port 5679
+labcanvas wechat backend api-history --port 5679 --json
+```
+
+Only run `labcanvas wechat backend find-keys` when keys are missing; it reads the
+running WeChat process memory and requires root or `CAP_SYS_PTRACE`.
+
+## 8. Group Creation
 
 Open the picker first:
 
@@ -138,3 +157,5 @@ visually confirmed. Creating a group is a real WeChat action and notifies users.
   retrying forever.
 - If a task is waiting for approval, use `labcanvas wechat approve` or
   `labcanvas wechat reject`; without a task id the newest waiting task is used.
+- If the external decrypt backend reports missing keys, rerun key extraction only
+  under explicit local authorization, then run `backend decrypt --incremental`.

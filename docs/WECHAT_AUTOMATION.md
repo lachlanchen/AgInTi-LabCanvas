@@ -64,6 +64,31 @@ labcanvas wechat install-user-scripts
 ~/scripts/create-labcanvas-wechat-stack.sh
 ```
 
+## External Decrypt Backend
+
+The second receive path is implemented as an optional private backend around
+`ylytdeng/wechat-decrypt`. It does not replace the production GUI send path or
+the existing group monitors.
+
+```bash
+labcanvas wechat backend install --skip-deps
+labcanvas wechat backend status --json
+labcanvas wechat backend probe --json
+labcanvas wechat backend init-config --json
+labcanvas wechat backend decrypt --incremental
+labcanvas wechat backend monitor-web --port 5679
+labcanvas wechat backend api-history --port 5679 --json
+labcanvas wechat backend mcp-config
+```
+
+The external checkout, generated `config.json`, SQLCipher keys, and decrypted
+DBs live under `agentic_tools/wechat_gui_agent/.private/`. Status and probe
+commands redact the WeChat profile ID and do not print decrypted messages. Use
+`find-keys` only when the private key file is missing; on Linux it requires root
+or `CAP_SYS_PTRACE`. The LabCanvas `monitor-web` launcher imports the upstream
+monitor but binds it to `127.0.0.1`, so the private Web UI/SSE API is not exposed
+on all interfaces.
+
 ## Private Config
 
 Real account identifiers stay in ignored files under

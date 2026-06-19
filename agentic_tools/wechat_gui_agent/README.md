@@ -237,6 +237,27 @@ Synced files are stored under
 `.private/downloads/<chat>/<wechat-profile>/<category>/` so images, PDFs, and
 videos from different profiles do not collide.
 
+## External Decrypt Backend
+
+The optional second solution uses `ylytdeng/wechat-decrypt` as a private receive
+backend while keeping LabCanvas GUI sending unchanged:
+
+```bash
+labcanvas wechat backend install --skip-deps
+labcanvas wechat backend status --json
+labcanvas wechat backend probe --json
+labcanvas wechat backend init-config --json
+labcanvas wechat backend decrypt --incremental
+labcanvas wechat backend monitor-web --port 5679
+labcanvas wechat backend api-history --port 5679 --json
+```
+
+Use `find-keys` only when the private key file is missing; Linux key extraction
+requires root or `CAP_SYS_PTRACE`. `monitor-web` runs through a LabCanvas
+localhost-only launcher instead of exposing the upstream Web UI on all
+interfaces. Status output redacts WeChat profile IDs and never prints keys or
+decrypted message contents.
+
 ## Chat Purpose Modes
 
 Keep one direct config per group. Research chats such as `懒人科研` should use

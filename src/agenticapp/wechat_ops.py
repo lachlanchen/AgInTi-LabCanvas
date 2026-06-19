@@ -120,6 +120,28 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     media.add_argument("--summary-only", action="store_true")
     media.set_defaults(func=cmd_media_sync)
 
+    backend = nested.add_parser("backend", help="Control optional external WeChat decrypt/MCP receive backends.")
+    backend.add_argument(
+        "action",
+        choices=["install", "status", "probe", "init-config", "find-keys", "decrypt", "monitor", "monitor-web", "api-history", "mcp-server", "mcp-config"],
+    )
+    backend.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    backend.add_argument("--external", type=Path, default=PRIVATE / "external" / "wechat-decrypt")
+    backend.add_argument("--db-dir", type=Path)
+    backend.add_argument("--chat", default="wechat-chat")
+    backend.add_argument("--repo", default="https://github.com/ylytdeng/wechat-decrypt.git")
+    backend.add_argument("--update", action="store_true")
+    backend.add_argument("--skip-deps", action="store_true")
+    backend.add_argument("--incremental", action="store_true")
+    backend.add_argument("--dry-run", action="store_true")
+    backend.add_argument("--host", default="127.0.0.1")
+    backend.add_argument("--port", type=int, default=5678)
+    backend.add_argument("--limit", type=int, default=20)
+    backend.add_argument("--filter-chat", default="")
+    backend.add_argument("--since", type=int, default=0)
+    backend.add_argument("--raw", action="store_true")
+    backend.set_defaults(func=cmd_backend)
+
     rename = nested.add_parser("rename", help="Best-effort group rename through the visible WeChat GUI.")
     rename.add_argument("--chat", default="wechat-chat")
     rename.add_argument("--name", required=True)
@@ -237,6 +259,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             SCRIPTS / "wechat_virtual_desktop.sh",
             SCRIPTS / "wechat_supervisor_tmux.sh",
             SCRIPTS / "wechat_direct_chatops.py",
+            SCRIPTS / "wechat_direct_backend.py",
             SCRIPTS / "wechat_task_worker.py",
             SCRIPTS / "wechat_chatops_bridge.py",
             SCRIPTS / "wechat_media_sync.py",
@@ -422,6 +445,49 @@ def cmd_media_sync(args: argparse.Namespace) -> int:
     if args.summary_only:
         command.append("--summary-only")
     return run_command(command, capture=False).returncode
+
+
+def cmd_backend(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_direct_backend.py"),
+        "--chat",
+        args.chat,
+        "--external",
+        str(args.external),
+    ]
+    if getattr(args, "json", False):
+        command.append("--json")
+    if args.db_dir:
+        command += ["--db-dir", str(args.db_dir)]
+    if args.action == "install":
+        command += ["install", "--repo", args.repo]
+        if args.update:
+            command.append("--update")
+        if args.skip_deps:
+            command.append("--skip-deps")
+    elif args.action == "decrypt":
+        command.append("decrypt")
+        if args.incremental:
+            command.append("--incremental")
+        if args.dry_run:
+            command.append("--dry-run")
+    elif args.action == "monitor-web":
+        command += ["monitor-web", "--host", args.host, "--port", str(args.port)]
+    elif args.action == "api-history":
+        command += ["api-history", "--port", str(args.port), "--limit", str(args.limit), "--since", str(args.since)]
+        if args.filter_chat:
+            command += ["--chat", args.filter_chat]
+        if args.raw:
+            command.append("--raw")
+    else:
+        command.append(args.action)
+    proc = run_command(command, capture=True)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, file=sys.stderr, end="")
+    return proc.returncode
 
 
 def cmd_rename(args: argparse.Namespace) -> int:
