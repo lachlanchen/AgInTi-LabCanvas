@@ -22,6 +22,7 @@ except ModuleNotFoundError:  # Tests and dry policy checks should not require th
     zstd = None
 
 from wechat_mirror import DEFAULT_DB, record_event
+from agent_backend import run_agent, select_backend
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -554,38 +555,27 @@ def recent_download_context(chat_name: str, *, limit: int = 8) -> str:
 
 
 def run_codex(config: dict[str, Any], row: dict[str, Any], context_rows: list[dict[str, Any]]) -> str:
-    codex = config["codex"]
+    codex = config.get("codex") if isinstance(config.get("codex"), dict) else {}
     context = "\n".join(
         f"- local_id={item['local_id']} sender={item['sender_display']} content={visible_message_text(item)}"
         for item in context_rows[-8:]
     )
     prompt = build_codex_prompt(config, row, context)
-    with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False) as out:
-        output_path = Path(out.name)
-    command = [
-        "codex",
-        "exec",
-        "-m",
-        codex.get("model", "gpt-5.5"),
-        "-c",
-        f'model_reasoning_effort="{codex.get("reasoning_effort", "low")}"',
-        "--sandbox",
-        codex.get("sandbox", "read-only"),
-        "-C",
-        str(ROOT),
-        "-o",
-        str(output_path),
+    backend = select_backend(config)
+    agent_cfg = config.get("claude") if backend == "claude" else codex
+    if not isinstance(agent_cfg, dict):
+        agent_cfg = {}
+    response = run_agent(
         prompt,
-    ]
-    try:
-        proc = subprocess.run(command, capture_output=True, text=True, check=False, timeout=int(codex.get("timeout_seconds", 60)))
-        if proc.returncode != 0:
-            return "NO_REPLY"
-        response = output_path.read_text(encoding="utf-8", errors="replace").strip()
-    except subprocess.TimeoutExpired:
+        backend=backend,
+        cwd=ROOT,
+        timeout=int(agent_cfg.get("timeout_seconds", codex.get("timeout_seconds", 60))),
+        writable=False,
+        model=str(agent_cfg.get("model", "")) if backend == "claude" else codex.get("model", "gpt-5.5"),
+        reasoning=str(codex.get("reasoning_effort", "low")),
+    )
+    if not response:
         return "NO_REPLY"
-    finally:
-        output_path.unlink(missing_ok=True)
     return response[: int(config.get("max_reply_chars", 1200))]
 
 

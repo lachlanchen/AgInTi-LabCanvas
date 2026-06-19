@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import tempfile
 from typing import Any
 
 from wechat_mirror import DEFAULT_DB, record_event
+from agent_backend import run_agent, select_backend
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -133,27 +135,16 @@ If the task needs external tools or files that are not available, say exactly wh
 Task:
 {json.dumps(task, ensure_ascii=False, indent=2)}
 """
-    with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False) as out:
-        output_path = Path(out.name)
-    command = [
-        "codex",
-        "exec",
-        "-m",
-        "gpt-5.5",
-        "-c",
-        'model_reasoning_effort="medium"',
-        "--sandbox",
-        "workspace-write",
-        "-C",
-        str(ROOT),
-        "-o",
-        str(output_path),
+    backend = select_backend()
+    return run_agent(
         prompt,
-    ]
-    subprocess.run(command, capture_output=True, text=True, check=False, timeout=300)
-    result = output_path.read_text(encoding="utf-8", errors="replace").strip()
-    output_path.unlink(missing_ok=True)
-    return result
+        backend=backend,
+        cwd=ROOT,
+        timeout=int(os.environ.get("WECHAT_WORKER_TIMEOUT", "300")),
+        writable=True,
+        model=os.environ.get("WECHAT_CLAUDE_WORKER_MODEL", "") if backend == "claude" else "gpt-5.5",
+        reasoning="medium",
+    )
 
 
 def parse_worker_result(text: str) -> dict[str, Any]:

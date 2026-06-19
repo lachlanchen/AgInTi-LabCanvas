@@ -88,7 +88,9 @@ fi
 
 if ! ss -ltn | awk '{print $4}' | grep -Eq "(^|:)${VNC_PORT}$"; then
   echo "Starting x11vnc on 127.0.0.1:$VNC_PORT for $DISPLAY_ID"
-  x11vnc -display "$DISPLAY_ID" -localhost -nopw -forever -shared -rfbport "$VNC_PORT" \
+  # Unset WAYLAND_DISPLAY so x11vnc attaches to the Xvfb X server instead of
+  # refusing to start under a WSLg/Wayland session.
+  env -u WAYLAND_DISPLAY x11vnc -display "$DISPLAY_ID" -localhost -nopw -forever -shared -rfbport "$VNC_PORT" \
     -bg -o "$LOG_DIR/${NAME}_x11vnc.log" >/dev/null
 fi
 

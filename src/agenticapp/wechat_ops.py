@@ -49,6 +49,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     init_config.add_argument("--chatroom-id", default="")
     init_config.add_argument("--message-table", default="")
     init_config.add_argument("--self-wxid", default="")
+    init_config.add_argument("--agent-backend", choices=["codex", "claude"], default="codex", help="AI backend the monitor and worker shell out to.")
     init_config.add_argument("--force", action="store_true")
     init_config.set_defaults(func=cmd_init_config)
 
@@ -229,7 +230,9 @@ def cmd_health(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    commands = ["tmux", "Xvfb", "x11vnc", "websockify", "xdotool", "xclip", "import", "tesseract", "codex"]
+    backend = (os.environ.get("WECHAT_AGENT_BACKEND") or "codex").strip().lower()
+    agent_cli = "claude" if backend == "claude" else "codex"
+    commands = ["tmux", "Xvfb", "x11vnc", "websockify", "xdotool", "xclip", "import", "tesseract", agent_cli]
     checks = {name: shutil.which(name) or "" for name in commands}
     scripts = {
         path.name: path.exists()
@@ -261,6 +264,8 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "state_path": str(PRIVATE / f"{safe_slug(args.chat)}-chatops.state.json"),
         "db_path": str(PRIVATE / "wechat_mirror.sqlite"),
         "output_dir": str(PACKAGE_ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F")),
+        "agent_backend": args.agent_backend,
+        "claude": {"model": "", "timeout_seconds": 60},
         "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "workdir": str(PACKAGE_ROOT), "timeout_seconds": 60},
     }
     direct_config = {
@@ -283,6 +288,8 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "figure", "file", "image"],
         "poll_seconds": 0.8,
         "catchup_poll_seconds": 0.1,
+        "agent_backend": args.agent_backend,
+        "claude": {"model": "", "timeout_seconds": 60},
         "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60},
     }
     written = []

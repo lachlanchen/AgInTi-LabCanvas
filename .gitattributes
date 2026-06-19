@@ -1,3 +1,6 @@
+# Shell scripts must stay LF so they run under bash/WSL after a Windows checkout.
+*.sh text eol=lf
+
 *.blend binary -whitespace
 *.dxf -diff -whitespace
 *.pdf binary -whitespace

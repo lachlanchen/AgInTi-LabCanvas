@@ -17,8 +17,10 @@ LOG_DIR="$ROOT/output/virtual_desktop/$(date +%F)"
   -- /bin/true >/tmp/wechat_virtual_desktop_launch.log
 
 if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible --class wechat >/dev/null 2>&1; then
-  DISPLAY="$DISPLAY_ID" XAUTHORITY= NO_AT_BRIDGE=1 setsid -f /usr/bin/wechat \
-    >"$LOG_DIR/wechat_app.log" 2>&1
+  # Force the X (xcb) backend on :97; without unsetting WAYLAND_DISPLAY a Qt app
+  # like WeChat may attach to the host WSLg Wayland display instead.
+  env -u WAYLAND_DISPLAY DISPLAY="$DISPLAY_ID" XAUTHORITY= NO_AT_BRIDGE=1 QT_QPA_PLATFORM=xcb \
+    setsid -f /usr/bin/wechat >"$LOG_DIR/wechat_app.log" 2>&1
   sleep 5
 fi
 
