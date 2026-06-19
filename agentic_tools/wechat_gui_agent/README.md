@@ -65,9 +65,10 @@ batch. Prompt context labels the latest row and bot/self replies, so a bare
 mention, repeated message, or fragment such as "same one" can refer to the
 previous request without repeating the same answer. By default,
 `coalesce_new_messages` makes a burst of incoming rows produce one reply to the
-latest actionable turn, with earlier rows used as context. Queued tasks include
-recent synced file paths so requests like "summarize this PDF" can resolve to
-the latest downloaded PDF.
+latest actionable turn while marking earlier actionable rows as `FOCUS`, so
+EchoMind analyzes every sentence in the burst and research tasks include every
+instruction. Queued tasks include recent synced file paths so requests like
+"summarize this PDF" can resolve to the latest downloaded PDF.
 
 For low-latency chatops, the supervisor defaults to:
 

@@ -97,6 +97,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("English gloss", prompt)
         self.assertIn("NO_REPLY", prompt)
         self.assertIn("full recent context", prompt)
+        self.assertIn("Analyze every FOCUS row", prompt)
+        self.assertIn("separate mini-analysis", prompt)
         self.assertIn("Avoid repeating", prompt)
 
     def test_research_prompt_uses_context_for_fragments_and_duplicates(self) -> None:
@@ -107,23 +109,25 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         prompt = direct_chatops.build_codex_prompt(config, self.row("same one"), "BOT_SELF previous answer")
 
-        self.assertIn("ongoing chat", prompt)
+        self.assertIn("coalesced user request", prompt)
         self.assertIn("incomplete messages", prompt)
         self.assertIn("near-duplicate", prompt)
         self.assertIn("Chip in", prompt)
-        self.assertIn("answer once", prompt)
+        self.assertIn("every FOCUS and LATEST instruction", prompt)
 
     def test_prompt_context_labels_latest_and_self_rows(self) -> None:
         config = self.base_config()
         rows = [
             self.row("previous answer", sender="self", local_id=1),
-            self.row("same one", sender="friend", local_id=2),
+            self.row("今日はいい天気です", sender="friend", local_id=2),
+            self.row("お腹すいた", sender="friend", local_id=3),
         ]
 
-        context = direct_chatops.format_prompt_context(config, rows[-1], rows)
+        context = direct_chatops.format_prompt_context(config, rows[-1], rows, focus_rows=rows[1:])
 
         self.assertIn("BOT_SELF local_id=1", context)
-        self.assertIn("LATEST local_id=2", context)
+        self.assertIn("FOCUS local_id=2", context)
+        self.assertIn("LATEST local_id=3", context)
 
     def test_burst_trigger_rows_are_coalesced_to_latest(self) -> None:
         config = self.base_config()
@@ -134,7 +138,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             self.row("今日はいい天気です", server_id="1", local_id=1),
             self.row("お腹すいた", server_id="2", local_id=2),
         ]
-        calls: list[str] = []
+        calls: list[dict[str, object]] = []
 
         original_read_new = direct_chatops.read_new_messages
         original_history = direct_chatops.read_recent_history
@@ -143,8 +147,14 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             direct_chatops.read_new_messages = lambda *_args, **_kwargs: rows  # type: ignore[assignment]
             direct_chatops.read_recent_history = lambda *_args, **_kwargs: rows  # type: ignore[assignment]
 
-            def fake_run_codex(_config: object, row: dict[str, object], _context: object) -> str:
-                calls.append(str(row["server_id"]))
+            def fake_run_codex(
+                _config: object,
+                row: dict[str, object],
+                _context: object,
+                *,
+                focus_rows: list[dict[str, object]] | None = None,
+            ) -> str:
+                calls.append({"server_id": row["server_id"], "focus_rows": focus_rows or []})
                 return f"CHAT: reply {row['server_id']}"
 
             direct_chatops.run_codex = fake_run_codex  # type: ignore[assignment]
@@ -154,7 +164,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
             direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
 
-        self.assertEqual(calls, ["2"])
+        self.assertEqual([call["server_id"] for call in calls], ["2"])
+        self.assertEqual([item["local_id"] for item in calls[0]["focus_rows"]], [1, 2])
         self.assertEqual(result["responses_sent"], 1)
         self.assertEqual(result["state"]["last_local_id"], 2)
         self.assertEqual(result["processed_local_id"], 2)
@@ -162,6 +173,30 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("metrics", result)
         self.assertIn("total_ms", result["metrics"])
         self.assertIn("last_loop_at", result["state"])
+
+    def test_research_immediate_route_keeps_all_focus_rows(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": ["download", "pdf"],
+        }
+        rows = [
+            self.row("find the paper", local_id=1),
+            self.row("download the pdf too", local_id=2),
+        ]
+
+        route = direct_chatops.immediate_task_route(config, rows[-1], rows, focus_rows=rows)
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("find the paper", route["task"])
+        self.assertIn("download the pdf too", route["task"])
+        self.assertIn("Current coalesced request", route["task"])
 
     def test_run_codex_uses_fast_session_role(self) -> None:
         config = self.base_config()
