@@ -60,13 +60,15 @@ case "$action" in
     fi
     tmux new-session -d -s "$SESSION" -n desktop \
       "cd '$ROOT' && while true; do agentic_tools/wechat_gui_agent/scripts/wechat_virtual_desktop.sh; sleep 60; done >> '$LOG_DIR/supervisor-desktop.log' 2>&1"
+    tmux split-window -h -t "$SESSION:desktop" \
+      "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh decrypt-refresh agentic_tools/wechat_gui_agent/scripts/wechat_decrypt_refresh_loop.sh >> '$LOG_DIR/supervisor-decrypt-refresh.log' 2>&1"
     IFS=',' read -r -a DIRECT_CONFIGS <<< "$CONFIGS"
     for direct_config in "${DIRECT_CONFIGS[@]}"; do
       direct_config="$(echo "$direct_config" | xargs)"
       [[ -n "$direct_config" ]] || continue
       direct_name="$(basename "$direct_config" .json | tr -c 'A-Za-z0-9_.-' '-')"
       tmux split-window -h -t "$SESSION:desktop" \
-        "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
+        "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
     done
     tmux split-window -v -t "$SESSION:desktop.1" \
       "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh worker python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-worker.log' 2>&1"

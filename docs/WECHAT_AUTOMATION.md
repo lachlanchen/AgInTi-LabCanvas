@@ -29,6 +29,9 @@ labcanvas wechat hold start
 labcanvas wechat stack start --web-port 19474
 labcanvas wechat queue --json
 labcanvas wechat approve <task-id> --note "approved"
+labcanvas wechat create-group --member-query lachlach --member-query lachlanchen --member-query lachlanchan --create
+labcanvas wechat rename --chat "EchoMind" --name "EchoMind"
+labcanvas wechat alias --chat "EchoMind" --name "LazyingArt"
 ```
 
 `hold start` launches tmux session `labcanvas-wechat` with panes for the virtual
@@ -74,17 +77,50 @@ message table and self ID from private config; they do not hard-code account IDs
   "message_table": "<Msg_TABLE>",
   "self_wxid": "<SELF_WXID>",
   "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex"],
+  "respond_to_all": false,
+  "respond_to_self": false,
+  "trigger_local_types": [1],
+  "chat_purpose": "research",
+  "analysis_mode": "",
+  "silent_danger_enabled": true,
   "immediate_ack_enabled": true,
   "immediate_ack_text": "收到，我先处理，完成后把结果发回来。"
 }
 ```
 
+Use purpose-specific configs rather than one global bot personality. For the
+research group, keep `chat_purpose` as `research` and require an explicit
+trigger. For an EchoMind-style language-learning group, set:
+
+```json
+{
+  "chat_name": "EchoMind",
+  "respond_to_all": true,
+  "respond_to_self": false,
+  "chat_purpose": "language_learning",
+  "analysis_mode": "echomind_language",
+  "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only"}
+}
+```
+
+EchoMind replies to normal messages with compact Japanese/Chinese/English
+pronunciation and grammar analysis. If a message asks for secrets, credentials,
+payments, destructive commands, prompt disclosure, rule changes, or other
+non-language actions, the fast monitor silently returns `NO_REPLY`.
+Set `respond_to_self: true` only when phone-sent messages from the logged-in
+account should also trigger replies. The monitor stores sent reply text and
+skips exact matches to avoid self-reply loops.
+
 ## Fast And Worker Agents
 
-The fast monitor reads new decrypted rows, mirrors them into SQLite, and routes
-mentions. When a trigger is found, it also loads recent full chat history from
-the decrypted message table, so a bare `@name` can refer back to an earlier
-request such as "summarize this PDF". It asks Codex for one of three shapes:
+The supervisor runs one decrypt refresh pane and one direct monitor pane per
+group. Direct monitors normally use `--no-decrypt` and read the refreshed cache;
+this avoids multiple monitors competing over the WeChat DB. The fast monitor
+reads new decrypted rows, ignores system/non-text rows as triggers, mirrors
+them into SQLite, and routes mentions. When a trigger is found, it also loads
+recent full chat history from the decrypted message table, so a bare `@name`
+can refer back to an earlier request such as "summarize this PDF". It asks Codex
+for one of three shapes:
 
 ```text
 CHAT: <quick reply>
@@ -169,15 +205,42 @@ labcanvas wechat stack start --web-port 19474
 
 ## Group Rename
 
-Rename through the visible Linux client:
+Create or update groups through the visible Linux client. Group creation is
+search based, so it is more stable than selecting contacts by a stale row
+number:
+
+```bash
+labcanvas wechat create-group \
+  --member-query lachlach \
+  --member-query lachlanchen \
+  --member-query lachlanchan \
+  --create
+```
+
+Then set the group name and the current account's in-group alias:
 
 ```bash
 labcanvas wechat rename --chat "example group" --name "懒人科研"
+labcanvas wechat alias --chat "example group" --name "LazyingArt"
 ```
 
-The helper clicks the `Group Name` field, pastes the name, presses Enter, and
-clicks the WeChat `Modify` confirmation. Add `--dry-run` if you only want
-screenshots.
+The helper opens Settings, edits the `Group Name` or `My Alias in Group` row,
+uses screenshots/OCR to verify the intended row contains the target text, then
+clicks WeChat's `Modify` confirmation. Add `--dry-run` to capture screenshots
+without typing. Use `--skip-ocr-guard` only under direct human supervision.
+
+For the EchoMind setup used here:
+
+```bash
+labcanvas wechat create-group \
+  --member-query lachlach \
+  --member-query lachlanchen \
+  --member-query lachlanchan \
+  --create
+labcanvas wechat rename --chat "EchoMind" --name "EchoMind"
+labcanvas wechat alias --chat "EchoMind" --name "LazyingArt"
+labcanvas wechat alias --chat "懒人科研" --name "LazyingArt"
+```
 
 ## Guardrails
 
@@ -185,3 +248,10 @@ screenshots.
 - Use noVNC on `127.0.0.1` and approve login from the phone.
 - Send only through explicit `--send` or web button actions.
 - Verify file sends in the GUI when attachments are important.
+- Use a distinct `send_target`, `message_table`, and `state_path` for each group
+  so replies go back to the group that produced the trigger.
+- Include `expected_title` in each private send target. The GUI sender OCR-checks
+  the opened chat title before composing and fails closed if the wrong group is
+  visible.
+- Keep danger handling silent in chat; record only private mirror metadata if a
+  blocked message must be audited.

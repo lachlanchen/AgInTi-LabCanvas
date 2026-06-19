@@ -7,6 +7,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import time
 
@@ -22,7 +23,9 @@ def main() -> int:
     parser.add_argument("--display", default=":97")
     parser.add_argument("--chat", default="wechat-chat")
     parser.add_argument("--rename")
-    parser.add_argument("--dry-run", action="store_true", help="Capture the rename path without typing or confirming.")
+    parser.add_argument("--my-alias", help="Set this account's display name inside the visible group.")
+    parser.add_argument("--dry-run", action="store_true", help="Open the target settings row and capture screenshots without typing.")
+    parser.add_argument("--skip-ocr-guard", action="store_true", help="Allow confirmation even if row OCR cannot verify the target text.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F"))
     parser.add_argument("--mirror-db", type=Path, default=DEFAULT_DB)
     args = parser.parse_args()
@@ -36,7 +39,15 @@ def main() -> int:
     focus(env, window)
 
     if args.rename:
-        result = rename_group_best_effort(env, window, args.rename, args.output_dir, dry_run=args.dry_run)
+        result = edit_settings_row(
+            env,
+            window,
+            "group_name",
+            args.rename,
+            args.output_dir,
+            dry_run=args.dry_run,
+            skip_ocr_guard=args.skip_ocr_guard,
+        )
         record_event(
             chat_name=args.chat,
             action="rename_group",
@@ -46,51 +57,185 @@ def main() -> int:
             metadata=result,
         )
         print(result)
+    if args.my_alias:
+        result = edit_settings_row(
+            env,
+            window,
+            "my_alias",
+            args.my_alias,
+            args.output_dir,
+            dry_run=args.dry_run,
+            skip_ocr_guard=args.skip_ocr_guard,
+        )
+        record_event(
+            chat_name=args.chat,
+            action="set_my_alias",
+            status=result["status"],
+            db_path=args.mirror_db,
+            screenshot_path=result["screenshot"],
+            metadata=result,
+        )
+        print(result)
     return 0
 
 
-def rename_group_best_effort(env: dict[str, str], window, new_name: str, out_dir: Path, *, dry_run: bool) -> dict[str, str]:
-    run_dir = out_dir / f"{datetime.now().strftime('%H%M%S')}-group-rename"
+ROW_SPECS = {
+    "group_name": {
+        "action": "rename_group",
+        "label": "Group Name",
+        "click_offset": (805, 326),
+        "crop_offset": (760, 286, 245, 78),
+        "note": "Edited the Group Name row.",
+    },
+    "my_alias": {
+        "action": "set_my_alias",
+        "label": "My Alias in Group",
+        "click_offset": (805, 531),
+        "crop_offset": (760, 492, 245, 78),
+        "note": "Edited the My Alias in Group row.",
+    },
+}
+
+
+def edit_settings_row(
+    env: dict[str, str],
+    window,
+    row_key: str,
+    value: str,
+    out_dir: Path,
+    *,
+    dry_run: bool,
+    skip_ocr_guard: bool,
+) -> dict[str, str]:
+    spec = ROW_SPECS[row_key]
+    run_dir = out_dir / f"{datetime.now().strftime('%H%M%S')}-{spec['action']}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Open right-side group settings drawer.
-    run_gui(["xdotool", "mousemove", str(window.x + window.width - 32), str(window.y + 51), "click", "1"], env=env)
-    time.sleep(0.8)
+    ensure_settings_drawer_open(env, window, run_dir)
     screenshot(env, run_dir / "01-settings.png")
 
-    # Known Linux WeChat 4.x locations. The blank row under Group Name becomes
-    # an input field after clicking; pasting is safe only after that row has
-    # focus. Dry-run captures the path without typing.
-    group_name_input = (window.x + window.width - 140, window.y + 328)
-    run_gui(["xdotool", "mousemove", str(group_name_input[0]), str(group_name_input[1]), "click", "1"], env=env, check=False)
+    click_x = window.x + int(spec["click_offset"][0])
+    click_y = window.y + int(spec["click_offset"][1])
+    run_gui(["xdotool", "mousemove", str(click_x), str(click_y), "click", "1"], env=env, check=False)
     time.sleep(0.4)
-    screenshot(env, run_dir / "02-group-name-field.png")
+    field_path = run_dir / "02-field-focused.png"
+    screenshot(env, field_path)
     if dry_run:
         return {
             "status": "dry-run",
-            "requested_name": new_name,
-            "screenshot": str(run_dir / "02-group-name-field.png"),
+            "row": row_key,
+            "requested_value": value,
+            "screenshot": str(field_path),
             "run_dir": str(run_dir),
-            "note": "Captured group-name field location without typing.",
+            "note": f"Captured {spec['label']} field location without typing.",
         }
 
-    paste_text(env, new_name)
+    replace_focused_text(env, value)
     time.sleep(0.8)
-    screenshot(env, run_dir / "03-pasted-name.png")
+    pasted_path = run_dir / "03-pasted-value.png"
+    screenshot(env, pasted_path)
+    verified_text = row_crop_text(env, window, pasted_path, run_dir / "03-pasted-row.png", spec)
+    if value.lower() not in verified_text.lower() and not skip_ocr_guard:
+        return {
+            "status": "blocked-unverified-row",
+            "row": row_key,
+            "requested_value": value,
+            "screenshot": str(pasted_path),
+            "row_screenshot": str(run_dir / "03-pasted-row.png"),
+            "run_dir": str(run_dir),
+            "ocr_text": verified_text,
+            "note": "Target text was not verified inside the settings row; no confirmation was sent.",
+        }
+
     run_gui(["xdotool", "key", "Return"], env=env, check=False)
     time.sleep(1.0)
-    screenshot(env, run_dir / "04-confirm-dialog.png")
+    confirm_path = run_dir / "04-confirm-dialog.png"
+    screenshot(env, confirm_path)
+    if not confirmation_dialog_visible(env, confirm_path) and not skip_ocr_guard:
+        return {
+            "status": "blocked-no-confirm-dialog",
+            "row": row_key,
+            "requested_value": value,
+            "screenshot": str(confirm_path),
+            "run_dir": str(run_dir),
+            "note": "WeChat confirmation dialog was not detected; no Modify click was sent.",
+        }
     click_modify_confirmation(env, window)
     time.sleep(1.4)
-    screenshot(env, run_dir / "05-after-confirm.png")
+    after_path = run_dir / "05-after-confirm.png"
+    screenshot(env, after_path)
 
     return {
         "status": "submitted",
-        "requested_name": new_name,
-        "screenshot": str(run_dir / "05-after-confirm.png"),
+        "row": row_key,
+        "requested_value": value,
+        "screenshot": str(after_path),
         "run_dir": str(run_dir),
-        "note": "Pasted into Group Name, confirmed with Enter, and clicked Modify.",
+        "note": str(spec["note"]),
     }
+
+
+def replace_focused_text(env: dict[str, str], value: str) -> None:
+    # In Linux WeChat settings rows, Ctrl+A is inconsistent. End followed by a
+    # generous Backspace run clears the value while staying inside the focused
+    # row; Delete clears any remaining suffix after the paste.
+    run_gui(["xdotool", "key", "End"], env=env, check=False)
+    run_gui(["xdotool", "key", "--repeat", "40", "--delay", "12", "BackSpace"], env=env, check=False)
+    paste_text(env, value)
+    run_gui(["xdotool", "key", "--repeat", "8", "--delay", "12", "Delete"], env=env, check=False)
+
+
+def ensure_settings_drawer_open(env: dict[str, str], window, run_dir: Path) -> None:
+    before = run_dir / "00-before-settings.png"
+    screenshot(env, before)
+    if settings_drawer_visible(before):
+        return
+    run_gui(["xdotool", "mousemove", str(window.x + window.width - 32), str(window.y + 51), "click", "1"], env=env)
+    time.sleep(0.8)
+    after = run_dir / "00-after-open-settings.png"
+    screenshot(env, after)
+    if not settings_drawer_visible(after):
+        raise SystemExit(f"Settings drawer was not detected after clicking menu. Screenshot: {after}")
+
+
+def settings_drawer_visible(path: Path) -> bool:
+    text = ocr_image(path)
+    markers = ("My Alias", "Group Name", "Search Chat History", "Mute Notifications")
+    return any(marker.lower() in text.lower() for marker in markers)
+
+
+def open_settings_drawer(env: dict[str, str], window) -> None:
+    # Open right-side group settings drawer if it is closed. If the drawer is
+    # already open, this click still keeps focus inside the main WeChat window;
+    # callers verify with screenshots before typing.
+    run_gui(["xdotool", "mousemove", str(window.x + window.width - 32), str(window.y + 51), "click", "1"], env=env)
+    time.sleep(0.8)
+
+
+def row_crop_text(env: dict[str, str], window, source: Path, crop_path: Path, spec: dict[str, object]) -> str:
+    x_off, y_off, width, height = spec["crop_offset"]
+    crop_geometry = f"{width}x{height}+{window.x + int(x_off)}+{window.y + int(y_off)}"
+    if shutil.which("convert"):
+        run_gui(["convert", str(source), "-crop", crop_geometry, str(crop_path)], env=env, check=False)
+        return ocr_image(crop_path)
+    return ocr_image(source)
+
+
+def confirmation_dialog_visible(env: dict[str, str], path: Path) -> bool:
+    text = ocr_image(path)
+    return "modify" in text.lower() or "edit my alias" in text.lower() or "edit group name" in text.lower()
+
+
+def ocr_image(path: Path) -> str:
+    if not shutil.which("tesseract"):
+        return ""
+    proc = subprocess.run(
+        ["tesseract", str(path), "stdout", "-l", "eng", "--psm", "6"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return (proc.stdout or "") + "\n" + (proc.stderr or "")
 
 
 def rename_group_evidence_only(env: dict[str, str], window, new_name: str, run_dir: Path) -> dict[str, str]:

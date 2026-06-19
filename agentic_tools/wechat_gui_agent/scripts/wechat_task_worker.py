@@ -199,7 +199,7 @@ def send_message(message: str, chat: str, send_targets: Path) -> None:
                     str(DEFAULT_DB),
                 ],
                 cwd=ROOT,
-                check=False,
+                check=True,
             )
         finally:
             target_file.unlink(missing_ok=True)
@@ -235,7 +235,7 @@ def send_file(file_path: Path, chat: str, send_targets: Path) -> None:
                     str(target_file),
                 ],
                 cwd=ROOT,
-                check=False,
+                check=True,
             )
         finally:
             target_file.unlink(missing_ok=True)

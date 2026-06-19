@@ -123,6 +123,23 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     rename.add_argument("--dry-run", action="store_true")
     rename.set_defaults(func=cmd_rename)
 
+    alias = nested.add_parser("alias", help="Set this account's in-group alias through WeChat group settings.")
+    alias.add_argument("--chat", default="wechat-chat")
+    alias.add_argument("--name", required=True)
+    alias.add_argument("--display", default=DEFAULT_DISPLAY)
+    alias.add_argument("--dry-run", action="store_true")
+    alias.add_argument("--skip-ocr-guard", action="store_true")
+    alias.set_defaults(func=cmd_alias)
+
+    create_group = nested.add_parser("create-group", help="Create a WeChat group by selecting searched contacts.")
+    create_group.add_argument("--display", default=DEFAULT_DISPLAY)
+    create_group.add_argument("--plan", type=Path)
+    create_group.add_argument("--member-query", action="append", default=[])
+    create_group.add_argument("--search-box")
+    create_group.add_argument("--search-result-checkbox")
+    create_group.add_argument("--create", action="store_true")
+    create_group.set_defaults(func=cmd_create_group)
+
     install = nested.add_parser("install-user-scripts", help="Install small launch wrappers into ~/scripts.")
     install.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     install.set_defaults(func=cmd_install_user_scripts)
@@ -241,6 +258,12 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
         "mirror_db": str(PRIVATE / "wechat_mirror.sqlite"),
         "max_reply_chars": 1200,
+        "respond_to_all": False,
+        "respond_to_self": False,
+        "trigger_local_types": [1],
+        "chat_purpose": "research",
+        "analysis_mode": "",
+        "silent_danger_enabled": True,
         "immediate_ack_enabled": True,
         "immediate_ack_text": "收到，我先处理，完成后把结果发回来。",
         "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "figure", "file", "image"],
@@ -398,6 +421,44 @@ def cmd_rename(args: argparse.Namespace) -> int:
     ]
     if args.dry_run:
         command.append("--dry-run")
+    return run_command(command, capture=False).returncode
+
+
+def cmd_alias(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_group_admin.py"),
+        "--display",
+        args.display,
+        "--chat",
+        args.chat,
+        "--my-alias",
+        args.name,
+    ]
+    if args.dry_run:
+        command.append("--dry-run")
+    if args.skip_ocr_guard:
+        command.append("--skip-ocr-guard")
+    return run_command(command, capture=False).returncode
+
+
+def cmd_create_group(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_group_create.py"),
+        "--display",
+        args.display,
+    ]
+    if args.plan:
+        command += ["--plan", str(args.plan)]
+    for query in args.member_query:
+        command += ["--member-query", query]
+    if args.search_box:
+        command += ["--search-box", args.search_box]
+    if args.search_result_checkbox:
+        command += ["--search-result-checkbox", args.search_result_checkbox]
+    if args.create:
+        command.append("--create")
     return run_command(command, capture=False).returncode
 
 

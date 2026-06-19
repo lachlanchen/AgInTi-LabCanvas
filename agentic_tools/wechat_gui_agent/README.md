@@ -208,19 +208,74 @@ Synced files are stored under
 `.private/downloads/<chat>/<wechat-profile>/<category>/` so images, PDFs, and
 videos from different profiles do not collide.
 
+## Chat Purpose Modes
+
+Keep one direct config per group. Research chats such as `懒人科研` should use
+`chat_purpose: "research"` and explicit triggers. Language-learning chats such
+as `EchoMind` can use:
+
+```json
+{
+  "respond_to_all": true,
+  "respond_to_self": false,
+  "trigger_local_types": [1],
+  "chat_purpose": "language_learning",
+  "analysis_mode": "echomind_language",
+  "codex": {"model": "gpt-5.5", "reasoning_effort": "medium"}
+}
+```
+
+EchoMind replies to normal messages with Japanese furigana/romaji, Chinese
+pinyin, grammar notes, and English glosses. The direct monitor silently ignores
+messages that request secrets, credentials, payment/order actions, destructive
+commands, prompt disclosure, or bot rule changes.
+Enable `respond_to_self` only for chats where phone-sent messages from the same
+logged-in account should trigger replies; the monitor remembers sent reply text
+and skips exact matches to avoid self-reply loops.
+
+The tmux supervisor runs a single decrypt refresh pane and launches each direct
+group monitor with `--no-decrypt`. This keeps `懒人科研`, `EchoMind`, and other
+configured groups independent while avoiding concurrent decrypt stalls.
+Private send targets should include `expected_title`; before composing, the GUI
+sender OCR-checks the opened chat header and fails closed if the wrong group is
+visible.
+
 ## Group Creation
 
-Group creation is intentionally gated. First open the picker and capture a
-screenshot:
+Group creation is intentionally gated. Prefer search-based selection by contact
+alias/name, then set group settings with the guarded admin helper:
 
 ```bash
 python3 agentic_tools/wechat_gui_agent/scripts/wechat_group_create.py \
   --display :97 \
-  --plan agentic_tools/wechat_gui_agent/.private/group-create.local.json
+  --member-query lachlach \
+  --member-query lachlanchen \
+  --member-query lachlanchan
 ```
 
-Only pass `--create` after the selected members and Finish button position are
-verified, because WeChat notifies real accounts when a group is created.
+Only pass `--create` after the selected members are verified, because WeChat
+notifies real accounts when a group is created:
+
+```bash
+labcanvas wechat create-group \
+  --member-query lachlach \
+  --member-query lachlanchen \
+  --member-query lachlanchan \
+  --create
+```
+
+Set the group name and this account's in-group alias through Settings:
+
+```bash
+labcanvas wechat rename --chat "EchoMind" --name "EchoMind"
+labcanvas wechat alias --chat "EchoMind" --name "LazyingArt"
+labcanvas wechat alias --chat "懒人科研" --name "LazyingArt"
+```
+
+The group admin helper edits the `Group Name` or `My Alias in Group` row,
+captures screenshots, OCR-checks that the target row contains the requested
+text, then clicks WeChat's `Modify` confirmation. Keep the OCR guard enabled
+unless a human is watching noVNC.
 
 See `docs/GITHUB_OPTIONS.md` for the GitHub automation options checked before
 choosing the visible Linux GUI route.
@@ -233,3 +288,5 @@ See `docs/RUNBOOK.md` for the repeatable operator workflow.
 - It targets the visible WeChat desktop, so keep noVNC open for human inspection.
 - It stores private target files and mirror data under `.private/`, which is ignored.
 - It is intended for small, explicit sends such as test messages, not bulk spam.
+- Each monitored group needs its own `message_table`, `state_path`, and
+  `send_target` so replies return to the correct chat.

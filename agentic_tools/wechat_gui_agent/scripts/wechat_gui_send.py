@@ -38,6 +38,7 @@ class Window:
 class TargetSpec:
     name: str
     query: str
+    expected_title: str
     result_click: tuple[int, int] | None = None
     open_click: tuple[int, int] | None = None
 
@@ -55,6 +56,7 @@ def main() -> int:
         help="In dry-run mode, paste the message into the composer for screenshot review.",
     )
     parser.add_argument("--pause", type=float, default=1.2, help="Pause between GUI actions.")
+    parser.add_argument("--skip-title-guard", action="store_true", help="Do not OCR-check the opened chat title before composing.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F"))
     parser.add_argument("--mirror-db", type=Path, default=DEFAULT_DB, help="SQLite mirror database path.")
     args = parser.parse_args()
@@ -64,7 +66,10 @@ def main() -> int:
         raise SystemExit("No targets supplied. Use --target or --targets-file.")
     args.message = message
 
-    require_tools("xdotool", "xclip", "import")
+    required = ["xdotool", "xclip", "import"]
+    if not args.skip_title_guard:
+        required.extend(["convert", "tesseract"])
+    require_tools(*required)
     env = os.environ.copy()
     env["DISPLAY"] = args.display
     env["XAUTHORITY"] = env.get("XAUTHORITY", "")
@@ -87,6 +92,7 @@ def main() -> int:
             args.send,
             args.compose_dry_run,
             args.pause,
+            args.skip_title_guard,
             args.output_dir,
             args.mirror_db,
             index,
@@ -129,16 +135,18 @@ def load_targets(cli_targets: list[str], targets_file: Path | None, default_mess
 
 def target_from_raw(raw: Any) -> TargetSpec:
     if isinstance(raw, str):
-        return TargetSpec(name=raw, query=raw)
+        return TargetSpec(name=raw, query=raw, expected_title=raw)
     if not isinstance(raw, dict):
         raise SystemExit(f"Target must be a string or object, got {type(raw).__name__}")
     name = str(raw.get("name") or raw.get("target") or raw.get("query") or "").strip()
     query = str(raw.get("query") or name).strip()
+    expected_title = str(raw.get("expected_title") or raw.get("title") or name).strip()
     if not name or not query:
         raise SystemExit("Target object requires name/target and query")
     return TargetSpec(
         name=name,
         query=query,
+        expected_title=expected_title or name,
         result_click=point_from_raw(raw.get("result_click")),
         open_click=point_from_raw(raw.get("open_click")),
     )
@@ -160,6 +168,7 @@ def send_one(
     do_send: bool,
     compose_dry_run: bool,
     pause: float,
+    skip_title_guard: bool,
     out_dir: Path,
     mirror_db: Path,
     index: int,
@@ -168,25 +177,19 @@ def send_one(
     shot_prefix = f"{index:02d}-{safe_name(target.name)}"
     screenshot(env, out_dir / f"{shot_prefix}-before.png")
 
-    # The native Linux WeChat layout has search near the top-left of the main
-    # window and the composer at the bottom of the right pane.
-    if target.open_click:
-        click(env, window.x + target.open_click[0], window.y + target.open_click[1])
-    else:
-        click(env, window.x + 118, window.y + 46)
-        time.sleep(pause)
-        hotkey(env, "ctrl+a")
-        key(env, "BackSpace")
-        paste_text(env, target.query)
-        time.sleep(max(pause, 1.6))
-        screenshot(env, out_dir / f"{shot_prefix}-search.png")
-        if target.result_click:
-            click(env, window.x + target.result_click[0], window.y + target.result_click[1])
-        else:
-            key(env, "Return")
-    time.sleep(max(pause, 1.8))
-    screenshot(env, out_dir / f"{shot_prefix}-opened.png")
+    guard = open_target(env, window, target, pause, out_dir, shot_prefix, skip_title_guard)
     opened_path = out_dir / f"{shot_prefix}-opened.png"
+    if not guard["ok"]:
+        record_event(
+            chat_name=target.name,
+            query=target.query,
+            action="open",
+            status="title-guard-failed",
+            db_path=mirror_db,
+            screenshot_path=str(opened_path),
+            metadata={"target": target.__dict__, "guard": guard},
+        )
+        raise RuntimeError(f"Opened chat title guard failed for {target.name}: OCR={guard.get('ocr_text', '')!r}")
 
     if not do_send and not compose_dry_run:
         record_event(
@@ -196,7 +199,7 @@ def send_one(
             status="dry-run-opened",
             db_path=mirror_db,
             screenshot_path=str(opened_path),
-            metadata={"target": target.__dict__},
+            metadata={"target": target.__dict__, "guard": guard},
         )
         return {"target": target.name, "status": "dry-run-opened", "screenshot_prefix": shot_prefix}
 
@@ -229,9 +232,97 @@ def send_one(
         status=status,
         db_path=mirror_db,
         screenshot_path=str(evidence_path),
-        metadata={"target": target.__dict__},
+        metadata={"target": target.__dict__, "guard": guard},
     )
     return {"target": target.name, "status": status, "screenshot_prefix": shot_prefix}
+
+
+def open_target(
+    env: dict[str, str],
+    window: Window,
+    target: TargetSpec,
+    pause: float,
+    out_dir: Path,
+    shot_prefix: str,
+    skip_title_guard: bool,
+) -> dict[str, Any]:
+    def verify(label: str) -> dict[str, Any]:
+        time.sleep(max(pause, 1.8))
+        opened = out_dir / f"{shot_prefix}-opened.png"
+        screenshot(env, opened)
+        if skip_title_guard:
+            return {"ok": True, "method": label, "ocr_text": ""}
+        return verify_opened_title(env, window, opened, target, out_dir / f"{shot_prefix}-title.png", label)
+
+    if target.open_click:
+        click(env, window.x + target.open_click[0], window.y + target.open_click[1])
+        return verify("open_click")
+
+    search_for_target(env, window, target.query, pause)
+    screenshot(env, out_dir / f"{shot_prefix}-search.png")
+    if target.result_click:
+        click(env, window.x + target.result_click[0], window.y + target.result_click[1])
+        guard = verify("result_click")
+        if guard["ok"]:
+            return guard
+        search_for_target(env, window, target.query, pause)
+        key(env, "Return")
+        return verify("return-fallback")
+
+    key(env, "Return")
+    return verify("return")
+
+
+def search_for_target(env: dict[str, str], window: Window, query: str, pause: float) -> None:
+    click(env, window.x + 118, window.y + 46)
+    time.sleep(pause)
+    hotkey(env, "ctrl+a")
+    key(env, "BackSpace")
+    paste_text(env, query)
+    time.sleep(max(pause, 1.6))
+
+
+def verify_opened_title(
+    env: dict[str, str],
+    window: Window,
+    screenshot_path: Path,
+    target: TargetSpec,
+    crop_path: Path,
+    method: str,
+) -> dict[str, Any]:
+    left = window.x + 260
+    top = window.y
+    width = max(300, window.width - 260)
+    height = 92
+    run(
+        [
+            "convert",
+            str(screenshot_path),
+            "-crop",
+            f"{width}x{height}+{left}+{top}",
+            "-colorspace",
+            "Gray",
+            "-resize",
+            "200%",
+            str(crop_path),
+        ],
+        env=env,
+    )
+    proc = run(["tesseract", str(crop_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "6"], env=env, check=False)
+    ocr_text = proc.stdout.strip()
+    expected = normalize_title(target.expected_title)
+    observed = normalize_title(ocr_text)
+    return {
+        "ok": bool(expected and expected in observed),
+        "method": method,
+        "expected_title": target.expected_title,
+        "ocr_text": ocr_text,
+        "title_crop": str(crop_path),
+    }
+
+
+def normalize_title(text: str) -> str:
+    return "".join(ch.lower() for ch in str(text or "") if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
 
 
 def find_wechat_window(env: dict[str, str]) -> Window | None:

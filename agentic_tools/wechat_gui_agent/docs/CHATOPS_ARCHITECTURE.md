@@ -88,7 +88,24 @@ WECHAT_DIRECT_CONFIGS='/path/to/group-a-direct.json,/path/to/group-b-direct.json
 ```
 
 The supervisor creates one direct monitor pane per config. Use a unique
-`state_path` per group so local IDs do not collide.
+`state_path` per group so local IDs do not collide. It also runs a single
+decrypt refresh pane; direct monitors use `--no-decrypt` and read the shared
+refreshed cache, which avoids concurrent decrypt stalls.
+Private send targets should include `expected_title`; the GUI sender OCR-checks
+the opened chat header before composing and fails closed if the wrong chat is
+visible.
+
+Use a purpose field in each private config. `懒人科研` is the research workflow
+and should require an explicit trigger. `EchoMind` is the language-learning
+workflow and can set `respond_to_all: true`,
+`respond_to_self: false`,
+`chat_purpose: "language_learning"`, and
+`analysis_mode: "echomind_language"` so each normal message is analyzed for
+Japanese furigana/romaji, Chinese pinyin, grammar, and English meaning.
+Dangerous or off-purpose messages should return `NO_REPLY` silently.
+Set `respond_to_self: true` only if phone-sent messages from the logged-in
+account should trigger replies; exact sent replies are remembered and skipped to
+avoid loops.
 
 Run the complete operator stack, including the LabCanvas web control panel:
 
@@ -100,7 +117,8 @@ labcanvas wechat stack start --web-port 19474
 The supervisor creates panes for:
 
 - virtual desktop / Linux WeChat relaunch
-- fast direct chat monitor
+- decrypt refresh loop
+- one fast direct chat monitor per configured group
 - slower worker queue processor
 - optional media sync loop
 
@@ -185,16 +203,33 @@ mirror.
 ## Group Rename
 
 Linux WeChat 4.x exposes the group-name editor as a blank field under the
-`Group Name` row. The rename helper clicks that field, pastes the requested
-name, presses Enter, and confirms the `Modify` dialog:
+`Group Name` row and this account's in-group display name under
+`My Alias in Group`. Use the guarded helpers instead of ad hoc clicks:
 
 ```bash
 python3 agentic_tools/wechat_gui_agent/scripts/wechat_group_admin.py \
   --chat "懒人科研" \
   --rename "懒人科研"
+python3 agentic_tools/wechat_gui_agent/scripts/wechat_group_admin.py \
+  --chat "懒人科研" \
+  --my-alias "LazyingArt"
 ```
 
-Use `--dry-run` to capture the field path without typing or confirming.
+The helper opens Settings, focuses the requested row, replaces the row text,
+captures screenshots, OCR-checks that the target row contains the requested
+value, then clicks the `Modify` dialog. Use `--dry-run` to capture the row
+without typing. Use `--skip-ocr-guard` only while watching the noVNC desktop.
+
+Create groups by searched aliases rather than fixed contact rows:
+
+```bash
+python3 agentic_tools/wechat_gui_agent/scripts/wechat_group_create.py \
+  --display :97 \
+  --member-query lachlach \
+  --member-query lachlanchen \
+  --member-query lachlanchan \
+  --create
+```
 
 ## Private Config Shape
 
@@ -207,6 +242,10 @@ Keep real IDs in ignored config files:
   "message_table": "<Msg_TABLE>",
   "self_wxid": "<SELF_WXID>",
   "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex"],
+  "respond_to_all": false,
+  "chat_purpose": "research",
+  "analysis_mode": "",
+  "silent_danger_enabled": true,
   "mirror_db": "agentic_tools/wechat_gui_agent/.private/wechat_mirror.sqlite"
 }
 ```
