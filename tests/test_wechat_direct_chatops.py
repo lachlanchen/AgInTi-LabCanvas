@@ -64,6 +64,28 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
     def test_system_rows_do_not_trigger(self) -> None:
         self.assertFalse(direct_chatops.should_respond(self.base_config(), {}, self.row("你修改群名为 EchoMind", local_type=10000)))
 
+    def test_research_attachment_triggers_worker_route(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+        }
+        row = self.row("", local_type=49)
+
+        self.assertTrue(direct_chatops.should_respond(config, {}, row))
+        route = direct_chatops.immediate_task_route(config, row, [row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("WeChat file/link item", route["task"])
+
+    def test_echomind_ignores_attachment_rows(self) -> None:
+        self.assertFalse(direct_chatops.should_respond(self.base_config(), {}, self.row("", local_type=49)))
+
     def test_visible_message_text_strips_group_sender_prefix(self) -> None:
         self.assertEqual(direct_chatops.visible_message_text(self.row("oldseedling1992:\n你吃飯了嗎")), "你吃飯了嗎")
 

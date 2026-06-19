@@ -856,6 +856,9 @@ def direct_config_health(path: Path) -> dict[str, Any]:
         "state_exists": state_exists,
         "state_last_local_id": state_last,
         "db_latest_local_id": latest.get("latest_local_id"),
+        "db_latest_at": latest.get("latest_at", ""),
+        "db_latest_age_seconds": latest.get("age_seconds"),
+        "db_stale": bool((latest.get("age_seconds") or 0) > int(config.get("stale_warning_seconds", 1800))),
         "caught_up": bool(caught_up),
         "respond_to_all": bool(config.get("respond_to_all", False)),
         "respond_to_self": bool(config.get("respond_to_self", False)),
@@ -885,15 +888,18 @@ def sanitize_loop_metrics(raw: Any) -> dict[str, Any]:
 def latest_direct_db_local_id(table: str) -> dict[str, Any]:
     db_path = PRIVATE / "wechat_decrypt" / "decrypted" / "message" / "message_0.db"
     if not db_path.exists():
-        return {"ok": False, "status": "decrypted-db-missing", "latest_local_id": None}
+        return {"ok": False, "status": "decrypted-db-missing", "latest_local_id": None, "latest_at": "", "age_seconds": None}
     if not is_safe_sql_identifier(table):
-        return {"ok": False, "status": "message-table-invalid", "latest_local_id": None}
+        return {"ok": False, "status": "message-table-invalid", "latest_local_id": None, "latest_at": "", "age_seconds": None}
     try:
         with sqlite3.connect(db_path) as conn:
-            row = conn.execute(f'SELECT MAX(local_id) FROM "{table}"').fetchone()
+            row = conn.execute(f'SELECT MAX(local_id), MAX(create_time) FROM "{table}"').fetchone()
     except sqlite3.Error:
-        return {"ok": False, "status": "message-table-unreadable", "latest_local_id": None}
-    return {"ok": True, "status": "ok", "latest_local_id": int(row[0] or 0)}
+        return {"ok": False, "status": "message-table-unreadable", "latest_local_id": None, "latest_at": "", "age_seconds": None}
+    latest_time = int(row[1] or 0)
+    latest_at = datetime.fromtimestamp(latest_time).isoformat(timespec="seconds") if latest_time else ""
+    age_seconds = int(datetime.now().timestamp() - latest_time) if latest_time else None
+    return {"ok": True, "status": "ok", "latest_local_id": int(row[0] or 0), "latest_at": latest_at, "age_seconds": age_seconds}
 
 
 def is_safe_sql_identifier(value: str) -> bool:

@@ -150,10 +150,13 @@ local SQLite/file work and does not call Codex. A Codex call only happens when a
 new message must be classified or answered.
 
 The fast monitor reads new decrypted rows, ignores system/non-text rows as
-triggers, mirrors them into SQLite, and routes mentions. When a trigger is
-found, it also loads recent full chat history from the decrypted message table,
-so a bare `@name` can refer back to an earlier request such as "summarize this
-PDF". It asks the low-reasoning router for one of four shapes:
+triggers for language-learning chats, mirrors them into SQLite, and routes
+mentions. Research chats can additionally treat image/video/file rows as
+attachment triggers; those rows immediately ACK and enqueue a worker task using
+recent synced media from `.private/downloads`. When a trigger is found, it also
+loads recent full chat history from the decrypted message table, so a bare
+`@name` can refer back to an earlier request such as "summarize this PDF". It
+asks the low-reasoning router for one of four shapes:
 
 ```text
 CHAT: <quick reply>

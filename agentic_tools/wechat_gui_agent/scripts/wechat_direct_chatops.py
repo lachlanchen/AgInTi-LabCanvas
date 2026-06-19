@@ -87,6 +87,8 @@ def load_config(path: Path) -> dict[str, Any]:
         "ignore_self_messages": True,
         "bot_reply_memory_limit": 20,
         "trigger_local_types": [1],
+        "attachment_trigger_local_types": [3, 43, 49],
+        "respond_to_attachments": None,
         "chat_purpose": "research",
         "analysis_mode": "",
         "silent_danger_enabled": True,
@@ -370,13 +372,16 @@ def should_respond(config: dict[str, Any], state: dict[str, Any], row: dict[str,
         if not bool(config.get("respond_to_self", False)):
             return False
     allowed_local_types = {int(item) for item in config.get("trigger_local_types", [1])}
-    if allowed_local_types and int(row.get("local_type") or 0) not in allowed_local_types:
+    attachment_trigger = is_attachment_trigger(config, row)
+    if allowed_local_types and int(row.get("local_type") or 0) not in allowed_local_types and not attachment_trigger:
         return False
     if str(row["server_id"]) in set(state.get("responded_server_ids", [])):
         return False
     text = visible_message_text(row)
     if is_dangerous_message(config, text):
         return False
+    if attachment_trigger:
+        return True
     if bool(config.get("respond_to_all", False)):
         return meaningful_request_text(text, config.get("trigger_prefixes", []))
     return any(prefix in text for prefix in config["trigger_prefixes"])
@@ -443,6 +448,34 @@ def is_language_analysis_mode(config: dict[str, Any]) -> bool:
     return str(config.get("analysis_mode") or "").strip().lower() in {"echomind_language", "language_learning"}
 
 
+def is_research_chat(config: dict[str, Any]) -> bool:
+    return str(config.get("chat_purpose") or "").strip().lower() in {"research", "lab", "paper", "science"}
+
+
+def is_attachment_trigger(config: dict[str, Any], row: dict[str, Any]) -> bool:
+    if is_language_analysis_mode(config):
+        return False
+    default_enabled = is_research_chat(config)
+    if not bool(config.get("respond_to_attachments", default_enabled)):
+        return False
+    local_type = int(row.get("local_type") or 0)
+    allowed = {int(item) for item in config.get("attachment_trigger_local_types", [3, 43, 49])}
+    return local_type in allowed
+
+
+def message_kind(row: dict[str, Any]) -> str:
+    local_type = int(row.get("local_type") or 0)
+    return {
+        1: "text",
+        3: "image",
+        34: "voice",
+        43: "video",
+        47: "sticker",
+        49: "file/link",
+        10000: "system",
+    }.get(local_type, f"type-{local_type}")
+
+
 def immediate_task_route(config: dict[str, Any], row: dict[str, Any], context_rows: list[dict[str, Any]]) -> dict[str, str] | None:
     if not bool(config.get("immediate_ack_enabled", True)):
         return None
@@ -450,7 +483,8 @@ def immediate_task_route(config: dict[str, Any], row: dict[str, Any], context_ro
     combined = latest_request or visible_message_text(row)
     lowered = combined.lower()
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
-    if not any(keyword and keyword in lowered for keyword in keywords):
+    attachment_trigger = is_attachment_trigger(config, row)
+    if not attachment_trigger and not any(keyword and keyword in lowered for keyword in keywords):
         return None
     task_context = "\n".join(
         f"{item['sender_display']}: {visible_message_text(item)}"
@@ -462,10 +496,11 @@ def immediate_task_route(config: dict[str, Any], row: dict[str, Any], context_ro
         "Handle this WeChat request as backend work. "
         "Use available local tools, download or generate needed artifacts into ignored private/output folders, "
         "and return a concise message plus any files/images/PDFs to send back.\n\n"
-        f"Latest request: {latest_request or visible_message_text(row)}\n\nRecent history:\n{task_context}"
+        f"Latest request: {latest_request or attachment_request_text(row)}\n\nRecent history:\n{task_context}"
         f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
     )
-    return {"ack": str(config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。"), "task": task}
+    ack = str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
+    return {"ack": ack, "task": task}
 
 
 def strip_trigger_prefixes(text: str, prefixes: list[str]) -> str:
@@ -491,6 +526,10 @@ def effective_request_text(config: dict[str, Any], row: dict[str, Any], context_
         if meaningful_request_text(candidate, prefixes):
             return candidate
     return trigger_text
+
+
+def attachment_request_text(row: dict[str, Any]) -> str:
+    return f"New WeChat {message_kind(row)} item received in this research chat; inspect recent synced files/media and summarize or process it."
 
 
 def visible_message_text(row: dict[str, Any]) -> str:

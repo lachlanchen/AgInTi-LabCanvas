@@ -289,7 +289,9 @@ configured groups independent while avoiding concurrent decrypt stalls. The
 refresh pane uses `labcanvas wechat backend decrypt --incremental` through the
 same backend wrapper as the CLI, and skips decrypt work when the source DB/WAL
 timestamp is unchanged. `labcanvas wechat health --json` reports the external
-backend state next to per-group catch-up status.
+backend state next to per-group catch-up status and latest-row age. Research
+configs can enable attachment triggers for image/video/file rows; EchoMind keeps
+those disabled so it only responds to language-learning text.
 Private send targets should include `expected_title`; before composing, the GUI
 sender OCR-checks the opened chat header and fails closed if the wrong group is
 visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel
