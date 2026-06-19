@@ -81,10 +81,14 @@ def load_config(path: Path) -> dict[str, Any]:
         "state_path": str(DEFAULT_STATE),
         "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
         "mirror_db": str(DEFAULT_DB),
-        "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60},
+        "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 30},
         "codex_session_reuse": True,
         "poll_seconds": float(os.environ.get("WECHAT_DIRECT_POLL_SECONDS", DEFAULT_POLL_SECONDS)),
         "catchup_poll_seconds": float(os.environ.get("WECHAT_DIRECT_CATCHUP_POLL_SECONDS", DEFAULT_CATCHUP_POLL_SECONDS)),
+        "send_pause_seconds": 0.35,
+        "send_initial_title_wait_seconds": 0.45,
+        "send_title_retry_seconds": 3.2,
+        "send_timeout_seconds": 60,
         "max_reply_chars": 1200,
         "history_limit": 24,
         "coalesce_new_messages": True,
@@ -957,6 +961,9 @@ def send_gui_message(config: dict[str, Any], message: str) -> str:
             "--targets-file",
             str(target_file),
             "--send",
+            "--prefer-current",
+            "--pause",
+            str(config.get("send_pause_seconds", 0.35)),
             "--mirror-db",
             str(Path(config.get("mirror_db", DEFAULT_DB))),
         ]
@@ -973,7 +980,18 @@ def send_gui_message(config: dict[str, Any], message: str) -> str:
             message,
         ]
     try:
-        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=int(config.get("send_timeout_seconds", 60)))
+        env = os.environ.copy()
+        env.setdefault("WECHAT_INITIAL_TITLE_WAIT", str(config.get("send_initial_title_wait_seconds", 0.45)))
+        env.setdefault("WECHAT_TITLE_RETRY_SECONDS", str(config.get("send_title_retry_seconds", 3.2)))
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=int(config.get("send_timeout_seconds", 60)),
+            env=env,
+        )
     finally:
         if target_file:
             target_file.unlink(missing_ok=True)

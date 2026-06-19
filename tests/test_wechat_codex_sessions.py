@@ -111,3 +111,41 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertIn("resume", calls[1])
         self.assertIn("thread-1", calls[1])
         self.assertEqual(next(iter(data.values()))["thread_id"], "thread-1")
+
+    def test_run_codex_session_does_not_fallback_after_timeout(self) -> None:
+        sessions = load_sessions()
+        calls: list[list[str]] = []
+        original_run = sessions.subprocess.run
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                registry = Path(tmp) / "sessions.local.json"
+                key = sessions.session_key("EchoMind", "fast")
+                registry.write_text(
+                    json.dumps({key: {"thread_id": "thread-1", "chat_name": "EchoMind", "role": "fast"}}),
+                    encoding="utf-8",
+                )
+
+                def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                    calls.append(command)
+                    raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+
+                sessions.subprocess.run = fake_run
+                result = sessions.run_codex_session(
+                    "hello",
+                    chat_name="EchoMind",
+                    role="fast",
+                    model="gpt-5.5",
+                    reasoning_effort="low",
+                    sandbox="read-only",
+                    timeout_seconds=5,
+                    registry_path=registry,
+                )
+        finally:
+            sessions.subprocess.run = original_run
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["resumed"])
+        self.assertFalse(result["fallback_started"])
+        self.assertEqual(result["returncode"], 124)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("resume", calls[0])

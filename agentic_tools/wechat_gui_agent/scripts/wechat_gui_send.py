@@ -60,6 +60,7 @@ def main() -> int:
     )
     parser.add_argument("--pause", type=float, default=1.2, help="Pause between GUI actions.")
     parser.add_argument("--skip-title-guard", action="store_true", help="Do not OCR-check the opened chat title before composing.")
+    parser.add_argument("--prefer-current", action="store_true", help="If the visible chat title already matches, send there without searching first.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F"))
     parser.add_argument("--mirror-db", type=Path, default=DEFAULT_DB, help="SQLite mirror database path.")
     args = parser.parse_args()
@@ -101,6 +102,7 @@ def main() -> int:
                 args.compose_dry_run,
                 args.pause,
                 args.skip_title_guard,
+                args.prefer_current,
                 args.output_dir,
                 args.mirror_db,
                 index,
@@ -192,6 +194,7 @@ def send_one(
     compose_dry_run: bool,
     pause: float,
     skip_title_guard: bool,
+    prefer_current: bool,
     out_dir: Path,
     mirror_db: Path,
     index: int,
@@ -200,7 +203,7 @@ def send_one(
     shot_prefix = f"{index:02d}-{safe_name(target.name)}"
     screenshot(env, out_dir / f"{shot_prefix}-before.png")
 
-    guard = open_target(env, window, target, pause, out_dir, shot_prefix, skip_title_guard)
+    guard = open_target(env, window, target, pause, out_dir, shot_prefix, skip_title_guard, prefer_current)
     opened_path = out_dir / f"{shot_prefix}-opened.png"
     if not guard["ok"]:
         record_event(
@@ -268,6 +271,7 @@ def open_target(
     out_dir: Path,
     shot_prefix: str,
     skip_title_guard: bool,
+    prefer_current: bool = False,
 ) -> dict[str, Any]:
     def verify(label: str) -> dict[str, Any]:
         time.sleep(max(pause, float(os.environ.get("WECHAT_INITIAL_TITLE_WAIT", "4.5"))))
@@ -285,6 +289,11 @@ def open_target(
             if time.monotonic() >= deadline:
                 return last_guard
             time.sleep(max(pause, 1.0))
+
+    if prefer_current:
+        current_guard = verify("current")
+        if current_guard["ok"]:
+            return current_guard
 
     if target.open_click:
         click(env, window.x + target.open_click[0], window.y + target.open_click[1])

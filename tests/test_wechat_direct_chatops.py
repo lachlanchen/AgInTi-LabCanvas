@@ -263,6 +263,43 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(calls[0]["chat_name"], "EchoMind")
         self.assertEqual(calls[0]["role"], "fast")
 
+    def test_send_gui_message_uses_fast_current_chat_path(self) -> None:
+        calls: list[dict[str, object]] = []
+        original_run = direct_chatops.subprocess.run
+        try:
+            def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                calls.append({"command": command, "kwargs": kwargs})
+                stdout = '{"results":[{"screenshot_prefix":"01-EchoMind"}]}'
+                return subprocess.CompletedProcess(command, 0, stdout, "")
+
+            direct_chatops.subprocess.run = fake_run  # type: ignore[assignment]
+            screenshot = direct_chatops.send_gui_message(
+                {
+                    "chat_name": "EchoMind",
+                    "display": ":97",
+                    "send_target": {"name": "EchoMind", "query": "EchoMind", "expected_title": "EchoMind"},
+                    "mirror_db": "/tmp/wechat-mirror.sqlite",
+                    "send_pause_seconds": 0.25,
+                    "send_initial_title_wait_seconds": 0.4,
+                    "send_title_retry_seconds": 2.5,
+                    "send_timeout_seconds": 12,
+                },
+                "hi",
+            )
+        finally:
+            direct_chatops.subprocess.run = original_run  # type: ignore[assignment]
+
+        self.assertIn("01-EchoMind-sent.png", screenshot)
+        self.assertEqual(len(calls), 1)
+        command = calls[0]["command"]
+        kwargs = calls[0]["kwargs"]
+        self.assertIn("--prefer-current", command)
+        self.assertIn("--pause", command)
+        self.assertIn("0.25", command)
+        self.assertEqual(kwargs["timeout"], 12)
+        self.assertEqual(kwargs["env"]["WECHAT_INITIAL_TITLE_WAIT"], "0.4")
+        self.assertEqual(kwargs["env"]["WECHAT_TITLE_RETRY_SECONDS"], "2.5")
+
     def test_default_direct_config_uses_low_reasoning_fast_polling(self) -> None:
         with self.subTest("defaults"):
             import json
@@ -274,9 +311,12 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertEqual(config["codex"]["model"], "gpt-5.5")
         self.assertEqual(config["codex"]["reasoning_effort"], "low")
-        self.assertEqual(config["codex"]["timeout_seconds"], 60)
+        self.assertEqual(config["codex"]["timeout_seconds"], 30)
         self.assertEqual(config["poll_seconds"], 0.8)
         self.assertEqual(config["catchup_poll_seconds"], 0.1)
+        self.assertEqual(config["send_pause_seconds"], 0.35)
+        self.assertEqual(config["send_initial_title_wait_seconds"], 0.45)
+        self.assertEqual(config["send_title_retry_seconds"], 3.2)
 
     def test_refresh_decrypted_store_uses_incremental_backend_wrapper(self) -> None:
         calls: list[list[str]] = []

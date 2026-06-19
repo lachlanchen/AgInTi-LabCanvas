@@ -56,7 +56,7 @@ def run_codex_session(
             timeout_seconds=timeout_seconds,
             workdir=workdir,
         )
-        if previous_id and not result["ok"]:
+        if previous_id and not result["ok"] and result.get("returncode") != 124:
             fallback = run_codex_once(
                 prompt,
                 thread_id="",
