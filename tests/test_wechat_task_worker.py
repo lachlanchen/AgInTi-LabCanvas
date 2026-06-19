@@ -14,6 +14,9 @@ def load_worker():
     spec = importlib.util.spec_from_file_location("wechat_task_worker_for_tests", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    scripts_dir = str(path.parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module

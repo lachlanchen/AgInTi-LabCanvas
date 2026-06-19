@@ -156,7 +156,11 @@ Return either plain text or this JSON shape:
 }}
 
 Use confirmation when an important choice, purchase, external send, deletion, privacy-sensitive action, or irreversible action needs approval.
-If the task needs external tools or files that are not available, say exactly what is needed next.
+If a download is blocked by login, CAPTCHA, bot check, consent page, or a site that needs human action, do not try to bypass it.
+Open a human-assist browser in the isolated virtual desktop with:
+PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --json
+Then return a confirmation telling the user to complete the manual step in noVNC and approve continuation.
+If other external tools or files are not available, say exactly what is needed next.
 
 Task:
 {json.dumps(task, ensure_ascii=False, indent=2)}

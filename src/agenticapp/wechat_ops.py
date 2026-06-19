@@ -57,6 +57,14 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     desktop.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     desktop.set_defaults(func=cmd_desktop)
 
+    browser = nested.add_parser("browser-assist", help="Open a browser in the isolated virtual desktop for manual login/CAPTCHA/download help.")
+    browser.add_argument("--url", default="about:blank")
+    browser.add_argument("--display", default=DEFAULT_DISPLAY)
+    browser.add_argument("--browser")
+    browser.add_argument("--dry-run", action="store_true")
+    browser.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    browser.set_defaults(func=cmd_browser_assist)
+
     monitor = nested.add_parser("monitor", help="Control the fast direct chat monitor tmux session.")
     monitor.add_argument("action", choices=["start", "stop", "restart", "status", "once"], nargs="?", default="status")
     monitor.add_argument("--config", type=Path, default=DEFAULT_DIRECT_CONFIG)
@@ -264,6 +272,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             SCRIPTS / "wechat_direct_backend.py",
             SCRIPTS / "wechat_task_worker.py",
             SCRIPTS / "wechat_chatops_bridge.py",
+            SCRIPTS / "wechat_browser_assist.py",
             SCRIPTS / "wechat_media_sync.py",
         )
     }
@@ -334,6 +343,29 @@ def cmd_desktop(args: argparse.Namespace) -> int:
     payload = desktop_status()
     print_payload(payload, args.json, f"wechat desktop: {payload['status']} {payload.get('novnc_url', '')}")
     return 0
+
+
+def cmd_browser_assist(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_browser_assist.py"),
+        "--url",
+        args.url,
+        "--display",
+        args.display,
+    ]
+    if args.browser:
+        command += ["--browser", args.browser]
+    if args.dry_run:
+        command.append("--dry-run")
+    if args.json:
+        command.append("--json")
+    proc = run_command(command, capture=True)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, file=sys.stderr, end="")
+    return proc.returncode
 
 
 def cmd_monitor(args: argparse.Namespace) -> int:

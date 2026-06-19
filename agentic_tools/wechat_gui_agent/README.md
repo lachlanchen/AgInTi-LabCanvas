@@ -299,6 +299,9 @@ force stateless turns.
 Worker sessions use `danger-full-access` by default so downloads and external
 tooling are not blocked by the shell sandbox; set
 `WECHAT_WORKER_CODEX_SANDBOX=workspace` to downgrade for a restricted run.
+For login/CAPTCHA/download blocks, open a browser in the same isolated noVNC
+desktop with `labcanvas wechat browser-assist --url "<url>" --json`; the user
+handles the manual step and the worker continues after approval.
 Private send targets should include `expected_title`; before composing, the GUI
 sender OCR-checks the opened chat header and fails closed if the wrong group is
 visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel

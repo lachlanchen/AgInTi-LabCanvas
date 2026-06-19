@@ -25,6 +25,7 @@ labcanvas wechat status
 labcanvas wechat doctor
 labcanvas wechat init-config --chat "example group"
 labcanvas wechat desktop start
+labcanvas wechat browser-assist --url "https://example.com" --json
 labcanvas wechat hold start
 labcanvas wechat stack start --web-port 19474
 labcanvas wechat queue --json
@@ -206,6 +207,18 @@ repo worktree. To restrict worker execution for a debugging run, set
 `WECHAT_WORKER_CODEX_SANDBOX=workspace` or `read-only` before restarting the
 supervisor. Fast router sessions remain read-only unless a group config
 explicitly changes its `codex.sandbox`.
+
+If a download is blocked by login, consent, CAPTCHA, or another manual check,
+use the same isolated noVNC virtual desktop rather than bypassing the check:
+
+```bash
+labcanvas wechat browser-assist --url "https://example.com/download" --json
+```
+
+The helper opens a persistent browser profile under `.private/browser_assist/`
+on display `:97` and prints the noVNC URL. The user can log in, click CAPTCHA,
+approve a download, or save a file manually; the worker should then wait for
+confirmation before continuing.
 
 Approve or cancel confirmation tasks from the CLI:
 

@@ -71,6 +71,16 @@ router replies and `worker` for backend work. The ignored registry is
 WECHAT_CODEX_REUSE_SESSIONS=0 labcanvas wechat hold restart
 ```
 
+When a paper/download site needs login, CAPTCHA, consent, or manual file-save
+confirmation, open a browser in the same virtual desktop:
+
+```bash
+labcanvas wechat browser-assist --url "https://example.com/download" --json
+```
+
+Use the printed noVNC URL to complete the manual step. The worker should wait
+for approval before continuing the task.
+
 ## 3. Verify Before Sending
 
 Open targets and record evidence without composing:
