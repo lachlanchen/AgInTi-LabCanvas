@@ -133,6 +133,25 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("total_ms", result["metrics"])
         self.assertIn("last_loop_at", result["state"])
 
+    def test_run_codex_uses_fast_session_role(self) -> None:
+        config = self.base_config()
+        config["codex"] = {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60}
+        calls: list[dict[str, object]] = []
+        original = direct_chatops.run_codex_session
+        try:
+            def fake_run_codex_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                calls.append({"prompt": prompt, **kwargs})
+                return {"ok": True, "message": "CHAT: ok", "thread_id": "thread-1", "resumed": True}
+
+            direct_chatops.run_codex_session = fake_run_codex_session  # type: ignore[assignment]
+            response = direct_chatops.run_codex(config, self.row("你好"), [self.row("你好")])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+        self.assertEqual(response, "CHAT: ok")
+        self.assertEqual(calls[0]["chat_name"], "EchoMind")
+        self.assertEqual(calls[0]["role"], "fast")
+
     def test_default_direct_config_uses_low_reasoning_fast_polling(self) -> None:
         with self.subTest("defaults"):
             import json

@@ -133,6 +133,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("mirror", payload)
         self.assertIn("external_backend", payload)
         self.assertTrue(payload["external_backend"]["private_paths_redacted"])
+        self.assertIn("codex_sessions", payload)
         self.assertIn("novnc_url", payload)
 
     def test_wechat_queue_json_reads_private_queue_shape(self):

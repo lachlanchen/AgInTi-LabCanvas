@@ -185,6 +185,13 @@ upload. If the worker needs an important decision before continuing, it returns
 `confirmation`, sends that question to chat, and marks the task
 `waiting_confirmation`.
 
+Each monitored group reuses two private Codex sessions: a `fast` session for
+immediate routing/chat replies and a `worker` session for slower backend tasks.
+The session registry lives under `.private/codex_sessions/`; public status
+output shows only shortened thread IDs and role metadata. Set
+`WECHAT_CODEX_REUSE_SESSIONS=0` before starting the supervisor to force fully
+stateless `codex exec` calls.
+
 The worker chooses its own Codex policy from task difficulty: low for simple
 chat follow-ups, medium for paper/PDF/search/figure/research work, and high for
 CAD, PCB, Blender/OpenSCAD, install, GitHub, ordering, or other full execution
@@ -192,6 +199,13 @@ tasks. If the first worker result is a timeout, empty/too-short answer, or clear
 failure, it escalates one reasoning level once. GUI send failures are recorded
 as `send_failed` instead of crashing the worker loop or repeatedly sending the
 same task.
+
+Worker Codex turns default to `danger-full-access` because downloads, CAD/PCB
+exports, browser automation, and file transfers often need access outside the
+repo worktree. To restrict worker execution for a debugging run, set
+`WECHAT_WORKER_CODEX_SANDBOX=workspace` or `read-only` before restarting the
+supervisor. Fast router sessions remain read-only unless a group config
+explicitly changes its `codex.sandbox`.
 
 Approve or cancel confirmation tasks from the CLI:
 

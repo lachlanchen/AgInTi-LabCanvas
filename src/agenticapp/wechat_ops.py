@@ -188,6 +188,7 @@ def status_payload() -> dict[str, Any]:
         "queue": queue_summary(DEFAULT_QUEUE),
         "mirror": mirror_summary(PRIVATE / "wechat_mirror.sqlite"),
         "external_backend": external_backend_summary(),
+        "codex_sessions": codex_session_summary(),
         "media_sources": [str(path) for path in discover_media_sources()],
         "novnc_url": f"http://127.0.0.1:{DEFAULT_NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port={DEFAULT_NOVNC_PORT}&autoconnect=1&resize=remote",
     }
@@ -769,6 +770,37 @@ def external_backend_summary() -> dict[str, Any]:
     summary = {key: payload[key] for key in allowed if key in payload}
     summary["returncode"] = proc.returncode
     return summary
+
+
+def codex_session_summary() -> dict[str, Any]:
+    registry = PRIVATE / "codex_sessions" / "sessions.local.json"
+    if not registry.exists():
+        return {"ok": True, "path_exists": False, "count": 0, "items": []}
+    try:
+        data = json.loads(registry.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"ok": False, "path_exists": True, "count": 0, "items": []}
+    items = []
+    if isinstance(data, dict):
+        for key, value in sorted(data.items()):
+            if not isinstance(value, dict):
+                continue
+            thread_id = str(value.get("thread_id") or "")
+            items.append(
+                {
+                    "key": key,
+                    "chat_name": value.get("chat_name", ""),
+                    "role": value.get("role", ""),
+                    "thread_id_short": thread_id[:8] if thread_id else "",
+                    "model": value.get("model", ""),
+                    "reasoning_effort": value.get("reasoning_effort", ""),
+                    "turn_count": int(value.get("turn_count") or 0),
+                    "last_used_at": value.get("last_used_at", ""),
+                    "last_resumed": bool(value.get("last_resumed")),
+                    "last_fallback_started": bool(value.get("last_fallback_started")),
+                }
+            )
+    return {"ok": True, "path_exists": True, "count": len(items), "items": items}
 
 
 def discover_direct_monitor_configs() -> list[Path]:

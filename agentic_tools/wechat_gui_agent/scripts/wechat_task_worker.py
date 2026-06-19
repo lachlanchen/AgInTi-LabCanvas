@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 from typing import Any
 
+from wechat_codex_sessions import run_codex_session
 from wechat_mirror import DEFAULT_DB, record_event
 
 
@@ -159,39 +161,26 @@ If the task needs external tools or files that are not available, say exactly wh
 Task:
 {json.dumps(task, ensure_ascii=False, indent=2)}
 """
-    with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False) as out:
-        output_path = Path(out.name)
-    command = [
-        "codex",
-        "exec",
-        "-m",
-        str(policy["model"]),
-        "-c",
-        f'model_reasoning_effort="{policy["reasoning_effort"]}"',
-        "--sandbox",
-        str(policy["sandbox"]),
-        "-C",
-        str(ROOT),
-        "-o",
-        str(output_path),
+    result = run_codex_session(
         prompt,
-    ]
-    try:
-        proc = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=int(policy["timeout_seconds"]),
-        )
-        if proc.returncode != 0:
-            return f"Worker failed: {(proc.stderr or proc.stdout).strip()[:1000]}"
-        result = output_path.read_text(encoding="utf-8", errors="replace").strip()
-    except subprocess.TimeoutExpired:
-        return "Worker failed: timed out before completing the task."
-    finally:
-        output_path.unlink(missing_ok=True)
-    return result
+        chat_name=str(task.get("chat") or "wechat-chat"),
+        role="worker",
+        model=str(policy["model"]),
+        reasoning_effort=str(policy["reasoning_effort"]),
+        sandbox=str(policy["sandbox"]),
+        timeout_seconds=int(policy["timeout_seconds"]),
+        workdir=ROOT,
+        reuse=bool(policy.get("reuse_session", True)),
+    )
+    if not result["ok"]:
+        return f"Worker failed: {str(result.get('stderr_tail') or result.get('message') or '').strip()[:1000]}"
+    task["codex_session"] = {
+        "role": "worker",
+        "thread_id_short": str(result.get("thread_id") or "")[:8],
+        "resumed": bool(result.get("resumed")),
+        "fallback_started": bool(result.get("fallback_started")),
+    }
+    return str(result.get("message") or "").strip()
 
 
 def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
@@ -249,9 +238,20 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
     return {
         "model": "gpt-5.5",
         "reasoning_effort": effort,
-        "sandbox": "workspace-write",
+        "sandbox": worker_sandbox(),
         "timeout_seconds": timeout,
     }
+
+
+def worker_sandbox() -> str:
+    raw = os.environ.get("WECHAT_WORKER_CODEX_SANDBOX", "danger-full-access").strip()
+    aliases = {
+        "full": "danger-full-access",
+        "full-access": "danger-full-access",
+        "danger": "danger-full-access",
+        "workspace": "workspace-write",
+    }
+    return aliases.get(raw, raw or "danger-full-access")
 
 
 def escalated_policy(policy: dict[str, Any], result: str) -> dict[str, Any] | None:

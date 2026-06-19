@@ -292,6 +292,13 @@ timestamp is unchanged. `labcanvas wechat health --json` reports the external
 backend state next to per-group catch-up status and latest-row age. Research
 configs can enable attachment triggers for image/video/file rows; EchoMind keeps
 those disabled so it only responds to language-learning text.
+Each group can keep two private Codex sessions, `fast` and `worker`, in
+`.private/codex_sessions/`; this preserves useful group context while keeping
+EchoMind and research work isolated. Set `WECHAT_CODEX_REUSE_SESSIONS=0` to
+force stateless turns.
+Worker sessions use `danger-full-access` by default so downloads and external
+tooling are not blocked by the shell sandbox; set
+`WECHAT_WORKER_CODEX_SANDBOX=workspace` to downgrade for a restricted run.
 Private send targets should include `expected_title`; before composing, the GUI
 sender OCR-checks the opened chat header and fails closed if the wrong group is
 visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel

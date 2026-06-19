@@ -21,6 +21,7 @@ try:
 except ModuleNotFoundError:  # Tests and dry policy checks should not require the decrypt venv.
     zstd = None
 
+from wechat_codex_sessions import run_codex_session
 from wechat_mirror import DEFAULT_DB, record_event
 
 
@@ -78,6 +79,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
         "mirror_db": str(DEFAULT_DB),
         "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60},
+        "codex_session_reuse": True,
         "poll_seconds": float(os.environ.get("WECHAT_DIRECT_POLL_SECONDS", DEFAULT_POLL_SECONDS)),
         "catchup_poll_seconds": float(os.environ.get("WECHAT_DIRECT_CATCHUP_POLL_SECONDS", DEFAULT_CATCHUP_POLL_SECONDS)),
         "max_reply_chars": 1200,
@@ -611,32 +613,20 @@ def run_codex(config: dict[str, Any], row: dict[str, Any], context_rows: list[di
         for item in context_rows[-8:]
     )
     prompt = build_codex_prompt(config, row, context)
-    with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False) as out:
-        output_path = Path(out.name)
-    command = [
-        "codex",
-        "exec",
-        "-m",
-        codex.get("model", "gpt-5.5"),
-        "-c",
-        f'model_reasoning_effort="{codex.get("reasoning_effort", "low")}"',
-        "--sandbox",
-        codex.get("sandbox", "read-only"),
-        "-C",
-        str(ROOT),
-        "-o",
-        str(output_path),
+    result = run_codex_session(
         prompt,
-    ]
-    try:
-        proc = subprocess.run(command, capture_output=True, text=True, check=False, timeout=int(codex.get("timeout_seconds", 60)))
-        if proc.returncode != 0:
-            return "NO_REPLY"
-        response = output_path.read_text(encoding="utf-8", errors="replace").strip()
-    except subprocess.TimeoutExpired:
+        chat_name=str(config.get("chat_name") or "wechat-chat"),
+        role="fast",
+        model=str(codex.get("model", "gpt-5.5")),
+        reasoning_effort=str(codex.get("reasoning_effort", "low")),
+        sandbox=str(codex.get("sandbox", "read-only")),
+        timeout_seconds=int(codex.get("timeout_seconds", 60)),
+        workdir=ROOT,
+        reuse=bool(codex.get("reuse_session", config.get("codex_session_reuse", True))),
+    )
+    if not result["ok"]:
         return "NO_REPLY"
-    finally:
-        output_path.unlink(missing_ok=True)
+    response = str(result.get("message") or "").strip()
     return response[: int(config.get("max_reply_chars", 1200))]
 
 

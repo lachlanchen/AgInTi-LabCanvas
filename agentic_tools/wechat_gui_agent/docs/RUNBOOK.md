@@ -63,6 +63,14 @@ tasks, medium for paper/PDF/search/research/figure tasks, and high for CAD, PCB,
 Blender/OpenSCAD, install, GitHub, ordering, and other execution-heavy tasks. A
 clear failure or timeout escalates once to the next effort level.
 
+Each group keeps two reusable Codex sessions by default: `fast` for immediate
+router replies and `worker` for backend work. The ignored registry is
+`.private/codex_sessions/sessions.local.json`. Disable reuse for debugging with:
+
+```bash
+WECHAT_CODEX_REUSE_SESSIONS=0 labcanvas wechat hold restart
+```
+
 ## 3. Verify Before Sending
 
 Open targets and record evidence without composing:

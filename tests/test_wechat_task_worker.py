@@ -26,6 +26,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertEqual(policy["model"], "gpt-5.5")
         self.assertEqual(policy["reasoning_effort"], "high")
+        self.assertEqual(policy["sandbox"], "danger-full-access")
         self.assertEqual(policy["timeout_seconds"], 600)
 
     def test_worker_policy_uses_medium_for_literature_summary(self) -> None:
@@ -43,6 +44,39 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertIsNotNone(next_policy)
         self.assertEqual(next_policy["reasoning_effort"], "medium")
+
+    def test_worker_uses_group_worker_session_role(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+        original = worker.run_codex_session
+        try:
+            def fake_run_codex_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                calls.append({"prompt": prompt, **kwargs})
+                return {"ok": True, "message": "done", "thread_id": "thread-worker", "resumed": True}
+
+            worker.run_codex_session = fake_run_codex_session
+            result = worker.run_worker_codex_once(
+                {"chat": "懒人科研", "request": "summarize this paper"},
+                {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "workspace-write", "timeout_seconds": 300},
+            )
+        finally:
+            worker.run_codex_session = original
+
+        self.assertEqual(result, "done")
+        self.assertEqual(calls[0]["chat_name"], "懒人科研")
+        self.assertEqual(calls[0]["role"], "worker")
+
+    def test_worker_sandbox_can_be_downgraded_by_env(self) -> None:
+        worker = load_worker()
+        original = worker.os.environ.get("WECHAT_WORKER_CODEX_SANDBOX")
+        try:
+            worker.os.environ["WECHAT_WORKER_CODEX_SANDBOX"] = "workspace"
+            self.assertEqual(worker.worker_sandbox(), "workspace-write")
+        finally:
+            if original is None:
+                worker.os.environ.pop("WECHAT_WORKER_CODEX_SANDBOX", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_CODEX_SANDBOX"] = original
 
 
 if __name__ == "__main__":
