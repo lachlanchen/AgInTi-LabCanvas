@@ -69,6 +69,8 @@ latest actionable turn while marking earlier actionable rows as `FOCUS`, so
 EchoMind analyzes every sentence in the burst and research tasks include every
 instruction. Queued tasks include recent synced file paths so requests like
 "summarize this PDF" can resolve to the latest downloaded PDF.
+WeChat quote/reply rows are decoded as `quote_reply`: the reply title is treated
+as the current command and the referenced message is included as quoted context.
 
 For low-latency chatops, the supervisor defaults to:
 

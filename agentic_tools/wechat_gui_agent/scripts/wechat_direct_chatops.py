@@ -6,15 +6,18 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import fcntl
+import html
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 from typing import Any
+import xml.etree.ElementTree as ET
 
 try:
     import zstandard as zstd
@@ -278,7 +281,7 @@ def read_new_messages(config: dict[str, Any], state: dict[str, Any]) -> list[dic
         for row in conn.execute(
             f"""
             SELECT local_id, server_id, local_type, real_sender_id, create_time,
-                   status, message_content, compress_content
+                   status, message_content, compress_content, WCDB_CT_message_content
             FROM {table}
             WHERE local_id > ?
             ORDER BY local_id
@@ -303,7 +306,7 @@ def read_recent_history(config: dict[str, Any], up_to_local_id: int, *, limit: i
         for row in conn.execute(
             f"""
             SELECT local_id, server_id, local_type, real_sender_id, create_time,
-                   status, message_content, compress_content
+                   status, message_content, compress_content, WCDB_CT_message_content
             FROM {table}
             WHERE local_id <= ?
             ORDER BY local_id DESC
@@ -327,7 +330,7 @@ def row_to_message(row: sqlite3.Row, name_map: dict[int, str], contact_map: dict
         "sender_display": contact_map.get(sender, sender),
         "create_time": row["create_time"],
         "status": row["status"],
-        "content": decode_content(row["message_content"], row["compress_content"]),
+        "content": decode_content(row["message_content"], row["compress_content"], row["WCDB_CT_message_content"]),
     }
 
 
@@ -346,11 +349,16 @@ def load_contact_map(db_path: Path) -> dict[str, str]:
         }
 
 
-def decode_content(message_content: Any, compress_content: Any) -> str:
+def decode_content(message_content: Any, compress_content: Any, content_ct: Any = None) -> str:
     for value in (message_content, compress_content):
         if value is None or value == "":
             continue
         if isinstance(value, bytes):
+            if zstd is not None and int(content_ct or 0) == 4:
+                try:
+                    return zstd.ZstdDecompressor().decompress(value).decode("utf-8", errors="replace")
+                except Exception:
+                    pass
             if zstd is not None:
                 try:
                     return zstd.ZstdDecompressor().decompress(value).decode("utf-8", errors="replace")
@@ -389,8 +397,10 @@ def should_respond(config: dict[str, Any], state: dict[str, Any], row: dict[str,
         if not bool(config.get("respond_to_self", False)):
             return False
     allowed_local_types = {int(item) for item in config.get("trigger_local_types", [1])}
+    base_type, _ = split_message_type(row.get("local_type"))
     attachment_trigger = is_attachment_trigger(config, row)
-    if allowed_local_types and int(row.get("local_type") or 0) not in allowed_local_types and not attachment_trigger:
+    quote_trigger = is_quote_reply_message(row)
+    if allowed_local_types and base_type not in allowed_local_types and not attachment_trigger and not quote_trigger:
         return False
     if str(row["server_id"]) in set(state.get("responded_server_ids", [])):
         return False
@@ -399,6 +409,8 @@ def should_respond(config: dict[str, Any], state: dict[str, Any], row: dict[str,
         return False
     if attachment_trigger:
         return True
+    if quote_trigger:
+        return bool(config.get("respond_to_all", False)) or any(prefix in text for prefix in config["trigger_prefixes"])
     if bool(config.get("respond_to_all", False)):
         return meaningful_request_text(text, config.get("trigger_prefixes", []))
     return any(prefix in text for prefix in config["trigger_prefixes"])
@@ -472,16 +484,38 @@ def is_research_chat(config: dict[str, Any]) -> bool:
 def is_attachment_trigger(config: dict[str, Any], row: dict[str, Any]) -> bool:
     if is_language_analysis_mode(config):
         return False
+    if is_quote_reply_message(row):
+        return False
     default_enabled = is_research_chat(config)
     if not bool(config.get("respond_to_attachments", default_enabled)):
         return False
-    local_type = int(row.get("local_type") or 0)
+    local_type, _ = split_message_type(row.get("local_type"))
     allowed = {int(item) for item in config.get("attachment_trigger_local_types", [3, 43, 49])}
     return local_type in allowed
 
 
+def split_message_type(raw: Any) -> tuple[int, int]:
+    try:
+        local_type = int(raw or 0)
+    except (TypeError, ValueError):
+        return 0, 0
+    if local_type > 0xFFFFFFFF:
+        return local_type & 0xFFFFFFFF, local_type >> 32
+    return local_type, 0
+
+
+def is_quote_reply_message(row: dict[str, Any]) -> bool:
+    base_type, subtype = split_message_type(row.get("local_type"))
+    if base_type == 49 and subtype == 57:
+        return True
+    text = strip_group_sender_prefix(str(row.get("content") or ""))
+    return "<appmsg" in text and "<type>57</type>" in text and "<refermsg" in text
+
+
 def message_kind(row: dict[str, Any]) -> str:
-    local_type = int(row.get("local_type") or 0)
+    local_type, subtype = split_message_type(row.get("local_type"))
+    if local_type == 49 and subtype == 57:
+        return "quote_reply"
     return {
         1: "text",
         3: "image",
@@ -578,14 +612,89 @@ def attachment_request_text(row: dict[str, Any]) -> str:
 
 def visible_message_text(row: dict[str, Any]) -> str:
     """Strip WeChat group sender prefaces like `wxid_xxx:\nmessage`."""
-    text = str(row.get("content") or "")
+    text = strip_group_sender_prefix(str(row.get("content") or ""))
+    if is_quote_reply_message(row):
+        return format_quote_reply_text(text)
+    return text
+
+
+def strip_group_sender_prefix(text: str) -> str:
     if "\n" not in text:
+        match = re.match(r"^([A-Za-z0-9_\-@.]+):\s*(<\?xml|<msg|<msglist|<voipmsg|<sysmsg)", text)
+        if match:
+            return text[len(match.group(1)) + 1 :].strip()
         return text
     first, rest = text.split("\n", 1)
     stripped = first.strip()
     if stripped.endswith(":") and not stripped.startswith("<") and len(stripped) <= 96:
         return rest.strip()
     return text
+
+
+def format_quote_reply_text(text: str) -> str:
+    root = parse_wechat_xml(text)
+    if root is None:
+        return "[quote/reply message; payload not decoded]"
+    appmsg = root.find(".//appmsg")
+    if appmsg is None:
+        return collapse_text(text)[:500] or "[quote/reply message]"
+    title = collapse_text(appmsg.findtext("title") or "")
+    refer = appmsg.find("refermsg")
+    if refer is None:
+        return title or "[quote/reply message]"
+    display_name = collapse_text(refer.findtext("displayname") or refer.findtext("fromusr") or "quoted message")
+    refer_type = collapse_text(refer.findtext("type") or "")
+    refer_content = html.unescape(refer.findtext("content") or "")
+    quoted = summarize_refer_content(refer_type, refer_content)
+    reply = title or "[quote/reply]"
+    if quoted:
+        return f"{reply}\n[quoted {display_name}: {quoted}]"
+    return reply
+
+
+def parse_wechat_xml(text: str) -> ET.Element | None:
+    stripped = text.strip()
+    if len(stripped) > 100_000 or "<!DOCTYPE" in stripped.upper():
+        return None
+    stripped = re.sub(r"^<\?xml[^>]*\?>", "", stripped).strip()
+    if not stripped.startswith("<"):
+        return None
+    try:
+        return ET.fromstring(stripped)
+    except ET.ParseError:
+        return None
+
+
+def summarize_refer_content(refer_type: str, content: str, *, max_len: int = 220) -> str:
+    if refer_type == "1":
+        return truncate_text(collapse_text(content), max_len)
+    if refer_type == "3":
+        return "[image]"
+    if refer_type == "34":
+        return "[voice]"
+    if refer_type == "43":
+        return "[video]"
+    if refer_type == "47":
+        return "[sticker]"
+    if refer_type == "49":
+        root = parse_wechat_xml(content)
+        appmsg = root.find(".//appmsg") if root is not None else None
+        if appmsg is None:
+            return "[card]"
+        inner_type = collapse_text(appmsg.findtext("type") or "")
+        title = truncate_text(collapse_text(appmsg.findtext("title") or ""), max_len)
+        labels = {"5": "link", "6": "file", "19": "chat record", "57": "quote/reply"}
+        label = labels.get(inner_type, "card")
+        return f"[{label}] {title}".strip()
+    return truncate_text(collapse_text(content), max_len) if content else f"[type={refer_type}]"
+
+
+def collapse_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def truncate_text(text: str, max_len: int) -> str:
+    return text if len(text) <= max_len else text[:max_len] + "..."
 
 
 def normalize_sent_text(text: str) -> str:

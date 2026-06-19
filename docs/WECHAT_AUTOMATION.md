@@ -168,6 +168,12 @@ help, shows confusion, mentions the bot, or needs a short expert note; otherwise
 it should return `NO_REPLY` for ordinary side conversation. It asks the
 low-reasoning router for one of four shapes:
 
+Quoted/reply messages are split from packed WeChat message types by using the
+low 32-bit base type and high 32-bit subtype. `base=49, subtype=57` is rendered
+as `quote_reply`; the reply title is the current command and the referenced
+message becomes quoted context. These rows are not treated as generic
+attachments, because they can contain ordinary chat instructions.
+
 ```text
 CHAT: <quick reply>
 ACK: <short confirmation>

@@ -86,8 +86,28 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
     def test_echomind_ignores_attachment_rows(self) -> None:
         self.assertFalse(direct_chatops.should_respond(self.base_config(), {}, self.row("", local_type=49)))
 
+    def test_quote_reply_message_triggers_echomind(self) -> None:
+        quote_type = (57 << 32) | 49
+        content = (
+            'wxid_synth:\n<msg><appmsg><type>57</type><title>Analyze this</title>'
+            '<refermsg><type>1</type><displayname>Alice</displayname>'
+            '<content>今日はいい天気です</content></refermsg></appmsg></msg>'
+        )
+        row = self.row(content, local_type=quote_type)
+
+        self.assertEqual(direct_chatops.message_kind(row), "quote_reply")
+        self.assertTrue(direct_chatops.should_respond(self.base_config(), {}, row))
+        visible = direct_chatops.visible_message_text(row)
+        self.assertIn("Analyze this", visible)
+        self.assertIn("今日はいい天気です", visible)
+        self.assertIn("quoted Alice", visible)
+
     def test_visible_message_text_strips_group_sender_prefix(self) -> None:
         self.assertEqual(direct_chatops.visible_message_text(self.row("oldseedling1992:\n你吃飯了嗎")), "你吃飯了嗎")
+        self.assertEqual(
+            direct_chatops.visible_message_text(self.row('wxid_synth: <msg><appmsg><type>5</type></appmsg></msg>')),
+            "<msg><appmsg><type>5</type></appmsg></msg>",
+        )
 
     def test_language_prompt_requests_japanese_chinese_and_english(self) -> None:
         config = self.base_config()
@@ -197,6 +217,32 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("find the paper", route["task"])
         self.assertIn("download the pdf too", route["task"])
         self.assertIn("Current coalesced request", route["task"])
+
+    def test_research_quote_reply_keeps_command_and_quoted_context(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": ["summarize"],
+        }
+        quote_type = (57 << 32) | 49
+        row = self.row(
+            "<msg><appmsg><type>57</type><title>summarize this</title>"
+            "<refermsg><type>1</type><displayname>Bob</displayname>"
+            "<content>single pixel event sensor paper</content></refermsg></appmsg></msg>",
+            local_type=quote_type,
+        )
+
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("summarize this", route["task"])
+        self.assertIn("single pixel event sensor paper", route["task"])
 
     def test_run_codex_uses_fast_session_role(self) -> None:
         config = self.base_config()
