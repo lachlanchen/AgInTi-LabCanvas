@@ -231,6 +231,8 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
     quoted_prompt = json.dumps(prompt_text or "prepare CAD/PCB/Blender artifacts", ensure_ascii=False)
     return f"""LabCanvas tool playbook:
 - Use `{artifact_dir}` as the preferred working/output folder for new artifacts.
+- For editable paper-figure grids plus AgInTi image-generation payloads/live images, run:
+  `PYTHONPATH=src python -m agenticapp studio figure-grid {quoted_prompt} --storage-dir output/webapp --json`
 - For PCB/CAD planning and reusable artifacts, run:
   `PYTHONPATH=src python -m agenticapp studio lab-task {quoted_prompt} --mode auto --execute --storage-dir output/webapp --json`
 - For a Blender experiment/setup render, write or reuse a scene JSON under `{artifact_dir}`, then run:
@@ -240,6 +242,7 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
 - For direct target envelopes or MCP handoff, use:
   `PYTHONPATH=src python -m agenticapp studio dispatch blender "<instruction>" --json`
 - For existing KiCad/OpenSCAD/Blender workflows, prefer the commands emitted by `studio lab-task`; they know the repo's PCB, CAD, Gerber, STEP, STL, and render locations.
+- For AgInTi figure requests, return the editable SVG grid plus AgInTi prompt/request/manifest files; if live image generation is enabled and `imagePaths` contains PNG/JPG outputs, include those image paths too.
 - For PCB render requests, return the KiCad/board PNG preview and any STEP/Gerber zip when available. For CAD/Blender render requests, return the PNG render plus STEP/STL/source spec when useful.
 
 Artifact return contract:
@@ -289,7 +292,13 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "summary",
         "dataset",
         "figure",
+        "figure grid",
         "diagram",
+        "aginti",
+        "imagegen",
+        "image generation",
+        "icons",
+        "overview",
         "research",
         "nature",
         "hyperspectral",

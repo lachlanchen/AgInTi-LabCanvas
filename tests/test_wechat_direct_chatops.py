@@ -238,6 +238,26 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("LabCanvas", route["task"])
         self.assertIn("KiCad", route["task"])
 
+    def test_research_aginti_image_generation_routes_to_worker(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": ["aginti", "image generation", "figure grid", "icons"],
+        }
+        row = self.row("use AgInTi image generation to make a 2x3 figure grid of microscopy icons")
+
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("AgInTi", route["task"])
+        self.assertIn("figure grid", route["task"])
+
     def test_research_quote_reply_keeps_command_and_quoted_context(self) -> None:
         config = {
             "chat_name": "懒人科研",

@@ -161,11 +161,12 @@ Model calls happen when a new message needs a quick reply or a task must be
 queued. Worker tasks choose `gpt-5.5` effort automatically: low for simple
 follow-ups, medium for paper/PDF/search/research/figure work, and high for CAD,
 PCB, Blender/OpenSCAD, install, GitHub, ordering, or other full execution work.
-For LabCanvas tool work, research-chat keywords such as `kicad`, `gerber`,
-`step`, `stl`, `3d`, and `labcanvas` route directly to the worker. The worker
-prompt advertises `studio lab-task`, `scene-template`, `render-scene`, KiCad,
-OpenSCAD, and Blender commands, then expects generated previews or source files
-to be returned in its JSON `files` array.
+For LabCanvas tool work, research-chat keywords such as `aginti`, `image
+generation`, `figure grid`, `icons`, `kicad`, `gerber`, `step`, `stl`, `3d`,
+and `labcanvas` route directly to the worker. The worker prompt advertises
+`studio figure-grid`, `studio lab-task`, `scene-template`, `render-scene`,
+AgInTi image generation, KiCad, OpenSCAD, and Blender commands, then expects
+generated previews or source files to be returned in its JSON `files` array.
 If a worker result is clearly failed, timed out, or too weak, the worker retries
 once at the next effort level. GUI send failures are saved as `send_failed` so
 the loop does not crash or resend duplicates indefinitely.

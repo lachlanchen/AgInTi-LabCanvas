@@ -73,6 +73,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("fragment or follow-up", str(calls[0]["prompt"]))
         self.assertIn("Avoid sending the same answer again", str(calls[0]["prompt"]))
         self.assertIn("LabCanvas tool playbook", str(calls[0]["prompt"]))
+        self.assertIn("studio figure-grid", str(calls[0]["prompt"]))
+        self.assertIn("AgInTi image-generation", str(calls[0]["prompt"]))
         self.assertIn("studio lab-task", str(calls[0]["prompt"]))
         self.assertIn("render-scene", str(calls[0]["prompt"]))
         self.assertIn("files", str(calls[0]["prompt"]))

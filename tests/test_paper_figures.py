@@ -5,7 +5,7 @@ import unittest
 from agenticapp.artifacts import ArtifactStore
 from agenticapp.openscad_export import export_scene_to_openscad
 from agenticapp.paper_figures import generate_icon_grid, parse_grid_size
-from agenticapp.webapp import default_scene_spec, generate_web_figure_grid
+from agenticapp.webapp import default_scene_spec, generate_web_figure_grid, register_aginti_outputs
 
 
 class PaperFigureTests(unittest.TestCase):
@@ -51,6 +51,19 @@ class PaperFigureTests(unittest.TestCase):
         self.assertEqual(result["rows"], 2)
         self.assertEqual(result["cols"], 2)
         self.assertGreaterEqual(len(result["artifacts"]["items"]), 1)
+
+    def test_register_aginti_outputs_includes_live_image_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            image = root / "aginti-output.png"
+            image.write_bytes(b"png")
+            store = ArtifactStore(root)
+
+            register_aginti_outputs(store, {"imagePaths": [str(image)], "summary": "live image"})
+            bundle = store.bundle()
+
+        self.assertEqual(bundle["items"][0]["kind"], "image")
+        self.assertEqual(bundle["items"][0]["source"], "aginti")
 
 
 if __name__ == "__main__":

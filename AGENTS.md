@@ -41,7 +41,7 @@ Paper figure generation must stay editable and atomic. Do not treat a generated 
 
 ## WeChat Worker Tool Routing
 
-Research chat messages that mention LabCanvas, KiCad, Gerber, STEP/STL, CAD, PCB, Blender, or renders should be routed to the worker queue. The fast monitor should only ACK and enqueue. The worker may run `studio lab-task`, `render-scene`, KiCad, OpenSCAD, and Blender commands, then return generated PNG/PDF/STEP/STL/ZIP/KiCad artifacts in the `files` array so the GUI sender can deliver them to WeChat.
+Research chat messages that mention LabCanvas, AgInTi image generation, KiCad, Gerber, STEP/STL, CAD, PCB, Blender, figures, icons, or renders should be routed to the worker queue. The fast monitor should only ACK and enqueue. The worker may run `studio figure-grid`, `studio lab-task`, `render-scene`, AgInTi image generation, KiCad, OpenSCAD, and Blender commands, then return generated PNG/PDF/SVG/STEP/STL/ZIP/KiCad artifacts in the `files` array so the GUI sender can deliver them to WeChat.
 
 ## Commit & Pull Request Guidelines
 

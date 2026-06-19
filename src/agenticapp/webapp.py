@@ -516,6 +516,16 @@ def register_aginti_outputs(store: ArtifactStore, result: dict[str, Any]) -> Non
             path = ROOT / path
         if path.exists():
             store.register(path, title=title, kind=kind, source="aginti", preview=str(result.get("summary") or ""), selected=False)
+    image_paths = result.get("imagePaths") or result.get("images") or []
+    if isinstance(image_paths, str):
+        image_paths = [image_paths]
+    if isinstance(image_paths, list):
+        for raw in image_paths:
+            path = Path(str(raw))
+            if not path.is_absolute():
+                path = ROOT / path
+            if path.exists():
+                store.register(path, title="AgInTi generated image", kind="image", source="aginti", preview=str(result.get("summary") or ""), selected=False)
 
 
 def sanitize_settings(settings: Any) -> dict[str, Any]:

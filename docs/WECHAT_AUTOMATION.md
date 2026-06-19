@@ -68,11 +68,13 @@ labcanvas wechat install-user-scripts
 ## LabCanvas Worker Tools
 
 Research groups such as `懒人科研` use the fast direct monitor only for routing.
-Messages mentioning `render`, `cad`, `pcb`, `kicad`, `gerber`, `step`, `stl`,
-`3d`, `blender`, or `labcanvas` are acknowledged and pushed into the worker
-queue. The worker prompt includes a LabCanvas tool playbook for:
+Messages mentioning `aginti`, `image generation`, `figure grid`, `icons`,
+`render`, `cad`, `pcb`, `kicad`, `gerber`, `step`, `stl`, `3d`, `blender`, or
+`labcanvas` are acknowledged and pushed into the worker queue. The worker prompt
+includes a LabCanvas tool playbook for:
 
 ```bash
+PYTHONPATH=src python -m agenticapp studio figure-grid "microscopy icons 2x3" --storage-dir output/webapp --json
 PYTHONPATH=src python -m agenticapp studio lab-task "prepare PCB/CAD render" --mode auto --execute --storage-dir output/webapp --json
 PYTHONPATH=src python -m agenticapp scene-template experiment-setup --output output/wechat_worker/demo/scene.json
 PYTHONPATH=src python -m agenticapp render-scene output/wechat_worker/demo/scene.json --output-dir output/wechat_worker/demo
@@ -80,8 +82,9 @@ PYTHONPATH=src python -m agenticapp studio dispatch blender "Prepare an editable
 ```
 
 Worker replies should return generated artifacts in a JSON `files` array. The
-sender accepts review artifacts such as PNG/JPG/SVG/PDF, STEP/STL/SCAD, Gerber
-ZIPs, KiCad project files, and `.blend` files. It refuses private paths,
+sender accepts review artifacts such as AgInTi PNG/JPG/SVG figure outputs,
+prompt/request/manifest files, PDF, STEP/STL/SCAD, Gerber ZIPs, KiCad project
+files, and `.blend` files. It refuses private paths,
 decrypted WeChat data, keys, cookies, browser profiles, chat logs, unsupported
 suffixes, and oversized files before sending.
 
