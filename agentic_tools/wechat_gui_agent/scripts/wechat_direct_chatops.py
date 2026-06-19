@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -23,6 +22,7 @@ except ModuleNotFoundError:  # Tests and dry policy checks should not require th
 
 from wechat_mirror import DEFAULT_DB, record_event
 from agent_backend import run_agent, select_backend
+from file_lock import exclusive_lock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -136,16 +136,15 @@ def refresh_decrypted_store() -> None:
     lock_path = PRIVATE / "wechat_decrypt.refresh.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        proc = subprocess.run(
-            command,
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=int(os.environ.get("WECHAT_DECRYPT_TIMEOUT", "45")),
-        )
-        fcntl.flock(lock, fcntl.LOCK_UN)
+        with exclusive_lock(lock):
+            proc = subprocess.run(
+                command,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=int(os.environ.get("WECHAT_DECRYPT_TIMEOUT", "45")),
+            )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
 

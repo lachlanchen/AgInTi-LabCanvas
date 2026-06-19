@@ -25,6 +25,19 @@ if [[ ! -x "$PY" ]]; then
   PY="$(command -v python3)"
 fi
 
+if [[ -z "${WECHAT_WORKER_QUEUE:-}" && -f "$CONFIG" ]]; then
+  QUEUE="$("$PY" - <<PY
+import json
+from pathlib import Path
+path = Path("$CONFIG")
+try:
+    print(json.loads(path.read_text(encoding="utf-8")).get("worker_queue") or "$QUEUE")
+except Exception:
+    print("$QUEUE")
+PY
+)"
+fi
+
 CHAT_NAME="${WECHAT_CHAT_NAME:-wechat-chat}"
 if [[ -f "$CONFIG" ]]; then
   CHAT_NAME="$("$PY" - <<PY

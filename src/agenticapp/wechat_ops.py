@@ -151,6 +151,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def status_payload() -> dict[str, Any]:
+    runtime_paths = configured_runtime_paths()
     return {
         "ok": True,
         "checked_at": datetime.now().isoformat(timespec="seconds"),
@@ -164,11 +165,30 @@ def status_payload() -> dict[str, Any]:
             "direct_monitor": tmux_status("labcanvas-wechat-direct-chatops"),
             "gui_monitor": tmux_status("labcanvas-wechat-chatops"),
         },
-        "queue": queue_summary(DEFAULT_QUEUE),
-        "mirror": mirror_summary(PRIVATE / "wechat_mirror.sqlite"),
+        "queue": queue_summary(runtime_paths["queue"]),
+        "mirror": mirror_summary(runtime_paths["mirror_db"]),
         "media_sources": [str(path) for path in discover_media_sources()],
         "novnc_url": f"http://127.0.0.1:{DEFAULT_NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port={DEFAULT_NOVNC_PORT}&autoconnect=1&resize=remote",
     }
+
+
+def configured_runtime_paths() -> dict[str, Path]:
+    paths = {"queue": DEFAULT_QUEUE, "mirror_db": PRIVATE / "wechat_mirror.sqlite"}
+    for config_path in discover_direct_monitor_configs():
+        if not config_path.exists():
+            continue
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        queue = str(config.get("worker_queue") or "").strip()
+        mirror = str(config.get("mirror_db") or "").strip()
+        if queue:
+            paths["queue"] = Path(queue)
+        if mirror:
+            paths["mirror_db"] = Path(mirror)
+        break
+    return paths
 
 
 def run_wechat_action(action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:

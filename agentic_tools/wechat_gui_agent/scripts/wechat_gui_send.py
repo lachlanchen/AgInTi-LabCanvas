@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -21,6 +20,7 @@ import time
 from typing import Any
 
 from wechat_mirror import DEFAULT_DB, record_event
+from file_lock import exclusive_lock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -90,23 +90,22 @@ def main() -> int:
     lock_path = PRIVATE / "wechat_gui_send.lock"
     results = []
     with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        for index, target in enumerate(targets, start=1):
-            result = send_one(
-                env,
-                window,
-                target,
-                args.message,
-                args.send,
-                args.compose_dry_run,
-                args.pause,
-                args.skip_title_guard,
-                args.output_dir,
-                args.mirror_db,
-                index,
-            )
-            results.append(result)
-        fcntl.flock(lock, fcntl.LOCK_UN)
+        with exclusive_lock(lock):
+            for index, target in enumerate(targets, start=1):
+                result = send_one(
+                    env,
+                    window,
+                    target,
+                    args.message,
+                    args.send,
+                    args.compose_dry_run,
+                    args.pause,
+                    args.skip_title_guard,
+                    args.output_dir,
+                    args.mirror_db,
+                    index,
+                )
+                results.append(result)
 
     manifest = {
         "created_at": datetime.now().isoformat(timespec="seconds"),

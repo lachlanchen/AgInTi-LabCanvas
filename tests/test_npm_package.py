@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import stat
 import unittest
@@ -29,7 +30,10 @@ class NpmPackageTests(unittest.TestCase):
         mode = wrapper.stat().st_mode
         text = wrapper.read_text(encoding="utf-8")
 
-        self.assertTrue(mode & stat.S_IXUSR)
+        if os.name == "nt":
+            self.assertTrue(text.startswith("#!/usr/bin/env node"))
+        else:
+            self.assertTrue(mode & stat.S_IXUSR)
         self.assertTrue(text.startswith("#!/usr/bin/env node"))
         self.assertIn("PYTHONPATH", text)
         self.assertIn("agenticapp", text)

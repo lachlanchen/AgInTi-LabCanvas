@@ -114,10 +114,10 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             import json
             import tempfile
 
-            with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8") as handle:
-                json.dump({"message_table": "Msg_demo"}, handle)
-                handle.flush()
-                config = direct_chatops.load_config(Path(handle.name))
+            with tempfile.TemporaryDirectory() as temp_dir:
+                config_path = Path(temp_dir) / "direct-chatops.json"
+                config_path.write_text(json.dumps({"message_table": "Msg_demo"}), encoding="utf-8")
+                config = direct_chatops.load_config(config_path)
 
         self.assertEqual(config["codex"]["model"], "gpt-5.5")
         self.assertEqual(config["codex"]["reasoning_effort"], "low")
