@@ -4,7 +4,8 @@ This workflow uses two layers:
 
 1. **Fast chat agent**: reads the local WeChat direct database stream, mirrors new
    messages into SQLite, detects mentions such as `@lachchen` or the in-group
-   display name, and sends quick acknowledgements or short replies.
+   display name, loads recent chat history around the trigger, and sends quick
+   acknowledgements or short replies.
 2. **Worker agent**: handles slower jobs such as paper search, PDF download,
    GitHub/MCP work, file generation, and file/image return.
 
@@ -134,6 +135,10 @@ The fast chat agent can enqueue slower work:
 python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py \
   --enqueue "Find and send the public PDF for <paper title>"
 ```
+
+Queued tasks should include recent chat history and recent synced file paths
+from `.private/downloads`. This lets the worker resolve follow-up phrases such
+as "this PDF", "the image above", or a bare group mention after a request.
 
 Process one queued task and send the result:
 

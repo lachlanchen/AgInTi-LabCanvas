@@ -71,7 +71,9 @@ message table and self ID from private config; they do not hard-code account IDs
 ## Fast And Worker Agents
 
 The fast monitor reads new decrypted rows, mirrors them into SQLite, and routes
-mentions. It asks Codex for one of three shapes:
+mentions. When a trigger is found, it also loads recent full chat history from
+the decrypted message table, so a bare `@name` can refer back to an earlier
+request such as "summarize this PDF". It asks Codex for one of three shapes:
 
 ```text
 CHAT: <quick reply>
@@ -93,9 +95,12 @@ can send plain text or JSON with files:
 
 For obvious slow work such as paper downloads, CAD/renders, figures, PCB jobs,
 or file/image handling, the monitor can skip the fast Codex call, send the ACK
-immediately, and enqueue the backend task directly. If the worker needs an
-important decision before continuing, it returns `confirmation`, sends that
-question to chat, and marks the task `waiting_confirmation`.
+immediately, and enqueue the backend task directly. The queued task includes
+recent chat history and recent synced WeChat file paths from `.private/downloads`
+so the worker can resolve phrases like "this PDF" without asking for another
+upload. If the worker needs an important decision before continuing, it returns
+`confirmation`, sends that question to chat, and marks the task
+`waiting_confirmation`.
 
 Approve or cancel confirmation tasks from the CLI:
 

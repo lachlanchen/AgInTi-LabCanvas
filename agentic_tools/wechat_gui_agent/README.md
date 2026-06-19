@@ -60,6 +60,11 @@ if they exit. Incoming mentions can get an immediate ACK while longer work is
 queued for `wechat_task_worker.py`, which can send a final message plus
 PDFs/images/files back through the official WeChat GUI.
 
+The direct monitor uses recent full chat history, not just the newest polling
+batch. A bare mention can therefore refer to the previous message, and queued
+tasks include recent synced file paths so requests like "summarize this PDF"
+can resolve to the latest downloaded PDF.
+
 Install a reusable launcher:
 
 ```bash

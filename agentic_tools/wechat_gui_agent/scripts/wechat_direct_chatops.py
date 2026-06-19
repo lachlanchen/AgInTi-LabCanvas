@@ -54,19 +54,19 @@ def main() -> int:
 
 def load_config(path: Path) -> dict[str, Any]:
     raw = json.loads(path.read_text(encoding="utf-8"))
-    raw.setdefault("chat_name", "wechat-chat")
-    raw.setdefault("chatroom_id", "")
-    raw.setdefault("message_table", "")
-    raw.setdefault("self_wxid", "")
-    raw.setdefault("trigger_prefixes", ["@lachchen", "＠lachchen", "@codex", "codex:"])
-    raw.setdefault("mirror_db", str(DEFAULT_DB))
-    raw.setdefault("codex", {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only"})
-    raw.setdefault("max_reply_chars", 1200)
-    raw.setdefault("immediate_ack_enabled", True)
-    raw.setdefault("immediate_ack_text", "收到，我先处理，完成后把结果发回来。")
-    raw.setdefault(
-        "slow_task_keywords",
-        [
+    defaults = {
+        "chat_name": "wechat-chat",
+        "chatroom_id": "",
+        "message_table": "",
+        "self_wxid": "",
+        "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
+        "mirror_db": str(DEFAULT_DB),
+        "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only"},
+        "max_reply_chars": 1200,
+        "history_limit": 24,
+        "immediate_ack_enabled": True,
+        "immediate_ack_text": "收到，我先处理，完成后把结果发回来。",
+        "slow_task_keywords": [
             "download",
             "pdf",
             "paper",
@@ -88,8 +88,17 @@ def load_config(path: Path) -> dict[str, Any]:
             "生成",
             "绘制",
             "渲染",
+            "summarize",
+            "summary",
+            "总结",
+            "摘要",
         ],
-    )
+    }
+    for key, value in defaults.items():
+        if raw.get(key) is None:
+            raw[key] = value
+        else:
+            raw.setdefault(key, value)
     if not raw["message_table"]:
         raise SystemExit(f"Missing message_table in private config: {path}")
     return raw
@@ -114,16 +123,17 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     task_enqueued = None
     trigger_row = next((row for row in new_rows if should_respond(config, state, row)), None)
     if trigger_row:
-        immediate = immediate_task_route(config, trigger_row, new_rows)
+        context_rows = read_recent_history(config, trigger_row["local_id"], limit=int(config.get("history_limit", 24))) or new_rows
+        immediate = immediate_task_route(config, trigger_row, context_rows)
         if immediate:
-            task = enqueue_worker_task(config, trigger_row, immediate["task"], context_rows=new_rows)
+            task = enqueue_worker_task(config, trigger_row, immediate["task"], context_rows=context_rows)
             task_enqueued = task["id"]
             reply_text = immediate["ack"]
         else:
-            response = run_codex(config, trigger_row, new_rows)
+            response = run_codex(config, trigger_row, context_rows)
             routed = parse_fast_response(response)
             if routed["task"]:
-                task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=new_rows)
+                task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=context_rows)
                 task_enqueued = task["id"]
             reply_text = routed["chat"] or routed["ack"]
         if reply_text and reply_text != "NO_REPLY":
@@ -175,21 +185,50 @@ def read_new_messages(config: dict[str, Any], state: dict[str, Any]) -> list[dic
             """,
             (last_local_id,),
         ):
-            sender = name_map.get(row["real_sender_id"], str(row["real_sender_id"]))
-            rows.append(
-                {
-                    "local_id": row["local_id"],
-                    "server_id": row["server_id"],
-                    "local_type": row["local_type"],
-                    "real_sender_id": row["real_sender_id"],
-                    "sender": sender,
-                    "sender_display": contact_map.get(sender, sender),
-                    "create_time": row["create_time"],
-                    "status": row["status"],
-                    "content": decode_content(row["message_content"], row["compress_content"]),
-                }
-            )
+            rows.append(row_to_message(row, name_map, contact_map))
     return rows
+
+
+def read_recent_history(config: dict[str, Any], up_to_local_id: int, *, limit: int = 24) -> list[dict[str, Any]]:
+    db_path = DECRYPTED / "message" / "message_0.db"
+    contact_db = DECRYPTED / "contact" / "contact.db"
+    if not db_path.exists():
+        return []
+    name_map = load_name_map(db_path)
+    contact_map = load_contact_map(contact_db)
+    table = config["message_table"]
+    rows = []
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        for row in conn.execute(
+            f"""
+            SELECT local_id, server_id, local_type, real_sender_id, create_time,
+                   status, message_content, compress_content
+            FROM {table}
+            WHERE local_id <= ?
+            ORDER BY local_id DESC
+            LIMIT ?
+            """,
+            (up_to_local_id, limit),
+        ):
+            rows.append(row_to_message(row, name_map, contact_map))
+    rows.reverse()
+    return rows
+
+
+def row_to_message(row: sqlite3.Row, name_map: dict[int, str], contact_map: dict[str, str]) -> dict[str, Any]:
+    sender = name_map.get(row["real_sender_id"], str(row["real_sender_id"]))
+    return {
+        "local_id": row["local_id"],
+        "server_id": row["server_id"],
+        "local_type": row["local_type"],
+        "real_sender_id": row["real_sender_id"],
+        "sender": sender,
+        "sender_display": contact_map.get(sender, sender),
+        "create_time": row["create_time"],
+        "status": row["status"],
+        "content": decode_content(row["message_content"], row["compress_content"]),
+    }
 
 
 def load_name_map(db_path: Path) -> dict[int, str]:
@@ -256,17 +295,19 @@ def immediate_task_route(config: dict[str, Any], row: dict[str, Any], context_ro
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
     if not any(keyword and keyword in lowered for keyword in keywords):
         return None
-    trigger_text = strip_trigger_prefixes(str(row.get("content") or ""), config.get("trigger_prefixes", []))
+    trigger_text = effective_request_text(config, row, context_rows)
     task_context = "\n".join(
         f"{item['sender_display']}: {item['content']}"
         for item in context_rows[-6:]
         if str(item.get("content") or "").strip()
     )
+    recent_files = recent_download_context(str(config.get("chat_name") or ""))
     task = (
         "Handle this WeChat request as backend work. "
         "Use available local tools, download or generate needed artifacts into ignored private/output folders, "
         "and return a concise message plus any files/images/PDFs to send back.\n\n"
-        f"Latest request: {trigger_text or row['content']}\n\nRecent context:\n{task_context}"
+        f"Latest request: {trigger_text or row['content']}\n\nRecent history:\n{task_context}"
+        f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
     )
     return {"ack": str(config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。"), "task": task}
 
@@ -277,6 +318,62 @@ def strip_trigger_prefixes(text: str, prefixes: list[str]) -> str:
         if prefix in stripped:
             stripped = stripped.split(prefix, 1)[1].strip()
     return stripped
+
+
+def effective_request_text(config: dict[str, Any], row: dict[str, Any], context_rows: list[dict[str, Any]]) -> str:
+    prefixes = config.get("trigger_prefixes", [])
+    trigger_text = strip_trigger_prefixes(str(row.get("content") or ""), prefixes)
+    if meaningful_request_text(trigger_text, prefixes):
+        return trigger_text
+    self_wxid = str(config.get("self_wxid") or "")
+    for item in reversed(context_rows):
+        if item.get("local_id") == row.get("local_id"):
+            continue
+        if self_wxid and item.get("sender") == self_wxid:
+            continue
+        candidate = strip_trigger_prefixes(str(item.get("content") or ""), prefixes)
+        if meaningful_request_text(candidate, prefixes):
+            return candidate
+    return trigger_text
+
+
+def meaningful_request_text(text: str, prefixes: list[str]) -> bool:
+    normalized = text.strip().replace("\u2005", "").replace("\u2009", "").replace("\u3000", "")
+    for prefix in prefixes:
+        normalized = normalized.replace(prefix, "")
+    normalized = normalized.strip(" :：@")
+    if not normalized:
+        return False
+    return any(char.isalnum() or "\u4e00" <= char <= "\u9fff" for char in normalized)
+
+
+def recent_download_context(chat_name: str, *, limit: int = 8) -> str:
+    downloads = PRIVATE / "downloads"
+    if not downloads.exists():
+        return ""
+    roots = []
+    chat_root = downloads / chat_name
+    if chat_root.exists():
+        roots.append(chat_root)
+    roots.append(downloads)
+    seen = set()
+    files = []
+    suffixes = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".zip", ".txt", ".docx", ".xlsx", ".csv"}
+    for root in roots:
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in suffixes:
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            files.append((stat.st_mtime, stat.st_size, path))
+    files.sort(reverse=True)
+    return "\n".join(f"- {path} ({size} bytes)" for _, size, path in files[:limit])
 
 
 def run_codex(config: dict[str, Any], row: dict[str, Any], context_rows: list[dict[str, Any]]) -> str:
