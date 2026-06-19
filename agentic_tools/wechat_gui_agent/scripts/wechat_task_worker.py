@@ -8,6 +8,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,27 @@ PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 EFFORT_ORDER = ["low", "medium", "high"]
+OUTBOUND_SUFFIXES = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".svg",
+    ".pdf",
+    ".txt",
+    ".md",
+    ".json",
+    ".csv",
+    ".zip",
+    ".step",
+    ".stp",
+    ".stl",
+    ".scad",
+    ".kicad_pcb",
+    ".kicad_sch",
+    ".blend",
+}
+DEFAULT_MAX_OUTBOUND_BYTES = 100 * 1024 * 1024
 
 
 def main() -> int:
@@ -69,6 +91,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         return False
     result_text = run_worker_codex(task)
     result = parse_worker_result(result_text)
+    result = prepare_result_files(result, result_text)
     target_chat = str(task.get("chat") or chat)
     send_errors = []
     if send:
@@ -81,6 +104,8 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
                 send_file(Path(file_path), target_chat, send_targets)
         except Exception as exc:
             send_errors.append(str(exc))
+    if result.get("skipped_files"):
+        task["skipped_files"] = result["skipped_files"]
     if send_errors:
         task["status"] = "send_failed"
         task["send_errors"] = send_errors
@@ -145,10 +170,16 @@ def run_worker_codex(task: dict[str, Any]) -> str:
 
 
 def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
+    artifact_dir = worker_artifact_dir(task)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    task.setdefault("artifact_dir", str(artifact_dir))
+    tool_context = build_worker_tool_context(task)
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
+
+{tool_context}
 
 Return either plain text or this JSON shape:
 {{
@@ -187,6 +218,40 @@ Task:
         "fallback_started": bool(result.get("fallback_started")),
     }
     return str(result.get("message") or "").strip()
+
+
+def worker_artifact_dir(task: dict[str, Any]) -> Path:
+    task_id = safe_slug(str(task.get("id") or "manual-task"))
+    return ROOT / "output" / "wechat_worker" / task_id
+
+
+def build_worker_tool_context(task: dict[str, Any]) -> str:
+    artifact_dir = str(task.get("artifact_dir") or worker_artifact_dir(task))
+    prompt_text = str(task.get("request") or "").strip()
+    quoted_prompt = json.dumps(prompt_text or "prepare CAD/PCB/Blender artifacts", ensure_ascii=False)
+    return f"""LabCanvas tool playbook:
+- Use `{artifact_dir}` as the preferred working/output folder for new artifacts.
+- For PCB/CAD planning and reusable artifacts, run:
+  `PYTHONPATH=src python -m agenticapp studio lab-task {quoted_prompt} --mode auto --execute --storage-dir output/webapp --json`
+- For a Blender experiment/setup render, write or reuse a scene JSON under `{artifact_dir}`, then run:
+  `PYTHONPATH=src python -m agenticapp render-scene <scene.json> --output-dir {artifact_dir} --timeout 240`
+- For a built-in starting scene, run:
+  `PYTHONPATH=src python -m agenticapp scene-template experiment-setup --output {artifact_dir}/scene.json`
+- For direct target envelopes or MCP handoff, use:
+  `PYTHONPATH=src python -m agenticapp studio dispatch blender "<instruction>" --json`
+- For existing KiCad/OpenSCAD/Blender workflows, prefer the commands emitted by `studio lab-task`; they know the repo's PCB, CAD, Gerber, STEP, STL, and render locations.
+- For PCB render requests, return the KiCad/board PNG preview and any STEP/Gerber zip when available. For CAD/Blender render requests, return the PNG render plus STEP/STL/source spec when useful.
+
+Artifact return contract:
+- If you generate or find preview files, include their existing absolute or repo-relative paths in the JSON `files` array. The outer worker sends those files to WeChat.
+- Prefer PNG/JPG/SVG/PDF/STEP/STL/ZIP/SCAD/KiCad files. Do not include decrypted WeChat DBs, private config, cookies, tokens, browser profiles, or chat logs.
+- Do not say a file was sent unless it is listed in `files` and exists locally.
+"""
+
+
+def safe_slug(value: str) -> str:
+    slug = re.sub(r"[^0-9A-Za-z_.-]+", "-", value.strip()).strip("-").lower()
+    return slug[:96] or "task"
 
 
 def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
@@ -299,7 +364,7 @@ def parse_worker_result(text: str) -> dict[str, Any]:
         if isinstance(data, dict):
             message = str(data.get("message") or "").strip()
             confirmation = str(data.get("confirmation") or data.get("confirm") or "").strip()
-            files = [str(Path(item).expanduser()) for item in data.get("files", []) if str(item).strip()]
+            files = file_entries_from_json(data)
             return {"message": message, "confirmation": confirmation, "files": files, "raw": text}
     except Exception:
         pass
@@ -311,6 +376,107 @@ def parse_worker_result(text: str) -> dict[str, Any]:
         else:
             message_lines.append(line)
     return {"message": "\n".join(message_lines).strip(), "confirmation": "", "files": files, "raw": text}
+
+
+def file_entries_from_json(data: Any) -> list[str]:
+    files: list[str] = []
+    file_keys = {"file", "files", "path", "paths", "artifact", "artifacts", "attachment", "attachments", "image", "images", "render", "renders", "preview", "previews"}
+
+    def visit(value: Any, *, key: str = "") -> None:
+        lowered = key.lower()
+        if isinstance(value, str):
+            if lowered in file_keys or looks_like_artifact_path(value):
+                files.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item, key=key)
+        elif isinstance(value, dict):
+            for child_key, child_value in value.items():
+                visit(child_value, key=str(child_key))
+
+    visit(data)
+    return unique_strings(files)
+
+
+def prepare_result_files(result: dict[str, Any], raw_text: str) -> dict[str, Any]:
+    candidates = unique_strings([*result.get("files", []), *extract_artifact_paths(raw_text)])
+    files: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for candidate in candidates:
+        path = resolve_candidate_path(candidate)
+        if not path.exists():
+            skipped.append({"path": candidate, "reason": "missing"})
+            continue
+        ok, reason = is_safe_outbound_file(path)
+        if not ok:
+            skipped.append({"path": str(path), "reason": reason})
+            continue
+        files.append(str(path))
+    result["files"] = unique_strings(files)
+    if skipped:
+        result["skipped_files"] = skipped
+    if result["files"] and not result.get("message"):
+        result["message"] = f"Generated {len(result['files'])} artifact(s); sending them now."
+    return result
+
+
+def extract_artifact_paths(text: str) -> list[str]:
+    candidates: list[str] = []
+    absolute = r"/[A-Za-z0-9_./:@%+=,\-]+"
+    relative = r"(?:output|cad|pcb|publications|references|examples)/[A-Za-z0-9_./:@%+=,\-]+"
+    for match in re.finditer(f"(?:{absolute}|{relative})", text):
+        token = clean_path_token(match.group(0))
+        if looks_like_artifact_path(token):
+            candidates.append(token)
+    return unique_strings(candidates)
+
+
+def looks_like_artifact_path(value: str) -> bool:
+    token = clean_path_token(value)
+    return bool(token and Path(token).suffix.lower() in OUTBOUND_SUFFIXES)
+
+
+def clean_path_token(value: str) -> str:
+    return str(value or "").strip().strip("\"'`").rstrip(".,;:)]}>")
+
+
+def resolve_candidate_path(value: str) -> Path:
+    path = Path(clean_path_token(value)).expanduser()
+    if not path.is_absolute():
+        path = ROOT / path
+    return path.resolve()
+
+
+def is_safe_outbound_file(path: Path) -> tuple[bool, str]:
+    resolved = path.resolve()
+    if not resolved.is_file():
+        return False, "not-a-file"
+    if resolved.suffix.lower() not in OUTBOUND_SUFFIXES:
+        return False, "unsupported-suffix"
+    if ".private" in resolved.parts or resolved == PRIVATE or PRIVATE in resolved.parents:
+        return False, "private-path"
+    private_markers = {"wechat_decrypt", "xwechat_files", "cookies", "session", "tokens", "keys"}
+    if any(marker in part.lower() for part in resolved.parts for marker in private_markers):
+        return False, "sensitive-path"
+    max_bytes = int(os.environ.get("WECHAT_WORKER_MAX_OUTBOUND_BYTES", DEFAULT_MAX_OUTBOUND_BYTES))
+    try:
+        if resolved.stat().st_size > max_bytes:
+            return False, "too-large"
+    except OSError:
+        return False, "stat-failed"
+    return True, ""
+
+
+def unique_strings(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
 
 
 def send_message(message: str, chat: str, send_targets: Path) -> None:
@@ -327,12 +493,16 @@ def send_message(message: str, chat: str, send_targets: Path) -> None:
                     "--targets-file",
                     str(target_file),
                     "--send",
+                    "--prefer-current",
+                    "--pause",
+                    os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
                     "--mirror-db",
                     str(DEFAULT_DB),
                 ],
                 cwd=ROOT,
                 check=True,
                 timeout=60,
+                env=wechat_send_env(),
             )
         finally:
             target_file.unlink(missing_ok=True)
@@ -354,6 +524,9 @@ def send_message(message: str, chat: str, send_targets: Path) -> None:
 
 
 def send_file(file_path: Path, chat: str, send_targets: Path) -> None:
+    ok, reason = is_safe_outbound_file(file_path)
+    if not ok:
+        raise ValueError(f"Refusing outbound file {file_path}: {reason}")
     target = load_send_target(chat, send_targets)
     if target:
         with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
@@ -366,10 +539,14 @@ def send_file(file_path: Path, chat: str, send_targets: Path) -> None:
                     str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
                     "--targets-file",
                     str(target_file),
+                    "--prefer-current",
+                    "--pause",
+                    os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
                 ],
                 cwd=ROOT,
                 check=True,
                 timeout=60,
+                env=wechat_send_env(),
             )
         finally:
             target_file.unlink(missing_ok=True)
@@ -386,7 +563,15 @@ def send_file(file_path: Path, chat: str, send_targets: Path) -> None:
         ],
         cwd=ROOT,
         check=False,
+        env=wechat_send_env(),
     )
+
+
+def wechat_send_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("WECHAT_INITIAL_TITLE_WAIT", os.environ.get("WECHAT_WORKER_INITIAL_TITLE_WAIT", "0.45"))
+    env.setdefault("WECHAT_TITLE_RETRY_SECONDS", os.environ.get("WECHAT_WORKER_TITLE_RETRY_SECONDS", "3.2"))
+    return env
 
 
 def load_send_target(chat: str, path: Path) -> dict[str, Any] | None:

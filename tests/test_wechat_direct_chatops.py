@@ -218,6 +218,26 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("download the pdf too", route["task"])
         self.assertIn("Current coalesced request", route["task"])
 
+    def test_research_labcanvas_tool_keywords_route_to_worker(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": ["kicad", "gerber", "step", "stl", "3d", "labcanvas"],
+        }
+        row = self.row("please use LabCanvas and KiCad to render the PCB and send the STEP")
+
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("LabCanvas", route["task"])
+        self.assertIn("KiCad", route["task"])
+
     def test_research_quote_reply_keeps_command_and_quoted_context(self) -> None:
         config = {
             "chat_name": "懒人科研",

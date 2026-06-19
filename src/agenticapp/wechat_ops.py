@@ -316,7 +316,7 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "silent_danger_enabled": True,
         "immediate_ack_enabled": True,
         "immediate_ack_text": "收到，我先处理，完成后把结果发回来。",
-        "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "figure", "file", "image"],
+        "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "kicad", "gerber", "step", "stl", "3d", "labcanvas", "figure", "file", "image"],
         "poll_seconds": 0.8,
         "catchup_poll_seconds": 0.1,
         "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 30},

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -70,6 +72,39 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(calls[0]["role"], "worker")
         self.assertIn("fragment or follow-up", str(calls[0]["prompt"]))
         self.assertIn("Avoid sending the same answer again", str(calls[0]["prompt"]))
+        self.assertIn("LabCanvas tool playbook", str(calls[0]["prompt"]))
+        self.assertIn("studio lab-task", str(calls[0]["prompt"]))
+        self.assertIn("render-scene", str(calls[0]["prompt"]))
+        self.assertIn("files", str(calls[0]["prompt"]))
+
+    def test_worker_result_collects_nested_and_plain_artifact_paths(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            png = Path(tmp) / "render.png"
+            step = Path(tmp) / "part.step"
+            png.write_bytes(b"png")
+            step.write_text("step", encoding="utf-8")
+            raw = json.dumps({"message": "", "artifacts": [{"path": str(png)}]}, ensure_ascii=False)
+            result = worker.parse_worker_result(raw)
+
+            prepared = worker.prepare_result_files(result, f"Also created {step}")
+
+        self.assertIn(str(png.resolve()), prepared["files"])
+        self.assertIn(str(step.resolve()), prepared["files"])
+        self.assertIn("Generated 2 artifact", prepared["message"])
+
+    def test_worker_result_skips_private_artifacts(self) -> None:
+        worker = load_worker()
+        private_file = worker.PRIVATE / "unit-test-private-render.png"
+        private_file.parent.mkdir(parents=True, exist_ok=True)
+        private_file.write_bytes(b"private")
+        try:
+            prepared = worker.prepare_result_files({"message": "done", "confirmation": "", "files": [str(private_file)]}, "")
+        finally:
+            private_file.unlink(missing_ok=True)
+
+        self.assertEqual(prepared["files"], [])
+        self.assertEqual(prepared["skipped_files"][0]["reason"], "private-path")
 
     def test_worker_sandbox_can_be_downgraded_by_env(self) -> None:
         worker = load_worker()
