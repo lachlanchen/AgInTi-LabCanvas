@@ -190,9 +190,59 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(result["state"]["last_local_id"], 2)
         self.assertEqual(result["processed_local_id"], 2)
         self.assertEqual(result["metrics"]["coalesced_trigger_rows"], 2)
+        self.assertEqual(result["state"]["responded_server_ids"], ["1", "2"])
         self.assertIn("metrics", result)
         self.assertIn("total_ms", result["metrics"])
         self.assertIn("last_loop_at", result["state"])
+
+    def test_force_latest_user_burst_rewinds_cursor_and_clears_dedupe(self) -> None:
+        config = self.base_config()
+        rows = [
+            self.row("old bot answer", sender="self", server_id="self-1", local_id=10),
+            self.row("今天很好", server_id="friend-1", local_id=11),
+            self.row("我去睡觉", server_id="friend-2", local_id=12),
+        ]
+        state: dict[str, object] = {"last_local_id": 12, "responded_server_ids": ["friend-1", "friend-2", "older"]}
+        original_history = direct_chatops.read_recent_history
+        try:
+            direct_chatops.read_recent_history = lambda *_args, **_kwargs: rows  # type: ignore[assignment]
+            updated = direct_chatops.prepare_force_latest_user_burst(config, state, 2)
+        finally:
+            direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
+
+        self.assertEqual(updated["last_local_id"], 10)
+        self.assertEqual(updated["responded_server_ids"], ["older"])
+        self.assertEqual(updated["force_replay_local_ids"], [11, 12])
+
+    def test_send_failure_does_not_mark_row_responded(self) -> None:
+        config = self.base_config()
+        config["immediate_ack_enabled"] = False
+        config["codex"] = {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60}
+        state: dict[str, object] = {"last_local_id": 0}
+        row = self.row("今日はいい天気です", server_id="1", local_id=1)
+        original_read_new = direct_chatops.read_new_messages
+        original_history = direct_chatops.read_recent_history
+        original_run_codex = direct_chatops.run_codex
+        original_send = direct_chatops.send_gui_message
+        try:
+            direct_chatops.read_new_messages = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+            direct_chatops.read_recent_history = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+            direct_chatops.run_codex = lambda *_args, **_kwargs: "CHAT: reply"  # type: ignore[assignment]
+
+            def fail_send(_config: object, _message: str) -> str:
+                raise RuntimeError("title guard failed")
+
+            direct_chatops.send_gui_message = fail_send  # type: ignore[assignment]
+            result = direct_chatops.run_once(config, state, send=True, no_decrypt=True)
+        finally:
+            direct_chatops.read_new_messages = original_read_new  # type: ignore[assignment]
+            direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
+            direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
+            direct_chatops.send_gui_message = original_send  # type: ignore[assignment]
+
+        self.assertEqual(result["responses_sent"], 1)
+        self.assertEqual(result["state"].get("responded_server_ids"), None)
+        self.assertEqual(result["metrics"]["send_error"], "title guard failed")
 
     def test_research_immediate_route_keeps_all_focus_rows(self) -> None:
         config = {

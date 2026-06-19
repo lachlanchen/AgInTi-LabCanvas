@@ -49,8 +49,17 @@ def main() -> int:
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--poll-seconds", type=float, default=None)
     parser.add_argument("--catchup-poll-seconds", type=float, default=None)
+    parser.add_argument(
+        "--force-latest-user-burst",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Replay the newest N non-self triggerable rows even if they were marked handled.",
+    )
     parser.add_argument("--worker-queue", type=Path, default=DEFAULT_QUEUE, help="Private JSONL queue for slower worker tasks.")
     args = parser.parse_args()
+    if args.loop and args.force_latest_user_burst:
+        raise SystemExit("--force-latest-user-burst is only valid for a one-shot replay, not --loop.")
 
     config = load_config(args.config)
     config["worker_queue"] = str(args.worker_queue)
@@ -63,6 +72,8 @@ def main() -> int:
     state_path = args.state or Path(config.get("state_path") or DEFAULT_STATE)
     while True:
         state = load_state(state_path)
+        if args.force_latest_user_burst:
+            state = prepare_force_latest_user_burst(config, state, args.force_latest_user_burst)
         result = run_once(config, state, send=args.send, no_decrypt=args.no_decrypt)
         save_state(state_path, result["state"])
         print(json.dumps({k: v for k, v in result.items() if k != "state"}, ensure_ascii=False, indent=2), flush=True)
@@ -232,6 +243,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         if reply_text and reply_text != "NO_REPLY":
             status = "dry-run-response"
             screenshot = None
+            send_ok = True
             if send:
                 started = time.monotonic()
                 try:
@@ -240,8 +252,10 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                 except Exception as exc:
                     metrics["send_error"] = str(exc)[:500]
                     status = "send-failed"
+                    send_ok = False
                 metrics["send_ms"] = elapsed_ms(started)
-            remember_sent_reply(config, state, reply_text)
+            if send_ok:
+                remember_sent_reply(config, state, reply_text)
             record_event(
                 chat_name=config["chat_name"],
                 action="direct_codex_reply",
@@ -256,10 +270,11 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     "worker_task_id": task_enqueued,
                 },
             )
-            state.setdefault("responded_server_ids", []).append(str(trigger_row["server_id"]))
+            if send_ok:
+                mark_responded_rows(state, focus_rows or [trigger_row])
             response_sent = reply_text
         elif task_enqueued:
-            state.setdefault("responded_server_ids", []).append(str(trigger_row["server_id"]))
+            mark_responded_rows(state, focus_rows or [trigger_row])
         processed_local_id = trigger_row["local_id"]
 
     if new_rows:
@@ -278,6 +293,61 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         "metrics": metrics,
         "state": state,
     }
+
+
+def mark_responded_rows(state: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    existing = [str(item) for item in state.get("responded_server_ids", [])]
+    seen = set(existing)
+    for row in rows:
+        server_id = str(row.get("server_id") or "")
+        if server_id and server_id not in seen:
+            existing.append(server_id)
+            seen.add(server_id)
+    state["responded_server_ids"] = existing[-200:]
+
+
+def prepare_force_latest_user_burst(config: dict[str, Any], state: dict[str, Any], count: int) -> dict[str, Any]:
+    rows = read_recent_history(config, 10**12, limit=max(24, count * 6))
+    selected = latest_force_replay_rows(config, rows, count)
+    if not selected:
+        return state
+    replay_ids = {str(row["server_id"]) for row in selected}
+    state["responded_server_ids"] = [
+        str(server_id) for server_id in state.get("responded_server_ids", []) if str(server_id) not in replay_ids
+    ]
+    state["last_local_id"] = max(0, min(int(row["local_id"]) for row in selected) - 1)
+    state["manual_reprocess_note"] = "Force replay of latest non-self user burst; message content intentionally not stored here."
+    state["force_replay_local_ids"] = [int(row["local_id"]) for row in selected]
+    state["force_replay_at"] = datetime.now().isoformat(timespec="seconds")
+    return state
+
+
+def latest_force_replay_rows(config: dict[str, Any], rows: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+    if count <= 0:
+        return []
+    self_wxid = str(config.get("self_wxid") or "")
+    candidates = []
+    for row in rows:
+        if self_wxid and row.get("sender") == self_wxid:
+            continue
+        if is_dangerous_message(config, visible_message_text(row)):
+            continue
+        if is_force_replay_candidate(config, row):
+            candidates.append(row)
+    return candidates[-count:]
+
+
+def is_force_replay_candidate(config: dict[str, Any], row: dict[str, Any]) -> bool:
+    base_type, _ = split_message_type(row.get("local_type"))
+    allowed_local_types = {int(item) for item in config.get("trigger_local_types", [1])}
+    if is_quote_reply_message(row) or is_attachment_trigger(config, row):
+        return True
+    if allowed_local_types and base_type not in allowed_local_types:
+        return False
+    text = visible_message_text(row)
+    if bool(config.get("respond_to_all", False)):
+        return meaningful_request_text(text, config.get("trigger_prefixes", []))
+    return any(prefix in text for prefix in config.get("trigger_prefixes", []))
 
 
 def elapsed_ms(started: float) -> float:
