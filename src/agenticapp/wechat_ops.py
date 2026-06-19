@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import sqlite3
@@ -23,6 +24,7 @@ DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_DISPLAY = ":97"
 DEFAULT_VNC_PORT = 5917
 DEFAULT_NOVNC_PORT = 6107
+CODEX_SESSION_KEY_RE = re.compile(r"^v2:[0-9a-z_.-]+-[0-9a-f]{12}:[0-9a-z_.-]+$")
 
 
 def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -813,14 +815,18 @@ def codex_session_summary() -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {"ok": False, "path_exists": True, "count": 0, "items": []}
     items = []
+    thread_counts: dict[str, int] = {}
     if isinstance(data, dict):
         for key, value in sorted(data.items()):
             if not isinstance(value, dict):
                 continue
             thread_id = str(value.get("thread_id") or "")
+            if thread_id:
+                thread_counts[thread_id] = thread_counts.get(thread_id, 0) + 1
             items.append(
                 {
                     "key": key,
+                    "legacy_key": not bool(CODEX_SESSION_KEY_RE.fullmatch(key)),
                     "chat_name": value.get("chat_name", ""),
                     "role": value.get("role", ""),
                     "thread_id_short": thread_id[:8] if thread_id else "",
@@ -832,7 +838,23 @@ def codex_session_summary() -> dict[str, Any]:
                     "last_fallback_started": bool(value.get("last_fallback_started")),
                 }
             )
-    return {"ok": True, "path_exists": True, "count": len(items), "items": items}
+    legacy_count = sum(1 for item in items if item["legacy_key"])
+    duplicate_thread_count = 0
+    for item in items:
+        record = data.get(item["key"], {}) if isinstance(data, dict) else {}
+        thread_id = str(record.get("thread_id") or "") if isinstance(record, dict) else ""
+        duplicate = bool(thread_id and thread_counts.get(thread_id, 0) > 1)
+        item["thread_id_duplicate"] = duplicate
+        if duplicate:
+            duplicate_thread_count += 1
+    return {
+        "ok": legacy_count == 0 and duplicate_thread_count == 0,
+        "path_exists": True,
+        "count": len(items),
+        "legacy_count": legacy_count,
+        "duplicate_thread_entry_count": duplicate_thread_count,
+        "items": items,
+    }
 
 
 def discover_direct_monitor_configs() -> list[Path]:

@@ -29,6 +29,43 @@ class WeChatCodexSessionTests(unittest.TestCase):
 
         self.assertEqual(sessions.parse_thread_id(events), "abc")
 
+    def test_session_key_is_exact_chat_scoped(self) -> None:
+        sessions = load_sessions()
+
+        keys = {
+            sessions.session_key("EchoMind", "fast"),
+            sessions.session_key("懒人科研", "fast"),
+            sessions.session_key("鏈接", "fast"),
+            sessions.session_key("写作 外语 挣钱", "fast"),
+        }
+
+        self.assertEqual(len(keys), 4)
+        self.assertTrue(all(key.startswith("v2:") for key in keys))
+        self.assertTrue(all(":fast" in key for key in keys))
+        self.assertNotIn("wechat:fast", keys)
+
+    def test_load_registry_ignores_legacy_keys(self) -> None:
+        sessions = load_sessions()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "sessions.local.json"
+            current_key = sessions.session_key("懒人科研", "fast")
+            registry.write_text(
+                json.dumps(
+                    {
+                        "wechat:fast": {"thread_id": "legacy", "chat_name": "懒人科研", "role": "fast"},
+                        current_key: {"thread_id": "current", "chat_name": "懒人科研", "role": "fast"},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            data = sessions.load_registry(registry)
+
+        self.assertEqual(list(data), [current_key])
+        self.assertEqual(data[current_key]["thread_id"], "current")
+
     def test_run_codex_session_stores_and_resumes_thread(self) -> None:
         sessions = load_sessions()
         calls: list[list[str]] = []

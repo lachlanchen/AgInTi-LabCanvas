@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,9 @@ ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 SESSION_DIR = PRIVATE / "codex_sessions"
 DEFAULT_REGISTRY = SESSION_DIR / "sessions.local.json"
+SESSION_KEY_VERSION = "v2"
+SESSION_KEY_DIGEST_LENGTH = 12
+CURRENT_SESSION_KEY_RE = re.compile(r"^v2:[0-9a-z_.-]+-[0-9a-f]{12}:[0-9a-z_.-]+$")
 
 
 def run_codex_session(
@@ -143,12 +147,15 @@ def parse_thread_id(events: str) -> str:
 
 
 def session_key(chat_name: str, role: str) -> str:
-    return f"{safe_slug(chat_name)}:{safe_slug(role)}"
+    """Return a collision-resistant key for one exact WeChat chat and role."""
+    chat_text = str(chat_name or "").strip()
+    digest = hashlib.sha256(chat_text.encode("utf-8")).hexdigest()[:SESSION_KEY_DIGEST_LENGTH]
+    return f"{SESSION_KEY_VERSION}:{safe_slug(chat_text)}-{digest}:{safe_slug(role)}"
 
 
 def safe_slug(value: str) -> str:
     slug = re.sub(r"[^0-9A-Za-z_.-]+", "-", str(value or "").strip()).strip("-").lower()
-    return slug or "wechat"
+    return slug or "chat"
 
 
 def load_registry(path: Path = DEFAULT_REGISTRY) -> dict[str, Any]:
@@ -158,7 +165,13 @@ def load_registry(path: Path = DEFAULT_REGISTRY) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        key: value
+        for key, value in data.items()
+        if CURRENT_SESSION_KEY_RE.fullmatch(str(key)) and isinstance(value, dict)
+    }
 
 
 def save_registry(path: Path, registry: dict[str, Any]) -> None:

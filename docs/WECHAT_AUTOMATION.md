@@ -189,9 +189,12 @@ upload. If the worker needs an important decision before continuing, it returns
 Each monitored group reuses two private Codex sessions: a `fast` session for
 immediate routing/chat replies and a `worker` session for slower backend tasks.
 The session registry lives under `.private/codex_sessions/`; public status
-output shows only shortened thread IDs and role metadata. Set
-`WECHAT_CODEX_REUSE_SESSIONS=0` before starting the supervisor to force fully
-stateless `codex exec` calls.
+output shows only shortened thread IDs, role metadata, and whether an entry uses
+the legacy key format. Current keys include a hash of the exact chat title to
+keep Chinese, Japanese, emoji, and English group names independent. Back up and
+remove legacy `wechat:*` or plain `<chat>:<role>` registry entries if context
+ever crosses groups. Set `WECHAT_CODEX_REUSE_SESSIONS=0` before starting the
+supervisor to force fully stateless `codex exec` calls.
 
 The worker chooses its own Codex policy from task difficulty: low for simple
 chat follow-ups, medium for paper/PDF/search/figure/research work, and high for

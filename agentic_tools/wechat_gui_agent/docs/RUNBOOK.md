@@ -65,7 +65,10 @@ clear failure or timeout escalates once to the next effort level.
 
 Each group keeps two reusable Codex sessions by default: `fast` for immediate
 router replies and `worker` for backend work. The ignored registry is
-`.private/codex_sessions/sessions.local.json`. Disable reuse for debugging with:
+`.private/codex_sessions/sessions.local.json`. Session keys are hash-scoped to
+the exact chat title; if status shows `legacy_key: true`, back up that registry
+and restart the monitor so mixed pre-fix context cannot be resumed. Disable
+reuse for debugging with:
 
 ```bash
 WECHAT_CODEX_REUSE_SESSIONS=0 labcanvas wechat hold restart
