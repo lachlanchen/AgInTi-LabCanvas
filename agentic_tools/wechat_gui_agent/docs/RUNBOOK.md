@@ -129,6 +129,12 @@ labcanvas wechat backend api-history --port 5679 --json
 Only run `labcanvas wechat backend find-keys` when keys are missing; it reads the
 running WeChat process memory and requires root or `CAP_SYS_PTRACE`.
 
+The persistent supervisor uses this same wrapper from its decrypt refresh pane.
+It defaults to `WECHAT_DECRYPT_REFRESH_MODE=incremental` and
+`WECHAT_DECRYPT_REFRESH_SMART=1`, so it avoids full decrypt passes while the
+source DB/WAL files are unchanged. Use `labcanvas wechat health --json` to check
+both external backend readiness and per-group catch-up.
+
 ## 8. Group Creation
 
 Open the picker first:

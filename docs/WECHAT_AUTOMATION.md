@@ -143,7 +143,9 @@ trigger replies.
 
 The supervisor runs one decrypt refresh pane and one direct monitor pane per
 group. Direct monitors normally use `--no-decrypt` and read the refreshed cache;
-this avoids multiple monitors competing over the WeChat DB. Idle polling is
+this avoids multiple monitors competing over the WeChat DB. The refresh pane
+calls the LabCanvas backend wrapper in incremental mode and, by default, skips
+decrypt work when the source DB/WAL timestamp has not changed. Idle polling is
 local SQLite/file work and does not call Codex. A Codex call only happens when a
 new message must be classified or answered.
 
@@ -198,6 +200,15 @@ labcanvas wechat reject <task-id> --note "wait for manual review"
 If no task id is supplied, the newest `waiting_confirmation` task is selected.
 Approval returns the task to `pending` so the worker can continue with the note
 attached.
+
+Useful refresh tuning variables:
+
+```bash
+WECHAT_DECRYPT_REFRESH_INTERVAL=1
+WECHAT_DECRYPT_REFRESH_MODE=incremental
+WECHAT_DECRYPT_REFRESH_SMART=1
+WECHAT_DECRYPT_HEARTBEAT_INTERVAL=30
+```
 
 ## Media Sync
 

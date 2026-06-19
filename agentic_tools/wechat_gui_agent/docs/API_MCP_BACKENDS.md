@@ -57,3 +57,8 @@ root or `CAP_SYS_PTRACE` on Linux. The `monitor-web` action uses a LabCanvas
 localhost-only launcher around the upstream `monitor_web.py`, avoiding the
 upstream default all-interface bind. Keep all generated configs, keys, decrypted
 DBs, MCP client configs, and API snapshots under `.private/`.
+
+The production tmux supervisor now refreshes the decrypted cache through this
+backend wrapper in incremental mode. The refresh loop performs a lightweight
+source DB/WAL timestamp check before decrypting, while fast group monitors keep
+using `--no-decrypt` and only read the refreshed local SQLite cache.

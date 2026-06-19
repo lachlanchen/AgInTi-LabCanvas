@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import unittest
 
 
@@ -112,7 +114,6 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
     def test_default_direct_config_uses_low_reasoning_fast_polling(self) -> None:
         with self.subTest("defaults"):
             import json
-            import tempfile
 
             with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8") as handle:
                 json.dump({"message_table": "Msg_demo"}, handle)
@@ -124,6 +125,28 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(config["codex"]["timeout_seconds"], 60)
         self.assertEqual(config["poll_seconds"], 0.8)
         self.assertEqual(config["catchup_poll_seconds"], 0.1)
+
+    def test_refresh_decrypted_store_uses_incremental_backend_wrapper(self) -> None:
+        calls: list[list[str]] = []
+        original_private = direct_chatops.PRIVATE
+        original_run = direct_chatops.subprocess.run
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                direct_chatops.PRIVATE = Path(tmp)  # type: ignore[assignment]
+
+                def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                    calls.append(command)
+                    return subprocess.CompletedProcess(command, 0, "ok", "")
+
+                direct_chatops.subprocess.run = fake_run  # type: ignore[assignment]
+                direct_chatops.refresh_decrypted_store()
+        finally:
+            direct_chatops.PRIVATE = original_private  # type: ignore[assignment]
+            direct_chatops.subprocess.run = original_run  # type: ignore[assignment]
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(Path(calls[0][1]).name, "wechat_direct_backend.py")
+        self.assertEqual(calls[0][-2:], ["decrypt", "--incremental"])
 
 
 if __name__ == "__main__":

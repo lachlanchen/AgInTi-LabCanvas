@@ -30,6 +30,7 @@ DEFAULT_CONFIG = PRIVATE / "lazy-research-direct-chatops.local.json"
 DEFAULT_STATE = PRIVATE / "lazy-research-direct-chatops.state.json"
 DECRYPTED = PRIVATE / "wechat_decrypt" / "decrypted"
 VENV_PYTHON = PRIVATE / "wechat_decrypt" / ".venv" / "bin" / "python"
+BACKEND_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_direct_backend.py"
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_POLL_SECONDS = 0.8
 DEFAULT_CATCHUP_POLL_SECONDS = 0.1
@@ -131,7 +132,12 @@ def load_config(path: Path) -> dict[str, Any]:
 
 
 def refresh_decrypted_store() -> None:
-    command = [str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable)), str(PRIVATE / "external" / "wechat-decrypt" / "decrypt_db.py")]
+    command = [
+        str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable)),
+        str(BACKEND_SCRIPT),
+        "decrypt",
+        "--incremental",
+    ]
     lock_path = PRIVATE / "wechat_decrypt.refresh.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w", encoding="utf-8") as lock:

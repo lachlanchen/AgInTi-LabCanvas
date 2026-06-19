@@ -285,7 +285,11 @@ phone-sent messages from the same logged-in account should trigger replies.
 
 The tmux supervisor runs a single decrypt refresh pane and launches each direct
 group monitor with `--no-decrypt`. This keeps `懒人科研`, `EchoMind`, and other
-configured groups independent while avoiding concurrent decrypt stalls.
+configured groups independent while avoiding concurrent decrypt stalls. The
+refresh pane uses `labcanvas wechat backend decrypt --incremental` through the
+same backend wrapper as the CLI, and skips decrypt work when the source DB/WAL
+timestamp is unchanged. `labcanvas wechat health --json` reports the external
+backend state next to per-group catch-up status.
 Private send targets should include `expected_title`; before composing, the GUI
 sender OCR-checks the opened chat header and fails closed if the wrong group is
 visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel

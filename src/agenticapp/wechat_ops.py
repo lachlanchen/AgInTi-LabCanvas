@@ -187,6 +187,7 @@ def status_payload() -> dict[str, Any]:
         },
         "queue": queue_summary(DEFAULT_QUEUE),
         "mirror": mirror_summary(PRIVATE / "wechat_mirror.sqlite"),
+        "external_backend": external_backend_summary(),
         "media_sources": [str(path) for path in discover_media_sources()],
         "novnc_url": f"http://127.0.0.1:{DEFAULT_NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port={DEFAULT_NOVNC_PORT}&autoconnect=1&resize=remote",
     }
@@ -710,19 +711,64 @@ def mirror_summary(path: Path, *, limit: int = 8) -> dict[str, Any]:
 def direct_monitor_health() -> dict[str, Any]:
     configs = discover_direct_monitor_configs()
     groups = [direct_config_health(path) for path in configs]
+    backend = external_backend_summary()
     caught_up = sum(1 for item in groups if item.get("caught_up"))
-    ok = bool(groups) and all(item.get("ok") for item in groups)
+    ok = bool(groups) and all(item.get("ok") for item in groups) and bool(backend.get("ok"))
     return {
         "ok": ok,
         "checked_at": datetime.now().isoformat(timespec="seconds"),
         "group_count": len(groups),
         "caught_up_groups": caught_up,
+        "external_backend": backend,
         "groups": groups,
         "notes": [
             "private chatroom ids, wxids, message-table names, and DB paths are intentionally omitted",
             "set WECHAT_DIRECT_CONFIGS in .private/wechat_supervisor.local.env to control monitored groups",
         ],
     }
+
+
+def external_backend_summary() -> dict[str, Any]:
+    proc = run_command([sys.executable, str(SCRIPTS / "wechat_direct_backend.py"), "--json", "status"], capture=True)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {
+            "ok": False,
+            "status": "status-unreadable",
+            "returncode": proc.returncode,
+            "private_paths_redacted": True,
+        }
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "status": "status-invalid",
+            "returncode": proc.returncode,
+            "private_paths_redacted": True,
+        }
+    allowed = {
+        "ok",
+        "status",
+        "external_exists",
+        "external_git",
+        "venv_python_exists",
+        "db_dir_exists",
+        "message_db_exists",
+        "source_db_count",
+        "config_exists",
+        "keys_file_exists",
+        "keys_file_mtime",
+        "decrypted_dir_exists",
+        "decrypted_db_count",
+        "decrypted_message_db_exists",
+        "scripts",
+        "monitor_web",
+        "private_paths_redacted",
+        "checked_at",
+    }
+    summary = {key: payload[key] for key in allowed if key in payload}
+    summary["returncode"] = proc.returncode
+    return summary
 
 
 def discover_direct_monitor_configs() -> list[Path]:
