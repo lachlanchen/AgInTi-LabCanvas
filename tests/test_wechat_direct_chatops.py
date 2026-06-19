@@ -96,8 +96,36 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("pinyin", prompt)
         self.assertIn("English gloss", prompt)
         self.assertIn("NO_REPLY", prompt)
+        self.assertIn("full recent context", prompt)
+        self.assertIn("Avoid repeating", prompt)
 
-    def test_later_trigger_rows_are_not_skipped(self) -> None:
+    def test_research_prompt_uses_context_for_fragments_and_duplicates(self) -> None:
+        config = self.base_config()
+        config["chat_name"] = "懒人科研"
+        config["analysis_mode"] = ""
+        config["chat_purpose"] = "research"
+
+        prompt = direct_chatops.build_codex_prompt(config, self.row("same one"), "BOT_SELF previous answer")
+
+        self.assertIn("ongoing chat", prompt)
+        self.assertIn("incomplete messages", prompt)
+        self.assertIn("near-duplicate", prompt)
+        self.assertIn("Chip in", prompt)
+        self.assertIn("answer once", prompt)
+
+    def test_prompt_context_labels_latest_and_self_rows(self) -> None:
+        config = self.base_config()
+        rows = [
+            self.row("previous answer", sender="self", local_id=1),
+            self.row("same one", sender="friend", local_id=2),
+        ]
+
+        context = direct_chatops.format_prompt_context(config, rows[-1], rows)
+
+        self.assertIn("BOT_SELF local_id=1", context)
+        self.assertIn("LATEST local_id=2", context)
+
+    def test_burst_trigger_rows_are_coalesced_to_latest(self) -> None:
         config = self.base_config()
         config["immediate_ack_enabled"] = False
         config["codex"] = {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60}
@@ -126,9 +154,11 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
             direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
 
-        self.assertEqual(calls, ["1"])
+        self.assertEqual(calls, ["2"])
         self.assertEqual(result["responses_sent"], 1)
-        self.assertEqual(result["state"]["last_local_id"], 1)
+        self.assertEqual(result["state"]["last_local_id"], 2)
+        self.assertEqual(result["processed_local_id"], 2)
+        self.assertEqual(result["metrics"]["coalesced_trigger_rows"], 2)
         self.assertIn("metrics", result)
         self.assertIn("total_ms", result["metrics"])
         self.assertIn("last_loop_at", result["state"])

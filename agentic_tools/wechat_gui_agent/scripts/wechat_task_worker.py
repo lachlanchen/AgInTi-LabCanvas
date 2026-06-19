@@ -147,6 +147,8 @@ def run_worker_codex(task: dict[str, Any]) -> str:
 def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
+The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
+Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
 
 Return either plain text or this JSON shape:
 {{

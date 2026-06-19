@@ -68,6 +68,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(result, "done")
         self.assertEqual(calls[0]["chat_name"], "懒人科研")
         self.assertEqual(calls[0]["role"], "worker")
+        self.assertIn("fragment or follow-up", str(calls[0]["prompt"]))
+        self.assertIn("Avoid sending the same answer again", str(calls[0]["prompt"]))
 
     def test_worker_sandbox_can_be_downgraded_by_env(self) -> None:
         worker = load_worker()

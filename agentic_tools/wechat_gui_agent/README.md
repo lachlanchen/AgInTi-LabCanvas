@@ -61,9 +61,13 @@ queued for `wechat_task_worker.py`, which can send a final message plus
 PDFs/images/files back through the official WeChat GUI.
 
 The direct monitor uses recent full chat history, not just the newest polling
-batch. A bare mention can therefore refer to the previous message, and queued
-tasks include recent synced file paths so requests like "summarize this PDF"
-can resolve to the latest downloaded PDF.
+batch. Prompt context labels the latest row and bot/self replies, so a bare
+mention, repeated message, or fragment such as "same one" can refer to the
+previous request without repeating the same answer. By default,
+`coalesce_new_messages` makes a burst of incoming rows produce one reply to the
+latest actionable turn, with earlier rows used as context. Queued tasks include
+recent synced file paths so requests like "summarize this PDF" can resolve to
+the latest downloaded PDF.
 
 For low-latency chatops, the supervisor defaults to:
 

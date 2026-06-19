@@ -157,7 +157,13 @@ attachment triggers; those rows immediately ACK and enqueue a worker task using
 recent synced media from `.private/downloads`. When a trigger is found, it also
 loads recent full chat history from the decrypted message table, so a bare
 `@name` can refer back to an earlier request such as "summarize this PDF". It
-asks the low-reasoning router for one of four shapes:
+labels latest and bot/self rows in the prompt, which lets the router resolve
+incomplete follow-ups such as "same one" and avoid repeating a previous answer.
+With `coalesce_new_messages` enabled, a burst of actionable rows is answered
+once at the latest row while earlier rows stay in context. The router should
+chip in when the chat clearly asks for help, shows confusion, mentions the bot,
+or needs a short expert note; otherwise it should return `NO_REPLY` for ordinary
+side conversation. It asks the low-reasoning router for one of four shapes:
 
 ```text
 CHAT: <quick reply>
@@ -182,7 +188,9 @@ or file/image handling, the monitor can skip the fast Codex call, send the ACK
 immediately, and enqueue the backend task directly. The queued task includes
 recent chat history and recent synced WeChat file paths from `.private/downloads`
 so the worker can resolve phrases like "this PDF" without asking for another
-upload. If the worker needs an important decision before continuing, it returns
+upload. The worker prompt also checks recent bot/self context before work so it
+returns only a delta/status when a request is repeated. If the worker needs an
+important decision before continuing, it returns
 `confirmation`, sends that question to chat, and marks the task
 `waiting_confirmation`.
 
