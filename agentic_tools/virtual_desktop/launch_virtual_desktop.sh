@@ -99,7 +99,11 @@ if ! ss -ltn | awk '{print $4}' | grep -Eq "(^|:)${NOVNC_PORT}$"; then
 fi
 
 if [[ ${#APP_COMMAND[@]} -gt 0 ]]; then
-  if [[ -n "$APP_MATCH" ]] && pgrep -u "$USER" -f "$APP_MATCH" >/dev/null 2>&1; then
+  MATCHING_APP_PIDS=""
+  if [[ -n "$APP_MATCH" ]]; then
+    MATCHING_APP_PIDS="$(pgrep -u "$USER" -f "$APP_MATCH" | grep -v -E "^($$|$PPID)$" || true)"
+  fi
+  if [[ -n "$MATCHING_APP_PIDS" ]]; then
     echo "App already running: $APP_MATCH"
   else
     echo "Starting app on $DISPLAY_ID: ${APP_COMMAND[*]}"
@@ -122,7 +126,7 @@ fi
 echo
 echo "Virtual desktop ready"
 echo "  display: $DISPLAY_ID"
-echo "  screen:  $(DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo | awk -F: '/dimensions|depth of root window/ {gsub(/^ +/, \"\", $2); print $1 \":\" $2}' | paste -sd ', ' -)"
+echo "  screen:  $(DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo | awk -F: '/dimensions|depth of root window/ {gsub(/^ +/, "", $2); print $1 ":" $2}' | paste -sd ', ' -)"
 echo "  vnc:     127.0.0.1:$VNC_PORT"
 echo "  noVNC:   $NOVNC_URL"
 echo "  logs:    $LOG_DIR"
