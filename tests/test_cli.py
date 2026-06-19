@@ -129,7 +129,28 @@ class CliTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertIn("desktop", payload)
         self.assertIn("sessions", payload)
+        self.assertIn("queue", payload)
+        self.assertIn("mirror", payload)
         self.assertIn("novnc_url", payload)
+
+    def test_wechat_queue_json_reads_private_queue_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps({"id": "1", "chat": "demo", "request": "render a device", "status": "pending"}) + "\n",
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(["wechat", "queue", "--queue", str(queue), "--json"])
+
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["counts"]["pending"], 1)
+        self.assertEqual(payload["recent"][0]["request"], "render a device")
 
 
 if __name__ == "__main__":

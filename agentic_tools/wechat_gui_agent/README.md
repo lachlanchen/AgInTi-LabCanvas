@@ -54,15 +54,17 @@ tmux attach -t labcanvas-wechat
 ```
 
 The supervisor keeps four panes alive: virtual desktop, fast direct monitor,
-worker queue, and optional media sync. Incoming mentions can get an immediate
-ACK while longer work is queued for `wechat_task_worker.py`, which can send a
-final message plus PDFs/images/files back through the official WeChat GUI.
+worker queue, and media sync. Monitor/worker/media panes restart automatically
+if they exit. Incoming mentions can get an immediate ACK while longer work is
+queued for `wechat_task_worker.py`, which can send a final message plus
+PDFs/images/files back through the official WeChat GUI.
 
 Install a reusable launcher:
 
 ```bash
 labcanvas wechat install-user-scripts
 ~/scripts/labcanvas-wechat-hold.sh start
+~/scripts/create-labcanvas-wechat-tmux.sh
 ```
 
 ## Send Messages
@@ -154,6 +156,7 @@ Queue slower backend work:
 ```bash
 labcanvas wechat worker enqueue "Download the public PDF for <paper title>"
 labcanvas wechat worker once --send
+labcanvas wechat queue --json
 ```
 
 Send a manual message or attachment to the currently visible chat:
@@ -167,7 +170,7 @@ Sync recent downloaded files/images into the private workspace:
 
 ```bash
 labcanvas wechat media-sync --chat "example group" \
-  --source "$HOME/Documents/xwechat_files/<WXID>/file" \
+  --auto-source \
   --since-minutes 60
 ```
 

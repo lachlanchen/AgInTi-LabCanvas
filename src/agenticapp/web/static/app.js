@@ -16,6 +16,7 @@ const TRANSLATIONS = {
     "button.stopHold": "Stop Hold",
     "button.status": "Status",
     "button.sendWechat": "Send to WeChat",
+    "button.workerOnce": "Process One",
     "button.applyJson": "Apply JSON",
     "button.dryRun": "Dry Run",
     "section.chat": "Chat",
@@ -881,6 +882,7 @@ document.getElementById("dispatchTargetBtn").addEventListener("click", dispatchR
 document.getElementById("wechatRefreshBtn").addEventListener("click", loadWeChatStatus);
 document.getElementById("wechatStartBtn").addEventListener("click", () => runWeChatAction("start-hold"));
 document.getElementById("wechatStopBtn").addEventListener("click", () => runWeChatAction("stop-hold"));
+document.getElementById("wechatWorkerBtn").addEventListener("click", () => runWeChatAction("worker-once"));
 document.getElementById("wechatSendBtn").addEventListener("click", () => runWeChatAction("send-message", { message: wechatMessage.value.trim() }));
 themeButton.addEventListener("click", toggleTheme);
 localeSelect.addEventListener("change", () => applyLocale(localeSelect.value, true));
@@ -1071,12 +1073,19 @@ async function runWeChatAction(action, extra = {}) {
 function renderWeChatStatus(data) {
   const desktop = data.desktop?.status || "unknown";
   const supervisor = data.sessions?.supervisor?.status || "unknown";
+  const pending = data.queue?.counts?.pending || 0;
+  const messages = data.mirror?.message_count || 0;
   wechatStatus.textContent = `${desktop} · ${supervisor}`;
   wechatOutput.textContent = JSON.stringify(
     {
       desktop,
       supervisor,
       direct_monitor: data.sessions?.direct_monitor?.status || "unknown",
+      pending_tasks: pending,
+      mirrored_messages: messages,
+      recent_tasks: data.queue?.recent || [],
+      recent_messages: data.mirror?.recent || [],
+      media_sources: data.media_sources || [],
       config: data.direct_config_exists ? "private config present" : "private config missing",
       novnc: data.novnc_url || data.desktop?.novnc_url || "",
     },

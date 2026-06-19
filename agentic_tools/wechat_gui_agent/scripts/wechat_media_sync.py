@@ -19,16 +19,27 @@ DEFAULT_DEST = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private" / "downl
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--chat", required=True)
-    parser.add_argument("--source", type=Path, action="append", required=True, help="WeChat download/cache directory. Repeatable.")
+    parser.add_argument("--source", type=Path, action="append", default=[], help="WeChat download/cache directory. Repeatable.")
+    parser.add_argument("--auto-source", action="store_true", help="Auto-discover local xwechat_files media folders.")
     parser.add_argument("--dest", type=Path, default=DEFAULT_DEST)
     parser.add_argument("--since-minutes", type=float, default=60)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--summary-only", action="store_true", help="Print counts and errors instead of every copied file.")
+    parser.add_argument("--record-empty", action="store_true", help="Record mirror events even when no files matched.")
     args = parser.parse_args()
+
+    sources = list(args.source)
+    if args.auto_source:
+        sources.extend(discover_sources())
+    sources = unique_existing_dirs(sources)
+    if not sources:
+        raise SystemExit("No media source directories. Pass --source or --auto-source.")
 
     cutoff = datetime.now() - timedelta(minutes=args.since_minutes)
     copied = []
-    for source in args.source:
+    errors = []
+    for source in sources:
         if not source.exists():
             continue
         for path in source.rglob("*"):
@@ -38,22 +49,47 @@ def main() -> int:
                 continue
             rel = safe_relative(source, path)
             target = args.dest / source.name / rel
-            copied.append({"source": str(path), "target": str(target), "bytes": path.stat().st_size})
+            item = {"source": str(path), "target": str(target), "bytes": path.stat().st_size}
+            copied.append(item)
             if not args.dry_run:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, target)
+                try:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if target.exists() and target.stat().st_size == path.stat().st_size:
+                        item["status"] = "exists"
+                        continue
+                    shutil.copy2(path, target)
+                    item["status"] = "copied"
+                except OSError as exc:
+                    item["status"] = "error"
+                    item["error"] = str(exc)
+                    errors.append(item)
 
-    status = "dry-run" if args.dry_run else "copied"
+    changed = [item for item in copied if item.get("status") in {"copied", "error"}]
+    status = "dry-run" if args.dry_run else "copied-with-errors" if errors else "copied"
+    if not (changed if not args.dry_run else copied) and not args.record_empty:
+        payload = {"event_id": None, "status": "no-changes", "file_count": 0, "error_count": 0, "errors": []}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
     event_id = record_event(
         chat_name=args.chat,
         action="media_sync",
         direction="inbound",
         status=status,
         db_path=args.db,
-        message=json.dumps(copied, ensure_ascii=False),
-        metadata={"source_count": len(args.source), "file_count": len(copied), "dest": str(args.dest)},
+        message=json.dumps(copied if args.dry_run else changed, ensure_ascii=False),
+        metadata={
+            "source_count": len(sources),
+            "sources": [str(path) for path in sources],
+            "file_count": len(copied if args.dry_run else changed),
+            "error_count": len(errors),
+            "dest": str(args.dest),
+        },
     )
-    print(json.dumps({"event_id": event_id, "status": status, "files": copied}, ensure_ascii=False, indent=2))
+    if args.summary_only:
+        payload = {"event_id": event_id, "status": status, "file_count": len(copied if args.dry_run else changed), "error_count": len(errors), "errors": errors}
+    else:
+        payload = {"event_id": event_id, "status": status, "files": copied if args.dry_run else changed, "errors": errors}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -62,6 +98,33 @@ def safe_relative(root: Path, path: Path) -> Path:
         return path.relative_to(root)
     except ValueError:
         return Path(path.name)
+
+
+def discover_sources() -> list[Path]:
+    base = Path.home() / "Documents" / "xwechat_files"
+    candidates: list[Path] = []
+    if not base.exists():
+        return candidates
+    for profile in base.iterdir():
+        if not profile.is_dir():
+            continue
+        for relative in ("msg/file", "msg/video", "cache", "temp/ImageTemp"):
+            path = profile / relative
+            if path.is_dir():
+                candidates.append(path)
+    return candidates
+
+
+def unique_existing_dirs(paths: list[Path]) -> list[Path]:
+    seen = set()
+    result = []
+    for path in paths:
+        resolved = path.expanduser().resolve()
+        if not resolved.is_dir() or resolved in seen:
+            continue
+        seen.add(resolved)
+        result.append(resolved)
+    return result
 
 
 if __name__ == "__main__":

@@ -26,10 +26,21 @@ labcanvas wechat doctor
 labcanvas wechat init-config --chat "example group"
 labcanvas wechat desktop start
 labcanvas wechat hold start
+labcanvas wechat queue --json
 ```
 
 `hold start` launches tmux session `labcanvas-wechat` with panes for the virtual
-desktop, direct monitor, worker loop, and optional media sync loop.
+desktop, direct monitor, worker loop, and media sync loop. The monitor, worker,
+and media panes run through a restart wrapper, so they come back after a crash
+or transient failure.
+
+Install user launchers:
+
+```bash
+labcanvas wechat install-user-scripts
+~/scripts/labcanvas-wechat-hold.sh start
+~/scripts/create-labcanvas-wechat-tmux.sh
+```
 
 ## Private Config
 
@@ -43,7 +54,9 @@ message table and self ID from private config; they do not hard-code account IDs
   "chatroom_id": "<CHATROOM_ID>",
   "message_table": "<Msg_TABLE>",
   "self_wxid": "<SELF_WXID>",
-  "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex"]
+  "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex"],
+  "immediate_ack_enabled": true,
+  "immediate_ack_text": "收到，我先处理，完成后把结果发回来。"
 }
 ```
 
@@ -65,22 +78,30 @@ can send plain text or JSON with files:
 ```json
 {
   "message": "Finished the export.",
-  "files": ["/absolute/path/to/report.pdf", "/absolute/path/to/preview.png"]
+  "files": ["/absolute/path/to/report.pdf", "/absolute/path/to/preview.png"],
+  "confirmation": ""
 }
 ```
 
+For obvious slow work such as paper downloads, CAD/renders, figures, PCB jobs,
+or file/image handling, the monitor can skip the fast Codex call, send the ACK
+immediately, and enqueue the backend task directly. If the worker needs an
+important decision before continuing, it returns `confirmation`, sends that
+question to chat, and marks the task `waiting_confirmation`.
+
 ## Media Sync
 
-Copy recent downloads into the private workspace:
+Copy recent downloads into the private workspace. Use `--auto-source` to scan
+local `~/Documents/xwechat_files/*` media folders:
 
 ```bash
 labcanvas wechat media-sync --chat "example group" \
-  --source "$HOME/Documents/xwechat_files/<WXID>/file" \
+  --auto-source \
   --since-minutes 60
 ```
 
-Set `WECHAT_MEDIA_SOURCES` to a colon-separated list before `hold start` to keep
-sync running in tmux.
+Set `WECHAT_MEDIA_SOURCES` to a colon-separated override before `hold start` if
+you want to add explicit folders. The default tmux media pane uses auto-source.
 
 ## Web App
 
@@ -88,6 +109,8 @@ The LabCanvas web app exposes a compact WeChat Ops card for:
 
 - checking desktop/supervisor status
 - starting and stopping the persistent tmux supervisor
+- viewing pending queue count, recent mirrored messages, and media sources
+- processing one queued worker task manually
 - sending a short message to the currently visible chat
 
 Run:

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 from typing import Any
@@ -79,11 +80,19 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     worker.add_argument("--send", action="store_true")
     worker.set_defaults(func=cmd_worker)
 
+    queue = nested.add_parser("queue", help="Inspect the private worker queue.")
+    queue.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    queue.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
+    queue.add_argument("--limit", type=int, default=10)
+    queue.set_defaults(func=cmd_queue)
+
     media = nested.add_parser("media-sync", help="Copy recent WeChat downloads/cache files into the private workspace.")
     media.add_argument("--chat", required=True)
-    media.add_argument("--source", action="append", type=Path, required=True)
+    media.add_argument("--source", action="append", type=Path, default=[])
+    media.add_argument("--auto-source", action="store_true", help="Auto-discover local xwechat_files media folders.")
     media.add_argument("--since-minutes", type=float, default=60)
     media.add_argument("--dry-run", action="store_true")
+    media.add_argument("--summary-only", action="store_true")
     media.set_defaults(func=cmd_media_sync)
 
     rename = nested.add_parser("rename", help="Best-effort group rename through the visible WeChat GUI.")
@@ -112,6 +121,9 @@ def status_payload() -> dict[str, Any]:
             "direct_monitor": tmux_status("labcanvas-wechat-direct-chatops"),
             "gui_monitor": tmux_status("labcanvas-wechat-chatops"),
         },
+        "queue": queue_summary(DEFAULT_QUEUE),
+        "mirror": mirror_summary(PRIVATE / "wechat_mirror.sqlite"),
+        "media_sources": [str(path) for path in discover_media_sources()],
         "novnc_url": f"http://127.0.0.1:{DEFAULT_NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port={DEFAULT_NOVNC_PORT}&autoconnect=1&resize=remote",
     }
 
@@ -139,6 +151,11 @@ def run_wechat_action(action: str, payload: dict[str, Any] | None = None) -> dic
             capture=True,
         )
         return {"ok": proc.returncode == 0, "action": action, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()}
+    if action == "worker-once":
+        proc = run_command([sys.executable, str(SCRIPTS / "wechat_task_worker.py"), "--queue", str(DEFAULT_QUEUE), "--once", "--send"], capture=True)
+        result = status_payload()
+        result.update({"action": action, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip(), "returncode": proc.returncode})
+        return result
     return {"ok": False, "error": f"Unsupported WeChat action: {action}"}
 
 
@@ -191,6 +208,9 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
         "mirror_db": str(PRIVATE / "wechat_mirror.sqlite"),
         "max_reply_chars": 1200,
+        "immediate_ack_enabled": True,
+        "immediate_ack_text": "收到，我先处理，完成后把结果发回来。",
+        "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "figure", "file", "image"],
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 180},
     }
     written = []
@@ -277,12 +297,22 @@ def cmd_worker(args: argparse.Namespace) -> int:
     return run_command(command, capture=False).returncode
 
 
+def cmd_queue(args: argparse.Namespace) -> int:
+    payload = queue_summary(args.queue, limit=args.limit)
+    print_payload(payload, args.json, f"queue: pending={payload['counts'].get('pending', 0)} total={payload['total']}")
+    return 0
+
+
 def cmd_media_sync(args: argparse.Namespace) -> int:
     command = [sys.executable, str(SCRIPTS / "wechat_media_sync.py"), "--chat", args.chat, "--since-minutes", str(args.since_minutes)]
     for source in args.source:
         command += ["--source", str(source)]
+    if args.auto_source:
+        command.append("--auto-source")
     if args.dry_run:
         command.append("--dry-run")
+    if args.summary_only:
+        command.append("--summary-only")
     return run_command(command, capture=False).returncode
 
 
@@ -318,8 +348,119 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     wrapper.chmod(0o755)
-    print_payload({"ok": True, "installed": [str(wrapper)]}, args.json, f"installed {wrapper}")
+    create_wrapper = scripts_dir / "create-labcanvas-wechat-tmux.sh"
+    create_wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "cd " + shlex.quote(str(PACKAGE_ROOT)) + "\n"
+        "export WECHAT_SUPERVISOR_SESSION=${WECHAT_SUPERVISOR_SESSION:-labcanvas-wechat}\n"
+        "export WECHAT_MEDIA_SYNC_INTERVAL=${WECHAT_MEDIA_SYNC_INTERVAL:-30}\n"
+        "export PYTHONPATH=" + shlex.quote(str(PACKAGE_ROOT / "src")) + ":${PYTHONPATH:-}\n"
+        "exec python3 -m agenticapp wechat hold start\n",
+        encoding="utf-8",
+    )
+    create_wrapper.chmod(0o755)
+    print_payload({"ok": True, "installed": [str(wrapper), str(create_wrapper)]}, args.json, f"installed {wrapper} and {create_wrapper}")
     return 0
+
+
+def queue_summary(path: Path, *, limit: int = 8) -> dict[str, Any]:
+    tasks = read_jsonl(path)
+    counts: dict[str, int] = {}
+    for task in tasks:
+        status = str(task.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    recent = []
+    for task in tasks[-limit:]:
+        recent.append(
+            {
+                "id": task.get("id", ""),
+                "chat": task.get("chat", ""),
+                "status": task.get("status", ""),
+                "created_at": task.get("created_at", ""),
+                "completed_at": task.get("completed_at", ""),
+                "request": str(task.get("request") or "")[:240],
+            }
+        )
+    return {"ok": True, "path": str(path), "exists": path.exists(), "total": len(tasks), "counts": counts, "recent": recent}
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def mirror_summary(path: Path, *, limit: int = 8) -> dict[str, Any]:
+    if not path.exists():
+        return {"ok": True, "path": str(path), "exists": False, "message_count": 0, "event_count": 0, "recent": []}
+    try:
+        with sqlite3.connect(path) as conn:
+            conn.row_factory = sqlite3.Row
+            message_count = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
+            event_count = conn.execute("SELECT count(*) FROM events").fetchone()[0]
+            recent = [
+                {
+                    "id": row["id"],
+                    "observed_at": row["observed_at"],
+                    "chat": row["chat"],
+                    "direction": row["direction"],
+                    "status": row["status"],
+                    "body": row["body"][:240],
+                }
+                for row in conn.execute(
+                    """
+                    SELECT messages.id, messages.observed_at, chats.name AS chat, messages.direction,
+                           messages.status, replace(messages.body, char(10), ' ') AS body
+                    FROM messages
+                    JOIN chats ON chats.id = messages.chat_id
+                    ORDER BY messages.id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            ]
+    except sqlite3.Error as exc:
+        return {"ok": False, "path": str(path), "exists": True, "error": str(exc), "recent": []}
+    return {
+        "ok": True,
+        "path": str(path),
+        "exists": True,
+        "message_count": int(message_count),
+        "event_count": int(event_count),
+        "recent": recent,
+    }
+
+
+def discover_media_sources() -> list[Path]:
+    base = Path.home() / "Documents" / "xwechat_files"
+    if not base.exists():
+        return []
+    sources = []
+    seen = set()
+    for profile in base.iterdir():
+        if not profile.is_dir():
+            continue
+        for relative in ("msg/file", "msg/video", "cache", "temp/ImageTemp"):
+            path = profile / relative
+            if not path.is_dir():
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            sources.append(resolved)
+    return sorted(sources)
 
 
 def desktop_status() -> dict[str, Any]:

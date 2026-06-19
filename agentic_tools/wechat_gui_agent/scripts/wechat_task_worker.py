@@ -23,7 +23,7 @@ DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
-    parser.add_argument("--chat", default="懒人科研")
+    parser.add_argument("--chat", default="wechat-chat")
     parser.add_argument("--enqueue", help="Add a task to the private queue and exit.")
     parser.add_argument("--once", action="store_true", help="Process one pending task.")
     parser.add_argument("--loop", action="store_true", help="Continuously process pending tasks.")
@@ -45,7 +45,7 @@ def main() -> int:
 
     if args.once or args.loop:
         while True:
-            processed = process_one(args.queue, args.chat, send=args.send)
+            processed = process_one(args.queue, args.chat, send=args.send, log_idle=not args.loop)
             if not args.loop:
                 return 0
             if not processed:
@@ -56,19 +56,22 @@ def main() -> int:
     raise SystemExit("Use --enqueue, --once, or --loop")
 
 
-def process_one(queue: Path, chat: str, *, send: bool) -> bool:
+def process_one(queue: Path, chat: str, *, send: bool, log_idle: bool = True) -> bool:
     task = next_pending(queue)
     if not task:
-        print(json.dumps({"status": "no-pending-task"}, ensure_ascii=False))
+        if log_idle:
+            print(json.dumps({"status": "no-pending-task"}, ensure_ascii=False))
         return False
     result_text = run_worker_codex(task)
     result = parse_worker_result(result_text)
     if send:
         if result["message"]:
             send_message(result["message"])
+        if result["confirmation"]:
+            send_message(result["confirmation"])
         for file_path in result["files"]:
             send_file(Path(file_path))
-    task["status"] = "done"
+    task["status"] = "waiting_confirmation" if result["confirmation"] else "done"
     task["completed_at"] = datetime.now().isoformat(timespec="seconds")
     task["result"] = result
     rewrite_task(queue, task)
@@ -76,8 +79,8 @@ def process_one(queue: Path, chat: str, *, send: bool) -> bool:
         chat_name=task.get("chat", chat),
         action="worker_task",
         direction="outbound",
-        message=result["message"] or result_text,
-        status="done-sent" if send else "done",
+        message=result["confirmation"] or result["message"] or result_text,
+        status=("waiting-confirmation-sent" if send else "waiting-confirmation") if result["confirmation"] else ("done-sent" if send else "done"),
         db_path=DEFAULT_DB,
         metadata=task,
     )
@@ -117,9 +120,11 @@ Handle the task using available local files/tools. Save downloaded or generated 
 Return either plain text or this JSON shape:
 {{
   "message": "concise message to send back",
-  "files": ["/absolute/path/to/file.pdf", "/absolute/path/to/preview.png"]
+  "files": ["/absolute/path/to/file.pdf", "/absolute/path/to/preview.png"],
+  "confirmation": "optional question to ask before continuing"
 }}
 
+Use confirmation when an important choice, purchase, external send, deletion, privacy-sensitive action, or irreversible action needs approval.
 If the task needs external tools or files that are not available, say exactly what is needed next.
 
 Task:
@@ -158,8 +163,9 @@ def parse_worker_result(text: str) -> dict[str, Any]:
         data = json.loads(stripped)
         if isinstance(data, dict):
             message = str(data.get("message") or "").strip()
+            confirmation = str(data.get("confirmation") or data.get("confirm") or "").strip()
             files = [str(Path(item).expanduser()) for item in data.get("files", []) if str(item).strip()]
-            return {"message": message, "files": files, "raw": text}
+            return {"message": message, "confirmation": confirmation, "files": files, "raw": text}
     except Exception:
         pass
     message_lines = []
@@ -169,7 +175,7 @@ def parse_worker_result(text: str) -> dict[str, Any]:
             files.append(str(Path(line.split(":", 1)[1].strip()).expanduser()))
         else:
             message_lines.append(line)
-    return {"message": "\n".join(message_lines).strip(), "files": files, "raw": text}
+    return {"message": "\n".join(message_lines).strip(), "confirmation": "", "files": files, "raw": text}
 
 
 def send_message(message: str) -> None:

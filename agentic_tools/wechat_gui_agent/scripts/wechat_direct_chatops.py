@@ -62,6 +62,34 @@ def load_config(path: Path) -> dict[str, Any]:
     raw.setdefault("mirror_db", str(DEFAULT_DB))
     raw.setdefault("codex", {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only"})
     raw.setdefault("max_reply_chars", 1200)
+    raw.setdefault("immediate_ack_enabled", True)
+    raw.setdefault("immediate_ack_text", "收到，我先处理，完成后把结果发回来。")
+    raw.setdefault(
+        "slow_task_keywords",
+        [
+            "download",
+            "pdf",
+            "paper",
+            "论文",
+            "下載",
+            "下载",
+            "render",
+            "cad",
+            "pcb",
+            "figure",
+            "file",
+            "image",
+            "open",
+            "search",
+            "github",
+            "mcp",
+            "blender",
+            "openscad",
+            "生成",
+            "绘制",
+            "渲染",
+        ],
+    )
     if not raw["message_table"]:
         raise SystemExit(f"Missing message_table in private config: {path}")
     return raw
@@ -86,12 +114,18 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     task_enqueued = None
     trigger_row = next((row for row in new_rows if should_respond(config, state, row)), None)
     if trigger_row:
-        response = run_codex(config, trigger_row, new_rows)
-        routed = parse_fast_response(response)
-        if routed["task"]:
-            task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=new_rows)
+        immediate = immediate_task_route(config, trigger_row, new_rows)
+        if immediate:
+            task = enqueue_worker_task(config, trigger_row, immediate["task"], context_rows=new_rows)
             task_enqueued = task["id"]
-        reply_text = routed["chat"] or routed["ack"]
+            reply_text = immediate["ack"]
+        else:
+            response = run_codex(config, trigger_row, new_rows)
+            routed = parse_fast_response(response)
+            if routed["task"]:
+                task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=new_rows)
+                task_enqueued = task["id"]
+            reply_text = routed["chat"] or routed["ack"]
         if reply_text and reply_text != "NO_REPLY":
             status = "dry-run-response"
             screenshot = None
@@ -212,6 +246,37 @@ def should_respond(config: dict[str, Any], state: dict[str, Any], row: dict[str,
         return False
     text = row["content"]
     return any(prefix in text for prefix in config["trigger_prefixes"])
+
+
+def immediate_task_route(config: dict[str, Any], row: dict[str, Any], context_rows: list[dict[str, Any]]) -> dict[str, str] | None:
+    if not bool(config.get("immediate_ack_enabled", True)):
+        return None
+    combined = "\n".join(str(item.get("content") or "") for item in context_rows[-4:])
+    lowered = combined.lower()
+    keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
+    if not any(keyword and keyword in lowered for keyword in keywords):
+        return None
+    trigger_text = strip_trigger_prefixes(str(row.get("content") or ""), config.get("trigger_prefixes", []))
+    task_context = "\n".join(
+        f"{item['sender_display']}: {item['content']}"
+        for item in context_rows[-6:]
+        if str(item.get("content") or "").strip()
+    )
+    task = (
+        "Handle this WeChat request as backend work. "
+        "Use available local tools, download or generate needed artifacts into ignored private/output folders, "
+        "and return a concise message plus any files/images/PDFs to send back.\n\n"
+        f"Latest request: {trigger_text or row['content']}\n\nRecent context:\n{task_context}"
+    )
+    return {"ack": str(config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。"), "task": task}
+
+
+def strip_trigger_prefixes(text: str, prefixes: list[str]) -> str:
+    stripped = text.strip()
+    for prefix in prefixes:
+        if prefix in stripped:
+            stripped = stripped.split(prefix, 1)[1].strip()
+    return stripped
 
 
 def run_codex(config: dict[str, Any], row: dict[str, Any], context_rows: list[dict[str, Any]]) -> str:
