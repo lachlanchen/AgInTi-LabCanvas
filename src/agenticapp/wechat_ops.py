@@ -34,6 +34,10 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     status.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     status.set_defaults(func=cmd_status)
 
+    health = nested.add_parser("health", help="Check direct monitor state, self-message guards, and DB catch-up.")
+    health.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    health.set_defaults(func=cmd_health)
+
     doctor = nested.add_parser("doctor", help="Check local commands and WeChat tool files.")
     doctor.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     doctor.set_defaults(func=cmd_doctor)
@@ -213,6 +217,15 @@ def cmd_status(args: argparse.Namespace) -> int:
     payload = status_payload()
     print_payload(payload, args.json, f"wechat: {payload['desktop']['status']} {payload['novnc_url']}")
     return 0
+
+
+def cmd_health(args: argparse.Namespace) -> int:
+    payload = direct_monitor_health()
+    summary = f"wechat health: {payload['caught_up_groups']}/{payload['group_count']} caught up"
+    if not payload["ok"]:
+        summary += " (attention needed)"
+    print_payload(payload, args.json, summary)
+    return 0 if payload["ok"] else 1
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -624,6 +637,142 @@ def mirror_summary(path: Path, *, limit: int = 8) -> dict[str, Any]:
         "event_count": int(event_count),
         "recent": recent,
     }
+
+
+def direct_monitor_health() -> dict[str, Any]:
+    configs = discover_direct_monitor_configs()
+    groups = [direct_config_health(path) for path in configs]
+    caught_up = sum(1 for item in groups if item.get("caught_up"))
+    ok = bool(groups) and all(item.get("ok") for item in groups)
+    return {
+        "ok": ok,
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+        "group_count": len(groups),
+        "caught_up_groups": caught_up,
+        "groups": groups,
+        "notes": [
+            "private chatroom ids, wxids, message-table names, and DB paths are intentionally omitted",
+            "set WECHAT_DIRECT_CONFIGS in .private/wechat_supervisor.local.env to control monitored groups",
+        ],
+    }
+
+
+def discover_direct_monitor_configs() -> list[Path]:
+    env_path = PRIVATE / "wechat_supervisor.local.env"
+    values: dict[str, str] = {}
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            if stripped.startswith("export "):
+                stripped = stripped[len("export ") :].strip()
+            key, raw_value = stripped.split("=", 1)
+            key = key.strip()
+            try:
+                parsed = shlex.split(raw_value, comments=False, posix=True)
+                values[key] = parsed[0] if parsed else ""
+            except ValueError:
+                values[key] = raw_value.strip().strip("'\"")
+    raw_configs = values.get("WECHAT_DIRECT_CONFIGS") or os.environ.get("WECHAT_DIRECT_CONFIGS", "")
+    paths: list[Path] = []
+    if raw_configs:
+        paths = [Path(item.strip()) for item in raw_configs.split(",") if item.strip()]
+    else:
+        raw_config = values.get("WECHAT_DIRECT_CONFIG") or os.environ.get("WECHAT_DIRECT_CONFIG", "")
+        if raw_config:
+            paths = [Path(raw_config)]
+        elif DEFAULT_DIRECT_CONFIG.exists():
+            paths = [DEFAULT_DIRECT_CONFIG]
+    resolved = []
+    seen: set[Path] = set()
+    for path in paths:
+        candidate = path if path.is_absolute() else PACKAGE_ROOT / path
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        resolved.append(candidate)
+    return resolved
+
+
+def direct_config_health(path: Path) -> dict[str, Any]:
+    base = {
+        "config_name": path.name,
+        "config_exists": path.exists(),
+        "ok": False,
+        "caught_up": False,
+    }
+    if not path.exists():
+        return {**base, "error": "config-missing"}
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {**base, "error": str(exc)}
+
+    raw_state_path = str(config.get("state_path") or "").strip()
+    state_path = Path(raw_state_path) if raw_state_path else None
+    if state_path and not state_path.is_absolute():
+        state_path = PACKAGE_ROOT / state_path
+    state_last = 0
+    state_exists = state_path.exists() if state_path else False
+    if state_exists:
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state_last = int(state.get("last_local_id") or 0)
+        except (OSError, json.JSONDecodeError, ValueError):
+            state_last = 0
+
+    latest = latest_direct_db_local_id(str(config.get("message_table") or ""))
+    has_guarded_target = has_send_title_guard(config.get("send_target"))
+    caught_up = latest.get("ok") and state_last >= int(latest.get("latest_local_id") or 0)
+    ok = bool(
+        state_exists
+        and latest.get("ok")
+        and caught_up
+        and bool(config.get("ignore_self_messages", True))
+        and not bool(config.get("respond_to_self", False))
+        and has_guarded_target
+    )
+    return {
+        **base,
+        "ok": ok,
+        "chat_name": str(config.get("chat_name") or path.stem),
+        "state_exists": state_exists,
+        "state_last_local_id": state_last,
+        "db_latest_local_id": latest.get("latest_local_id"),
+        "caught_up": bool(caught_up),
+        "respond_to_all": bool(config.get("respond_to_all", False)),
+        "respond_to_self": bool(config.get("respond_to_self", False)),
+        "ignore_self_messages": bool(config.get("ignore_self_messages", True)),
+        "chat_purpose": str(config.get("chat_purpose") or ""),
+        "analysis_mode": str(config.get("analysis_mode") or ""),
+        "send_target_has_title_guard": has_guarded_target,
+        "db_status": latest.get("status", "ok"),
+    }
+
+
+def latest_direct_db_local_id(table: str) -> dict[str, Any]:
+    db_path = PRIVATE / "wechat_decrypt" / "decrypted" / "message" / "message_0.db"
+    if not db_path.exists():
+        return {"ok": False, "status": "decrypted-db-missing", "latest_local_id": None}
+    if not is_safe_sql_identifier(table):
+        return {"ok": False, "status": "message-table-invalid", "latest_local_id": None}
+    try:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(f'SELECT MAX(local_id) FROM "{table}"').fetchone()
+    except sqlite3.Error:
+        return {"ok": False, "status": "message-table-unreadable", "latest_local_id": None}
+    return {"ok": True, "status": "ok", "latest_local_id": int(row[0] or 0)}
+
+
+def is_safe_sql_identifier(value: str) -> bool:
+    return bool(value) and all(ch.isalnum() or ch == "_" for ch in value)
+
+
+def has_send_title_guard(raw: Any) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    return bool(str(raw.get("expected_title") or raw.get("title") or raw.get("name") or "").strip())
 
 
 def discover_media_sources() -> list[Path]:

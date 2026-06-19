@@ -93,7 +93,18 @@ decrypt refresh pane; direct monitors use `--no-decrypt` and read the shared
 refreshed cache, which avoids concurrent decrypt stalls.
 Private send targets should include `expected_title`; the GUI sender OCR-checks
 the opened chat header before composing and fails closed if the wrong chat is
-visible.
+visible. Add `fallback_clicks` when WeChat search results appear at different
+rows; each fallback is still protected by the same title guard.
+
+Check the running multi-group setup with:
+
+```bash
+labcanvas wechat health --json
+```
+
+The health command compares each monitor state file against the latest local
+message ID in the decrypted DB and verifies self-message guards without printing
+chatroom IDs, wxids, message-table names, or decrypted DB paths.
 
 Use a purpose field in each private config. `懒人科研` is the research workflow
 and should require an explicit trigger. `EchoMind` is the language-learning

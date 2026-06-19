@@ -30,14 +30,27 @@ Create an ignored plan under `.private/`:
 {
   "message": "test",
   "targets": [
-    {"name": "example group", "query": "example", "result_click": [180, 337]}
+    {
+      "name": "example group",
+      "query": "example",
+      "expected_title": "example group",
+      "result_click": [180, 337],
+      "fallback_clicks": [[165, 100], [165, 170]]
+    }
   ]
 }
 ```
 
 Use `query` for the search text and `result_click` for the row offset inside the
 WeChat window after the search result appears. If a chat is already visible in
-the left list, use `open_click` instead.
+the left list, use `open_click` instead. Use `fallback_clicks` for alternate
+search result rows; the sender OCR-checks the opened title after every attempt.
+
+For multi-group monitors, confirm state and routing guards:
+
+```bash
+labcanvas wechat health --json
+```
 
 ## 3. Verify Before Sending
 

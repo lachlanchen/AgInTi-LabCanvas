@@ -74,7 +74,15 @@ WECHAT_DIRECT_CONFIGS='/path/to/group-a-direct.json,/path/to/group-b-direct.json
 
 Each config should use a distinct `state_path`. Optional `send_target` values
 let replies open the correct group before sending, instead of assuming the
-visible chat is already correct.
+visible chat is already correct. Use the health check after edits:
+
+```bash
+labcanvas wechat health --json
+```
+
+It reports each configured group, whether its monitor state has caught up to
+the decrypted DB, and whether the self-message and title-guard protections are
+enabled. Private chatroom IDs, wxids, DB paths, and table names are omitted.
 
 Install a reusable launcher:
 
@@ -98,7 +106,13 @@ Prepare an ignored target file under `.private/`:
 {
   "message": "test",
   "targets": [
-    {"name": "example group", "query": "example", "result_click": [180, 337]}
+    {
+      "name": "example group",
+      "query": "example",
+      "expected_title": "example group",
+      "result_click": [180, 337],
+      "fallback_clicks": [[165, 100], [165, 170]]
+    }
   ]
 }
 ```
@@ -239,7 +253,9 @@ configured groups independent while avoiding concurrent decrypt stalls.
 Private send targets should include `expected_title`; before composing, the GUI
 sender OCR-checks the opened chat header and fails closed if the wrong group is
 visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel
-raw click/paste senders against the same WeChat desktop.
+raw click/paste senders against the same WeChat desktop. If WeChat opens a
+small floating chat or search window, the sender closes secondary WeChat windows
+and retries configured `fallback_clicks` before using Return.
 
 ## Group Creation
 

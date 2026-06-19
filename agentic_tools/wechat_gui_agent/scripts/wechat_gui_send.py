@@ -42,6 +42,7 @@ class TargetSpec:
     query: str
     expected_title: str
     result_click: tuple[int, int] | None = None
+    fallback_clicks: tuple[tuple[int, int], ...] = ()
     open_click: tuple[int, int] | None = None
 
 
@@ -156,6 +157,7 @@ def target_from_raw(raw: Any) -> TargetSpec:
         query=query,
         expected_title=expected_title or name,
         result_click=point_from_raw(raw.get("result_click")),
+        fallback_clicks=points_from_raw(raw.get("fallback_clicks")),
         open_click=point_from_raw(raw.get("open_click")),
     )
 
@@ -166,6 +168,19 @@ def point_from_raw(raw: Any) -> tuple[int, int] | None:
     if not isinstance(raw, list | tuple) or len(raw) != 2:
         raise SystemExit("Click point must be [x_offset, y_offset]")
     return int(raw[0]), int(raw[1])
+
+
+def points_from_raw(raw: Any) -> tuple[tuple[int, int], ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list | tuple):
+        raise SystemExit("fallback_clicks must be a list of [x_offset, y_offset] points")
+    points = []
+    for item in raw:
+        point = point_from_raw(item)
+        if point is not None:
+            points.append(point)
+    return tuple(points)
 
 
 def send_one(
@@ -268,17 +283,36 @@ def open_target(
 
     search_for_target(env, window, target.query, pause)
     screenshot(env, out_dir / f"{shot_prefix}-search.png")
-    if target.result_click:
-        click(env, window.x + target.result_click[0], window.y + target.result_click[1])
-        guard = verify("result_click")
+    attempts: list[dict[str, Any]] = []
+    for label, point in target_click_candidates(target):
+        click(env, window.x + point[0], window.y + point[1])
+        guard = verify(label)
+        attempts.append(guard)
         if guard["ok"]:
             return guard
+        close_secondary_wechat_windows(env, window)
         search_for_target(env, window, target.query, pause)
-        key(env, "Return")
-        return verify("return-fallback")
 
     key(env, "Return")
-    return verify("return")
+    guard = verify("return")
+    if attempts:
+        guard = {**guard, "attempts": attempts}
+    return guard
+
+
+def target_click_candidates(target: TargetSpec) -> list[tuple[str, tuple[int, int]]]:
+    """Return explicit click candidates while preserving the first configured point."""
+    candidates: list[tuple[str, tuple[int, int]]] = []
+    seen: set[tuple[int, int]] = set()
+    if target.result_click:
+        candidates.append(("result_click", target.result_click))
+        seen.add(target.result_click)
+    for index, point in enumerate(target.fallback_clicks, start=1):
+        if point in seen:
+            continue
+        candidates.append((f"fallback_click_{index}", point))
+        seen.add(point)
+    return candidates
 
 
 def search_for_target(env: dict[str, str], window: Window, query: str, pause: float) -> None:
