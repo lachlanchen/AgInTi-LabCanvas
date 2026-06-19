@@ -13,6 +13,10 @@ Checked on 2026-06-19 with `gh search repos`.
 | `wechaty/wechaty` | 22851 | Bot/RPA framework | Large ecosystem, but usually depends on puppet/protocol providers and is heavier than a visible desktop task. |
 | `wechaty/python-wechaty` | 1826 | Python bot framework | Useful if building a bot architecture, not direct control of this installed Linux WeChat. |
 | `Saroth/docker_wechat` | 149 | Linux container with WeChatFerry | Interesting for containerized WeChatFerry; not simpler than current native Linux GUI path. |
+| `BiboyQG/WeChat-MCP` | n/a | macOS MCP | Uses macOS Accessibility/screen capture to read and reply; good MCP reference, not usable on this Ubuntu Linux desktop. |
+| `lw396/wechat-mcp` | n/a | Windows WeChatFerry MCP | Provides Codex/Claude/VS Code HTTP MCP examples and tools for messages, contacts, chatrooms, and files; Windows-only for practical use. |
+| `paean-ai/claude-code-wechat` | n/a | WeChat iOS ClawBot channel | API-like ClawBot/ilink path into Claude Code Channels; interesting but tied to iOS ClawBot and Claude Code. |
+| `loonghao/wecom-bot-mcp-server` | n/a | WeCom MCP | Good enterprise WeChat option if workflows can move to WeCom rather than personal WeChat. |
 
 Search for `linux wechat xdotool` returned no strong purpose-built repository.
 

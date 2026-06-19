@@ -15,6 +15,10 @@ CONFIGS="${WECHAT_DIRECT_CONFIGS:-$CONFIG}"
 QUEUE="${WECHAT_WORKER_QUEUE:-$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_task_queue.jsonl}"
 LOG_DIR="$ROOT/output/wechat_gui_agent/$(date +%F)"
 PY="$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_decrypt/.venv/bin/python"
+DIRECT_POLL_SECONDS="${WECHAT_DIRECT_POLL_SECONDS:-0.8}"
+DIRECT_CATCHUP_POLL_SECONDS="${WECHAT_DIRECT_CATCHUP_POLL_SECONDS:-0.1}"
+export WECHAT_DECRYPT_REFRESH_INTERVAL="${WECHAT_DECRYPT_REFRESH_INTERVAL:-1}"
+export WECHAT_RESTART_DELAY="${WECHAT_RESTART_DELAY:-2}"
 mkdir -p "$LOG_DIR"
 
 if [[ ! -x "$PY" ]]; then
@@ -68,7 +72,7 @@ case "$action" in
       [[ -n "$direct_config" ]] || continue
       direct_name="$(basename "$direct_config" .json | tr -c 'A-Za-z0-9_.-' '-')"
       tmux split-window -h -t "$SESSION:desktop" \
-        "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
+        "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt --poll-seconds '$DIRECT_POLL_SECONDS' --catchup-poll-seconds '$DIRECT_CATCHUP_POLL_SECONDS' >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
     done
     tmux split-window -v -t "$SESSION:desktop.1" \
       "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh worker python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-worker.log' 2>&1"

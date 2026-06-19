@@ -52,6 +52,10 @@ For multi-group monitors, confirm state and routing guards:
 labcanvas wechat health --json
 ```
 
+The fast monitor is tuned for immediate responses: idle polling is 0.8 seconds,
+catch-up polling is 0.1 seconds when rows are waiting, the decrypt refresh loop
+runs every 1 second, and the fast agent should use `gpt-5.5` with low reasoning.
+
 ## 3. Verify Before Sending
 
 Open targets and record evidence without composing:

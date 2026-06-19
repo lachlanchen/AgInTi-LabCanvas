@@ -65,6 +65,13 @@ batch. A bare mention can therefore refer to the previous message, and queued
 tasks include recent synced file paths so requests like "summarize this PDF"
 can resolve to the latest downloaded PDF.
 
+For low-latency chatops, the supervisor defaults to:
+
+- `WECHAT_DIRECT_POLL_SECONDS=0.8` for idle direct DB polling.
+- `WECHAT_DIRECT_CATCHUP_POLL_SECONDS=0.1` when rows are waiting.
+- `WECHAT_DECRYPT_REFRESH_INTERVAL=1` for the shared decrypted cache refresh.
+- `gpt-5.5` with `low` reasoning and a 60 second timeout for the fast agent.
+
 To monitor multiple groups, create one ignored direct config per group and set
 `WECHAT_DIRECT_CONFIGS` in `.private/wechat_supervisor.local.env`:
 
@@ -82,7 +89,9 @@ labcanvas wechat health --json
 
 It reports each configured group, whether its monitor state has caught up to
 the decrypted DB, and whether the self-message and title-guard protections are
-enabled. Private chatroom IDs, wxids, DB paths, and table names are omitted.
+enabled. It also shows poll timing, Codex model/reasoning settings, and the
+last loop timing metrics. Private chatroom IDs, wxids, DB paths, and table
+names are omitted.
 
 Install a reusable launcher:
 

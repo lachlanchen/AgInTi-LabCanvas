@@ -76,6 +76,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
     def test_later_trigger_rows_are_not_skipped(self) -> None:
         config = self.base_config()
         config["immediate_ack_enabled"] = False
+        config["codex"] = {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60}
         state: dict[str, object] = {"last_local_id": 0}
         rows = [
             self.row("今日はいい天気です", server_id="1", local_id=1),
@@ -104,6 +105,25 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(calls, ["1"])
         self.assertEqual(result["responses_sent"], 1)
         self.assertEqual(result["state"]["last_local_id"], 1)
+        self.assertIn("metrics", result)
+        self.assertIn("total_ms", result["metrics"])
+        self.assertIn("last_loop_at", result["state"])
+
+    def test_default_direct_config_uses_low_reasoning_fast_polling(self) -> None:
+        with self.subTest("defaults"):
+            import json
+            import tempfile
+
+            with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8") as handle:
+                json.dump({"message_table": "Msg_demo"}, handle)
+                handle.flush()
+                config = direct_chatops.load_config(Path(handle.name))
+
+        self.assertEqual(config["codex"]["model"], "gpt-5.5")
+        self.assertEqual(config["codex"]["reasoning_effort"], "low")
+        self.assertEqual(config["codex"]["timeout_seconds"], 60)
+        self.assertEqual(config["poll_seconds"], 0.8)
+        self.assertEqual(config["catchup_poll_seconds"], 0.1)
 
 
 if __name__ == "__main__":

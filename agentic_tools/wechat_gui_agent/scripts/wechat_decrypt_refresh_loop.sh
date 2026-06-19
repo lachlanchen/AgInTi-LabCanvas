@@ -6,7 +6,7 @@ PRIVATE="$ROOT/agentic_tools/wechat_gui_agent/.private"
 PY="$PRIVATE/wechat_decrypt/.venv/bin/python"
 DECRYPT="$PRIVATE/external/wechat-decrypt/decrypt_db.py"
 LOCK="$PRIVATE/wechat_decrypt.refresh.lock"
-INTERVAL="${WECHAT_DECRYPT_REFRESH_INTERVAL:-4}"
+INTERVAL="${WECHAT_DECRYPT_REFRESH_INTERVAL:-1}"
 TIMEOUT="${WECHAT_DECRYPT_TIMEOUT:-45}"
 
 if [[ ! -x "$PY" ]]; then

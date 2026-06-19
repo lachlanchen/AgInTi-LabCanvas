@@ -261,7 +261,7 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "state_path": str(PRIVATE / f"{safe_slug(args.chat)}-chatops.state.json"),
         "db_path": str(PRIVATE / "wechat_mirror.sqlite"),
         "output_dir": str(PACKAGE_ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F")),
-        "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "workdir": str(PACKAGE_ROOT)},
+        "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "workdir": str(PACKAGE_ROOT), "timeout_seconds": 60},
     }
     direct_config = {
         "chat_name": args.chat,
@@ -281,7 +281,9 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "immediate_ack_enabled": True,
         "immediate_ack_text": "收到，我先处理，完成后把结果发回来。",
         "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "figure", "file", "image"],
-        "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 180},
+        "poll_seconds": 0.8,
+        "catchup_poll_seconds": 0.1,
+        "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60},
     }
     written = []
     for path, data in ((DEFAULT_CHAT_CONFIG, chat_config), (DEFAULT_DIRECT_CONFIG, direct_config)):
@@ -714,6 +716,7 @@ def direct_config_health(path: Path) -> dict[str, Any]:
     if state_path and not state_path.is_absolute():
         state_path = PACKAGE_ROOT / state_path
     state_last = 0
+    state: dict[str, Any] = {}
     state_exists = state_path.exists() if state_path else False
     if state_exists:
         try:
@@ -724,6 +727,7 @@ def direct_config_health(path: Path) -> dict[str, Any]:
 
     latest = latest_direct_db_local_id(str(config.get("message_table") or ""))
     has_guarded_target = has_send_title_guard(config.get("send_target"))
+    codex = config.get("codex") if isinstance(config.get("codex"), dict) else {}
     caught_up = latest.get("ok") and state_last >= int(latest.get("latest_local_id") or 0)
     ok = bool(
         state_exists
@@ -746,9 +750,24 @@ def direct_config_health(path: Path) -> dict[str, Any]:
         "ignore_self_messages": bool(config.get("ignore_self_messages", True)),
         "chat_purpose": str(config.get("chat_purpose") or ""),
         "analysis_mode": str(config.get("analysis_mode") or ""),
+        "poll_seconds": float(config.get("poll_seconds", 0.8)),
+        "catchup_poll_seconds": float(config.get("catchup_poll_seconds", 0.1)),
+        "codex_model": str(codex.get("model") or "gpt-5.5"),
+        "codex_reasoning_effort": str(codex.get("reasoning_effort") or "low"),
+        "codex_timeout_seconds": int(codex.get("timeout_seconds") or 60),
+        "last_seen_at": str(state.get("last_seen_at") or ""),
+        "last_loop_at": str(state.get("last_loop_at") or ""),
+        "last_loop_metrics": sanitize_loop_metrics(state.get("last_loop_metrics")),
         "send_target_has_title_guard": has_guarded_target,
         "db_status": latest.get("status", "ok"),
     }
+
+
+def sanitize_loop_metrics(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    allowed = {"started_at", "decrypt_ms", "read_ms", "context_ms", "codex_ms", "send_ms", "total_ms"}
+    return {key: raw[key] for key in allowed if key in raw}
 
 
 def latest_direct_db_local_id(table: str) -> dict[str, Any]:

@@ -90,7 +90,12 @@ WECHAT_DIRECT_CONFIGS='/path/to/group-a-direct.json,/path/to/group-b-direct.json
 The supervisor creates one direct monitor pane per config. Use a unique
 `state_path` per group so local IDs do not collide. It also runs a single
 decrypt refresh pane; direct monitors use `--no-decrypt` and read the shared
-refreshed cache, which avoids concurrent decrypt stalls.
+refreshed cache, which avoids concurrent decrypt stalls. The fast path should
+run with `WECHAT_DIRECT_POLL_SECONDS=0.8`,
+`WECHAT_DIRECT_CATCHUP_POLL_SECONDS=0.1`, and
+`WECHAT_DECRYPT_REFRESH_INTERVAL=1`; each group config should use `gpt-5.5`
+with low reasoning for immediate replies and leave heavier work to the worker
+queue.
 Private send targets should include `expected_title`; the GUI sender OCR-checks
 the opened chat header before composing and fails closed if the wrong chat is
 visible. Add `fallback_clicks` when WeChat search results appear at different
@@ -103,8 +108,9 @@ labcanvas wechat health --json
 ```
 
 The health command compares each monitor state file against the latest local
-message ID in the decrypted DB and verifies self-message guards without printing
-chatroom IDs, wxids, message-table names, or decrypted DB paths.
+message ID in the decrypted DB, verifies self-message guards, and reports the
+active poll/Codex settings plus last-loop timings without printing chatroom IDs,
+wxids, message-table names, or decrypted DB paths.
 
 Use a purpose field in each private config. `懒人科研` is the research workflow
 and should require an explicit trigger. `EchoMind` is the language-learning

@@ -31,6 +31,8 @@ DEFAULT_STATE = PRIVATE / "lazy-research-direct-chatops.state.json"
 DECRYPTED = PRIVATE / "wechat_decrypt" / "decrypted"
 VENV_PYTHON = PRIVATE / "wechat_decrypt" / ".venv" / "bin" / "python"
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
+DEFAULT_POLL_SECONDS = 0.8
+DEFAULT_CATCHUP_POLL_SECONDS = 0.1
 
 
 def main() -> int:
@@ -40,12 +42,19 @@ def main() -> int:
     parser.add_argument("--send", action="store_true", help="Send Codex replies back through WeChat GUI.")
     parser.add_argument("--no-decrypt", action="store_true", help="Use the current decrypted DB cache.")
     parser.add_argument("--loop", action="store_true")
-    parser.add_argument("--poll-seconds", type=float, default=4.0)
+    parser.add_argument("--poll-seconds", type=float, default=None)
+    parser.add_argument("--catchup-poll-seconds", type=float, default=None)
     parser.add_argument("--worker-queue", type=Path, default=DEFAULT_QUEUE, help="Private JSONL queue for slower worker tasks.")
     args = parser.parse_args()
 
     config = load_config(args.config)
     config["worker_queue"] = str(args.worker_queue)
+    if args.poll_seconds is not None:
+        config["poll_seconds"] = args.poll_seconds
+    if args.catchup_poll_seconds is not None:
+        config["catchup_poll_seconds"] = args.catchup_poll_seconds
+    poll_seconds = max(0.05, float(config.get("poll_seconds", DEFAULT_POLL_SECONDS)))
+    catchup_poll_seconds = max(0.01, float(config.get("catchup_poll_seconds", DEFAULT_CATCHUP_POLL_SECONDS)))
     state_path = args.state or Path(config.get("state_path") or DEFAULT_STATE)
     while True:
         state = load_state(state_path)
@@ -54,7 +63,7 @@ def main() -> int:
         print(json.dumps({k: v for k, v in result.items() if k != "state"}, ensure_ascii=False, indent=2), flush=True)
         if not args.loop:
             return 0
-        time.sleep(args.poll_seconds)
+        time.sleep(catchup_poll_seconds if result["new_rows"] else poll_seconds)
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -67,7 +76,9 @@ def load_config(path: Path) -> dict[str, Any]:
         "state_path": str(DEFAULT_STATE),
         "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
         "mirror_db": str(DEFAULT_DB),
-        "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only"},
+        "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60},
+        "poll_seconds": float(os.environ.get("WECHAT_DIRECT_POLL_SECONDS", DEFAULT_POLL_SECONDS)),
+        "catchup_poll_seconds": float(os.environ.get("WECHAT_DIRECT_CATCHUP_POLL_SECONDS", DEFAULT_CATCHUP_POLL_SECONDS)),
         "max_reply_chars": 1200,
         "history_limit": 24,
         "respond_to_all": False,
@@ -139,10 +150,16 @@ def refresh_decrypted_store() -> None:
 
 
 def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_decrypt: bool) -> dict[str, Any]:
+    loop_started = time.monotonic()
+    metrics: dict[str, float | str] = {"started_at": datetime.now().isoformat(timespec="seconds")}
     if not no_decrypt:
+        started = time.monotonic()
         refresh_decrypted_store()
+        metrics["decrypt_ms"] = elapsed_ms(started)
 
+    started = time.monotonic()
     new_rows = read_new_messages(config, state)
+    metrics["read_ms"] = elapsed_ms(started)
     for row in new_rows:
         sync_row_to_mirror(config, row)
 
@@ -151,14 +168,18 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     processed_local_id = None
     trigger_row = next((row for row in new_rows if should_respond(config, state, row)), None)
     if trigger_row:
+        started = time.monotonic()
         context_rows = read_recent_history(config, trigger_row["local_id"], limit=int(config.get("history_limit", 24))) or new_rows
+        metrics["context_ms"] = elapsed_ms(started)
         immediate = None if is_language_analysis_mode(config) else immediate_task_route(config, trigger_row, context_rows)
         if immediate:
             task = enqueue_worker_task(config, trigger_row, immediate["task"], context_rows=context_rows)
             task_enqueued = task["id"]
             reply_text = immediate["ack"]
         else:
+            started = time.monotonic()
             response = run_codex(config, trigger_row, context_rows)
+            metrics["codex_ms"] = elapsed_ms(started)
             routed = parse_fast_response(response)
             if routed["task"]:
                 task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=context_rows)
@@ -168,7 +189,9 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             status = "dry-run-response"
             screenshot = None
             if send:
+                started = time.monotonic()
                 screenshot = send_gui_message(config, reply_text)
+                metrics["send_ms"] = elapsed_ms(started)
                 status = "sent"
             remember_sent_reply(config, state, reply_text)
             record_event(
@@ -192,6 +215,9 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     if new_rows:
         state["last_local_id"] = processed_local_id or max(row["local_id"] for row in new_rows)
         state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
+    state["last_loop_at"] = datetime.now().isoformat(timespec="seconds")
+    metrics["total_ms"] = elapsed_ms(loop_started)
+    state["last_loop_metrics"] = metrics
     return {
         "new_rows": len(new_rows),
         "response_sent": response_sent,
@@ -199,8 +225,13 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         "task_enqueued": task_enqueued,
         "tasks_enqueued": 1 if task_enqueued else 0,
         "processed_local_id": processed_local_id,
+        "metrics": metrics,
         "state": state,
     }
+
+
+def elapsed_ms(started: float) -> float:
+    return round((time.monotonic() - started) * 1000, 1)
 
 
 def read_new_messages(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -537,7 +568,7 @@ def run_codex(config: dict[str, Any], row: dict[str, Any], context_rows: list[di
         "-m",
         codex.get("model", "gpt-5.5"),
         "-c",
-        f'model_reasoning_effort="{codex.get("reasoning_effort", "medium")}"',
+        f'model_reasoning_effort="{codex.get("reasoning_effort", "low")}"',
         "--sandbox",
         codex.get("sandbox", "read-only"),
         "-C",
@@ -546,9 +577,15 @@ def run_codex(config: dict[str, Any], row: dict[str, Any], context_rows: list[di
         str(output_path),
         prompt,
     ]
-    subprocess.run(command, capture_output=True, text=True, check=False, timeout=int(codex.get("timeout_seconds", 180)))
-    response = output_path.read_text(encoding="utf-8", errors="replace").strip()
-    output_path.unlink(missing_ok=True)
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, check=False, timeout=int(codex.get("timeout_seconds", 60)))
+        if proc.returncode != 0:
+            return "NO_REPLY"
+        response = output_path.read_text(encoding="utf-8", errors="replace").strip()
+    except subprocess.TimeoutExpired:
+        return "NO_REPLY"
+    finally:
+        output_path.unlink(missing_ok=True)
     return response[: int(config.get("max_reply_chars", 1200))]
 
 
