@@ -118,12 +118,15 @@ trigger replies.
 
 The supervisor runs one decrypt refresh pane and one direct monitor pane per
 group. Direct monitors normally use `--no-decrypt` and read the refreshed cache;
-this avoids multiple monitors competing over the WeChat DB. The fast monitor
-reads new decrypted rows, ignores system/non-text rows as triggers, mirrors
-them into SQLite, and routes mentions. When a trigger is found, it also loads
-recent full chat history from the decrypted message table, so a bare `@name`
-can refer back to an earlier request such as "summarize this PDF". It asks Codex
-for one of three shapes:
+this avoids multiple monitors competing over the WeChat DB. Idle polling is
+local SQLite/file work and does not call Codex. A Codex call only happens when a
+new message must be classified or answered.
+
+The fast monitor reads new decrypted rows, ignores system/non-text rows as
+triggers, mirrors them into SQLite, and routes mentions. When a trigger is
+found, it also loads recent full chat history from the decrypted message table,
+so a bare `@name` can refer back to an earlier request such as "summarize this
+PDF". It asks the low-reasoning router for one of four shapes:
 
 ```text
 CHAT: <quick reply>
@@ -151,6 +154,14 @@ so the worker can resolve phrases like "this PDF" without asking for another
 upload. If the worker needs an important decision before continuing, it returns
 `confirmation`, sends that question to chat, and marks the task
 `waiting_confirmation`.
+
+The worker chooses its own Codex policy from task difficulty: low for simple
+chat follow-ups, medium for paper/PDF/search/figure/research work, and high for
+CAD, PCB, Blender/OpenSCAD, install, GitHub, ordering, or other full execution
+tasks. If the first worker result is a timeout, empty/too-short answer, or clear
+failure, it escalates one reasoning level once. GUI send failures are recorded
+as `send_failed` instead of crashing the worker loop or repeatedly sending the
+same task.
 
 Approve or cancel confirmation tasks from the CLI:
 
@@ -255,7 +266,8 @@ labcanvas wechat alias --chat "懒人科研" --name "LazyingArt"
   so replies go back to the group that produced the trigger.
 - Include `expected_title` in each private send target. The GUI sender OCR-checks
   the opened chat title before composing and fails closed if the wrong group is
-  visible.
+  visible. It retries during WeChat loading and falls back to full-page OCR when
+  the header crop is unreliable.
 - GUI sends are serialized by `.private/wechat_gui_send.lock`; do not bypass the
   sender helper with parallel raw `xdotool` scripts.
 - Keep danger handling silent in chat; record only private mirror metadata if a

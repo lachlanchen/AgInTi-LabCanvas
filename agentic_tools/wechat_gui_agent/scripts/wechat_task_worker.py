@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
+EFFORT_ORDER = ["low", "medium", "high"]
 
 
 def main() -> int:
@@ -67,23 +68,37 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     result_text = run_worker_codex(task)
     result = parse_worker_result(result_text)
     target_chat = str(task.get("chat") or chat)
+    send_errors = []
     if send:
-        if result["message"]:
-            send_message(result["message"], target_chat, send_targets)
-        if result["confirmation"]:
-            send_message(result["confirmation"], target_chat, send_targets)
-        for file_path in result["files"]:
-            send_file(Path(file_path), target_chat, send_targets)
-    task["status"] = "waiting_confirmation" if result["confirmation"] else "done"
+        try:
+            if result["message"]:
+                send_message(result["message"], target_chat, send_targets)
+            if result["confirmation"]:
+                send_message(result["confirmation"], target_chat, send_targets)
+            for file_path in result["files"]:
+                send_file(Path(file_path), target_chat, send_targets)
+        except Exception as exc:
+            send_errors.append(str(exc))
+    if send_errors:
+        task["status"] = "send_failed"
+        task["send_errors"] = send_errors
+    else:
+        task["status"] = "waiting_confirmation" if result["confirmation"] else "done"
     task["completed_at"] = datetime.now().isoformat(timespec="seconds")
     task["result"] = result
     rewrite_task(queue, task)
+    if send_errors:
+        event_status = "send-failed"
+    elif result["confirmation"]:
+        event_status = "waiting-confirmation-sent" if send else "waiting-confirmation"
+    else:
+        event_status = "done-sent" if send else "done"
     record_event(
         chat_name=task.get("chat", chat),
         action="worker_task",
         direction="outbound",
         message=result["confirmation"] or result["message"] or result_text,
-        status=("waiting-confirmation-sent" if send else "waiting-confirmation") if result["confirmation"] else ("done-sent" if send else "done"),
+        status=event_status,
         db_path=DEFAULT_DB,
         metadata=task,
     )
@@ -117,6 +132,17 @@ def rewrite_task(path: Path, updated: dict[str, Any]) -> None:
 
 
 def run_worker_codex(task: dict[str, Any]) -> str:
+    policy = choose_worker_policy(task)
+    task["worker_policy"] = policy
+    result = run_worker_codex_once(task, policy)
+    next_policy = escalated_policy(policy, result)
+    if next_policy:
+        task["worker_policy"] = {**next_policy, "escalated_from": policy["reasoning_effort"]}
+        result = run_worker_codex_once(task, next_policy)
+    return result
+
+
+def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
 
@@ -139,21 +165,121 @@ Task:
         "codex",
         "exec",
         "-m",
-        "gpt-5.5",
+        str(policy["model"]),
         "-c",
-        'model_reasoning_effort="medium"',
+        f'model_reasoning_effort="{policy["reasoning_effort"]}"',
         "--sandbox",
-        "workspace-write",
+        str(policy["sandbox"]),
         "-C",
         str(ROOT),
         "-o",
         str(output_path),
         prompt,
     ]
-    subprocess.run(command, capture_output=True, text=True, check=False, timeout=300)
-    result = output_path.read_text(encoding="utf-8", errors="replace").strip()
-    output_path.unlink(missing_ok=True)
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=int(policy["timeout_seconds"]),
+        )
+        if proc.returncode != 0:
+            return f"Worker failed: {(proc.stderr or proc.stdout).strip()[:1000]}"
+        result = output_path.read_text(encoding="utf-8", errors="replace").strip()
+    except subprocess.TimeoutExpired:
+        return "Worker failed: timed out before completing the task."
+    finally:
+        output_path.unlink(missing_ok=True)
     return result
+
+
+def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
+    text = json.dumps(task, ensure_ascii=False).lower()
+    high_keywords = [
+        "deep research",
+        "pcb",
+        "kicad",
+        "cad",
+        "openscad",
+        "blender",
+        "render",
+        "install",
+        "github",
+        "mcp",
+        "commit",
+        "push",
+        "publish",
+        "order",
+        "jlc",
+        "wenext",
+        "labview",
+        "full task",
+        "完整",
+        "下单",
+        "电路板",
+        "渲染",
+        "安装",
+    ]
+    medium_keywords = [
+        "paper",
+        "pdf",
+        "search",
+        "summarize",
+        "summary",
+        "dataset",
+        "figure",
+        "diagram",
+        "research",
+        "nature",
+        "hyperspectral",
+        "论文",
+        "总结",
+        "搜索",
+        "文献",
+        "高光谱",
+        "高光譜",
+    ]
+    if any(keyword in text for keyword in high_keywords):
+        effort, timeout = "high", 600
+    elif any(keyword in text for keyword in medium_keywords) or len(text) > 1200:
+        effort, timeout = "medium", 300
+    else:
+        effort, timeout = "low", 120
+    return {
+        "model": "gpt-5.5",
+        "reasoning_effort": effort,
+        "sandbox": "workspace-write",
+        "timeout_seconds": timeout,
+    }
+
+
+def escalated_policy(policy: dict[str, Any], result: str) -> dict[str, Any] | None:
+    text = str(result or "").lower()
+    failure_markers = [
+        "worker failed",
+        "timed out",
+        "cannot complete",
+        "can't complete",
+        "unable to complete",
+        "i cannot",
+        "i can't",
+        "无法完成",
+        "不能完成",
+        "没有完成",
+    ]
+    if len(text.strip()) >= 80 and not any(marker in text for marker in failure_markers):
+        return None
+    effort = str(policy.get("reasoning_effort") or "medium")
+    try:
+        index = EFFORT_ORDER.index(effort)
+    except ValueError:
+        index = 1
+    if index >= len(EFFORT_ORDER) - 1:
+        return None
+    next_effort = EFFORT_ORDER[index + 1]
+    timeout = 300 if next_effort == "medium" else 600
+    return {**policy, "reasoning_effort": next_effort, "timeout_seconds": timeout}
 
 
 def parse_worker_result(text: str) -> dict[str, Any]:
@@ -258,15 +384,36 @@ def send_file(file_path: Path, chat: str, send_targets: Path) -> None:
 
 
 def load_send_target(chat: str, path: Path) -> dict[str, Any] | None:
+    direct_target = load_direct_config_send_target(chat)
+    registry_target = None
     if not path.exists():
-        return None
+        return direct_target
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return None
+        return direct_target
     raw = data.get(chat) if isinstance(data, dict) else None
     if isinstance(raw, dict):
-        return raw
+        registry_target = raw
+    if direct_target and registry_target:
+        merged = {**registry_target, **direct_target}
+        if not merged.get("fallback_clicks") and registry_target.get("fallback_clicks"):
+            merged["fallback_clicks"] = registry_target["fallback_clicks"]
+        return merged
+    return direct_target or registry_target
+
+
+def load_direct_config_send_target(chat: str) -> dict[str, Any] | None:
+    for config_path in PRIVATE.glob("*direct-chatops.local.json"):
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if str(data.get("chat_name") or "") != chat:
+            continue
+        target = data.get("send_target")
+        if isinstance(target, dict):
+            return target
     return None
 
 

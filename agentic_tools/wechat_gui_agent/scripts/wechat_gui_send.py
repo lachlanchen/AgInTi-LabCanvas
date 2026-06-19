@@ -270,12 +270,21 @@ def open_target(
     skip_title_guard: bool,
 ) -> dict[str, Any]:
     def verify(label: str) -> dict[str, Any]:
-        time.sleep(max(pause, 3.2))
-        opened = out_dir / f"{shot_prefix}-opened.png"
-        screenshot(env, opened)
-        if skip_title_guard:
-            return {"ok": True, "method": label, "ocr_text": ""}
-        return verify_opened_title(env, window, opened, target, out_dir / f"{shot_prefix}-title.png", label)
+        time.sleep(max(pause, float(os.environ.get("WECHAT_INITIAL_TITLE_WAIT", "4.5"))))
+        deadline = time.monotonic() + max(max(pause, 3.2), float(os.environ.get("WECHAT_TITLE_RETRY_SECONDS", "8")))
+        last_guard: dict[str, Any] = {"ok": False, "method": label, "ocr_text": ""}
+        while True:
+            opened = out_dir / f"{shot_prefix}-opened.png"
+            screenshot(env, opened)
+            if skip_title_guard:
+                return {"ok": True, "method": label, "ocr_text": ""}
+            guard = verify_opened_title(env, window, opened, target, out_dir / f"{shot_prefix}-title.png", label)
+            if guard["ok"]:
+                return guard
+            last_guard = guard
+            if time.monotonic() >= deadline:
+                return last_guard
+            time.sleep(max(pause, 1.0))
 
     if target.open_click:
         click(env, window.x + target.open_click[0], window.y + target.open_click[1])
@@ -354,11 +363,18 @@ def verify_opened_title(
     ocr_text = proc.stdout.strip()
     expected = normalize_title(target.expected_title)
     observed = normalize_title(ocr_text)
+    ok = bool(expected and expected in observed)
+    full_ocr_text = ""
+    if not ok:
+        full_proc = run(["tesseract", str(screenshot_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "6"], env=env, check=False)
+        full_ocr_text = full_proc.stdout.strip()
+        ok = bool(expected and expected in normalize_title(full_ocr_text))
     return {
-        "ok": bool(expected and expected in observed),
+        "ok": ok,
         "method": method,
         "expected_title": target.expected_title,
         "ocr_text": ocr_text,
+        "full_ocr_text": full_ocr_text[:1000],
         "title_crop": str(crop_path),
     }
 

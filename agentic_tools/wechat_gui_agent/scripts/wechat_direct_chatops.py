@@ -190,9 +190,13 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             screenshot = None
             if send:
                 started = time.monotonic()
-                screenshot = send_gui_message(config, reply_text)
+                try:
+                    screenshot = send_gui_message(config, reply_text)
+                    status = "sent"
+                except Exception as exc:
+                    metrics["send_error"] = str(exc)[:500]
+                    status = "send-failed"
                 metrics["send_ms"] = elapsed_ms(started)
-                status = "sent"
             remember_sent_reply(config, state, reply_text)
             record_event(
                 chat_name=config["chat_name"],
@@ -210,6 +214,8 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             )
             state.setdefault("responded_server_ids", []).append(str(trigger_row["server_id"]))
             response_sent = reply_text
+        elif task_enqueued:
+            state.setdefault("responded_server_ids", []).append(str(trigger_row["server_id"]))
         processed_local_id = trigger_row["local_id"]
 
     if new_rows:

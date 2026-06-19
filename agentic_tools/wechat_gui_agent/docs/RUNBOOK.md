@@ -55,6 +55,13 @@ labcanvas wechat health --json
 The fast monitor is tuned for immediate responses: idle polling is 0.8 seconds,
 catch-up polling is 0.1 seconds when rows are waiting, the decrypt refresh loop
 runs every 1 second, and the fast agent should use `gpt-5.5` with low reasoning.
+Polling itself is local DB/file work; it only spends Codex tokens when a new
+message needs a route decision or reply.
+
+The worker loop chooses its effort separately. It uses low for simple follow-up
+tasks, medium for paper/PDF/search/research/figure tasks, and high for CAD, PCB,
+Blender/OpenSCAD, install, GitHub, ordering, and other execution-heavy tasks. A
+clear failure or timeout escalates once to the next effort level.
 
 ## 3. Verify Before Sending
 
@@ -124,7 +131,10 @@ visually confirmed. Creating a group is a real WeChat action and notifies users.
   physical desktop display.
 - If search opens the wrong row, replace `result_click` with a verified
   `open_click` for the visible chat list or update the offset from a screenshot.
-- If OCR is empty, install the needed Tesseract language pack or rely on the
-  saved screenshot.
+- If OCR is empty, install the needed Tesseract language pack, increase
+  `WECHAT_INITIAL_TITLE_WAIT`, or inspect the saved full-page OCR screenshot.
+- If a worker result cannot be sent, inspect `send_failed` tasks in
+  `.private/wechat_task_queue.jsonl`; the worker records the error instead of
+  retrying forever.
 - If a task is waiting for approval, use `labcanvas wechat approve` or
   `labcanvas wechat reject`; without a task id the newest waiting task is used.

@@ -99,7 +99,9 @@ queue.
 Private send targets should include `expected_title`; the GUI sender OCR-checks
 the opened chat header before composing and fails closed if the wrong chat is
 visible. Add `fallback_clicks` when WeChat search results appear at different
-rows; each fallback is still protected by the same title guard.
+rows; each fallback is still protected by the same title guard. The sender waits
+for the chat to finish loading, retries the title guard, and can use full-page
+OCR when the header crop is too noisy.
 
 Check the running multi-group setup with:
 
@@ -138,6 +140,16 @@ The supervisor creates panes for:
 - one fast direct chat monitor per configured group
 - slower worker queue processor
 - optional media sync loop
+
+The direct monitor is intentionally a lightweight router. Idle polling only
+checks local decrypted rows and mirror state, so it does not spend model tokens.
+Model calls happen when a new message needs a quick reply or a task must be
+queued. Worker tasks choose `gpt-5.5` effort automatically: low for simple
+follow-ups, medium for paper/PDF/search/research/figure work, and high for CAD,
+PCB, Blender/OpenSCAD, install, GitHub, ordering, or other full execution work.
+If a worker result is clearly failed, timed out, or too weak, the worker retries
+once at the next effort level. GUI send failures are saved as `send_failed` so
+the loop does not crash or resend duplicates indefinitely.
 
 ## Files And PDFs
 

@@ -205,6 +205,12 @@ labcanvas wechat worker once --send
 labcanvas wechat queue --json
 ```
 
+Worker tasks pick model effort from task difficulty: low for simple follow-ups,
+medium for paper/PDF/search/research/figure work, and high for CAD, PCB,
+Blender/OpenSCAD, install, GitHub, ordering, or other execution-heavy tasks. A
+clear failure escalates once. If GUI delivery fails, the queue item is marked
+`send_failed` with the error instead of retrying indefinitely.
+
 Approve or cancel work that is waiting on a confirmation:
 
 ```bash
