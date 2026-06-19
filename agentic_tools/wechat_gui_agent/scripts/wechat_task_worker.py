@@ -18,6 +18,7 @@ from wechat_mirror import DEFAULT_DB, record_event
 ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
+DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 
 
 def main() -> int:
@@ -29,6 +30,7 @@ def main() -> int:
     parser.add_argument("--loop", action="store_true", help="Continuously process pending tasks.")
     parser.add_argument("--poll-seconds", type=float, default=5.0)
     parser.add_argument("--send", action="store_true", help="Send worker result back to WeChat.")
+    parser.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS, help="Ignored JSON mapping chat names to GUI target specs.")
     args = parser.parse_args()
 
     if args.enqueue:
@@ -45,7 +47,7 @@ def main() -> int:
 
     if args.once or args.loop:
         while True:
-            processed = process_one(args.queue, args.chat, send=args.send, log_idle=not args.loop)
+            processed = process_one(args.queue, args.chat, send=args.send, send_targets=args.send_targets, log_idle=not args.loop)
             if not args.loop:
                 return 0
             if not processed:
@@ -56,7 +58,7 @@ def main() -> int:
     raise SystemExit("Use --enqueue, --once, or --loop")
 
 
-def process_one(queue: Path, chat: str, *, send: bool, log_idle: bool = True) -> bool:
+def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
     task = next_pending(queue)
     if not task:
         if log_idle:
@@ -64,13 +66,14 @@ def process_one(queue: Path, chat: str, *, send: bool, log_idle: bool = True) ->
         return False
     result_text = run_worker_codex(task)
     result = parse_worker_result(result_text)
+    target_chat = str(task.get("chat") or chat)
     if send:
         if result["message"]:
-            send_message(result["message"])
+            send_message(result["message"], target_chat, send_targets)
         if result["confirmation"]:
-            send_message(result["confirmation"])
+            send_message(result["confirmation"], target_chat, send_targets)
         for file_path in result["files"]:
-            send_file(Path(file_path))
+            send_file(Path(file_path), target_chat, send_targets)
     task["status"] = "waiting_confirmation" if result["confirmation"] else "done"
     task["completed_at"] = datetime.now().isoformat(timespec="seconds")
     task["result"] = result
@@ -178,13 +181,37 @@ def parse_worker_result(text: str) -> dict[str, Any]:
     return {"message": "\n".join(message_lines).strip(), "confirmation": "", "files": files, "raw": text}
 
 
-def send_message(message: str) -> None:
+def send_message(message: str, chat: str, send_targets: Path) -> None:
+    target = load_send_target(chat, send_targets)
+    if target:
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
+            target_file = Path(handle.name)
+            json.dump({"message": message, "targets": [target]}, handle, ensure_ascii=False)
+        try:
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
+                    "--targets-file",
+                    str(target_file),
+                    "--send",
+                    "--mirror-db",
+                    str(DEFAULT_DB),
+                ],
+                cwd=ROOT,
+                check=False,
+            )
+        finally:
+            target_file.unlink(missing_ok=True)
+        return
     subprocess.run(
         [
             sys.executable,
             str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_chatops_bridge.py"),
             "--config",
             str(PRIVATE / "lazy-research-chatops.local.json"),
+            "--chat",
+            chat,
             "--message",
             message,
         ],
@@ -193,19 +220,52 @@ def send_message(message: str) -> None:
     )
 
 
-def send_file(file_path: Path) -> None:
+def send_file(file_path: Path, chat: str, send_targets: Path) -> None:
+    target = load_send_target(chat, send_targets)
+    if target:
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
+            target_file = Path(handle.name)
+            json.dump({"message": "", "targets": [target]}, handle, ensure_ascii=False)
+        try:
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
+                    "--targets-file",
+                    str(target_file),
+                ],
+                cwd=ROOT,
+                check=False,
+            )
+        finally:
+            target_file.unlink(missing_ok=True)
     subprocess.run(
         [
             sys.executable,
             str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_chatops_bridge.py"),
             "--config",
             str(PRIVATE / "lazy-research-chatops.local.json"),
+            "--chat",
+            chat,
             "--file",
             str(file_path.expanduser().resolve()),
         ],
         cwd=ROOT,
         check=False,
     )
+
+
+def load_send_target(chat: str, path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    raw = data.get(chat) if isinstance(data, dict) else None
+    if isinstance(raw, dict):
+        return raw
+    return None
 
 
 if __name__ == "__main__":

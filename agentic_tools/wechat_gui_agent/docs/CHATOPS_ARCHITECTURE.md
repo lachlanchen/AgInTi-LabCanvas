@@ -80,6 +80,16 @@ Run the full persistent supervisor in tmux:
 agentic_tools/wechat_gui_agent/scripts/wechat_supervisor_tmux.sh start
 ```
 
+For multi-group monitoring, store private shell settings in
+`.private/wechat_supervisor.local.env`:
+
+```bash
+WECHAT_DIRECT_CONFIGS='/path/to/group-a-direct.json,/path/to/group-b-direct.json'
+```
+
+The supervisor creates one direct monitor pane per config. Use a unique
+`state_path` per group so local IDs do not collide.
+
 Run the complete operator stack, including the LabCanvas web control panel:
 
 ```bash

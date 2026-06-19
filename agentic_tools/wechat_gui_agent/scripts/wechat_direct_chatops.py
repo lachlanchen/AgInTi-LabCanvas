@@ -32,7 +32,7 @@ DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
+    parser.add_argument("--state", type=Path, default=None)
     parser.add_argument("--send", action="store_true", help="Send Codex replies back through WeChat GUI.")
     parser.add_argument("--no-decrypt", action="store_true", help="Use the current decrypted DB cache.")
     parser.add_argument("--loop", action="store_true")
@@ -42,10 +42,11 @@ def main() -> int:
 
     config = load_config(args.config)
     config["worker_queue"] = str(args.worker_queue)
+    state_path = args.state or Path(config.get("state_path") or DEFAULT_STATE)
     while True:
-        state = load_state(args.state)
+        state = load_state(state_path)
         result = run_once(config, state, send=args.send, no_decrypt=args.no_decrypt)
-        save_state(args.state, result["state"])
+        save_state(state_path, result["state"])
         print(json.dumps({k: v for k, v in result.items() if k != "state"}, ensure_ascii=False, indent=2), flush=True)
         if not args.loop:
             return 0
@@ -59,6 +60,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "chatroom_id": "",
         "message_table": "",
         "self_wxid": "",
+        "state_path": str(DEFAULT_STATE),
         "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
         "mirror_db": str(DEFAULT_DB),
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only"},
@@ -495,19 +497,48 @@ def enqueue_worker_task(
 
 
 def send_gui_message(config: dict[str, Any], message: str) -> str:
-    command = [
-        sys.executable,
-        str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_chatops_bridge.py"),
-        "--config",
-        str(PRIVATE / "lazy-research-chatops.local.json"),
-        "--message",
-        message,
-    ]
+    target = config.get("send_target")
+    if isinstance(target, dict) and target.get("name"):
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
+            target_file = Path(handle.name)
+            json.dump({"message": message, "targets": [target]}, handle, ensure_ascii=False)
+        command = [
+            sys.executable,
+            str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
+            "--display",
+            str(config.get("display") or ":97"),
+            "--targets-file",
+            str(target_file),
+            "--send",
+            "--mirror-db",
+            str(Path(config.get("mirror_db", DEFAULT_DB))),
+        ]
+    else:
+        target_file = None
+        command = [
+            sys.executable,
+            str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_chatops_bridge.py"),
+            "--config",
+            str(PRIVATE / "lazy-research-chatops.local.json"),
+            "--chat",
+            str(config.get("chat_name") or "wechat-chat"),
+            "--message",
+            message,
+        ]
     proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+    if target_file:
+        target_file.unlink(missing_ok=True)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
     try:
-        return json.loads(proc.stdout)["screenshot"]
+        data = json.loads(proc.stdout)
+        if "screenshot" in data:
+            return data["screenshot"]
+        result = (data.get("results") or [{}])[-1]
+        prefix = result.get("screenshot_prefix")
+        if prefix:
+            return str(ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F") / f"{prefix}-sent.png")
+        return ""
     except Exception:
         return ""
 

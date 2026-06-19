@@ -36,6 +36,17 @@ desktop, direct monitor, worker loop, and media sync loop. The monitor, worker,
 and media panes run through a restart wrapper, so they come back after a crash
 or transient failure.
 
+For multiple group chats, put comma-separated direct configs in the ignored
+`.private/wechat_supervisor.local.env` file:
+
+```bash
+WECHAT_DIRECT_CONFIGS='/path/to/group-a-direct.json,/path/to/group-b-direct.json'
+```
+
+The supervisor starts one fast monitor per config. Each config needs its own
+`chat_name`, `message_table`, and `state_path`; optional `send_target` values
+let replies open the correct group before sending.
+
 `stack start` keeps both the WeChat supervisor and the LabCanvas web control
 panel alive. It starts `labcanvas-wechat` plus a web tmux session named
 `labcanvas-web-wechat` by default. The web port is preferred, not fixed; if the

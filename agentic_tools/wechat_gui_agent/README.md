@@ -65,6 +65,17 @@ batch. A bare mention can therefore refer to the previous message, and queued
 tasks include recent synced file paths so requests like "summarize this PDF"
 can resolve to the latest downloaded PDF.
 
+To monitor multiple groups, create one ignored direct config per group and set
+`WECHAT_DIRECT_CONFIGS` in `.private/wechat_supervisor.local.env`:
+
+```bash
+WECHAT_DIRECT_CONFIGS='/path/to/group-a-direct.json,/path/to/group-b-direct.json'
+```
+
+Each config should use a distinct `state_path`. Optional `send_target` values
+let replies open the correct group before sending, instead of assuming the
+visible chat is already correct.
+
 Install a reusable launcher:
 
 ```bash

@@ -2,8 +2,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+PRIVATE_ENV="$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_supervisor.local.env"
+if [[ -f "$PRIVATE_ENV" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$PRIVATE_ENV"
+  set +a
+fi
 SESSION="${WECHAT_SUPERVISOR_SESSION:-labcanvas-wechat}"
 CONFIG="${WECHAT_DIRECT_CONFIG:-$ROOT/agentic_tools/wechat_gui_agent/.private/lazy-research-direct-chatops.local.json}"
+CONFIGS="${WECHAT_DIRECT_CONFIGS:-$CONFIG}"
 QUEUE="${WECHAT_WORKER_QUEUE:-$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_task_queue.jsonl}"
 LOG_DIR="$ROOT/output/wechat_gui_agent/$(date +%F)"
 PY="$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_decrypt/.venv/bin/python"
@@ -35,6 +43,7 @@ Usage:
 Environment:
   WECHAT_SUPERVISOR_SESSION   tmux session name, default labcanvas-wechat
   WECHAT_DIRECT_CONFIG        private direct-chatops JSON config
+  WECHAT_DIRECT_CONFIGS       comma-separated private direct-chatops configs
   WECHAT_WORKER_QUEUE         private JSONL worker queue
   WECHAT_MEDIA_SOURCES        optional colon-separated folders to sync
   WECHAT_CHAT_NAME            chat name for media-sync events
@@ -51,8 +60,14 @@ case "$action" in
     fi
     tmux new-session -d -s "$SESSION" -n desktop \
       "cd '$ROOT' && while true; do agentic_tools/wechat_gui_agent/scripts/wechat_virtual_desktop.sh; sleep 60; done >> '$LOG_DIR/supervisor-desktop.log' 2>&1"
-    tmux split-window -h -t "$SESSION:desktop" \
-      "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh direct-chatops '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$CONFIG' --worker-queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-direct-chatops.log' 2>&1"
+    IFS=',' read -r -a DIRECT_CONFIGS <<< "$CONFIGS"
+    for direct_config in "${DIRECT_CONFIGS[@]}"; do
+      direct_config="$(echo "$direct_config" | xargs)"
+      [[ -n "$direct_config" ]] || continue
+      direct_name="$(basename "$direct_config" .json | tr -c 'A-Za-z0-9_.-' '-')"
+      tmux split-window -h -t "$SESSION:desktop" \
+        "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
+    done
     tmux split-window -v -t "$SESSION:desktop.1" \
       "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh worker python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-worker.log' 2>&1"
     tmux split-window -v -t "$SESSION:desktop.0" \
