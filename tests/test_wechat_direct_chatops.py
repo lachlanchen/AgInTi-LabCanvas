@@ -240,7 +240,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
             direct_chatops.send_gui_message = original_send  # type: ignore[assignment]
 
-        self.assertEqual(result["responses_sent"], 1)
+        self.assertEqual(result["responses_sent"], 0)
+        self.assertIsNone(result["response_sent"])
         self.assertEqual(result["state"].get("responded_server_ids"), None)
         self.assertEqual(result["metrics"]["send_error"], "title guard failed")
 

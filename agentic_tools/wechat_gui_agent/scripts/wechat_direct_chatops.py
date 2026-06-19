@@ -272,7 +272,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             )
             if send_ok:
                 mark_responded_rows(state, focus_rows or [trigger_row])
-            response_sent = reply_text
+                response_sent = reply_text
         elif task_enqueued:
             mark_responded_rows(state, focus_rows or [trigger_row])
         processed_local_id = trigger_row["local_id"]

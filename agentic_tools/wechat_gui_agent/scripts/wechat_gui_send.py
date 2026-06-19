@@ -11,6 +11,7 @@ import argparse
 from dataclasses import dataclass
 from datetime import datetime
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -239,16 +240,22 @@ def send_one(
     time.sleep(0.2)
     paste_text(env, message)
     time.sleep(pause)
-    screenshot(env, out_dir / f"{shot_prefix}-composed.png")
+    composed_path = out_dir / f"{shot_prefix}-composed.png"
+    screenshot(env, composed_path)
+    if same_screenshot(opened_path, composed_path):
+        raise RuntimeError(f"Message compose did not visibly change the WeChat window for {target.name}")
     if do_send:
         key(env, "Return")
         time.sleep(pause)
-        screenshot(env, out_dir / f"{shot_prefix}-sent.png")
+        sent_path = out_dir / f"{shot_prefix}-sent.png"
+        screenshot(env, sent_path)
+        if same_screenshot(composed_path, sent_path):
+            raise RuntimeError(f"Message send did not visibly change the WeChat window for {target.name}")
         status = "sent"
-        evidence_path = out_dir / f"{shot_prefix}-sent.png"
+        evidence_path = sent_path
     else:
         status = "dry-run-composed"
-        evidence_path = out_dir / f"{shot_prefix}-composed.png"
+        evidence_path = composed_path
     record_event(
         chat_name=target.name,
         query=target.query,
@@ -350,9 +357,9 @@ def verify_opened_title(
     crop_path: Path,
     method: str,
 ) -> dict[str, Any]:
-    left = window.x + 260
+    left = window.x + 360
     top = window.y
-    width = max(300, window.width - 260)
+    width = max(300, window.width - 360)
     height = 92
     run(
         [
@@ -373,17 +380,11 @@ def verify_opened_title(
     expected = normalize_title(target.expected_title)
     observed = normalize_title(ocr_text)
     ok = bool(expected and expected in observed)
-    full_ocr_text = ""
-    if not ok:
-        full_proc = run(["tesseract", str(screenshot_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "6"], env=env, check=False)
-        full_ocr_text = full_proc.stdout.strip()
-        ok = bool(expected and expected in normalize_title(full_ocr_text))
     return {
         "ok": ok,
         "method": method,
         "expected_title": target.expected_title,
         "ocr_text": ocr_text,
-        "full_ocr_text": full_ocr_text[:1000],
         "title_crop": str(crop_path),
     }
 
@@ -483,6 +484,14 @@ def paste_text(env: dict[str, str], text: str) -> None:
 def screenshot(env: dict[str, str], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     run(["import", "-window", "root", str(path)], env=env, check=False)
+
+
+def same_screenshot(first: Path, second: Path) -> bool:
+    if not first.exists() or not second.exists():
+        return False
+    if first.stat().st_size != second.stat().st_size:
+        return False
+    return hashlib.sha256(first.read_bytes()).digest() == hashlib.sha256(second.read_bytes()).digest()
 
 
 def require_tools(*names: str) -> None:

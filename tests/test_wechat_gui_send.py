@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 
@@ -40,6 +41,46 @@ class WeChatGuiSendTests(unittest.TestCase):
                 ("fallback_click_3", (165, 170)),
             ],
         )
+
+    def test_title_guard_does_not_accept_full_page_left_list_match(self):
+        module = load_wechat_gui_send()
+        calls = []
+        original_run = module.run
+        try:
+            def fake_run(command, *, env, check=True):
+                calls.append(command)
+                if command[0] == "tesseract":
+                    return subprocess.CompletedProcess(command, 0, "blank right pane", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            result = module.verify_opened_title(
+                {},
+                module.Window("1", 0, 0, 1000, 700),
+                Path("/tmp/screen.png"),
+                module.TargetSpec(name="EchoMind", query="EchoMind", expected_title="EchoMind"),
+                Path("/tmp/title.png"),
+                "current",
+            )
+        finally:
+            module.run = original_run
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(sum(1 for call in calls if call[0] == "tesseract"), 1)
+
+    def test_same_screenshot_detects_identical_files(self):
+        module = load_wechat_gui_send()
+        first = Path("/tmp/wechat-gui-send-same-a.png")
+        second = Path("/tmp/wechat-gui-send-same-b.png")
+        try:
+            first.write_bytes(b"same")
+            second.write_bytes(b"same")
+            self.assertTrue(module.same_screenshot(first, second))
+            second.write_bytes(b"different")
+            self.assertFalse(module.same_screenshot(first, second))
+        finally:
+            first.unlink(missing_ok=True)
+            second.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
