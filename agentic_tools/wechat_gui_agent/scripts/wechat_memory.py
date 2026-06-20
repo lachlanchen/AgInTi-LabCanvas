@@ -33,11 +33,25 @@ CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
         "bookmark",
         "article",
         "paper",
+        "pdf",
+        "youtube",
+        "youtu.be",
+        "video",
+        "channel",
+        "shipinhao",
+        "wechat channel",
         "链接",
         "網址",
         "网址",
         "网页",
         "网站",
+        "视频",
+        "视频号",
+        "频道",
+        "公众号",
+        "小红书",
+        "b站",
+        "哔哩",
         "收藏",
         "稍后读",
         "看到",
@@ -485,8 +499,20 @@ def is_question_or_request(text: str) -> bool:
 def infer_tags(chat_name: str, text: str, categories: list[str]) -> list[str]:
     lowered = f"{chat_name} {text}".lower()
     tags = list(categories)
-    if "http://" in lowered or "https://" in lowered or "<url>" in lowered or "链接" in lowered or "网页" in lowered:
+    if (
+        "http://" in lowered
+        or "https://" in lowered
+        or "<url>" in lowered
+        or "链接" in lowered
+        or "网页" in lowered
+        or "youtube" in lowered
+        or "youtu.be" in lowered
+        or "视频号" in lowered
+        or "shipinhao" in lowered
+    ):
         tags.extend(["web-clip", "read-later"])
+    if any(marker in lowered for marker in ("youtube", "youtu.be", "video", "视频号", "shipinhao", "bilibili", "b站", "哔哩")):
+        tags.append("video")
     if "写作" in lowered or "writing" in lowered:
         tags.append("writing")
     if "外语" in lowered or "language" in lowered or "english" in lowered or "japanese" in lowered:

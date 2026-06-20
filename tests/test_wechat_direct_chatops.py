@@ -431,15 +431,39 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("could you summarize my notes?")))
         self.assertFalse(direct_chatops.should_respond(config, {}, self.row("今天路上人很多")))
 
-    def test_web_clip_inbox_saves_plain_links_without_replying(self) -> None:
+    def test_web_clip_inbox_routes_plain_links_for_summary(self) -> None:
         config = self.base_config()
         config["analysis_mode"] = ""
         config["chat_purpose"] = "web_clip_inbox"
         config["respond_to_all"] = True
+        config["slow_task_keywords"] = ["https://", "youtube", "视频号", "pdf"]
 
-        self.assertFalse(direct_chatops.should_respond(config, {}, self.row("https://example.com/article?id=1")))
+        row = self.row("https://www.youtube.com/watch?v=demo")
+
+        self.assertTrue(direct_chatops.should_respond(config, {}, row))
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("YouTube", route["task"])
+        self.assertIn("summarizing", route["task"])
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("summarize this link https://example.com/article")))
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("这个链接讲什么？")))
+
+    def test_visible_message_text_extracts_wechat_card_metadata(self) -> None:
+        row = self.row(
+            "<msg><appmsg><type>5</type><title>Shipinhao channel update</title>"
+            "<des>short video description</des><url>https://channels.weixin.qq.com/demo</url>"
+            "<sourcedisplayname>视频号</sourcedisplayname></appmsg></msg>",
+            local_type=49,
+        )
+
+        visible = direct_chatops.visible_message_text(row)
+
+        self.assertIn("[WeChat link]", visible)
+        self.assertIn("title: Shipinhao channel update", visible)
+        self.assertIn("url: https://channels.weixin.qq.com/demo", visible)
+        self.assertIn("source: 视频号", visible)
 
     def test_personal_organizer_prompt_mentions_notes_and_tasks(self) -> None:
         config = self.base_config()
@@ -483,6 +507,48 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(result["responses_sent"], 1)
         self.assertEqual(result["metrics"]["organizer_status"], "error")
         self.assertEqual(result["metrics"]["organizer_error"], "memory db busy")
+
+    def test_organizer_ack_confirms_saved_message_without_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self.base_config()
+            config["analysis_mode"] = ""
+            config["chat_purpose"] = "personal_organizer"
+            config["respond_to_all"] = True
+            config["immediate_ack_enabled"] = True
+            config["mirror_db"] = str(Path(tmp) / "mirror.sqlite")
+            config["organizer"] = {
+                "enabled": True,
+                "db_path": str(Path(tmp) / "memory.sqlite"),
+                "ack_on_save": True,
+                "ack_saved_text": "已保存 {items} 项。",
+            }
+            state: dict[str, object] = {"last_local_id": 0}
+            row = self.row("今天路上人很多", server_id="1", local_id=1)
+            original_read_new = direct_chatops.read_new_messages
+            original_history = direct_chatops.read_recent_history
+            original_run_codex = direct_chatops.run_codex
+            original_organize = direct_chatops.organize_messages
+            try:
+                direct_chatops.read_new_messages = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+                direct_chatops.read_recent_history = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+
+                def fail_run_codex(*_args: object, **_kwargs: object) -> str:
+                    raise AssertionError("organizer ACK should not call Codex")
+
+                direct_chatops.run_codex = fail_run_codex  # type: ignore[assignment]
+                direct_chatops.organize_messages = lambda *_args, **_kwargs: {"status": "ok", "messages": 1, "items": 1}  # type: ignore[assignment]
+                result = direct_chatops.run_once(config, state, send=False, no_decrypt=True)
+            finally:
+                direct_chatops.read_new_messages = original_read_new  # type: ignore[assignment]
+                direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
+                direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
+                direct_chatops.organize_messages = original_organize  # type: ignore[assignment]
+
+        self.assertEqual(result["responses_sent"], 1)
+        self.assertEqual(result["response_sent"], "已保存 1 项。")
+        self.assertEqual(result["metrics"]["trigger_candidates"], 0)
+        self.assertEqual(result["state"]["last_organizer_ack_local_id"], 1)
+        self.assertEqual(result["processed_local_id"], 1)
 
     def test_refresh_decrypted_store_uses_incremental_backend_wrapper(self) -> None:
         calls: list[list[str]] = []

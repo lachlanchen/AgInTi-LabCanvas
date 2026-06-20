@@ -61,23 +61,28 @@ Configs can opt into structured memory capture with an ignored SQLite database:
     "enabled": true,
     "db_path": "agentic_tools/wechat_gui_agent/.private/wechat_memory.sqlite",
     "capture_unclassified": true,
-    "default_tags": ["writing", "foreign-language", "money"]
+    "default_tags": ["writing", "foreign-language", "money"],
+    "ack_on_save": true,
+    "ack_saved_text": "已保存到收件箱。"
   }
 }
 ```
 
-The direct monitor still backs up and tags messages even when it returns
-`NO_REPLY`. It classifies notes, memos, todos, groceries, calendar hints,
-beat-board/story ideas, writing/language/money ideas, requests, attachments,
-and inbox items into `source_messages`, `memory_items`, `tags`, and
-`item_tags`. One database can be shared across any number of groups because
-every row stores `chat_name`.
+The direct monitor backs up and tags messages before routing. It classifies
+notes, memos, todos, groceries, calendar hints, beat-board/story ideas,
+writing/language/money ideas, requests, attachments, web clips, and inbox items
+into `source_messages`, `memory_items`, `tags`, and `item_tags`. If
+`ack_on_save` is enabled and no worker task was triggered, the monitor sends a
+short deterministic receipt without calling Codex. One database can be shared
+across any number of groups because every row stores `chat_name`.
 
 For a link/read-later group such as `鏈接`, set `chat_purpose` to
-`web_clip_inbox`. Plain URLs and forwarded webpage cards are stored silently as
-`web_clip` items. Questions such as "summarize this link", "what is this", or
-`这个链接讲什么？` go through the fast router; slow page/PDF inspection or export
-requests are acknowledged and sent to the worker queue.
+`web_clip_inbox`. Plain URLs, PDFs, forwarded webpage cards, YouTube links,
+视频号/Shipinhao shares, Bilibili links, and similar video-channel links are
+stored as `web_clip` items and can trigger an ACK plus worker task for summary
+or extraction. Questions such as "summarize this link", "what is this", or
+`这个链接讲什么？` also go through the fast router; slow page/PDF inspection or
+export requests are acknowledged and sent to the worker queue.
 
 Inspect the private organizer without opening raw chat tables:
 

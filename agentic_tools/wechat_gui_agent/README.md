@@ -112,7 +112,9 @@ direct config:
     "enabled": true,
     "db_path": "agentic_tools/wechat_gui_agent/.private/wechat_memory.sqlite",
     "capture_unclassified": true,
-    "default_tags": ["writing", "foreign-language", "money"]
+    "default_tags": ["writing", "foreign-language", "money"],
+    "ack_on_save": true,
+    "ack_saved_text": "已保存到收件箱。"
   }
 }
 ```
@@ -121,14 +123,18 @@ The monitor backs up every new row, then classifies inbound messages into
 `source_messages`, `memory_items`, `tags`, and `item_tags`. It can track notes,
 memos, todos, groceries, calendar hints, beat-board ideas, writing/language
 ideas, money ideas, requests, and attachments across any number of groups. The
-router only replies to actionable save/list/summarize/schedule/organize
-requests or explicit mentions; ordinary notes are stored silently.
+router replies to actionable save/list/summarize/schedule/organize requests,
+explicit mentions, and configured rich-share summaries. If `ack_on_save` is
+enabled and no worker task was triggered, ordinary saved notes get a short
+deterministic receipt without a Codex call.
 
 Use `chat_purpose: "web_clip_inbox"` for a group such as `鏈接`, where the chat
-is mainly a read-later stream. Plain URLs and forwarded webpage cards become
-`web_clip` records in the same private database, partitioned by `chat_name`.
-Questions and summary/list/export requests still use the fast router and worker
-queue.
+is mainly a read-later stream. Plain URLs, PDFs, forwarded webpage cards,
+YouTube links, 视频号/Shipinhao shares, Bilibili links, and similar
+video-channel links become `web_clip` records in the same private database,
+partitioned by `chat_name`. These shares can also trigger an ACK plus worker
+task to summarize or extract the content; summary/list/export requests use the
+same fast-router and worker queue.
 
 Direct contacts can be monitored with the same config shape as groups. Keep a
 unique `chat_name`, `message_table`, and `state_path` for each contact. Set

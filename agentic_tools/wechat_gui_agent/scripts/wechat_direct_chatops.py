@@ -119,6 +119,9 @@ def load_config(path: Path) -> dict[str, Any]:
         "immediate_ack_enabled": True,
         "immediate_ack_text": "收到，我先处理，完成后把结果发回来。",
         "slow_task_keywords": [
+            "http://",
+            "https://",
+            "www.",
             "download",
             "pdf",
             "paper",
@@ -142,6 +145,17 @@ def load_config(path: Path) -> dict[str, Any]:
             "figure grid",
             "icons",
             "file",
+            "link",
+            "url",
+            "webpage",
+            "website",
+            "article",
+            "video",
+            "channel",
+            "youtube",
+            "youtu.be",
+            "shipinhao",
+            "wechat channel",
             "image",
             "open",
             "search",
@@ -156,6 +170,17 @@ def load_config(path: Path) -> dict[str, Any]:
             "summary",
             "总结",
             "摘要",
+            "链接",
+            "网址",
+            "网页",
+            "文章",
+            "视频",
+            "视频号",
+            "频道",
+            "公众号",
+            "小红书",
+            "b站",
+            "哔哩",
         ],
     }
     for key, value in defaults.items():
@@ -205,6 +230,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     metrics["read_ms"] = elapsed_ms(started)
     for row in new_rows:
         sync_row_to_mirror(config, row)
+    organizer_result: dict[str, Any] = {}
     if new_rows and organizer_enabled(config):
         started = time.monotonic()
         try:
@@ -290,6 +316,44 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             mark_responded_rows(state, focus_rows or [trigger_row])
         processed_local_id = trigger_row["local_id"]
 
+    if not response_sent and not task_enqueued:
+        ack_text = organizer_ack_candidate(config, state, new_rows, organizer_result)
+        if ack_text:
+            status = "dry-run-organizer-ack"
+            screenshot = None
+            send_ok = True
+            if send:
+                started = time.monotonic()
+                try:
+                    screenshot = send_gui_message(config, ack_text)
+                    status = "sent"
+                except Exception as exc:
+                    metrics["send_error"] = str(exc)[:500]
+                    status = "send-failed"
+                    send_ok = False
+                metrics["send_ms"] = elapsed_ms(started)
+            latest_row = latest_inbound_row(config, new_rows)
+            record_event(
+                chat_name=config["chat_name"],
+                action="direct_organizer_ack",
+                direction="outbound",
+                message=ack_text,
+                status=status,
+                db_path=Path(config.get("mirror_db", DEFAULT_DB)),
+                screenshot_path=screenshot,
+                metadata={
+                    "source_server_id": latest_row.get("server_id") if latest_row else "",
+                    "source_local_id": latest_row.get("local_id") if latest_row else "",
+                    "organizer_items": int(organizer_result.get("items") or 0),
+                },
+            )
+            if send_ok:
+                remember_sent_reply(config, state, ack_text)
+                state["last_organizer_ack_at"] = datetime.now().isoformat(timespec="seconds")
+                state["last_organizer_ack_local_id"] = latest_row.get("local_id") if latest_row else None
+                response_sent = ack_text
+                processed_local_id = latest_row.get("local_id") if latest_row else processed_local_id
+
     if new_rows:
         state["last_local_id"] = processed_local_id or max(row["local_id"] for row in new_rows)
         state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
@@ -306,6 +370,47 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         "metrics": metrics,
         "state": state,
     }
+
+
+def organizer_ack_candidate(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    rows: list[dict[str, Any]],
+    organizer_result: dict[str, Any],
+) -> str | None:
+    organizer = config.get("organizer") if isinstance(config.get("organizer"), dict) else {}
+    if not bool(organizer.get("ack_on_save", False)):
+        return None
+    if not rows or int(organizer_result.get("items") or 0) <= 0:
+        return None
+    inbound = [row for row in rows if is_inbound_user_row(config, row)]
+    if not inbound:
+        return None
+    if all(is_dangerous_message(config, visible_message_text(row)) for row in inbound):
+        return None
+    last_ack_local_id = int(state.get("last_organizer_ack_local_id") or 0)
+    latest_local_id = max(int(row.get("local_id") or 0) for row in inbound)
+    if latest_local_id <= last_ack_local_id:
+        return None
+    text = str(organizer.get("ack_saved_text") or "已保存。")
+    if "{" in text:
+        try:
+            text = text.format(items=int(organizer_result.get("items") or 0), messages=len(inbound))
+        except (KeyError, IndexError, ValueError):
+            pass
+    return text.strip() or None
+
+
+def latest_inbound_row(config: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    inbound = [row for row in rows if is_inbound_user_row(config, row)]
+    return inbound[-1] if inbound else (rows[-1] if rows else None)
+
+
+def is_inbound_user_row(config: dict[str, Any], row: dict[str, Any]) -> bool:
+    self_wxid = str(config.get("self_wxid") or "")
+    if self_wxid and row.get("sender") == self_wxid:
+        return False
+    return True
 
 
 def mark_responded_rows(state: dict[str, Any], rows: list[dict[str, Any]]) -> None:
@@ -551,8 +656,16 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "list",
         "organize",
         "export",
+        "http://",
+        "https://",
+        "www.",
         "link",
         "url",
+        "pdf",
+        "youtube",
+        "youtu.be",
+        "video",
+        "channel",
         "web clip",
         "bookmark",
         "read later",
@@ -590,6 +703,14 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "链接",
         "网址",
         "网页",
+        "视频号",
+        "视频",
+        "频道",
+        "公众号",
+        "小红书",
+        "b站",
+        "哔哩",
+        "pdf",
         "收藏",
         "稍后读",
         "分镜",
@@ -758,7 +879,9 @@ def immediate_task_route(
     task = (
         "Handle this WeChat request as backend work. "
         "Use available local tools, download or generate needed artifacts into ignored private/output folders, "
-        "and return a concise message plus any files/images/PDFs to send back.\n\n"
+        "and return a concise message plus any files/images/PDFs to send back. "
+        "For link, PDF, webpage, YouTube, Shipinhao/视频号, or other video-channel shares, "
+        "extract the title, URL, file metadata, and recent synced media before summarizing.\n\n"
         f"Current coalesced request:\n{current_request or attachment_request_text(row)}\n\nRecent history:\n{task_context}"
         f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
     )
@@ -813,7 +936,10 @@ def effective_request_text(config: dict[str, Any], row: dict[str, Any], context_
 
 
 def attachment_request_text(row: dict[str, Any]) -> str:
-    return f"New WeChat {message_kind(row)} item received in this research chat; inspect recent synced files/media and summarize or process it."
+    return (
+        f"New WeChat {message_kind(row)} item received; inspect the card metadata, "
+        "referenced link/video channel, and recent synced files/media, then summarize or process it."
+    )
 
 
 def visible_message_text(row: dict[str, Any]) -> str:
@@ -821,6 +947,11 @@ def visible_message_text(row: dict[str, Any]) -> str:
     text = strip_group_sender_prefix(str(row.get("content") or ""))
     if is_quote_reply_message(row):
         return format_quote_reply_text(text)
+    local_type, _ = split_message_type(row.get("local_type"))
+    if local_type == 49 and "<appmsg" in text:
+        return format_app_message_text(text)
+    if local_type in {3, 34, 43, 47} and not text.strip():
+        return f"[{message_kind(row)}]"
     return text
 
 
@@ -856,6 +987,52 @@ def format_quote_reply_text(text: str) -> str:
     if quoted:
         return f"{reply}\n[quoted {display_name}: {quoted}]"
     return reply
+
+
+def format_app_message_text(text: str, *, max_len: int = 700) -> str:
+    root = parse_wechat_xml(text)
+    appmsg = root.find(".//appmsg") if root is not None else None
+    if appmsg is None:
+        return truncate_text(collapse_text(text), max_len) or "[WeChat card]"
+    app_type = collapse_text(appmsg.findtext("type") or "")
+    labels = {
+        "5": "link",
+        "6": "file",
+        "19": "chat record",
+        "33": "mini program",
+        "36": "mini program",
+        "51": "video channel",
+        "57": "quote/reply",
+        "76": "video channel",
+    }
+    label = labels.get(app_type, f"card type {app_type}" if app_type else "card")
+    fields = [f"[WeChat {label}]"]
+    title = card_field(appmsg, "title")
+    description = card_field(appmsg, "des")
+    url = card_field(appmsg, "url")
+    source = card_field(appmsg, "sourcedisplayname") or card_field(appmsg, "appname")
+    file_name = card_field(appmsg, "appattach/title")
+    file_ext = card_field(appmsg, "appattach/fileext")
+    finder_name = card_field(appmsg, ".//nickname") or card_field(appmsg, ".//findername")
+    finder_desc = card_field(appmsg, ".//desc")
+    for name, value in (
+        ("title", title),
+        ("description", description),
+        ("url", url),
+        ("source", source),
+        ("file", file_name),
+        ("extension", file_ext),
+        ("channel", finder_name),
+        ("channel_description", finder_desc),
+    ):
+        if value:
+            fields.append(f"{name}: {value}")
+    return truncate_text("\n".join(fields), max_len)
+
+
+def card_field(appmsg: ET.Element, path: str, *, max_len: int = 220) -> str:
+    value = collapse_text(html.unescape(appmsg.findtext(path) or ""))
+    return truncate_text(value, max_len) if value else ""
 
 
 def parse_wechat_xml(text: str) -> ET.Element | None:
