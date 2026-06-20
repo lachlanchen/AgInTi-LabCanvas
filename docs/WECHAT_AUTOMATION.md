@@ -92,9 +92,11 @@ for prompts such as `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结
 AI accounts for the transcript or summary. Skim other high-signal comments for
 quoted lines, timestamps, corrections, names, links, or context. Reading comments
 is allowed; posting a comment or asking Yuanbao from the account requires an
-explicit user request or confirmation. If comments are not exposed by the Linux
-WeChat/Finder path, report that limitation and summarize from metadata, cover
-images, downloaded media, or public search instead.
+explicit user request or confirmation. If the actual video, comments,
+transcript, or a reliable public mirror are not accessible, do not produce a
+"deep analysis" or imply the source was watched/read. Report the limitation and
+ask for the video/comments/transcript or manual browser access if deeper
+analysis is needed.
 
 Inspect the private organizer without opening raw chat tables:
 
@@ -236,7 +238,10 @@ The fast monitor reads new decrypted rows, ignores system/non-text rows as
 triggers for language-learning chats, mirrors them into SQLite, and routes
 mentions. Research chats can additionally treat image/video/file rows as
 attachment triggers; those rows immediately ACK and enqueue a worker task using
-recent synced media from `.private/downloads`. When a trigger is found, it also
+recent synced media from `.private/downloads`. Long or obviously multi-step
+research messages are also treated as worker tasks even when they do not contain
+a known keyword. This keeps the fast chat agent responsive while preserving the
+full request for the slower worker session. When a trigger is found, it also
 loads recent full chat history from the decrypted message table, so a bare
 `@name` can refer back to an earlier request such as "summarize this PDF". It
 labels latest and bot/self rows in the prompt, which lets the router resolve
@@ -442,7 +447,9 @@ labcanvas wechat alias --chat "懒人科研" --name "LazyingArt"
 - Include `expected_title` in each private send target. The GUI sender OCR-checks
   the opened chat title before composing and fails closed if the wrong group is
   visible. It retries during WeChat loading and falls back to full-page OCR when
-  the header crop is unreliable.
+  the header crop is unreliable. If OCR consistently misreads a group name, add
+  `expected_title_aliases` for the observed OCR text plus stable
+  `fallback_clicks`.
 - GUI sends are serialized by `.private/wechat_gui_send.lock`; do not bypass the
   sender helper with parallel raw `xdotool` scripts.
 - Keep danger handling silent in chat; record only private mirror metadata if a

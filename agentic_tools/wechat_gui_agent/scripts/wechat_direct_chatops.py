@@ -918,7 +918,8 @@ def immediate_task_route(
     lowered = combined.lower()
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
     attachment_trigger = is_attachment_trigger(config, row)
-    if not attachment_trigger and not any(keyword and keyword in lowered for keyword in keywords):
+    complex_task = is_complex_research_task(config, combined, focus_rows=focus_rows)
+    if not attachment_trigger and not complex_task and not any(keyword and keyword in lowered for keyword in keywords):
         return None
     task_context = "\n".join(
         f"{item['sender_display']}: {visible_message_text(item)}"
@@ -939,6 +940,68 @@ def immediate_task_route(
     )
     ack = str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
     return {"ack": ack, "task": task}
+
+
+def is_complex_research_task(
+    config: dict[str, Any],
+    text: str,
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+) -> bool:
+    if not is_research_chat(config):
+        return False
+    normalized = str(text or "").strip()
+    lowered = normalized.lower()
+    if len(normalized) >= int(config.get("complex_task_min_chars", 120)):
+        return True
+    if focus_rows and len(focus_rows) >= int(config.get("complex_task_min_focus_rows", 3)):
+        return True
+    markers = [
+        "deep research",
+        "full task",
+        "complete task",
+        "complicated task",
+        "complex task",
+        "step by step",
+        "multi-step",
+        "end to end",
+        "implement",
+        "debug",
+        "fix",
+        "design",
+        "analyze",
+        "compare",
+        "summarize and",
+        "download and",
+        "find and",
+        "write and",
+        "test and",
+        "run and",
+        "finish",
+        "完成",
+        "复杂",
+        "多步骤",
+        "一步步",
+        "全流程",
+        "深入研究",
+        "深度研究",
+        "详细分析",
+        "实现",
+        "调试",
+        "修复",
+        "设计",
+        "对比",
+        "下载并",
+        "总结并",
+        "写一份",
+        "生成并",
+    ]
+    if any(marker in lowered for marker in markers):
+        return True
+    lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    if len(lines) >= 3:
+        return True
+    return bool(re.search(r"(^|\n)\s*(?:[0-9]+[.、)]|[-*])\s+", normalized))
 
 
 def combined_focus_request(

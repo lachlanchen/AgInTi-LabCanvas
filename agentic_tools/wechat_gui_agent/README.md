@@ -142,7 +142,10 @@ summary evidence when accessible. It should look for viewer prompts such as
 `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`, `转写`,
 `transcript`, and `summary`, plus other comments with quoted lines, timestamps,
 corrections, names, or links. Reading comments is acceptable; posting a comment
-or asking Yuanbao from the account requires explicit user confirmation.
+or asking Yuanbao from the account requires explicit user confirmation. If the
+actual video, comments, transcript, or a reliable public mirror are unavailable,
+the worker should not produce a deep analysis; it should report the limitation
+and ask for the source material or manual browser access.
 
 Direct contacts can be monitored with the same config shape as groups. Keep a
 unique `chat_name`, `message_table`, and `state_path` for each contact. Set
@@ -352,8 +355,10 @@ The refresh process uses `labcanvas wechat backend decrypt --incremental`
 through the same backend wrapper as the CLI, and skips decrypt work when the
 source DB/WAL timestamp is unchanged. `labcanvas wechat health --json` reports
 the external backend state next to per-group catch-up status and latest-row age.
-Research configs can enable attachment triggers for image/video/file rows;
-EchoMind keeps those disabled so it only responds to language-learning text.
+Research configs can enable attachment triggers for image/video/file rows, and
+long or obviously multi-step research messages route directly to the worker
+even without a known keyword. EchoMind keeps attachment triggers disabled so it
+only responds to language-learning text.
 Each group can keep two private Codex sessions, `fast` and `worker`, in
 `.private/codex_sessions/`. Session keys include a short hash of the exact chat
 title, so non-ASCII groups such as `懒人科研` and `鏈接` cannot collapse into the
@@ -371,7 +376,8 @@ sender OCR-checks the opened chat header and fails closed if the wrong group is
 visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel
 raw click/paste senders against the same WeChat desktop. If WeChat opens a
 small floating chat or search window, the sender closes secondary WeChat windows
-and retries configured `fallback_clicks` before using Return.
+and retries configured `fallback_clicks` before using Return. If OCR repeatedly
+misreads a group title, add `expected_title_aliases` for the observed OCR text.
 
 ## Group Creation
 

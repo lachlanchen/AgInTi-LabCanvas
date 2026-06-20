@@ -320,6 +320,27 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("LabCanvas", route["task"])
         self.assertIn("KiCad", route["task"])
 
+    def test_research_complex_task_routes_to_worker_without_keyword(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": [],
+        }
+        row = self.row(
+            "请帮我完成一个复杂任务：先整理背景，再给出方案，然后列出风险和下一步。"
+        )
+
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("复杂任务", route["task"])
+
     def test_research_aginti_image_generation_routes_to_worker(self) -> None:
         config = {
             "chat_name": "懒人科研",

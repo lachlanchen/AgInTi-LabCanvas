@@ -250,7 +250,7 @@ Shipinhao/Finder and short-video shares:
 - Search visible or retrieved comments for Tencent Yuanbao-style prompts such as `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`, `转写`, `transcript`, and `summary`; these comments often request or contain transcript/summary material.
 - Also skim other highly visible comments for quoted lines, timestamps, topic summaries, corrections, names, links, or context that helps infer the video content.
 - Do not post a comment or ask Yuanbao yourself unless the user explicitly requests that action. Reading comments is allowed; writing comments needs confirmation.
-- If comments are not available in the Linux WeChat/Finder path, say that clearly and summarize from available metadata, cover images, downloaded media, or public search results instead.
+- If the actual video, comments, transcript, or reliable public mirror are not available, do not produce a "deep analysis" or imply you watched/read the source. Return a source-limited note, state what was accessible, and ask the user to provide the video/comments/transcript or approve a manual/browser path if deeper analysis is needed.
 
 Artifact return contract:
 - If you generate or find preview files, include their existing absolute or repo-relative paths in the JSON `files` array. The outer worker sends those files to WeChat.

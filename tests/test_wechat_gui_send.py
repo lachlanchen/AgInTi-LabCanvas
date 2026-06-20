@@ -27,11 +27,13 @@ class WeChatGuiSendTests(unittest.TestCase):
                 "name": "EchoMind",
                 "query": "EchoMind",
                 "expected_title": "EchoMind",
+                "expected_title_aliases": ["Echo Mind"],
                 "result_click": [165, 100],
                 "fallback_clicks": [[165, 100], [240, 335], [165, 170]],
             }
         )
 
+        self.assertEqual(target.expected_title_aliases, ("Echo Mind",))
         self.assertEqual(target.fallback_clicks, ((165, 100), (240, 335), (165, 170)))
         self.assertEqual(
             module.target_click_candidates(target),
@@ -67,6 +69,34 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(sum(1 for call in calls if call[0] == "tesseract"), 1)
+
+    def test_title_guard_accepts_configured_ocr_alias(self):
+        module = load_wechat_gui_send()
+        original_run = module.run
+        try:
+            def fake_run(command, *, env, check=True):
+                if command[0] == "tesseract":
+                    return subprocess.CompletedProcess(command, 0, "SR AEF (5)", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            result = module.verify_opened_title(
+                {},
+                module.Window("1", 0, 0, 1000, 700),
+                Path("/tmp/screen.png"),
+                module.TargetSpec(
+                    name="懒人科研",
+                    query="懒人科研",
+                    expected_title="懒人科研",
+                    expected_title_aliases=("SR AEF", "SRAEF"),
+                ),
+                Path("/tmp/title.png"),
+                "current",
+            )
+        finally:
+            module.run = original_run
+
+        self.assertTrue(result["ok"])
 
     def test_same_screenshot_detects_identical_files(self):
         module = load_wechat_gui_send()

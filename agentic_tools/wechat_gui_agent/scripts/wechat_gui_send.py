@@ -42,6 +42,7 @@ class TargetSpec:
     name: str
     query: str
     expected_title: str
+    expected_title_aliases: tuple[str, ...] = ()
     result_click: tuple[int, int] | None = None
     fallback_clicks: tuple[tuple[int, int], ...] = ()
     open_click: tuple[int, int] | None = None
@@ -153,16 +154,28 @@ def target_from_raw(raw: Any) -> TargetSpec:
     name = str(raw.get("name") or raw.get("target") or raw.get("query") or "").strip()
     query = str(raw.get("query") or name).strip()
     expected_title = str(raw.get("expected_title") or raw.get("title") or name).strip()
+    expected_title_aliases = strings_from_raw(raw.get("expected_title_aliases") or raw.get("title_aliases"))
     if not name or not query:
         raise SystemExit("Target object requires name/target and query")
     return TargetSpec(
         name=name,
         query=query,
         expected_title=expected_title or name,
+        expected_title_aliases=expected_title_aliases,
         result_click=point_from_raw(raw.get("result_click")),
         fallback_clicks=points_from_raw(raw.get("fallback_clicks")),
         open_click=point_from_raw(raw.get("open_click")),
     )
+
+
+def strings_from_raw(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        return (raw,)
+    if not isinstance(raw, list | tuple):
+        raise SystemExit("title aliases must be a string or list of strings")
+    return tuple(str(item).strip() for item in raw if str(item).strip())
 
 
 def point_from_raw(raw: Any) -> tuple[int, int] | None:
@@ -377,13 +390,15 @@ def verify_opened_title(
     )
     proc = run(["tesseract", str(crop_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "6"], env=env, check=False)
     ocr_text = proc.stdout.strip()
-    expected = normalize_title(target.expected_title)
+    expected_titles = [target.expected_title, *target.expected_title_aliases]
+    expected = [normalize_title(item) for item in expected_titles if normalize_title(item)]
     observed = normalize_title(ocr_text)
-    ok = bool(expected and expected in observed)
+    ok = any(item in observed for item in expected)
     return {
         "ok": ok,
         "method": method,
         "expected_title": target.expected_title,
+        "expected_title_aliases": list(target.expected_title_aliases),
         "ocr_text": ocr_text,
         "title_crop": str(crop_path),
     }
