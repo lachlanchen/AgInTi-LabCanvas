@@ -73,6 +73,12 @@ and inbox items into `source_messages`, `memory_items`, `tags`, and
 `item_tags`. One database can be shared across any number of groups because
 every row stores `chat_name`.
 
+For a link/read-later group such as `鏈接`, set `chat_purpose` to
+`web_clip_inbox`. Plain URLs and forwarded webpage cards are stored silently as
+`web_clip` items. Questions such as "summarize this link", "what is this", or
+`这个链接讲什么？` go through the fast router; slow page/PDF inspection or export
+requests are acknowledged and sent to the worker queue.
+
 Inspect the private organizer without opening raw chat tables:
 
 ```bash

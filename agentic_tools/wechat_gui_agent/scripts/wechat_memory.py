@@ -19,6 +19,32 @@ DEFAULT_DB = PRIVATE / "wechat_memory.sqlite"
 
 
 CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "web_clip": (
+        "http://",
+        "https://",
+        "www.",
+        "<url>",
+        "<appmsg",
+        "link",
+        "url",
+        "web page",
+        "website",
+        "read later",
+        "bookmark",
+        "article",
+        "paper",
+        "链接",
+        "網址",
+        "网址",
+        "网页",
+        "网站",
+        "收藏",
+        "稍后读",
+        "看到",
+        "转发",
+        "文章",
+        "论文",
+    ),
     "todo": (
         "todo",
         "to do",
@@ -440,6 +466,8 @@ def infer_categories(text: str, kind: str) -> list[str]:
     for category, keywords in CATEGORY_KEYWORDS.items():
         if any(keyword.lower() in lowered for keyword in keywords):
             categories.append(category)
+    if kind == "file/link" and "web_clip" not in categories:
+        categories.append("web_clip")
     if kind not in {"text", "type-1"} and "attachment" not in categories:
         categories.append("attachment")
     if not categories and is_question_or_request(text):
@@ -457,6 +485,8 @@ def is_question_or_request(text: str) -> bool:
 def infer_tags(chat_name: str, text: str, categories: list[str]) -> list[str]:
     lowered = f"{chat_name} {text}".lower()
     tags = list(categories)
+    if "http://" in lowered or "https://" in lowered or "<url>" in lowered or "链接" in lowered or "网页" in lowered:
+        tags.extend(["web-clip", "read-later"])
     if "写作" in lowered or "writing" in lowered:
         tags.append("writing")
     if "外语" in lowered or "language" in lowered or "english" in lowered or "japanese" in lowered:
@@ -465,7 +495,12 @@ def infer_tags(chat_name: str, text: str, categories: list[str]) -> list[str]:
         tags.append("money")
     if "labcanvas" in lowered or "aginti" in lowered:
         tags.append("labcanvas")
-    if any(ch in text for ch in "？?"):
+    stripped = text.lstrip()
+    if (
+        any(ch in text for ch in "？?")
+        and "�" not in text[:128]
+        and not (stripped.startswith("<?xml") or stripped.startswith("<msg"))
+    ):
         tags.append("question")
     return tags
 

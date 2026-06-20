@@ -539,9 +539,23 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "remind",
         "summarize",
         "summary",
+        "summarize this",
+        "what is this",
+        "what's this",
+        "what does this mean",
+        "why",
+        "how",
+        "which",
+        "where",
+        "tell me",
         "list",
         "organize",
         "export",
+        "link",
+        "url",
+        "web clip",
+        "bookmark",
+        "read later",
         "beat board",
         "storyboard",
         "writing",
@@ -560,9 +574,24 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "日程",
         "提醒",
         "总结",
+        "这个是什么",
+        "这是什么",
+        "这个链接",
+        "这篇",
+        "为什么",
+        "怎么",
+        "如何",
+        "哪个",
+        "哪里",
+        "讲什么",
         "整理",
         "列出",
         "导出",
+        "链接",
+        "网址",
+        "网页",
+        "收藏",
+        "稍后读",
         "分镜",
         "故事板",
         "写作",
@@ -645,6 +674,11 @@ def is_personal_organizer_chat(config: dict[str, Any]) -> bool:
         "notes",
         "life_admin",
         "writing_language_money",
+        "web_clip_inbox",
+        "link_inbox",
+        "internet_inbox",
+        "reading_inbox",
+        "device_inbox",
     }
 
 
@@ -1024,6 +1058,11 @@ For personal organizer chat purpose:
 - Reply when the latest context asks you to save, organize, list, summarize, schedule, remind, plan, or clarify something. For plain side conversation, return NO_REPLY.
 - Keep confirmations short. Use ACK+TASK for export, long summaries, files, calendar planning, or backend work.
 - If a note is incomplete, acknowledge the saved item and ask one concise missing-detail question only when it is needed for action.
+"""
+        if str(config.get("chat_purpose") or "").strip().lower() in {"web_clip_inbox", "link_inbox", "internet_inbox", "reading_inbox"}:
+            organizer_rules += """
+- For a web-clip/link inbox, assume plain links and forwarded webpage cards are saved silently. Reply only when the user asks a question, requests a summary/list/export, or asks you to organize/process saved material.
+- Use ACK+TASK when a link needs fetching, page/PDF inspection, long summarization, extraction, translation, tagging, or file handling.
 """
     research_rules = ""
     if is_research_chat(config):

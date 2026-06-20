@@ -420,6 +420,16 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("could you summarize my notes?")))
         self.assertFalse(direct_chatops.should_respond(config, {}, self.row("今天路上人很多")))
 
+    def test_web_clip_inbox_saves_plain_links_without_replying(self) -> None:
+        config = self.base_config()
+        config["analysis_mode"] = ""
+        config["chat_purpose"] = "web_clip_inbox"
+        config["respond_to_all"] = True
+
+        self.assertFalse(direct_chatops.should_respond(config, {}, self.row("https://example.com/article?id=1")))
+        self.assertTrue(direct_chatops.should_respond(config, {}, self.row("summarize this link https://example.com/article")))
+        self.assertTrue(direct_chatops.should_respond(config, {}, self.row("这个链接讲什么？")))
+
     def test_personal_organizer_prompt_mentions_notes_and_tasks(self) -> None:
         config = self.base_config()
         config["analysis_mode"] = ""

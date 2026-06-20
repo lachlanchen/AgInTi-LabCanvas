@@ -124,6 +124,12 @@ ideas, money ideas, requests, and attachments across any number of groups. The
 router only replies to actionable save/list/summarize/schedule/organize
 requests or explicit mentions; ordinary notes are stored silently.
 
+Use `chat_purpose: "web_clip_inbox"` for a group such as `鏈接`, where the chat
+is mainly a read-later stream. Plain URLs and forwarded webpage cards become
+`web_clip` records in the same private database, partitioned by `chat_name`.
+Questions and summary/list/export requests still use the fast router and worker
+queue.
+
 ```bash
 labcanvas wechat memory init
 labcanvas wechat memory summary --chat "写作 外语 挣钱"
