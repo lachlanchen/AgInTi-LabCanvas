@@ -75,6 +75,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("Strict source isolation", str(calls[0]["prompt"]))
         self.assertIn("Never use media, files, or generated artifacts from another chat", str(calls[0]["prompt"]))
         self.assertIn("If no exact matching source media is available", str(calls[0]["prompt"]))
+        self.assertIn("explicit source/reference rows embedded in `request`", str(calls[0]["prompt"]))
         self.assertIn("LabCanvas tool playbook", str(calls[0]["prompt"]))
         self.assertIn("Match every input file/media path to this task's exact", str(calls[0]["prompt"]))
         self.assertIn("studio figure-grid", str(calls[0]["prompt"]))

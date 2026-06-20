@@ -145,9 +145,13 @@ suffixes, and oversized files before sending.
 
 Worker tasks are source-isolated. A task may use only the current chat title,
 the recorded `source.local_id`/`source.server_id`, the task context rows, and
-the media paths listed from that same chat's download folder. If an image, PDF,
-video, or quoted source cannot be matched exactly, the worker must ask for the
-source again instead of using media from another group or an older task.
+the explicit source/reference rows embedded in the request plus media paths
+listed from that same chat's download folder. This supports multi-message tasks
+such as sending an image and then sending "change the two people to anime": the
+text command is paired with recent same-chat image/file rows before it reaches
+the worker. If an image, PDF, video, or quoted source cannot be matched exactly,
+the worker must ask for the source again instead of using media from another
+group or an older task.
 
 ## External Decrypt Backend
 
@@ -298,9 +302,11 @@ or file/image handling, the monitor can skip the fast Codex call, send the ACK
 immediately, and enqueue the backend task directly. The queued task includes
 recent chat history and recent synced WeChat file paths from `.private/downloads`
 so the worker can resolve phrases like "this PDF" without asking for another
-upload. The worker prompt also checks recent bot/self context before work so it
-returns only a delta/status when a request is repeated. If the worker needs an
-important decision before continuing, it returns
+upload. For delayed follow-ups, the router also includes recent same-chat
+attachment rows as source/reference rows, so "edit this image" can refer to an
+image sent just before the text command. The worker prompt also checks recent
+bot/self context before work so it returns only a delta/status when a request is
+repeated. If the worker needs an important decision before continuing, it returns
 `confirmation`, sends that question to chat, and marks the task
 `waiting_confirmation`.
 

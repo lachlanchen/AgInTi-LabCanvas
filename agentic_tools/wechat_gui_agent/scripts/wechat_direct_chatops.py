@@ -919,7 +919,13 @@ def immediate_task_route(
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
     attachment_trigger = is_attachment_trigger(config, row)
     complex_task = is_complex_research_task(config, combined, focus_rows=focus_rows)
-    if not attachment_trigger and not complex_task and not any(keyword and keyword in lowered for keyword in keywords):
+    contextual_media_task = is_contextual_media_task(config, combined, row, context_rows, focus_rows=focus_rows)
+    if (
+        not attachment_trigger
+        and not complex_task
+        and not contextual_media_task
+        and not any(keyword and keyword in lowered for keyword in keywords)
+    ):
         return None
     task_context = "\n".join(
         f"{item['sender_display']}: {visible_message_text(item)}"
@@ -927,11 +933,19 @@ def immediate_task_route(
         if visible_message_text(item).strip()
     )
     chat_name = str(config.get("chat_name") or "")
-    source_rows = focus_rows or [row]
+    include_reference_media = attachment_trigger or contextual_media_task or references_recent_media(combined)
+    source_rows = source_reference_rows(
+        config,
+        row,
+        context_rows,
+        focus_rows=focus_rows,
+        include_recent_media=include_reference_media,
+    )
     source_ids = ", ".join(
         f"{item.get('sender_display') or item.get('sender')}:local_id={item.get('local_id')}:server_id={item.get('server_id')}"
         for item in source_rows
     )
+    reference_context = reference_row_context(source_rows)
     recent_files = recent_download_context(chat_name)
     task = (
         "Handle this WeChat request as backend work. "
@@ -941,15 +955,181 @@ def immediate_task_route(
         "images/screenshots, PDFs, documents, archives, audio/voice, video, webpage cards, mini programs, "
         "YouTube, Shipinhao/视频号, Bilibili, links, contact/location cards, CAD/PCB files, and other formats. "
         "Extract useful metadata such as title, URL, filename, extension, media path, and visible content before summarizing. "
-        "Strict source isolation: use only media/files from this exact chat and the current source/local_id rows below. "
+        "Strict source isolation: use only media/files from this exact chat and the current source/reference local_id rows below. "
         "Do not borrow media, files, or generated artifacts from another group, direct message, old request, or unrelated download folder. "
+        "For multi-message tasks, combine the latest text command with referenced same-chat media rows, such as an image sent just before an edit request. "
         "If the exact attachment/image/video/PDF is unavailable, say it is missing and ask the user to resend or provide the original.\n\n"
-        f"Chat: {chat_name}\nSource rows: {source_ids}\n\n"
+        f"Chat: {chat_name}\nSource/reference rows: {source_ids}\n\n"
         f"Current coalesced request:\n{current_request or attachment_request_text(row)}\n\nRecent history:\n{task_context}"
+        f"\n\nSame-chat reference media/context rows:\n{reference_context or '(none found)'}"
         f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
     )
     ack = str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
     return {"ack": ack, "task": task}
+
+
+def is_contextual_media_task(
+    config: dict[str, Any],
+    text: str,
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+) -> bool:
+    if is_language_analysis_mode(config):
+        return False
+    if not has_recent_reference_media(config, row, context_rows, focus_rows=focus_rows):
+        return False
+    lowered = str(text or "").lower()
+    return references_recent_media(text)
+
+
+def references_recent_media(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = [
+        "edit",
+        "image edit",
+        "change",
+        "modify",
+        "replace",
+        "remove",
+        "mask",
+        "crop",
+        "upscale",
+        "turn",
+        "convert",
+        "based on that",
+        "based on this",
+        "use that",
+        "use this",
+        "same image",
+        "this image",
+        "that image",
+        "photo",
+        "picture",
+        "screenshot",
+        "pdf",
+        "file",
+        "attachment",
+        "document",
+        "video",
+        "audio",
+        "voice",
+        "link",
+        "url",
+        "webpage",
+        "card",
+        "shared object",
+        "anime",
+        "cartoon",
+        "style",
+        "生成",
+        "编辑",
+        "修改",
+        "改",
+        "换",
+        "替换",
+        "去掉",
+        "删除",
+        "遮住",
+        "遮挡",
+        "裁剪",
+        "放大",
+        "转成",
+        "基于",
+        "按照",
+        "用这",
+        "这张",
+        "那张",
+        "图片",
+        "照片",
+        "截图",
+        "文件",
+        "附件",
+        "文档",
+        "视频",
+        "音频",
+        "语音",
+        "链接",
+        "网址",
+        "网页",
+        "卡片",
+        "动漫",
+        "漫画",
+        "风格",
+    ]
+    return any(marker in lowered for marker in markers)
+
+
+def has_recent_reference_media(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+) -> bool:
+    return any(
+        item.get("local_id") != row.get("local_id") and is_reference_media_row(config, item)
+        for item in source_reference_rows(config, row, context_rows, focus_rows=focus_rows)
+    )
+
+
+def source_reference_rows(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+    media_limit: int = 4,
+    include_recent_media: bool = True,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+
+    def add(item: dict[str, Any]) -> None:
+        key = item.get("local_id")
+        if key in seen:
+            return
+        rows.append(item)
+        seen.add(key)
+
+    for item in focus_rows or [row]:
+        add(item)
+    if not include_recent_media:
+        rows.sort(key=lambda item: int(item.get("local_id") or 0))
+        return rows
+    for item in reversed(context_rows):
+        if len([candidate for candidate in rows if is_reference_media_row(config, candidate)]) >= media_limit:
+            break
+        if item.get("local_id") == row.get("local_id"):
+            continue
+        if is_reference_media_row(config, item):
+            add(item)
+    rows.sort(key=lambda item: int(item.get("local_id") or 0))
+    return rows
+
+
+def is_reference_media_row(config: dict[str, Any], row: dict[str, Any]) -> bool:
+    if is_quote_reply_message(row):
+        return True
+    local_type, _ = split_message_type(row.get("local_type"))
+    allowed = {int(item) for item in config.get("attachment_trigger_local_types", [3, 34, 42, 43, 47, 48, 49])}
+    return local_type in allowed
+
+
+def reference_row_context(rows: list[dict[str, Any]]) -> str:
+    lines = []
+    for item in rows:
+        if not is_quote_reply_message(item):
+            local_type, _ = split_message_type(item.get("local_type"))
+            if local_type == 1:
+                continue
+        lines.append(
+            f"- local_id={item.get('local_id')} server_id={item.get('server_id')} "
+            f"sender={item.get('sender_display') or item.get('sender')} type={message_kind(item)} "
+            f"content={visible_message_text(item)}"
+        )
+    return "\n".join(lines)
 
 
 def is_complex_research_task(

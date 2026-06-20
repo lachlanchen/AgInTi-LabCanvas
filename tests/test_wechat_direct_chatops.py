@@ -344,6 +344,75 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         assert route is not None
         self.assertIn("复杂任务", route["task"])
 
+    def test_text_after_image_routes_as_contextual_media_edit_task(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "attachment_trigger_local_types": [3, 49],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": [],
+        }
+        image = self.row("<msg><img md5=\"abc\" /></msg>", local_id=10, server_id="img-10", local_type=3)
+        command = self.row("change the two people to anime", local_id=11, server_id="txt-11")
+
+        route = direct_chatops.immediate_task_route(config, command, [image, command], focus_rows=[command])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("change the two people to anime", route["task"])
+        self.assertIn("Source/reference rows", route["task"])
+        self.assertIn("local_id=10", route["task"])
+        self.assertIn("type=image", route["task"])
+        self.assertIn("For multi-message tasks", route["task"])
+
+    def test_short_edit_text_without_recent_media_does_not_route_as_media_task(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": [],
+        }
+        row = self.row("change it", local_id=11, server_id="txt-11")
+
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNone(route)
+
+    def test_complex_task_without_media_reference_does_not_attach_old_image(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "attachment_trigger_local_types": [3, 49],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": [],
+        }
+        image = self.row("<msg><img md5=\"abc\" /></msg>", local_id=10, server_id="img-10", local_type=3)
+        command = self.row(
+            "请帮我完成一个复杂任务：先整理背景，再给出方案，然后列出风险和下一步。",
+            local_id=11,
+            server_id="txt-11",
+        )
+
+        route = direct_chatops.immediate_task_route(config, command, [image, command], focus_rows=[command])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("复杂任务", route["task"])
+        self.assertIn("Same-chat reference media/context rows:\n(none found)", route["task"])
+        self.assertNotIn("local_id=10", route["task"])
+
     def test_research_aginti_image_generation_routes_to_worker(self) -> None:
         config = {
             "chat_name": "懒人科研",
