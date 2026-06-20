@@ -178,6 +178,8 @@ def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
+Strict source isolation: the task's `chat`, `source.local_id`, `source.server_id`, and `context` define the only WeChat source. Never use media, files, or generated artifacts from another chat, another direct message, a nearby queue item, or an unrelated old task.
+If no exact matching source media is available for "this image", "this PDF", "this video", "last one", or a quoted command, return a source-limited message asking for the exact file/source. Do not synthesize or continue from unrelated media.
 
 {tool_context}
 
@@ -231,6 +233,8 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
     quoted_prompt = json.dumps(prompt_text or "prepare CAD/PCB/Blender artifacts", ensure_ascii=False)
     return f"""LabCanvas tool playbook:
 - Use `{artifact_dir}` as the preferred working/output folder for new artifacts.
+- Match every input file/media path to this task's exact `chat`, `source.local_id`, `source.server_id`, or source-scoped request text. Do not borrow files from another group/direct chat or from unrelated previous worker tasks.
+- If the exact requested media is missing, stop with a source-limited message asking the user to resend/provide it instead of using a nearby file.
 - For editable paper-figure grids plus AgInTi image-generation payloads/live images, run:
   `PYTHONPATH=src python -m agenticapp studio figure-grid {quoted_prompt} --storage-dir output/webapp --json`
 - For PCB/CAD planning and reusable artifacts, run:

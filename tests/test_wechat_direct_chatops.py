@@ -82,6 +82,9 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIsNotNone(route)
         assert route is not None
         self.assertIn("WeChat file/link item", route["task"])
+        self.assertIn("Strict source isolation", route["task"])
+        self.assertIn("Chat: 懒人科研", route["task"])
+        self.assertIn("local_id=1", route["task"])
 
     def test_enabled_attachment_chats_route_images_voice_and_location(self) -> None:
         config = {
@@ -536,6 +539,35 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("clip.mp4", context)
         self.assertIn("voice.m4a", context)
         self.assertIn("board.step", context)
+
+    def test_recent_download_context_is_scoped_to_exact_chat_folder(self) -> None:
+        original_private = direct_chatops.PRIVATE
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                direct_chatops.PRIVATE = Path(tmp)  # type: ignore[assignment]
+                downloads = Path(tmp) / "downloads"
+                (downloads / "鏈接").mkdir(parents=True)
+                (downloads / "懒人科研").mkdir(parents=True)
+                (downloads / "写作-外语-挣钱").mkdir(parents=True)
+                (downloads / "鏈接" / "link.mp4").write_text("link", encoding="utf-8")
+                (downloads / "懒人科研" / "photo.png").write_text("photo", encoding="utf-8")
+                (downloads / "写作-外语-挣钱" / "note.pdf").write_text("note", encoding="utf-8")
+                (downloads / "global.mp4").write_text("global", encoding="utf-8")
+
+                research_context = direct_chatops.recent_download_context("懒人科研", limit=8)
+                link_context = direct_chatops.recent_download_context("鏈接", limit=8)
+                writing_context = direct_chatops.recent_download_context("写作—外语—挣钱", limit=8)
+                unknown_context = direct_chatops.recent_download_context("unknown group", limit=8)
+        finally:
+            direct_chatops.PRIVATE = original_private  # type: ignore[assignment]
+
+        self.assertIn("photo.png", research_context)
+        self.assertNotIn("link.mp4", research_context)
+        self.assertNotIn("global.mp4", research_context)
+        self.assertIn("link.mp4", link_context)
+        self.assertNotIn("photo.png", link_context)
+        self.assertIn("note.pdf", writing_context)
+        self.assertEqual("", unknown_context)
 
     def test_personal_organizer_prompt_mentions_notes_and_tasks(self) -> None:
         config = self.base_config()

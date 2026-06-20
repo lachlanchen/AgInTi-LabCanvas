@@ -40,7 +40,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | Board/CAD tasks | Shared CLI and web-chat workflow for KiCad, OpenSCAD, renders, and manufacturing prep | [docs/BOARD_CAD_TASKS.md](docs/BOARD_CAD_TASKS.md) |
 | PCB manufacturing | KiCad HYBEC and Lumileds boards, DRC/ERC, JLCPCB Gerber ZIPs | [pcb](pcb) |
 | LabVIEW automation | Linux install probe, MCP candidate research, stdio-to-HTTP bridge | [agentic_tools/labview_mcp_agent](agentic_tools/labview_mcp_agent) |
-| WeChat chatops | Isolated Linux GUI, direct local message mirror, fast ACK agent, AgInTi figure generation plus CAD/PCB/Blender worker queue, file/PDF/render return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md) |
+| WeChat chatops | Isolated Linux GUI, direct local message mirror, fast ACK agent, strict per-chat media isolation, AgInTi figure generation plus CAD/PCB/Blender worker queue, file/PDF/render return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md) |
 | App routing | Blender, BioRender, Unity, Unreal, and custom target dispatch | [docs/RESEARCH.md](docs/RESEARCH.md) |
 
 ## Quick Start

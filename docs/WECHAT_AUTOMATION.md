@@ -143,6 +143,12 @@ files, and `.blend` files. It refuses private paths,
 decrypted WeChat data, keys, cookies, browser profiles, chat logs, unsupported
 suffixes, and oversized files before sending.
 
+Worker tasks are source-isolated. A task may use only the current chat title,
+the recorded `source.local_id`/`source.server_id`, the task context rows, and
+the media paths listed from that same chat's download folder. If an image, PDF,
+video, or quoted source cannot be matched exactly, the worker must ask for the
+source again instead of using media from another group or an older task.
+
 ## External Decrypt Backend
 
 The second receive path is implemented as an optional private backend around
@@ -238,7 +244,9 @@ The fast monitor reads new decrypted rows, ignores system/non-text rows as
 triggers for language-learning chats, mirrors them into SQLite, and routes
 mentions. Research chats can additionally treat image/video/file rows as
 attachment triggers; those rows immediately ACK and enqueue a worker task using
-recent synced media from `.private/downloads`. Long or obviously multi-step
+recent synced media from the exact `.private/downloads/<chat>/` folder only.
+There is no global download fallback, because cross-chat media reuse can answer
+the wrong request. Long or obviously multi-step
 research messages are also treated as worker tasks even when they do not contain
 a known keyword. This keeps the fast chat agent responsive while preserving the
 full request for the slower worker session. When a trigger is found, it also
@@ -374,7 +382,9 @@ agentic_tools/wechat_gui_agent/.private/downloads/<chat>/<wechat-profile>/<categ
 ```
 
 This keeps files/images from different local WeChat profiles separate while
-keeping them out of git.
+keeping them out of git. The router reads only the configured chat's folder
+(including the same sanitized folder name used by media sync) and never scans
+the parent downloads directory.
 
 ## Web App
 

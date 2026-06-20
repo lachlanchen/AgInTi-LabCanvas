@@ -926,7 +926,13 @@ def immediate_task_route(
         for item in context_rows[-6:]
         if visible_message_text(item).strip()
     )
-    recent_files = recent_download_context(str(config.get("chat_name") or ""))
+    chat_name = str(config.get("chat_name") or "")
+    source_rows = focus_rows or [row]
+    source_ids = ", ".join(
+        f"{item.get('sender_display') or item.get('sender')}:local_id={item.get('local_id')}:server_id={item.get('server_id')}"
+        for item in source_rows
+    )
+    recent_files = recent_download_context(chat_name)
     task = (
         "Handle this WeChat request as backend work. "
         "Use available local tools, download or generate needed artifacts into ignored private/output folders, "
@@ -934,7 +940,11 @@ def immediate_task_route(
         "For any WeChat attachment or shared object, inspect the structured message text and recent synced media first: "
         "images/screenshots, PDFs, documents, archives, audio/voice, video, webpage cards, mini programs, "
         "YouTube, Shipinhao/视频号, Bilibili, links, contact/location cards, CAD/PCB files, and other formats. "
-        "Extract useful metadata such as title, URL, filename, extension, media path, and visible content before summarizing.\n\n"
+        "Extract useful metadata such as title, URL, filename, extension, media path, and visible content before summarizing. "
+        "Strict source isolation: use only media/files from this exact chat and the current source/local_id rows below. "
+        "Do not borrow media, files, or generated artifacts from another group, direct message, old request, or unrelated download folder. "
+        "If the exact attachment/image/video/PDF is unavailable, say it is missing and ask the user to resend or provide the original.\n\n"
+        f"Chat: {chat_name}\nSource rows: {source_ids}\n\n"
         f"Current coalesced request:\n{current_request or attachment_request_text(row)}\n\nRecent history:\n{task_context}"
         f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
     )
@@ -1259,11 +1269,13 @@ def recent_download_context(chat_name: str, *, limit: int = 8) -> str:
     downloads = PRIVATE / "downloads"
     if not downloads.exists():
         return ""
-    roots = []
-    chat_root = downloads / chat_name
-    if chat_root.exists():
-        roots.append(chat_root)
-    roots.append(downloads)
+    roots = [
+        root
+        for root in (downloads / name for name in chat_download_folder_candidates(chat_name))
+        if root.is_dir()
+    ]
+    if not roots:
+        return ""
     seen = set()
     files = []
     suffixes = {
@@ -1330,6 +1342,22 @@ def recent_download_context(chat_name: str, *, limit: int = 8) -> str:
             files.append((stat.st_mtime, stat.st_size, path))
     files.sort(reverse=True)
     return "\n".join(f"- {path} ({size} bytes)" for _, size, path in files[:limit])
+
+
+def chat_download_folder_candidates(chat_name: str) -> list[str]:
+    raw = str(chat_name or "").strip()
+    candidates: list[str] = []
+    if raw and raw not in {".", ".."} and "/" not in raw and "\\" not in raw:
+        candidates.append(raw)
+    safe = safe_download_component(raw)
+    if safe and safe not in candidates:
+        candidates.append(safe)
+    return candidates
+
+
+def safe_download_component(value: str) -> str:
+    cleaned = re.sub(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+", "-", value.strip())
+    return cleaned.strip("-") or "wechat"
 
 
 def run_codex(
