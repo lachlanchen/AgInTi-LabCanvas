@@ -767,14 +767,16 @@ def mirror_summary(path: Path, *, limit: int = 8) -> dict[str, Any]:
 def direct_monitor_health() -> dict[str, Any]:
     configs = discover_direct_monitor_configs()
     groups = [direct_config_health(path) for path in configs]
+    separation = direct_config_separation_summary(configs)
     backend = external_backend_summary()
     caught_up = sum(1 for item in groups if item.get("caught_up"))
-    ok = bool(groups) and all(item.get("ok") for item in groups) and bool(backend.get("ok"))
+    ok = bool(groups) and all(item.get("ok") for item in groups) and bool(backend.get("ok")) and bool(separation.get("ok"))
     return {
         "ok": ok,
         "checked_at": datetime.now().isoformat(timespec="seconds"),
         "group_count": len(groups),
         "caught_up_groups": caught_up,
+        "separation": separation,
         "external_backend": backend,
         "groups": groups,
         "notes": [
@@ -782,6 +784,68 @@ def direct_monitor_health() -> dict[str, Any]:
             "set WECHAT_DIRECT_CONFIGS in .private/wechat_supervisor.local.env to control monitored groups",
         ],
     }
+
+
+def direct_config_separation_summary(paths: list[Path]) -> dict[str, Any]:
+    records: list[dict[str, str]] = []
+    missing_send_title_guard: list[str] = []
+    unreadable: list[str] = []
+    for path in paths:
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            unreadable.append(path.name)
+            continue
+        config_name = path.name
+        if not has_send_title_guard(config.get("send_target")):
+            missing_send_title_guard.append(config_name)
+        records.append(
+            {
+                "config_name": config_name,
+                "chat_name": str(config.get("chat_name") or ""),
+                "message_table": str(config.get("message_table") or ""),
+                "state_path": normalized_private_path_key(str(config.get("state_path") or "")),
+            }
+        )
+    duplicate_state = duplicate_config_groups(records, "state_path")
+    duplicate_table = duplicate_config_groups(records, "message_table")
+    duplicate_chat = duplicate_config_groups(records, "chat_name")
+    ok = not unreadable and not missing_send_title_guard and not duplicate_state and not duplicate_table and not duplicate_chat
+    return {
+        "ok": ok,
+        "private_values_redacted": True,
+        "config_count": len(paths),
+        "checked_config_count": len(records),
+        "unreadable_config_count": len(unreadable),
+        "missing_send_title_guard_count": len(missing_send_title_guard),
+        "duplicate_state_path_count": len(duplicate_state),
+        "duplicate_message_table_count": len(duplicate_table),
+        "duplicate_chat_name_count": len(duplicate_chat),
+        "unreadable_configs": unreadable,
+        "missing_send_title_guard_configs": missing_send_title_guard,
+        "duplicate_state_path_configs": duplicate_state,
+        "duplicate_message_table_configs": duplicate_table,
+        "duplicate_chat_name_configs": duplicate_chat,
+    }
+
+
+def normalized_private_path_key(value: str) -> str:
+    if not value:
+        return ""
+    path = Path(value)
+    if not path.is_absolute():
+        path = PACKAGE_ROOT / path
+    return str(path)
+
+
+def duplicate_config_groups(records: list[dict[str, str]], field: str) -> list[list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for record in records:
+        value = record.get(field, "")
+        if not value:
+            continue
+        grouped.setdefault(value, []).append(record["config_name"])
+    return [sorted(names) for names in grouped.values() if len(names) > 1]
 
 
 def external_backend_summary() -> dict[str, Any]:
