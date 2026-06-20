@@ -85,6 +85,17 @@ for summary or extraction. Questions such as "summarize this link", "what is
 this", or `这个链接讲什么？` also go through the fast router; slow page/PDF/media
 inspection or export requests are acknowledged and sent to the worker queue.
 
+For 视频号/Shipinhao/Finder shares, the worker should treat comments as optional
+auxiliary evidence when they are accessible. Search visible or retrieved comments
+for prompts such as `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`,
+`转写`, `transcript`, and `summary`, because viewers often ask Yuanbao or other
+AI accounts for the transcript or summary. Skim other high-signal comments for
+quoted lines, timestamps, corrections, names, links, or context. Reading comments
+is allowed; posting a comment or asking Yuanbao from the account requires an
+explicit user request or confirmation. If comments are not exposed by the Linux
+WeChat/Finder path, report that limitation and summarize from metadata, cover
+images, downloaded media, or public search instead.
+
 Inspect the private organizer without opening raw chat tables:
 
 ```bash

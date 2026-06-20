@@ -245,6 +245,13 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
 - For AgInTi figure requests, return the editable SVG grid plus AgInTi prompt/request/manifest files; if live image generation is enabled and `imagePaths` contains PNG/JPG outputs, include those image paths too.
 - For PCB render requests, return the KiCad/board PNG preview and any STEP/Gerber zip when available. For CAD/Blender render requests, return the PNG render plus STEP/STL/source spec when useful.
 
+Shipinhao/Finder and short-video shares:
+- Treat comment sections as useful auxiliary evidence when they are accessible from the local GUI, cached metadata, a browser-assist session, or a public mirrored page.
+- Search visible or retrieved comments for Tencent Yuanbao-style prompts such as `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`, `转写`, `transcript`, and `summary`; these comments often request or contain transcript/summary material.
+- Also skim other highly visible comments for quoted lines, timestamps, topic summaries, corrections, names, links, or context that helps infer the video content.
+- Do not post a comment or ask Yuanbao yourself unless the user explicitly requests that action. Reading comments is allowed; writing comments needs confirmation.
+- If comments are not available in the Linux WeChat/Finder path, say that clearly and summarize from available metadata, cover images, downloaded media, or public search results instead.
+
 Artifact return contract:
 - If you generate or find preview files, include their existing absolute or repo-relative paths in the JSON `files` array. The outer worker sends those files to WeChat.
 - Prefer PNG/JPG/SVG/PDF/STEP/STL/ZIP/SCAD/KiCad files. Do not include decrypted WeChat DBs, private config, cookies, tokens, browser profiles, or chat logs.

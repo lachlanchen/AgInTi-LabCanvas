@@ -77,6 +77,10 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("AgInTi image-generation", str(calls[0]["prompt"]))
         self.assertIn("studio lab-task", str(calls[0]["prompt"]))
         self.assertIn("render-scene", str(calls[0]["prompt"]))
+        self.assertIn("Shipinhao/Finder", str(calls[0]["prompt"]))
+        self.assertIn("@元宝", str(calls[0]["prompt"]))
+        self.assertIn("英文全文", str(calls[0]["prompt"]))
+        self.assertIn("Do not post a comment", str(calls[0]["prompt"]))
         self.assertIn("files", str(calls[0]["prompt"]))
 
     def test_worker_result_collects_nested_and_plain_artifact_paths(self) -> None:

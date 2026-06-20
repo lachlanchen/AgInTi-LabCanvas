@@ -137,6 +137,13 @@ partitioned by `chat_name`. These shares can also trigger an ACK plus worker
 task to summarize or extract the content; summary/list/export requests use the
 same fast-router and worker queue.
 
+For 视频号/Shipinhao/Finder shares, the worker also treats comments as optional
+summary evidence when accessible. It should look for viewer prompts such as
+`@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`, `转写`,
+`transcript`, and `summary`, plus other comments with quoted lines, timestamps,
+corrections, names, or links. Reading comments is acceptable; posting a comment
+or asking Yuanbao from the account requires explicit user confirmation.
+
 Direct contacts can be monitored with the same config shape as groups. Keep a
 unique `chat_name`, `message_table`, and `state_path` for each contact. Set
 `bot_identity`, such as `LazyResearch / 懒人科研`, when the contact should hear a
