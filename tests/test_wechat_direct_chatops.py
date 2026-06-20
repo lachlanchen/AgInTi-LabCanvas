@@ -408,6 +408,60 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(config["send_pause_seconds"], 0.35)
         self.assertEqual(config["send_initial_title_wait_seconds"], 0.45)
         self.assertEqual(config["send_title_retry_seconds"], 3.2)
+        self.assertEqual(config["organizer"], {"enabled": False})
+
+    def test_personal_organizer_response_candidates_are_intent_based(self) -> None:
+        config = self.base_config()
+        config["analysis_mode"] = ""
+        config["chat_purpose"] = "personal_organizer"
+        config["respond_to_all"] = True
+
+        self.assertTrue(direct_chatops.should_respond(config, {}, self.row("记一下：明天买牛奶")))
+        self.assertTrue(direct_chatops.should_respond(config, {}, self.row("could you summarize my notes?")))
+        self.assertFalse(direct_chatops.should_respond(config, {}, self.row("今天路上人很多")))
+
+    def test_personal_organizer_prompt_mentions_notes_and_tasks(self) -> None:
+        config = self.base_config()
+        config["analysis_mode"] = ""
+        config["chat_purpose"] = "personal_organizer"
+
+        prompt = direct_chatops.build_codex_prompt(config, self.row("记一下：明天买牛奶"), "recent context")
+
+        self.assertIn("personal organizer", prompt)
+        self.assertIn("notes, memos, todos, groceries, calendar items", prompt)
+        self.assertIn("Do not mention the database", prompt)
+        self.assertNotIn("For research chat purpose", prompt)
+
+    def test_organizer_error_is_recorded_without_stopping_monitor(self) -> None:
+        config = self.base_config()
+        config["immediate_ack_enabled"] = False
+        config["organizer"] = {"enabled": True}
+        config["codex"] = {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60}
+        state: dict[str, object] = {"last_local_id": 0}
+        row = self.row("今日はいい天気です", server_id="1", local_id=1)
+        original_read_new = direct_chatops.read_new_messages
+        original_history = direct_chatops.read_recent_history
+        original_run_codex = direct_chatops.run_codex
+        original_organize = direct_chatops.organize_messages
+        try:
+            direct_chatops.read_new_messages = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+            direct_chatops.read_recent_history = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+            direct_chatops.run_codex = lambda *_args, **_kwargs: "CHAT: reply"  # type: ignore[assignment]
+
+            def fail_organizer(*_args: object, **_kwargs: object) -> dict[str, object]:
+                raise RuntimeError("memory db busy")
+
+            direct_chatops.organize_messages = fail_organizer  # type: ignore[assignment]
+            result = direct_chatops.run_once(config, state, send=False, no_decrypt=True)
+        finally:
+            direct_chatops.read_new_messages = original_read_new  # type: ignore[assignment]
+            direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
+            direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
+            direct_chatops.organize_messages = original_organize  # type: ignore[assignment]
+
+        self.assertEqual(result["responses_sent"], 1)
+        self.assertEqual(result["metrics"]["organizer_status"], "error")
+        self.assertEqual(result["metrics"]["organizer_error"], "memory db busy")
 
     def test_refresh_decrypted_store_uses_incremental_backend_wrapper(self) -> None:
         calls: list[list[str]] = []

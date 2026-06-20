@@ -54,11 +54,12 @@ labcanvas wechat status
 tmux attach -t labcanvas-wechat
 ```
 
-The supervisor keeps four panes alive: virtual desktop, fast direct monitor,
-worker queue, and media sync. Monitor/worker/media panes restart automatically
-if they exit. Incoming mentions can get an immediate ACK while longer work is
-queued for `wechat_task_worker.py`, which can send a final message plus
-PDFs/images/files back through the official WeChat GUI.
+The supervisor keeps a virtual desktop/decrypt window, one fast direct-monitor
+window per configured group, plus worker and media-sync windows. Monitor,
+worker, and media processes restart automatically if they exit. Incoming
+mentions can get an immediate ACK while longer work is queued for
+`wechat_task_worker.py`, which can send a final message plus PDFs/images/files
+back through the official WeChat GUI.
 
 The direct monitor uses recent full chat history, not just the newest polling
 batch. Prompt context labels the latest row and bot/self replies, so a bare
@@ -99,6 +100,34 @@ the decrypted DB, and whether the self-message and title-guard protections are
 enabled. It also shows poll timing, Codex model/reasoning settings, and the
 last loop timing metrics. Private chatroom IDs, wxids, DB paths, and table
 names are omitted.
+
+For organizer-style groups, enable the private memory sidecar in that group's
+direct config:
+
+```json
+{
+  "chat_purpose": "personal_organizer",
+  "respond_to_all": true,
+  "organizer": {
+    "enabled": true,
+    "db_path": "agentic_tools/wechat_gui_agent/.private/wechat_memory.sqlite",
+    "capture_unclassified": true,
+    "default_tags": ["writing", "foreign-language", "money"]
+  }
+}
+```
+
+The monitor backs up every new row, then classifies inbound messages into
+`source_messages`, `memory_items`, `tags`, and `item_tags`. It can track notes,
+memos, todos, groceries, calendar hints, beat-board ideas, writing/language
+ideas, money ideas, requests, and attachments across any number of groups. The
+router only replies to actionable save/list/summarize/schedule/organize
+requests or explicit mentions; ordinary notes are stored silently.
+
+```bash
+labcanvas wechat memory init
+labcanvas wechat memory summary --chat "写作 外语 挣钱"
+```
 
 Install a reusable launcher:
 
@@ -290,15 +319,15 @@ Keep `ignore_self_messages: true` so EchoMind does not analyze or repeat its own
 previous output. Enable `respond_to_self` only for short manual tests where
 phone-sent messages from the same logged-in account should trigger replies.
 
-The tmux supervisor runs a single decrypt refresh pane and launches each direct
-group monitor with `--no-decrypt`. This keeps `懒人科研`, `EchoMind`, and other
-configured groups independent while avoiding concurrent decrypt stalls. The
-refresh pane uses `labcanvas wechat backend decrypt --incremental` through the
-same backend wrapper as the CLI, and skips decrypt work when the source DB/WAL
-timestamp is unchanged. `labcanvas wechat health --json` reports the external
-backend state next to per-group catch-up status and latest-row age. Research
-configs can enable attachment triggers for image/video/file rows; EchoMind keeps
-those disabled so it only responds to language-learning text.
+The tmux supervisor runs a single decrypt refresh process and launches each
+direct group monitor with `--no-decrypt`. This keeps `懒人科研`, `EchoMind`, and
+other configured groups independent while avoiding concurrent decrypt stalls.
+The refresh process uses `labcanvas wechat backend decrypt --incremental`
+through the same backend wrapper as the CLI, and skips decrypt work when the
+source DB/WAL timestamp is unchanged. `labcanvas wechat health --json` reports
+the external backend state next to per-group catch-up status and latest-row age.
+Research configs can enable attachment triggers for image/video/file rows;
+EchoMind keeps those disabled so it only responds to language-learning text.
 Each group can keep two private Codex sessions, `fast` and `worker`, in
 `.private/codex_sessions/`. Session keys include a short hash of the exact chat
 title, so non-ASCII groups such as `懒人科研` and `鏈接` cannot collapse into the

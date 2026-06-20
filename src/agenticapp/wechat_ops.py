@@ -107,6 +107,13 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     queue.add_argument("--limit", type=int, default=10)
     queue.set_defaults(func=cmd_queue)
 
+    memory = nested.add_parser("memory", help="Initialize or summarize the private organized WeChat memory database.")
+    memory.add_argument("action", choices=["init", "summary"], nargs="?", default="summary")
+    memory.add_argument("--db", type=Path, default=PRIVATE / "wechat_memory.sqlite")
+    memory.add_argument("--chat", default="")
+    memory.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    memory.set_defaults(func=cmd_memory)
+
     approve = nested.add_parser("approve", help="Approve a worker task that is waiting for confirmation.")
     approve.add_argument("task_id", nargs="?", help="Task id. Defaults to the newest waiting_confirmation task.")
     approve.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
@@ -456,6 +463,20 @@ def cmd_queue(args: argparse.Namespace) -> int:
     payload = queue_summary(args.queue, limit=args.limit)
     print_payload(payload, args.json, f"queue: pending={payload['counts'].get('pending', 0)} total={payload['total']}")
     return 0
+
+
+def cmd_memory(args: argparse.Namespace) -> int:
+    command = [sys.executable, str(SCRIPTS / "wechat_memory.py"), args.action, "--db", str(args.db)]
+    if args.chat:
+        command += ["--chat", args.chat]
+    if getattr(args, "json", False):
+        command.append("--json")
+    proc = run_command(command, capture=True)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, file=sys.stderr, end="")
+    return proc.returncode
 
 
 def cmd_approve(args: argparse.Namespace) -> int:
@@ -926,6 +947,7 @@ def direct_config_health(path: Path) -> dict[str, Any]:
     latest = latest_direct_db_local_id(str(config.get("message_table") or ""))
     has_guarded_target = has_send_title_guard(config.get("send_target"))
     codex = config.get("codex") if isinstance(config.get("codex"), dict) else {}
+    organizer = config.get("organizer") if isinstance(config.get("organizer"), dict) else {}
     caught_up = latest.get("ok") and state_last >= int(latest.get("latest_local_id") or 0)
     ok = bool(
         state_exists
@@ -951,6 +973,8 @@ def direct_config_health(path: Path) -> dict[str, Any]:
         "ignore_self_messages": bool(config.get("ignore_self_messages", True)),
         "chat_purpose": str(config.get("chat_purpose") or ""),
         "analysis_mode": str(config.get("analysis_mode") or ""),
+        "organizer_enabled": bool(organizer.get("enabled", False)),
+        "organizer_capture_unclassified": bool(organizer.get("capture_unclassified", True)),
         "poll_seconds": float(config.get("poll_seconds", 0.8)),
         "catchup_poll_seconds": float(config.get("catchup_poll_seconds", 0.1)),
         "codex_model": str(codex.get("model") or "gpt-5.5"),
@@ -967,7 +991,20 @@ def direct_config_health(path: Path) -> dict[str, Any]:
 def sanitize_loop_metrics(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
-    allowed = {"started_at", "decrypt_ms", "read_ms", "context_ms", "codex_ms", "send_ms", "total_ms"}
+    allowed = {
+        "started_at",
+        "decrypt_ms",
+        "read_ms",
+        "context_ms",
+        "codex_ms",
+        "send_ms",
+        "total_ms",
+        "organizer_ms",
+        "organizer_status",
+        "organizer_messages",
+        "organizer_items",
+        "organizer_error",
+    }
     return {key: raw[key] for key in allowed if key in raw}
 
 
@@ -1040,8 +1077,21 @@ def tmux_status(session: str) -> dict[str, Any]:
     check = run_command(["tmux", "has-session", "-t", session], capture=True)
     if check.returncode != 0:
         return {"session": session, "running": False, "status": "not-running"}
-    panes = run_command(["tmux", "list-panes", "-t", session, "-F", "#{pane_index}: #{pane_current_command} #{pane_pid}"], capture=True)
-    return {"session": session, "running": True, "status": "running", "panes": panes.stdout.splitlines()}
+    panes = tmux_session_panes(session)
+    return {"session": session, "running": True, "status": "running", "panes": panes}
+
+
+def tmux_session_panes(session: str) -> list[str]:
+    windows = run_command(["tmux", "list-windows", "-t", session, "-F", "#{window_id}\t#{window_name}"], capture=True)
+    panes: list[str] = []
+    for line in windows.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        window_id, window_name = line.split("\t", 1)
+        proc = run_command(["tmux", "list-panes", "-t", window_id, "-F", "#{pane_index}: #{pane_current_command} #{pane_pid}"], capture=True)
+        for pane in proc.stdout.splitlines():
+            panes.append(f"{window_name}.{pane}")
+    return panes
 
 
 def labcanvas_web_status(session: str) -> dict[str, Any]:

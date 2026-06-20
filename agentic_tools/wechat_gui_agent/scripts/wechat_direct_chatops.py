@@ -25,6 +25,7 @@ except ModuleNotFoundError:  # Tests and dry policy checks should not require th
     zstd = None
 
 from wechat_codex_sessions import run_codex_session
+from wechat_memory import organize_messages
 from wechat_mirror import DEFAULT_DB, record_event
 
 
@@ -110,6 +111,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "trigger_local_types": [1],
         "attachment_trigger_local_types": [3, 43, 49],
         "respond_to_attachments": None,
+        "organizer": {"enabled": False},
         "chat_purpose": "research",
         "analysis_mode": "",
         "silent_danger_enabled": True,
@@ -203,6 +205,17 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     metrics["read_ms"] = elapsed_ms(started)
     for row in new_rows:
         sync_row_to_mirror(config, row)
+    if new_rows and organizer_enabled(config):
+        started = time.monotonic()
+        try:
+            organizer_result = organize_messages(config, new_rows, text_fn=visible_message_text, kind_fn=message_kind)
+            metrics["organizer_status"] = str(organizer_result.get("status") or "ok")
+            metrics["organizer_messages"] = int(organizer_result.get("messages") or 0)
+            metrics["organizer_items"] = int(organizer_result.get("items") or 0)
+        except Exception as exc:
+            metrics["organizer_status"] = "error"
+            metrics["organizer_error"] = str(exc)[:500]
+        metrics["organizer_ms"] = elapsed_ms(started)
 
     response_sent = None
     task_enqueued = None
@@ -498,8 +511,66 @@ def should_respond(config: dict[str, Any], state: dict[str, Any], row: dict[str,
     if quote_trigger:
         return bool(config.get("respond_to_all", False)) or any(prefix in text for prefix in config["trigger_prefixes"])
     if bool(config.get("respond_to_all", False)):
+        if is_personal_organizer_chat(config):
+            return organizer_response_candidate(config, text)
         return meaningful_request_text(text, config.get("trigger_prefixes", []))
     return any(prefix in text for prefix in config["trigger_prefixes"])
+
+
+def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
+    if any(prefix in text for prefix in config.get("trigger_prefixes", [])):
+        return True
+    organizer = config.get("organizer") if isinstance(config.get("organizer"), dict) else {}
+    if bool(organizer.get("respond_to_all_messages", False)):
+        return meaningful_request_text(text, config.get("trigger_prefixes", []))
+    lowered = text.lower()
+    markers = [
+        "could you",
+        "can you",
+        "please",
+        "help me",
+        "save",
+        "record",
+        "note",
+        "memo",
+        "todo",
+        "grocery",
+        "calendar",
+        "remind",
+        "summarize",
+        "summary",
+        "list",
+        "organize",
+        "export",
+        "beat board",
+        "storyboard",
+        "writing",
+        "language",
+        "money",
+        "帮我",
+        "请",
+        "能不能",
+        "可以",
+        "保存",
+        "记录",
+        "记一下",
+        "待办",
+        "购物",
+        "买菜",
+        "日程",
+        "提醒",
+        "总结",
+        "整理",
+        "列出",
+        "导出",
+        "分镜",
+        "故事板",
+        "写作",
+        "外语",
+        "挣钱",
+        "赚钱",
+    ]
+    return any(marker.lower() in lowered for marker in markers)
 
 
 DEFAULT_DANGER_KEYWORDS = [
@@ -565,6 +636,21 @@ def is_language_analysis_mode(config: dict[str, Any]) -> bool:
 
 def is_research_chat(config: dict[str, Any]) -> bool:
     return str(config.get("chat_purpose") or "").strip().lower() in {"research", "lab", "paper", "science"}
+
+
+def is_personal_organizer_chat(config: dict[str, Any]) -> bool:
+    return str(config.get("chat_purpose") or "").strip().lower() in {
+        "personal_organizer",
+        "organizer",
+        "notes",
+        "life_admin",
+        "writing_language_money",
+    }
+
+
+def organizer_enabled(config: dict[str, Any]) -> bool:
+    organizer = config.get("organizer")
+    return isinstance(organizer, dict) and bool(organizer.get("enabled", False))
 
 
 def is_attachment_trigger(config: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -929,6 +1015,22 @@ Rules:
 - For mixed bursts, cover all messages in English, Chinese, and Japanese support as applicable, but keep each item concise.
 - Keep the reply compact enough for one WeChat message.
 """
+    organizer_rules = ""
+    if is_personal_organizer_chat(config):
+        organizer_rules = """
+For personal organizer chat purpose:
+- Treat the group as a shared inbox for notes, memos, todos, groceries, calendar items, beat-board/story ideas, writing/language/money ideas, and lightweight requests.
+- The local organizer has already saved and tagged incoming messages. Do not mention the database or storage implementation.
+- Reply when the latest context asks you to save, organize, list, summarize, schedule, remind, plan, or clarify something. For plain side conversation, return NO_REPLY.
+- Keep confirmations short. Use ACK+TASK for export, long summaries, files, calendar planning, or backend work.
+- If a note is incomplete, acknowledge the saved item and ask one concise missing-detail question only when it is needed for action.
+"""
+    research_rules = ""
+    if is_research_chat(config):
+        research_rules = """
+For research chat purpose, reply to research questions, paper discussion, literature search requests, experiment/design discussion, summaries, and relevant scientific planning. Return NO_REPLY for casual language-learning chatter or unrelated personal chat.
+If the latest research message is a short topic fragment rather than a full question, still answer with a concise interpretation or useful next step instead of returning NO_REPLY.
+"""
     return f"""You are the fast chat agent for WeChat group {config['chat_name']} as LazyingArt/LabCanvas.
 Chat purpose: {config.get('chat_purpose') or 'research'}.
 Triggered direct database message:
@@ -950,8 +1052,8 @@ Be responsive but not noisy. Chip in when the latest context clearly asks for he
 Avoid sending a near-duplicate of a previous BOT_SELF answer. If the request was already answered, give a concise status/delta, ask for the missing decision, or enqueue only the remaining work.
 Use ACK+TASK for slower work such as searching/downloading papers, rendering, CAD/PCB work, file conversion, GitHub/MCP work, or anything that will take more than a few seconds.
 When returning ACK+TASK, include every FOCUS and LATEST instruction in TASK so the worker continues the whole current request and avoids duplicating an already completed answer.
-For research chat purpose, reply to research questions, paper discussion, literature search requests, experiment/design discussion, summaries, and relevant scientific planning. Return NO_REPLY for casual language-learning chatter or unrelated personal chat.
-If the latest research message is a short topic fragment rather than a full question, still answer with a concise interpretation or useful next step instead of returning NO_REPLY.
+{research_rules}
+{organizer_rules}
 If several messages arrived together, answer once based on the combined intent and keep the feedback simple.
 Do not mention database, OCR, decrypted messages, or automation internals.
 """

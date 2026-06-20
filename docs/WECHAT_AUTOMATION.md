@@ -35,10 +35,10 @@ labcanvas wechat rename --chat "EchoMind" --name "EchoMind"
 labcanvas wechat alias --chat "EchoMind" --name "LazyingArt"
 ```
 
-`hold start` launches tmux session `labcanvas-wechat` with panes for the virtual
-desktop, direct monitor, worker loop, and media sync loop. The monitor, worker,
-and media panes run through a restart wrapper, so they come back after a crash
-or transient failure.
+`hold start` launches tmux session `labcanvas-wechat` with a desktop/decrypt
+window, one direct-monitor window per configured group, plus worker and media
+sync windows. Monitor, worker, and media processes run through a restart
+wrapper, so they come back after a crash or transient failure.
 
 For multiple group chats, put comma-separated direct configs in the ignored
 `.private/wechat_supervisor.local.env` file:
@@ -50,6 +50,36 @@ WECHAT_DIRECT_CONFIGS='/path/to/group-a-direct.json,/path/to/group-b-direct.json
 The supervisor starts one fast monitor per config. Each config needs its own
 `chat_name`, `message_table`, and `state_path`; optional `send_target` values
 let replies open the correct group before sending.
+
+Configs can opt into structured memory capture with an ignored SQLite database:
+
+```json
+{
+  "chat_purpose": "personal_organizer",
+  "respond_to_all": true,
+  "organizer": {
+    "enabled": true,
+    "db_path": "agentic_tools/wechat_gui_agent/.private/wechat_memory.sqlite",
+    "capture_unclassified": true,
+    "default_tags": ["writing", "foreign-language", "money"]
+  }
+}
+```
+
+The direct monitor still backs up and tags messages even when it returns
+`NO_REPLY`. It classifies notes, memos, todos, groceries, calendar hints,
+beat-board/story ideas, writing/language/money ideas, requests, attachments,
+and inbox items into `source_messages`, `memory_items`, `tags`, and
+`item_tags`. One database can be shared across any number of groups because
+every row stores `chat_name`.
+
+Inspect the private organizer without opening raw chat tables:
+
+```bash
+labcanvas wechat memory init
+labcanvas wechat memory summary --chat "写作 外语 挣钱"
+labcanvas wechat health --json
+```
 
 `stack start` keeps both the WeChat supervisor and the LabCanvas web control
 panel alive. It starts `labcanvas-wechat` plus a web tmux session named
@@ -165,13 +195,13 @@ trigger replies.
 
 ## Fast And Worker Agents
 
-The supervisor runs one decrypt refresh pane and one direct monitor pane per
-group. Direct monitors normally use `--no-decrypt` and read the refreshed cache;
-this avoids multiple monitors competing over the WeChat DB. The refresh pane
-calls the LabCanvas backend wrapper in incremental mode and, by default, skips
-decrypt work when the source DB/WAL timestamp has not changed. Idle polling is
-local SQLite/file work and does not call Codex. A Codex call only happens when a
-new message must be classified or answered.
+The supervisor runs one decrypt refresh process and one direct monitor process
+per group. Direct monitors normally use `--no-decrypt` and read the refreshed
+cache; this avoids multiple monitors competing over the WeChat DB. The refresh
+process calls the LabCanvas backend wrapper in incremental mode and, by
+default, skips decrypt work when the source DB/WAL timestamp has not changed.
+Idle polling is local SQLite/file work and does not call Codex. A Codex call
+only happens when a new message must be classified or answered.
 
 The fast monitor reads new decrypted rows, ignores system/non-text rows as
 triggers for language-learning chats, mirrors them into SQLite, and routes
@@ -190,6 +220,12 @@ reply or worker task. The router should chip in when the chat clearly asks for
 help, shows confusion, mentions the bot, or needs a short expert note; otherwise
 it should return `NO_REPLY` for ordinary side conversation. It asks the
 low-reasoning router for one of four shapes:
+
+For personal-organizer groups, the deterministic organizer runs before the
+router. This keeps idle polling local and cheap: Codex is called only when the
+message is an actionable save/list/summarize/schedule/organize request or when
+the group explicitly mentions the bot. Plain notes are still backed up and
+tagged silently.
 
 Quoted/reply messages are split from packed WeChat message types by using the
 low 32-bit base type and high 32-bit subtype. `base=49, subtype=57` is rendered
@@ -295,7 +331,8 @@ labcanvas wechat media-sync --chat "example group" \
 ```
 
 Set `WECHAT_MEDIA_SOURCES` to a colon-separated override before `hold start` if
-you want to add explicit folders. The default tmux media pane uses auto-source.
+you want to add explicit folders. The default tmux media process uses
+auto-source.
 Copied files are organized as:
 
 ```text
