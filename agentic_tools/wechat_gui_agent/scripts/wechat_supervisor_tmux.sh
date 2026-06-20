@@ -38,6 +38,28 @@ except Exception:
 PY
 )"
 fi
+MEDIA_CHATS="${WECHAT_MEDIA_CHATS:-}"
+if [[ -z "$MEDIA_CHATS" ]]; then
+  MEDIA_CHATS="$(WECHAT_DIRECT_CONFIGS_VALUE="$CONFIGS" WECHAT_FALLBACK_CHAT="$CHAT_NAME" "$PY" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+names = []
+for item in os.environ.get("WECHAT_DIRECT_CONFIGS_VALUE", "").split(","):
+    item = item.strip()
+    if not item:
+        continue
+    try:
+        name = json.loads(Path(item).read_text(encoding="utf-8")).get("chat_name")
+    except Exception:
+        name = ""
+    if name and name not in names:
+        names.append(name)
+print(",".join(names) or os.environ.get("WECHAT_FALLBACK_CHAT", "wechat-chat"))
+PY
+)"
+fi
 
 usage() {
   cat <<'EOF'
@@ -50,7 +72,8 @@ Environment:
   WECHAT_DIRECT_CONFIGS       comma-separated private direct-chatops configs
   WECHAT_WORKER_QUEUE         private JSONL worker queue
   WECHAT_MEDIA_SOURCES        optional colon-separated folders to sync
-  WECHAT_CHAT_NAME            chat name for media-sync events
+  WECHAT_MEDIA_CHATS          optional comma-separated chat names to mirror
+  WECHAT_CHAT_NAME            fallback chat name for media-sync events
 EOF
 }
 
@@ -85,7 +108,7 @@ case "$action" in
     tmux new-window -t "$SESSION" -n worker \
       "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh worker python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-worker.log' 2>&1"
     tmux new-window -t "$SESSION" -n media-sync \
-      "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
+      "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' WECHAT_MEDIA_CHATS='$MEDIA_CHATS' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
     tmux select-layout -t "$SESSION:desktop" tiled >/dev/null
     tmux select-window -t "$SESSION:desktop" >/dev/null
     echo "Started tmux session: $SESSION"

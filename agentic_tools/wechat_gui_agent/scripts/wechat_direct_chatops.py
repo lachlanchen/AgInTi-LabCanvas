@@ -1678,7 +1678,12 @@ def recent_download_context(
             normalized_path = str(path).lower()
             token_match = any(token in normalized_path for token in normalized_tokens)
             if normalized_tokens and not token_match:
-                continue
+                if since_epoch is None and until_epoch is None:
+                    continue
+                if since_epoch is not None and stat.st_mtime < since_epoch:
+                    continue
+                if until_epoch is not None and stat.st_mtime > until_epoch:
+                    continue
             if not token_match:
                 if since_epoch is not None and stat.st_mtime < since_epoch:
                     continue

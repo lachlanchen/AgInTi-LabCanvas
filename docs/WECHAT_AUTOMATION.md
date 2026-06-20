@@ -155,6 +155,18 @@ the sync attempt in the private mirror DB. If an image, PDF, video, or quoted
 source cannot be matched exactly, the worker must ask for the source again
 instead of using media from another group or an older task.
 
+The background media sync is shared by every configured group and DM. If
+`WECHAT_MEDIA_CHATS` is not set, the supervisor derives the chat list from
+`WECHAT_DIRECT_CONFIGS`, so friends such as `<FRIEND_NAME>` and groups use the
+same download and decode path. It scans `msg/file`, `msg/video`, `msg/attach`,
+`cache`, and `temp/ImageTemp`, records all candidates in the private
+`media_files` table, and decodes readable WeChat image blobs where possible.
+Old XOR `.dat` images decode directly. WeChat V1/V2 image containers need a
+private image key in `agentic_tools/wechat_gui_agent/.private/wechat_image_keys.local.json`
+or `WECHAT_IMAGE_AES_KEY`; keep that file ignored and do not print the key. If
+the key is missing, the worker receives only same-chat fallback thumbnails or
+asks the user to resend the source.
+
 ## External Decrypt Backend
 
 The second receive path is implemented as an optional private backend around
@@ -387,14 +399,17 @@ the file is older than the mtime window:
 ```bash
 labcanvas wechat media-sync --chat "example group" \
   --auto-source \
-  --match-token 1fef4957d446b9a5e42084c7a4ff8438 \
+  --match-token cafed00d1234567890abcdef12345678 \
   --record-empty \
   --summary-only
 ```
 
 Set `WECHAT_MEDIA_SOURCES` to a colon-separated override before `hold start` if
 you want to add explicit folders. The default tmux media process uses
-auto-source.
+auto-source. By default, the supervisor derives `WECHAT_MEDIA_CHATS` from every
+configured direct-monitor config, so the background loop mirrors media for all
+groups and DMs such as `lachlanchan`. Override it with a comma-separated list
+only when you need a narrower set.
 Copied files are organized as:
 
 ```text
@@ -409,9 +424,15 @@ the parent downloads directory.
 The sync utility scans `msg/file`, `msg/video`, `msg/attach`, `cache`, and
 `temp/ImageTemp`. It detects common extensionless blobs by magic bytes and
 mirrors them with usable suffixes such as `.jpg`, `.png`, `.webp`, `.pdf`,
-`.mp4`, or `.zip`. Every copied, existing, dry-run, or error candidate is
-recorded in the private `media_files` table with source path, mirrored path,
-status, size, mtime, suffix, and match reason.
+`.mp4`, or `.zip`. It also decodes readable WeChat `.dat` image blobs:
+legacy XOR images work directly; V1/V2 AES containers work when the private
+image key is available through `wechat_image_keys.local.json`, the external
+decryptor config, or `WECHAT_IMAGE_AES_KEY`. If full-size V2 decode is
+unavailable, the worker still receives same-chat thumbnail or mid-temp images
+from the matched message-time window.
+Every copied, decoded, existing, dry-run, or error candidate is recorded in the
+private `media_files` table with source path, mirrored path, status, size,
+mtime, suffix, decode status, and match reason.
 
 ## Web App
 

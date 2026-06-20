@@ -460,7 +460,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("single pixel event sensor paper", route["task"])
 
     def test_quoted_image_metadata_and_token_sync_are_passed_to_worker(self) -> None:
-        image_md5 = "1fef4957d446b9a5e42084c7a4ff8438"
+        image_md5 = "cafed00d1234567890abcdef12345678"
         quote_type = (57 << 32) | 49
         row = self.row(
             "<msg><appmsg><type>57</type><title>change this image to anime</title>"
@@ -666,14 +666,21 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 (downloads / "写作-外语-挣钱").mkdir(parents=True)
                 (downloads / "鏈接" / "link.mp4").write_text("link", encoding="utf-8")
                 (downloads / "懒人科研" / "photo.png").write_text("photo", encoding="utf-8")
-                (downloads / "懒人科研" / "1fef4957d446b9a5e42084c7a4ff8438.jpg").write_text("matched", encoding="utf-8")
+                (downloads / "懒人科研" / "cafed00d1234567890abcdef12345678.jpg").write_text("matched", encoding="utf-8")
                 (downloads / "写作-外语-挣钱" / "note.pdf").write_text("note", encoding="utf-8")
                 (downloads / "global.mp4").write_text("global", encoding="utf-8")
 
                 research_context = direct_chatops.recent_download_context("懒人科研", limit=8)
                 token_context = direct_chatops.recent_download_context(
                     "懒人科研",
-                    match_tokens=["1fef4957d446b9a5e42084c7a4ff8438"],
+                    match_tokens=["cafed00d1234567890abcdef12345678"],
+                    limit=8,
+                )
+                token_with_time_fallback = direct_chatops.recent_download_context(
+                    "懒人科研",
+                    match_tokens=["missing-token"],
+                    since_epoch=0,
+                    until_epoch=9999999999,
                     limit=8,
                 )
                 link_context = direct_chatops.recent_download_context("鏈接", limit=8)
@@ -685,8 +692,9 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("photo.png", research_context)
         self.assertNotIn("link.mp4", research_context)
         self.assertNotIn("global.mp4", research_context)
-        self.assertIn("1fef4957d446b9a5e42084c7a4ff8438.jpg", token_context)
+        self.assertIn("cafed00d1234567890abcdef12345678.jpg", token_context)
         self.assertNotIn("photo.png", token_context)
+        self.assertIn("photo.png", token_with_time_fallback)
         self.assertIn("link.mp4", link_context)
         self.assertNotIn("photo.png", link_context)
         self.assertIn("note.pdf", writing_context)
