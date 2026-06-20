@@ -122,16 +122,17 @@ direct config:
 The monitor backs up every new row, then classifies inbound messages into
 `source_messages`, `memory_items`, `tags`, and `item_tags`. It can track notes,
 memos, todos, groceries, calendar hints, beat-board ideas, writing/language
-ideas, money ideas, requests, and attachments across any number of groups. The
-router replies to actionable save/list/summarize/schedule/organize requests,
-explicit mentions, and configured rich-share summaries. If `ack_on_save` is
-enabled and no worker task was triggered, ordinary saved notes get a short
-deterministic receipt without a Codex call.
+ideas, money ideas, requests, rich media, and attachments across any number of
+groups. The router replies to actionable save/list/summarize/schedule/organize
+requests, explicit mentions, and configured shared-object summaries. If
+`ack_on_save` is enabled and no worker task was triggered, ordinary saved notes
+get a short deterministic receipt without a Codex call.
 
 Use `chat_purpose: "web_clip_inbox"` for a group such as `鏈接`, where the chat
-is mainly a read-later stream. Plain URLs, PDFs, forwarded webpage cards,
-YouTube links, 视频号/Shipinhao shares, Bilibili links, and similar
-video-channel links become `web_clip` records in the same private database,
+is mainly a read-later stream. Plain URLs, PDFs, images/screenshots,
+voice/audio, videos, forwarded webpage cards, mini programs, archives, CAD/PCB
+files, YouTube links, 视频号/Shipinhao shares, Bilibili links, contact/location
+cards, and other shared objects become records in the same private database,
 partitioned by `chat_name`. These shares can also trigger an ACK plus worker
 task to summarize or extract the content; summary/list/export requests use the
 same fast-router and worker queue.

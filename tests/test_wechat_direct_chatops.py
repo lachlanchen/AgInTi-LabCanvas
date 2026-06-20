@@ -83,6 +83,26 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         assert route is not None
         self.assertIn("WeChat file/link item", route["task"])
 
+    def test_enabled_attachment_chats_route_images_voice_and_location(self) -> None:
+        config = {
+            "chat_name": "鏈接",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "respond_to_attachments": True,
+            "chat_purpose": "web_clip_inbox",
+            "immediate_ack_enabled": True,
+        }
+        for local_type, kind in ((3, "image"), (34, "voice"), (48, "location")):
+            with self.subTest(kind=kind):
+                row = self.row("", local_type=local_type)
+                self.assertTrue(direct_chatops.should_respond(config, {}, row))
+                route = direct_chatops.immediate_task_route(config, row, [row])
+                self.assertIsNotNone(route)
+                assert route is not None
+                self.assertIn(f"WeChat {kind} item", route["task"])
+                self.assertIn("images/screenshots", route["task"])
+
     def test_echomind_ignores_attachment_rows(self) -> None:
         self.assertFalse(direct_chatops.should_respond(self.base_config(), {}, self.row("", local_type=49)))
 
@@ -464,6 +484,37 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("title: Shipinhao channel update", visible)
         self.assertIn("url: https://channels.weixin.qq.com/demo", visible)
         self.assertIn("source: 视频号", visible)
+
+    def test_visible_message_text_extracts_media_metadata(self) -> None:
+        row = self.row(
+            "<msg><location x=\"22.5\" y=\"114.0\" label=\"Tsinghua SIGS\" />"
+            "<label>Tsinghua SIGS</label></msg>",
+            local_type=48,
+        )
+
+        visible = direct_chatops.visible_message_text(row)
+
+        self.assertIn("[WeChat location]", visible)
+        self.assertIn("label: Tsinghua SIGS", visible)
+
+    def test_recent_download_context_includes_rich_media_and_cad_files(self) -> None:
+        original_private = direct_chatops.PRIVATE
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                direct_chatops.PRIVATE = Path(tmp)  # type: ignore[assignment]
+                chat_root = Path(tmp) / "downloads" / "鏈接"
+                chat_root.mkdir(parents=True)
+                for name in ("image.webp", "clip.mp4", "voice.m4a", "board.step"):
+                    (chat_root / name).write_text("demo", encoding="utf-8")
+
+                context = direct_chatops.recent_download_context("鏈接", limit=8)
+        finally:
+            direct_chatops.PRIVATE = original_private  # type: ignore[assignment]
+
+        self.assertIn("image.webp", context)
+        self.assertIn("clip.mp4", context)
+        self.assertIn("voice.m4a", context)
+        self.assertIn("board.step", context)
 
     def test_personal_organizer_prompt_mentions_notes_and_tasks(self) -> None:
         config = self.base_config()

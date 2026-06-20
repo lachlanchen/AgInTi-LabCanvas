@@ -109,7 +109,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "ignore_self_messages": True,
         "bot_reply_memory_limit": 20,
         "trigger_local_types": [1],
-        "attachment_trigger_local_types": [3, 43, 49],
+        "attachment_trigger_local_types": [3, 34, 42, 43, 47, 48, 49],
         "respond_to_attachments": None,
         "organizer": {"enabled": False},
         "chat_purpose": "research",
@@ -145,13 +145,27 @@ def load_config(path: Path) -> dict[str, Any]:
             "figure grid",
             "icons",
             "file",
+            "attachment",
+            "media",
             "link",
             "url",
             "webpage",
             "website",
             "article",
+            "photo",
+            "picture",
+            "screenshot",
             "video",
             "channel",
+            "voice",
+            "audio",
+            "sticker",
+            "emoji",
+            "mini program",
+            "contact card",
+            "location",
+            "archive",
+            "zip",
             "youtube",
             "youtu.be",
             "shipinhao",
@@ -174,9 +188,19 @@ def load_config(path: Path) -> dict[str, Any]:
             "网址",
             "网页",
             "文章",
+            "图片",
+            "照片",
+            "截图",
             "视频",
             "视频号",
             "频道",
+            "语音",
+            "音频",
+            "表情",
+            "小程序",
+            "位置",
+            "名片",
+            "压缩包",
             "公众号",
             "小红书",
             "b站",
@@ -659,13 +683,26 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "http://",
         "https://",
         "www.",
+        "file",
+        "attachment",
+        "media",
         "link",
         "url",
         "pdf",
+        "image",
+        "photo",
+        "picture",
+        "screenshot",
         "youtube",
         "youtu.be",
         "video",
         "channel",
+        "voice",
+        "audio",
+        "sticker",
+        "mini program",
+        "archive",
+        "zip",
         "web clip",
         "bookmark",
         "read later",
@@ -703,9 +740,20 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "链接",
         "网址",
         "网页",
+        "文件",
+        "图片",
+        "照片",
+        "截图",
         "视频号",
         "视频",
         "频道",
+        "语音",
+        "音频",
+        "表情",
+        "小程序",
+        "位置",
+        "名片",
+        "压缩包",
         "公众号",
         "小红书",
         "b站",
@@ -817,7 +865,7 @@ def is_attachment_trigger(config: dict[str, Any], row: dict[str, Any]) -> bool:
     if not bool(config.get("respond_to_attachments", default_enabled)):
         return False
     local_type, _ = split_message_type(row.get("local_type"))
-    allowed = {int(item) for item in config.get("attachment_trigger_local_types", [3, 43, 49])}
+    allowed = {int(item) for item in config.get("attachment_trigger_local_types", [3, 34, 42, 43, 47, 48, 49])}
     return local_type in allowed
 
 
@@ -847,8 +895,10 @@ def message_kind(row: dict[str, Any]) -> str:
         1: "text",
         3: "image",
         34: "voice",
+        42: "contact card",
         43: "video",
         47: "sticker",
+        48: "location",
         49: "file/link",
         10000: "system",
     }.get(local_type, f"type-{local_type}")
@@ -880,8 +930,10 @@ def immediate_task_route(
         "Handle this WeChat request as backend work. "
         "Use available local tools, download or generate needed artifacts into ignored private/output folders, "
         "and return a concise message plus any files/images/PDFs to send back. "
-        "For link, PDF, webpage, YouTube, Shipinhao/视频号, or other video-channel shares, "
-        "extract the title, URL, file metadata, and recent synced media before summarizing.\n\n"
+        "For any WeChat attachment or shared object, inspect the structured message text and recent synced media first: "
+        "images/screenshots, PDFs, documents, archives, audio/voice, video, webpage cards, mini programs, "
+        "YouTube, Shipinhao/视频号, Bilibili, links, contact/location cards, CAD/PCB files, and other formats. "
+        "Extract useful metadata such as title, URL, filename, extension, media path, and visible content before summarizing.\n\n"
         f"Current coalesced request:\n{current_request or attachment_request_text(row)}\n\nRecent history:\n{task_context}"
         f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
     )
@@ -901,10 +953,13 @@ def combined_focus_request(
     entries = []
     for item in rows:
         text = strip_trigger_prefixes(visible_message_text(item), prefixes)
-        if meaningful_request_text(text, prefixes):
+        if is_attachment_trigger(config, item):
+            entry = f"{item['sender_display']}: {attachment_request_text(item)}"
+            if text:
+                entry += f"\nmetadata: {text}"
+            entries.append(entry)
+        elif meaningful_request_text(text, prefixes):
             entries.append(f"{item['sender_display']}: {text}")
-        elif is_attachment_trigger(config, item):
-            entries.append(f"{item['sender_display']}: {attachment_request_text(item)}")
     if entries:
         return "\n".join(entries)
     return effective_request_text(config, row, context_rows)
@@ -937,8 +992,8 @@ def effective_request_text(config: dict[str, Any], row: dict[str, Any], context_
 
 def attachment_request_text(row: dict[str, Any]) -> str:
     return (
-        f"New WeChat {message_kind(row)} item received; inspect the card metadata, "
-        "referenced link/video channel, and recent synced files/media, then summarize or process it."
+        f"New WeChat {message_kind(row)} item received; inspect its message metadata, "
+        "card/link fields, and recent synced files/media, then summarize or process it."
     )
 
 
@@ -950,8 +1005,8 @@ def visible_message_text(row: dict[str, Any]) -> str:
     local_type, _ = split_message_type(row.get("local_type"))
     if local_type == 49 and "<appmsg" in text:
         return format_app_message_text(text)
-    if local_type in {3, 34, 43, 47} and not text.strip():
-        return f"[{message_kind(row)}]"
+    if local_type in {3, 34, 42, 43, 47, 48}:
+        return format_media_message_text(row, text)
     return text
 
 
@@ -1028,6 +1083,32 @@ def format_app_message_text(text: str, *, max_len: int = 700) -> str:
         if value:
             fields.append(f"{name}: {value}")
     return truncate_text("\n".join(fields), max_len)
+
+
+def format_media_message_text(row: dict[str, Any], text: str, *, max_len: int = 700) -> str:
+    kind = message_kind(row)
+    collapsed = collapse_text(text)
+    if not collapsed:
+        return f"[WeChat {kind}]"
+    if collapsed.startswith("<"):
+        root = parse_wechat_xml(collapsed)
+        if root is not None:
+            fields = [f"[WeChat {kind}]"]
+            for name, path in (
+                ("title", ".//title"),
+                ("description", ".//des"),
+                ("url", ".//url"),
+                ("location", ".//location"),
+                ("label", ".//label"),
+                ("filename", ".//filename"),
+                ("md5", ".//md5"),
+            ):
+                value = collapse_text(html.unescape(root.findtext(path) or ""))
+                if value:
+                    fields.append(f"{name}: {truncate_text(value, 220)}")
+            if len(fields) > 1:
+                return truncate_text("\n".join(fields), max_len)
+    return f"[WeChat {kind}] {truncate_text(collapsed, max_len - len(kind) - 12)}"
 
 
 def card_field(appmsg: ET.Element, path: str, *, max_len: int = 220) -> str:
@@ -1122,7 +1203,55 @@ def recent_download_context(chat_name: str, *, limit: int = 8) -> str:
     roots.append(downloads)
     seen = set()
     files = []
-    suffixes = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".zip", ".txt", ".docx", ".xlsx", ".csv"}
+    suffixes = {
+        ".pdf",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".heic",
+        ".tif",
+        ".tiff",
+        ".svg",
+        ".mp4",
+        ".mov",
+        ".m4v",
+        ".avi",
+        ".mkv",
+        ".webm",
+        ".mp3",
+        ".m4a",
+        ".aac",
+        ".wav",
+        ".ogg",
+        ".amr",
+        ".opus",
+        ".zip",
+        ".rar",
+        ".7z",
+        ".tar",
+        ".gz",
+        ".txt",
+        ".md",
+        ".json",
+        ".tex",
+        ".doc",
+        ".docx",
+        ".ppt",
+        ".pptx",
+        ".xls",
+        ".xlsx",
+        ".csv",
+        ".step",
+        ".stp",
+        ".stl",
+        ".scad",
+        ".blend",
+        ".kicad_pcb",
+        ".sch",
+    }
     for root in roots:
         for path in root.rglob("*"):
             if not path.is_file() or path.suffix.lower() not in suffixes:

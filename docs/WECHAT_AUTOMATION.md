@@ -70,19 +70,20 @@ Configs can opt into structured memory capture with an ignored SQLite database:
 
 The direct monitor backs up and tags messages before routing. It classifies
 notes, memos, todos, groceries, calendar hints, beat-board/story ideas,
-writing/language/money ideas, requests, attachments, web clips, and inbox items
-into `source_messages`, `memory_items`, `tags`, and `item_tags`. If
+writing/language/money ideas, requests, attachments, rich media, web clips, and
+inbox items into `source_messages`, `memory_items`, `tags`, and `item_tags`. If
 `ack_on_save` is enabled and no worker task was triggered, the monitor sends a
 short deterministic receipt without calling Codex. One database can be shared
 across any number of groups because every row stores `chat_name`.
 
 For a link/read-later group such as `鏈接`, set `chat_purpose` to
-`web_clip_inbox`. Plain URLs, PDFs, forwarded webpage cards, YouTube links,
-视频号/Shipinhao shares, Bilibili links, and similar video-channel links are
-stored as `web_clip` items and can trigger an ACK plus worker task for summary
-or extraction. Questions such as "summarize this link", "what is this", or
-`这个链接讲什么？` also go through the fast router; slow page/PDF inspection or
-export requests are acknowledged and sent to the worker queue.
+`web_clip_inbox`. Plain URLs, PDFs, images/screenshots, voice/audio, videos,
+forwarded webpage cards, mini programs, archives, CAD/PCB files, YouTube links,
+视频号/Shipinhao shares, Bilibili links, contact/location cards, and other
+shared objects are stored as inbox items and can trigger an ACK plus worker task
+for summary or extraction. Questions such as "summarize this link", "what is
+this", or `这个链接讲什么？` also go through the fast router; slow page/PDF/media
+inspection or export requests are acknowledged and sent to the worker queue.
 
 Inspect the private organizer without opening raw chat tables:
 

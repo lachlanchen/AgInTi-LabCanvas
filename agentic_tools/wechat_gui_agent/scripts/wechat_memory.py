@@ -59,6 +59,24 @@ CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
         "文章",
         "论文",
     ),
+    "media": (
+        "image",
+        "photo",
+        "picture",
+        "screenshot",
+        "video",
+        "voice",
+        "audio",
+        "sticker",
+        "gif",
+        "图片",
+        "照片",
+        "截图",
+        "视频",
+        "语音",
+        "音频",
+        "表情",
+    ),
     "todo": (
         "todo",
         "to do",
@@ -482,6 +500,8 @@ def infer_categories(text: str, kind: str) -> list[str]:
             categories.append(category)
     if kind == "file/link" and "web_clip" not in categories:
         categories.append("web_clip")
+    if kind in {"image", "video", "voice", "sticker"} and "media" not in categories:
+        categories.append("media")
     if kind not in {"text", "type-1"} and "attachment" not in categories:
         categories.append("attachment")
     if not categories and is_question_or_request(text):
@@ -511,7 +531,12 @@ def infer_tags(chat_name: str, text: str, categories: list[str]) -> list[str]:
         or "shipinhao" in lowered
     ):
         tags.extend(["web-clip", "read-later"])
+    if any(marker in lowered for marker in ("image", "photo", "picture", "screenshot", "图片", "照片", "截图")):
+        tags.extend(["media", "image"])
+    if any(marker in lowered for marker in ("voice", "audio", "语音", "音频")):
+        tags.extend(["media", "audio"])
     if any(marker in lowered for marker in ("youtube", "youtu.be", "video", "视频号", "shipinhao", "bilibili", "b站", "哔哩")):
+        tags.append("media")
         tags.append("video")
     if "写作" in lowered or "writing" in lowered:
         tags.append("writing")
