@@ -6,6 +6,8 @@ DISPLAY_ID="${WECHAT_DISPLAY:-:97}"
 VNC_PORT="${WECHAT_VNC_PORT:-5917}"
 NOVNC_PORT="${WECHAT_NOVNC_PORT:-6107}"
 LOG_DIR="$ROOT/output/virtual_desktop/$(date +%F)"
+mkdir -p "$LOG_DIR"
+LAUNCH_LOG="$LOG_DIR/wechat_virtual_desktop_launch.log"
 
 "$ROOT/agentic_tools/virtual_desktop/launch_virtual_desktop.sh" \
   --name wechat \
@@ -14,7 +16,7 @@ LOG_DIR="$ROOT/output/virtual_desktop/$(date +%F)"
   --vnc-port "$VNC_PORT" \
   --novnc-port "$NOVNC_PORT" \
   --log-dir "$LOG_DIR" \
-  -- /bin/true >/tmp/wechat_virtual_desktop_launch.log
+  -- /bin/true >"$LAUNCH_LOG"
 
 if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible --class wechat >/dev/null 2>&1; then
   # Force the X (xcb) backend on :97; without unsetting WAYLAND_DISPLAY a Qt app
@@ -24,7 +26,7 @@ if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible --class wech
   sleep 5
 fi
 
-cat /tmp/wechat_virtual_desktop_launch.log
+cat "$LAUNCH_LOG"
 echo
 echo "WeChat noVNC:"
 echo "  http://127.0.0.1:${NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port=${NOVNC_PORT}&autoconnect=1&resize=remote"
