@@ -135,6 +135,17 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("Chip in", prompt)
         self.assertIn("every FOCUS and LATEST instruction", prompt)
 
+    def test_research_prompt_can_use_configured_bot_identity(self) -> None:
+        config = self.base_config()
+        config["chat_name"] = "lachlanchan"
+        config["analysis_mode"] = ""
+        config["chat_purpose"] = "research"
+        config["bot_identity"] = "LazyResearch / 懒人科研"
+
+        prompt = direct_chatops.build_codex_prompt(config, self.row("research question"), "recent context")
+
+        self.assertIn("as LazyResearch / 懒人科研", prompt)
+
     def test_prompt_context_labels_latest_and_self_rows(self) -> None:
         config = self.base_config()
         rows = [

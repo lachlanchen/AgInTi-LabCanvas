@@ -1020,6 +1020,7 @@ def format_prompt_context(
 
 def build_codex_prompt(config: dict[str, Any], row: dict[str, Any], context: str) -> str:
     latest_text = visible_message_text(row)
+    bot_identity = str(config.get("bot_identity") or "LazyingArt/LabCanvas")
     if is_language_analysis_mode(config):
         return f"""You are EchoMind, a concise language-learning assistant in a WeChat group.
 Chat purpose: analyze each normal message for language learning.
@@ -1070,7 +1071,7 @@ For personal organizer chat purpose:
 For research chat purpose, reply to research questions, paper discussion, literature search requests, experiment/design discussion, summaries, and relevant scientific planning. Return NO_REPLY for casual language-learning chatter or unrelated personal chat.
 If the latest research message is a short topic fragment rather than a full question, still answer with a concise interpretation or useful next step instead of returning NO_REPLY.
 """
-    return f"""You are the fast chat agent for WeChat group {config['chat_name']} as LazyingArt/LabCanvas.
+    return f"""You are the fast chat agent for WeChat group {config['chat_name']} as {bot_identity}.
 Chat purpose: {config.get('chat_purpose') or 'research'}.
 Triggered direct database message:
 sender={row['sender']} display={row['sender_display']}

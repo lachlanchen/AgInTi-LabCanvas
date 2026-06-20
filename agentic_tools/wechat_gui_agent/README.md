@@ -130,6 +130,12 @@ is mainly a read-later stream. Plain URLs and forwarded webpage cards become
 Questions and summary/list/export requests still use the fast router and worker
 queue.
 
+Direct contacts can be monitored with the same config shape as groups. Keep a
+unique `chat_name`, `message_table`, and `state_path` for each contact. Set
+`bot_identity`, such as `LazyResearch / 懒人科研`, when the contact should hear a
+specific assistant persona while remaining separate from the group with the
+same persona.
+
 ```bash
 labcanvas wechat memory init
 labcanvas wechat memory summary --chat "写作 外语 挣钱"

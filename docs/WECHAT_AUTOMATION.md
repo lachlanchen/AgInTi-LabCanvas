@@ -199,6 +199,12 @@ analyze its own previous output. Set `respond_to_self: true` only for short
 manual tests where phone-sent messages from the logged-in account should also
 trigger replies.
 
+One-to-one contacts use the same direct-monitor path as groups. Give the contact
+its own `chat_name`, `message_table`, and `state_path`; use `bot_identity` when
+the reply should present as a specific assistant, for example
+`LazyResearch / 懒人科研`, while keeping the chat state isolated from the
+`懒人科研` group.
+
 ## Fast And Worker Agents
 
 The supervisor runs one decrypt refresh process and one direct monitor process
