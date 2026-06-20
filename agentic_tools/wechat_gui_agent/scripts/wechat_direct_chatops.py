@@ -111,6 +111,10 @@ def load_config(path: Path) -> dict[str, Any]:
         "trigger_local_types": [1],
         "attachment_trigger_local_types": [3, 34, 42, 43, 47, 48, 49],
         "respond_to_attachments": None,
+        "auto_media_sync_on_task": True,
+        "media_sync_since_minutes": 180,
+        "media_sync_context_window_seconds": 300,
+        "media_sync_timeout_seconds": 20,
         "organizer": {"enabled": False},
         "chat_purpose": "research",
         "analysis_mode": "",
@@ -920,10 +924,12 @@ def immediate_task_route(
     attachment_trigger = is_attachment_trigger(config, row)
     complex_task = is_complex_research_task(config, combined, focus_rows=focus_rows)
     contextual_media_task = is_contextual_media_task(config, combined, row, context_rows, focus_rows=focus_rows)
+    quoted_media_task = is_quote_reply_message(row) and references_recent_media(combined)
     if (
         not attachment_trigger
         and not complex_task
         and not contextual_media_task
+        and not quoted_media_task
         and not any(keyword and keyword in lowered for keyword in keywords)
     ):
         return None
@@ -933,7 +939,7 @@ def immediate_task_route(
         if visible_message_text(item).strip()
     )
     chat_name = str(config.get("chat_name") or "")
-    include_reference_media = attachment_trigger or contextual_media_task or references_recent_media(combined)
+    include_reference_media = attachment_trigger or contextual_media_task or quoted_media_task or references_recent_media(combined)
     source_rows = source_reference_rows(
         config,
         row,
@@ -946,7 +952,15 @@ def immediate_task_route(
         for item in source_rows
     )
     reference_context = reference_row_context(source_rows)
-    recent_files = recent_download_context(chat_name)
+    reference_tokens = media_reference_tokens(source_rows)
+    reference_epoch_window = media_sync_epoch_window(config, source_rows) if include_reference_media else None
+    media_sync_status = auto_sync_recent_media(config, source_rows) if include_reference_media else ""
+    recent_files = recent_download_context(
+        chat_name,
+        match_tokens=reference_tokens if include_reference_media else None,
+        since_epoch=reference_epoch_window[0] if reference_epoch_window else None,
+        until_epoch=reference_epoch_window[1] if reference_epoch_window else None,
+    )
     task = (
         "Handle this WeChat request as backend work. "
         "Use available local tools, download or generate needed artifacts into ignored private/output folders, "
@@ -962,6 +976,7 @@ def immediate_task_route(
         f"Chat: {chat_name}\nSource/reference rows: {source_ids}\n\n"
         f"Current coalesced request:\n{current_request or attachment_request_text(row)}\n\nRecent history:\n{task_context}"
         f"\n\nSame-chat reference media/context rows:\n{reference_context or '(none found)'}"
+        f"\n\nAutomatic media sync:\n{media_sync_status or '(not run)'}"
         f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
     )
     ack = str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
@@ -1130,6 +1145,122 @@ def reference_row_context(rows: list[dict[str, Any]]) -> str:
             f"content={visible_message_text(item)}"
         )
     return "\n".join(lines)
+
+
+def auto_sync_recent_media(config: dict[str, Any], rows: list[dict[str, Any]]) -> str:
+    if not bool(config.get("auto_media_sync_on_task", False)):
+        return ""
+    chat_name = str(config.get("chat_name") or "").strip()
+    if not chat_name:
+        return ""
+    command = [
+        sys.executable,
+        str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_media_sync.py"),
+        "--chat",
+        chat_name,
+        "--auto-source",
+        "--since-minutes",
+        str(float(config.get("media_sync_since_minutes", 180))),
+        "--summary-only",
+        "--record-empty",
+        "--db",
+        str(Path(config.get("mirror_db", DEFAULT_DB))),
+    ]
+    epoch_window = media_sync_epoch_window(config, rows)
+    if epoch_window:
+        command += ["--since-epoch", str(epoch_window[0]), "--until-epoch", str(epoch_window[1])]
+    for token in media_reference_tokens(rows):
+        command += ["--match-token", token]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=float(config.get("media_sync_timeout_seconds", 20)),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        record_event(
+            chat_name=chat_name,
+            action="media_sync_request",
+            direction="inbound",
+            status="error",
+            db_path=Path(config.get("mirror_db", DEFAULT_DB)),
+            message=str(exc)[:500],
+            metadata={"source_local_ids": [item.get("local_id") for item in rows]},
+        )
+        return f"error: {str(exc)[:240]}"
+    summary = parse_media_sync_summary(proc.stdout)
+    status = "ok" if proc.returncode == 0 else "error"
+    record_event(
+        chat_name=chat_name,
+        action="media_sync_request",
+        direction="inbound",
+        status=status,
+        db_path=Path(config.get("mirror_db", DEFAULT_DB)),
+        message=summary,
+        metadata={
+            "returncode": proc.returncode,
+            "stderr": proc.stderr.strip()[:1000],
+            "source_local_ids": [item.get("local_id") for item in rows],
+        },
+    )
+    if proc.returncode != 0:
+        return f"error: {summary or proc.stderr.strip()[:240]}"
+    return summary
+
+
+def media_sync_epoch_window(config: dict[str, Any], rows: list[dict[str, Any]]) -> tuple[int, int] | None:
+    times = []
+    for row in rows:
+        try:
+            value = int(row.get("create_time") or 0)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            times.append(value)
+    if not times:
+        return None
+    window = int(config.get("media_sync_context_window_seconds", 300))
+    now = int(time.time())
+    return max(0, min(times) - window), max(max(times) + window, now + 60)
+
+
+def media_reference_tokens(rows: list[dict[str, Any]], *, limit: int = 12) -> list[str]:
+    tokens: list[str] = []
+    for row in rows:
+        text = str(row.get("content") or "")
+        text += "\n" + visible_message_text(row)
+        for pattern in (
+            r"\b(?:md5|filemd5)\s*=\s*[\"']([0-9A-Fa-f]{16,64})[\"']",
+            r"<md5>\s*([0-9A-Fa-f]{16,64})\s*</md5>",
+            r"\b([0-9A-Fa-f]{16,64})(?:_[A-Za-z])?(?:\.dat|\.jpg|\.jpeg|\.png|\.webp)?\b",
+        ):
+            for match in re.finditer(pattern, text):
+                token = match.group(1).lower()
+                if token not in tokens:
+                    tokens.append(token)
+                if len(tokens) >= limit:
+                    return tokens
+    return tokens
+
+
+def parse_media_sync_summary(stdout: str) -> str:
+    text = str(stdout or "").strip()
+    if not text:
+        return ""
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return text[:500]
+    return (
+        f"status={payload.get('status') or 'unknown'} "
+        f"files={payload.get('file_count', 0)} "
+        f"errors={payload.get('error_count', 0)} "
+        f"recorded={payload.get('recorded_files', 0)} "
+        f"event_id={payload.get('event_id')}"
+    )
 
 
 def is_complex_research_task(
@@ -1347,6 +1478,7 @@ def format_media_message_text(row: dict[str, Any], text: str, *, max_len: int = 
         root = parse_wechat_xml(collapsed)
         if root is not None:
             fields = [f"[WeChat {kind}]"]
+            fields.extend(image_attribute_fields(root))
             for name, path in (
                 ("title", ".//title"),
                 ("description", ".//des"),
@@ -1386,7 +1518,9 @@ def summarize_refer_content(refer_type: str, content: str, *, max_len: int = 220
     if refer_type == "1":
         return truncate_text(collapse_text(content), max_len)
     if refer_type == "3":
-        return "[image]"
+        root = parse_wechat_xml(content)
+        fields = image_attribute_fields(root) if root is not None else []
+        return truncate_text(" ".join(["[image]", *fields]), max_len)
     if refer_type == "34":
         return "[voice]"
     if refer_type == "43":
@@ -1404,6 +1538,20 @@ def summarize_refer_content(refer_type: str, content: str, *, max_len: int = 220
         label = labels.get(inner_type, "card")
         return f"[{label}] {title}".strip()
     return truncate_text(collapse_text(content), max_len) if content else f"[type={refer_type}]"
+
+
+def image_attribute_fields(root: ET.Element) -> list[str]:
+    fields = []
+    image = root.find(".//img")
+    if image is None and root.tag == "img":
+        image = root
+    if image is None:
+        return fields
+    for name in ("md5", "length", "cdnmidimgurl", "cdnthumburl"):
+        value = collapse_text(image.attrib.get(name) or "")
+        if value:
+            fields.append(f"{name}: {truncate_text(value, 96)}")
+    return fields
 
 
 def collapse_text(text: str) -> str:
@@ -1445,7 +1593,14 @@ def meaningful_request_text(text: str, prefixes: list[str]) -> bool:
     return any(char.isalnum() or "\u4e00" <= char <= "\u9fff" for char in normalized)
 
 
-def recent_download_context(chat_name: str, *, limit: int = 8) -> str:
+def recent_download_context(
+    chat_name: str,
+    *,
+    limit: int = 8,
+    match_tokens: list[str] | None = None,
+    since_epoch: float | None = None,
+    until_epoch: float | None = None,
+) -> str:
     downloads = PRIVATE / "downloads"
     if not downloads.exists():
         return ""
@@ -1507,6 +1662,7 @@ def recent_download_context(chat_name: str, *, limit: int = 8) -> str:
         ".kicad_pcb",
         ".sch",
     }
+    normalized_tokens = [token.lower() for token in match_tokens or [] if token]
     for root in roots:
         for path in root.rglob("*"):
             if not path.is_file() or path.suffix.lower() not in suffixes:
@@ -1519,6 +1675,15 @@ def recent_download_context(chat_name: str, *, limit: int = 8) -> str:
                 stat = path.stat()
             except OSError:
                 continue
+            normalized_path = str(path).lower()
+            token_match = any(token in normalized_path for token in normalized_tokens)
+            if normalized_tokens and not token_match:
+                continue
+            if not token_match:
+                if since_epoch is not None and stat.st_mtime < since_epoch:
+                    continue
+                if until_epoch is not None and stat.st_mtime > until_epoch:
+                    continue
             files.append((stat.st_mtime, stat.st_size, path))
     files.sort(reverse=True)
     return "\n".join(f"- {path} ({size} bytes)" for _, size, path in files[:limit])

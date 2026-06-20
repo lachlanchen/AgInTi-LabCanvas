@@ -149,9 +149,11 @@ the explicit source/reference rows embedded in the request plus media paths
 listed from that same chat's download folder. This supports multi-message tasks
 such as sending an image and then sending "change the two people to anime": the
 text command is paired with recent same-chat image/file rows before it reaches
-the worker. If an image, PDF, video, or quoted source cannot be matched exactly,
-the worker must ask for the source again instead of using media from another
-group or an older task.
+the worker. Before queueing a media task, the direct monitor runs a same-chat
+media sync, extracts quoted image/file tokens such as MD5 values, and records
+the sync attempt in the private mirror DB. If an image, PDF, video, or quoted
+source cannot be matched exactly, the worker must ask for the source again
+instead of using media from another group or an older task.
 
 ## External Decrypt Backend
 
@@ -378,6 +380,18 @@ labcanvas wechat media-sync --chat "example group" \
   --since-minutes 60
 ```
 
+For quoted or referenced files, pass a stable token from the message metadata,
+such as an image MD5 or cached filename stem. Token matches are copied even when
+the file is older than the mtime window:
+
+```bash
+labcanvas wechat media-sync --chat "example group" \
+  --auto-source \
+  --match-token 1fef4957d446b9a5e42084c7a4ff8438 \
+  --record-empty \
+  --summary-only
+```
+
 Set `WECHAT_MEDIA_SOURCES` to a colon-separated override before `hold start` if
 you want to add explicit folders. The default tmux media process uses
 auto-source.
@@ -391,6 +405,13 @@ This keeps files/images from different local WeChat profiles separate while
 keeping them out of git. The router reads only the configured chat's folder
 (including the same sanitized folder name used by media sync) and never scans
 the parent downloads directory.
+
+The sync utility scans `msg/file`, `msg/video`, `msg/attach`, `cache`, and
+`temp/ImageTemp`. It detects common extensionless blobs by magic bytes and
+mirrors them with usable suffixes such as `.jpg`, `.png`, `.webp`, `.pdf`,
+`.mp4`, or `.zip`. Every copied, existing, dry-run, or error candidate is
+recorded in the private `media_files` table with source path, mirrored path,
+status, size, mtime, suffix, and match reason.
 
 ## Web App
 

@@ -67,6 +67,27 @@ def init_db(db_path: Path = DEFAULT_DB) -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS media_files (
+                id INTEGER PRIMARY KEY,
+                chat_id INTEGER NOT NULL,
+                event_id INTEGER,
+                source_path TEXT NOT NULL,
+                mirror_path TEXT NOT NULL,
+                suffix TEXT,
+                size_bytes INTEGER,
+                source_mtime REAL,
+                status TEXT NOT NULL,
+                matched_by TEXT,
+                metadata_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(chat_id) REFERENCES chats(id),
+                FOREIGN KEY(event_id) REFERENCES events(id)
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_event_direction
             ON messages(event_id, direction)
             WHERE event_id IS NOT NULL
@@ -74,6 +95,8 @@ def init_db(db_path: Path = DEFAULT_DB) -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_media_files_chat_mirror ON media_files(chat_id, mirror_path)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_media_files_chat_updated ON media_files(chat_id, updated_at)")
 
 
 def record_event(
@@ -147,6 +170,71 @@ def record_event(
                 observed_at=now,
             )
         return event_id
+
+
+def record_media_files(
+    *,
+    chat_name: str,
+    event_id: int | None,
+    files: list[dict],
+    db_path: Path = DEFAULT_DB,
+) -> int:
+    if not files:
+        return 0
+    init_db(db_path)
+    now = datetime.now().isoformat(timespec="seconds")
+    inserted_or_updated = 0
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO chats(name, query, created_at, last_seen_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET last_seen_at=excluded.last_seen_at
+            """,
+            (chat_name, None, now, now),
+        )
+        chat_id = conn.execute("SELECT id FROM chats WHERE name = ?", (chat_name,)).fetchone()[0]
+        for item in files:
+            source = str(item.get("source") or "")
+            target = str(item.get("target") or "")
+            if not source or not target:
+                continue
+            conn.execute(
+                """
+                INSERT INTO media_files(
+                    chat_id, event_id, source_path, mirror_path, suffix,
+                    size_bytes, source_mtime, status, matched_by,
+                    metadata_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id, mirror_path) DO UPDATE SET
+                    event_id=excluded.event_id,
+                    source_path=excluded.source_path,
+                    suffix=excluded.suffix,
+                    size_bytes=excluded.size_bytes,
+                    source_mtime=excluded.source_mtime,
+                    status=excluded.status,
+                    matched_by=excluded.matched_by,
+                    metadata_json=excluded.metadata_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    chat_id,
+                    event_id,
+                    source,
+                    target,
+                    str(item.get("suffix") or Path(target).suffix.lower()),
+                    int(item.get("bytes") or 0),
+                    float(item.get("mtime") or 0.0),
+                    str(item.get("status") or "unknown"),
+                    str(item.get("matched_by") or ""),
+                    json.dumps(item, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            inserted_or_updated += 1
+    return inserted_or_updated
 
 
 def insert_message(

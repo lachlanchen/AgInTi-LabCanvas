@@ -133,8 +133,12 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     media.add_argument("--source", action="append", type=Path, default=[])
     media.add_argument("--auto-source", action="store_true", help="Auto-discover local xwechat_files media folders.")
     media.add_argument("--since-minutes", type=float, default=60)
+    media.add_argument("--since-epoch", type=float)
+    media.add_argument("--until-epoch", type=float)
+    media.add_argument("--match-token", action="append", default=[])
     media.add_argument("--dry-run", action="store_true")
     media.add_argument("--summary-only", action="store_true")
+    media.add_argument("--record-empty", action="store_true")
     media.set_defaults(func=cmd_media_sync)
 
     backend = nested.add_parser("backend", help="Control optional external WeChat decrypt/MCP receive backends.")
@@ -321,6 +325,10 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "chat_purpose": "research",
         "analysis_mode": "",
         "silent_danger_enabled": True,
+        "auto_media_sync_on_task": True,
+        "media_sync_since_minutes": 180,
+        "media_sync_context_window_seconds": 300,
+        "media_sync_timeout_seconds": 20,
         "immediate_ack_enabled": True,
         "immediate_ack_text": "收到，我先处理，完成后把结果发回来。",
         "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "aginti", "imagegen", "image generation", "kicad", "gerber", "step", "stl", "3d", "labcanvas", "overview", "figure", "figure grid", "icons", "file", "image"],
@@ -493,6 +501,12 @@ def cmd_reject(args: argparse.Namespace) -> int:
 
 def cmd_media_sync(args: argparse.Namespace) -> int:
     command = [sys.executable, str(SCRIPTS / "wechat_media_sync.py"), "--chat", args.chat, "--since-minutes", str(args.since_minutes)]
+    if args.since_epoch is not None:
+        command += ["--since-epoch", str(args.since_epoch)]
+    if args.until_epoch is not None:
+        command += ["--until-epoch", str(args.until_epoch)]
+    for token in args.match_token:
+        command += ["--match-token", str(token)]
     for source in args.source:
         command += ["--source", str(source)]
     if args.auto_source:
@@ -501,6 +515,8 @@ def cmd_media_sync(args: argparse.Namespace) -> int:
         command.append("--dry-run")
     if args.summary_only:
         command.append("--summary-only")
+    if args.record_empty:
+        command.append("--record-empty")
     return run_command(command, capture=False).returncode
 
 
@@ -1108,7 +1124,7 @@ def discover_media_sources() -> list[Path]:
     for profile in base.iterdir():
         if not profile.is_dir():
             continue
-        for relative in ("msg/file", "msg/video", "cache", "temp/ImageTemp"):
+        for relative in ("msg/file", "msg/video", "msg/attach", "cache", "temp/ImageTemp"):
             path = profile / relative
             if not path.is_dir():
                 continue

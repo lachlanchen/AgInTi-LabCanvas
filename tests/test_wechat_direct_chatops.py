@@ -459,6 +459,52 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("summarize this", route["task"])
         self.assertIn("single pixel event sensor paper", route["task"])
 
+    def test_quoted_image_metadata_and_token_sync_are_passed_to_worker(self) -> None:
+        image_md5 = "1fef4957d446b9a5e42084c7a4ff8438"
+        quote_type = (57 << 32) | 49
+        row = self.row(
+            "<msg><appmsg><type>57</type><title>change this image to anime</title>"
+            "<refermsg><type>3</type><displayname>Bob</displayname>"
+            f"<content>&lt;msg&gt;&lt;img md5=&quot;{image_md5}&quot; length=&quot;123&quot; /&gt;&lt;/msg&gt;</content>"
+            "</refermsg></appmsg></msg>",
+            local_type=quote_type,
+        )
+        calls: list[list[str]] = []
+        original_run = direct_chatops.subprocess.run
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                config = {
+                    "chat_name": "懒人科研",
+                    "self_wxid": "self",
+                    "trigger_prefixes": ["@LazyingArt"],
+                    "respond_to_all": True,
+                    "trigger_local_types": [1],
+                    "chat_purpose": "research",
+                    "immediate_ack_enabled": True,
+                    "slow_task_keywords": [],
+                    "auto_media_sync_on_task": True,
+                    "mirror_db": str(Path(tmp) / "wechat_mirror.sqlite"),
+                }
+
+                def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                    calls.append(command)
+                    stdout = '{"event_id": 7, "status": "copied", "file_count": 1, "error_count": 0, "recorded_files": 1}'
+                    return subprocess.CompletedProcess(command, 0, stdout, "")
+
+                direct_chatops.subprocess.run = fake_run  # type: ignore[assignment]
+                route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.subprocess.run = original_run  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("md5: " + image_md5, route["task"])
+        self.assertIn("Automatic media sync:\nstatus=copied files=1 errors=0 recorded=1 event_id=7", route["task"])
+        self.assertTrue(calls)
+        self.assertIn("--match-token", calls[0])
+        self.assertIn(image_md5, calls[0])
+        self.assertIn("--record-empty", calls[0])
+
     def test_run_codex_uses_fast_session_role(self) -> None:
         config = self.base_config()
         config["codex"] = {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60}
@@ -620,10 +666,16 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 (downloads / "写作-外语-挣钱").mkdir(parents=True)
                 (downloads / "鏈接" / "link.mp4").write_text("link", encoding="utf-8")
                 (downloads / "懒人科研" / "photo.png").write_text("photo", encoding="utf-8")
+                (downloads / "懒人科研" / "1fef4957d446b9a5e42084c7a4ff8438.jpg").write_text("matched", encoding="utf-8")
                 (downloads / "写作-外语-挣钱" / "note.pdf").write_text("note", encoding="utf-8")
                 (downloads / "global.mp4").write_text("global", encoding="utf-8")
 
                 research_context = direct_chatops.recent_download_context("懒人科研", limit=8)
+                token_context = direct_chatops.recent_download_context(
+                    "懒人科研",
+                    match_tokens=["1fef4957d446b9a5e42084c7a4ff8438"],
+                    limit=8,
+                )
                 link_context = direct_chatops.recent_download_context("鏈接", limit=8)
                 writing_context = direct_chatops.recent_download_context("写作—外语—挣钱", limit=8)
                 unknown_context = direct_chatops.recent_download_context("unknown group", limit=8)
@@ -633,6 +685,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("photo.png", research_context)
         self.assertNotIn("link.mp4", research_context)
         self.assertNotIn("global.mp4", research_context)
+        self.assertIn("1fef4957d446b9a5e42084c7a4ff8438.jpg", token_context)
+        self.assertNotIn("photo.png", token_context)
         self.assertIn("link.mp4", link_context)
         self.assertNotIn("photo.png", link_context)
         self.assertIn("note.pdf", writing_context)
