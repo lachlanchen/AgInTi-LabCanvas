@@ -44,6 +44,7 @@ class TargetSpec:
     expected_title: str
     expected_title_aliases: tuple[str, ...] = ()
     allow_title_guard_fallback: bool = False
+    allow_live_title_guard_fallback: bool = False
     result_click: tuple[int, int] | None = None
     fallback_clicks: tuple[tuple[int, int], ...] = ()
     open_click: tuple[int, int] | None = None
@@ -164,6 +165,7 @@ def target_from_raw(raw: Any) -> TargetSpec:
         expected_title=expected_title or name,
         expected_title_aliases=expected_title_aliases,
         allow_title_guard_fallback=bool(raw.get("allow_title_guard_fallback") or raw.get("relaxed_title_guard")),
+        allow_live_title_guard_fallback=bool(raw.get("allow_live_title_guard_fallback")),
         result_click=point_from_raw(raw.get("result_click")),
         fallback_clicks=points_from_raw(raw.get("fallback_clicks")),
         open_click=point_from_raw(raw.get("open_click")),
@@ -222,7 +224,8 @@ def send_one(
     guard = open_target(env, window, target, pause, out_dir, shot_prefix, skip_title_guard, prefer_current)
     opened_path = out_dir / f"{shot_prefix}-opened.png"
     if not guard["ok"]:
-        if target.allow_title_guard_fallback:
+        fallback_allowed = target.allow_title_guard_fallback and (not do_send or target.allow_live_title_guard_fallback)
+        if fallback_allowed:
             guard = {**guard, "ok": True, "relaxed_title_guard": True}
         else:
             record_event(
@@ -234,7 +237,8 @@ def send_one(
                 screenshot_path=str(opened_path),
                 metadata={"target": target.__dict__, "guard": guard},
             )
-            raise RuntimeError(f"Opened chat title guard failed for {target.name}: OCR={guard.get('ocr_text', '')!r}")
+            live_note = " Live sends do not allow relaxed title fallback." if do_send and target.allow_title_guard_fallback else ""
+            raise RuntimeError(f"Opened chat title guard failed for {target.name}: OCR={guard.get('ocr_text', '')!r}.{live_note}")
     if guard.get("relaxed_title_guard"):
         record_event(
             chat_name=target.name,

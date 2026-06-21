@@ -654,6 +654,14 @@ labcanvas wechat alias --chat "懒人科研" --name "LazyingArt"
   the header crop is unreliable. If OCR consistently misreads a group name, add
   `expected_title_aliases` for the observed OCR text plus stable
   `fallback_clicks`.
+- Do not use live relaxed title fallback for multi-chat monitors. Relaxed
+  fallback is safe for dry-run/review; live sends require a verified title unless
+  `allow_live_title_guard_fallback` is explicitly set for a known single-chat
+  workflow.
+- Worker tasks carry a `route` contract with the source chat, message table,
+  send target, and expected title. The worker validates this contract before
+  sending results, so a task from `🍓我的设备` cannot reply into `鏈接` if the GUI is
+  currently showing that group.
 - GUI sends are serialized by `.private/wechat_gui_send.lock`; do not bypass the
   sender helper with parallel raw `xdotool` scripts.
 - Keep danger handling silent in chat; record only private mirror metadata if a

@@ -128,7 +128,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         result = {"message": result_text, "confirmation": "", "files": [], "raw": result_text}
         task["worker_error"] = {"type": type(exc).__name__, "message": str(exc)[:1000]}
     target_chat = str(task.get("chat") or chat)
-    send_errors = send_result_with_retries(result, target_chat, send_targets) if send else []
+    send_errors = send_result_with_retries(result, target_chat, send_targets, task=task) if send else []
     if result.get("skipped_files"):
         task["skipped_files"] = result["skipped_files"]
     if task.get("worker_error"):
@@ -163,13 +163,22 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     return True
 
 
-def send_result_with_retries(result: dict[str, Any], target_chat: str, send_targets: Path) -> list[str]:
+def send_result_with_retries(
+    result: dict[str, Any],
+    target_chat: str,
+    send_targets: Path,
+    *,
+    task: dict[str, Any] | None = None,
+) -> list[str]:
     attempts = max(1, int(os.environ.get("WECHAT_WORKER_SEND_RETRIES", "2")))
     delay = max(0.0, float(os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY", "1.5")))
     errors: list[str] = []
     for attempt in range(1, attempts + 1):
         try:
-            send_result_once(result, target_chat, send_targets)
+            if task is None:
+                send_result_once(result, target_chat, send_targets)
+            else:
+                send_result_once(result, target_chat, send_targets, task=task)
             return []
         except Exception as exc:
             errors.append(f"attempt {attempt}: {exc}")
@@ -180,13 +189,20 @@ def send_result_with_retries(result: dict[str, Any], target_chat: str, send_targ
     return errors
 
 
-def send_result_once(result: dict[str, Any], target_chat: str, send_targets: Path) -> None:
+def send_result_once(
+    result: dict[str, Any],
+    target_chat: str,
+    send_targets: Path,
+    *,
+    task: dict[str, Any] | None = None,
+) -> None:
+    target = guarded_send_target(target_chat, send_targets, task=task)
     if result["message"]:
-        send_message(result["message"], target_chat, send_targets)
+        send_message(result["message"], target_chat, send_targets, target=target)
     if result["confirmation"]:
-        send_message(result["confirmation"], target_chat, send_targets)
+        send_message(result["confirmation"], target_chat, send_targets, target=target)
     for file_path in result["files"]:
-        send_file(Path(file_path), target_chat, send_targets)
+        send_file(Path(file_path), target_chat, send_targets, target=target)
 
 
 def append_jsonl(path: Path, item: dict[str, Any]) -> None:
@@ -1336,8 +1352,8 @@ def unique_strings(values: list[str]) -> list[str]:
     return result
 
 
-def send_message(message: str, chat: str, send_targets: Path) -> None:
-    target = load_send_target(chat, send_targets)
+def send_message(message: str, chat: str, send_targets: Path, *, target: dict[str, Any] | None = None) -> None:
+    target = target if target is not None else guarded_send_target(chat, send_targets)
     if target:
         with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
             target_file = Path(handle.name)
@@ -1364,6 +1380,8 @@ def send_message(message: str, chat: str, send_targets: Path) -> None:
         finally:
             target_file.unlink(missing_ok=True)
         return
+    if os.environ.get("WECHAT_ALLOW_UNGUARDED_SEND", "0") != "1":
+        raise RuntimeError(f"Refusing unguarded WeChat message send for {chat}: missing send_target")
     subprocess.run(
         [
             sys.executable,
@@ -1380,11 +1398,11 @@ def send_message(message: str, chat: str, send_targets: Path) -> None:
     )
 
 
-def send_file(file_path: Path, chat: str, send_targets: Path) -> None:
+def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[str, Any] | None = None) -> None:
     ok, reason = is_safe_outbound_file(file_path)
     if not ok:
         raise ValueError(f"Refusing outbound file {file_path}: {reason}")
-    target = load_send_target(chat, send_targets)
+    target = target if target is not None else guarded_send_target(chat, send_targets)
     if target:
         with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
             target_file = Path(handle.name)
@@ -1407,6 +1425,8 @@ def send_file(file_path: Path, chat: str, send_targets: Path) -> None:
             )
         finally:
             target_file.unlink(missing_ok=True)
+    elif os.environ.get("WECHAT_ALLOW_UNGUARDED_SEND", "0") != "1":
+        raise RuntimeError(f"Refusing unguarded WeChat file send for {chat}: missing send_target")
     subprocess.run(
         [
             sys.executable,
@@ -1429,6 +1449,45 @@ def wechat_send_env() -> dict[str, str]:
     env.setdefault("WECHAT_INITIAL_TITLE_WAIT", os.environ.get("WECHAT_WORKER_INITIAL_TITLE_WAIT", "0.45"))
     env.setdefault("WECHAT_TITLE_RETRY_SECONDS", os.environ.get("WECHAT_WORKER_TITLE_RETRY_SECONDS", "3.2"))
     return env
+
+
+def guarded_send_target(chat: str, path: Path, *, task: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    target = load_send_target(chat, path)
+    if target is None:
+        if os.environ.get("WECHAT_ALLOW_UNGUARDED_SEND", "0") == "1":
+            return None
+        raise RuntimeError(f"Refusing unguarded WeChat send for {chat}: missing send_target")
+    validate_worker_send_route(task or {"chat": chat}, chat, target)
+    return target
+
+
+def validate_worker_send_route(task: dict[str, Any], target_chat: str, target: dict[str, Any]) -> None:
+    route = task.get("route") if isinstance(task.get("route"), dict) else {}
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    errors: list[str] = []
+    task_chat = str(task.get("chat") or "").strip()
+    source_chat = str(source.get("chat") or "").strip()
+    route_chat = str(route.get("chat") or "").strip()
+    target_name = str(target.get("name") or target.get("target") or target.get("query") or "").strip()
+    expected_title = str(target.get("expected_title") or target.get("title") or "").strip()
+    route_target_name = str(route.get("send_target_name") or "").strip()
+    route_expected_title = str(route.get("expected_title") or "").strip()
+    if task_chat and task_chat != target_chat:
+        errors.append(f"task.chat={task_chat!r} target_chat={target_chat!r}")
+    if source_chat and source_chat != target_chat:
+        errors.append(f"source.chat={source_chat!r} target_chat={target_chat!r}")
+    if route_chat and route_chat != target_chat:
+        errors.append(f"route.chat={route_chat!r} target_chat={target_chat!r}")
+    if target_name and target_name != target_chat:
+        errors.append(f"target.name={target_name!r} target_chat={target_chat!r}")
+    if route_target_name and target_name and route_target_name != target_name:
+        errors.append(f"route.target={route_target_name!r} resolved.target={target_name!r}")
+    if route_expected_title and expected_title and route_expected_title != expected_title:
+        errors.append(f"route.expected_title={route_expected_title!r} resolved.expected_title={expected_title!r}")
+    if not expected_title and not target.get("expected_title_aliases"):
+        errors.append("resolved target has no expected_title/aliases")
+    if errors:
+        raise RuntimeError("Refusing WeChat send route mismatch: " + "; ".join(errors))
 
 
 def load_send_target(chat: str, path: Path) -> dict[str, Any] | None:

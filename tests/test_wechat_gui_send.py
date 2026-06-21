@@ -100,6 +100,85 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
 
+    def test_relaxed_title_guard_does_not_allow_live_send_by_default(self):
+        module = load_wechat_gui_send()
+        original_focus = module.focus
+        original_screenshot = module.screenshot
+        original_open_target = module.open_target
+        original_record_event = module.record_event
+        try:
+            module.focus = lambda *_args, **_kwargs: None
+            module.screenshot = lambda _env, path: Path(path).write_bytes(b"screen")
+            module.open_target = lambda *_args, **_kwargs: {"ok": False, "method": "current", "ocr_text": "鏈接"}
+            module.record_event = lambda **_kwargs: None
+
+            with self.assertRaisesRegex(RuntimeError, "Live sends do not allow relaxed title fallback"):
+                module.send_one(
+                    {},
+                    module.Window("1", 0, 0, 1000, 700),
+                    module.TargetSpec(
+                        name="🍓我的设备",
+                        query="我的设备",
+                        expected_title="🍓我的设备",
+                        expected_title_aliases=("我的设备",),
+                        allow_title_guard_fallback=True,
+                    ),
+                    "reply",
+                    True,
+                    False,
+                    0,
+                    False,
+                    True,
+                    Path("/tmp"),
+                    Path("/tmp/wechat-mirror.sqlite"),
+                    1,
+                )
+        finally:
+            module.focus = original_focus
+            module.screenshot = original_screenshot
+            module.open_target = original_open_target
+            module.record_event = original_record_event
+
+    def test_relaxed_title_guard_still_allows_dry_open_review(self):
+        module = load_wechat_gui_send()
+        original_focus = module.focus
+        original_screenshot = module.screenshot
+        original_open_target = module.open_target
+        original_record_event = module.record_event
+        try:
+            module.focus = lambda *_args, **_kwargs: None
+            module.screenshot = lambda _env, path: Path(path).write_bytes(b"screen")
+            module.open_target = lambda *_args, **_kwargs: {"ok": False, "method": "current", "ocr_text": "鏈接"}
+            module.record_event = lambda **_kwargs: None
+
+            result = module.send_one(
+                {},
+                module.Window("1", 0, 0, 1000, 700),
+                module.TargetSpec(
+                    name="🍓我的设备",
+                    query="我的设备",
+                    expected_title="🍓我的设备",
+                    expected_title_aliases=("我的设备",),
+                    allow_title_guard_fallback=True,
+                ),
+                "reply",
+                False,
+                False,
+                0,
+                False,
+                True,
+                Path("/tmp"),
+                Path("/tmp/wechat-mirror.sqlite"),
+                1,
+            )
+        finally:
+            module.focus = original_focus
+            module.screenshot = original_screenshot
+            module.open_target = original_open_target
+            module.record_event = original_record_event
+
+        self.assertEqual(result["status"], "dry-run-opened")
+
     def test_same_screenshot_detects_identical_files(self):
         module = load_wechat_gui_send()
         first = Path("/tmp/wechat-gui-send-same-a.png")

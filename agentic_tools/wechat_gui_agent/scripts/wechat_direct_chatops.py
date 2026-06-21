@@ -228,6 +228,7 @@ def load_config(path: Path) -> dict[str, Any]:
             raw[key] = value
         else:
             raw.setdefault(key, value)
+    raw.setdefault("config_id", path.name)
     merge_default_list_items(raw, defaults, "slow_task_keywords")
     if not raw["message_table"]:
         raise SystemExit(f"Missing message_table in private config: {path}")
@@ -2051,7 +2052,11 @@ def enqueue_worker_task(
         "request": task_text,
         "status": "pending",
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "route": build_route_contract(config),
         "source": {
+            "chat": config["chat_name"],
+            "config_id": config.get("config_id") or "",
+            "message_table": config.get("message_table") or "",
             "server_id": row["server_id"],
             "local_id": row["local_id"],
             "sender": row["sender"],
@@ -2081,6 +2086,20 @@ def enqueue_worker_task(
     return task
 
 
+def build_route_contract(config: dict[str, Any]) -> dict[str, Any]:
+    target = config.get("send_target") if isinstance(config.get("send_target"), dict) else {}
+    return {
+        "chat": str(config.get("chat_name") or ""),
+        "config_id": str(config.get("config_id") or ""),
+        "message_table": str(config.get("message_table") or ""),
+        "state_path": str(config.get("state_path") or ""),
+        "send_target_name": str(target.get("name") or ""),
+        "send_target_query": str(target.get("query") or ""),
+        "expected_title": str(target.get("expected_title") or ""),
+        "expected_title_aliases": [str(item) for item in target.get("expected_title_aliases", [])],
+    }
+
+
 def send_gui_message(config: dict[str, Any], message: str) -> str:
     target = config.get("send_target")
     if isinstance(target, dict) and target.get("name"):
@@ -2102,17 +2121,7 @@ def send_gui_message(config: dict[str, Any], message: str) -> str:
             str(Path(config.get("mirror_db", DEFAULT_DB))),
         ]
     else:
-        target_file = None
-        command = [
-            sys.executable,
-            str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_chatops_bridge.py"),
-            "--config",
-            str(PRIVATE / "lazy-research-chatops.local.json"),
-            "--chat",
-            str(config.get("chat_name") or "wechat-chat"),
-            "--message",
-            message,
-        ]
+        raise RuntimeError(f"Refusing unguarded WeChat send for {config.get('chat_name') or 'wechat-chat'}: missing send_target")
     try:
         env = os.environ.copy()
         env.setdefault("WECHAT_INITIAL_TITLE_WAIT", str(config.get("send_initial_title_wait_seconds", 0.45)))

@@ -372,6 +372,35 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(calls), 2)
 
+    def test_worker_route_guard_rejects_cross_chat_send(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "🍓我的设备",
+            "source": {"chat": "🍓我的设备"},
+            "route": {
+                "chat": "🍓我的设备",
+                "send_target_name": "🍓我的设备",
+                "expected_title": "🍓我的设备",
+            },
+        }
+        target = {"name": "鏈接", "query": "鏈接", "expected_title": "鏈接"}
+
+        with self.assertRaisesRegex(RuntimeError, "route mismatch"):
+            worker.validate_worker_send_route(task, "鏈接", target)
+
+    def test_worker_requires_guarded_target_for_send(self) -> None:
+        worker = load_worker()
+        original_allow = worker.os.environ.get("WECHAT_ALLOW_UNGUARDED_SEND")
+        try:
+            worker.os.environ.pop("WECHAT_ALLOW_UNGUARDED_SEND", None)
+            with self.assertRaisesRegex(RuntimeError, "missing send_target"):
+                worker.guarded_send_target("not-a-real-chat-for-tests", Path("/tmp/no-targets.json"))
+        finally:
+            if original_allow is None:
+                worker.os.environ.pop("WECHAT_ALLOW_UNGUARDED_SEND", None)
+            else:
+                worker.os.environ["WECHAT_ALLOW_UNGUARDED_SEND"] = original_allow
+
     def test_claim_next_pending_marks_task_in_progress_once(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

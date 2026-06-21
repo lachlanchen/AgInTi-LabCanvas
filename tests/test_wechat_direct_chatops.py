@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -595,6 +596,39 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(kwargs["timeout"], 12)
         self.assertEqual(kwargs["env"]["WECHAT_INITIAL_TITLE_WAIT"], "0.4")
         self.assertEqual(kwargs["env"]["WECHAT_TITLE_RETRY_SECONDS"], "2.5")
+
+    def test_send_gui_message_refuses_missing_guarded_target(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "Refusing unguarded WeChat send"):
+            direct_chatops.send_gui_message({"chat_name": "鏈接"}, "hi")
+
+    def test_enqueued_worker_task_carries_source_route_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "chat_name": "🍓我的设备",
+                "config_id": "wodeshebei-direct-chatops.local.json",
+                "message_table": "Msg_device",
+                "state_path": str(Path(tmp) / "device.state.json"),
+                "worker_queue": str(Path(tmp) / "queue.jsonl"),
+                "mirror_db": str(Path(tmp) / "mirror.sqlite"),
+                "send_target": {
+                    "name": "🍓我的设备",
+                    "query": "我的设备",
+                    "expected_title": "🍓我的设备",
+                    "expected_title_aliases": ["我的设备"],
+                },
+            }
+            row = self.row("publish this", local_id=7, server_id="srv-7")
+
+            task = direct_chatops.enqueue_worker_task(config, row, "do work", context_rows=[row])
+
+            self.assertEqual(task["route"]["chat"], "🍓我的设备")
+            self.assertEqual(task["route"]["send_target_name"], "🍓我的设备")
+            self.assertEqual(task["route"]["expected_title"], "🍓我的设备")
+            self.assertEqual(task["route"]["expected_title_aliases"], ["我的设备"])
+            self.assertEqual(task["source"]["chat"], "🍓我的设备")
+            self.assertEqual(task["source"]["message_table"], "Msg_device")
+            queued = [json.loads(line) for line in Path(config["worker_queue"]).read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(queued[0]["route"], task["route"])
 
     def test_default_direct_config_uses_low_reasoning_fast_polling(self) -> None:
         with self.subTest("defaults"):

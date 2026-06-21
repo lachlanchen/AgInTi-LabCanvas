@@ -411,9 +411,11 @@ subject to the configured size limit.
 
 For exact video-row tasks, pass `--message-local-id` so AutoPublish refuses to
 copy a nearby older cached MP4. If an emoji-heavy group title is hard for OCR,
-set `allow_title_guard_fallback: true` only in that chat's private `send_target`
-after confirming search opens the correct group; strict title guard remains the
-default.
+prefer `expected_title_aliases` such as the title without emoji. The relaxed
+`allow_title_guard_fallback` path is for dry-run/review only; live sends still
+fail closed unless `allow_live_title_guard_fallback` is deliberately set. Avoid
+that live override for multi-chat monitors because it can post into the wrong
+visible group.
 
 ## External Decrypt Backend
 
