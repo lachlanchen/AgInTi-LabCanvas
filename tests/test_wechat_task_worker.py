@@ -87,7 +87,23 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("英文全文", str(calls[0]["prompt"]))
         self.assertIn("Do not post a comment", str(calls[0]["prompt"]))
         self.assertIn("do not produce a \"deep analysis\"", str(calls[0]["prompt"]))
+        self.assertIn("lazyedit-publish-workflow/SKILL.md", str(calls[0]["prompt"]))
+        self.assertIn("scripts/lazyedit_publish.py", str(calls[0]["prompt"]))
+        self.assertIn("--correction-prompt-file", str(calls[0]["prompt"]))
+        self.assertIn("--metadata-prompt-file", str(calls[0]["prompt"]))
+        self.assertIn("api/autopublish/queue", str(calls[0]["prompt"]))
+        self.assertIn("lazyingart:8081/publish/queue", str(calls[0]["prompt"]))
         self.assertIn("files", str(calls[0]["prompt"]))
+
+    def test_lazyedit_publish_skill_is_checked_in(self) -> None:
+        skill = ROOT / "agentic_tools" / "wechat_gui_agent" / "skills" / "lazyedit-publish-workflow" / "SKILL.md"
+        text = skill.read_text(encoding="utf-8")
+
+        self.assertIn("LazyEdit Publish Workflow", text)
+        self.assertIn("autopublish-video", text)
+        self.assertIn("scripts/lazyedit_publish.py", text)
+        self.assertIn("Shipinhao", text)
+        self.assertIn("--metadata-prompt-file", text)
 
     def test_worker_result_collects_nested_and_plain_artifact_paths(self) -> None:
         worker = load_worker()

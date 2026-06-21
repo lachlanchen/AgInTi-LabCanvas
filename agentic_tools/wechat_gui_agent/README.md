@@ -319,6 +319,41 @@ video message is visible in WeChat but no MP4 has been cached yet, use
 `--sync --fetch-gui`; the tool opens the chat, clicks the latest visible video,
 waits for the official client to cache the MP4, then copies the matched file.
 
+## LazyEdit Platform Publishing
+
+Full video publishing is documented in
+`agentic_tools/wechat_gui_agent/skills/lazyedit-publish-workflow/SKILL.md`. Use
+that workflow when a chat task asks to publish, re-publish, subtitle, monitor, or
+send a WeChat video to Shipinhao, YouTube, or Instagram.
+
+The normal path is:
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat autopublish-video \
+  --chat "example group" \
+  --sync \
+  --fetch-gui \
+  --since-minutes 720 \
+  --json
+
+cd /home/lachlan/DiskMech/Projects/lazyedit
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate lazyedit
+python scripts/lazyedit_publish.py \
+  --video-id VIDEO_ID \
+  --use-current-settings \
+  --platforms shipinhao,youtube,instagram \
+  --guided-monitor \
+  --wait \
+  --poll-seconds 10
+```
+
+For context-sensitive videos, pass separate files with
+`--correction-prompt-file` and `--metadata-prompt-file`. Use `--no-process` only
+when reusing an already completed LazyEdit output. If Shipinhao or another
+platform needs QR login or manual confirmation, open the isolated browser and
+wait for the user rather than bypassing the page.
+
 ## External Decrypt Backend
 
 The optional second solution uses `ylytdeng/wechat-decrypt` as a private receive

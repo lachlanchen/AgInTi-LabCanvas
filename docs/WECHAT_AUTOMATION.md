@@ -466,6 +466,41 @@ cached: the tool opens the chat in the isolated WeChat desktop, clicks the
 latest visible video, waits for WeChat to write the MP4 under `msg/video`, runs
 media sync again, then copies the matched video to AutoPublish.
 
+## LazyEdit Publish Workflow
+
+For full platform publishing, use the checked-in workflow at
+`agentic_tools/wechat_gui_agent/skills/lazyedit-publish-workflow/SKILL.md`.
+It covers LazyEdit processing, subtitle correction, metadata prompts, Nutstore
+AutoPublish import, queue monitoring, and Shipinhao/YouTube/Instagram handoff.
+
+Minimal publish command after a video has a LazyEdit id:
+
+```bash
+cd /home/lachlan/DiskMech/Projects/lazyedit
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate lazyedit
+python scripts/lazyedit_publish.py \
+  --video-id VIDEO_ID \
+  --use-current-settings \
+  --platforms shipinhao,youtube,instagram \
+  --guided-monitor \
+  --wait \
+  --poll-seconds 10
+```
+
+Use `--correction-prompt-file` for full transcript/story context and
+`--metadata-prompt-file` for a concise public-facing brief. Use `--no-process`
+only for an already completed output. Monitor status with:
+
+```bash
+curl -fsS http://127.0.0.1:18787/api/autopublish/queue | jq '.jobs[:8]'
+curl -fsS http://lazyingart:8081/publish/queue | jq '.jobs[:8]'
+ssh lachlan@lazyingart 'tmux capture-pane -pt autopub:0 -S -120 | tail -n 120'
+```
+
+Do not bypass QR login, CAPTCHA, or consent pages. Open a human-assist browser
+and wait for user confirmation before continuing.
+
 ## Web App
 
 The LabCanvas web app exposes a compact WeChat Ops card for:
