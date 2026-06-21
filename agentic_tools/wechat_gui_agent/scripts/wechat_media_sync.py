@@ -390,7 +390,7 @@ def discover_sources() -> list[Path]:
     for profile in base.iterdir():
         if not profile.is_dir():
             continue
-        for relative in ("msg/file", "msg/video", "msg/attach", "cache", "temp/ImageTemp"):
+        for relative in ("msg/file", "msg/video", "msg/attach", "cache", "temp/ImageTemp", "temp/ImageUtils"):
             path = profile / relative
             if path.is_dir():
                 candidates.append(path)

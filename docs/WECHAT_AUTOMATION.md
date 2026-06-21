@@ -159,7 +159,7 @@ The background media sync is shared by every configured group and DM. If
 `WECHAT_MEDIA_CHATS` is not set, the supervisor derives the chat list from
 `WECHAT_DIRECT_CONFIGS`, so friends such as `<FRIEND_NAME>` and groups use the
 same download and decode path. It scans `msg/file`, `msg/video`, `msg/attach`,
-`cache`, and `temp/ImageTemp`, records all candidates in the private
+`cache`, `temp/ImageTemp`, and `temp/ImageUtils`, records all candidates in the private
 `media_files` table, and decodes readable WeChat image blobs where possible.
 Old XOR `.dat` images decode directly. WeChat V1/V2 image containers need a
 private image key in `agentic_tools/wechat_gui_agent/.private/wechat_image_keys.local.json`
@@ -422,7 +422,7 @@ keeping them out of git. The router reads only the configured chat's folder
 the parent downloads directory.
 
 The sync utility scans `msg/file`, `msg/video`, `msg/attach`, `cache`, and
-`temp/ImageTemp`. It detects common extensionless blobs by magic bytes and
+`temp/ImageTemp`, and `temp/ImageUtils`. It detects common extensionless blobs by magic bytes and
 mirrors them with usable suffixes such as `.jpg`, `.png`, `.webp`, `.pdf`,
 `.mp4`, or `.zip`. It also decodes readable WeChat `.dat` image blobs:
 legacy XOR images work directly; V1/V2 AES containers work when the private
@@ -430,6 +430,9 @@ image key is available through `wechat_image_keys.local.json`, the external
 decryptor config, or `WECHAT_IMAGE_AES_KEY`. If full-size V2 decode is
 unavailable, the worker still receives same-chat thumbnail or mid-temp images
 from the matched message-time window.
+When the official WeChat client opens an image, it may write a readable JPG to
+`temp/ImageUtils`; media sync treats that folder as same-chat evidence only when
+the filename/token or message-time window matches the source row.
 Every copied, decoded, existing, dry-run, or error candidate is recorded in the
 private `media_files` table with source path, mirrored path, status, size,
 mtime, suffix, decode status, and match reason.

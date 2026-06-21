@@ -300,7 +300,9 @@ labcanvas wechat media-sync --chat "example group" \
 
 Synced files are stored under
 `.private/downloads/<chat>/<wechat-profile>/<category>/` so images, PDFs, and
-videos from different profiles do not collide.
+videos from different profiles do not collide. The sync scanner includes
+`temp/ImageUtils`, where the official WeChat client writes readable JPGs after
+an image is opened.
 
 Copy the newest mirrored video from a group or DM into the Nutstore
 AutoPublish watcher:

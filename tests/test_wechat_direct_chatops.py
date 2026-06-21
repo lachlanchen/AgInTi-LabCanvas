@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -131,6 +132,40 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             direct_chatops.visible_message_text(self.row('wxid_synth: <msg><appmsg><type>5</type></appmsg></msg>')),
             "<msg><appmsg><type>5</type></appmsg></msg>",
         )
+
+    def test_decode_content_uses_zstd_cli_fallback_for_image_xml(self) -> None:
+        if shutil.which("zstd") is None:
+            self.skipTest("zstd command is not installed")
+        xml = (
+            'oldseedling1992:\n<?xml version="1.0"?><msg><img '
+            'md5="cafed00d1234567890abcdef12345678" length="12345" /></msg>'
+        ).encode("utf-8")
+        proc = subprocess.run(["zstd", "-q", "-c"], input=xml, capture_output=True, check=True)
+
+        decoded = direct_chatops.decode_content(proc.stdout, b"", 4)
+        visible = direct_chatops.visible_message_text(self.row(decoded, local_type=3))
+
+        self.assertIn("cafed00d1234567890abcdef12345678", visible)
+        self.assertIn("[WeChat image]", visible)
+
+    def test_media_reference_tokens_decode_hex_encoded_cdn_cache_token(self) -> None:
+        cache_token = "b323bad959307864c89d109e5ce3f762"
+        cdn_value = "30570201000424" + cache_token.encode("ascii").hex() + "0204012d2a"
+        row = self.row(
+            f'<?xml version="1.0"?><msg><img md5="cafed00d1234567890abcdef12345678" cdnmidimgurl="{cdn_value}" /></msg>',
+            local_type=3,
+        )
+
+        tokens = direct_chatops.media_reference_tokens([row])
+
+        self.assertIn("cafed00d1234567890abcdef12345678", tokens)
+        self.assertIn(cache_token, tokens)
+
+    def test_media_sync_epoch_window_does_not_extend_old_messages_to_now(self) -> None:
+        config = {"media_sync_context_window_seconds": 300}
+        rows = [{"create_time": 1000}, {"create_time": 1020}]
+
+        self.assertEqual(direct_chatops.media_sync_epoch_window(config, rows), (700, 1320))
 
     def test_language_prompt_requests_japanese_chinese_and_english(self) -> None:
         config = self.base_config()

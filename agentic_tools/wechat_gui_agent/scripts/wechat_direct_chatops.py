@@ -586,22 +586,35 @@ def decode_content(message_content: Any, compress_content: Any, content_ct: Any 
         if value is None or value == "":
             continue
         if isinstance(value, bytes):
-            if zstd is not None and int(content_ct or 0) == 4:
-                try:
-                    return zstd.ZstdDecompressor().decompress(value).decode("utf-8", errors="replace")
-                except Exception:
-                    pass
-            if zstd is not None:
-                try:
-                    return zstd.ZstdDecompressor().decompress(value).decode("utf-8", errors="replace")
-                except Exception:
-                    pass
+            decoded = decode_zstd_bytes(value)
+            if decoded and (int(content_ct or 0) == 4 or looks_like_xml_or_text(decoded)):
+                return decoded
             try:
                 return value.decode("utf-8", errors="replace")
             except Exception:
                 return f"<binary:{len(value)}>"
         return str(value)
     return ""
+
+
+def decode_zstd_bytes(value: bytes) -> str:
+    if zstd is not None:
+        try:
+            return zstd.ZstdDecompressor().decompress(value).decode("utf-8", errors="replace")
+        except Exception:
+            pass
+    try:
+        proc = subprocess.run(["zstd", "-q", "-dc"], input=value, capture_output=True, check=False)
+    except OSError:
+        return ""
+    if proc.returncode != 0 or not proc.stdout:
+        return ""
+    return proc.stdout.decode("utf-8", errors="replace")
+
+
+def looks_like_xml_or_text(value: str) -> bool:
+    stripped = value.lstrip()
+    return stripped.startswith("<") or "<?xml" in stripped[:120] or "<msg" in stripped[:240] or bool(re.search(r"[\u4e00-\u9fffA-Za-z]", stripped[:120]))
 
 
 def sync_row_to_mirror(config: dict[str, Any], row: dict[str, Any]) -> None:
@@ -1224,7 +1237,7 @@ def media_sync_epoch_window(config: dict[str, Any], rows: list[dict[str, Any]]) 
         return None
     window = int(config.get("media_sync_context_window_seconds", 300))
     now = int(time.time())
-    return max(0, min(times) - window), max(max(times) + window, now + 60)
+    return max(0, min(times) - window), min(max(times) + window, now + 60)
 
 
 def media_reference_tokens(rows: list[dict[str, Any]], *, limit: int = 12) -> list[str]:
@@ -1243,6 +1256,26 @@ def media_reference_tokens(rows: list[dict[str, Any]], *, limit: int = 12) -> li
                     tokens.append(token)
                 if len(tokens) >= limit:
                     return tokens
+        for token in decoded_hex_reference_tokens(text):
+            if token not in tokens:
+                tokens.append(token)
+            if len(tokens) >= limit:
+                return tokens
+    return tokens
+
+
+def decoded_hex_reference_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    for match in re.finditer(r"\b[0-9A-Fa-f]{48,}\b", text):
+        raw = match.group(0)
+        try:
+            decoded = bytes.fromhex(raw).decode("utf-8", errors="ignore")
+        except ValueError:
+            continue
+        for token in re.findall(r"\b[0-9A-Fa-f]{16,64}\b", decoded):
+            lowered = token.lower()
+            if lowered not in tokens:
+                tokens.append(lowered)
     return tokens
 
 
