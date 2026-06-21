@@ -4,6 +4,10 @@ This tool automates the native Linux WeChat client through a clean Xvfb/noVNC
 desktop. It uses visible GUI control instead of private protocol hooks, records
 evidence screenshots, and mirrors send/read events into a local SQLite database.
 
+For the complete operator map of CLI commands, tmux sessions, scripts, private
+state files, route guards, media sync, worker tasks, skills, and safety rules,
+read [docs/FULL_CONTROL_MANUAL.md](docs/FULL_CONTROL_MANUAL.md).
+
 ## Start The Desktop
 
 Use the wrapper for the shared WeChat desktop:
