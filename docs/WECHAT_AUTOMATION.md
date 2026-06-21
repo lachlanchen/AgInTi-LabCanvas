@@ -370,13 +370,17 @@ remove legacy `wechat:*` or plain `<chat>:<role>` registry entries if context
 ever crosses groups. Set `WECHAT_CODEX_REUSE_SESSIONS=0` before starting the
 supervisor to force fully stateless `codex exec` calls.
 
-The worker chooses its own Codex policy from task difficulty: low for simple
-chat follow-ups, medium for paper/PDF/search/figure/research work, and high for
-CAD, PCB, Blender/OpenSCAD, install, GitHub, ordering, or other full execution
-tasks. If the first worker result is a timeout, empty/too-short answer, or clear
-failure, it escalates one reasoning level once. GUI send failures are recorded
-as `send_failed` instead of crashing the worker loop or repeatedly sending the
-same task.
+The worker chooses its own Codex policy from task difficulty and defaults to
+`gpt-5.5`, not Spark. Fast routers stay low-latency, but queued backend work
+starts at `medium`, uses `high` for CAD/PCB/Blender/file/video/tool execution,
+and uses `xhigh` for full autonomous tasks such as installs, GitHub
+commit/push, publishing, ordering, or "finish this end-to-end" requests. If a
+worker result is a timeout, empty/too-short answer, or clear model failure, it
+retries upward through the allowed effort levels up to `xhigh`. It does not
+escalate when the blocker is a missing exact source file, login/CAPTCHA, manual
+approval, or another user decision. GUI send failures are recorded as
+`send_failed` instead of crashing the worker loop or repeatedly sending the same
+task.
 
 Before running backend work, the worker atomically claims a queue row by moving
 it from `pending` to `in_progress` under a file lock. This prevents a manual
@@ -391,6 +395,10 @@ repo worktree. To restrict worker execution for a debugging run, set
 `WECHAT_WORKER_CODEX_SANDBOX=workspace` or `read-only` before restarting the
 supervisor. Fast router sessions remain read-only unless a group config
 explicitly changes its `codex.sandbox`.
+Worker model/effort can be tuned with `WECHAT_WORKER_CODEX_MODEL`,
+`WECHAT_WORKER_MIN_EFFORT`, `WECHAT_WORKER_MAX_EFFORT`, and
+`WECHAT_WORKER_MAX_CODEX_ATTEMPTS`; Spark worker models are ignored unless
+`WECHAT_ALLOW_SPARK_WORKER=1` is set intentionally.
 
 If a download is blocked by login, consent, CAPTCHA, or another manual check,
 use the same isolated noVNC virtual desktop rather than bypassing the check:

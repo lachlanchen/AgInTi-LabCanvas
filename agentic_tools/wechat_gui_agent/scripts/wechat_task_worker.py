@@ -29,9 +29,16 @@ LAZYEDIT_ROOT = Path(os.environ.get("LAZYEDIT_ROOT", "/home/lachlan/DiskMech/Pro
 LAZYEDIT_API_URL = os.environ.get("LAZYEDIT_API_URL", "http://127.0.0.1:18787").rstrip("/")
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
-EFFORT_ORDER = ["low", "medium", "high"]
+EFFORT_ORDER = ["low", "medium", "high", "xhigh"]
 CLAIMED_STATUS = "in_progress"
 DEFAULT_STALE_IN_PROGRESS_SECONDS = 60 * 60
+DEFAULT_WORKER_MODEL = "gpt-5.5"
+EFFORT_TIMEOUT_SECONDS = {
+    "low": 120,
+    "medium": 300,
+    "high": 600,
+    "xhigh": 1200,
+}
 OUTBOUND_SUFFIXES = {
     ".png",
     ".jpg",
@@ -282,12 +289,27 @@ def log_worker_event(status: str, task: dict[str, Any]) -> None:
 
 def run_worker_codex(task: dict[str, Any]) -> str:
     policy = choose_worker_policy(task)
+    attempts: list[dict[str, Any]] = []
+    max_attempts = max(1, int(os.environ.get("WECHAT_WORKER_MAX_CODEX_ATTEMPTS", str(len(EFFORT_ORDER)))))
+    for attempt_index in range(max_attempts):
+        task["worker_policy"] = policy
+        result = run_worker_codex_once(task, policy)
+        attempts.append(
+            {
+                "attempt": attempt_index + 1,
+                "model": policy.get("model"),
+                "reasoning_effort": policy.get("reasoning_effort"),
+                "timeout_seconds": policy.get("timeout_seconds"),
+                "escalated_from": policy.get("escalated_from"),
+                "result_excerpt": collapse_context_text(result, max_len=280),
+            }
+        )
+        next_policy = escalated_policy(policy, result)
+        if not next_policy:
+            break
+        policy = next_policy
     task["worker_policy"] = policy
-    result = run_worker_codex_once(task, policy)
-    next_policy = escalated_policy(policy, result)
-    if next_policy:
-        task["worker_policy"] = {**next_policy, "escalated_from": policy["reasoning_effort"]}
-        result = run_worker_codex_once(task, next_policy)
+    task["worker_policy_attempts"] = attempts
     return result
 
 
@@ -926,30 +948,71 @@ def safe_slug(value: str) -> str:
 
 def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
     text = json.dumps(task, ensure_ascii=False).lower()
-    high_keywords = [
+    xhigh_keywords = [
         "deep research",
+        "fully implement",
+        "full implementation",
+        "complete task",
+        "finish the task",
+        "end to end",
+        "end-to-end",
+        "as you",
+        "do it all",
+        "take over",
+        "autonomous",
+        "robust",
+        "systematic",
+        "commit and push",
+        "install",
+        "github",
+        "mcp",
+        "publish",
+        "place order",
+        "submit order",
+        "jlc",
+        "jlcpcb",
+        "wenext",
+        "labview",
+        "wechat automation",
+        "fully control",
+        "完整任务",
+        "完整实现",
+        "自动完成",
+        "全自动",
+        "提交订单",
+        "下单",
+        "安装",
+        "发布",
+    ]
+    high_keywords = [
         "pcb",
         "kicad",
         "cad",
         "openscad",
         "blender",
         "render",
-        "install",
-        "github",
-        "mcp",
         "commit",
         "push",
-        "publish",
         "order",
-        "jlc",
-        "wenext",
-        "labview",
         "full task",
+        "agent",
+        "webapp",
+        "script",
+        "cli",
+        "database",
+        "download",
+        "video",
+        "subtitle",
+        "autopublish",
+        "lazyedit",
         "完整",
-        "下单",
         "电路板",
         "渲染",
-        "安装",
+        "脚本",
+        "数据库",
+        "下载",
+        "视频",
+        "字幕",
     ]
     medium_keywords = [
         "paper",
@@ -976,18 +1039,65 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "高光谱",
         "高光譜",
     ]
-    if any(keyword in text for keyword in high_keywords):
-        effort, timeout = "high", 600
-    elif any(keyword in text for keyword in medium_keywords) or len(text) > 1200:
-        effort, timeout = "medium", 300
+    if any(keyword in text for keyword in xhigh_keywords) or len(text) > 5000:
+        effort = "xhigh"
+    elif any(keyword in text for keyword in high_keywords) or len(text) > 2200:
+        effort = "high"
+    elif any(keyword in text for keyword in medium_keywords) or len(text) > 800:
+        effort = "medium"
     else:
-        effort, timeout = "low", 120
+        effort = "medium"
+    effort = clamp_effort(effort, min_effort=worker_min_effort(), max_effort=worker_max_effort())
     return {
-        "model": "gpt-5.5",
+        "model": worker_model(),
         "reasoning_effort": effort,
         "sandbox": worker_sandbox(),
-        "timeout_seconds": timeout,
+        "timeout_seconds": timeout_for_effort(effort),
     }
+
+
+def worker_model() -> str:
+    raw = os.environ.get("WECHAT_WORKER_CODEX_MODEL", DEFAULT_WORKER_MODEL).strip()
+    model = raw or DEFAULT_WORKER_MODEL
+    if "spark" in model.lower() and os.environ.get("WECHAT_ALLOW_SPARK_WORKER", "0") != "1":
+        return DEFAULT_WORKER_MODEL
+    return model
+
+
+def worker_min_effort() -> str:
+    return normalize_effort(os.environ.get("WECHAT_WORKER_MIN_EFFORT", "medium"), fallback="medium")
+
+
+def worker_max_effort() -> str:
+    return normalize_effort(os.environ.get("WECHAT_WORKER_MAX_EFFORT", "xhigh"), fallback="xhigh")
+
+
+def normalize_effort(value: str | None, *, fallback: str) -> str:
+    effort = str(value or "").strip().lower()
+    return effort if effort in EFFORT_ORDER else fallback
+
+
+def clamp_effort(effort: str, *, min_effort: str, max_effort: str) -> str:
+    effort = normalize_effort(effort, fallback="medium")
+    min_index = EFFORT_ORDER.index(normalize_effort(min_effort, fallback="medium"))
+    max_index = EFFORT_ORDER.index(normalize_effort(max_effort, fallback="xhigh"))
+    if min_index > max_index:
+        min_index, max_index = max_index, min_index
+    index = EFFORT_ORDER.index(effort)
+    index = max(min_index, min(index, max_index))
+    return EFFORT_ORDER[index]
+
+
+def timeout_for_effort(effort: str) -> int:
+    normalized = normalize_effort(effort, fallback="medium")
+    env_name = f"WECHAT_WORKER_TIMEOUT_{normalized.upper()}_SECONDS"
+    raw = os.environ.get(env_name)
+    if raw:
+        try:
+            return max(30, int(raw))
+        except ValueError:
+            pass
+    return EFFORT_TIMEOUT_SECONDS[normalized]
 
 
 def worker_sandbox() -> str:
@@ -1002,20 +1112,7 @@ def worker_sandbox() -> str:
 
 
 def escalated_policy(policy: dict[str, Any], result: str) -> dict[str, Any] | None:
-    text = str(result or "").lower()
-    failure_markers = [
-        "worker failed",
-        "timed out",
-        "cannot complete",
-        "can't complete",
-        "unable to complete",
-        "i cannot",
-        "i can't",
-        "无法完成",
-        "不能完成",
-        "没有完成",
-    ]
-    if len(text.strip()) >= 80 and not any(marker in text for marker in failure_markers):
+    if not worker_result_needs_escalation(result):
         return None
     effort = str(policy.get("reasoning_effort") or "medium")
     try:
@@ -1025,8 +1122,71 @@ def escalated_policy(policy: dict[str, Any], result: str) -> dict[str, Any] | No
     if index >= len(EFFORT_ORDER) - 1:
         return None
     next_effort = EFFORT_ORDER[index + 1]
-    timeout = 300 if next_effort == "medium" else 600
-    return {**policy, "reasoning_effort": next_effort, "timeout_seconds": timeout}
+    next_effort = clamp_effort(next_effort, min_effort=worker_min_effort(), max_effort=worker_max_effort())
+    if next_effort == effort:
+        return None
+    return {
+        **policy,
+        "model": worker_model(),
+        "reasoning_effort": next_effort,
+        "timeout_seconds": timeout_for_effort(next_effort),
+        "escalated_from": effort,
+    }
+
+
+def worker_result_needs_escalation(result: str) -> bool:
+    text = str(result or "").strip().lower()
+    if not text:
+        return True
+    if worker_result_is_terminal_blocker(text):
+        return False
+    failure_markers = [
+        "worker failed",
+        "codex failed",
+        "timed out",
+        "timeout",
+        "cannot complete",
+        "can't complete",
+        "unable to complete",
+        "i cannot",
+        "i can't",
+        "failed before completion",
+        "无法完成",
+        "不能完成",
+        "没有完成",
+        "失败",
+        "超时",
+    ]
+    if any(marker in text for marker in failure_markers):
+        return True
+    return len(text) < 80
+
+
+def worker_result_is_terminal_blocker(text: str) -> bool:
+    blocker_markers = [
+        "captcha",
+        "login",
+        "log in",
+        "manual step",
+        "manual confirmation",
+        "waiting for approval",
+        "waiting_confirmation",
+        "approve continuation",
+        "source-limited",
+        "resend",
+        "provide the exact",
+        "exact file/source",
+        "missing source",
+        "not accessible",
+        "需要登录",
+        "需要人工",
+        "需要确认",
+        "请确认",
+        "请重新发送",
+        "缺少源文件",
+        "找不到源文件",
+    ]
+    return any(marker in text for marker in blocker_markers)
 
 
 def parse_worker_result(text: str) -> dict[str, Any]:

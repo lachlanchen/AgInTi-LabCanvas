@@ -296,11 +296,15 @@ labcanvas wechat worker once --send
 labcanvas wechat queue --json
 ```
 
-Worker tasks pick model effort from task difficulty: low for simple follow-ups,
-medium for paper/PDF/search/research/figure work, and high for CAD, PCB,
-Blender/OpenSCAD, install, GitHub, ordering, or other execution-heavy tasks. A
-clear failure escalates once. If GUI delivery fails, the queue item is marked
-`send_failed` with the error instead of retrying indefinitely.
+Worker tasks default to `gpt-5.5` and pick effort from task difficulty. Queued
+backend work starts at `medium`, uses `high` for CAD/PCB/Blender/file/video/tool
+execution, and uses `xhigh` for full autonomous tasks such as installs, GitHub
+commit/push, publishing, ordering, or "finish this end-to-end" requests. A
+timeout, empty result, or clear model failure retries upward through allowed
+effort levels up to `xhigh`. Missing exact sources, login/CAPTCHA, and user
+confirmation blockers do not trigger blind retries. If GUI delivery fails, the
+queue item is marked `send_failed` with the error instead of retrying
+indefinitely.
 Before work starts, a queue item is claimed as `in_progress` under a file lock.
 This prevents a manual `worker once` and the persistent loop from handling the
 same request twice. Stale claims are reclaimed after
@@ -474,9 +478,12 @@ title, so non-ASCII groups such as `懒人科研` and `鏈接` cannot collapse i
 same reusable thread. If `labcanvas wechat status --json` reports
 `legacy_key: true`, back up and remove that old registry before restarting the
 monitors. Set `WECHAT_CODEX_REUSE_SESSIONS=0` to force stateless turns.
-Worker sessions use `danger-full-access` by default so downloads and external
-tooling are not blocked by the shell sandbox; set
+Worker sessions use `gpt-5.5` and `danger-full-access` by default so downloads
+and external tooling are not blocked by the shell sandbox; set
 `WECHAT_WORKER_CODEX_SANDBOX=workspace` to downgrade for a restricted run.
+Set `WECHAT_WORKER_MIN_EFFORT`, `WECHAT_WORKER_MAX_EFFORT`, or
+`WECHAT_WORKER_MAX_CODEX_ATTEMPTS` to tune dynamic escalation. Spark worker
+models are ignored unless `WECHAT_ALLOW_SPARK_WORKER=1` is set intentionally.
 For login/CAPTCHA/download blocks, open a browser in the same isolated noVNC
 desktop with `labcanvas wechat browser-assist --url "<url>" --json`; the user
 handles the manual step and the worker continues after approval.

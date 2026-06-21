@@ -65,10 +65,13 @@ runs every 1 second, and the fast agent should use `gpt-5.5` with low reasoning.
 Polling itself is local DB/file work; it only spends Codex tokens when a new
 message needs a route decision or reply.
 
-The worker loop chooses its effort separately. It uses low for simple follow-up
-tasks, medium for paper/PDF/search/research/figure tasks, and high for CAD, PCB,
-Blender/OpenSCAD, install, GitHub, ordering, and other execution-heavy tasks. A
-clear failure or timeout escalates once to the next effort level.
+The worker loop chooses its effort separately and defaults to `gpt-5.5`.
+Queued backend tasks start at medium, use high for CAD/PCB/Blender/file/video
+tool execution, and use xhigh for full autonomous tasks such as installs,
+GitHub commit/push, publishing, ordering, or end-to-end execution. A clear
+model failure, timeout, or empty answer retries upward through allowed effort
+levels up to xhigh. Missing exact source files, login/CAPTCHA, and approval
+blockers do not trigger blind retries.
 
 Each group keeps two reusable Codex sessions by default: `fast` for immediate
 router replies and `worker` for backend work. The ignored registry is

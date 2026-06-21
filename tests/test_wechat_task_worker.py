@@ -36,6 +36,14 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(policy["sandbox"], "danger-full-access")
         self.assertEqual(policy["timeout_seconds"], 600)
 
+    def test_worker_policy_selects_xhigh_for_full_autonomous_tasks(self) -> None:
+        worker = load_worker()
+        policy = worker.choose_worker_policy({"request": "fully implement this WeChat automation, commit and push"})
+
+        self.assertEqual(policy["model"], "gpt-5.5")
+        self.assertEqual(policy["reasoning_effort"], "xhigh")
+        self.assertEqual(policy["timeout_seconds"], 1200)
+
     def test_worker_policy_uses_medium_for_literature_summary(self) -> None:
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "summarize this PDF paper"})
@@ -51,6 +59,82 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertIsNotNone(next_policy)
         self.assertEqual(next_policy["reasoning_effort"], "medium")
+
+    def test_worker_policy_escalates_to_xhigh_for_failed_high_result(self) -> None:
+        worker = load_worker()
+        next_policy = worker.escalated_policy(
+            {"model": "gpt-5.5", "reasoning_effort": "high", "sandbox": "danger-full-access", "timeout_seconds": 600},
+            "Worker failed: cannot complete the CAD export.",
+        )
+
+        self.assertIsNotNone(next_policy)
+        assert next_policy is not None
+        self.assertEqual(next_policy["model"], "gpt-5.5")
+        self.assertEqual(next_policy["reasoning_effort"], "xhigh")
+        self.assertEqual(next_policy["timeout_seconds"], 1200)
+
+    def test_worker_policy_does_not_use_spark_unless_allowed(self) -> None:
+        worker = load_worker()
+        original = worker.os.environ.get("WECHAT_WORKER_CODEX_MODEL")
+        original_allow = worker.os.environ.get("WECHAT_ALLOW_SPARK_WORKER")
+        try:
+            worker.os.environ["WECHAT_WORKER_CODEX_MODEL"] = "gpt-5.3-codex-spark"
+            worker.os.environ.pop("WECHAT_ALLOW_SPARK_WORKER", None)
+            self.assertEqual(worker.choose_worker_policy({"request": "summarize"}), {
+                "model": "gpt-5.5",
+                "reasoning_effort": "medium",
+                "sandbox": "danger-full-access",
+                "timeout_seconds": 300,
+            })
+            worker.os.environ["WECHAT_ALLOW_SPARK_WORKER"] = "1"
+            self.assertEqual(worker.worker_model(), "gpt-5.3-codex-spark")
+        finally:
+            if original is None:
+                worker.os.environ.pop("WECHAT_WORKER_CODEX_MODEL", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_CODEX_MODEL"] = original
+            if original_allow is None:
+                worker.os.environ.pop("WECHAT_ALLOW_SPARK_WORKER", None)
+            else:
+                worker.os.environ["WECHAT_ALLOW_SPARK_WORKER"] = original_allow
+
+    def test_worker_policy_does_not_escalate_missing_source_or_manual_blocker(self) -> None:
+        worker = load_worker()
+
+        self.assertIsNone(
+            worker.escalated_policy(
+                {"model": "gpt-5.5", "reasoning_effort": "high", "sandbox": "danger-full-access", "timeout_seconds": 600},
+                "Source-limited: please resend the exact file/source.",
+            )
+        )
+        self.assertIsNone(
+            worker.escalated_policy(
+                {"model": "gpt-5.5", "reasoning_effort": "high", "sandbox": "danger-full-access", "timeout_seconds": 600},
+                "This needs login/CAPTCHA, waiting for approval.",
+            )
+        )
+
+    def test_run_worker_codex_retries_until_xhigh_success(self) -> None:
+        worker = load_worker()
+        calls: list[str] = []
+        original = worker.run_worker_codex_once
+        try:
+            def fake_run_worker_codex_once(task: dict[str, object], policy: dict[str, object]) -> str:
+                calls.append(str(policy["reasoning_effort"]))
+                if policy["reasoning_effort"] == "xhigh":
+                    return "Finished the task with enough detail to be accepted by the worker pipeline."
+                return "Worker failed: cannot complete with current effort."
+
+            worker.run_worker_codex_once = fake_run_worker_codex_once
+            task = {"chat": "demo", "request": "summarize this PDF paper"}
+            result = worker.run_worker_codex(task)
+        finally:
+            worker.run_worker_codex_once = original
+
+        self.assertEqual(calls, ["medium", "high", "xhigh"])
+        self.assertIn("Finished the task", result)
+        self.assertEqual(task["worker_policy"]["reasoning_effort"], "xhigh")
+        self.assertEqual(len(task["worker_policy_attempts"]), 3)
 
     def test_worker_uses_group_worker_session_role(self) -> None:
         worker = load_worker()
