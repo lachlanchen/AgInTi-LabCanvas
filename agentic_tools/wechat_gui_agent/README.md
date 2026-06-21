@@ -363,6 +363,14 @@ For an explicit publish request, `--no-publish` is only a quality gate. After
 the MP4/ZIP is correct and no manual blocker appears, continue to exactly one
 real publish for the requested platforms and report the job ids/status.
 
+The worker has a deterministic fast path for exact WeChat video rows. When
+`autopublish-video --message-local-id` succeeds and the chat clearly asks to
+publish, the worker waits for the LazyEdit import, runs
+`scripts/lazyedit_publish.py` with the generated correction and metadata prompt
+files, and monitors the local/remote publish queues before falling back to the
+general Codex worker. Disable this path with
+`WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH=1` when testing.
+
 When the request comes from WeChat, keep the monitor's
 `Video publish/subtitle context bundle` as the correction prompt. It preserves
 the coalesced command, quoted message, same-chat media rows, recent context, and

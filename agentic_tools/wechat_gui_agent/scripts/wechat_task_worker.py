@@ -13,7 +13,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
+import urllib.error
+import urllib.request
 
 from wechat_codex_sessions import run_codex_session
 from wechat_mirror import DEFAULT_DB, record_event
@@ -22,6 +25,8 @@ from wechat_mirror import DEFAULT_DB, record_event
 ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 LAZYEDIT_PUBLISH_SKILL = ROOT / "agentic_tools" / "wechat_gui_agent" / "skills" / "lazyedit-publish-workflow" / "SKILL.md"
+LAZYEDIT_ROOT = Path(os.environ.get("LAZYEDIT_ROOT", "/home/lachlan/DiskMech/Projects/lazyedit"))
+LAZYEDIT_API_URL = os.environ.get("LAZYEDIT_API_URL", "http://127.0.0.1:18787").rstrip("/")
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 EFFORT_ORDER = ["low", "medium", "high"]
@@ -525,6 +530,8 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
     autopub = ((task.get("preflight") or {}).get("autopublish_video") if isinstance(task.get("preflight"), dict) else None)
     if not isinstance(autopub, dict):
         return None
+    if bool(autopub.get("ok")) and should_deterministic_video_publish(task):
+        return run_deterministic_lazyedit_publish(task, autopub)
     if bool(autopub.get("ok")):
         return None
     message_local_ids = autopub.get("message_local_ids")
@@ -542,6 +549,262 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
         "请重新发送原视频，或在 WeChat 里点开这条视频让客户端缓存完整 MP4；缓存到本地后我会继续保存到 Nutstore/AutoPublish 并走 LazyEdit 发布链路。"
     )
     return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
+
+
+def should_deterministic_video_publish(task: dict[str, Any]) -> bool:
+    if os.environ.get("WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH"):
+        return False
+    text = json.dumps(task, ensure_ascii=False).lower()
+    negative_markers = [
+        "no need to publish",
+        "do not publish",
+        "don't publish",
+        "dont publish",
+        "no publish",
+        "not publish",
+        "先不要发布",
+        "先別發布",
+        "不要发布",
+        "不要發布",
+        "不用发布",
+        "不用發布",
+        "暂不发布",
+        "暫不發布",
+    ]
+    if any(marker in text for marker in negative_markers):
+        return False
+    direct_markers = [
+        "publish it",
+        "publish this",
+        "publish the video",
+        "post it",
+        "post this",
+        "upload it",
+        "upload this",
+        "发布它",
+        "發布它",
+        "发布这个",
+        "發布這個",
+        "发布视频",
+        "發布影片",
+        "上传这个",
+        "上傳這個",
+        "sph",
+        "shipinhao",
+        "视频号",
+        "視頻號",
+        "youtube",
+        "y2b",
+        "ytb",
+        "instagram",
+    ]
+    return any(marker in text for marker in direct_markers) or bool(re.search(r"\b(?:sph|y2b|ytb|ins)\b", text))
+
+
+def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, Any]) -> str | None:
+    target_raw = str(autopub.get("target") or "")
+    if not target_raw:
+        return None
+    target = Path(target_raw)
+    if not target.is_file():
+        return json.dumps(
+            {
+                "message": f"视频已匹配但 AutoPublish 目标文件不存在：{target.name or target_raw}。我没有发布；请重新触发保存或重新发送视频。",
+                "files": [],
+                "confirmation": "",
+            },
+            ensure_ascii=False,
+        )
+    timeout = float(os.environ.get("WECHAT_WORKER_LAZYEDIT_IMPORT_TIMEOUT", "360"))
+    poll = float(os.environ.get("WECHAT_WORKER_LAZYEDIT_IMPORT_POLL_SECONDS", "5"))
+    video_id = wait_for_lazyedit_import(target, timeout=timeout, poll_seconds=poll)
+    if video_id is None:
+        return json.dumps(
+            {
+                "message": (
+                    f"视频已保存到 AutoPublish 文件夹：{target.name}，但 LazyEdit 在 {int(timeout)} 秒内还没有显示导入结果。"
+                    "我没有切换到旧视频；稍后会由队列继续或请再发“继续发布”。"
+                ),
+                "files": [],
+                "confirmation": "",
+            },
+            ensure_ascii=False,
+        )
+    platforms = detect_publish_platforms(task)
+    lazy_context = ((task.get("preflight") or {}).get("lazyedit_context") if isinstance(task.get("preflight"), dict) else {}) or {}
+    correction_prompt = str(lazy_context.get("correction_prompt_file") or "")
+    metadata_prompt = str(lazy_context.get("metadata_prompt_file") or "")
+    outcome = run_lazyedit_publish_command(
+        video_id=video_id,
+        platforms=platforms,
+        correction_prompt=correction_prompt,
+        metadata_prompt=metadata_prompt,
+    )
+    message = summarize_lazyedit_publish_outcome(video_id, platforms, target, outcome)
+    return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
+
+
+def wait_for_lazyedit_import(target: Path, *, timeout: float, poll_seconds: float) -> int | None:
+    deadline = time.monotonic() + max(0.0, timeout)
+    target_name = target.name
+    target_stem = target.stem
+    while True:
+        for video in lazyedit_videos():
+            file_path = str(video.get("file_path") or "")
+            title = str(video.get("title") or "")
+            if Path(file_path).name == target_name or title == target_stem or Path(file_path).stem == target_stem:
+                try:
+                    return int(video.get("id"))
+                except (TypeError, ValueError):
+                    return None
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(max(0.25, poll_seconds))
+
+
+def lazyedit_videos() -> list[dict[str, Any]]:
+    payload = lazyedit_api_get("/api/videos", timeout=20)
+    videos = payload.get("videos") if isinstance(payload, dict) else []
+    return [item for item in videos if isinstance(item, dict)]
+
+
+def lazyedit_api_get(path: str, *, timeout: float = 20) -> dict[str, Any]:
+    url = f"{LAZYEDIT_API_URL}{path}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            data = response.read().decode("utf-8", errors="replace")
+    except (OSError, urllib.error.URLError):
+        return {}
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def detect_publish_platforms(task: dict[str, Any]) -> list[str]:
+    text = json.dumps(task, ensure_ascii=False).lower()
+    platforms: list[str] = []
+    if any(marker in text for marker in ["shipinhao", "视频号", "視頻號"]) or re.search(r"\bsph\b", text):
+        platforms.append("shipinhao")
+    if "youtube" in text or re.search(r"\b(?:y2b|ytb)\b", text):
+        platforms.append("youtube")
+    if "instagram" in text or re.search(r"\bins\b", text):
+        platforms.append("instagram")
+    if not platforms:
+        platforms = ["shipinhao", "youtube", "instagram"]
+    return platforms
+
+
+def run_lazyedit_publish_command(
+    *,
+    video_id: int,
+    platforms: list[str],
+    correction_prompt: str,
+    metadata_prompt: str,
+) -> dict[str, Any]:
+    timeout = float(os.environ.get("WECHAT_WORKER_LAZYEDIT_PUBLISH_TIMEOUT", "10800"))
+    process_timeout = os.environ.get("WECHAT_WORKER_LAZYEDIT_PROCESS_TIMEOUT", "3600")
+    publish_timeout = os.environ.get("WECHAT_WORKER_LAZYEDIT_REMOTE_TIMEOUT", "7200")
+    command_parts = [
+        "source ~/miniconda3/etc/profile.d/conda.sh",
+        "conda activate lazyedit",
+        "python scripts/lazyedit_publish.py",
+        f"--video-id {video_id}",
+        "--use-current-settings",
+        f"--platforms {','.join(platforms)}",
+        "--correct-subtitles",
+        "--correction-source polished",
+        "--guided-monitor",
+        "--wait",
+        "--poll-seconds 10",
+        f"--process-timeout {process_timeout}",
+        f"--publish-timeout {publish_timeout}",
+        "--json",
+    ]
+    if correction_prompt:
+        command_parts.append(f"--correction-prompt-file {shell_quote(correction_prompt)}")
+    if metadata_prompt:
+        command_parts.append(f"--metadata-prompt-file {shell_quote(metadata_prompt)}")
+    command = ["bash", "-lc", " ".join(command_parts)]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=LAZYEDIT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {"ok": False, "status": "timeout", "stdout": (exc.stdout or "")[-4000:], "stderr": (exc.stderr or "")[-4000:]}
+    return {
+        "ok": proc.returncode == 0,
+        "status": "done" if proc.returncode == 0 else "failed",
+        "returncode": proc.returncode,
+        "stdout": proc.stdout[-8000:],
+        "stderr": proc.stderr[-4000:],
+        "payload": parse_last_json_object(proc.stdout),
+    }
+
+
+def shell_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def parse_last_json_object(text: str) -> dict[str, Any]:
+    stripped = text.strip()
+    if not stripped:
+        return {}
+    for start in [index for index, char in enumerate(stripped) if char == "{"][::-1]:
+        try:
+            parsed = json.loads(stripped[start:])
+        except json.JSONDecodeError:
+            continue
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def summarize_lazyedit_publish_outcome(video_id: int, platforms: list[str], target: Path, outcome: dict[str, Any]) -> str:
+    queue = lazyedit_api_get("/api/autopublish/queue", timeout=30)
+    jobs = queue.get("jobs") if isinstance(queue, dict) else []
+    matching = [
+        job for job in jobs
+        if isinstance(job, dict) and int_or_none(job.get("video_id")) == video_id
+    ]
+    latest = matching[0] if matching else {}
+    status = str(latest.get("status") or outcome.get("status") or ("done" if outcome.get("ok") else "failed"))
+    local_job_id = latest.get("id")
+    remote_job_id = latest.get("remote_job_id")
+    remote_status = latest.get("remote_status")
+    error = latest.get("error") or outcome.get("stderr") or ""
+    if outcome.get("ok") or status in {"queued", "running", "done"}:
+        pieces = [
+            "已自动完成 exact 视频保存、LazyEdit 处理/字幕修正并提交发布。",
+            f"video_id={video_id}",
+            f"platforms={','.join(platforms)}",
+            f"status={status}",
+        ]
+        if local_job_id:
+            pieces.append(f"job_id={local_job_id}")
+        if remote_job_id:
+            pieces.append(f"remote_job_id={remote_job_id}")
+        if remote_status:
+            pieces.append(f"remote={remote_status}")
+        pieces.append(f"source={target.name}")
+        return "；".join(pieces)
+    return (
+        "视频已严格按 exact source 保存，但 LazyEdit 发布没有完成。"
+        f" video_id={video_id}; platforms={','.join(platforms)}; source={target.name}; "
+        f"error={str(error)[:500]}"
+    )
+
+
+def int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def extract_video_local_ids_from_task(task: dict[str, Any]) -> list[int]:

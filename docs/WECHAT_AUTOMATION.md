@@ -508,6 +508,14 @@ the generated MP4/ZIP is inspected and no manual blocker appears, run exactly
 one real publish for the requested platforms and report the LazyEdit job id,
 remote job id, platform list, and final status.
 
+For exact WeChat video rows, the worker can now complete the publish path
+without another agent decision. If `autopublish-video --message-local-id`
+succeeds and the message clearly asks to publish, it waits for the LazyEdit
+import, runs `scripts/lazyedit_publish.py` with the generated correction and
+metadata prompt files, and monitors local/remote publish queues. Set
+`WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH=1` to force the older general
+worker-agent fallback during testing.
+
 ```bash
 curl -fsS http://127.0.0.1:18787/api/autopublish/queue | jq '.jobs[:8]'
 curl -fsS http://lazyingart:8081/publish/queue | jq '.jobs[:8]'

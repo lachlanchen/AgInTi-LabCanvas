@@ -208,6 +208,48 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("旧视频", payload["message"])
         self.assertEqual(payload["files"], [])
 
+    def test_exact_video_preflight_success_runs_deterministic_lazyedit_publish(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "exact_video_COMPLETED.mp4"
+            target.write_bytes(b"video")
+            task = {
+                "request": "Could you publish it to sph Ins y2b?",
+                "preflight": {
+                    "autopublish_video": {"ok": True, "target": str(target)},
+                    "lazyedit_context": {
+                        "correction_prompt_file": str(Path(tmp) / "correction.md"),
+                        "metadata_prompt_file": str(Path(tmp) / "metadata.md"),
+                    },
+                },
+            }
+            calls: list[dict[str, object]] = []
+
+            def fake_publish(**kwargs: object) -> dict[str, object]:
+                calls.append(kwargs)
+                return {"ok": True, "status": "done", "payload": {}}
+
+            with mock.patch.object(worker, "wait_for_lazyedit_import", return_value=393):
+                with mock.patch.object(worker, "run_lazyedit_publish_command", side_effect=fake_publish):
+                    with mock.patch.object(worker, "lazyedit_api_get", return_value={"jobs": [{"video_id": 393, "id": 203, "status": "running", "remote_job_id": "job-1"}]}):
+                        raw = worker.deterministic_preflight_result(task)
+
+        self.assertIsNotNone(raw)
+        payload = json.loads(raw or "{}")
+        self.assertIn("video_id=393", payload["message"])
+        self.assertIn("remote_job_id=job-1", payload["message"])
+        self.assertEqual(calls[0]["platforms"], ["shipinhao", "youtube", "instagram"])
+        self.assertEqual(calls[0]["video_id"], 393)
+
+    def test_save_to_publish_folder_without_publish_does_not_auto_publish(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "Save this video to the publish folder but no need to publish yet",
+            "preflight": {"autopublish_video": {"ok": True, "target": "/tmp/exact_video_COMPLETED.mp4"}},
+        }
+
+        self.assertFalse(worker.should_deterministic_video_publish(task))
+
     def test_worker_result_skips_private_artifacts(self) -> None:
         worker = load_worker()
         private_file = worker.PRIVATE / "unit-test-private-render.png"
