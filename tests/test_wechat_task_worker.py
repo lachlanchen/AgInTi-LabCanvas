@@ -555,12 +555,27 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
             worker.send_file = fail_file
             task: dict[str, object] = {}
-            errors = worker.send_result_with_retries(
-                {"message": "done", "confirmation": "", "files": ["/tmp/preview.png"]},
-                "🍓我的设备",
-                Path("/tmp/no-targets.json"),
-                task=task,
-            )
+            with tempfile.TemporaryDirectory() as tmp:
+                targets = Path(tmp) / "targets.json"
+                targets.write_text(
+                    json.dumps(
+                        {
+                            "🍓我的设备": {
+                                "name": "🍓我的设备",
+                                "query": "我的设备",
+                                "expected_title": "🍓我的设备",
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+                errors = worker.send_result_with_retries(
+                    {"message": "done", "confirmation": "", "files": ["/tmp/preview.png"]},
+                    "🍓我的设备",
+                    targets,
+                    task=task,
+                )
         finally:
             worker.send_message = original_message
             worker.send_file = original_file
