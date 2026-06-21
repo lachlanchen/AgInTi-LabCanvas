@@ -44,6 +44,10 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     doctor.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     doctor.set_defaults(func=cmd_doctor)
 
+    control = nested.add_parser("control-map", help="Show safe WeChat control surfaces, guardrails, and reference projects.")
+    control.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    control.set_defaults(func=cmd_control_map)
+
     init_config = nested.add_parser("init-config", help="Write ignored private config templates.")
     init_config.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     init_config.add_argument("--chat", default="wechat-chat")
@@ -319,6 +323,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     payload = {"ok": not missing and all(scripts.values()), "commands": checks, "scripts": scripts, "missing": missing}
     print_payload(payload, args.json, "wechat doctor: " + ("ok" if payload["ok"] else "missing " + ", ".join(missing)))
     return 0 if payload["ok"] else 1
+
+
+def cmd_control_map(args: argparse.Namespace) -> int:
+    payload = control_map_payload()
+    print_payload(payload, args.json, f"wechat control-map: {payload['score']['label']} {payload['score']['ready_layers']}/{payload['score']['total_layers']} layers ready")
+    return 0
 
 
 def cmd_init_config(args: argparse.Namespace) -> int:
@@ -1182,6 +1192,167 @@ def has_send_title_guard(raw: Any) -> bool:
     if not isinstance(raw, dict):
         return False
     return bool(str(raw.get("expected_title") or raw.get("title") or raw.get("name") or "").strip())
+
+
+def control_map_payload() -> dict[str, Any]:
+    status = status_payload()
+    health = direct_monitor_health()
+    layer_specs = [
+        {
+            "id": "isolated_gui",
+            "name": "Isolated official GUI control",
+            "goal": "Drive the real Linux WeChat client through Xvfb/noVNC, xdotool, xclip, screenshots, OCR, and title guards.",
+            "ready": status["desktop"]["status"] == "ready",
+            "commands": [
+                "labcanvas wechat desktop start",
+                "labcanvas wechat send --message 'ping'",
+                "labcanvas wechat browser-assist --url https://example.com --json",
+            ],
+            "failure_mode": "If OCR/title guard is ambiguous, fail closed and ask for human confirmation.",
+        },
+        {
+            "id": "direct_receive",
+            "name": "Direct receive and state mirror",
+            "goal": "Poll the user's own local message cache/decrypted mirror, coalesce bursts, ignore self messages, and maintain per-chat state.",
+            "ready": bool(health.get("ok")) and int(health.get("group_count") or 0) > 0,
+            "commands": [
+                "labcanvas wechat health --json",
+                "labcanvas wechat hold start",
+            ],
+            "failure_mode": "If a chat config is stale or duplicated, do not route messages until health is green.",
+        },
+        {
+            "id": "media_sync",
+            "name": "Attachment and media resolver",
+            "goal": "Copy same-chat files/images/videos from xwechat_files into ignored private storage and bind them to source local_id rows.",
+            "ready": bool(status["mirror"].get("exists")) and len(status.get("media_sources") or []) > 0,
+            "commands": [
+                "labcanvas wechat media-sync --chat '<chat>' --auto-source --since-minutes 60",
+                "labcanvas wechat autopublish-video --chat '<chat>' --message-local-id 14 --sync --fetch-gui --json",
+            ],
+            "failure_mode": "If exact media is missing, ask for resend/opening the source; never borrow nearby media.",
+        },
+        {
+            "id": "agent_queue",
+            "name": "Agent queue and deterministic workers",
+            "goal": "Route simple replies fast, queue slow work, atomically claim tasks, reuse per-chat sessions, and run deterministic exact-video publishing.",
+            "ready": status["sessions"]["supervisor"]["running"] and status["queue"]["exists"],
+            "commands": [
+                "labcanvas wechat queue --json",
+                "labcanvas wechat worker once --send",
+            ],
+            "failure_mode": "If a worker crashes, stale in-progress claims are reclaimed; irreversible actions still require explicit approval.",
+        },
+        {
+            "id": "observability",
+            "name": "Event log, screenshots, and replay evidence",
+            "goal": "Record mirrored messages, outbound sends, task state, GUI screenshots, and queue transitions without committing private data.",
+            "ready": bool(status["mirror"].get("exists")) and int(status["mirror"].get("event_count") or 0) > 0,
+            "commands": [
+                "labcanvas wechat status --json",
+                "labcanvas wechat memory summary --chat '<chat>' --json",
+            ],
+            "failure_mode": "Logs are local/private; public docs must use placeholders and summaries only.",
+        },
+        {
+            "id": "official_or_bridge_apis",
+            "name": "Optional bridge APIs",
+            "goal": "Evaluate Wechaty, MCP, ACP, Docker GUI, or platform-specific accessibility bridges when they are more stable than screen control.",
+            "ready": False,
+            "commands": [
+                "Review the reference_projects list before adding a new backend.",
+            ],
+            "failure_mode": "Use only consented accounts and maintained projects; keep the GUI path as the fallback.",
+        },
+    ]
+    blocked = [
+        {
+            "id": "packet_mitm",
+            "name": "Wireshark/TLS MITM/private protocol replay",
+            "reason": "Unreliable against encrypted apps and not acceptable for automation that could expose credentials, session tokens, or private traffic.",
+            "allowed_alternative": "Use GUI state, local owned-data mirrors, official APIs, or human-assisted browser sessions.",
+        },
+        {
+            "id": "session_or_key_theft",
+            "name": "Session extraction, credential theft, or bypassing login/CAPTCHA",
+            "reason": "This crosses from automation into unauthorized access. The tool must ask the user to log in or confirm manually.",
+            "allowed_alternative": "Open noVNC/browser-assist and wait for the account owner.",
+        },
+        {
+            "id": "cross_chat_media_guessing",
+            "name": "Using nearby files or another chat's media",
+            "reason": "It causes crosstalk and wrong actions.",
+            "allowed_alternative": "Exact local_id/server_id/media-token matching with fail-closed behavior.",
+        },
+    ]
+    ready_layers = sum(1 for layer in layer_specs if layer["ready"])
+    return {
+        "ok": True,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "score": {
+            "ready_layers": ready_layers,
+            "total_layers": len(layer_specs),
+            "label": "high-control" if ready_layers >= 5 else "partial-control" if ready_layers >= 3 else "bootstrap-needed",
+        },
+        "principle": "Make WeChat observable and controllable through owned, consented surfaces; do not bypass encryption, authentication, or platform abuse protections.",
+        "layers": layer_specs,
+        "blocked_methods": blocked,
+        "reference_projects": wechat_reference_projects(),
+        "next_hardening_steps": [
+            "Add per-action screenshot before/after diff assertions for every GUI sender action.",
+            "Add a UI state machine for compose box, attachment modal, chat search, and group settings pages.",
+            "Keep one send lock across all GUI actions and expose lock owner/age in health output.",
+            "Add media manifest rows keyed by chat_name, local_id, server_id, md5, size, and path.",
+            "Add optional bridge backends behind capability flags, never as a replacement for the safe GUI fallback.",
+        ],
+    }
+
+
+def wechat_reference_projects() -> list[dict[str, str]]:
+    return [
+        {
+            "name": "wechaty/wechaty",
+            "url": "https://github.com/wechaty/wechaty",
+            "use": "Cross-platform conversational RPA SDK; useful as a design reference for bot event APIs and adapters.",
+            "risk": "May depend on puppet/provider availability and login constraints.",
+        },
+        {
+            "name": "BiboyQG/WeChat-MCP",
+            "url": "https://github.com/BiboyQG/WeChat-MCP",
+            "use": "MCP/accessibility/screen-capture pattern for exposing WeChat actions as agent tools.",
+            "risk": "Platform-specific; keep title guards and GUI fallback.",
+        },
+        {
+            "name": "thisnick/agent-wechat",
+            "url": "https://github.com/thisnick/agent-wechat",
+            "use": "Dockerized RPA controller pattern with API/CLI surfaces.",
+            "risk": "Container GUI reliability and account login state still need supervision.",
+        },
+        {
+            "name": "huohuoer/wechat-cli",
+            "url": "https://github.com/huohuoer/wechat-cli",
+            "use": "Local WeChat data query pattern for LLM integration.",
+            "risk": "Use only with the owner's local data and private configs.",
+        },
+        {
+            "name": "ylytdeng/wechat-decrypt",
+            "url": "https://github.com/ylytdeng/wechat-decrypt",
+            "use": "Owned-data decrypt/monitor backend pattern already used as an optional receive backend.",
+            "risk": "Sensitive private data; never commit keys, DBs, or raw chat logs.",
+        },
+        {
+            "name": "formulahendry/wechat-acp",
+            "url": "https://github.com/formulahendry/wechat-acp",
+            "use": "ACP bridge pattern for forwarding messages to agent runtimes.",
+            "risk": "Validate protocol, auth, and account-safety assumptions before integration.",
+        },
+        {
+            "name": "leeguooooo/wechat-use",
+            "url": "https://github.com/leeguooooo/wechat-use",
+            "use": "macOS background send/agent skill pattern; useful if adding a macOS backend.",
+            "risk": "Not a Linux replacement; treat as separate backend.",
+        },
+    ]
 
 
 def discover_media_sources() -> list[Path]:

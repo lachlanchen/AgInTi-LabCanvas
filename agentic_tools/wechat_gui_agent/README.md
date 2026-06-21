@@ -51,6 +51,7 @@ self account ID. Then start the full supervisor:
 labcanvas wechat hold start
 labcanvas wechat stack start --web-port 19474
 labcanvas wechat status
+labcanvas wechat control-map --json
 tmux attach -t labcanvas-wechat
 ```
 
@@ -93,6 +94,7 @@ visible chat is already correct. Use the health check after edits:
 
 ```bash
 labcanvas wechat health --json
+labcanvas wechat control-map --json
 ```
 
 It reports each configured group, whether its monitor state has caught up to
@@ -100,6 +102,14 @@ the decrypted DB, and whether the self-message and title-guard protections are
 enabled. It also shows poll timing, Codex model/reasoning settings, and the
 last loop timing metrics. Private chatroom IDs, wxids, DB paths, and table
 names are omitted.
+
+`control-map` is the implementation guide for robust control. It lists the
+supported surfaces: isolated GUI automation, direct receive/mirror state,
+same-chat media sync, deterministic workers, event/screenshot observability, and
+optional bridge APIs. It also lists blocked approaches: packet/TLS MITM,
+private-protocol replay, session extraction, credential theft, login/CAPTCHA
+bypass, and cross-chat media guessing. Use Wireshark-style tooling only for
+coarse connectivity diagnostics, never for message content or credentials.
 
 For organizer-style groups, enable the private memory sidecar in that group's
 direct config:

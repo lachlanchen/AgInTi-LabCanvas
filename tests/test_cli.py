@@ -136,6 +136,21 @@ class CliTests(unittest.TestCase):
         self.assertIn("codex_sessions", payload)
         self.assertIn("novnc_url", payload)
 
+    def test_wechat_control_map_json_lists_safe_and_blocked_surfaces(self):
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            code = main(["wechat", "control-map", "--json"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertIn("layers", payload)
+        self.assertIn("reference_projects", payload)
+        self.assertTrue(any(layer["id"] == "isolated_gui" for layer in payload["layers"]))
+        self.assertTrue(any(item["id"] == "packet_mitm" for item in payload["blocked_methods"]))
+        self.assertTrue(any(project["name"] == "wechaty/wechaty" for project in payload["reference_projects"]))
+
     def test_wechat_queue_json_reads_private_queue_shape(self):
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "queue.jsonl"

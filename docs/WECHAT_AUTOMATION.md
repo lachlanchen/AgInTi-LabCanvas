@@ -23,6 +23,7 @@ The reusable command surface is available from source or the npm package:
 ```bash
 labcanvas wechat status
 labcanvas wechat doctor
+labcanvas wechat control-map --json
 labcanvas wechat init-config --chat "example group"
 labcanvas wechat desktop start
 labcanvas wechat browser-assist --url "https://example.com" --json
@@ -104,7 +105,24 @@ Inspect the private organizer without opening raw chat tables:
 labcanvas wechat memory init
 labcanvas wechat memory summary --chat "写作 外语 挣钱"
 labcanvas wechat health --json
+labcanvas wechat control-map --json
 ```
+
+## Robust Control Model
+
+Treat WeChat as controllable only through owned, consented surfaces. The
+supported layers are: isolated official GUI control, direct local receive/mirror
+state, same-chat media sync, deterministic worker queues, event/screenshot
+observability, and optional bridge APIs. Use `labcanvas wechat control-map
+--json` to inspect which layers are live and which GitHub projects are useful
+references before adding a new backend.
+
+Do not use packet capture, TLS interception, private-protocol replay, session
+extraction, credential theft, or login/CAPTCHA bypass as automation methods.
+Wireshark-style tooling is acceptable only for coarse local diagnostics such as
+connectivity and timing, never for recovering message contents or credentials.
+When a page requires login, CAPTCHA, consent, or a manual platform click, open
+the isolated noVNC/browser-assist session and wait for the account owner.
 
 `stack start` keeps both the WeChat supervisor and the LabCanvas web control
 panel alive. It starts `labcanvas-wechat` plus a web tmux session named
