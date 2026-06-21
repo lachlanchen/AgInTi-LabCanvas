@@ -35,6 +35,13 @@ http://127.0.0.1:6107/vnc_lite.html?host=127.0.0.1&port=6107&autoconnect=1&resiz
 
 The Linux WeChat client is single-instance. If it is already running on another
 desktop, close that instance before launching it on the virtual display.
+The wrapper keeps the isolated X11 desktop awake with `xset`, so noVNC should
+not blank during long-running monitoring. Apply or refresh this without
+restarting WeChat:
+
+```bash
+labcanvas wechat desktop keep-awake
+```
 
 ## Persistent ChatOps
 

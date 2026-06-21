@@ -138,6 +138,15 @@ port is busy, the web app moves to the next free port and prints the actual URL.
 `labcanvas wechat stack restart` also preserves the WeChat GUI; use
 `stack restart-all` only for an intentional full restart.
 
+The isolated desktop starts an X11 keep-awake daemon by default. It disables
+screensaver blanking, disables DPMS when available, and does not inject keyboard
+or mouse events. To refresh it on the live WeChat display without restarting the
+app, run:
+
+```bash
+labcanvas wechat desktop keep-awake
+```
+
 Install user launchers:
 
 ```bash

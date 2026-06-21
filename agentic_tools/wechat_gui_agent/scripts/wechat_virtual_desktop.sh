@@ -6,6 +6,7 @@ DISPLAY_ID="${WECHAT_DISPLAY:-:97}"
 VNC_PORT="${WECHAT_VNC_PORT:-5917}"
 NOVNC_PORT="${WECHAT_NOVNC_PORT:-6107}"
 LOG_DIR="$ROOT/output/virtual_desktop/$(date +%F)"
+KEEP_AWAKE_INTERVAL="${WECHAT_KEEP_AWAKE_INTERVAL:-55}"
 
 "$ROOT/agentic_tools/virtual_desktop/launch_virtual_desktop.sh" \
   --name wechat \
@@ -13,6 +14,7 @@ LOG_DIR="$ROOT/output/virtual_desktop/$(date +%F)"
   --screen 1920x1080x24 \
   --vnc-port "$VNC_PORT" \
   --novnc-port "$NOVNC_PORT" \
+  --keep-awake-interval "$KEEP_AWAKE_INTERVAL" \
   --log-dir "$LOG_DIR" \
   -- /bin/true >/tmp/wechat_virtual_desktop_launch.log
 

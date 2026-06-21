@@ -58,8 +58,9 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     init_config.add_argument("--force", action="store_true")
     init_config.set_defaults(func=cmd_init_config)
 
-    desktop = nested.add_parser("desktop", help="Start or inspect the isolated WeChat desktop.")
-    desktop.add_argument("action", choices=["start", "status"], nargs="?", default="status")
+    desktop = nested.add_parser("desktop", help="Start, inspect, or keep awake the isolated WeChat desktop.")
+    desktop.add_argument("action", choices=["start", "status", "keep-awake"], nargs="?", default="status")
+    desktop.add_argument("--interval", type=int, default=55, help="Keep-awake refresh interval in seconds.")
     desktop.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     desktop.set_defaults(func=cmd_desktop)
 
@@ -386,15 +387,42 @@ def cmd_init_config(args: argparse.Namespace) -> int:
 def cmd_desktop(args: argparse.Namespace) -> int:
     if args.action == "start":
         proc = run_command([str(SCRIPTS / "wechat_virtual_desktop.sh")], capture=True)
-        if args.json:
+        if getattr(args, "json", False):
             print(json.dumps({"ok": proc.returncode == 0, "stdout": proc.stdout, "stderr": proc.stderr, "desktop": desktop_status()}, indent=2))
         else:
             print(proc.stdout, end="")
             if proc.stderr:
                 print(proc.stderr, file=sys.stderr, end="")
         return proc.returncode
+    if args.action == "keep-awake":
+        root = PACKAGE_ROOT
+        log_dir = root / "output" / "virtual_desktop" / datetime.now().strftime("%F")
+        pid_file = root / "output" / "virtual_desktop" / "wechat_97_keep_awake.pid"
+        log_file = log_dir / "wechat_keep_awake.log"
+        proc = run_command(
+            [
+                str(root / "agentic_tools" / "virtual_desktop" / "start_keep_awake.sh"),
+                "--display",
+                DEFAULT_DISPLAY,
+                "--interval",
+                str(args.interval),
+                "--pid-file",
+                str(pid_file),
+                "--log-file",
+                str(log_file),
+            ],
+            capture=True,
+        )
+        payload = {"ok": proc.returncode == 0, "stdout": proc.stdout, "stderr": proc.stderr, "desktop": desktop_status()}
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print(proc.stdout, end="")
+            if proc.stderr:
+                print(proc.stderr, file=sys.stderr, end="")
+        return proc.returncode
     payload = desktop_status()
-    print_payload(payload, args.json, f"wechat desktop: {payload['status']} {payload.get('novnc_url', '')}")
+    print_payload(payload, getattr(args, "json", False), f"wechat desktop: {payload['status']} {payload.get('novnc_url', '')}")
     return 0
 
 

@@ -6,6 +6,8 @@ that do not behave well inside an existing remote desktop. It uses:
 - `Xvfb` for a dedicated virtual display.
 - `x11vnc` bound to localhost for VNC access.
 - `websockify`/noVNC for browser access.
+- `xset` keep-awake settings so the isolated X11 display does not blank or
+  enter DPMS sleep while long-running GUI automation is active.
 - Optional app launch on that display.
 
 ## LabVIEW Example
@@ -54,3 +56,12 @@ LabVIEW IDE and noVNC server running.
 Use this launcher for KiCad, JLCEDA, LabVIEW, Blender GUI, FreeCAD, or any GUI
 app that needs a stable remote X11 display. Keep ports localhost-only unless you
 intentionally add SSH tunneling or another authenticated access layer.
+
+The launcher starts a small keep-awake daemon by default. It repeatedly applies
+`xset s off` and `xset s noblank`, disables DPMS when the X server exposes it,
+and resets the X screensaver timer without sending keyboard or mouse events to
+the application. Disable it only for debugging:
+
+```bash
+agentic_tools/virtual_desktop/launch_virtual_desktop.sh --no-keep-awake -- ...
+```

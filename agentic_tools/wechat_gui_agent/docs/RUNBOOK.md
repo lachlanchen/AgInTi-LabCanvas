@@ -21,6 +21,13 @@ labcanvas wechat stack start --web-port 19474
 
 This starts the isolated WeChat desktop, the direct monitor, the worker, media
 sync, and the LabCanvas web panel in tmux-managed sessions.
+The desktop launcher disables X11 blanking and disables DPMS when available. If
+noVNC looks idle or blank but WeChat should stay logged in, refresh the
+keep-awake daemon without restarting WeChat:
+
+```bash
+labcanvas wechat desktop keep-awake
+```
 
 ## 2. Prepare Targets
 

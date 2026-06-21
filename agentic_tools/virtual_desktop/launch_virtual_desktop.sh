@@ -7,9 +7,12 @@ SCREEN="1920x1080x24"
 VNC_PORT="5908"
 NOVNC_PORT="6099"
 LOG_DIR="output/virtual_desktop/$(date +%F)"
+KEEP_AWAKE="${VIRTUAL_DESKTOP_KEEP_AWAKE:-1}"
+KEEP_AWAKE_INTERVAL="${VIRTUAL_DESKTOP_KEEP_AWAKE_INTERVAL:-55}"
 OPEN_BROWSER="0"
 APP_MATCH=""
 APP_COMMAND=()
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 usage() {
   cat <<'EOF'
@@ -24,6 +27,9 @@ Options:
   --novnc-port PORT    localhost noVNC/websockify port. Default: 6099
   --log-dir DIR        Log directory. Default: output/virtual_desktop/YYYY-MM-DD
   --app-match TEXT     Do not relaunch app if a matching process is already running.
+  --no-keep-awake      Do not disable X11 blanking/DPMS.
+  --keep-awake-interval SECONDS
+                       Refresh X11 keep-awake state on this interval. Default: 55
   --open-browser       Open Chromium/Chrome app window pointed at noVNC.
 
 Example:
@@ -41,6 +47,8 @@ while [[ $# -gt 0 ]]; do
     --novnc-port) NOVNC_PORT="$2"; shift 2 ;;
     --log-dir) LOG_DIR="$2"; shift 2 ;;
     --app-match) APP_MATCH="$2"; shift 2 ;;
+    --no-keep-awake) KEEP_AWAKE="0"; shift ;;
+    --keep-awake-interval) KEEP_AWAKE_INTERVAL="$2"; shift 2 ;;
     --open-browser) OPEN_BROWSER="1"; shift ;;
     --help|-h) usage; exit 0 ;;
     --) shift; APP_COMMAND=("$@"); break ;;
@@ -86,6 +94,18 @@ if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1; then
   exit 4
 fi
 
+if [[ "$KEEP_AWAKE" == "1" ]]; then
+  state_dir="$(dirname "$LOG_DIR")"
+  mkdir -p "$state_dir"
+  keep_awake_id="${DISPLAY_ID#:}"
+  keep_awake_id="${keep_awake_id//[^A-Za-z0-9_.-]/_}"
+  "$SCRIPT_DIR/start_keep_awake.sh" \
+    --display "$DISPLAY_ID" \
+    --interval "$KEEP_AWAKE_INTERVAL" \
+    --pid-file "$state_dir/${NAME}_${keep_awake_id}_keep_awake.pid" \
+    --log-file "$LOG_DIR/${NAME}_keep_awake.log" || true
+fi
+
 if ! ss -ltn | awk '{print $4}' | grep -Eq "(^|:)${VNC_PORT}$"; then
   echo "Starting x11vnc on 127.0.0.1:$VNC_PORT for $DISPLAY_ID"
   x11vnc -display "$DISPLAY_ID" -localhost -nopw -forever -shared -rfbport "$VNC_PORT" \
@@ -129,6 +149,7 @@ echo "  display: $DISPLAY_ID"
 echo "  screen:  $(DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo | awk -F: '/dimensions|depth of root window/ {gsub(/^ +/, "", $2); print $1 ":" $2}' | paste -sd ', ' -)"
 echo "  vnc:     127.0.0.1:$VNC_PORT"
 echo "  noVNC:   $NOVNC_URL"
+echo "  awake:   $KEEP_AWAKE"
 echo "  logs:    $LOG_DIR"
 echo
 echo "Windows:"
