@@ -80,7 +80,7 @@ WeChat, which may require phone confirmation.
 | Script | Main use |
 | --- | --- |
 | `wechat_virtual_desktop.sh` | Launch WeChat on display `:97`, VNC, noVNC, and X11 keep-awake. |
-| `wechat_gui_send.py` | Search/open target chat, OCR-check title, paste/send text, record screenshots. |
+| `wechat_gui_send.py` | Search/open target chat, verify native popup title or OCR title, paste/send text, record screenshots. |
 | `wechat_chatops_bridge.py` | Legacy visible-chat OCR monitor and direct visible message/file send path. |
 | `wechat_direct_backend.py` | Install/probe/decrypt wrapper for optional `ylytdeng/wechat-decrypt`. |
 | `wechat_decrypt_refresh_loop.sh` | Locked incremental refresh loop for decrypted DB cache. |
@@ -364,7 +364,9 @@ Then inspect fresh logs under `output/wechat_gui_agent/YYYY-MM-DD/`.
 | noVNC is blank | Run `labcanvas wechat desktop keep-awake`; check `labcanvas wechat status`. |
 | Login expired | Stop sends and ask the user to approve login in noVNC or on phone. |
 | Wrong search row opens | Add `fallback_clicks` or use a verified `open_click`; keep OCR title guard enabled. |
-| Title OCR fails | Add stable `expected_title_aliases`, increase title wait, inspect title crop screenshots. |
+| Title OCR fails | Prefer native popup title matching; otherwise add stable `expected_title_aliases`, increase title wait, inspect title crop screenshots. |
+| Backend done but reply failed | Fix the sender/title guard, then run `python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --resend <task-id>` so work is not rerun. |
+| Text artifacts trigger file picker issues | Keep `.md`/`.txt`/`.json` as saved paths in the message; use `WECHAT_WORKER_SEND_FILES=0` to disable attachment sends or `WECHAT_WORKER_REQUIRE_FILE_SEND=1` for strict delivery. |
 | Task replies to wrong chat | Treat as a bug; check route contract, send target, state path, and title guard logs. |
 | File missing | Run same-chat media sync and verify exact local/server ids before retrying. |
 | Worker hangs | Check queue status, worker log, and Codex session registry; stale claims are reclaimable. |

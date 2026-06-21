@@ -262,9 +262,12 @@ def send_one(
         )
         return {"target": target.name, "status": "dry-run-opened", "screenshot_prefix": shot_prefix}
 
+    compose_window = window_from_guard(guard) or window
+    focus(env, compose_window)
+
     # Click the message composer. This is deliberately biased toward the lower
     # right pane so it does not send from the search box.
-    click(env, window.x + int(window.width * 0.66), window.y + window.height - 80)
+    click(env, compose_window.x + int(compose_window.width * 0.66), compose_window.y + compose_window.height - 80)
     time.sleep(pause)
     hotkey(env, "ctrl+a")
     time.sleep(0.2)
@@ -313,18 +316,26 @@ def open_target(
     prefer_current: bool = False,
 ) -> dict[str, Any]:
     def verify(label: str) -> dict[str, Any]:
-        time.sleep(max(pause, float(os.environ.get("WECHAT_INITIAL_TITLE_WAIT", "4.5"))))
-        deadline = time.monotonic() + max(max(pause, 3.2), float(os.environ.get("WECHAT_TITLE_RETRY_SECONDS", "8")))
+        time.sleep(max(pause, float(os.environ.get("WECHAT_INITIAL_TITLE_WAIT", "1.2"))))
+        deadline = time.monotonic() + max(max(pause, 1.8), float(os.environ.get("WECHAT_TITLE_RETRY_SECONDS", "3.5")))
         last_guard: dict[str, Any] = {"ok": False, "method": label, "ocr_text": ""}
         while True:
             opened = out_dir / f"{shot_prefix}-opened.png"
             screenshot(env, opened)
             if skip_title_guard:
-                return {"ok": True, "method": label, "ocr_text": ""}
-            guard = verify_opened_title(env, window, opened, target, out_dir / f"{shot_prefix}-title.png", label)
-            if guard["ok"]:
-                return guard
-            last_guard = guard
+                compose_window = focused_window(env) or window
+                return {
+                    "ok": True,
+                    "method": label,
+                    "ocr_text": "",
+                    "compose_window": window_to_dict(compose_window),
+                }
+            for candidate in title_window_candidates(env, window):
+                suffix = "title" if candidate.wid == window.wid else f"title-{safe_name(candidate.wid)}"
+                guard = verify_opened_title(env, candidate, opened, target, out_dir / f"{shot_prefix}-{suffix}.png", label)
+                if guard["ok"]:
+                    return guard
+                last_guard = guard
             if time.monotonic() >= deadline:
                 return last_guard
             time.sleep(max(pause, 1.0))
@@ -342,12 +353,11 @@ def open_target(
     screenshot(env, out_dir / f"{shot_prefix}-search.png")
     attempts: list[dict[str, Any]] = []
     for label, point in target_click_candidates(target):
-        click(env, window.x + point[0], window.y + point[1])
-        guard = verify(label)
+        double_click(env, window.x + point[0], window.y + point[1])
+        guard = verify(f"{label}_double")
         attempts.append(guard)
         if guard["ok"]:
             return guard
-        close_secondary_wechat_windows(env, window)
         search_for_target(env, window, target.query, pause)
 
     key(env, "Return")
@@ -358,17 +368,29 @@ def open_target(
 
 
 def target_click_candidates(target: TargetSpec) -> list[tuple[str, tuple[int, int]]]:
-    """Return explicit click candidates while preserving the first configured point."""
+    """Return result click candidates while preserving configured points first."""
     candidates: list[tuple[str, tuple[int, int]]] = []
     seen: set[tuple[int, int]] = set()
-    if target.result_click:
-        candidates.append(("result_click", target.result_click))
-        seen.add(target.result_click)
-    for index, point in enumerate(target.fallback_clicks, start=1):
+
+    def add(label: str, point: tuple[int, int]) -> None:
         if point in seen:
-            continue
-        candidates.append((f"fallback_click_{index}", point))
+            return
+        candidates.append((label, point))
         seen.add(point)
+
+    if target.result_click:
+        x, y = target.result_click
+        add("result_click", target.result_click)
+        for label, point in (
+            ("result_click_row_center", (x, max(70, y - 26))),
+            ("result_click_title_offset", (x + 35, max(70, y - 26))),
+            ("result_click_preview_offset", (x + 35, y)),
+        ):
+            add(label, point)
+    for index, point in enumerate(target.fallback_clicks, start=1):
+        add(f"fallback_click_{index}", point)
+    for index, point in enumerate(((165, 100), (205, 100), (165, 125), (205, 125), (165, 155)), start=1):
+        add(f"default_search_row_{index}", point)
     return candidates
 
 
@@ -389,42 +411,142 @@ def verify_opened_title(
     crop_path: Path,
     method: str,
 ) -> dict[str, Any]:
-    left = window.x + 360
-    top = window.y
-    width = max(300, window.width - 360)
-    height = 92
-    run(
-        [
-            "convert",
-            str(screenshot_path),
-            "-crop",
-            f"{width}x{height}+{left}+{top}",
-            "-colorspace",
-            "Gray",
-            "-resize",
-            "200%",
-            str(crop_path),
-        ],
-        env=env,
-    )
-    proc = run(["tesseract", str(crop_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "6"], env=env, check=False)
-    ocr_text = proc.stdout.strip()
     expected_titles = [target.expected_title, *target.expected_title_aliases]
     expected = [normalize_title(item) for item in expected_titles if normalize_title(item)]
-    observed = normalize_title(ocr_text)
-    ok = any(item in observed for item in expected)
+    window_title = run(["xdotool", "getwindowname", window.wid], env=env, check=False).stdout.strip()
+    window_title_ok = bool(window_title) and any(item in normalize_title(window_title) for item in expected)
+    if window_title_ok:
+        return {
+            "ok": True,
+            "method": method,
+            "expected_title": target.expected_title,
+            "expected_title_aliases": list(target.expected_title_aliases),
+            "ocr_text": window_title,
+            "title_crop": "",
+            "title_crops": [],
+            "window_title": window_title,
+            "compose_window": window_to_dict(window),
+        }
+    ocr_texts: list[str] = []
+    crop_paths: list[str] = []
+    ok = False
+    for region in title_crop_regions(window):
+        region_crop = crop_path.with_name(f"{crop_path.stem}-{region['label']}{crop_path.suffix}")
+        run(
+            [
+                "convert",
+                str(screenshot_path),
+                "-crop",
+                f"{region['width']}x{region['height']}+{region['left']}+{region['top']}",
+                "-colorspace",
+                "Gray",
+                "-resize",
+                "200%",
+                str(region_crop),
+            ],
+            env=env,
+        )
+        proc = run(["tesseract", str(region_crop), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "6"], env=env, check=False)
+        text = proc.stdout.strip()
+        ocr_texts.append(text)
+        crop_paths.append(str(region_crop))
+        observed = normalize_title(text)
+        if any(item in observed for item in expected):
+            ok = True
+            crop_path = region_crop
+            break
     return {
         "ok": ok,
         "method": method,
         "expected_title": target.expected_title,
         "expected_title_aliases": list(target.expected_title_aliases),
-        "ocr_text": ocr_text,
+        "ocr_text": "\n".join(text for text in ocr_texts if text).strip(),
         "title_crop": str(crop_path),
+        "title_crops": crop_paths,
+        "window_title": window_title,
+        "compose_window": window_to_dict(window),
     }
 
 
 def normalize_title(text: str) -> str:
     return "".join(ch.lower() for ch in str(text or "") if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def title_crop_regions(window: Window) -> list[dict[str, int | str]]:
+    """OCR regions that avoid the left chat list but cover main and popup chats."""
+    regions: list[dict[str, int | str]] = []
+    if window.width < 760:
+        regions.append(
+            {
+                "label": "popup_header",
+                "left": window.x + 18,
+                "top": window.y + 35,
+                "width": max(260, window.width - 70),
+                "height": 78,
+            }
+        )
+    else:
+        regions.append(
+            {
+                "label": "main_right_header",
+                "left": window.x + 360,
+                "top": window.y + 32,
+                "width": max(300, window.width - 390),
+                "height": 78,
+            }
+        )
+        regions.append(
+            {
+                "label": "main_right_header_high",
+                "left": window.x + 360,
+                "top": window.y,
+                "width": max(300, window.width - 390),
+                "height": 96,
+            }
+        )
+    return regions
+
+
+def window_to_dict(window: Window) -> dict[str, int | str]:
+    return {
+        "wid": window.wid,
+        "x": window.x,
+        "y": window.y,
+        "width": window.width,
+        "height": window.height,
+    }
+
+
+def window_from_guard(guard: dict[str, Any]) -> Window | None:
+    raw = guard.get("compose_window")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return Window(
+            wid=str(raw.get("wid") or ""),
+            x=int(raw["x"]),
+            y=int(raw["y"]),
+            width=int(raw["width"]),
+            height=int(raw["height"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def title_window_candidates(env: dict[str, str], main: Window) -> list[Window]:
+    candidates: list[Window] = []
+    focused = focused_window(env)
+    if focused and focused.width >= 480 and focused.height >= 420:
+        candidates.append(focused)
+    candidates.append(main)
+    seen: set[str] = set()
+    unique: list[Window] = []
+    for candidate in candidates:
+        if candidate.wid in seen:
+            continue
+        unique.append(candidate)
+        seen.add(candidate.wid)
+    return unique
 
 
 def find_wechat_window(env: dict[str, str]) -> Window | None:
@@ -448,6 +570,31 @@ def find_wechat_window(env: dict[str, str]) -> Window | None:
     return max(candidates, key=lambda item: item.width * item.height)
 
 
+def focused_window(env: dict[str, str]) -> Window | None:
+    geom = run(["xdotool", "getwindowfocus", "getwindowgeometry", "--shell"], env=env, check=False).stdout
+    values: dict[str, int | str] = {}
+    for line in geom.splitlines():
+        if "=" not in line:
+            continue
+        key_name, raw = line.split("=", 1)
+        if key_name == "WINDOW":
+            values[key_name] = raw
+            continue
+        try:
+            values[key_name] = int(raw)
+        except ValueError:
+            pass
+    if {"WINDOW", "X", "Y", "WIDTH", "HEIGHT"} <= values.keys():
+        return Window(
+            str(values["WINDOW"]),
+            int(values["X"]),
+            int(values["Y"]),
+            int(values["WIDTH"]),
+            int(values["HEIGHT"]),
+        )
+    return None
+
+
 def close_secondary_wechat_windows(env: dict[str, str], main: Window) -> None:
     ids = run(["xdotool", "search", "--onlyvisible", "--class", "wechat"], env=env, check=False).stdout.split()
     main_area = main.width * main.height
@@ -465,7 +612,7 @@ def close_secondary_wechat_windows(env: dict[str, str], main: Window) -> None:
             except ValueError:
                 pass
         area = values.get("WIDTH", 0) * values.get("HEIGHT", 0)
-        if 20_000 <= area < main_area:
+        if 20_000 <= area < min(main_area, int(main_area * 0.25)):
             run(["xdotool", "windowclose", wid], env=env, check=False)
     time.sleep(0.5)
 
@@ -478,6 +625,10 @@ def focus(env: dict[str, str], window: Window) -> None:
 
 def click(env: dict[str, str], x: int, y: int) -> None:
     run(["xdotool", "mousemove", str(x), str(y), "click", "1"], env=env)
+
+
+def double_click(env: dict[str, str], x: int, y: int) -> None:
+    run(["xdotool", "mousemove", str(x), str(y), "click", "--repeat", "2", "--delay", "80", "1"], env=env)
 
 
 def key(env: dict[str, str], name: str) -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import importlib.util
 import json
 from pathlib import Path
@@ -242,6 +244,44 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn(str(mp4.resolve()), result["files"])
         self.assertIn(str(audio.resolve()), result["files"])
 
+    def test_resend_task_result_uses_stored_result_without_rerunning_worker(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+        original = worker.send_result_with_retries
+        try:
+            def fake_send_result_with_retries(result, target_chat, send_targets, *, task=None):
+                calls.append({"result": result, "target_chat": target_chat, "send_targets": send_targets, "task": task})
+                return []
+
+            worker.send_result_with_retries = fake_send_result_with_retries
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-resend",
+                            "chat": "🍓我的设备",
+                            "status": "send_failed",
+                            "result": {"message": "done", "confirmation": "", "files": []},
+                        }
+                    ],
+                )
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = worker.resend_task_result(queue, "task-resend", "fallback-chat", send_targets=Path(tmp) / "targets.json")
+                saved = worker.find_task(queue, "task-resend")
+        finally:
+            worker.send_result_with_retries = original
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[0]["target_chat"], "🍓我的设备")
+        self.assertEqual(calls[0]["result"]["message"], "done")
+        self.assertIsNotNone(saved)
+        assert saved is not None
+        self.assertEqual(saved["status"], "done")
+        self.assertIn("resent_at", saved)
+
     def test_video_publish_preflight_writes_context_and_uses_exact_message_id(self) -> None:
         worker = load_worker()
         task = {
@@ -283,6 +323,34 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("--message-local-id", calls[0])
         self.assertIn("14", calls[0])
         self.assertIn("--fetch-gui", calls[0])
+
+    def test_lalachan_story_request_ignores_old_video_publish_context_for_preflight(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-story",
+            "chat": "🍓我的设备",
+            "request": (
+                "Handle this WeChat request as backend work.\n\n"
+                "Current coalesced request:\n"
+                "Generate today’s LALACHAN story from the prompt: They go to the restaurant and find many gold.\n\n"
+                "Recent history:\n"
+                "陈苗: <msg><videomsg md5=\"bea815fa6ed81bbd5da77ac6895c5fd9\" /></msg>\n"
+                "陈苗: Could you publish it?"
+            ),
+            "source": {"local_id": 19, "sender_display": "陈苗"},
+            "context": [
+                {"local_id": 14, "sender_display": "陈苗", "content": '<msg><videomsg md5="bea815fa6ed81bbd5da77ac6895c5fd9" /></msg>'},
+                {"local_id": 16, "sender_display": "陈苗", "content": "Could you publish it?"},
+                {"local_id": 19, "sender_display": "陈苗", "content": "Could you generate today lalachan story? They go to the restaurant and find many gold."},
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            preflight = worker.prepare_worker_preflight(task, Path(tmp))
+
+        self.assertEqual(preflight, {})
+        self.assertFalse(worker.is_video_publish_task(task))
+        self.assertFalse(worker.should_preflight_autopublish(task))
 
     def test_exact_video_preflight_failure_returns_deterministic_fail_closed_result(self) -> None:
         worker = load_worker()
@@ -385,6 +453,63 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(len(calls), 2)
+
+    def test_send_result_notes_markdown_files_without_gui_file_send(self) -> None:
+        worker = load_worker()
+        messages: list[str] = []
+        files: list[Path] = []
+        original_message = worker.send_message
+        original_file = worker.send_file
+        try:
+            worker.send_message = lambda message, *_args, **_kwargs: messages.append(message)
+            worker.send_file = lambda file_path, *_args, **_kwargs: files.append(Path(file_path))
+            task: dict[str, object] = {}
+            worker.send_result_once(
+                {
+                    "message": "done",
+                    "confirmation": "",
+                    "files": ["/tmp/story.md", "/tmp/preview.png"],
+                },
+                "🍓我的设备",
+                Path("/tmp/no-targets.json"),
+                target={"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备"},
+                task=task,
+            )
+        finally:
+            worker.send_message = original_message
+            worker.send_file = original_file
+
+        self.assertEqual(files, [Path("/tmp/preview.png")])
+        self.assertEqual(task["unsent_saved_files"], ["/tmp/story.md"])
+        self.assertIn("Saved files:", messages[0])
+        self.assertIn("/tmp/story.md", messages[0])
+
+    def test_optional_file_send_failure_does_not_retry_whole_message(self) -> None:
+        worker = load_worker()
+        sent_messages: list[str] = []
+        original_message = worker.send_message
+        original_file = worker.send_file
+        try:
+            worker.send_message = lambda message, *_args, **_kwargs: sent_messages.append(message)
+
+            def fail_file(*_args, **_kwargs):
+                raise RuntimeError("file picker unavailable")
+
+            worker.send_file = fail_file
+            task: dict[str, object] = {}
+            errors = worker.send_result_with_retries(
+                {"message": "done", "confirmation": "", "files": ["/tmp/preview.png"]},
+                "🍓我的设备",
+                Path("/tmp/no-targets.json"),
+                task=task,
+            )
+        finally:
+            worker.send_message = original_message
+            worker.send_file = original_file
+
+        self.assertEqual(errors, [])
+        self.assertEqual(sent_messages, ["done"])
+        self.assertIn("file_send_errors", task)
 
     def test_worker_route_guard_rejects_cross_chat_send(self) -> None:
         worker = load_worker()

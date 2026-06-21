@@ -72,6 +72,21 @@ OUTBOUND_SUFFIXES = {
     ".kicad_sch",
     ".blend",
 }
+DEFAULT_AUTO_SEND_SUFFIXES = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".pdf",
+    ".zip",
+    ".mp4",
+    ".mov",
+    ".m4v",
+    ".webm",
+    ".mp3",
+    ".m4a",
+    ".wav",
+}
 DEFAULT_MAX_OUTBOUND_BYTES = 100 * 1024 * 1024
 
 
@@ -85,6 +100,7 @@ def main() -> int:
     parser.add_argument("--poll-seconds", type=float, default=5.0)
     parser.add_argument("--send", action="store_true", help="Send worker result back to WeChat.")
     parser.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS, help="Ignored JSON mapping chat names to GUI target specs.")
+    parser.add_argument("--resend", help="Send an existing task result by task id without rerunning the worker.")
     args = parser.parse_args()
 
     if args.enqueue:
@@ -99,6 +115,9 @@ def main() -> int:
         print(json.dumps(task, ensure_ascii=False, indent=2))
         return 0
 
+    if args.resend:
+        return resend_task_result(args.queue, args.resend, args.chat, send_targets=args.send_targets)
+
     if args.once or args.loop:
         while True:
             processed = process_one(args.queue, args.chat, send=args.send, send_targets=args.send_targets, log_idle=not args.loop)
@@ -109,7 +128,28 @@ def main() -> int:
 
                 time.sleep(args.poll_seconds)
         return 0
-    raise SystemExit("Use --enqueue, --once, or --loop")
+    raise SystemExit("Use --enqueue, --once, --loop, or --resend")
+
+
+def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Path = DEFAULT_SEND_TARGETS) -> int:
+    task = find_task(queue, task_id)
+    if not task:
+        raise SystemExit(f"No task found with id {task_id}")
+    result = task.get("result")
+    if not isinstance(result, dict):
+        raise SystemExit(f"Task {task_id} has no stored result to resend")
+    target_chat = str(task.get("chat") or chat)
+    errors = send_result_with_retries(result, target_chat, send_targets, task=task)
+    if errors:
+        task["status"] = "send_failed"
+        task["send_errors"] = errors
+    else:
+        task["status"] = "waiting_confirmation" if result.get("confirmation") else "done"
+        task.pop("send_errors", None)
+    task["resent_at"] = datetime.now().isoformat(timespec="seconds")
+    rewrite_task(queue, task)
+    print(json.dumps(task, ensure_ascii=False, indent=2))
+    return 1 if errors else 0
 
 
 def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
@@ -195,14 +235,58 @@ def send_result_once(
     send_targets: Path,
     *,
     task: dict[str, Any] | None = None,
+    target: dict[str, Any] | None = None,
 ) -> None:
-    target = guarded_send_target(target_chat, send_targets, task=task)
-    if result["message"]:
-        send_message(result["message"], target_chat, send_targets, target=target)
+    target = target if target is not None else guarded_send_target(target_chat, send_targets, task=task)
+    files_to_send, files_to_note = partition_result_files_for_wechat(result.get("files") or [])
+    if task is not None and files_to_note:
+        task["unsent_saved_files"] = [str(path) for path in files_to_note]
+    message = message_with_saved_file_note(str(result.get("message") or ""), files_to_note)
+    if message:
+        send_message(message, target_chat, send_targets, target=target)
     if result["confirmation"]:
         send_message(result["confirmation"], target_chat, send_targets, target=target)
-    for file_path in result["files"]:
-        send_file(Path(file_path), target_chat, send_targets, target=target)
+    file_errors = []
+    for file_path in files_to_send:
+        try:
+            send_file(file_path, target_chat, send_targets, target=target)
+        except Exception as exc:
+            error = {"path": str(file_path), "error": f"{type(exc).__name__}: {str(exc)[:500]}"}
+            file_errors.append(error)
+            if os.environ.get("WECHAT_WORKER_REQUIRE_FILE_SEND", "0") == "1":
+                raise
+    if file_errors and task is not None:
+        task.setdefault("file_send_errors", []).extend(file_errors)
+
+
+def partition_result_files_for_wechat(files: list[str]) -> tuple[list[Path], list[Path]]:
+    if os.environ.get("WECHAT_WORKER_SEND_FILES", "1") != "1":
+        return [], [Path(path) for path in files]
+    raw_suffixes = os.environ.get("WECHAT_WORKER_AUTO_SEND_SUFFIXES")
+    suffixes = DEFAULT_AUTO_SEND_SUFFIXES
+    if raw_suffixes:
+        suffixes = {item.strip().lower() for item in raw_suffixes.split(",") if item.strip()}
+    send: list[Path] = []
+    note: list[Path] = []
+    for raw in files:
+        path = Path(raw)
+        if path.suffix.lower() in suffixes:
+            send.append(path)
+        else:
+            note.append(path)
+    return send, note
+
+
+def message_with_saved_file_note(message: str, files: list[Path]) -> str:
+    if not files:
+        return message
+    lines = [message.strip()] if message.strip() else []
+    lines.append("Saved files:")
+    for path in files[:8]:
+        lines.append(f"- {path}")
+    if len(files) > 8:
+        lines.append(f"- ... {len(files) - 8} more")
+    return "\n".join(lines)
 
 
 def append_jsonl(path: Path, item: dict[str, Any]) -> None:
@@ -215,6 +299,13 @@ def read_tasks(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def find_task(path: Path, task_id: str) -> dict[str, Any] | None:
+    for task in read_tasks(path):
+        if str(task.get("id") or "") == str(task_id):
+            return task
+    return None
 
 
 def next_pending(path: Path) -> dict[str, Any] | None:
@@ -416,12 +507,38 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     return preflight
 
 
+def task_focus_text(task: dict[str, Any]) -> str:
+    request = str(task.get("request") or "")
+    focused = request
+    match = re.search(
+        r"Current coalesced request:\n(?P<body>.*?)(?:\n\nRecent history:|\n\nSame-chat reference media/context rows:|\Z)",
+        request,
+        flags=re.DOTALL,
+    )
+    if match:
+        focused = match.group("body").strip()
+
+    source_local_id = int_or_none((task.get("source") or {}).get("local_id")) if isinstance(task.get("source"), dict) else None
+    source_text = ""
+    if source_local_id is not None:
+        for row in task.get("context") or []:
+            if not isinstance(row, dict):
+                continue
+            if int_or_none(row.get("local_id")) == source_local_id:
+                source_text = str(row.get("content") or "").strip()
+                break
+
+    parts = []
+    for value in (focused, source_text):
+        text = collapse_context_text(value, max_len=3000)
+        if text and text not in parts:
+            parts.append(text)
+    return "\n".join(parts)
+
+
 def is_video_publish_task(task: dict[str, Any]) -> bool:
-    text = json.dumps(task, ensure_ascii=False).lower()
+    text = task_focus_text(task).lower()
     markers = [
-        "video",
-        "视频",
-        "videomsg",
         "publish",
         "post",
         "upload",
@@ -442,7 +559,7 @@ def is_video_publish_task(task: dict[str, Any]) -> bool:
 
 
 def should_preflight_autopublish(task: dict[str, Any]) -> bool:
-    text = json.dumps(task, ensure_ascii=False).lower()
+    text = task_focus_text(task).lower()
     markers = [
         "nutstore",
         "autopublish",

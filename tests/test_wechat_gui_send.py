@@ -37,14 +37,15 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertEqual(target.expected_title_aliases, ("Echo Mind",))
         self.assertTrue(target.allow_title_guard_fallback)
         self.assertEqual(target.fallback_clicks, ((165, 100), (240, 335), (165, 170)))
-        self.assertEqual(
-            module.target_click_candidates(target),
-            [
-                ("result_click", (165, 100)),
-                ("fallback_click_2", (240, 335)),
-                ("fallback_click_3", (165, 170)),
-            ],
-        )
+        candidates = module.target_click_candidates(target)
+        self.assertEqual(candidates[:4], [
+            ("result_click", (165, 100)),
+            ("result_click_row_center", (165, 74)),
+            ("result_click_title_offset", (200, 74)),
+            ("result_click_preview_offset", (200, 100)),
+        ])
+        self.assertIn(("fallback_click_2", (240, 335)), candidates)
+        self.assertIn(("fallback_click_3", (165, 170)), candidates)
 
     def test_title_guard_does_not_accept_full_page_left_list_match(self):
         module = load_wechat_gui_send()
@@ -70,7 +71,7 @@ class WeChatGuiSendTests(unittest.TestCase):
             module.run = original_run
 
         self.assertFalse(result["ok"])
-        self.assertEqual(sum(1 for call in calls if call[0] == "tesseract"), 1)
+        self.assertEqual(sum(1 for call in calls if call[0] == "tesseract"), 2)
 
     def test_title_guard_accepts_configured_ocr_alias(self):
         module = load_wechat_gui_send()
@@ -99,6 +100,76 @@ class WeChatGuiSendTests(unittest.TestCase):
             module.run = original_run
 
         self.assertTrue(result["ok"])
+        self.assertEqual(result["compose_window"]["width"], 1000)
+
+    def test_title_guard_accepts_popup_chat_window(self):
+        module = load_wechat_gui_send()
+        original_run = module.run
+        crops = []
+        try:
+            def fake_run(command, *, env, check=True):
+                if command[0] == "convert":
+                    crops.append(command[3])
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                if command[0] == "tesseract":
+                    return subprocess.CompletedProcess(command, 0, "🍓我的设备 (4)", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            result = module.verify_opened_title(
+                {},
+                module.Window("popup", 649, 206, 623, 666),
+                Path("/tmp/screen.png"),
+                module.TargetSpec(
+                    name="🍓我的设备",
+                    query="我的设备",
+                    expected_title="🍓我的设备",
+                    expected_title_aliases=("我的设备",),
+                ),
+                Path("/tmp/title.png"),
+                "result_click_double",
+            )
+        finally:
+            module.run = original_run
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["compose_window"]["wid"], "popup")
+        self.assertTrue(crops)
+        self.assertIn("+667+241", crops[0])
+
+    def test_title_guard_prefers_native_window_title(self):
+        module = load_wechat_gui_send()
+        original_run = module.run
+        calls = []
+        try:
+            def fake_run(command, *, env, check=True):
+                calls.append(command)
+                if command[:2] == ["xdotool", "getwindowname"]:
+                    return subprocess.CompletedProcess(command, 0, "🍓我的设备\n", "")
+                if command[0] == "tesseract":
+                    return subprocess.CompletedProcess(command, 0, "bad ocr", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            result = module.verify_opened_title(
+                {},
+                module.Window("popup", 649, 206, 623, 666),
+                Path("/tmp/screen.png"),
+                module.TargetSpec(
+                    name="🍓我的设备",
+                    query="我的设备",
+                    expected_title="🍓我的设备",
+                    expected_title_aliases=("我的设备",),
+                ),
+                Path("/tmp/title.png"),
+                "result_click_double",
+            )
+        finally:
+            module.run = original_run
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["window_title"], "🍓我的设备")
+        self.assertFalse(any(call[0] == "tesseract" for call in calls))
 
     def test_relaxed_title_guard_does_not_allow_live_send_by_default(self):
         module = load_wechat_gui_send()
