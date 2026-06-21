@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -105,6 +106,34 @@ class WeChatAutoPublishVideoTests(unittest.TestCase):
             self.assertEqual(payload["status"], "dry-run")
             self.assertEqual(payload["target_name"], "field_test_COMPLETED.mov")
             self.assertFalse((dest / "field_test_COMPLETED.mov").exists())
+
+    def test_exact_message_candidates_use_message_local_id_match(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "exact-message.mp4"
+            video.write_bytes(b"video")
+            message = wechat_autopublish_video.VideoMessage(
+                chat_name="🍓我的设备",
+                local_id=14,
+                create_time=int(time.time()),
+                stems=("exact-message",),
+                sizes=(video.stat().st_size,),
+            )
+            with mock.patch.object(wechat_autopublish_video, "recent_video_messages", return_value=[message]) as recent:
+                with mock.patch.object(wechat_autopublish_video, "matching_video_files", return_value=[video]) as matching:
+                    candidates = wechat_autopublish_video.exact_message_candidates(
+                        chats=["🍓我的设备"],
+                        since_minutes=720,
+                        message_local_ids=[14],
+                    )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].path, video.resolve())
+        self.assertEqual(candidates[0].matched_by, "message-local-id:14")
+        recent.assert_called_once()
+        matching.assert_called_once()
 
 
 def create_media_db(path: Path, source: Path, *, chat: str) -> None:

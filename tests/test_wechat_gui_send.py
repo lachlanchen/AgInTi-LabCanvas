@@ -28,12 +28,14 @@ class WeChatGuiSendTests(unittest.TestCase):
                 "query": "EchoMind",
                 "expected_title": "EchoMind",
                 "expected_title_aliases": ["Echo Mind"],
+                "allow_title_guard_fallback": True,
                 "result_click": [165, 100],
                 "fallback_clicks": [[165, 100], [240, 335], [165, 170]],
             }
         )
 
         self.assertEqual(target.expected_title_aliases, ("Echo Mind",))
+        self.assertTrue(target.allow_title_guard_fallback)
         self.assertEqual(target.fallback_clicks, ((165, 100), (240, 335), (165, 170)))
         self.assertEqual(
             module.target_click_candidates(target),

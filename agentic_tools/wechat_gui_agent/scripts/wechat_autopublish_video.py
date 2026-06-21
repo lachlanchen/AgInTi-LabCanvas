@@ -55,6 +55,7 @@ def main() -> int:
     parser.add_argument("--dest", type=Path, default=DEFAULT_AUTOPUBLISH_DIR)
     parser.add_argument("--title", default="", help="Output basename. _COMPLETED is appended if missing.")
     parser.add_argument("--match-token", action="append", default=[], help="Filter mirror rows by token in path/metadata. Repeatable.")
+    parser.add_argument("--message-local-id", action="append", type=int, default=[], help="Use an exact WeChat video message local_id instead of the newest mirrored video. Repeatable.")
     parser.add_argument("--since-minutes", type=float, default=180, help="Only use mirror rows updated or modified recently. Default: 180.")
     parser.add_argument("--limit", type=int, default=10, help="Candidate count for --list. Default: 10.")
     parser.add_argument("--sync", action="store_true", help="Run WeChat media-sync before selecting the video.")
@@ -78,6 +79,33 @@ def main() -> int:
 
     if args.source:
         candidates = [candidate_from_source(args.source, args.chat[0] if args.chat else "manual")]
+    elif args.message_local_id:
+        candidates = exact_message_candidates(
+            chats=args.chat,
+            since_minutes=args.since_minutes,
+            message_local_ids=args.message_local_id,
+        )
+        if not candidates and args.fetch_gui and not args.dry_run:
+            fetch_payload = fetch_latest_video_via_gui(
+                chats=args.chat,
+                since_minutes=args.since_minutes,
+                display=args.display,
+                timeout=args.fetch_timeout,
+                video_click=parse_click(args.video_click) or (510, 280),
+                message_local_ids=args.message_local_id,
+            )
+            if fetch_payload.get("ok") and fetch_payload.get("path"):
+                candidates = [candidate_from_source(Path(str(fetch_payload["path"])), str(fetch_payload.get("chat") or (args.chat[0] if args.chat else "manual")))]
+            if fetch_payload.get("ok"):
+                for chat in args.chat or [str(fetch_payload.get("chat") or "")]:
+                    if chat:
+                        run_media_sync(chat, args.since_minutes, auto_source=not args.no_auto_source)
+            if not candidates:
+                candidates = exact_message_candidates(
+                    chats=args.chat,
+                    since_minutes=args.since_minutes,
+                    message_local_ids=args.message_local_id,
+                )
     else:
         candidates = find_video_candidates(
             db_path=args.db,
@@ -112,7 +140,7 @@ def main() -> int:
         return 0
 
     if not candidates:
-        recent_messages = recent_video_message_summary(args.chat, args.since_minutes)
+        recent_messages = recent_video_message_summary(args.chat, args.since_minutes, message_local_ids=args.message_local_id)
         payload = {
             "ok": False,
             "error": "no matching mirrored video found",
@@ -131,6 +159,32 @@ def main() -> int:
     )
     print_payload(result, args.json, f"{result['status']}: {result['target_name']}")
     return 0 if result["ok"] else 1
+
+
+def exact_message_candidates(*, chats: list[str], since_minutes: float, message_local_ids: list[int]) -> list[VideoCandidate]:
+    messages = recent_video_messages(chats, since_minutes, message_local_ids=message_local_ids)
+    candidates: list[VideoCandidate] = []
+    for message in messages:
+        for path in matching_video_files(message, since_minutes=since_minutes, started_at=0):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            candidates.append(
+                VideoCandidate(
+                    media_id=0,
+                    chat_name=message.chat_name,
+                    path=path.resolve(),
+                    suffix=path.suffix.lower(),
+                    size_bytes=stat.st_size,
+                    source_mtime=stat.st_mtime,
+                    updated_at=datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+                    status="message-match",
+                    matched_by=f"message-local-id:{message.local_id}",
+                )
+            )
+    candidates.sort(key=lambda item: item.source_mtime, reverse=True)
+    return candidates
 
 
 def run_media_sync(chat: str, since_minutes: float, *, auto_source: bool) -> None:
@@ -262,14 +316,15 @@ def fetch_latest_video_via_gui(
     display: str,
     timeout: float,
     video_click: tuple[int, int],
+    message_local_ids: list[int] | None = None,
 ) -> dict:
-    messages = recent_video_messages(chats, since_minutes)
+    messages = recent_video_messages(chats, since_minutes, message_local_ids=message_local_ids)
     if not messages:
         return {"ok": False, "error": "no recent video message"}
     message = messages[0]
     existing = matching_video_files(message, since_minutes=since_minutes, started_at=0)
     if existing:
-        return {"ok": True, "chat": message.chat_name, "status": "already-cached", "name": existing[0].name}
+        return {"ok": True, "chat": message.chat_name, "status": "already-cached", "name": existing[0].name, "path": str(existing[0])}
     start = time.time()
     try:
         open_chat_and_click_video(message.chat_name, display=display, video_click=video_click)
@@ -279,12 +334,12 @@ def fetch_latest_video_via_gui(
     while time.monotonic() < deadline:
         matches = matching_video_files(message, since_minutes=since_minutes, started_at=start)
         if matches:
-            return {"ok": True, "chat": message.chat_name, "status": "fetched", "name": matches[0].name, "bytes": matches[0].stat().st_size}
+            return {"ok": True, "chat": message.chat_name, "status": "fetched", "name": matches[0].name, "bytes": matches[0].stat().st_size, "path": str(matches[0])}
         time.sleep(1.0)
     return {"ok": False, "chat": message.chat_name, "error": "video cache did not appear before timeout"}
 
 
-def recent_video_messages(chats: list[str], since_minutes: float) -> list[VideoMessage]:
+def recent_video_messages(chats: list[str], since_minutes: float, *, message_local_ids: list[int] | None = None) -> list[VideoMessage]:
     private = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
     db_path = private / "wechat_decrypt" / "decrypted" / "message" / "message_0.db"
     if not db_path.exists():
@@ -305,15 +360,20 @@ def recent_video_messages(chats: list[str], since_minutes: float) -> list[VideoM
             if not table.replace("_", "").isalnum():
                 continue
             try:
+                local_id_filter = ""
+                params: list[object] = [cutoff]
+                if message_local_ids:
+                    local_id_filter = " AND local_id IN ({})".format(",".join("?" for _ in message_local_ids))
+                    params.extend(int(item) for item in message_local_ids)
                 rows = conn.execute(
                     f"""
                     SELECT local_id, create_time, message_content, source, packed_info_data
                     FROM {table}
-                    WHERE create_time >= ? AND (local_type & 4294967295) = 43
+                    WHERE create_time >= ? AND (local_type & 4294967295) = 43{local_id_filter}
                     ORDER BY create_time DESC
                     LIMIT 3
                     """,
-                    (cutoff,),
+                    params,
                 ).fetchall()
             except sqlite3.Error:
                 continue
@@ -443,11 +503,34 @@ def find_wechat_window(env: dict[str, str]) -> tuple[str, int, int, int, int] | 
 
 
 def run(command: list[str], *, env: dict[str, str] | None = None, check: bool = True, input: bytes | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(command, env=env, input=input, text=False if input is not None else True, capture_output=True, check=check)
+    try:
+        return subprocess.run(
+            command,
+            env=env,
+            input=input,
+            text=False if input is not None else True,
+            capture_output=True,
+            check=check,
+            timeout=float(os.environ.get("WECHAT_GUI_COMMAND_TIMEOUT", "8")),
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode(errors="ignore") if isinstance(exc.stderr, bytes) else str(exc.stderr or "")
+        stdout = exc.stdout.decode(errors="ignore") if isinstance(exc.stdout, bytes) else str(exc.stdout or "")
+        detail = (stderr or stdout or str(exc)).strip()
+        raise RuntimeError(f"{' '.join(command)} failed: {detail[:500]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"{' '.join(command)} timed out after {exc.timeout}s") from exc
 
 
 def focus(env: dict[str, str], wid: str) -> None:
-    run(["xdotool", "windowactivate", "--sync", wid], env=env)
+    proc = run(["xdotool", "windowactivate", "--sync", wid], env=env, check=False)
+    if proc.returncode == 0:
+        return
+    proc = run(["xdotool", "windowfocus", wid], env=env, check=False)
+    if proc.returncode != 0:
+        stderr = proc.stderr if isinstance(proc.stderr, str) else proc.stderr.decode(errors="ignore")
+        raise RuntimeError(f"Could not focus WeChat window {wid}: {stderr.strip()[:500]}")
+    time.sleep(0.2)
 
 
 def click(env: dict[str, str], x: int, y: int) -> None:
@@ -459,10 +542,36 @@ def key(env: dict[str, str], keys: str) -> None:
 
 
 def paste_text(env: dict[str, str], text: str) -> None:
-    proc = subprocess.run(["xclip", "-selection", "clipboard"], input=text, text=True, env=env, capture_output=True)
-    if proc.returncode != 0:
-        raise RuntimeError("xclip failed while preparing WeChat search text")
+    timeout = float(os.environ.get("WECHAT_CLIPBOARD_TIMEOUT", "6"))
+    try:
+        proc = subprocess.Popen(
+            ["xclip", "-selection", "clipboard", "-loops", "1"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"xclip failed to start: {exc}") from exc
+    assert proc.stdin is not None
+    proc.stdin.write(text)
+    proc.stdin.close()
+    time.sleep(0.15)
     key(env, "ctrl+v")
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        return
+    stdout = proc.stdout.read() if proc.stdout else ""
+    stderr = proc.stderr.read() if proc.stderr else ""
+    if proc.returncode not in (0, None):
+        raise RuntimeError(f"xclip failed while preparing WeChat search text: {(stderr or stdout or '').strip()[:500]}")
 
 
 def parse_click(raw: Any) -> tuple[int, int] | None:
@@ -483,7 +592,7 @@ def add_unique(items: list[Any], value: Any) -> None:
         items.append(value)
 
 
-def recent_video_message_summary(chats: list[str], since_minutes: float) -> list[dict]:
+def recent_video_message_summary(chats: list[str], since_minutes: float, message_local_ids: list[int] | None = None) -> list[dict]:
     private = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
     db_path = private / "wechat_decrypt" / "decrypted" / "message" / "message_0.db"
     if not db_path.exists():
@@ -504,13 +613,18 @@ def recent_video_message_summary(chats: list[str], since_minutes: float) -> list
             if not table.replace("_", "").isalnum():
                 continue
             try:
+                local_id_filter = ""
+                params: list[object] = [cutoff]
+                if message_local_ids:
+                    local_id_filter = " AND local_id IN ({})".format(",".join("?" for _ in message_local_ids))
+                    params.extend(int(item) for item in message_local_ids)
                 row = conn.execute(
                     f"""
                     SELECT COUNT(*), MAX(create_time)
                     FROM {table}
-                    WHERE create_time >= ? AND (local_type & 4294967295) = 43
+                    WHERE create_time >= ? AND (local_type & 4294967295) = 43{local_id_filter}
                     """,
-                    (cutoff,),
+                    params,
                 ).fetchone()
             except sqlite3.Error:
                 continue

@@ -43,6 +43,7 @@ class TargetSpec:
     query: str
     expected_title: str
     expected_title_aliases: tuple[str, ...] = ()
+    allow_title_guard_fallback: bool = False
     result_click: tuple[int, int] | None = None
     fallback_clicks: tuple[tuple[int, int], ...] = ()
     open_click: tuple[int, int] | None = None
@@ -162,6 +163,7 @@ def target_from_raw(raw: Any) -> TargetSpec:
         query=query,
         expected_title=expected_title or name,
         expected_title_aliases=expected_title_aliases,
+        allow_title_guard_fallback=bool(raw.get("allow_title_guard_fallback") or raw.get("relaxed_title_guard")),
         result_click=point_from_raw(raw.get("result_click")),
         fallback_clicks=points_from_raw(raw.get("fallback_clicks")),
         open_click=point_from_raw(raw.get("open_click")),
@@ -220,16 +222,29 @@ def send_one(
     guard = open_target(env, window, target, pause, out_dir, shot_prefix, skip_title_guard, prefer_current)
     opened_path = out_dir / f"{shot_prefix}-opened.png"
     if not guard["ok"]:
+        if target.allow_title_guard_fallback:
+            guard = {**guard, "ok": True, "relaxed_title_guard": True}
+        else:
+            record_event(
+                chat_name=target.name,
+                query=target.query,
+                action="open",
+                status="title-guard-failed",
+                db_path=mirror_db,
+                screenshot_path=str(opened_path),
+                metadata={"target": target.__dict__, "guard": guard},
+            )
+            raise RuntimeError(f"Opened chat title guard failed for {target.name}: OCR={guard.get('ocr_text', '')!r}")
+    if guard.get("relaxed_title_guard"):
         record_event(
             chat_name=target.name,
             query=target.query,
             action="open",
-            status="title-guard-failed",
+            status="title-guard-relaxed",
             db_path=mirror_db,
             screenshot_path=str(opened_path),
             metadata={"target": target.__dict__, "guard": guard},
         )
-        raise RuntimeError(f"Opened chat title guard failed for {target.name}: OCR={guard.get('ocr_text', '')!r}")
 
     if not do_send and not compose_dry_run:
         record_event(

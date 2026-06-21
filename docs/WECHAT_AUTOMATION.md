@@ -457,6 +457,7 @@ labcanvas wechat autopublish-video --chat "example group" --list --json
 labcanvas wechat autopublish-video --source /path/to/video.mp4 --title "paper demo"
 labcanvas wechat autopublish-video --chat "example group" --since-minutes 720 --replace
 labcanvas wechat autopublish-video --chat "example group" --sync --fetch-gui --json
+labcanvas wechat autopublish-video --chat "example group" --message-local-id 14 --sync --fetch-gui --json
 ```
 
 Set `LABCANVAS_AUTOPUBLISH_DIR` or pass `--dest` if the Nutstore folder moves.
@@ -465,6 +466,9 @@ Use `--dry-run` to inspect the exact target filename without copying. Use
 cached: the tool opens the chat in the isolated WeChat desktop, clicks the
 latest visible video, waits for WeChat to write the MP4 under `msg/video`, runs
 media sync again, then copies the matched video to AutoPublish.
+Use `--message-local-id` whenever the worker knows the exact WeChat video row.
+The command then matches the message metadata and refuses to copy a nearby older
+cached MP4 if the exact row is unavailable.
 
 ## LazyEdit Publish Workflow
 

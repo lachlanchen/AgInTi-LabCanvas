@@ -331,6 +331,7 @@ The normal path is:
 ```bash
 PYTHONPATH=src python -m agenticapp wechat autopublish-video \
   --chat "example group" \
+  --message-local-id VIDEO_LOCAL_ID \
   --sync \
   --fetch-gui \
   --since-minutes 720 \
@@ -361,6 +362,12 @@ visible metadata so subtitle correction can use the user's actual instructions.
 Use a separate concise metadata brief for public title/description/hashtags.
 Safe MP4/MOV/audio outputs can be returned in the worker JSON `files` array,
 subject to the configured size limit.
+
+For exact video-row tasks, pass `--message-local-id` so AutoPublish refuses to
+copy a nearby older cached MP4. If an emoji-heavy group title is hard for OCR,
+set `allow_title_guard_fallback: true` only in that chat's private `send_target`
+after confirming search opens the correct group; strict title guard remains the
+default.
 
 ## External Decrypt Backend
 

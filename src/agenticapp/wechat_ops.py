@@ -152,6 +152,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     autopub.add_argument("--title", default="", help="Output basename. _COMPLETED is appended if missing.")
     autopub.add_argument("--match-token", action="append", default=[])
+    autopub.add_argument("--message-local-id", action="append", type=int, default=[], help="Use an exact WeChat video message local_id. Repeatable.")
     autopub.add_argument("--since-minutes", type=float, default=180)
     autopub.add_argument("--limit", type=int, default=10)
     autopub.add_argument("--sync", action="store_true", help="Run media-sync before selecting the video.")
@@ -566,6 +567,8 @@ def cmd_autopublish_video(args: argparse.Namespace) -> int:
         command += ["--title", args.title]
     for token in args.match_token:
         command += ["--match-token", str(token)]
+    for local_id in args.message_local_id:
+        command += ["--message-local-id", str(local_id)]
     if args.sync:
         command.append("--sync")
     if args.fetch_gui:

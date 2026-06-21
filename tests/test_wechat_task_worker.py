@@ -3,9 +3,11 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +95,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("--metadata-prompt-file", str(calls[0]["prompt"]))
         self.assertIn("api/autopublish/queue", str(calls[0]["prompt"]))
         self.assertIn("lazyingart:8081/publish/queue", str(calls[0]["prompt"]))
+        self.assertIn("fail closed", str(calls[0]["prompt"]))
+        self.assertIn("nearby/older video", str(calls[0]["prompt"]))
         self.assertIn("files", str(calls[0]["prompt"]))
 
     def test_lazyedit_publish_skill_is_checked_in(self) -> None:
@@ -136,6 +140,48 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertIn(str(mp4.resolve()), result["files"])
         self.assertIn(str(audio.resolve()), result["files"])
+
+    def test_video_publish_preflight_writes_context_and_uses_exact_message_id(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-video",
+            "chat": "🍓我的设备",
+            "request": "publish the video at local_id14 to sph Ins y2b and correct subtitles with the context",
+            "source": {"local_id": 16, "sender_display": "陈苗"},
+            "context": [
+                {"local_id": 10, "sender_display": "陈苗", "content": "Context is haircut and curly; use this to correct subtitles"},
+                {
+                    "local_id": 14,
+                    "sender_display": "陈苗",
+                    "content": '<msg><videomsg md5="bea815fa6ed81bbd5da77ac6895c5fd9" length="19452344" /></msg>',
+                },
+                {"local_id": 16, "sender_display": "陈苗", "content": "Could you publish it?"},
+            ],
+        }
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, '{"ok": true, "status": "copied", "target": "/tmp/demo_COMPLETED.mp4"}', "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+                preflight = worker.prepare_worker_preflight(task, Path(tmp))
+
+            context_path = Path(preflight["lazyedit_context"]["correction_prompt_file"])
+            metadata_path = Path(preflight["lazyedit_context"]["metadata_prompt_file"])
+            context_text = context_path.read_text(encoding="utf-8")
+
+        self.assertTrue(context_path.name.endswith("correction_context.md"))
+        self.assertTrue(metadata_path.name.endswith("metadata_brief.md"))
+        self.assertIn("haircut and curly", context_text)
+        self.assertIn("bea815fa6ed81bbd5da77ac6895c5fd9", context_text)
+        self.assertEqual(preflight["autopublish_video"]["ok"], True)
+        self.assertEqual(preflight["autopublish_video"]["message_local_ids"], [14])
+        self.assertTrue(calls)
+        self.assertIn("--message-local-id", calls[0])
+        self.assertIn("14", calls[0])
+        self.assertIn("--fetch-gui", calls[0])
 
     def test_worker_result_skips_private_artifacts(self) -> None:
         worker = load_worker()

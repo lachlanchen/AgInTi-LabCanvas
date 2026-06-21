@@ -187,6 +187,9 @@ def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
     artifact_dir = worker_artifact_dir(task)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     task.setdefault("artifact_dir", str(artifact_dir))
+    preflight = prepare_worker_preflight(task, artifact_dir)
+    if preflight:
+        task["preflight"] = preflight
     tool_context = build_worker_tool_context(task)
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
@@ -197,6 +200,7 @@ If no exact matching source media is available for "this image", "this PDF", "th
 Exception for WeChat video-to-AutoPublish requests: if the task asks to copy/download a WeChat video to Nutstore AutoPublish and the recent context contains a same-chat video row, first run:
 `PYTHONPATH=src python -m agenticapp wechat autopublish-video --chat "<chat>" --sync --fetch-gui --since-minutes 720 --json`
 This opens the chat in the isolated WeChat desktop, clicks the latest visible video so the official client caches the MP4, media-syncs it, and atomically copies it to `/home/lachlan/Nutstore Files/AutoPublish/AutoPublish`. Only report missing source after that command fails or returns no matching video.
+If `task.preflight.autopublish_video` exists and has `ok: false` for a task with `message_local_ids`, fail closed: do not publish, transcode, or reuse any nearby/older video. Report that the exact WeChat row was not cached and include the safe next action.
 
 {tool_context}
 
@@ -242,6 +246,226 @@ Task:
 def worker_artifact_dir(task: dict[str, Any]) -> Path:
     task_id = safe_slug(str(task.get("id") or "manual-task"))
     return ROOT / "output" / "wechat_worker" / task_id
+
+
+def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+    if not is_video_publish_task(task):
+        return {}
+    context_path = artifact_dir / "lazyedit_correction_context.md"
+    metadata_path = artifact_dir / "lazyedit_metadata_brief.md"
+    context_path.write_text(build_lazyedit_correction_context(task), encoding="utf-8")
+    metadata_path.write_text(build_lazyedit_metadata_brief(task), encoding="utf-8")
+    preflight: dict[str, Any] = {
+        "lazyedit_context": {
+            "correction_prompt_file": str(context_path),
+            "metadata_prompt_file": str(metadata_path),
+            "rule": "Pass correction_prompt_file to --correction-prompt-file and metadata_prompt_file to --metadata-prompt-file.",
+        }
+    }
+    if should_preflight_autopublish(task):
+        preflight["autopublish_video"] = run_autopublish_video_preflight(task)
+    return preflight
+
+
+def is_video_publish_task(task: dict[str, Any]) -> bool:
+    text = json.dumps(task, ensure_ascii=False).lower()
+    markers = [
+        "video",
+        "视频",
+        "videomsg",
+        "publish",
+        "post",
+        "upload",
+        "shipinhao",
+        "视频号",
+        "youtube",
+        "instagram",
+        "lazyedit",
+        "autopublish",
+        "subtitle",
+        "caption",
+        "transcript",
+        "字幕",
+        "发布",
+        "上传",
+    ]
+    return any(marker in text for marker in markers)
+
+
+def should_preflight_autopublish(task: dict[str, Any]) -> bool:
+    text = json.dumps(task, ensure_ascii=False).lower()
+    markers = [
+        "nutstore",
+        "autopublish",
+        "publish folder",
+        "publish",
+        "post",
+        "upload",
+        "lazyedit",
+        "shipinhao",
+        "视频号",
+        "youtube",
+        "instagram",
+        "sph",
+        "y2b",
+        "ytb",
+        "ins",
+        "发布",
+        "上传",
+    ]
+    return any(marker in text for marker in markers)
+
+
+def build_lazyedit_correction_context(task: dict[str, Any]) -> str:
+    lines = [
+        "# LazyEdit Correction Context",
+        "",
+        "Use this as evidence for subtitle correction. Do not invent dialogue unsupported by the audio/video.",
+        "",
+        "## Request",
+        str(task.get("request") or "").strip() or "(empty)",
+        "",
+        "## Source",
+        json.dumps(task.get("source") or {}, ensure_ascii=False, indent=2),
+        "",
+        "## Recent Same-Chat Context",
+    ]
+    for row in task.get("context") or []:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"- local_id={row.get('local_id')} sender={row.get('sender_display') or row.get('sender')}: "
+            f"{collapse_context_text(row.get('content'))}"
+        )
+    lines.extend(
+        [
+            "",
+            "## Media Reference Tokens",
+            ", ".join(extract_media_tokens_from_task(task)) or "(none)",
+            "",
+            "## Instructions",
+            "- Fix clear ASR mistakes, names, terms, and broken phrases based on the context above.",
+            "- Preserve timing and line count where practical.",
+            "- Use a separate metadata brief for public title/description/hashtags.",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_lazyedit_metadata_brief(task: dict[str, Any]) -> str:
+    request = collapse_context_text(task.get("request")) or "WeChat video publish request"
+    context_lines = []
+    for row in task.get("context") or []:
+        if not isinstance(row, dict):
+            continue
+        text = collapse_context_text(row.get("content"))
+        if text:
+            context_lines.append(text)
+    return (
+        "# LazyEdit Metadata Brief\n\n"
+        "Use this only for public-facing title, description, keywords, and platform notes.\n"
+        "Do not expose private chat logs, internal agent workflow, or every subtitle-correction detail.\n\n"
+        f"Request summary: {request[:800]}\n\n"
+        "Relevant public context candidates:\n"
+        + "\n".join(f"- {line[:360]}" for line in context_lines[-6:])
+        + "\n\nSuggested metadata style: concise, natural, viewer-facing.\n"
+    )
+
+
+def run_autopublish_video_preflight(task: dict[str, Any]) -> dict[str, Any]:
+    if os.environ.get("WECHAT_WORKER_DISABLE_AUTOPUBLISH_PREFLIGHT"):
+        return {"ok": False, "status": "disabled-by-env"}
+    chat = str(task.get("chat") or "").strip()
+    if not chat:
+        return {"ok": False, "status": "skipped", "error": "missing chat"}
+    command = [
+        sys.executable,
+        str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_autopublish_video.py"),
+        "--chat",
+        chat,
+        "--sync",
+        "--fetch-gui",
+        "--since-minutes",
+        os.environ.get("WECHAT_WORKER_AUTOPUBLISH_SINCE_MINUTES", "720"),
+        "--limit",
+        "20",
+        "--json",
+    ]
+    video_local_ids = extract_video_local_ids_from_task(task)
+    for local_id in video_local_ids:
+        command += ["--message-local-id", str(local_id)]
+    timeout = float(os.environ.get("WECHAT_WORKER_AUTOPUBLISH_TIMEOUT", "180"))
+    try:
+        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "status": "error", "error": str(exc)[:1000], "command": redact_command(command)}
+    payload: dict[str, Any]
+    try:
+        parsed = json.loads(proc.stdout) if proc.stdout.strip() else {}
+        payload = parsed if isinstance(parsed, dict) else {"stdout": proc.stdout.strip()[:2000]}
+    except json.JSONDecodeError:
+        payload = {"stdout": proc.stdout.strip()[:2000]}
+    payload.setdefault("ok", proc.returncode == 0)
+    payload["returncode"] = proc.returncode
+    payload["command"] = redact_command(command)
+    if proc.stderr.strip():
+        payload["stderr"] = proc.stderr.strip()[:2000]
+    if video_local_ids:
+        payload["message_local_ids"] = video_local_ids
+    return payload
+
+
+def extract_video_local_ids_from_task(task: dict[str, Any]) -> list[int]:
+    requested: set[int] = set()
+    for groups in re.findall(r"local_id\s*[=:]?\s*(\d+)|local_id(\d+)", str(task.get("request") or "")):
+        for value in groups:
+            if value:
+                requested.add(int(value))
+    video_ids = []
+    for row in task.get("context") or []:
+        if not isinstance(row, dict):
+            continue
+        content = str(row.get("content") or "")
+        try:
+            local_id = int(row.get("local_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if local_id <= 0:
+            continue
+        if "<videomsg" in content or "[WeChat video]" in content:
+            video_ids.append(local_id)
+    if requested:
+        exact = [local_id for local_id in video_ids if local_id in requested]
+        if exact:
+            return exact
+    return video_ids[-1:] if video_ids else []
+
+
+def extract_media_tokens_from_task(task: dict[str, Any], *, limit: int = 16) -> list[str]:
+    text = json.dumps(task, ensure_ascii=False)
+    tokens: list[str] = []
+    patterns = [
+        r"\b(?:md5|newmd5|rawmd5|originsourcemd5|filemd5)\s*=\s*[\"']([0-9A-Fa-f]{16,64})[\"']",
+        r"<md5>\s*([0-9A-Fa-f]{16,64})\s*</md5>",
+        r"\b([0-9A-Fa-f]{32,64})\b",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            token = match.group(1).lower()
+            if token not in tokens:
+                tokens.append(token)
+            if len(tokens) >= limit:
+                return tokens
+    return tokens
+
+
+def collapse_context_text(value: Any, *, max_len: int = 2000) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text if len(text) <= max_len else text[:max_len] + "..."
+
+
+def redact_command(command: list[str]) -> list[str]:
+    return [item if ".private" not in item else "<private-path>" for item in command]
 
 
 def build_worker_tool_context(task: dict[str, Any]) -> str:

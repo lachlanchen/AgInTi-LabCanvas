@@ -61,6 +61,7 @@ source into the Nutstore AutoPublish watcher:
 ```bash
 PYTHONPATH=src python -m agenticapp wechat autopublish-video \
   --chat "<chat>" \
+  --message-local-id VIDEO_LOCAL_ID \
   --sync \
   --fetch-gui \
   --since-minutes 720 \
@@ -71,6 +72,10 @@ This opens the isolated WeChat desktop when needed, clicks the latest visible
 video so WeChat caches the MP4, syncs media, and atomically writes a
 `*_COMPLETED` file into the Nutstore watcher. Use `--list --json` to inspect
 candidates and `--source /abs/video.mp4` when the exact source file is known.
+When a task references a specific WeChat video row, always pass
+`--message-local-id`; this prevents a nearby older cached MP4 from being copied
+or published by mistake. If the exact row cannot be cached, fail closed and ask
+for a resend or a GUI cache retry rather than falling back to another video.
 
 After import, find the LazyEdit `video_id`:
 
