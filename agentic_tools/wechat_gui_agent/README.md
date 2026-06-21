@@ -275,6 +275,10 @@ medium for paper/PDF/search/research/figure work, and high for CAD, PCB,
 Blender/OpenSCAD, install, GitHub, ordering, or other execution-heavy tasks. A
 clear failure escalates once. If GUI delivery fails, the queue item is marked
 `send_failed` with the error instead of retrying indefinitely.
+Before work starts, a queue item is claimed as `in_progress` under a file lock.
+This prevents a manual `worker once` and the persistent loop from handling the
+same request twice. Stale claims are reclaimed after
+`WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS` (default: one hour).
 
 Approve or cancel work that is waiting on a confirmation:
 
@@ -354,6 +358,10 @@ For context-sensitive videos, pass separate files with
 when reusing an already completed LazyEdit output. If Shipinhao or another
 platform needs QR login or manual confirmation, open the isolated browser and
 wait for the user rather than bypassing the page.
+
+For an explicit publish request, `--no-publish` is only a quality gate. After
+the MP4/ZIP is correct and no manual blocker appears, continue to exactly one
+real publish for the requested platforms and report the job ids/status.
 
 When the request comes from WeChat, keep the monitor's
 `Video publish/subtitle context bundle` as the correction prompt. It preserves

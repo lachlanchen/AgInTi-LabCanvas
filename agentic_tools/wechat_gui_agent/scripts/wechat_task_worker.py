@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,8 @@ LAZYEDIT_PUBLISH_SKILL = ROOT / "agentic_tools" / "wechat_gui_agent" / "skills" 
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 EFFORT_ORDER = ["low", "medium", "high"]
+CLAIMED_STATUS = "in_progress"
+DEFAULT_STALE_IN_PROGRESS_SECONDS = 60 * 60
 OUTBOUND_SUFFIXES = {
     ".png",
     ".jpg",
@@ -98,19 +101,29 @@ def main() -> int:
 
 
 def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
-    task = next_pending(queue)
+    task = claim_next_pending(queue)
     if not task:
         if log_idle:
             print(json.dumps({"status": "no-pending-task"}, ensure_ascii=False))
         return False
-    result_text = run_worker_codex(task)
-    result = parse_worker_result(result_text)
-    result = prepare_result_files(result, result_text)
+    log_worker_event("claimed", task)
+    try:
+        result_text = run_worker_codex(task)
+        result = parse_worker_result(result_text)
+        result = prepare_result_files(result, result_text)
+    except Exception as exc:
+        result_text = f"Worker failed before completion: {type(exc).__name__}: {str(exc)[:800]}"
+        result = {"message": result_text, "confirmation": "", "files": [], "raw": result_text}
+        task["worker_error"] = {"type": type(exc).__name__, "message": str(exc)[:1000]}
     target_chat = str(task.get("chat") or chat)
     send_errors = send_result_with_retries(result, target_chat, send_targets) if send else []
     if result.get("skipped_files"):
         task["skipped_files"] = result["skipped_files"]
-    if send_errors:
+    if task.get("worker_error"):
+        task["status"] = "worker_failed"
+        if send_errors:
+            task["send_errors"] = send_errors
+    elif send_errors:
         task["status"] = "send_failed"
         task["send_errors"] = send_errors
     else:
@@ -134,6 +147,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         metadata=task,
     )
     print(json.dumps(task, ensure_ascii=False, indent=2))
+    log_worker_event(task["status"], task)
     return True
 
 
@@ -179,13 +193,86 @@ def next_pending(path: Path) -> dict[str, Any] | None:
     return next((task for task in read_tasks(path) if task.get("status") == "pending"), None)
 
 
+def claim_next_pending(path: Path) -> dict[str, Any] | None:
+    """Atomically claim one pending task so multiple workers cannot duplicate it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    worker_id = worker_identity()
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        now = datetime.now()
+        now_text = now.isoformat(timespec="seconds")
+        for index, task in enumerate(tasks):
+            status = str(task.get("status") or "")
+            if status == "pending" or stale_in_progress(task, now):
+                if status == CLAIMED_STATUS:
+                    task.setdefault("claim_history", []).append(
+                        {
+                            "worker_id": task.get("worker_id"),
+                            "claimed_at": task.get("claimed_at"),
+                            "reclaimed_at": now_text,
+                        }
+                    )
+                task["status"] = CLAIMED_STATUS
+                task["worker_id"] = worker_id
+                task["claimed_at"] = now_text
+                task.pop("send_errors", None)
+                tasks[index] = task
+                write_tasks(path, tasks)
+                return task
+        return None
+
+
+def stale_in_progress(task: dict[str, Any], now: datetime) -> bool:
+    if task.get("status") != CLAIMED_STATUS:
+        return False
+    timeout = int(os.environ.get("WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS", DEFAULT_STALE_IN_PROGRESS_SECONDS))
+    if timeout <= 0:
+        return False
+    claimed_at = parse_iso_datetime(str(task.get("claimed_at") or ""))
+    if not claimed_at:
+        return False
+    return (now - claimed_at).total_seconds() > timeout
+
+
+def parse_iso_datetime(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def worker_identity() -> str:
+    return f"pid:{os.getpid()}"
+
+
 def rewrite_task(path: Path, updated: dict[str, Any]) -> None:
-    tasks = read_tasks(path)
-    for index, task in enumerate(tasks):
-        if task.get("id") == updated.get("id"):
-            tasks[index] = updated
-            break
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        for index, task in enumerate(tasks):
+            if task.get("id") == updated.get("id"):
+                tasks[index] = updated
+                break
+        write_tasks(path, tasks)
+
+
+def write_tasks(path: Path, tasks: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(task, ensure_ascii=False) + "\n" for task in tasks), encoding="utf-8")
+
+
+def log_worker_event(status: str, task: dict[str, Any]) -> None:
+    payload = {
+        "worker_event": status,
+        "task_id": task.get("id"),
+        "chat": task.get("chat"),
+        "worker_id": task.get("worker_id") or worker_identity(),
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
+    print(json.dumps(payload, ensure_ascii=False), flush=True)
 
 
 def run_worker_codex(task: dict[str, Any]) -> str:
@@ -544,6 +631,7 @@ LazyEdit/AutoPublish video publishing:
 - For subtitle correction, create a correction context file under `{artifact_dir}` from the task JSON, current coalesced request, quoted message, recent history, source/reference rows, visible media metadata, and any user-provided script/transcript/story notes. Pass that file as `--correction-prompt-file`.
 - Create a separate short metadata brief under `{artifact_dir}` for public title/description/hashtags and pass it as `--metadata-prompt-file`. Do not feed the full chat history or full script as metadata context.
 - For processing plus publish, use `scripts/lazyedit_publish.py` with `--use-current-settings`, platform flags, `--guided-monitor`, `--wait`, and separate `--correction-prompt-file` and `--metadata-prompt-file` files when context is needed.
+- For explicit publish requests, a `--no-publish` run is only a verification gate. If it succeeds and no manual login/CAPTCHA/approval block appears, immediately run exactly one real publish for the requested platforms with the same corrected output and report the publish job ids/status. Do not stop after a successful no-publish pass.
 - If the user asks to correct subtitles or provides contextual wording for a video, use `--correct-subtitles --correction-source polished` unless the source output has already been corrected and verified.
 - Before a real publish with subtitle correction, inspect the polished subtitle output such as `DATA/VIDEO_FOLDER/*_mixed_polished.md` and fix obvious ASR errors only when supported by the message context.
 - Use `--no-process` only when the final LazyEdit output already exists or the user explicitly asks to reuse the last/current output.

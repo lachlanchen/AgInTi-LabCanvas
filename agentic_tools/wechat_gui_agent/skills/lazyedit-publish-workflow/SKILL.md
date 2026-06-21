@@ -37,7 +37,10 @@ conda activate lazyedit
 
 - Use `--no-publish` before a real publish when testing packaging, subtitles, or
   logo output.
-- Publish exactly once after the final MP4/ZIP is correct.
+- Publish exactly once after the final MP4/ZIP is correct. When the user
+  explicitly asks to publish, `--no-publish` is only a temporary quality gate;
+  continue to the real publish automatically unless login, CAPTCHA, payment,
+  consent, or another manual block prevents it.
 - Real publishes should use polished subtitles and the configured LazyEdit logo
   unless the user explicitly says otherwise.
 - Verify logo settings before publish:

@@ -93,6 +93,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("scripts/lazyedit_publish.py", str(calls[0]["prompt"]))
         self.assertIn("--correction-prompt-file", str(calls[0]["prompt"]))
         self.assertIn("--metadata-prompt-file", str(calls[0]["prompt"]))
+        self.assertIn("verification gate", str(calls[0]["prompt"]))
+        self.assertIn("Do not stop after a successful no-publish pass", str(calls[0]["prompt"]))
         self.assertIn("api/autopublish/queue", str(calls[0]["prompt"]))
         self.assertIn("lazyingart:8081/publish/queue", str(calls[0]["prompt"]))
         self.assertIn("fail closed", str(calls[0]["prompt"]))
@@ -108,6 +110,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("scripts/lazyedit_publish.py", text)
         self.assertIn("Shipinhao", text)
         self.assertIn("--metadata-prompt-file", text)
+        self.assertIn("temporary quality gate", text)
 
     def test_worker_result_collects_nested_and_plain_artifact_paths(self) -> None:
         worker = load_worker()
@@ -242,6 +245,66 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(len(calls), 2)
+
+    def test_claim_next_pending_marks_task_in_progress_once(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps({"id": "task-1", "chat": "demo", "request": "publish", "status": "pending"}, ensure_ascii=False)
+                + "\n",
+                encoding="utf-8",
+            )
+
+            first = worker.claim_next_pending(queue)
+            second = worker.claim_next_pending(queue)
+            rows = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
+
+        self.assertIsNotNone(first)
+        assert first is not None
+        self.assertEqual(first["id"], "task-1")
+        self.assertEqual(first["status"], "in_progress")
+        self.assertIn("worker_id", first)
+        self.assertIsNone(second)
+        self.assertEqual(rows[0]["status"], "in_progress")
+
+    def test_claim_next_pending_recovers_stale_in_progress_task(self) -> None:
+        worker = load_worker()
+        original = worker.os.environ.get("WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS")
+        try:
+            worker.os.environ["WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS"] = "1"
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                queue.write_text(
+                    json.dumps(
+                        {
+                            "id": "task-1",
+                            "chat": "demo",
+                            "request": "publish",
+                            "status": "in_progress",
+                            "worker_id": "pid:old",
+                            "claimed_at": "2000-01-01T00:00:00",
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                claimed = worker.claim_next_pending(queue)
+                rows = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
+        finally:
+            if original is None:
+                worker.os.environ.pop("WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS"] = original
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], "task-1")
+        self.assertEqual(claimed["status"], "in_progress")
+        self.assertEqual(claimed["claim_history"][0]["worker_id"], "pid:old")
+        self.assertEqual(rows[0]["claim_history"][0]["worker_id"], "pid:old")
 
     def test_worker_sandbox_can_be_downgraded_by_env(self) -> None:
         worker = load_worker()

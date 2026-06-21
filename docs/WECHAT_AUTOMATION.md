@@ -342,6 +342,13 @@ failure, it escalates one reasoning level once. GUI send failures are recorded
 as `send_failed` instead of crashing the worker loop or repeatedly sending the
 same task.
 
+Before running backend work, the worker atomically claims a queue row by moving
+it from `pending` to `in_progress` under a file lock. This prevents a manual
+`worker once` and the persistent tmux loop from processing the same request
+twice. Stale `in_progress` rows are reclaimed after
+`WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS` (default: one hour), so a crashed
+worker does not permanently block the queue.
+
 Worker Codex turns default to `danger-full-access` because downloads, CAD/PCB
 exports, browser automation, and file transfers often need access outside the
 repo worktree. To restrict worker execution for a debugging run, set
@@ -495,6 +502,11 @@ python scripts/lazyedit_publish.py \
 Use `--correction-prompt-file` for full transcript/story context and
 `--metadata-prompt-file` for a concise public-facing brief. Use `--no-process`
 only for an already completed output. Monitor status with:
+
+For an explicit publish request, `--no-publish` is only a quality gate. After
+the generated MP4/ZIP is inspected and no manual blocker appears, run exactly
+one real publish for the requested platforms and report the LazyEdit job id,
+remote job id, platform list, and final status.
 
 ```bash
 curl -fsS http://127.0.0.1:18787/api/autopublish/queue | jq '.jobs[:8]'
