@@ -434,6 +434,30 @@ Every copied, decoded, existing, dry-run, or error candidate is recorded in the
 private `media_files` table with source path, mirrored path, status, size,
 mtime, suffix, decode status, and match reason.
 
+## Nutstore AutoPublish Import
+
+Use the mirrored media database to send the newest WeChat video into the
+Nutstore AutoPublish watcher folder:
+
+```bash
+labcanvas wechat autopublish-video --chat "example group" --sync --json
+```
+
+The command copies to
+`/home/lachlan/Nutstore Files/AutoPublish/AutoPublish` by default, writes through
+`/home/lachlan/Nutstore Files/AutoPublish/.tmp_autopub_copy`, then atomically
+renames the final file to a `*_COMPLETED.mp4`/`.MOV` style name. This prevents
+AutoPublish from reading a partial copy. Useful variants:
+
+```bash
+labcanvas wechat autopublish-video --chat "example group" --list --json
+labcanvas wechat autopublish-video --source /path/to/video.mp4 --title "paper demo"
+labcanvas wechat autopublish-video --chat "example group" --since-minutes 720 --replace
+```
+
+Set `LABCANVAS_AUTOPUBLISH_DIR` or pass `--dest` if the Nutstore folder moves.
+Use `--dry-run` to inspect the exact target filename without copying.
+
 ## Web App
 
 The LabCanvas web app exposes a compact WeChat Ops card for:

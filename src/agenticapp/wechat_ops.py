@@ -141,6 +141,27 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     media.add_argument("--record-empty", action="store_true")
     media.set_defaults(func=cmd_media_sync)
 
+    autopub = nested.add_parser("autopublish-video", help="Copy the latest mirrored WeChat video to Nutstore AutoPublish.")
+    autopub.add_argument("--chat", action="append", default=[], help="Chat/group name to search. Repeatable. Defaults to all mirrored chats.")
+    autopub.add_argument("--source", type=Path, help="Explicit local video path. Bypasses the mirror query.")
+    autopub.add_argument("--db", type=Path, default=PRIVATE / "wechat_mirror.sqlite")
+    autopub.add_argument(
+        "--dest",
+        type=Path,
+        default=Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/home/lachlan/Nutstore Files/AutoPublish/AutoPublish")),
+    )
+    autopub.add_argument("--title", default="", help="Output basename. _COMPLETED is appended if missing.")
+    autopub.add_argument("--match-token", action="append", default=[])
+    autopub.add_argument("--since-minutes", type=float, default=180)
+    autopub.add_argument("--limit", type=int, default=10)
+    autopub.add_argument("--sync", action="store_true", help="Run media-sync before selecting the video.")
+    autopub.add_argument("--no-auto-source", action="store_true")
+    autopub.add_argument("--replace", action="store_true")
+    autopub.add_argument("--list", action="store_true")
+    autopub.add_argument("--dry-run", action="store_true")
+    autopub.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    autopub.set_defaults(func=cmd_autopublish_video)
+
     backend = nested.add_parser("backend", help="Control optional external WeChat decrypt/MCP receive backends.")
     backend.add_argument(
         "action",
@@ -517,6 +538,42 @@ def cmd_media_sync(args: argparse.Namespace) -> int:
         command.append("--summary-only")
     if args.record_empty:
         command.append("--record-empty")
+    return run_command(command, capture=False).returncode
+
+
+def cmd_autopublish_video(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_autopublish_video.py"),
+        "--db",
+        str(args.db),
+        "--dest",
+        str(args.dest),
+        "--since-minutes",
+        str(args.since_minutes),
+        "--limit",
+        str(args.limit),
+    ]
+    for chat in args.chat:
+        command += ["--chat", str(chat)]
+    if args.source:
+        command += ["--source", str(args.source)]
+    if args.title:
+        command += ["--title", args.title]
+    for token in args.match_token:
+        command += ["--match-token", str(token)]
+    if args.sync:
+        command.append("--sync")
+    if args.no_auto_source:
+        command.append("--no-auto-source")
+    if args.replace:
+        command.append("--replace")
+    if args.list:
+        command.append("--list")
+    if args.dry_run:
+        command.append("--dry-run")
+    if getattr(args, "json", False):
+        command.append("--json")
     return run_command(command, capture=False).returncode
 
 

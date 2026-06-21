@@ -302,6 +302,18 @@ Synced files are stored under
 `.private/downloads/<chat>/<wechat-profile>/<category>/` so images, PDFs, and
 videos from different profiles do not collide.
 
+Copy the newest mirrored video from a group or DM into the Nutstore
+AutoPublish watcher:
+
+```bash
+labcanvas wechat autopublish-video --chat "example group" --sync --json
+```
+
+The import command writes through a temporary folder and atomically creates a
+`*_COMPLETED` file under `/home/lachlan/Nutstore Files/AutoPublish/AutoPublish`
+so the watcher does not see partial copies. Use `--list --json` to inspect
+candidate videos and `--source /path/to/video.mp4` for an explicit file.
+
 ## External Decrypt Backend
 
 The optional second solution uses `ylytdeng/wechat-decrypt` as a private receive
