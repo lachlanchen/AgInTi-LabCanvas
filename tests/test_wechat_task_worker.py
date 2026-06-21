@@ -183,6 +183,28 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("14", calls[0])
         self.assertIn("--fetch-gui", calls[0])
 
+    def test_exact_video_preflight_failure_returns_deterministic_fail_closed_result(self) -> None:
+        worker = load_worker()
+        task = {
+            "preflight": {
+                "autopublish_video": {
+                    "ok": False,
+                    "message_local_ids": [14],
+                    "recent_video_messages": [{"chat": "🍓我的设备", "recent_video_rows": 1}],
+                }
+            }
+        }
+
+        raw = worker.deterministic_preflight_result(task)
+
+        self.assertIsNotNone(raw)
+        assert raw is not None
+        payload = json.loads(raw)
+        self.assertIn("没有发布", payload["message"])
+        self.assertIn("fail-closed", payload["message"])
+        self.assertIn("旧视频", payload["message"])
+        self.assertEqual(payload["files"], [])
+
     def test_worker_result_skips_private_artifacts(self) -> None:
         worker = load_worker()
         private_file = worker.PRIVATE / "unit-test-private-render.png"

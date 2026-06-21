@@ -206,6 +206,9 @@ def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
     preflight = prepare_worker_preflight(task, artifact_dir)
     if preflight:
         task["preflight"] = preflight
+    deterministic = deterministic_preflight_result(task)
+    if deterministic is not None:
+        return deterministic
     tool_context = build_worker_tool_context(task)
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
@@ -429,6 +432,29 @@ def run_autopublish_video_preflight(task: dict[str, Any]) -> dict[str, Any]:
     if video_local_ids:
         payload["message_local_ids"] = video_local_ids
     return payload
+
+
+def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
+    autopub = ((task.get("preflight") or {}).get("autopublish_video") if isinstance(task.get("preflight"), dict) else None)
+    if not isinstance(autopub, dict):
+        return None
+    if bool(autopub.get("ok")):
+        return None
+    message_local_ids = autopub.get("message_local_ids")
+    if not message_local_ids:
+        return None
+    recent = autopub.get("recent_video_messages") or []
+    if recent:
+        source_state = "看到了对应的 WeChat 视频消息，但官方客户端还没有把这一条完整 MP4 缓存到本地。"
+    else:
+        source_state = "没有在本地解密消息库中找到对应的 WeChat 视频行。"
+    message = (
+        "我没有发布这个视频。"
+        f"{source_state}"
+        "为了避免误发布，我已按 exact local_id fail-closed 规则停止，没有使用附近的旧视频或上一次视频。"
+        "请重新发送原视频，或在 WeChat 里点开这条视频让客户端缓存完整 MP4；缓存到本地后我会继续保存到 Nutstore/AutoPublish 并走 LazyEdit 发布链路。"
+    )
+    return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
 
 
 def extract_video_local_ids_from_task(task: dict[str, Any]) -> list[int]:
