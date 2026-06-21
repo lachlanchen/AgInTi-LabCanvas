@@ -107,17 +107,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     result = parse_worker_result(result_text)
     result = prepare_result_files(result, result_text)
     target_chat = str(task.get("chat") or chat)
-    send_errors = []
-    if send:
-        try:
-            if result["message"]:
-                send_message(result["message"], target_chat, send_targets)
-            if result["confirmation"]:
-                send_message(result["confirmation"], target_chat, send_targets)
-            for file_path in result["files"]:
-                send_file(Path(file_path), target_chat, send_targets)
-        except Exception as exc:
-            send_errors.append(str(exc))
+    send_errors = send_result_with_retries(result, target_chat, send_targets) if send else []
     if result.get("skipped_files"):
         task["skipped_files"] = result["skipped_files"]
     if send_errors:
@@ -145,6 +135,32 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     )
     print(json.dumps(task, ensure_ascii=False, indent=2))
     return True
+
+
+def send_result_with_retries(result: dict[str, Any], target_chat: str, send_targets: Path) -> list[str]:
+    attempts = max(1, int(os.environ.get("WECHAT_WORKER_SEND_RETRIES", "2")))
+    delay = max(0.0, float(os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY", "1.5")))
+    errors: list[str] = []
+    for attempt in range(1, attempts + 1):
+        try:
+            send_result_once(result, target_chat, send_targets)
+            return []
+        except Exception as exc:
+            errors.append(f"attempt {attempt}: {exc}")
+            if attempt < attempts and delay:
+                import time
+
+                time.sleep(delay)
+    return errors
+
+
+def send_result_once(result: dict[str, Any], target_chat: str, send_targets: Path) -> None:
+    if result["message"]:
+        send_message(result["message"], target_chat, send_targets)
+    if result["confirmation"]:
+        send_message(result["confirmation"], target_chat, send_targets)
+    for file_path in result["files"]:
+        send_file(Path(file_path), target_chat, send_targets)
 
 
 def append_jsonl(path: Path, item: dict[str, Any]) -> None:

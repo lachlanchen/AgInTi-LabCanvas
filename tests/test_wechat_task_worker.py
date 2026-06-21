@@ -196,6 +196,31 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(prepared["files"], [])
         self.assertEqual(prepared["skipped_files"][0]["reason"], "private-path")
 
+    def test_send_result_retries_transient_failure(self) -> None:
+        worker = load_worker()
+        calls = []
+        original = worker.send_result_once
+        original_delay = worker.os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY")
+        try:
+            worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = "0"
+
+            def flaky_send(*args: object) -> None:
+                calls.append(args)
+                if len(calls) == 1:
+                    raise RuntimeError("title guard transient")
+
+            worker.send_result_once = flaky_send
+            errors = worker.send_result_with_retries({"message": "ok", "confirmation": "", "files": []}, "EchoMind", Path("/tmp/no-targets.json"))
+        finally:
+            worker.send_result_once = original
+            if original_delay is None:
+                worker.os.environ.pop("WECHAT_WORKER_SEND_RETRY_DELAY", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = original_delay
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(calls), 2)
+
     def test_worker_sandbox_can_be_downgraded_by_env(self) -> None:
         worker = load_worker()
         original = worker.os.environ.get("WECHAT_WORKER_CODEX_SANDBOX")
