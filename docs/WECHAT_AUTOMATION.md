@@ -41,6 +41,13 @@ window, one direct-monitor window per configured group, plus worker and media
 sync windows. Monitor, worker, and media processes run through a restart
 wrapper, so they come back after a crash or transient failure.
 
+For code or config reloads, use `labcanvas wechat hold restart` or
+`labcanvas wechat hold reload-workers`; both preserve the official WeChat GUI
+and restart only direct monitors, the worker, and media sync. Use
+`restart-all` or `stop` followed by `start` only when intentionally restarting
+WeChat and accepting possible mobile confirmation. If the supervisor is not
+running, reload fails instead of launching WeChat unexpectedly.
+
 For multiple group chats, put comma-separated direct configs in the ignored
 `.private/wechat_supervisor.local.env` file:
 
@@ -128,6 +135,8 @@ the isolated noVNC/browser-assist session and wait for the account owner.
 panel alive. It starts `labcanvas-wechat` plus a web tmux session named
 `labcanvas-web-wechat` by default. The web port is preferred, not fixed; if the
 port is busy, the web app moves to the next free port and prints the actual URL.
+`labcanvas wechat stack restart` also preserves the WeChat GUI; use
+`stack restart-all` only for an intentional full restart.
 
 Install user launchers:
 

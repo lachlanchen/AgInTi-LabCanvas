@@ -64,7 +64,12 @@ fi
 usage() {
   cat <<'EOF'
 Usage:
-  wechat_supervisor_tmux.sh start|stop|restart|status
+  wechat_supervisor_tmux.sh start|stop|restart|reload-workers|restart-all|status
+
+Notes:
+  restart/reload-workers keeps the WeChat GUI desktop alive and only reloads
+  monitor, worker, and media-sync windows. Use restart-all, or stop then start,
+  only when you intentionally want to restart the official WeChat client.
 
 Environment:
   WECHAT_SUPERVISOR_SESSION   tmux session name, default labcanvas-wechat
@@ -83,6 +88,46 @@ list_session_panes() {
       [[ -n "$window_id" ]] || continue
       tmux list-panes -t "$window_id" -F "${window_name}.#{pane_index}: #{pane_current_command} #{pane_pid}"
     done
+}
+
+respawn_or_new_window() {
+  local window_name="$1"
+  local command="$2"
+  local window_id
+  window_id="$(
+    tmux list-windows -t "$SESSION" -F '#{window_id}	#{window_name}' |
+      awk -F '\t' -v name="$window_name" '$2 == name { print $1; exit }'
+  )"
+  if [[ -n "$window_id" ]]; then
+    tmux respawn-window -k -t "$window_id" "$command"
+    echo "Reloaded window: $window_name"
+  else
+    tmux new-window -t "$SESSION" -n "$window_name" "$command"
+    echo "Started missing window: $window_name"
+  fi
+}
+
+reload_worker_windows() {
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "Session not running: $SESSION" >&2
+    echo "Use start or restart-all only when you intentionally want to launch the WeChat client." >&2
+    return 1
+  fi
+  IFS=',' read -r -a DIRECT_CONFIGS <<< "$CONFIGS"
+  for direct_config in "${DIRECT_CONFIGS[@]}"; do
+    direct_config="$(echo "$direct_config" | xargs)"
+    [[ -n "$direct_config" ]] || continue
+    direct_name="$(basename "$direct_config" .json | tr -c 'A-Za-z0-9_.-' '-')"
+    respawn_or_new_window "direct-$direct_name" \
+      "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt --poll-seconds '$DIRECT_POLL_SECONDS' --catchup-poll-seconds '$DIRECT_CATCHUP_POLL_SECONDS' >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
+  done
+  respawn_or_new_window "worker" \
+    "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh worker python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-worker.log' 2>&1"
+  respawn_or_new_window "media-sync" \
+    "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' WECHAT_MEDIA_CHATS='$MEDIA_CHATS' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
+  tmux select-window -t "$SESSION:desktop" >/dev/null 2>&1 || true
+  echo "Reloaded worker/monitor windows without restarting the WeChat desktop."
+  echo "Logs: $LOG_DIR"
 }
 
 action="${1:-start}"
@@ -123,7 +168,10 @@ case "$action" in
       echo "Session not running: $SESSION"
     fi
     ;;
-  restart)
+  reload-workers|restart)
+    reload_worker_windows
+    ;;
+  restart-all)
     "$0" stop || true
     "$0" start
     ;;

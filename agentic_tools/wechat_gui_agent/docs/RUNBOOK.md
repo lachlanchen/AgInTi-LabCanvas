@@ -74,6 +74,11 @@ reuse for debugging with:
 WECHAT_CODEX_REUSE_SESSIONS=0 labcanvas wechat hold restart
 ```
 
+This reloads monitor, worker, and media-sync windows while preserving the
+WeChat desktop. Use `labcanvas wechat hold restart-all` only for a deliberate
+GUI restart that may require phone confirmation. If the supervisor is not
+running, reload fails closed instead of launching WeChat.
+
 When a paper/download site needs login, CAPTCHA, consent, or manual file-save
 confirmation, open a browser in the same virtual desktop:
 

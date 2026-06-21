@@ -79,13 +79,13 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     monitor.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     monitor.set_defaults(func=cmd_monitor)
 
-    hold = nested.add_parser("hold", help="Control the full tmux supervisor: desktop, fast monitor, worker, media sync.")
-    hold.add_argument("action", choices=["start", "stop", "restart", "status"], nargs="?", default="start")
+    hold = nested.add_parser("hold", help="Control the tmux supervisor. Normal restart reloads workers without restarting WeChat.")
+    hold.add_argument("action", choices=["start", "stop", "restart", "reload-workers", "restart-all", "status"], nargs="?", default="start")
     hold.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     hold.set_defaults(func=cmd_hold)
 
-    stack = nested.add_parser("stack", help="Control the WeChat supervisor plus LabCanvas web control panel.")
-    stack.add_argument("action", choices=["start", "stop", "restart", "status"], nargs="?", default="start")
+    stack = nested.add_parser("stack", help="Control the WeChat supervisor plus LabCanvas web control panel. Normal restart preserves WeChat GUI.")
+    stack.add_argument("action", choices=["start", "stop", "restart", "restart-all", "status"], nargs="?", default="start")
     stack.add_argument("--web-port", type=int, default=19474)
     stack.add_argument("--web-session", default="labcanvas-web-wechat")
     stack.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
@@ -446,7 +446,7 @@ def cmd_monitor(args: argparse.Namespace) -> int:
 
 def cmd_hold(args: argparse.Namespace) -> int:
     proc = run_command([str(SCRIPTS / "wechat_supervisor_tmux.sh"), args.action], capture=True)
-    if args.json:
+    if getattr(args, "json", False):
         print(json.dumps({"ok": proc.returncode == 0, "stdout": proc.stdout, "stderr": proc.stderr, "status": status_payload()}, indent=2))
     else:
         print(proc.stdout, end="")
@@ -468,7 +468,7 @@ def cmd_stack(args: argparse.Namespace) -> int:
         "wechat": status_payload(),
         "webapp": web_status,
     }
-    if args.json:
+    if getattr(args, "json", False):
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
         print(proc.stdout, end="")

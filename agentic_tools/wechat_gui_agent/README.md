@@ -62,6 +62,12 @@ mentions can get an immediate ACK while longer work is queued for
 `wechat_task_worker.py`, which can send a final message plus PDFs/images/files
 back through the official WeChat GUI.
 
+Use `labcanvas wechat hold restart` or `labcanvas wechat hold reload-workers`
+after code changes; these commands do not restart the WeChat desktop. Use
+`restart-all` only if you intentionally want the official client to close and
+reopen, which may require mobile confirmation. If the supervisor is not running,
+reload fails instead of launching WeChat unexpectedly.
+
 The direct monitor uses recent full chat history, not just the newest polling
 batch. Prompt context labels the latest row and bot/self replies, so a bare
 mention, repeated message, or fragment such as "same one" can refer to the
@@ -181,6 +187,9 @@ labcanvas wechat install-user-scripts
 panel alive together. The default web session is `labcanvas-web-wechat` on port
 `19474`; if that port is busy, the web app uses the next free port and prints
 the actual URL.
+`labcanvas wechat stack restart` preserves the WeChat GUI and reloads only
+worker-side processes plus the web panel. Use `stack restart-all` only for a
+deliberate full restart.
 
 ## Send Messages
 

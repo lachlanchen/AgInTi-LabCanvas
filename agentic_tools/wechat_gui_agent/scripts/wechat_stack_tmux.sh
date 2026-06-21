@@ -10,11 +10,15 @@ export PYTHONPATH="$ROOT/src:${PYTHONPATH:-}"
 usage() {
   cat <<'EOF'
 Usage:
-  wechat_stack_tmux.sh start|stop|restart|status
+  wechat_stack_tmux.sh start|stop|restart|restart-all|status
 
 Starts or stops the complete reusable WeChat chatops stack:
   - labcanvas-wechat tmux supervisor for WeChat desktop, fast monitor, worker, and media sync
   - labcanvas-web-wechat tmux web app session for the browser control panel
+
+Normal restart preserves the official WeChat GUI and reloads only monitor,
+worker, media-sync, and web app processes. Use restart-all, or stop then start,
+only when you intentionally want to restart the WeChat client.
 
 Environment:
   WECHAT_WEB_SESSION          tmux session name for web app, default labcanvas-web-wechat
@@ -36,6 +40,12 @@ case "$action" in
     python3 -m agenticapp webapp stop --session "$WEB_SESSION" || true
     ;;
   restart)
+    python3 -m agenticapp wechat hold reload-workers
+    python3 -m agenticapp webapp stop --session "$WEB_SESSION" || true
+    python3 -m agenticapp webapp start --host "$WEB_HOST" --port "$WEB_PORT" --session "$WEB_SESSION"
+    echo "WeChat stack reloaded without restarting the WeChat desktop."
+    ;;
+  restart-all)
     "$0" stop || true
     "$0" start
     ;;
