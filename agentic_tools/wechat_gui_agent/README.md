@@ -312,7 +312,10 @@ labcanvas wechat autopublish-video --chat "example group" --sync --json
 The import command writes through a temporary folder and atomically creates a
 `*_COMPLETED` file under `/home/lachlan/Nutstore Files/AutoPublish/AutoPublish`
 so the watcher does not see partial copies. Use `--list --json` to inspect
-candidate videos and `--source /path/to/video.mp4` for an explicit file.
+candidate videos and `--source /path/to/video.mp4` for an explicit file. If a
+video message is visible in WeChat but no MP4 has been cached yet, use
+`--sync --fetch-gui`; the tool opens the chat, clicks the latest visible video,
+waits for the official client to cache the MP4, then copies the matched file.
 
 ## External Decrypt Backend
 

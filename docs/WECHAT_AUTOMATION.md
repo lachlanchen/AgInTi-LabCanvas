@@ -453,10 +453,15 @@ AutoPublish from reading a partial copy. Useful variants:
 labcanvas wechat autopublish-video --chat "example group" --list --json
 labcanvas wechat autopublish-video --source /path/to/video.mp4 --title "paper demo"
 labcanvas wechat autopublish-video --chat "example group" --since-minutes 720 --replace
+labcanvas wechat autopublish-video --chat "example group" --sync --fetch-gui --json
 ```
 
 Set `LABCANVAS_AUTOPUBLISH_DIR` or pass `--dest` if the Nutstore folder moves.
-Use `--dry-run` to inspect the exact target filename without copying.
+Use `--dry-run` to inspect the exact target filename without copying. Use
+`--fetch-gui` when a WeChat video message exists but only the thumbnail is
+cached: the tool opens the chat in the isolated WeChat desktop, clicks the
+latest visible video, waits for WeChat to write the MP4 under `msg/video`, runs
+media sync again, then copies the matched video to AutoPublish.
 
 ## Web App
 

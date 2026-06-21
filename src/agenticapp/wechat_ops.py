@@ -155,6 +155,10 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     autopub.add_argument("--since-minutes", type=float, default=180)
     autopub.add_argument("--limit", type=int, default=10)
     autopub.add_argument("--sync", action="store_true", help="Run media-sync before selecting the video.")
+    autopub.add_argument("--fetch-gui", action="store_true", help="Open WeChat and click the latest video to force the client to cache it.")
+    autopub.add_argument("--fetch-timeout", type=float, default=90)
+    autopub.add_argument("--display", default=DEFAULT_DISPLAY)
+    autopub.add_argument("--video-click", default="", help="Relative x,y click inside the WeChat window for the latest visible video.")
     autopub.add_argument("--no-auto-source", action="store_true")
     autopub.add_argument("--replace", action="store_true")
     autopub.add_argument("--list", action="store_true")
@@ -564,6 +568,11 @@ def cmd_autopublish_video(args: argparse.Namespace) -> int:
         command += ["--match-token", str(token)]
     if args.sync:
         command.append("--sync")
+    if args.fetch_gui:
+        command.append("--fetch-gui")
+        command += ["--fetch-timeout", str(args.fetch_timeout), "--display", args.display]
+    if args.video_click:
+        command += ["--video-click", args.video_click]
     if args.no_auto_source:
         command.append("--no-auto-source")
     if args.replace:

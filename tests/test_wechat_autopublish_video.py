@@ -16,6 +16,27 @@ SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_autop
 
 
 class WeChatAutoPublishVideoTests(unittest.TestCase):
+    def test_parse_video_metadata_extracts_stems_and_sizes(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        xml = (
+            '<msg><videomsg md5="c43f397a0572fb697d26dad0b60abfe0" '
+            'newmd5="f6f04092fb889141347d7b4067a3be6d" '
+            'rawmd5="20ce6116367236e51d76b816161685c2" '
+            'length="13616508" rawlength="129918644" /></msg>'
+        )
+        packed = b"\x08\x01\x12 c347ab61d55d3e4ee3b2653c17263c4f"
+
+        stems, sizes = wechat_autopublish_video.parse_video_metadata(xml.encode(), b"", packed)
+
+        self.assertIn("c43f397a0572fb697d26dad0b60abfe0", stems)
+        self.assertIn("f6f04092fb889141347d7b4067a3be6d", stems)
+        self.assertIn("20ce6116367236e51d76b816161685c2", stems)
+        self.assertIn("c347ab61d55d3e4ee3b2653c17263c4f", stems)
+        self.assertIn(13616508, sizes)
+        self.assertIn(129918644, sizes)
+
     def test_copies_latest_mirrored_video_with_completed_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
