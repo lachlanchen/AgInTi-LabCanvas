@@ -660,6 +660,42 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         assert route is not None
         self.assertIn("Current coalesced request", route["task"])
         self.assertIn("Publish on sph Ins y2b", route["task"])
+        self.assertIn("Video publish/subtitle context bundle", route["task"])
+        self.assertIn("--correction-prompt-file", route["task"])
+        self.assertIn("--metadata-prompt-file", route["task"])
+
+    def test_video_publish_route_preserves_prior_context_for_subtitle_correction(self) -> None:
+        config = {
+            "chat_name": "🍓我的设备",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "attachment_trigger_local_types": [43],
+            "chat_purpose": "personal_organizer",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": ["publish", "shipinhao", "subtitle", "video"],
+        }
+        context_note = self.row(
+            "字幕上下文：标题用 OpenHI demo，里面日语名字是小中彩乃，不要写成罗马音。",
+            local_id=19,
+            server_id="ctx-19",
+        )
+        video = self.row("<msg><videomsg md5=\"feedfacecafebeef0011223344556677\" length=\"123456\" /></msg>", local_id=20, server_id="vid-20", local_type=43)
+        command = self.row("publish this video to Shipinhao and correct subtitles based on the context above", local_id=21, server_id="cmd-21")
+
+        route = direct_chatops.immediate_task_route(config, command, [context_note, video, command], focus_rows=[command])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        task = route["task"]
+        self.assertIn("Video publish/subtitle context bundle", task)
+        self.assertIn("OpenHI demo", task)
+        self.assertIn("小中彩乃", task)
+        self.assertIn("local_id=20", task)
+        self.assertIn("type=video", task)
+        self.assertIn("--correction-prompt-file", task)
+        self.assertIn("--metadata-prompt-file", task)
 
     def test_visible_message_text_extracts_wechat_card_metadata(self) -> None:
         row = self.row(

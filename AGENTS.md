@@ -41,8 +41,8 @@ Paper figure generation must stay editable and atomic. Do not treat a generated 
 
 ## WeChat Worker Tool Routing
 
-Research chat messages that mention LabCanvas, AgInTi image generation, KiCad, Gerber, STEP/STL, CAD, PCB, Blender, figures, icons, or renders should be routed to the worker queue. The fast monitor should only ACK and enqueue. The worker may run `studio figure-grid`, `studio lab-task`, `render-scene`, AgInTi image generation, KiCad, OpenSCAD, and Blender commands, then return generated PNG/PDF/SVG/STEP/STL/ZIP/KiCad artifacts in the `files` array so the GUI sender can deliver them to WeChat.
-Video publishing requests should use `agentic_tools/wechat_gui_agent/skills/lazyedit-publish-workflow/SKILL.md`: resolve exact same-chat video media with `labcanvas wechat autopublish-video`, process/publish through LazyEdit's `scripts/lazyedit_publish.py`, monitor local and remote queues, and stop for human QR/CAPTCHA/login steps.
+Research chat messages that mention LabCanvas, AgInTi image generation, KiCad, Gerber, STEP/STL, CAD, PCB, Blender, figures, icons, or renders should be routed to the worker queue. The fast monitor should only ACK and enqueue. The worker may run `studio figure-grid`, `studio lab-task`, `render-scene`, AgInTi image generation, KiCad, OpenSCAD, and Blender commands, then return generated PNG/PDF/SVG/MP4/MOV/audio/STEP/STL/ZIP/KiCad artifacts in the `files` array so the GUI sender can deliver them to WeChat.
+Video publishing requests should use `agentic_tools/wechat_gui_agent/skills/lazyedit-publish-workflow/SKILL.md`: resolve exact same-chat video media with `labcanvas wechat autopublish-video`, process/publish through LazyEdit's `scripts/lazyedit_publish.py`, monitor local and remote queues, and stop for human QR/CAPTCHA/login steps. Preserve the worker's video publish/subtitle context bundle as `--correction-prompt-file`, create a separate concise `--metadata-prompt-file`, and only return safe source-scoped media artifacts.
 
 ## Commit & Pull Request Guidelines
 

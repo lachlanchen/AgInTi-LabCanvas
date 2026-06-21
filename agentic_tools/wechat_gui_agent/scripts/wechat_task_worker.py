@@ -36,6 +36,19 @@ OUTBOUND_SUFFIXES = {
     ".json",
     ".csv",
     ".zip",
+    ".mp4",
+    ".mov",
+    ".m4v",
+    ".avi",
+    ".mkv",
+    ".webm",
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".wav",
+    ".ogg",
+    ".amr",
+    ".opus",
     ".step",
     ".stp",
     ".stl",
@@ -262,7 +275,11 @@ LazyEdit/AutoPublish video publishing:
   `PYTHONPATH=src python -m agenticapp wechat autopublish-video --chat "<chat>" --sync --fetch-gui --since-minutes 720 --json`
 - For real publishes, verify configured logo settings with:
   `curl -fsS http://127.0.0.1:18787/api/ui-settings/logo_settings | jq .`
+- For subtitle correction, create a correction context file under `{artifact_dir}` from the task JSON, current coalesced request, quoted message, recent history, source/reference rows, visible media metadata, and any user-provided script/transcript/story notes. Pass that file as `--correction-prompt-file`.
+- Create a separate short metadata brief under `{artifact_dir}` for public title/description/hashtags and pass it as `--metadata-prompt-file`. Do not feed the full chat history or full script as metadata context.
 - For processing plus publish, use `scripts/lazyedit_publish.py` with `--use-current-settings`, platform flags, `--guided-monitor`, `--wait`, and separate `--correction-prompt-file` and `--metadata-prompt-file` files when context is needed.
+- If the user asks to correct subtitles or provides contextual wording for a video, use `--correct-subtitles --correction-source polished` unless the source output has already been corrected and verified.
+- Before a real publish with subtitle correction, inspect the polished subtitle output such as `DATA/VIDEO_FOLDER/*_mixed_polished.md` and fix obvious ASR errors only when supported by the message context.
 - Use `--no-process` only when the final LazyEdit output already exists or the user explicitly asks to reuse the last/current output.
 - Monitor local and remote queues:
   `curl -fsS http://127.0.0.1:18787/api/autopublish/queue | jq '.jobs[:8]'`
@@ -280,7 +297,7 @@ Shipinhao/Finder and short-video shares:
 
 Artifact return contract:
 - If you generate or find preview files, include their existing absolute or repo-relative paths in the JSON `files` array. The outer worker sends those files to WeChat.
-- Prefer PNG/JPG/SVG/PDF/STEP/STL/ZIP/SCAD/KiCad files. Do not include decrypted WeChat DBs, private config, cookies, tokens, browser profiles, or chat logs.
+- Prefer PNG/JPG/SVG/PDF/MP4/MOV/audio/STEP/STL/ZIP/SCAD/KiCad files. Do not include decrypted WeChat DBs, private config, cookies, tokens, browser profiles, or chat logs.
 - Do not say a file was sent unless it is listed in `files` and exists locally.
 """
 
@@ -422,7 +439,28 @@ def parse_worker_result(text: str) -> dict[str, Any]:
 
 def file_entries_from_json(data: Any) -> list[str]:
     files: list[str] = []
-    file_keys = {"file", "files", "path", "paths", "artifact", "artifacts", "attachment", "attachments", "image", "images", "render", "renders", "preview", "previews"}
+    file_keys = {
+        "file",
+        "files",
+        "path",
+        "paths",
+        "artifact",
+        "artifacts",
+        "attachment",
+        "attachments",
+        "image",
+        "images",
+        "video",
+        "videos",
+        "audio",
+        "audios",
+        "subtitle",
+        "subtitles",
+        "render",
+        "renders",
+        "preview",
+        "previews",
+    }
 
     def visit(value: Any, *, key: str = "") -> None:
         lowered = key.lower()

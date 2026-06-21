@@ -1011,14 +1011,20 @@ def immediate_task_route(
         since_epoch=reference_epoch_window[0] if reference_epoch_window else None,
         until_epoch=reference_epoch_window[1] if reference_epoch_window else None,
     )
+    publish_context = (
+        video_publish_context_bundle(config, row, context_rows, focus_rows=focus_rows, source_rows=source_rows)
+        if is_video_publish_context_task(combined)
+        else ""
+    )
     task = (
         "Handle this WeChat request as backend work. "
-        "Use available local tools, download or generate needed artifacts into ignored private/output folders, "
-        "and return a concise message plus any files/images/PDFs to send back. "
+        "Use available local tools, download, sync, copy, or generate needed artifacts into ignored private/output folders, "
+        "and return a concise message plus any safe files/images/videos/audio/PDFs to send back. "
         "For any WeChat attachment or shared object, inspect the structured message text and recent synced media first: "
         "images/screenshots, PDFs, documents, archives, audio/voice, video, webpage cards, mini programs, "
         "YouTube, Shipinhao/视频号, Bilibili, links, contact/location cards, CAD/PCB files, and other formats. "
-        "Extract useful metadata such as title, URL, filename, extension, media path, and visible content before summarizing. "
+        "Extract useful metadata such as title, URL, filename, extension, media path, size, timestamp, checksum/token, and visible content before summarizing. "
+        "If the task asks to save media/files, keep the source-scoped copy path or generated output path in the result `files` array when it is safe to send. "
         "Strict source isolation: use only media/files from this exact chat and the current source/reference local_id rows below. "
         "Do not borrow media, files, or generated artifacts from another group, direct message, old request, or unrelated download folder. "
         "For multi-message tasks, combine the latest text command with referenced same-chat media rows, such as an image sent just before an edit request. "
@@ -1028,6 +1034,7 @@ def immediate_task_route(
         f"\n\nSame-chat reference media/context rows:\n{reference_context or '(none found)'}"
         f"\n\nAutomatic media sync:\n{media_sync_status or '(not run)'}"
         f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
+        f"{publish_context}"
     )
     ack = str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
     return {"ack": ack, "task": task}
@@ -1124,6 +1131,92 @@ def references_recent_media(text: str) -> bool:
         "风格",
     ]
     return any(marker in lowered for marker in markers)
+
+
+def is_video_publish_context_task(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = [
+        "publish",
+        "post",
+        "upload",
+        "shipinhao",
+        "视频号",
+        "youtube",
+        "instagram",
+        "lazyedit",
+        "autopublish",
+        "subtitle",
+        "subtitles",
+        "caption",
+        "captions",
+        "transcript",
+        "correct subtitles",
+        "correction prompt",
+        "metadata brief",
+        "sph",
+        "y2b",
+        "ytb",
+        "ins",
+        "发布",
+        "上传",
+        "投稿",
+        "字幕",
+        "转写",
+        "全文",
+        "校正",
+        "纠正",
+        "修正",
+    ]
+    return any(marker in lowered for marker in markers)
+
+
+def video_publish_context_bundle(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+    source_rows: list[dict[str, Any]] | None = None,
+) -> str:
+    prefixes = config.get("trigger_prefixes", [])
+    important: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+
+    def add(item: dict[str, Any]) -> None:
+        key = item.get("local_id")
+        if key in seen:
+            return
+        important.append(item)
+        seen.add(key)
+
+    for item in context_rows[-12:]:
+        add(item)
+    for item in source_rows or []:
+        add(item)
+    for item in focus_rows or [row]:
+        add(item)
+    important.sort(key=lambda item: int(item.get("local_id") or 0))
+    lines = []
+    for item in important:
+        text = strip_trigger_prefixes(visible_message_text(item), prefixes)
+        if not text.strip():
+            continue
+        label = "FOCUS" if any(item.get("local_id") == focus.get("local_id") for focus in (focus_rows or [row])) else "CONTEXT"
+        if source_rows and any(item.get("local_id") == source.get("local_id") for source in source_rows):
+            label += "+SOURCE"
+        lines.append(
+            f"- {label} local_id={item.get('local_id')} sender={item.get('sender_display') or item.get('sender')} "
+            f"type={message_kind(item)}: {truncate_text(text, 900)}"
+        )
+    body = "\n".join(lines) or "(no text context captured)"
+    return (
+        "\n\nVideo publish/subtitle context bundle:\n"
+        "- If this task publishes or processes a video, write this bundle plus the current request/source rows to a correction context file under the worker artifact directory and pass it as `--correction-prompt-file`.\n"
+        "- Use this context to correct subtitles, names, terminology, and obvious ASR errors. Treat it as evidence, not as a script to invent unsupported dialogue.\n"
+        "- Create a separate concise public metadata brief for title/description/hashtags and pass it as `--metadata-prompt-file`; do not reuse the full chat bundle as metadata.\n"
+        "- If the user supplied a transcript, story, quoted wording, or title in earlier messages, preserve it here and use it during subtitle correction.\n"
+        f"{body}"
+    )
 
 
 def has_recent_reference_media(

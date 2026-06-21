@@ -354,6 +354,14 @@ when reusing an already completed LazyEdit output. If Shipinhao or another
 platform needs QR login or manual confirmation, open the isolated browser and
 wait for the user rather than bypassing the page.
 
+When the request comes from WeChat, keep the monitor's
+`Video publish/subtitle context bundle` as the correction prompt. It preserves
+the coalesced command, quoted message, same-chat media rows, recent context, and
+visible metadata so subtitle correction can use the user's actual instructions.
+Use a separate concise metadata brief for public title/description/hashtags.
+Safe MP4/MOV/audio outputs can be returned in the worker JSON `files` array,
+subject to the configured size limit.
+
 ## External Decrypt Backend
 
 The optional second solution uses `ylytdeng/wechat-decrypt` as a private receive

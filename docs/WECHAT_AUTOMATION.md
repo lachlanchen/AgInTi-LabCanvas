@@ -501,6 +501,17 @@ ssh lachlan@lazyingart 'tmux capture-pane -pt autopub:0 -S -120 | tail -n 120'
 Do not bypass QR login, CAPTCHA, or consent pages. Open a human-assist browser
 and wait for user confirmation before continuing.
 
+For WeChat-origin video tasks, the worker prompt includes a
+`Video publish/subtitle context bundle`. Save that bundle under the worker
+artifact directory and pass it as `--correction-prompt-file` so subtitle
+correction can use the complete chat context: the coalesced command, quoted
+message, same-chat source rows, recent history, and media metadata. Create a
+separate short `--metadata-prompt-file` for public title/description/hashtags.
+
+The worker may return safe video/audio outputs as attachments when they are
+under the size limit. It must not attach private DBs, chat logs, cookies, tokens,
+browser profiles, or generated queue snapshots.
+
 ## Web App
 
 The LabCanvas web app exposes a compact WeChat Ops card for:

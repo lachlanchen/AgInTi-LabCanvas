@@ -110,16 +110,32 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             png = Path(tmp) / "render.png"
             step = Path(tmp) / "part.step"
+            mp4 = Path(tmp) / "publish_preview.mp4"
             png.write_bytes(b"png")
             step.write_text("step", encoding="utf-8")
-            raw = json.dumps({"message": "", "artifacts": [{"path": str(png)}]}, ensure_ascii=False)
+            mp4.write_bytes(b"video")
+            raw = json.dumps({"message": "", "artifacts": [{"path": str(png)}], "videos": [str(mp4)]}, ensure_ascii=False)
             result = worker.parse_worker_result(raw)
 
             prepared = worker.prepare_result_files(result, f"Also created {step}")
 
         self.assertIn(str(png.resolve()), prepared["files"])
         self.assertIn(str(step.resolve()), prepared["files"])
-        self.assertIn("Generated 2 artifact", prepared["message"])
+        self.assertIn(str(mp4.resolve()), prepared["files"])
+        self.assertIn("Generated 3 artifact", prepared["message"])
+
+    def test_worker_result_allows_safe_video_and_audio_artifacts(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            mp4 = Path(tmp) / "clip.mp4"
+            audio = Path(tmp) / "voice.m4a"
+            mp4.write_bytes(b"video")
+            audio.write_bytes(b"audio")
+
+            result = worker.prepare_result_files({"message": "", "confirmation": "", "files": [str(mp4), str(audio)]}, "")
+
+        self.assertIn(str(mp4.resolve()), result["files"])
+        self.assertIn(str(audio.resolve()), result["files"])
 
     def test_worker_result_skips_private_artifacts(self) -> None:
         worker = load_worker()
