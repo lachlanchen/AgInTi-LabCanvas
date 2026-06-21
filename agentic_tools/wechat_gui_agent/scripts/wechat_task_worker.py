@@ -920,6 +920,18 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
 - For AgInTi figure requests, return the editable SVG grid plus AgInTi prompt/request/manifest files; if live image generation is enabled and `imagePaths` contains PNG/JPG outputs, include those image paths too.
 - For PCB render requests, return the KiCad/board PNG preview and any STEP/Gerber zip when available. For CAD/Blender render requests, return the PNG render plus STEP/STL/source spec when useful.
 
+LALACHAN/RaraXia/AyaChan/SasaKun story-video generation:
+- For requests mentioning LALACHAN, RaraXia/Rara Xia/啦啦侠, AyaChan/Aya Chan/阿芽酱, SasaKun/Sasa Kun/飒飒君, Xiaoyunque/小云雀, XYQ, or Seedance, treat the task as a LALACHAN repo workflow rather than a generic video prompt.
+- Use `/home/lachlan/ProjectsLFS/LALACHAN` as the default root. If available, read `/home/lachlan/.codex/skills/lalachan-xyq-browser-video/SKILL.md` and `/home/lachlan/ProjectsLFS/LALACHAN/references/lalachan-story-video-handoff-for-wechat.md` for the current runbook.
+- First write a natural, understandable Chinese story with one clear setup -> problem -> action -> twist -> payoff chain. Save it under `/home/lachlan/ProjectsLFS/LALACHAN/references/stories/`.
+- Convert the story into a compact Xiaoyunque prompt and save it under `/home/lachlan/ProjectsLFS/LALACHAN/references/prompts/`.
+- Use the Xiaoyunque browser UI, not the API, unless explicitly requested. Default to 沉浸式短片, Seedance 2.0 Fast non-VIP, 15s, 4:3, mainly Chinese, with `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。`
+- Upload and verify the eight default reference images in this exact order: `words-card.jpg`, `LazyingArtRobot.png`, `display.png`, `patchwork-leather-notebook-luxury-clean-v2.png`, `raraxia.jpeg`, `ayachan.png`, `sasakun.jpeg`, `Trio.png`.
+- In the Xiaoyunque prompt, refer to uploaded images as 图1 through 图8. Do not paste local filesystem paths or file names into the prompt as scene text.
+- Before any paid submit, verify visible page state: mode, model, duration, ratio, prompt, all attachment uploads succeeded, non-VIP model, and point cost. Never double-click submit or retry if the job is queued/running.
+- Monitor the thread, download the finished MP4, save/copy it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return the story path, prompt path, MP4 path, and relevant screenshots/logs in `files` where safe.
+- If the user asks to publish, then hand the verified MP4 to LazyEdit with the publish workflow below. Otherwise stop after generation/import and report the ready video path.
+
 LazyEdit/AutoPublish video publishing:
 - For publish, re-publish, Shipinhao, YouTube, Instagram, AutoPublish, LazyEdit, subtitle-correction, metadata, or platform-monitoring requests, first read the repo-local workflow:
   `sed -n '1,260p' {LAZYEDIT_PUBLISH_SKILL.relative_to(ROOT)}`
@@ -1018,6 +1030,19 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "database",
         "download",
         "video",
+        "lalachan",
+        "raraxia",
+        "rara xia",
+        "ayachan",
+        "aya chan",
+        "sasakun",
+        "sasa kun",
+        "xiaoyunque",
+        "小云雀",
+        "啦啦侠",
+        "阿芽酱",
+        "飒飒君",
+        "seedance",
         "subtitle",
         "autopublish",
         "lazyedit",

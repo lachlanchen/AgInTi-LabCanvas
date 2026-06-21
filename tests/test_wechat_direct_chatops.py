@@ -359,6 +359,34 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("LabCanvas", route["task"])
         self.assertIn("KiCad", route["task"])
 
+    def test_lalachan_story_video_request_routes_with_eight_image_contract(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": [],
+        }
+        row = self.row("请帮我写一个 RaraXia AyaChan SasaKun 故事，并用小云雀生成视频")
+
+        self.assertTrue(direct_chatops.should_respond(config, {}, row))
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("LALACHAN/RaraXia story-video generation contract", route["task"])
+        self.assertIn("words-card.jpg", route["task"])
+        self.assertIn("raraxia.jpeg", route["task"])
+        self.assertIn("ayachan.png", route["task"])
+        self.assertIn("sasakun.jpeg", route["task"])
+        self.assertIn("Trio.png", route["task"])
+        self.assertIn("Seedance 2.0 Fast", route["task"])
+        self.assertIn("non-VIP", route["task"])
+        self.assertIn("Do not double-click", route["task"])
+
     def test_research_complex_task_routes_to_worker_without_keyword(self) -> None:
         config = {
             "chat_name": "懒人科研",

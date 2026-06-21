@@ -179,11 +179,25 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("--metadata-prompt-file", str(calls[0]["prompt"]))
         self.assertIn("verification gate", str(calls[0]["prompt"]))
         self.assertIn("Do not stop after a successful no-publish pass", str(calls[0]["prompt"]))
+        self.assertIn("LALACHAN/RaraXia/AyaChan/SasaKun story-video generation", str(calls[0]["prompt"]))
+        self.assertIn("words-card.jpg", str(calls[0]["prompt"]))
+        self.assertIn("raraxia.jpeg", str(calls[0]["prompt"]))
+        self.assertIn("ayachan.png", str(calls[0]["prompt"]))
+        self.assertIn("sasakun.jpeg", str(calls[0]["prompt"]))
+        self.assertIn("Trio.png", str(calls[0]["prompt"]))
+        self.assertIn("Seedance 2.0 Fast non-VIP", str(calls[0]["prompt"]))
+        self.assertIn("Do not paste local filesystem paths", str(calls[0]["prompt"]))
         self.assertIn("api/autopublish/queue", str(calls[0]["prompt"]))
         self.assertIn("lazyingart:8081/publish/queue", str(calls[0]["prompt"]))
         self.assertIn("fail closed", str(calls[0]["prompt"]))
         self.assertIn("nearby/older video", str(calls[0]["prompt"]))
         self.assertIn("files", str(calls[0]["prompt"]))
+
+    def test_worker_policy_selects_high_for_lalachan_video_generation(self) -> None:
+        worker = load_worker()
+        policy = worker.choose_worker_policy({"request": "写 RaraXia AyaChan SasaKun 故事并用小云雀生成视频"})
+
+        self.assertEqual(policy["reasoning_effort"], "high")
 
     def test_lazyedit_publish_skill_is_checked_in(self) -> None:
         skill = ROOT / "agentic_tools" / "wechat_gui_agent" / "skills" / "lazyedit-publish-workflow" / "SKILL.md"

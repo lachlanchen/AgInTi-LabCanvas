@@ -211,7 +211,12 @@ The worker chooses effort based on task difficulty:
 
 The worker prompt includes LabCanvas commands for figure grids, AgInTi image
 generation, CAD/PCB tasks, Blender scene renders, LazyEdit/AutoPublish, and
-browser assist. It returns plain text or JSON:
+browser assist. It also recognizes LALACHAN/RaraXia/AyaChan/SasaKun requests
+from WeChat and routes them as a story-video workflow: write/save the Chinese
+story, save the Xiaoyunque prompt, upload the eight LALACHAN reference images
+in order, verify non-VIP `Seedance 2.0 Fast`, generate/download the MP4, verify
+with `ffprobe`, and only publish through LazyEdit when requested. It returns
+plain text or JSON:
 
 ```json
 {

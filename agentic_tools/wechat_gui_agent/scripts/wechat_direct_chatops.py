@@ -160,6 +160,18 @@ def load_config(path: Path) -> dict[str, Any]:
             "picture",
             "screenshot",
             "video",
+            "story",
+            "story prompt",
+            "lalachan",
+            "rara xia",
+            "raraxia",
+            "aya chan",
+            "ayachan",
+            "sasa kun",
+            "sasakun",
+            "xiaoyunque",
+            "xyq",
+            "seedance",
             "channel",
             "publish",
             "post",
@@ -208,6 +220,13 @@ def load_config(path: Path) -> dict[str, Any]:
             "照片",
             "截图",
             "视频",
+            "故事",
+            "提示词",
+            "啦啦侠",
+            "阿芽酱",
+            "飒飒君",
+            "庄子机器人",
+            "小云雀",
             "视频号",
             "频道",
             "语音",
@@ -740,6 +759,18 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "youtube",
         "youtu.be",
         "video",
+        "story",
+        "story prompt",
+        "lalachan",
+        "rara xia",
+        "raraxia",
+        "aya chan",
+        "ayachan",
+        "sasa kun",
+        "sasakun",
+        "xiaoyunque",
+        "xyq",
+        "seedance",
         "publish",
         "post",
         "upload",
@@ -801,6 +832,13 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "截图",
         "视频号",
         "视频",
+        "故事",
+        "提示词",
+        "啦啦侠",
+        "阿芽酱",
+        "飒飒君",
+        "庄子机器人",
+        "小云雀",
         "频道",
         "语音",
         "音频",
@@ -973,11 +1011,13 @@ def immediate_task_route(
     lowered = combined.lower()
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
     attachment_trigger = is_attachment_trigger(config, row)
+    lalachan_task = is_lalachan_story_video_task(combined)
     complex_task = is_complex_research_task(config, combined, focus_rows=focus_rows)
     contextual_media_task = is_contextual_media_task(config, combined, row, context_rows, focus_rows=focus_rows)
     quoted_media_task = is_quote_reply_message(row) and references_recent_media(combined)
     if (
         not attachment_trigger
+        and not lalachan_task
         and not complex_task
         and not contextual_media_task
         and not quoted_media_task
@@ -1017,6 +1057,7 @@ def immediate_task_route(
         if is_video_publish_context_task(combined)
         else ""
     )
+    lalachan_context = lalachan_story_video_context_bundle() if lalachan_task else ""
     task = (
         "Handle this WeChat request as backend work. "
         "Use available local tools, download, sync, copy, or generate needed artifacts into ignored private/output folders, "
@@ -1036,9 +1077,78 @@ def immediate_task_route(
         f"\n\nAutomatic media sync:\n{media_sync_status or '(not run)'}"
         f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
         f"{publish_context}"
+        f"{lalachan_context}"
     )
     ack = str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
     return {"ack": ack, "task": task}
+
+
+def is_lalachan_story_video_task(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = [
+        "lalachan",
+        "rara xia",
+        "raraxia",
+        "lala xia",
+        "ayachan",
+        "aya chan",
+        "sasakun",
+        "sasa kun",
+        "xiaoyunque",
+        "xyq",
+        "seedance",
+        "啦啦侠",
+        "阿芽酱",
+        "飒飒君",
+        "庄子机器人",
+        "小云雀",
+    ]
+    has_lalachan_marker = any(marker in lowered for marker in markers)
+    generation_markers = [
+        "story",
+        "prompt",
+        "video",
+        "generate",
+        "create",
+        "write",
+        "make",
+        "publish",
+        "故事",
+        "提示词",
+        "视频",
+        "生成",
+        "创作",
+        "写",
+        "做",
+        "发布",
+    ]
+    return has_lalachan_marker and any(marker in lowered for marker in generation_markers)
+
+
+def lalachan_story_video_context_bundle() -> str:
+    return """
+
+LALACHAN/RaraXia story-video generation contract:
+- Treat this as a LALACHAN repo task, not a generic image/video prompt. Use `/home/lachlan/ProjectsLFS/LALACHAN` as the project root unless the user gives another root.
+- Characters: 啦啦侠 / RaraXia / Rara Xia, 阿芽酱 / AyaChan / Aya Chan, 飒飒君 / SasaKun / Sasa Kun, plus 庄子机器人 when useful.
+- First write a natural, understandable Chinese story with one clear setup -> problem -> action -> twist -> payoff chain. Keep dialogue concrete and human.
+- Save the story under `/home/lachlan/ProjectsLFS/LALACHAN/references/stories/` and the Xiaoyunque prompt under `/home/lachlan/ProjectsLFS/LALACHAN/references/prompts/`.
+- Use the Xiaoyunque browser UI workflow, not the API, unless the user explicitly asks for API use.
+- Upload and verify the eight default reference images in this exact order:
+  1. `words-card.jpg`
+  2. `LazyingArtRobot.png`
+  3. `display.png`
+  4. `patchwork-leather-notebook-luxury-clean-v2.png`
+  5. `raraxia.jpeg`
+  6. `ayachan.png`
+  7. `sasakun.jpeg`
+  8. `Trio.png`
+- The prompt should refer to uploaded images as 图1 through 图8. Never paste local filesystem paths or file names into the Xiaoyunque prompt as visible scene text.
+- Default setup: 沉浸式短片, Seedance 2.0 Fast non-VIP, 15s, 4:3, mainly Chinese, and include `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。`
+- Before any paid submit, verify visible page state: mode, model, duration, ratio, prompt text, all attachment uploads succeeded, non-VIP model, and point cost. Do not double-click or resubmit if a job is queued/running.
+- Monitor the submitted thread, download the finished MP4, copy/save it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return safe paths to the story, prompt, screenshots/logs, and MP4.
+- If the user asks to publish, hand the downloaded MP4 to LazyEdit using the normal publish workflow; otherwise stop after local video generation/import and report the ready path.
+"""
 
 
 def is_contextual_media_task(

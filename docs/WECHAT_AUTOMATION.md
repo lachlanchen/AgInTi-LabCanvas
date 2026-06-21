@@ -177,11 +177,33 @@ PYTHONPATH=src python -m agenticapp studio dispatch blender "Prepare an editable
 ```
 
 Worker replies should return generated artifacts in a JSON `files` array. The
-sender accepts review artifacts such as AgInTi PNG/JPG/SVG figure outputs,
+sender accepts safe review artifacts such as AgInTi PNG/JPG/SVG figure outputs,
 prompt/request/manifest files, PDF, STEP/STL/SCAD, Gerber ZIPs, KiCad project
-files, and `.blend` files. It refuses private paths,
-decrypted WeChat data, keys, cookies, browser profiles, chat logs, unsupported
-suffixes, and oversized files before sending.
+files, `.blend` files, videos, and audio. It refuses private paths, decrypted
+WeChat data, keys, cookies, browser profiles, chat logs, unsupported suffixes,
+and oversized files before sending.
+
+LALACHAN/RaraXia story-video requests are also first-class worker tasks. A
+message that mentions `LALACHAN`, `RaraXia`, `AyaChan`, `SasaKun`, `小云雀`,
+`啦啦侠`, `阿芽酱`, or `飒飒君` with story/video/generation intent is routed to
+the worker with the LALACHAN contract: write the Chinese story, save the story
+and Xiaoyunque prompt in the LALACHAN repo, upload the eight default images in
+order, verify non-VIP `Seedance 2.0 Fast`, generate/download the MP4, verify it
+with `ffprobe`, and return the story/prompt/video paths. Publishing only starts
+when the user asks for it, then the worker hands the verified MP4 to LazyEdit.
+
+Default LALACHAN upload order:
+
+```text
+words-card.jpg
+LazyingArtRobot.png
+display.png
+patchwork-leather-notebook-luxury-clean-v2.png
+raraxia.jpeg
+ayachan.png
+sasakun.jpeg
+Trio.png
+```
 
 Worker tasks are source-isolated. A task may use only the current chat title,
 the recorded `source.local_id`/`source.server_id`, the task context rows, and
