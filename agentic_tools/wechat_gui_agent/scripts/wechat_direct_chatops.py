@@ -161,6 +161,18 @@ def load_config(path: Path) -> dict[str, Any]:
             "screenshot",
             "video",
             "channel",
+            "publish",
+            "post",
+            "upload",
+            "lazyedit",
+            "autopublish",
+            "sph",
+            "shipinhao",
+            "视频号",
+            "instagram",
+            "ins",
+            "y2b",
+            "ytb",
             "voice",
             "audio",
             "sticker",
@@ -216,9 +228,23 @@ def load_config(path: Path) -> dict[str, Any]:
             raw[key] = value
         else:
             raw.setdefault(key, value)
+    merge_default_list_items(raw, defaults, "slow_task_keywords")
     if not raw["message_table"]:
         raise SystemExit(f"Missing message_table in private config: {path}")
     return raw
+
+
+def merge_default_list_items(raw: dict[str, Any], defaults: dict[str, Any], key: str) -> None:
+    current = raw.get(key)
+    fallback = defaults.get(key)
+    if not isinstance(current, list) or not isinstance(fallback, list):
+        return
+    seen = {str(item).casefold() for item in current}
+    for item in fallback:
+        marker = str(item).casefold()
+        if marker not in seen:
+            current.append(item)
+            seen.add(marker)
 
 
 def refresh_decrypted_store() -> None:
@@ -713,6 +739,17 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "youtube",
         "youtu.be",
         "video",
+        "publish",
+        "post",
+        "upload",
+        "lazyedit",
+        "autopublish",
+        "sph",
+        "shipinhao",
+        "instagram",
+        "ins",
+        "y2b",
+        "ytb",
         "channel",
         "voice",
         "audio",

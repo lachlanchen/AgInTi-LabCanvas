@@ -644,6 +644,23 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("summarize this link https://example.com/article")))
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("这个链接讲什么？")))
 
+    def test_personal_organizer_routes_publish_platform_shorthand(self) -> None:
+        config = self.base_config()
+        config["analysis_mode"] = "device_inbox"
+        config["chat_purpose"] = "personal_organizer"
+        config["respond_to_all"] = True
+        config["slow_task_keywords"] = ["publish", "sph", "ins", "y2b"]
+
+        row = self.row("Publish on sph Ins y2b")
+
+        self.assertTrue(direct_chatops.should_respond(config, {}, row))
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("Current coalesced request", route["task"])
+        self.assertIn("Publish on sph Ins y2b", route["task"])
+
     def test_visible_message_text_extracts_wechat_card_metadata(self) -> None:
         row = self.row(
             "<msg><appmsg><type>5</type><title>Shipinhao channel update</title>"
