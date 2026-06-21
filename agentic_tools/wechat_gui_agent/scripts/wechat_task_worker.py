@@ -31,7 +31,10 @@ DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 EFFORT_ORDER = ["low", "medium", "high", "xhigh"]
 CLAIMED_STATUS = "in_progress"
+SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
+SEND_RETRYING_STATUS = "send_retrying"
 DEFAULT_STALE_IN_PROGRESS_SECONDS = 60 * 60
+DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS = 5 * 60
 DEFAULT_WORKER_MODEL = "gpt-5.5"
 EFFORT_TIMEOUT_SECONDS = {
     "low": 120,
@@ -101,6 +104,7 @@ def main() -> int:
     parser.add_argument("--send", action="store_true", help="Send worker result back to WeChat.")
     parser.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS, help="Ignored JSON mapping chat names to GUI target specs.")
     parser.add_argument("--resend", help="Send an existing task result by task id without rerunning the worker.")
+    parser.add_argument("--flush-deferred", action="store_true", help="Try one deferred locked send without running new worker tasks.")
     args = parser.parse_args()
 
     if args.enqueue:
@@ -118,6 +122,9 @@ def main() -> int:
     if args.resend:
         return resend_task_result(args.queue, args.resend, args.chat, send_targets=args.send_targets)
 
+    if args.flush_deferred:
+        return 0 if flush_one_deferred_send(args.queue, args.chat, send_targets=args.send_targets, log_idle=True) else 1
+
     if args.once or args.loop:
         while True:
             processed = process_one(args.queue, args.chat, send=args.send, send_targets=args.send_targets, log_idle=not args.loop)
@@ -128,7 +135,7 @@ def main() -> int:
 
                 time.sleep(args.poll_seconds)
         return 0
-    raise SystemExit("Use --enqueue, --once, --loop, or --resend")
+    raise SystemExit("Use --enqueue, --once, --loop, --resend, or --flush-deferred")
 
 
 def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Path = DEFAULT_SEND_TARGETS) -> int:
@@ -140,12 +147,7 @@ def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Pa
         raise SystemExit(f"Task {task_id} has no stored result to resend")
     target_chat = str(task.get("chat") or chat)
     errors = send_result_with_retries(result, target_chat, send_targets, task=task)
-    if errors:
-        task["status"] = "send_failed"
-        task["send_errors"] = errors
-    else:
-        task["status"] = "waiting_confirmation" if result.get("confirmation") else "done"
-        task.pop("send_errors", None)
+    apply_send_outcome(task, result, errors)
     task["resent_at"] = datetime.now().isoformat(timespec="seconds")
     rewrite_task(queue, task)
     print(json.dumps(task, ensure_ascii=False, indent=2))
@@ -155,6 +157,8 @@ def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Pa
 def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
     task = claim_next_pending(queue)
     if not task:
+        if send and os.environ.get("WECHAT_WORKER_AUTO_FLUSH_DEFERRED", "1") == "1":
+            return flush_one_deferred_send(queue, chat, send_targets=send_targets, log_idle=log_idle)
         if log_idle:
             print(json.dumps({"status": "no-pending-task"}, ensure_ascii=False))
         return False
@@ -176,14 +180,15 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         if send_errors:
             task["send_errors"] = send_errors
     elif send_errors:
-        task["status"] = "send_failed"
-        task["send_errors"] = send_errors
+        apply_send_outcome(task, result, send_errors)
     else:
-        task["status"] = "waiting_confirmation" if result["confirmation"] else "done"
+        apply_send_outcome(task, result, [])
     task["completed_at"] = datetime.now().isoformat(timespec="seconds")
     task["result"] = result
     rewrite_task(queue, task)
-    if send_errors:
+    if send_errors and send_errors_indicate_wechat_locked(send_errors):
+        event_status = "send-deferred-locked"
+    elif send_errors:
         event_status = "send-failed"
     elif result["confirmation"]:
         event_status = "waiting-confirmation-sent" if send else "waiting-confirmation"
@@ -201,6 +206,63 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     print(json.dumps(task, ensure_ascii=False, indent=2))
     log_worker_event(task["status"], task)
     return True
+
+
+def flush_one_deferred_send(
+    queue: Path,
+    chat: str,
+    *,
+    send_targets: Path = DEFAULT_SEND_TARGETS,
+    log_idle: bool = True,
+) -> bool:
+    task = claim_next_deferred_send(queue)
+    if not task:
+        if log_idle:
+            print(json.dumps({"status": "no-deferred-send-ready"}, ensure_ascii=False))
+        return False
+    log_worker_event("claimed_deferred_send", task)
+    result = task.get("result")
+    if not isinstance(result, dict):
+        task["status"] = "send_failed"
+        task["send_errors"] = ["stored result missing or invalid; cannot flush deferred send"]
+    else:
+        target_chat = str(task.get("chat") or chat)
+        errors = send_result_with_retries(result, target_chat, send_targets, task=task)
+        apply_send_outcome(task, result, errors)
+    task["resent_at"] = datetime.now().isoformat(timespec="seconds")
+    rewrite_task(queue, task)
+    record_event(
+        chat_name=task.get("chat", chat),
+        action="worker_task_resend",
+        direction="outbound",
+        message=(result or {}).get("confirmation") or (result or {}).get("message") or "",
+        status=str(task.get("status") or ""),
+        db_path=DEFAULT_DB,
+        metadata=task,
+    )
+    print(json.dumps(task, ensure_ascii=False, indent=2))
+    log_worker_event(str(task.get("status") or "unknown"), task)
+    return True
+
+
+def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: list[str]) -> None:
+    if errors:
+        task["send_errors"] = errors
+        task["last_send_attempt_at"] = datetime.now().isoformat(timespec="seconds")
+        if send_errors_indicate_wechat_locked(errors):
+            task["status"] = SEND_DEFERRED_LOCKED_STATUS
+            task["send_deferred_reason"] = "wechat_locked"
+        else:
+            task["status"] = "send_failed"
+        return
+    task["status"] = "waiting_confirmation" if result.get("confirmation") else "done"
+    task.pop("send_errors", None)
+    task.pop("send_deferred_reason", None)
+
+
+def send_errors_indicate_wechat_locked(errors: list[str]) -> bool:
+    text = "\n".join(str(error) for error in errors).lower()
+    return "wechat_locked" in text or "weixin for linux is locked" in text or "unlock on phone" in text
 
 
 def send_result_with_retries(
@@ -222,6 +284,8 @@ def send_result_with_retries(
             return []
         except Exception as exc:
             errors.append(f"attempt {attempt}: {exc}")
+            if send_errors_indicate_wechat_locked(errors):
+                break
             if attempt < attempts and delay:
                 import time
 
@@ -341,6 +405,56 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
                 write_tasks(path, tasks)
                 return task
         return None
+
+
+def claim_next_deferred_send(path: Path) -> dict[str, Any] | None:
+    """Claim one deferred send if its retry backoff has elapsed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    worker_id = worker_identity()
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        now = datetime.now()
+        now_text = now.isoformat(timespec="seconds")
+        for index, task in enumerate(tasks):
+            status = str(task.get("status") or "")
+            if status not in {SEND_DEFERRED_LOCKED_STATUS, SEND_RETRYING_STATUS}:
+                continue
+            if status == SEND_RETRYING_STATUS and not stale_send_retrying(task, now):
+                continue
+            if status == SEND_DEFERRED_LOCKED_STATUS and not deferred_send_backoff_elapsed(task, now):
+                continue
+            task["status"] = SEND_RETRYING_STATUS
+            task["worker_id"] = worker_id
+            task["send_retry_claimed_at"] = now_text
+            task["send_retry_count"] = int(task.get("send_retry_count") or 0) + 1
+            tasks[index] = task
+            write_tasks(path, tasks)
+            return task
+        return None
+
+
+def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
+    backoff = int(os.environ.get("WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS", DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS))
+    if backoff <= 0:
+        return True
+    last = parse_iso_datetime(str(task.get("last_send_attempt_at") or task.get("resent_at") or task.get("completed_at") or ""))
+    if not last:
+        return True
+    return (now - last).total_seconds() >= backoff
+
+
+def stale_send_retrying(task: dict[str, Any], now: datetime) -> bool:
+    if task.get("status") != SEND_RETRYING_STATUS:
+        return False
+    timeout = int(os.environ.get("WECHAT_WORKER_STALE_SEND_RETRY_SECONDS", "180"))
+    if timeout <= 0:
+        return False
+    claimed_at = parse_iso_datetime(str(task.get("send_retry_claimed_at") or ""))
+    if not claimed_at:
+        return True
+    return (now - claimed_at).total_seconds() > timeout
 
 
 def stale_in_progress(task: dict[str, Any], now: datetime) -> bool:
@@ -1501,7 +1615,7 @@ def send_message(message: str, chat: str, send_targets: Path, *, target: dict[st
             target_file = Path(handle.name)
             json.dump({"message": message, "targets": [target]}, handle, ensure_ascii=False)
         try:
-            subprocess.run(
+            run_send_subprocess(
                 [
                     sys.executable,
                     str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
@@ -1514,10 +1628,6 @@ def send_message(message: str, chat: str, send_targets: Path, *, target: dict[st
                     "--mirror-db",
                     str(DEFAULT_DB),
                 ],
-                cwd=ROOT,
-                check=True,
-                timeout=60,
-                env=wechat_send_env(),
             )
         finally:
             target_file.unlink(missing_ok=True)
@@ -1550,7 +1660,7 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
             target_file = Path(handle.name)
             json.dump({"message": "", "targets": [target]}, handle, ensure_ascii=False)
         try:
-            subprocess.run(
+            run_send_subprocess(
                 [
                     sys.executable,
                     str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
@@ -1560,10 +1670,6 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
                     "--pause",
                     os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
                 ],
-                cwd=ROOT,
-                check=True,
-                timeout=60,
-                env=wechat_send_env(),
             )
         finally:
             target_file.unlink(missing_ok=True)
@@ -1584,6 +1690,28 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
         check=False,
         env=wechat_send_env(),
     )
+
+
+def run_send_subprocess(command: list[str], timeout: int = 60) -> None:
+    proc = subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+        env=wechat_send_env(),
+    )
+    if proc.returncode == 0:
+        return
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    parts = [f"send command failed with exit {proc.returncode}"]
+    if stdout:
+        parts.append(f"stdout={stdout[-1200:]}")
+    if stderr:
+        parts.append(f"stderr={stderr[-1200:]}")
+    raise RuntimeError("; ".join(parts))
 
 
 def wechat_send_env() -> dict[str, str]:

@@ -421,6 +421,21 @@ by default; media/PDF/ZIP artifacts are the default auto-send candidates. Set
 `WECHAT_WORKER_SEND_FILES=0` to report all paths only, or
 `WECHAT_WORKER_REQUIRE_FILE_SEND=1` when attachment delivery must fail the task.
 
+If the official Linux client shows "Weixin for Linux is locked", do not bypass
+it with packet capture, decompilation, traffic decryption, session extraction,
+or private-protocol replay. The sender emits `WECHAT_LOCKED`, completed tasks
+move to `send_deferred_locked`, and the worker keeps processing new backend work
+while outbound replies wait in the private queue. The loop periodically retries
+deferred sends after `WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS` (default:
+300), or an operator can run:
+
+```bash
+python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --flush-deferred
+```
+
+After the user unlocks WeChat through the normal phone-side flow, the queued
+replies flush without rerunning the completed backend tasks.
+
 Before running backend work, the worker atomically claims a queue row by moving
 it from `pending` to `in_progress` under a file lock. This prevents a manual
 `worker once` and the persistent tmux loop from processing the same request

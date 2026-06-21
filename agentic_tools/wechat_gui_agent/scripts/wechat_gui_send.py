@@ -50,6 +50,10 @@ class TargetSpec:
     open_click: tuple[int, int] | None = None
 
 
+class WeChatLockedError(RuntimeError):
+    """Raised when the official WeChat client requires phone unlock."""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--display", default=":97", help="X display running WeChat. Default: :97.")
@@ -219,7 +223,23 @@ def send_one(
 ) -> dict[str, str]:
     focus(env, window)
     shot_prefix = f"{index:02d}-{safe_name(target.name)}"
-    screenshot(env, out_dir / f"{shot_prefix}-before.png")
+    before_path = out_dir / f"{shot_prefix}-before.png"
+    screenshot(env, before_path)
+    if not skip_title_guard:
+        locked = detect_wechat_locked(env, window, before_path, out_dir / f"{shot_prefix}-locked.png")
+        if locked["locked"]:
+            record_event(
+                chat_name=target.name,
+                query=target.query,
+                action="open",
+                status="wechat-locked",
+                db_path=mirror_db,
+                screenshot_path=str(before_path),
+                metadata={"target": target.__dict__, "lock": locked},
+            )
+            raise WeChatLockedError(
+                "WECHAT_LOCKED: Weixin for Linux is locked and requires normal phone-side unlock before GUI sends."
+            )
 
     guard = open_target(env, window, target, pause, out_dir, shot_prefix, skip_title_guard, prefer_current)
     opened_path = out_dir / f"{shot_prefix}-opened.png"
@@ -470,6 +490,43 @@ def verify_opened_title(
 
 def normalize_title(text: str) -> str:
     return "".join(ch.lower() for ch in str(text or "") if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def detect_wechat_locked(env: dict[str, str], window: Window, screenshot_path: Path, crop_path: Path) -> dict[str, Any]:
+    try:
+        run(
+            [
+                "convert",
+                str(screenshot_path),
+                "-crop",
+                f"{window.width}x{window.height}+{window.x}+{window.y}",
+                "-colorspace",
+                "Gray",
+                "-resize",
+                "160%",
+                str(crop_path),
+            ],
+            env=env,
+        )
+    except Exception as exc:
+        return {"locked": False, "ocr_text": "", "lock_crop": str(crop_path), "error": str(exc)[:500]}
+    proc = run(["tesseract", str(crop_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "6"], env=env, check=False)
+    ocr_text = proc.stdout.strip()
+    observed = normalize_title(ocr_text)
+    locked = any(
+        marker in observed
+        for marker in (
+            "weixinforlinuxislocked",
+            "unlockonphone",
+            "手机微信聊天列表顶部的状态栏解锁",
+            "微信聊天列表顶部的状态栏解锁",
+        )
+    )
+    return {
+        "locked": locked,
+        "ocr_text": ocr_text,
+        "lock_crop": str(crop_path),
+    }
 
 
 def title_crop_regions(window: Window) -> list[dict[str, int | str]]:

@@ -364,7 +364,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     status = "sent"
                 except Exception as exc:
                     metrics["send_error"] = str(exc)[:500]
-                    status = "send-failed"
+                    status = "send-deferred-locked" if is_wechat_locked_error(exc) else "send-failed"
                     send_ok = False
                 metrics["send_ms"] = elapsed_ms(started)
             if send_ok:
@@ -386,6 +386,8 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             if send_ok:
                 mark_responded_rows(state, focus_rows or [trigger_row])
                 response_sent = reply_text
+            elif task_enqueued and status == "send-deferred-locked":
+                mark_responded_rows(state, focus_rows or [trigger_row])
         elif task_enqueued:
             mark_responded_rows(state, focus_rows or [trigger_row])
         processed_local_id = trigger_row["local_id"]
@@ -403,7 +405,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     status = "sent"
                 except Exception as exc:
                     metrics["send_error"] = str(exc)[:500]
-                    status = "send-failed"
+                    status = "send-deferred-locked" if is_wechat_locked_error(exc) else "send-failed"
                     send_ok = False
                 metrics["send_ms"] = elapsed_ms(started)
             latest_row = latest_inbound_row(config, new_rows)
@@ -426,6 +428,10 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                 state["last_organizer_ack_at"] = datetime.now().isoformat(timespec="seconds")
                 state["last_organizer_ack_local_id"] = latest_row.get("local_id") if latest_row else None
                 response_sent = ack_text
+                processed_local_id = latest_row.get("local_id") if latest_row else processed_local_id
+            elif status == "send-deferred-locked":
+                state["last_organizer_ack_at"] = datetime.now().isoformat(timespec="seconds")
+                state["last_organizer_ack_local_id"] = latest_row.get("local_id") if latest_row else None
                 processed_local_id = latest_row.get("local_id") if latest_row else processed_local_id
 
     if new_rows:
@@ -2261,6 +2267,11 @@ def send_gui_message(config: dict[str, Any], message: str) -> str:
         return ""
     except Exception:
         return ""
+
+
+def is_wechat_locked_error(exc: Exception | str) -> bool:
+    text = str(exc).lower()
+    return "wechat_locked" in text or "weixin for linux is locked" in text or "unlock on phone" in text
 
 
 def load_state(path: Path) -> dict[str, Any]:

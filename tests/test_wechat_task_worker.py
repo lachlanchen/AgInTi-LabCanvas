@@ -454,6 +454,64 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(calls), 2)
 
+    def test_send_result_defers_immediately_when_wechat_locked(self) -> None:
+        worker = load_worker()
+        calls = []
+        original = worker.send_result_once
+        try:
+            def locked_send(*args: object, **kwargs: object) -> None:
+                calls.append((args, kwargs))
+                raise RuntimeError("WECHAT_LOCKED: Weixin for Linux is locked")
+
+            worker.send_result_once = locked_send
+            task: dict[str, object] = {}
+            errors = worker.send_result_with_retries(
+                {"message": "ok", "confirmation": "", "files": []},
+                "EchoMind",
+                Path("/tmp/no-targets.json"),
+                task=task,
+            )
+            worker.apply_send_outcome(task, {"message": "ok", "confirmation": "", "files": []}, errors)
+        finally:
+            worker.send_result_once = original
+
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(worker.send_errors_indicate_wechat_locked(errors))
+        self.assertEqual(task["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
+        self.assertEqual(task["send_deferred_reason"], "wechat_locked")
+
+    def test_claim_next_deferred_send_respects_backoff(self) -> None:
+        worker = load_worker()
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-deferred",
+                            "chat": "EchoMind",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "last_send_attempt_at": "2099-01-01T00:00:00",
+                            "result": {"message": "ok", "confirmation": "", "files": []},
+                        }
+                    ],
+                )
+                self.assertIsNone(worker.claim_next_deferred_send(queue))
+                worker.os.environ["WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS"] = "0"
+                claimed = worker.claim_next_deferred_send(queue)
+        finally:
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS"] = original_backoff
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+        self.assertEqual(claimed["send_retry_count"], 1)
+
     def test_send_result_notes_markdown_files_without_gui_file_send(self) -> None:
         worker = load_worker()
         messages: list[str] = []

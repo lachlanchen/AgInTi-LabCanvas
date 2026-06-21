@@ -171,6 +171,33 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertEqual(result["window_title"], "🍓我的设备")
         self.assertFalse(any(call[0] == "tesseract" for call in calls))
 
+    def test_detect_wechat_locked_from_visible_screen(self):
+        module = load_wechat_gui_send()
+        original_run = module.run
+        try:
+            def fake_run(command, *, env, check=True):
+                if command[0] == "tesseract":
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        "Weixin for Linux is locked. Unlock on Phone",
+                        "",
+                    )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            result = module.detect_wechat_locked(
+                {},
+                module.Window("1", 0, 0, 1000, 700),
+                Path("/tmp/screen.png"),
+                Path("/tmp/locked.png"),
+            )
+        finally:
+            module.run = original_run
+
+        self.assertTrue(result["locked"])
+        self.assertIn("Weixin for Linux is locked", result["ocr_text"])
+
     def test_relaxed_title_guard_does_not_allow_live_send_by_default(self):
         module = load_wechat_gui_send()
         original_focus = module.focus
