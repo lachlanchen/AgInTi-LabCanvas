@@ -654,6 +654,16 @@ run `labcanvas wechat approve <task-id>` to resume verification. Set
 `WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH=1` to force the older general
 worker-agent fallback during testing.
 
+Run the focused self-test after changing this path:
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat selftest --suite publish-poststage --json
+```
+
+It verifies that the system itself reissues a missing publish job, does not
+duplicate an existing job, and turns platform login blockers into resumable
+`waiting_confirmation` tasks.
+
 ```bash
 curl -fsS http://127.0.0.1:18787/api/autopublish/queue | jq '.jobs[:8]'
 curl -fsS http://lazyingart:8081/publish/queue | jq '.jobs[:8]'

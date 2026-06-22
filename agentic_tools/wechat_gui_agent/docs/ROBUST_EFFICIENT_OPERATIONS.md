@@ -210,6 +210,8 @@ Set `WECHAT_WORKER_LAZYEDIT_REMOTE_LOG_COMMAND` in the ignored supervisor env to
 let the verifier inspect bounded AutoPublish logs. Login or QR markers should
 become `waiting_confirmation` with the same poststage stored, so the user can
 log in normally and approve the task to resume.
+Use `PYTHONPATH=src python -m agenticapp wechat selftest --suite publish-poststage --json`
+as the smoke test for this contract after worker or LazyEdit bridge changes.
 
 ## Health Checks
 

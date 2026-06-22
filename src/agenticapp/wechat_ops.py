@@ -52,6 +52,11 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     routines.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     routines.set_defaults(func=cmd_routines)
 
+    selftest = nested.add_parser("selftest", help="Run focused automation self-tests for critical WeChat routines.")
+    selftest.add_argument("--suite", choices=["publish-poststage"], default="publish-poststage")
+    selftest.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    selftest.set_defaults(func=cmd_selftest)
+
     init_config = nested.add_parser("init-config", help="Write ignored private config templates.")
     init_config.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     init_config.add_argument("--chat", default="wechat-chat")
@@ -356,6 +361,64 @@ def cmd_routines(args: argparse.Namespace) -> int:
     summary = "wechat routines: " + ", ".join(str(item.get("id") or "") for item in routines)
     print_payload(payload, args.json, summary)
     return 0
+
+
+def cmd_selftest(args: argparse.Namespace) -> int:
+    if args.suite != "publish-poststage":
+        raise ValueError(f"Unsupported selftest suite: {args.suite}")
+    checks = publish_poststage_selftest_checks()
+    results = []
+    for check in checks:
+        proc = run_command(
+            [sys.executable, "-m", "unittest", check["test"]],
+            capture=True,
+            env={**os.environ, "PYTHONPATH": str(PACKAGE_ROOT / "src") + os.pathsep + os.environ.get("PYTHONPATH", "")},
+        )
+        results.append(
+            {
+                "id": check["id"],
+                "ok": proc.returncode == 0,
+                "test": check["test"],
+                "stdout_tail": proc.stdout[-1200:],
+                "stderr_tail": proc.stderr[-1200:],
+                "returncode": proc.returncode,
+            }
+        )
+    payload = {
+        "ok": all(item["ok"] for item in results),
+        "suite": args.suite,
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+        "results": results,
+        "contract": [
+            "missing LazyEdit publish job triggers the worker's real publish command",
+            "existing LazyEdit/remote job is monitored and not duplicated",
+            "remote platform login blockers become waiting_confirmation with poststage preserved",
+        ],
+    }
+    print_payload(payload, args.json, f"wechat selftest {args.suite}: " + ("ok" if payload["ok"] else "failed"))
+    return 0 if payload["ok"] else 1
+
+
+def publish_poststage_selftest_checks() -> list[dict[str, str]]:
+    prefix = "tests.test_wechat_task_worker.WeChatTaskWorkerTests."
+    return [
+        {
+            "id": "missing_job_reissues_publish",
+            "test": prefix + "test_publish_poststage_reissues_lazyedit_when_no_local_job_exists",
+        },
+        {
+            "id": "existing_job_not_duplicated",
+            "test": prefix + "test_publish_poststage_does_not_reissue_when_local_job_exists",
+        },
+        {
+            "id": "login_blocker_waits_for_confirmation",
+            "test": prefix + "test_publish_poststage_login_blocker_waits_for_confirmation",
+        },
+        {
+            "id": "remote_login_log_detection",
+            "test": prefix + "test_detect_remote_publish_login_blocker_from_log",
+        },
+    ]
 
 
 def cmd_init_config(args: argparse.Namespace) -> int:
