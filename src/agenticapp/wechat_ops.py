@@ -419,6 +419,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "chat-sync dry-open alarm is long enough to refresh inactive groups",
             "chat-sync retryable failures back off per chat without blocking other groups",
             "plain story/script requests route to the same worker capability set in research and device chats",
+            "all non-EchoMind monitored chats share the backend routine skill surface",
+            "EchoMind remains language-learning only and does not enqueue backend worker routines",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -482,6 +484,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "story_route_unified_research_device",
             "test": direct_prefix + "test_plain_story_generation_routes_to_story_worker_for_research_and_device_chats",
+        },
+        {
+            "id": "non_echomind_shared_backend_routes",
+            "test": direct_prefix + "test_all_non_echomind_chats_share_backend_route_skills",
+        },
+        {
+            "id": "echomind_language_only_backend_guard",
+            "test": direct_prefix + "test_echomind_stays_language_only_for_backend_requests",
         },
         {
             "id": "supervisor_uses_guarded_worker_entrypoint",

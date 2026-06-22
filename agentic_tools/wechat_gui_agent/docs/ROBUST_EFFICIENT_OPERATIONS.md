@@ -43,6 +43,12 @@ that contract rather than designing a new workflow from scratch.
   target.
 - Never mix context, media, files, Codex sessions, or generated artifacts across
   chats.
+- All monitored non-EchoMind chats share the same backend routine skill surface:
+  CAD/PCB/LabCanvas, editable figures, story/script, file/media, video,
+  publish, and research requests should reach the shared worker routines when
+  the current message asks for them.
+- EchoMind remains language-learning only. It may analyze Japanese, Chinese,
+  and English, but it must not enqueue backend routine work.
 - Every live send must pass the send target and title guard.
 - For the common phone-to-desktop workflow, enable
   `allow_human_self_messages=true` with `self_message_policy=human_commands`.

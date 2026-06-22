@@ -35,6 +35,22 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             "mirror_db": self.mirror_db,
         }
 
+    def backend_chat_config(self, chat_name: str, purpose: str = "research") -> dict[str, object]:
+        return {
+            "chat_name": chat_name,
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "respond_to_self": False,
+            "trigger_local_types": [1],
+            "analysis_mode": "",
+            "chat_purpose": purpose,
+            "silent_danger_enabled": True,
+            "mirror_db": self.mirror_db,
+            "immediate_ack_enabled": True,
+            "agent_route_enabled": False,
+        }
+
     def row(
         self,
         content: str,
@@ -63,7 +79,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             )
         )
 
-    def test_echomind_routes_generated_video_request_to_worker(self) -> None:
+    def test_echomind_stays_language_only_for_backend_requests(self) -> None:
         config = self.base_config()
         config["agent_route_enabled"] = False
         row = self.row("Could you send me the generated video in the group?", local_id=72, server_id="srv-72")
@@ -74,16 +90,39 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         route = direct_chatops.immediate_task_route(config, row, context, focus_rows=[row])
 
-        self.assertIsNotNone(route)
-        assert route is not None
-        self.assertEqual(route["route_decision"]["route_kind"], "file_download_or_save")
-        self.assertTrue(route["route_decision"]["worker_needed"])
-        self.assertIn("Current coalesced request", route["task"])
-        self.assertIn("Could you send me the generated video in the group?", route["task"])
-        self.assertIn("Strict source isolation", route["task"])
+        self.assertIsNone(route)
+
+    def test_all_non_echomind_chats_share_backend_route_skills(self) -> None:
+        chats = [
+            ("懒人科研", "research"),
+            ("鏈接", "web_clip_inbox"),
+            ("写作 外语 挣钱", "writing_language_money"),
+            ("🍓我的设备", "device_inbox"),
+            ("lachlanchan", "research"),
+        ]
+        cases = [
+            ("render a KiCad PCB and export Gerbers", "cad_pcb_labcanvas"),
+            ("generate a story about RaraXia and AyaChan", "story_or_script"),
+            ("generate a BioRender figure diagram of an optical setup", "generate_image"),
+            ("summarize this paper and compare the methods", "research_or_summary"),
+            ("generate a Xiaoyunque video for LALACHAN", "generate_video"),
+            ("download and send back this PDF", "file_download_or_save"),
+        ]
+        for chat_name, purpose in chats:
+            for message, expected_kind in cases:
+                with self.subTest(chat=chat_name, message=message):
+                    config = self.backend_chat_config(chat_name, purpose)
+                    row = self.row(message, local_id=72, server_id=f"{chat_name}-{expected_kind}")
+                    route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+                    self.assertIsNotNone(route)
+                    assert route is not None
+                    self.assertEqual(route["route_decision"]["route_kind"], expected_kind)
+                    self.assertTrue(route["route_decision"]["worker_needed"])
+                    self.assertIn(f"Chat: {chat_name}", route["task"])
 
     def test_worker_heuristic_overrides_agent_chat_only_for_generated_video_request(self) -> None:
-        config = self.base_config()
+        config = self.backend_chat_config("🍓我的设备", "device_inbox")
         config["agent_route_enabled"] = True
         config["agent_route_prefilter"] = "agent_first"
         row = self.row("Could you send me the generated video in the group?", local_id=72, server_id="srv-72")

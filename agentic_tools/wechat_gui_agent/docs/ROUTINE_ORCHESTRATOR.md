@@ -50,6 +50,17 @@ Current routines:
   send-back, optional LazyEdit, and optional public publish.
 - `general_worker`: safe fallback for other backend work.
 
+Routing scope:
+
+- All monitored non-EchoMind chats use the same backend routine skill surface:
+  懒人科研, 鏈接, 写作 外语 挣钱, 🍓我的设备, and `lachlanchan` can route CAD/PCB,
+  LabCanvas, figure/image, file/media, story/script, video, publish, and
+  research tasks to these routines when the current message asks for them.
+- EchoMind is intentionally different. It stays a language-learning chat for
+  Japanese/Chinese/English analysis and must not enqueue backend worker
+  routines, even if a message mentions images, CAD, videos, downloads, or
+  publishing.
+
 ## Contract Rules
 
 Every worker task should contain `task.routine`. When claimed, the worker writes

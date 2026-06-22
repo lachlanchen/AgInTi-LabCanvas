@@ -768,6 +768,8 @@ def response_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dic
             return ""
         return "no_trigger"
     if bool(config.get("respond_to_all", False)):
+        if is_unified_backend_request(config, text):
+            return ""
         if is_personal_organizer_chat(config):
             return "" if organizer_response_candidate(config, text) else "no_trigger"
         return "" if meaningful_request_text(text, config.get("trigger_prefixes", [])) else "no_trigger"
@@ -879,6 +881,12 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "list",
         "organize",
         "export",
+        "edit",
+        "change",
+        "modify",
+        "replace",
+        "remove",
+        "mask",
         "http://",
         "https://",
         "www.",
@@ -1098,7 +1106,7 @@ def is_attachment_trigger(config: dict[str, Any], row: dict[str, Any]) -> bool:
         return False
     if is_quote_reply_message(row):
         return False
-    default_enabled = is_research_chat(config)
+    default_enabled = not is_language_analysis_mode(config)
     if not bool(config.get("respond_to_attachments", default_enabled)):
         return False
     local_type, _ = split_message_type(row.get("local_type"))
@@ -1333,6 +1341,8 @@ def immediate_task_route(
     *,
     focus_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
+    if is_language_analysis_mode(config):
+        return None
     if not bool(config.get("immediate_ack_enabled", True)):
         return None
     current_request = combined_focus_request(config, row, context_rows, focus_rows=focus_rows)
@@ -1483,6 +1493,7 @@ def heuristic_worker_route_candidate(
         or quoted_media_task
         or file_download_task
         or story_or_script_task
+        or is_unified_backend_request(config, text)
         or any(keyword and keyword in lowered for keyword in keywords)
     )
 
@@ -1657,19 +1668,32 @@ def fallback_route_decision(
     publish_allowed = has_public_publish_intent(lowered)
     if is_file_download_or_save_task(text):
         route_kind = "file_download_or_save"
+    elif is_cad_pcb_labcanvas_task(text):
+        route_kind = "cad_pcb_labcanvas"
     elif is_lalachan_story_video_task(text) or has_video_generation_intent(text):
         route_kind = "generate_video"
     elif is_story_or_script_task(text):
         route_kind = "story_or_script"
+    elif is_image_generation_task(text):
+        route_kind = "generate_image"
+    elif is_research_or_summary_task(text) or is_complex_research_task(config, text, focus_rows=focus_rows):
+        route_kind = "research_or_summary"
     elif publish_allowed:
         route_kind = "publish_video"
-    elif references_recent_media(text):
+    elif is_contextual_media_task(config, text, row, context_rows, focus_rows=focus_rows) or (
+        is_quote_reply_message(row) and references_recent_media(text)
+    ):
         route_kind = "edit_existing_media"
-    elif is_complex_research_task(config, text, focus_rows=focus_rows):
-        route_kind = "research_or_summary"
     else:
         route_kind = "other_worker"
-    project = "lalachan" if route_kind in {"generate_video", "story_or_script", "file_download_or_save", "process_existing_video"} and (mentions_lalachan_project(text) or recent_context_mentions_lalachan(context_rows)) else "unknown"
+    if route_kind in {"generate_video", "story_or_script", "file_download_or_save", "process_existing_video"} and (
+        mentions_lalachan_project(text) or recent_context_mentions_lalachan(context_rows)
+    ):
+        project = "lalachan"
+    elif route_kind in {"cad_pcb_labcanvas", "generate_image", "edit_existing_media"}:
+        project = "labcanvas"
+    else:
+        project = "unknown"
     needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save"}
     return {
         "route_kind": route_kind,
@@ -1703,6 +1727,13 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     route_kind = str(parsed.get("route_kind") or fallback.get("route_kind") or "other_worker")
     if route_kind not in allowed_kinds:
         route_kind = "other_worker"
+    fallback_kind = str(fallback.get("route_kind") or "")
+    if route_kind == "other_worker" and fallback_kind in allowed_kinds and fallback_kind != "other_worker":
+        route_kind = fallback_kind
+        parsed["reason"] = (
+            str(parsed.get("reason") or fallback.get("reason") or "")
+            + " | specialized fallback route restored"
+        ).strip()
     if route_kind in {"generate_image", "generate_video"} and is_story_or_script_task(current_request):
         if route_kind == "generate_image" and not has_visual_generation_intent(current_request):
             route_kind = "story_or_script"
@@ -2107,6 +2138,138 @@ def is_file_download_or_save_task(text: str) -> bool:
         "下載",
     ]
     return any(term in lowered for term in media_terms) and any(term in lowered for term in action_terms)
+
+
+def is_cad_pcb_labcanvas_task(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = [
+        "kicad",
+        "gerber",
+        "pcb",
+        "openscad",
+        "open scad",
+        "blender",
+        "freecad",
+        "cad",
+        "3d",
+        "step",
+        "stl",
+        "3mf",
+        "iges",
+        "obj",
+        "glb",
+        "labcanvas",
+        "jlcpcb",
+        "jlc",
+        "电路板",
+        "電路板",
+        "立创",
+        "立創",
+        "嘉立创",
+        "嘉立創",
+        "建模",
+        "模型",
+        "渲染",
+        "板子",
+        "打板",
+    ]
+    return any(marker in lowered for marker in markers)
+
+
+def is_image_generation_task(text: str) -> bool:
+    if not has_visual_generation_intent(text):
+        return False
+    lowered = str(text or "").lower()
+    action_markers = [
+        "generate",
+        "create",
+        "make",
+        "draw",
+        "design",
+        "render",
+        "edit",
+        "modify",
+        "replace",
+        "remove",
+        "mask",
+        "biorender",
+        "aginti image",
+        "imagegen",
+        "生成",
+        "创作",
+        "創作",
+        "做",
+        "画",
+        "畫",
+        "设计",
+        "設計",
+        "渲染",
+        "编辑",
+        "編輯",
+        "修改",
+        "替换",
+        "替換",
+        "遮住",
+    ]
+    return any(marker in lowered for marker in action_markers)
+
+
+def is_research_or_summary_task(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = [
+        "paper",
+        "article",
+        "literature",
+        "research",
+        "deep research",
+        "summarize",
+        "summary",
+        "explain",
+        "analyze",
+        "compare",
+        "find",
+        "search",
+        "look up",
+        "pdf",
+        "doi",
+        "arxiv",
+        "论文",
+        "論文",
+        "文献",
+        "文獻",
+        "研究",
+        "深度研究",
+        "总结",
+        "總結",
+        "摘要",
+        "解释",
+        "解釋",
+        "分析",
+        "对比",
+        "對比",
+        "查找",
+        "搜索",
+        "检索",
+        "檢索",
+    ]
+    return any(marker in lowered for marker in markers)
+
+
+def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
+    if is_language_analysis_mode(config):
+        return False
+    lowered = str(text or "").lower()
+    keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
+    return (
+        is_file_download_or_save_task(text)
+        or is_cad_pcb_labcanvas_task(text)
+        or has_video_generation_intent(text)
+        or is_story_or_script_task(text)
+        or has_public_publish_intent(text)
+        or is_image_generation_task(text)
+        or is_research_or_summary_task(text)
+        or any(keyword and keyword in lowered for keyword in keywords)
+    )
 
 
 def is_video_publish_context_task(text: str) -> bool:
