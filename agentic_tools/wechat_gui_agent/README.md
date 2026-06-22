@@ -338,6 +338,11 @@ The generated-video route contract records `stage_permissions` from the current
 request only: story/video generation, WeChat send-back, LazyEdit import/process,
 and public publish are separate booleans. Old chat history can provide context
 but cannot authorize LazyEdit or platform posting.
+Treat WeChat as a mirror command box for the persistent Codex worker. The durable
+agent is the running monitor, queue, session registry, and worker supervisor:
+messages become queue tasks, Codex worker turns are resumed per chat/role when
+reasoning is needed, and long Xiaoyunque waits are held by deterministic queue
+state rather than a single fragile multi-hour model call.
 
 Generated-video MP4 delivery is strict by default. When a finished video path is
 present, the worker sends that file before the completion text and records it in

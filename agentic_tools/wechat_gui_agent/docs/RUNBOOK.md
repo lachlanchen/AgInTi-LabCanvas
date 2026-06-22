@@ -96,6 +96,11 @@ old history cannot authorize LazyEdit import or public posting. A request for
 generation alone stops after download, verification, and WeChat send-back; a
 request that mentions LazyEdit imports/processes with `--no-publish`; a request
 that explicitly names publish/post/platforms may proceed to public publish.
+WeChat should be treated as a mirror command box for the persistent worker, not
+as the execution engine itself. The supervisor keeps monitors and the worker
+alive, Codex sessions are reused per exact chat/role when reasoning is needed,
+and long Xiaoyunque rendering is represented by queue state plus CDP probes so
+the system can wait for hours without holding an expensive model call open.
 Generated-video file delivery is mandatory: the MP4 is sent before the final
 done message, recorded in `sent_file_paths`, and a file-send failure leaves the
 task in `send_deferred_artifact` or `send_deferred_locked` for retry instead of
