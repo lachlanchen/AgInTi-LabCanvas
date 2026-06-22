@@ -1928,9 +1928,9 @@ LALACHAN/RaraXia story-video generation contract:
   7. `sasakun.jpeg`
   8. `Trio.png`
 - The prompt should refer to uploaded images as 图1 through 图8. Never paste local filesystem paths or file names into the Xiaoyunque prompt as visible scene text.
-- Default setup: 沉浸式短片, cheapest acceptable visible-cost Seedance model, 15s, 4:3, mainly Chinese, and include `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。`
-- Model preference for cheap/fast runs: use `Seedance 2.0 Mini 体验版` / `vipnew` when the page shows a cheap rate such as `单秒限时低至4积分`; otherwise `Seedance 2.0 Fast` or `Fast VIP` is acceptable only when the visible per-second/total cost is cheap and suitable.
-- Before any paid submit, verify visible page state: mode, exact model row, duration, ratio, prompt text, all attachment uploads succeeded, per-second/total point cost, and whether VIP/vipnew is present. Do not double-click or resubmit if a job is queued/running.
+- Default setup: 沉浸式短片, a relatively cheap suitable Seedance model, 15s, 4:3, mainly Chinese, and include `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。`
+- Model preference for cheap/fast runs: use `Seedance 2.0 Mini 体验版` / `vipnew` when the page shows a cheap rate such as `单秒限时低至4积分`; otherwise choose the relatively cheaper suitable `Seedance 2.0 Fast`, `Fast VIP`, or available Seedance option and continue.
+- Before any submit, verify visible page state as far as the UI allows: mode, selected model row, duration, ratio, prompt text, upload success, and any visible point cost/VIP/vipnew state. Do not block only because the exact preferred model or exact cost text is unavailable. Do not double-click or resubmit if a job is queued/running.
 - Monitor the submitted thread, download the finished MP4, copy/save it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return safe paths to the story, prompt, screenshots/logs, and MP4 so the outer worker can send the MP4 back to the source WeChat chat.
 - If the current request asks for LazyEdit import/process, hand the downloaded MP4 to LazyEdit without public publish unless public publishing is also explicitly requested. If the user asks to publish, use the normal LazyEdit publish workflow; otherwise stop after local video generation/download/send-back and report the ready path.
 """

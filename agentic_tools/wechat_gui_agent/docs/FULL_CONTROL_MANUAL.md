@@ -251,10 +251,10 @@ generation, CAD/PCB tasks, Blender scene renders, LazyEdit/AutoPublish, and
 browser assist. It also recognizes LALACHAN/RaraXia/AyaChan/SasaKun requests
 from WeChat and routes them as a story-video workflow: write/save the Chinese
 story, save the Xiaoyunque prompt, upload the eight LALACHAN reference images
-in order, verify the cheapest acceptable visible-cost Seedance model, generate/download the MP4, verify
+in order, choose a relatively cheap suitable Seedance model, generate/download the MP4, verify
 with `ffprobe`, and send the verified MP4 back to the source WeChat chat. `Seedance 2.0 Mini 体验版` / `vipnew`
-at a visible cheap rate such as `单秒限时低至4积分` is acceptable; `Fast VIP` is acceptable only when the visible
-per-second/total cost is cheap and suitable. A
+at a visible cheap rate such as `单秒限时低至4积分` is preferred; if unavailable, the worker should choose the
+relatively cheaper suitable `Fast`, `Fast VIP`, or available Seedance row and continue. Model selection is not a blocker. A
 submitted Xiaoyunque job stays as `generation_waiting` and is checked by short
 status-probe cycles; the next poll is based on page state rather than a fixed
 long timeout. If the agent times out before returning monitor state, the worker
