@@ -32,6 +32,7 @@ PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 LAZYEDIT_PUBLISH_SKILL = ROOT / "agentic_tools" / "wechat_gui_agent" / "skills" / "lazyedit-publish-workflow" / "SKILL.md"
 LAZYEDIT_ROOT = Path(os.environ.get("LAZYEDIT_ROOT", "/home/lachlan/DiskMech/Projects/lazyedit"))
 LAZYEDIT_API_URL = os.environ.get("LAZYEDIT_API_URL", "http://127.0.0.1:18787").rstrip("/")
+LAZYEDIT_REMOTE_QUEUE_URL = os.environ.get("LAZYEDIT_REMOTE_QUEUE_URL", "http://lazyingart:8081/publish/queue")
 DEFAULT_AUTOPUBLISH_DIR = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/home/lachlan/Nutstore Files/AutoPublish/AutoPublish"))
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
@@ -43,6 +44,7 @@ SEND_DEFERRED_ARTIFACT_STATUS = "send_deferred_artifact"
 SEND_RETRYING_STATUS = "send_retrying"
 GENERATED_VIDEO_WAITING_STATUS = "generation_waiting"
 GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS = "generation_poststage_pending"
+EXISTING_VIDEO_PUBLISH_PENDING_STATUS = "publish_poststage_pending"
 DEFAULT_STALE_IN_PROGRESS_SECONDS = 60 * 60
 DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS = 5 * 60
 DEFAULT_GENERATED_VIDEO_POLL_BACKOFF_SECONDS = 5 * 60
@@ -306,6 +308,14 @@ def flush_one_deferred_send(
 
 
 def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: list[str]) -> None:
+    if existing_video_publish_result_is_nonterminal(task, result):
+        if errors:
+            task["last_publish_progress_send_errors"] = errors
+            task["last_publish_progress_send_attempt_at"] = datetime.now().isoformat(timespec="seconds")
+        else:
+            task.pop("last_publish_progress_send_errors", None)
+        schedule_existing_video_publish_poststage(task, result)
+        return
     if generated_video_result_is_nonterminal(task, result):
         if errors:
             task["last_progress_send_errors"] = errors
@@ -354,6 +364,12 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
     task["status"] = "waiting_confirmation" if result.get("confirmation") else "done"
     task.pop("send_errors", None)
     task.pop("send_deferred_reason", None)
+
+
+def existing_video_publish_result_is_nonterminal(task: dict[str, Any], result: dict[str, Any]) -> bool:
+    if not is_video_publish_task(task):
+        return False
+    return bool(existing_video_publish_poststage_retry_from_result(result))
 
 
 def generated_video_result_is_nonterminal(task: dict[str, Any], result: dict[str, Any]) -> bool:
@@ -432,6 +448,12 @@ def generated_video_poststage_retry_from_result(result: dict[str, Any]) -> dict[
     return dict(retry) if isinstance(retry, dict) else {}
 
 
+def existing_video_publish_poststage_retry_from_result(result: dict[str, Any]) -> dict[str, Any]:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    retry = data.get("publish_poststage_retry")
+    return dict(retry) if isinstance(retry, dict) else {}
+
+
 def generated_video_poststage_delivery_complete(task: dict[str, Any], poststage: dict[str, Any]) -> bool:
     video_path = str(poststage.get("video_path") or "")
     if not video_path:
@@ -487,6 +509,26 @@ def schedule_generated_video_poll(task: dict[str, Any], result: dict[str, Any]) 
             monitor.update(discovered)
     task["generated_video_monitor"] = monitor
     task.setdefault("generation_started_at", now.isoformat(timespec="seconds"))
+
+
+def schedule_existing_video_publish_poststage(task: dict[str, Any], result: dict[str, Any]) -> None:
+    retry = existing_video_publish_poststage_retry_from_result(result)
+    try:
+        retry_seconds = max(60.0, float(retry.get("retry_seconds") or os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_RETRY_SECONDS", "600")))
+    except (TypeError, ValueError):
+        retry_seconds = 600.0
+    now = datetime.now()
+    task["status"] = EXISTING_VIDEO_PUBLISH_PENDING_STATUS
+    task["existing_video_publish_poststage"] = retry.get("poststage") or task.get("existing_video_publish_poststage") or {}
+    task["publish_poststage_queued_at"] = now.isoformat(timespec="seconds")
+    task["next_publish_poststage_at"] = (now + timedelta(seconds=retry_seconds)).timestamp()
+    task["next_publish_poststage_at_iso"] = datetime.fromtimestamp(float(task["next_publish_poststage_at"])).isoformat(timespec="seconds")
+    task["publish_poststage_wait_count"] = int(task.get("publish_poststage_wait_count") or 0) + 1
+    task["publish_poststage_last_status"] = retry.get("status") or retry.get("stage") or "retry"
+    task["publish_poststage_last_outcome"] = retry.get("outcome") or {}
+    task.pop("completed_at", None)
+    task.pop("send_errors", None)
+    task.pop("send_deferred_reason", None)
 
 
 def generated_video_next_poll_seconds(task: dict[str, Any], result: dict[str, Any] | None = None) -> int:
@@ -662,6 +704,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
 
 
 def should_send_worker_result(task: dict[str, Any], result: dict[str, Any]) -> bool:
+    if existing_video_publish_result_is_nonterminal(task, result):
+        return os.environ.get("WECHAT_WORKER_SEND_PUBLISH_PROGRESS", "1") == "1"
     if not generated_video_result_is_nonterminal(task, result):
         return True
     return os.environ.get("WECHAT_WORKER_SEND_GENERATION_PROGRESS", "0") == "1"
@@ -820,6 +864,7 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
                 or stale_in_progress(task, now)
                 or generated_video_poll_ready(task, now)
                 or generated_video_poststage_ready(task, now)
+                or existing_video_publish_poststage_ready(task, now)
             ):
                 if status == CLAIMED_STATUS:
                     task.setdefault("claim_history", []).append(
@@ -843,6 +888,15 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
                             "queued_at": task.get("poststage_queued_at"),
                             "claimed_at": now_text,
                             "kind": (task.get("generated_video_poststage") or {}).get("kind"),
+                        }
+                    )
+                if status == EXISTING_VIDEO_PUBLISH_PENDING_STATUS:
+                    task.setdefault("publish_poststage_history", []).append(
+                        {
+                            "queued_at": task.get("publish_poststage_queued_at"),
+                            "claimed_at": now_text,
+                            "stage": (task.get("existing_video_publish_poststage") or {}).get("stage"),
+                            "video_id": (task.get("existing_video_publish_poststage") or {}).get("video_id"),
                         }
                     )
                 task["status"] = CLAIMED_STATUS
@@ -874,6 +928,19 @@ def generated_video_poststage_ready(task: dict[str, Any], now: datetime) -> bool
     if task.get("confirmation"):
         return False
     raw = task.get("next_poststage_at")
+    try:
+        next_poststage = float(raw)
+    except (TypeError, ValueError):
+        next_poststage = 0.0
+    return now.timestamp() >= next_poststage
+
+
+def existing_video_publish_poststage_ready(task: dict[str, Any], now: datetime) -> bool:
+    if str(task.get("status") or "") != EXISTING_VIDEO_PUBLISH_PENDING_STATUS:
+        return False
+    if task.get("confirmation"):
+        return False
+    raw = task.get("next_publish_poststage_at")
     try:
         next_poststage = float(raw)
     except (TypeError, ValueError):
@@ -1681,6 +1748,8 @@ def has_public_publish_intent(text: str) -> bool:
 
 
 def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[str, Any] | None = None) -> str:
+    autopub = (preflight or {}).get("autopublish_video") if isinstance(preflight, dict) else None
+    resolved_by_artifact = isinstance(autopub, dict) and str(autopub.get("status") or "") == "artifact-ledger-match"
     lines = [
         "# LazyEdit Correction Context",
         "",
@@ -1697,11 +1766,16 @@ def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[s
     for row in task.get("context") or []:
         if not isinstance(row, dict):
             continue
+        content = collapse_context_text(row.get("content"))
+        marker = " "
+        if resolved_by_artifact and is_obsolete_video_cache_refusal(content):
+            marker = " OBSOLETE-CACHE-MISS "
+        elif is_unverified_publish_claim(content):
+            marker = " OBSOLETE-UNVERIFIED-PUBLISH "
         lines.append(
-            f"- local_id={row.get('local_id')} sender={row.get('sender_display') or row.get('sender')}: "
-            f"{collapse_context_text(row.get('content'))}"
+            f"-{marker}local_id={row.get('local_id')} sender={row.get('sender_display') or row.get('sender')}: "
+            f"{content}"
         )
-    autopub = (preflight or {}).get("autopublish_video") if isinstance(preflight, dict) else None
     if isinstance(autopub, dict):
         lines.extend(
             [
@@ -1722,6 +1796,17 @@ def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[s
                 ),
             ]
         )
+        source_task = autopub.get("source_task") if isinstance(autopub.get("source_task"), dict) else {}
+        supporting_materials = source_task.get("supporting_materials") if isinstance(source_task, dict) else []
+        if isinstance(supporting_materials, list) and supporting_materials:
+            lines.extend(["", "## Source Generation / Prompt Material"])
+            for item in supporting_materials[:8]:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or item.get("path") or "supporting material")
+                excerpt = collapse_context_text(item.get("excerpt"), max_len=1200)
+                if excerpt:
+                    lines.append(f"- {title}: {excerpt}")
     lines.extend(
         [
             "",
@@ -1756,6 +1841,14 @@ def build_lazyedit_metadata_brief(task: dict[str, Any], *, preflight: dict[str, 
         result_excerpt = collapse_context_text(source_task.get("result_message_excerpt"), max_len=360)
         if result_excerpt:
             context_lines.append(result_excerpt)
+        supporting_materials = source_task.get("supporting_materials")
+        if isinstance(supporting_materials, list):
+            for item in supporting_materials:
+                if not isinstance(item, dict):
+                    continue
+                excerpt = collapse_context_text(item.get("excerpt"), max_len=360)
+                if excerpt:
+                    context_lines.append(excerpt)
     return (
         "# LazyEdit Metadata Brief\n\n"
         "Use this only for public-facing title, description, keywords, and platform notes.\n"
@@ -2005,7 +2098,127 @@ def summarize_video_source_task(task: dict[str, Any], path: Path) -> dict[str, A
         "artifact_dir": task.get("artifact_dir"),
         "matched_file": str(path),
         "sent_file_paths": task.get("sent_file_paths") or [],
+        "supporting_materials": collect_video_supporting_materials(task, path),
     }
+
+
+def is_obsolete_video_cache_refusal(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = [
+        "官方客户端还没有把这一条完整 mp4 缓存到本地",
+        "没有把这一条完整 mp4 缓存到本地",
+        "no matching mirrored video found",
+        "official client",
+        "cache",
+    ]
+    return ("mp4" in lowered or "视频" in lowered or "video" in lowered) and any(marker in lowered for marker in markers)
+
+
+def is_unverified_publish_claim(text: str) -> bool:
+    lowered = str(text or "").lower()
+    claim_markers = [
+        "已自动完成 exact 视频保存",
+        "lazyedit 处理/字幕修正并提交发布",
+        "并提交发布",
+        "submitted publish",
+    ]
+    proof_markers = [
+        "stage=published_verified",
+        "已确认发布完成",
+        "remote=done",
+        "remote_status=done",
+        "public_url",
+        "published_urls",
+    ]
+    return any(marker in lowered for marker in claim_markers) and not any(marker in lowered for marker in proof_markers)
+
+
+def collect_video_supporting_materials(task: dict[str, Any], path: Path) -> list[dict[str, str]]:
+    """Collect safe local prompt/story/context snippets that explain a generated video."""
+    materials: list[dict[str, str]] = []
+    seen: set[Path] = set()
+
+    def add_file(candidate: Path, *, title: str | None = None) -> None:
+        try:
+            resolved = candidate.expanduser().resolve()
+        except OSError:
+            return
+        if resolved in seen or not resolved.is_file():
+            return
+        if resolved.suffix.lower() not in {".md", ".txt", ".json"}:
+            return
+        try:
+            if resolved.stat().st_size > int(os.environ.get("WECHAT_WORKER_SUPPORTING_MATERIAL_MAX_BYTES", "60000")):
+                return
+            text = resolved.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        excerpt = collapse_context_text(text, max_len=1600)
+        if not excerpt:
+            return
+        seen.add(resolved)
+        materials.append(
+            {
+                "title": title or resolved.name,
+                "path": str(resolved),
+                "excerpt": excerpt,
+            }
+        )
+
+    artifact_dir = task.get("artifact_dir")
+    if artifact_dir:
+        root = Path(str(artifact_dir)).expanduser()
+        if root.is_dir():
+            for pattern in ("*prompt*.md", "*story*.md", "*script*.md", "*context*.md", "*metadata*.md", "*contract*.md", "*.txt", "*.json"):
+                for candidate in sorted(root.glob(pattern)):
+                    add_file(candidate, title=f"source task {candidate.name}")
+                    if len(materials) >= 6:
+                        break
+                if len(materials) >= 6:
+                    break
+
+    for candidate in related_lalachan_material_files(path):
+        add_file(candidate, title=f"LALACHAN {candidate.name}")
+        if len(materials) >= 10:
+            break
+    return materials[:10]
+
+
+def related_lalachan_material_files(path: Path) -> list[Path]:
+    lalachan = Path(os.environ.get("LALACHAN_ROOT", "/home/lachlan/ProjectsLFS/LALACHAN")).expanduser()
+    if not lalachan.is_dir():
+        return []
+    stem_tokens = video_stem_tokens(path)
+    if not stem_tokens:
+        return []
+    candidates: list[tuple[int, float, Path]] = []
+    roots = [lalachan / "references", lalachan / "outputs"]
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for candidate in root.rglob("*"):
+            if candidate.suffix.lower() not in {".md", ".txt", ".json"}:
+                continue
+            name_tokens = video_stem_tokens(candidate)
+            score = len(stem_tokens & name_tokens)
+            if "2026" in stem_tokens and "2026" in name_tokens:
+                score += 1
+            if score < 2:
+                continue
+            try:
+                mtime = candidate.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            candidates.append((score, mtime, candidate))
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [item[2] for item in candidates[:12]]
+
+
+def video_stem_tokens(path: Path) -> set[str]:
+    raw = path.stem.lower()
+    tokens = {item for item in re.split(r"[^a-z0-9]+", raw) if len(item) >= 3}
+    stop = {"mp4", "wechat", "completed", "final", "video", "seedance", "fast", "revised"}
+    return {item for item in tokens if item not in stop}
 
 
 def copy_exact_video_artifact_to_autopublish(source: Path, task: dict[str, Any]) -> Path:
@@ -2041,6 +2254,9 @@ def add_once(items: list[Any], value: Any) -> None:
 
 
 def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
+    existing_publish = deterministic_existing_video_publish_poststage_result(task)
+    if existing_publish is not None:
+        return existing_publish
     poststage = deterministic_generated_video_poststage_result(task)
     if poststage is not None:
         return poststage
@@ -2459,8 +2675,31 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
         correction_prompt=correction_prompt,
         metadata_prompt=metadata_prompt,
     )
-    message = summarize_lazyedit_publish_outcome(video_id, platforms, target, outcome)
-    return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
+    verification = verify_lazyedit_publish_stage(video_id, platforms, target, outcome)
+    message = summarize_lazyedit_publish_outcome(video_id, platforms, target, outcome, verification=verification)
+    payload: dict[str, Any] = {
+        "message": message,
+        "files": [],
+        "confirmation": "",
+        "publish_stage": verification,
+    }
+    if not bool(verification.get("verified")):
+        payload["publish_poststage_retry"] = {
+            "status": verification.get("stage") or "not_verified",
+            "retry_seconds": publish_stage_retry_seconds(verification),
+            "poststage": {
+                "kind": "existing_video_publish",
+                "stage": verification.get("stage") or "not_verified",
+                "video_id": video_id,
+                "platforms": platforms,
+                "target": str(target),
+                "target_name": target.name,
+                "source_path": autopub.get("source_path"),
+                "autopublish_video": autopub,
+            },
+            "outcome": compact_publish_outcome(outcome),
+        }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def wait_for_lazyedit_import(target: Path, *, timeout: float, poll_seconds: float) -> int | None:
@@ -2584,25 +2823,225 @@ def parse_last_json_object(text: str) -> dict[str, Any]:
     return {}
 
 
-def summarize_lazyedit_publish_outcome(video_id: int, platforms: list[str], target: Path, outcome: dict[str, Any]) -> str:
+def deterministic_existing_video_publish_poststage_result(task: dict[str, Any]) -> str | None:
+    if not is_video_publish_task(task) or str(task.get("status") or "") != CLAIMED_STATUS:
+        return None
+    poststage = task.get("existing_video_publish_poststage") if isinstance(task.get("existing_video_publish_poststage"), dict) else {}
+    if not poststage:
+        return None
+    video_id = int_or_none(poststage.get("video_id"))
+    if video_id is None:
+        return None
+    platforms = [str(item) for item in poststage.get("platforms") or detect_publish_platforms(task)]
+    target = Path(str(poststage.get("target") or poststage.get("target_name") or ""))
+    verification = verify_lazyedit_publish_stage(video_id, platforms, target, {"status": "probe"})
+    stage = str(verification.get("stage") or "not_verified")
+    wait_count = int(task.get("publish_poststage_wait_count") or 0)
+    probe_only_retries = int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_PROBE_ONLY_RETRIES", "1"))
+    if stage in {"no_local_job", "failed", "unverified_done"} and wait_count >= probe_only_retries:
+        # Let the resumed per-chat Codex worker inspect LazyEdit/browser state
+        # and repair the routine. The deterministic probe has no proof to close
+        # or continue by itself.
+        return None
+    message = summarize_lazyedit_publish_outcome(video_id, platforms, target, {"status": "probe"}, verification=verification)
+    payload: dict[str, Any] = {
+        "message": message,
+        "files": [],
+        "confirmation": "",
+        "publish_stage": verification,
+    }
+    if not bool(verification.get("verified")):
+        payload["publish_poststage_retry"] = {
+            "status": stage,
+            "retry_seconds": publish_stage_retry_seconds(verification),
+            "poststage": poststage,
+            "outcome": {"status": "probe"},
+        }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def verify_lazyedit_publish_stage(video_id: int, platforms: list[str], target: Path, outcome: dict[str, Any]) -> dict[str, Any]:
+    requested = normalize_platforms(platforms)
+    local_jobs = matching_lazyedit_publish_jobs(video_id, outcome)
+    remote_jobs = remote_publish_jobs_for(local_jobs)
+    verified_platforms: set[str] = set()
+    pending = False
+    failed = False
+    for index, job in enumerate(local_jobs):
+        remote = remote_jobs[index] if index < len(remote_jobs) else {}
+        status = normalized_status(job.get("status"))
+        remote_status = normalized_status(job.get("remote_status") or remote.get("status"))
+        job_platforms = normalize_platforms(job.get("platforms") or requested)
+        if publish_job_verified(job, remote):
+            verified_platforms.update(job_platforms)
+        elif status in {"queued", "running", "pending"} or remote_status in {"queued", "running", "pending"}:
+            pending = True
+        elif status in {"failed", "error"} or remote_status in {"failed", "error"}:
+            failed = True
+        elif status == "done":
+            pending = True
+    verified = bool(requested) and set(requested).issubset(verified_platforms)
+    if verified:
+        stage = "published_verified"
+    elif not local_jobs:
+        stage = "no_local_job"
+    elif failed and not pending:
+        stage = "failed"
+    elif pending:
+        stage = "publish_running"
+    else:
+        stage = "unverified_done"
+    return {
+        "verified": verified,
+        "stage": stage,
+        "video_id": video_id,
+        "requested_platforms": requested,
+        "verified_platforms": sorted(verified_platforms),
+        "local_jobs": compact_publish_jobs(local_jobs),
+        "remote_jobs": compact_publish_jobs(remote_jobs),
+        "source": target.name if str(target) else "",
+        "rule": "Do not say published unless all requested platforms have terminal platform evidence.",
+    }
+
+
+def matching_lazyedit_publish_jobs(video_id: int, outcome: dict[str, Any]) -> list[dict[str, Any]]:
+    jobs: list[dict[str, Any]] = []
     queue = lazyedit_api_get("/api/autopublish/queue", timeout=30)
-    jobs = queue.get("jobs") if isinstance(queue, dict) else []
-    matching = [
-        job for job in jobs
-        if isinstance(job, dict) and int_or_none(job.get("video_id")) == video_id
-    ]
-    latest = matching[0] if matching else {}
-    status = str(latest.get("status") or outcome.get("status") or ("done" if outcome.get("ok") else "failed"))
-    local_job_id = latest.get("id")
-    remote_job_id = latest.get("remote_job_id")
-    remote_status = latest.get("remote_status")
-    error = latest.get("error") or outcome.get("stderr") or ""
-    if outcome.get("ok") or status in {"queued", "running", "done"}:
+    queue_jobs = queue.get("jobs") if isinstance(queue, dict) else []
+    for job in queue_jobs or []:
+        if isinstance(job, dict) and int_or_none(job.get("video_id")) == video_id:
+            jobs.append(job)
+    payload = outcome.get("payload") if isinstance(outcome.get("payload"), dict) else {}
+    for key in ("publish_job", "publish_started"):
+        candidate = payload.get(key) if isinstance(payload, dict) else None
+        if isinstance(candidate, dict):
+            job = candidate.get("job") if isinstance(candidate.get("job"), dict) else candidate
+            if isinstance(job, dict) and not any(same_local_job_id(existing.get("id"), int_or_none(job.get("id")) or -1) for existing in jobs):
+                if int_or_none(job.get("video_id")) is None:
+                    job = {**job, "video_id": video_id}
+                jobs.append(job)
+    jobs.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    return jobs
+
+
+def remote_publish_jobs_for(local_jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not local_jobs or not LAZYEDIT_REMOTE_QUEUE_URL:
+        return [{} for _ in local_jobs]
+    try:
+        with urllib.request.urlopen(LAZYEDIT_REMOTE_QUEUE_URL, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        return [{} for _ in local_jobs]
+    remote_jobs = payload.get("jobs") if isinstance(payload, dict) else []
+    if not isinstance(remote_jobs, list):
+        return [{} for _ in local_jobs]
+    matches: list[dict[str, Any]] = []
+    for job in local_jobs:
+        remote_id = str(job.get("remote_job_id") or "")
+        filename = str(job.get("remote_filename") or job.get("filename") or "")
+        match = {}
+        for remote in remote_jobs:
+            if not isinstance(remote, dict):
+                continue
+            if remote_id and str(remote.get("id") or remote.get("job_id") or "") == remote_id:
+                match = remote
+                break
+            if not remote_id and filename and str(remote.get("filename") or "") == filename:
+                match = remote
+                break
+        matches.append(match)
+    return matches
+
+
+def publish_job_verified(job: dict[str, Any], remote: dict[str, Any]) -> bool:
+    status = normalized_status(job.get("status"))
+    remote_status = normalized_status(job.get("remote_status") or remote.get("status"))
+    if status not in {"done", "completed", "success", "succeeded"}:
+        return False
+    if remote_status in {"done", "completed", "success", "succeeded"}:
+        return True
+    return bool(public_publish_evidence(job) or public_publish_evidence(remote))
+
+
+def public_publish_evidence(job: dict[str, Any]) -> bool:
+    for key in ("url", "urls", "public_url", "public_urls", "post_url", "post_urls", "published_urls", "result_urls"):
+        value = job.get(key)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return True
+        if isinstance(value, list) and any(str(item).startswith(("http://", "https://")) for item in value):
+            return True
+    return False
+
+
+def normalize_platforms(platforms: Any) -> list[str]:
+    if isinstance(platforms, str):
+        raw = [platforms]
+    elif isinstance(platforms, list):
+        raw = [str(item) for item in platforms]
+    else:
+        raw = []
+    normalized: list[str] = []
+    aliases = {"sph": "shipinhao", "视频号": "shipinhao", "視頻號": "shipinhao", "y2b": "youtube", "ytb": "youtube", "ins": "instagram"}
+    for item in raw:
+        for part in re.split(r"[,，、\s]+", item.lower()):
+            part = aliases.get(part.strip(), part.strip())
+            if part and part not in normalized:
+                normalized.append(part)
+    return normalized
+
+
+def normalized_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    aliases = {"complete": "done", "completed": "completed", "success": "success", "succeeded": "succeeded", "queued": "queued", "running": "running", "pending": "pending", "error": "error"}
+    return aliases.get(status, status)
+
+
+def compact_publish_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    keep = ("id", "video_id", "status", "platforms", "remote_status", "remote_job_id", "filename", "updated_at", "error")
+    return [{key: job.get(key) for key in keep if job.get(key) not in (None, "")} for job in jobs[:6] if isinstance(job, dict)]
+
+
+def compact_publish_outcome(outcome: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": outcome.get("ok"),
+        "status": outcome.get("status"),
+        "returncode": outcome.get("returncode"),
+        "payload": outcome.get("payload") if isinstance(outcome.get("payload"), dict) else {},
+        "stderr_tail": collapse_context_text(outcome.get("stderr"), max_len=600),
+    }
+
+
+def publish_stage_retry_seconds(verification: dict[str, Any]) -> int:
+    stage = str(verification.get("stage") or "")
+    if stage == "publish_running":
+        return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_RUNNING_RETRY_SECONDS", "600"))
+    if stage == "no_local_job":
+        return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_IMPORT_RETRY_SECONDS", "180"))
+    return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_RETRY_SECONDS", "600"))
+
+
+def summarize_lazyedit_publish_outcome(
+    video_id: int,
+    platforms: list[str],
+    target: Path,
+    outcome: dict[str, Any],
+    *,
+    verification: dict[str, Any] | None = None,
+) -> str:
+    verification = verification or verify_lazyedit_publish_stage(video_id, platforms, target, outcome)
+    requested = ",".join(verification.get("requested_platforms") or normalize_platforms(platforms))
+    stage = str(verification.get("stage") or "not_verified")
+    local_jobs = verification.get("local_jobs") or []
+    latest = local_jobs[0] if local_jobs else {}
+    local_job_id = latest.get("id") if isinstance(latest, dict) else None
+    remote_job_id = latest.get("remote_job_id") if isinstance(latest, dict) else None
+    remote_status = latest.get("remote_status") if isinstance(latest, dict) else None
+    if verification.get("verified"):
         pieces = [
-            "已自动完成 exact 视频保存、LazyEdit 处理/字幕修正并提交发布。",
+            "已确认发布完成。",
             f"video_id={video_id}",
-            f"platforms={','.join(platforms)}",
-            f"status={status}",
+            f"platforms={requested}",
+            f"stage={stage}",
         ]
         if local_job_id:
             pieces.append(f"job_id={local_job_id}")
@@ -2612,11 +3051,26 @@ def summarize_lazyedit_publish_outcome(video_id: int, platforms: list[str], targ
             pieces.append(f"remote={remote_status}")
         pieces.append(f"source={target.name}")
         return "；".join(pieces)
-    return (
-        "视频已严格按 exact source 保存，但 LazyEdit 发布没有完成。"
-        f" video_id={video_id}; platforms={','.join(platforms)}; source={target.name}; "
-        f"error={str(error)[:500]}"
-    )
+    pieces = [
+        "未确认发布完成；不会把提交/排队当作已发布。",
+        f"video_id={video_id}",
+        f"platforms={requested}",
+        f"stage={stage}",
+    ]
+    if local_job_id:
+        pieces.append(f"job_id={local_job_id}")
+    if remote_job_id:
+        pieces.append(f"remote_job_id={remote_job_id}")
+    if remote_status:
+        pieces.append(f"remote={remote_status}")
+    error = latest.get("error") if isinstance(latest, dict) else ""
+    if not error:
+        error = outcome.get("stderr") or outcome.get("status") or ""
+    if error:
+        pieces.append(f"detail={collapse_context_text(error, max_len=240)}")
+    pieces.append(f"source={target.name}")
+    pieces.append("我会保留任务并继续用同一聊天的 worker session 检查/修复。")
+    return "；".join(pieces)
 
 
 def int_or_none(value: Any) -> int | None:

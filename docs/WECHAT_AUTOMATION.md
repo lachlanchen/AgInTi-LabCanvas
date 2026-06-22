@@ -625,7 +625,13 @@ For exact WeChat video rows, the worker can now complete the publish path
 without another agent decision. If `autopublish-video --message-local-id`
 succeeds and the message clearly asks to publish, it waits for the LazyEdit
 import, runs `scripts/lazyedit_publish.py` with the generated correction and
-metadata prompt files, and monitors local/remote publish queues. Set
+metadata prompt files, and monitors local/remote publish queues. A LazyEdit
+return code, import, queued job, submitted job, or running remote job is not
+publication proof. The worker may say “queued”, “running”, or “not verified”,
+but it must only say “published” after all requested platforms have terminal
+LazyEdit/remote evidence, a public URL, or equivalent platform proof. Incomplete
+publication stays in `publish_poststage_pending` for deterministic probes and
+the same chat’s resumed Codex worker session to repair. Set
 `WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH=1` to force the older general
 worker-agent fallback during testing.
 
@@ -644,6 +650,10 @@ artifact directory and pass it as `--correction-prompt-file` so subtitle
 correction can use the complete chat context: the coalesced command, quoted
 message, same-chat source rows, recent history, and media metadata. Create a
 separate short `--metadata-prompt-file` for public title/description/hashtags.
+When the exact source is recovered from the same-chat artifact ledger, the
+context file also includes safe supporting prompt/story/source snippets. Old
+cache-miss refusals and old unverified “submitted publish” bot messages are
+marked obsolete so they are not treated as facts.
 
 The worker may return safe video/audio outputs as attachments when they are
 under the size limit. It must not attach private DBs, chat logs, cookies, tokens,

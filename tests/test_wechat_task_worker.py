@@ -430,6 +430,11 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             tmp_path = Path(tmp)
             source_video = tmp_path / "restaurant_gold_box_30s_2026-06-22_wechat.mp4"
             source_video.write_bytes(video_bytes)
+            source_prompt = tmp_path / "restaurant_gold_box_prompt.md"
+            source_prompt.write_text(
+                "Original generation prompt: RaraXia, AyaChan, and SasaKun find a glowing gold box in a restaurant.",
+                encoding="utf-8",
+            )
             md5 = worker.file_md5(source_video)
             queue = tmp_path / "queue.jsonl"
             worker.write_tasks(
@@ -459,6 +464,11 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                         "sender_display": "陈喵瞄秒妙",
                         "content": f'<msg><videomsg md5="{md5}" length="{len(video_bytes)}" /></msg>',
                     },
+                    {
+                        "local_id": 49,
+                        "sender_display": "陈喵瞄秒妙",
+                        "content": "我没有发布这个视频。官方客户端还没有把这一条完整 MP4 缓存到本地。",
+                    },
                     {"local_id": 50, "sender_display": "陈苗", "content": "发布这个视频"},
                 ],
             }
@@ -487,12 +497,15 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(autopub["md5"], md5)
         self.assertEqual(autopub["bytes"], len(video_bytes))
         self.assertEqual(autopub["source_task"]["id"], "source-task")
+        self.assertTrue(autopub["source_task"]["supporting_materials"])
         self.assertIn("same-chat-task-ledger", autopub["matched_by"])
         self.assertTrue(target_name.endswith("_COMPLETED.mp4"))
         self.assertTrue(target_exists)
         self.assertEqual(target_bytes, video_bytes)
         self.assertIn("artifact-ledger-match", context_text)
         self.assertIn("original prompt and script", context_text)
+        self.assertIn("Original generation prompt", context_text)
+        self.assertIn("OBSOLETE-CACHE-MISS", context_text)
 
     def test_lalachan_story_request_ignores_old_video_publish_context_for_preflight(self) -> None:
         worker = load_worker()
@@ -1477,14 +1490,89 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             with mock.patch.object(worker, "wait_for_lazyedit_import", return_value=393):
                 with mock.patch.object(worker, "run_lazyedit_publish_command", side_effect=fake_publish):
                     with mock.patch.object(worker, "lazyedit_api_get", return_value={"jobs": [{"video_id": 393, "id": 203, "status": "running", "remote_job_id": "job-1"}]}):
-                        raw = worker.deterministic_preflight_result(task)
+                        with mock.patch.object(worker, "remote_publish_jobs_for", return_value=[{}]):
+                            raw = worker.deterministic_preflight_result(task)
 
         self.assertIsNotNone(raw)
         payload = json.loads(raw or "{}")
+        self.assertIn("未确认发布完成", payload["message"])
+        self.assertNotIn("已确认发布完成", payload["message"])
         self.assertIn("video_id=393", payload["message"])
         self.assertIn("remote_job_id=job-1", payload["message"])
+        self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
+        self.assertFalse(payload["publish_stage"]["verified"])
+        self.assertIn("publish_poststage_retry", payload)
         self.assertEqual(calls[0]["platforms"], ["shipinhao", "youtube", "instagram"])
         self.assertEqual(calls[0]["video_id"], 393)
+
+    def test_exact_video_publish_requires_terminal_platform_verification(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "exact_video_COMPLETED.mp4"
+            target.write_bytes(b"video")
+            task = {
+                "request": "Could you publish it to sph Ins y2b?",
+                "preflight": {"autopublish_video": {"ok": True, "target": str(target)}},
+            }
+
+            with mock.patch.object(worker, "wait_for_lazyedit_import", return_value=393):
+                with mock.patch.object(worker, "run_lazyedit_publish_command", return_value={"ok": True, "status": "done", "payload": {}}):
+                    with mock.patch.object(
+                        worker,
+                        "lazyedit_api_get",
+                        return_value={
+                            "jobs": [
+                                {
+                                    "video_id": 393,
+                                    "id": 203,
+                                    "status": "done",
+                                    "remote_status": "done",
+                                    "remote_job_id": "job-1",
+                                    "platforms": ["shipinhao", "youtube", "instagram"],
+                                }
+                            ]
+                        },
+                    ):
+                        with mock.patch.object(worker, "remote_publish_jobs_for", return_value=[{}]):
+                            raw = worker.deterministic_preflight_result(task)
+
+        payload = json.loads(raw or "{}")
+        self.assertIn("已确认发布完成", payload["message"])
+        self.assertEqual(payload["publish_stage"]["stage"], "published_verified")
+        self.assertTrue(payload["publish_stage"]["verified"])
+        self.assertNotIn("publish_poststage_retry", payload)
+
+    def test_unverified_existing_video_publish_stays_pending(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "publish-task",
+            "request": "Current coalesced request:\npublish this video to YouTube",
+            "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+        }
+        result = {
+            "message": "未确认发布完成；video_id=393",
+            "files": [],
+            "confirmation": "",
+            "data": {
+                "publish_poststage_retry": {
+                    "status": "publish_running",
+                    "retry_seconds": 60,
+                    "poststage": {
+                        "kind": "existing_video_publish",
+                        "video_id": 393,
+                        "platforms": ["youtube"],
+                        "target": "/tmp/exact_video_COMPLETED.mp4",
+                    },
+                    "outcome": {"status": "probe"},
+                }
+            },
+        }
+
+        worker.apply_send_outcome(task, result, [])
+
+        self.assertEqual(task["status"], worker.EXISTING_VIDEO_PUBLISH_PENDING_STATUS)
+        self.assertEqual(task["existing_video_publish_poststage"]["video_id"], 393)
+        self.assertIn("next_publish_poststage_at", task)
 
     def test_save_to_publish_folder_without_publish_does_not_auto_publish(self) -> None:
         worker = load_worker()

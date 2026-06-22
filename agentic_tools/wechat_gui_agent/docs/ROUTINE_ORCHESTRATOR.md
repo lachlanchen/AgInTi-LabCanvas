@@ -41,7 +41,8 @@ Current routines:
   STEP/STL, and device design.
 - `file_download_save`: exact-source file, media, link, and download handling.
 - `video_publish_existing`: source-scoped existing video processing and
-  LazyEdit/public publishing only when explicitly requested.
+  LazyEdit/public publishing only when explicitly requested; `public_publish_verified`
+  is a required gate before any response may say “published”.
 - `generated_video`: LALACHAN/Xiaoyunque generation, long monitoring, MP4
   send-back, optional LazyEdit, and optional public publish.
 - `general_worker`: safe fallback for other backend work.
@@ -60,6 +61,8 @@ Required behavior:
 - preserve per-chat source isolation;
 - keep long waits in queue state, not one long model call;
 - send or defer required artifacts through the artifact delivery gate;
+- keep LazyEdit/public publish work in `publish_poststage_pending` until
+  requested platforms have terminal LazyEdit/remote evidence;
 - require current-message permission for public publish, purchases, deletion,
   payment, and other irreversible actions.
 

@@ -68,6 +68,22 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertIn("file-picker click", " ".join(contract["rules"]))
         self.assertIn("verified", contract["artifact_policy"])
 
+    def test_video_publish_routine_requires_terminal_publish_verification(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "publish_video", "public_publish_allowed": True},
+            "publish this exact video to sph youtube instagram",
+            task_id="task-publish",
+            chat="🍓我的设备",
+        )
+        stage_ids = [stage["id"] for stage in contract["stages"]]
+
+        self.assertEqual(contract["id"], "video_publish_existing")
+        self.assertIn("exact_video_resolution", contract["required_gates"])
+        self.assertIn("public_publish_verified", contract["required_gates"])
+        self.assertIn("public_publish_verified", stage_ids)
+        self.assertIn("Never call queued/submitted/running jobs published", " ".join(contract["rules"]))
+
     def test_write_routine_contract_creates_json_and_markdown(self) -> None:
         routines = load_routines()
         task = {

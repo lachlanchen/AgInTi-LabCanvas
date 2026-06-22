@@ -128,6 +128,7 @@ workflow from scratch.
 | `send_deferred_artifact` | Result exists but required file was not sent. | Fix GUI/file send and flush deferred outbox. |
 | `send_deferred_locked` | WeChat is locked, at the Enter Weixin gate, or the serialized GUI send lane was busy/timed out. | Unlock, enter the client, or wait for the active send, then flush deferred outbox. `gui_send_busy`, `gui_send_timeout`, and `wechat_entry_required` use short retries once the lane is free. |
 | `generation_poststage_pending` | MP4 was delivered; LazyEdit/public publish is queued or still running. | Worker claims poststage after `next_poststage_at`. |
+| `publish_poststage_pending` | Existing-video LazyEdit/public publish has no terminal platform proof yet. | Worker claims poststage after `next_publish_poststage_at`; deterministic probes run first, then the same chat’s Codex worker session repairs if needed. |
 | `waiting_confirmation` | Human approval required. | Approve/reject through CLI or web panel. |
 | `send_failed` | Non-deferred send failure. | Inspect evidence, fix target/title guard, resend stored result. |
 | `worker_failed` | Backend failed before a useful result. | Fix source/tool issue; rerun only if safe. |
@@ -182,13 +183,22 @@ the worker resolves the source in this order:
 3. accept a file only when MD5 matches, or when no MD5 exists and byte length
    matches a same-chat sent/generated artifact;
 4. copy the exact match into Nutstore AutoPublish with a `_COMPLETED` name;
-5. pass the original generation/source task summary into the LazyEdit
-   correction and metadata prompt files.
-6. if no ledger match exists, run `wechat_autopublish_video.py` with exact
+5. pass the original generation/source task summary, supporting prompt/story
+   snippets, and safe source material into the LazyEdit correction and metadata
+   prompt files;
+6. mark old cache-miss refusals or old unverified “submitted publish” bot
+   messages as obsolete context, not evidence;
+7. run LazyEdit and verify local plus remote publish queues;
+8. if no ledger match exists, run `wechat_autopublish_video.py` with exact
    `message_local_ids` and optionally `--fetch-gui`.
 
 If both the WeChat cache and artifact ledger fail, stop source-limited. Do not
 reuse a nearby video, another group’s artifact, or an older unrelated task.
+If LazyEdit reports only queued, submitted, running, missing, or unverified
+status, do not say published. Return the current stage to WeChat and keep the
+task in `publish_poststage_pending` until all requested platforms have terminal
+LazyEdit/remote evidence, a public URL, or an explicit failure that the worker
+can repair or report.
 
 ## Health Checks
 

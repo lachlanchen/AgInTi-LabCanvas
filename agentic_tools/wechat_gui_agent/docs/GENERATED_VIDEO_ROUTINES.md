@@ -56,6 +56,10 @@ specialized stage contract for the `generated_video` routine.
    - Existing generated videos quoted later are resolved by exact WeChat video
      MD5/length against same-chat task artifacts, then copied to AutoPublish
      with the original source task summary passed into LazyEdit prompt files.
+   - “Queued”, “submitted”, “running”, or “imported” are not “published”.
+     Existing-video publish work uses `publish_poststage_pending` until all
+     requested platforms have terminal LazyEdit/remote evidence or public URL
+     proof.
 
 ## State Rules
 
@@ -68,6 +72,9 @@ specialized stage contract for the `generated_video` routine.
   unlock or after the active send finishes.
 - `generation_poststage_pending`: MP4 was delivered and LazyEdit/public publish
   is queued or still running.
+- `publish_poststage_pending`: an existing quoted/generated video is in
+  LazyEdit/public publish verification; deterministic probes and the resumed
+  chat worker session continue until terminal proof or repairable failure.
 - `done`: only after the requested current-message stages have completed.
 
 The WeChat group is a command mirror. The durable system is the monitor, queue,

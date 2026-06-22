@@ -190,22 +190,29 @@ ROUTINES: dict[str, RoutineDefinition] = {
             },
             {
                 "id": "public_publish",
-                "owner": "worker_agent",
+                "owner": "queue_orchestrator",
                 "entrypoint": "lazyedit_publish.py --platforms",
-                "success": "only requested current-message platforms are queued/published",
+                "success": "requested current-message platforms are terminal-verified or the task requeues",
+            },
+            {
+                "id": "public_publish_verified",
+                "owner": "queue_orchestrator",
+                "entrypoint": "verify_lazyedit_publish_stage",
+                "success": "all requested platforms have terminal LazyEdit/remote evidence before saying published",
             },
             {
                 "id": "status_delivery",
                 "owner": "queue_orchestrator",
                 "entrypoint": "send_result_with_retries",
-                "success": "job ids/status and safe files are returned to the source chat",
+                "success": "verified job ids/status or resumable pending state are returned to the source chat",
             },
         ),
-        required_gates=("exact_video_resolution",),
+        required_gates=("exact_video_resolution", "public_publish_verified"),
         rules=COMMON_RULES
         + (
             "Old chat history may explain subtitles but cannot authorize public publish.",
             "If exact source video is missing, fail closed; do not publish old or nearby videos.",
+            "Never call queued/submitted/running jobs published; only terminal platform evidence is published.",
         ),
     ),
     "generated_video": RoutineDefinition(
