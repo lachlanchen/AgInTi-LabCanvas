@@ -19,6 +19,8 @@ class NpmPackageTests(unittest.TestCase):
         self.assertIn("src/agenticapp/web/static/*", package["files"])
         self.assertIn("agentic_tools/wechat_gui_agent/scripts/*.py", package["files"])
         self.assertIn("agentic_tools/wechat_gui_agent/scripts/*.sh", package["files"])
+        self.assertIn("agentic_tools/android_device_agent/scripts/*.py", package["files"])
+        self.assertIn("agentic_tools/android_device_agent/scripts/*.sh", package["files"])
         self.assertIn("agentic_tools/virtual_desktop/", package["files"])
         self.assertIn("configs/", package["files"])
         self.assertIn("examples/", package["files"])

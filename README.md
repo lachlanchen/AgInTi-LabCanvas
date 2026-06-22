@@ -40,6 +40,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | Board/CAD tasks | Shared CLI and web-chat workflow for KiCad, OpenSCAD, renders, and manufacturing prep | [docs/BOARD_CAD_TASKS.md](docs/BOARD_CAD_TASKS.md) |
 | PCB manufacturing | KiCad HYBEC and Lumileds boards, DRC/ERC, JLCPCB Gerber ZIPs | [pcb](pcb) |
 | LabVIEW automation | Linux install probe, MCP candidate research, stdio-to-HTTP bridge | [agentic_tools/labview_mcp_agent](agentic_tools/labview_mcp_agent) |
+| Android control | Dedicated noVNC/scrcpy desktop and ADB wrapper for the Mi MIX 2S real device plus matching AVD profile | [docs/ANDROID_DEVICE_CONTROL.md](docs/ANDROID_DEVICE_CONTROL.md) |
 | WeChat chatops | Isolated Linux GUI, direct local message mirror, fast ACK agent, strict per-chat media isolation, AgInTi figure generation plus CAD/PCB/Blender worker queue, file/PDF/render return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md), [full control manual](agentic_tools/wechat_gui_agent/docs/FULL_CONTROL_MANUAL.md) |
 | App routing | Blender, BioRender, Unity, Unreal, and custom target dispatch | [docs/RESEARCH.md](docs/RESEARCH.md) |
 
@@ -88,6 +89,8 @@ labcanvas wechat worker --chat "懒人科研" enqueue "Use LabCanvas to render t
 labcanvas wechat status
 labcanvas wechat hold start
 labcanvas wechat stack start --web-port 19474
+agentic_tools/android_device_agent/scripts/android_device_desktop.sh start --serial <MIX2S_SERIAL>
+agentic_tools/android_device_agent/scripts/android_control.py status --serial <MIX2S_SERIAL>
 ```
 
 For a local Blender bridge test:

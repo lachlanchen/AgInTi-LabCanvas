@@ -13,6 +13,7 @@ OPEN_BROWSER="0"
 APP_MATCH=""
 APP_COMMAND=()
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+USER_NAME="${USER:-$(id -un)}"
 
 usage() {
   cat <<'EOF'
@@ -77,10 +78,10 @@ socket_path="/tmp/.X11-unix/X$display_number"
 lock_path="/tmp/.X$display_number-lock"
 
 if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1; then
-  if [[ -S "$socket_path" ]] && ! pgrep -u "$USER" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
+  if [[ -S "$socket_path" ]] && ! pgrep -u "$USER_NAME" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
     rm -f "$socket_path"
   fi
-  if [[ -f "$lock_path" ]] && ! pgrep -u "$USER" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
+  if [[ -f "$lock_path" ]] && ! pgrep -u "$USER_NAME" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
     rm -f "$lock_path"
   fi
   echo "Starting Xvfb $DISPLAY_ID with $SCREEN"
@@ -121,7 +122,7 @@ fi
 if [[ ${#APP_COMMAND[@]} -gt 0 ]]; then
   MATCHING_APP_PIDS=""
   if [[ -n "$APP_MATCH" ]]; then
-    MATCHING_APP_PIDS="$(pgrep -u "$USER" -f "$APP_MATCH" | grep -v -E "^($$|$PPID)$" || true)"
+    MATCHING_APP_PIDS="$(pgrep -u "$USER_NAME" -f "$APP_MATCH" | grep -v -E "^($$|$PPID)$" || true)"
   fi
   if [[ -n "$MATCHING_APP_PIDS" ]]; then
     echo "App already running: $APP_MATCH"
