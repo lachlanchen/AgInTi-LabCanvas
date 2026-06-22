@@ -135,6 +135,12 @@ reuse for debugging with:
 WECHAT_CODEX_REUSE_SESSIONS=0 labcanvas wechat hold restart
 ```
 
+For WSL/Windows deployments, `agent_backend=claude` can switch the selected
+agent calls to Claude Code while leaving the same monitor, worker queue,
+routine contracts, and GUI sender in place. See
+[`docs/WSL_WINDOWS_DEPLOY.md`](../../../docs/WSL_WINDOWS_DEPLOY.md). Keep Codex
+as the default unless the direct-chat config or environment explicitly opts in.
+
 This reloads monitor, worker, and media-sync windows while preserving the
 WeChat desktop. Use `labcanvas wechat hold restart-all` only for a deliberate
 GUI restart that may require phone confirmation. If the supervisor is not

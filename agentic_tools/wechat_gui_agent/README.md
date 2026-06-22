@@ -588,6 +588,12 @@ title, so non-ASCII groups such as `懒人科研` and `鏈接` cannot collapse i
 same reusable thread. If `labcanvas wechat status --json` reports
 `legacy_key: true`, back up and remove that old registry before restarting the
 monitors. Set `WECHAT_CODEX_REUSE_SESSIONS=0` to force stateless turns.
+Codex is the default agent backend. To run a Windows/WSL deployment with Claude
+Code, set `agent_backend: "claude"` in the ignored direct-chat config or export
+`WECHAT_AGENT_BACKEND=claude`; the router and worker still use the same
+coalescing, safety, queue, and artifact-delivery logic. Claude route/fast turns
+use read-only tool blocks, and worker turns remain opt-in. See
+[`docs/WSL_WINDOWS_DEPLOY.md`](../../docs/WSL_WINDOWS_DEPLOY.md).
 Worker sessions use `gpt-5.5` and `danger-full-access` by default so downloads
 and external tooling are not blocked by the shell sandbox; set
 `WECHAT_WORKER_CODEX_SANDBOX=workspace` to downgrade for a restricted run.

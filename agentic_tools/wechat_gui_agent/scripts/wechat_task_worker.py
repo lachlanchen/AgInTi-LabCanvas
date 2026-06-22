@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta
-import fcntl
 import hashlib
 import html
 import json
@@ -22,7 +21,8 @@ from typing import Any
 import urllib.error
 import urllib.request
 
-from wechat_codex_sessions import run_codex_session
+from file_lock import fcntl_compat as fcntl
+from wechat_agent_backend import run_agent_session as run_codex_session, select_agent_backend
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_routines import ensure_task_routine_contract, routine_prompt_context, write_routine_contract
 
@@ -1330,7 +1330,7 @@ def run_worker_agent_session(task: dict[str, Any], policy: dict[str, Any]) -> st
     instruction_context = json.dumps(worker_instruction_contract(task), ensure_ascii=False, indent=2)
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
-WeChat is only the message transport: it receives user messages and returns safe files/messages. Backend execution belongs to the routine orchestrator and the resumed per-chat Codex exec worker session.
+WeChat is only the message transport: it receives user messages and returns safe files/messages. Backend execution belongs to the routine orchestrator and the selected per-chat worker agent session.
 You are being resumed by the central routine orchestrator. Treat the routine contract and orchestrator handoff as the execution center: inspect current stage, use mature routine entrypoints first, repair blockers, and only invent a new approach if no routine stage applies.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 Follow the machine-readable instruction contract below. Follow every safe, explicit instruction in the current coalesced request. If the user asks for multiple stages, do them in order or persist a resumable state for unfinished stages; do not collapse the request to a smaller hardcoded action just because one routine or keyword matched.
@@ -1381,8 +1381,10 @@ If other external tools or files are not available, say exactly what is needed n
 Task:
 {json.dumps(task, ensure_ascii=False, indent=2)}
 """
+    backend = select_agent_backend(task)
     result = run_codex_session(
         prompt,
+        backend=backend,
         chat_name=str(task.get("chat") or "wechat-chat"),
         role="worker",
         model=str(policy["model"]),
@@ -1391,9 +1393,17 @@ Task:
         timeout_seconds=int(policy["timeout_seconds"]),
         workdir=ROOT,
         reuse=bool(policy.get("reuse_session", True)),
+        backend_config=worker_backend_config(task, backend),
     )
     if not result["ok"]:
-        return f"Worker failed: {str(result.get('stderr_tail') or result.get('message') or '').strip()[:1000]}"
+        return f"Worker failed via {backend}: {str(result.get('stderr_tail') or result.get('message') or '').strip()[:1000]}"
+    task["agent_session"] = {
+        "backend": backend,
+        "role": "worker",
+        "thread_id_short": str(result.get("thread_id") or "")[:8],
+        "resumed": bool(result.get("resumed")),
+        "fallback_started": bool(result.get("fallback_started")),
+    }
     task["codex_session"] = {
         "role": "worker",
         "thread_id_short": str(result.get("thread_id") or "")[:8],
@@ -1401,6 +1411,14 @@ Task:
         "fallback_started": bool(result.get("fallback_started")),
     }
     return str(result.get("message") or "").strip()
+
+
+def worker_backend_config(task: dict[str, Any], backend: str) -> dict[str, Any]:
+    raw = task.get("agent_backend_config")
+    if isinstance(raw, dict):
+        return raw
+    raw = task.get(backend)
+    return raw if isinstance(raw, dict) else {}
 
 
 def worker_execution_contract(task: dict[str, Any]) -> dict[str, Any]:
@@ -1419,8 +1437,11 @@ def default_worker_execution_contract(task: dict[str, Any], instruction: dict[st
         "monitor_role": "receive_coalesce_ack_enqueue",
         "routine_source": "task.routine",
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
+        "agent_backend": select_agent_backend(task),
+        "agent_entrypoint": "wechat_agent_backend.run_agent_session",
         "codex_entrypoint": "wechat_codex_sessions.run_codex_session",
         "codex_exec_mode": "resume_per_chat_worker_session",
+        "claude_exec_mode": "stable_per_chat_role_session_id",
         "codex_session": {
             "chat": str(task.get("chat") or "wechat-chat"),
             "role": "worker",

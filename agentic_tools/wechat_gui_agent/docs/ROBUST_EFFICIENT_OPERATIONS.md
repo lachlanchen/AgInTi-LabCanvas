@@ -107,6 +107,11 @@ that contract rather than designing a new workflow from scratch.
   the default, so repeated requests in one chat resume the same route thread.
   Keyword and attachment checks remain auxiliary fallback and safety gates, not
   the primary capability map.
+- Codex is the default backend. `agent_backend=claude` or
+  `WECHAT_AGENT_BACKEND=claude` may switch a WSL/Windows deployment to Claude
+  Code, but it must still use the same route, worker, queue, media, and
+  artifact-delivery contracts. Do not bypass source isolation or delivery gates
+  because the backend changed.
 - Keep `immediate_route_enabled=true` for monitored chats that should enqueue
   backend work. `immediate_ack_enabled=false` only suppresses the visible ack;
   it must not be used as the routing kill switch.

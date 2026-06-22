@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
-import fcntl
 import html
 import json
 import os
@@ -25,7 +24,8 @@ try:
 except ModuleNotFoundError:  # Tests and dry policy checks should not require the decrypt venv.
     zstd = None
 
-from wechat_codex_sessions import run_codex_session
+from file_lock import exclusive_lock, fcntl_compat as fcntl
+from wechat_agent_backend import run_agent_session as run_codex_session, select_agent_backend
 from wechat_memory import organize_messages
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_routines import build_routine_contract, ensure_task_routine_contract
@@ -96,6 +96,8 @@ def load_config(path: Path) -> dict[str, Any]:
         "state_path": str(DEFAULT_STATE),
         "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
         "mirror_db": str(DEFAULT_DB),
+        "agent_backend": "codex",
+        "claude": {"model": "", "timeout_seconds": 60},
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 60},
         "codex_session_reuse": True,
         "agent_route_enabled": True,
@@ -296,16 +298,15 @@ def refresh_decrypted_store() -> None:
     lock_path = PRIVATE / "wechat_decrypt.refresh.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        proc = subprocess.run(
-            command,
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=int(os.environ.get("WECHAT_DECRYPT_TIMEOUT", "45")),
-        )
-        fcntl.flock(lock, fcntl.LOCK_UN)
+        with exclusive_lock(lock):
+            proc = subprocess.run(
+                command,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=int(os.environ.get("WECHAT_DECRYPT_TIMEOUT", "45")),
+            )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
 
@@ -1525,8 +1526,10 @@ def agent_route_decision(
         return fallback
     prompt = build_agent_route_prompt(config, row, context_rows, focus_rows=focus_rows, current_request=current_request)
     policy = select_agent_route_policy(config, current_request or visible_message_text(row))
+    backend = select_agent_backend(config)
     result = run_codex_session(
         prompt,
+        backend=backend,
         chat_name=str(config.get("chat_name") or "wechat-chat"),
         role="route",
         model=policy["model"],
@@ -1535,10 +1538,12 @@ def agent_route_decision(
         timeout_seconds=int(policy["timeout_seconds"]),
         workdir=ROOT,
         reuse=bool(policy.get("reuse_session", False)),
+        backend_config=agent_backend_config(config, backend),
     )
     if not result.get("ok"):
         fallback["route_agent_error"] = str(result.get("stderr_tail") or result.get("message") or "")[:500]
         fallback["route_agent_model"] = policy["model"]
+        fallback["route_agent_backend"] = backend
         return fallback
     parsed = parse_route_decision(str(result.get("message") or ""))
     if not parsed:
@@ -1548,6 +1553,7 @@ def agent_route_decision(
         return fallback
     parsed["route_agent_model"] = policy["model"]
     parsed["route_agent_reasoning_effort"] = policy["reasoning_effort"]
+    parsed["route_agent_backend"] = backend
     return enforce_route_safety(parsed, current_request or visible_message_text(row), fallback)
 
 
@@ -3093,11 +3099,13 @@ def run_codex(
     *,
     focus_rows: list[dict[str, Any]] | None = None,
 ) -> str:
-    codex = config["codex"]
+    codex = config.get("codex") if isinstance(config.get("codex"), dict) else {}
     context = format_prompt_context(config, row, context_rows, focus_rows=focus_rows)
     prompt = build_codex_prompt(config, row, context)
+    backend = select_agent_backend(config)
     result = run_codex_session(
         prompt,
+        backend=backend,
         chat_name=str(config.get("chat_name") or "wechat-chat"),
         role="fast",
         model=str(codex.get("model", "gpt-5.5")),
@@ -3106,11 +3114,18 @@ def run_codex(
         timeout_seconds=int(codex.get("timeout_seconds", 60)),
         workdir=ROOT,
         reuse=bool(codex.get("reuse_session", config.get("codex_session_reuse", True))),
+        backend_config=agent_backend_config(config, backend),
     )
     if not result["ok"]:
         return "NO_REPLY"
     response = str(result.get("message") or "").strip()
     return response[: int(config.get("max_reply_chars", 1200))]
+
+
+def agent_backend_config(config: dict[str, Any], backend: str) -> dict[str, Any]:
+    selected = select_agent_backend({"agent_backend": backend})
+    raw = config.get(selected)
+    return raw if isinstance(raw, dict) else {}
 
 
 def format_prompt_context(
@@ -3260,12 +3275,15 @@ def enqueue_worker_task(
 ) -> dict[str, Any]:
     queue = Path(config.get("worker_queue") or DEFAULT_QUEUE)
     queue.parent.mkdir(parents=True, exist_ok=True)
+    backend = select_agent_backend(config)
     task = {
         "id": datetime.now().strftime("%Y%m%d%H%M%S") + f"-{row['local_id']}",
         "chat": config["chat_name"],
         "request": task_text,
         "status": "pending",
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "agent_backend": backend,
+        "agent_backend_config": agent_backend_config(config, backend),
         "route": build_route_contract(config),
         "route_decision": route_decision or {},
         "instruction_contract": build_instruction_contract(config, route_decision or {}),
@@ -3311,8 +3329,11 @@ def build_execution_contract(config: dict[str, Any], route_decision: dict[str, A
         "monitor_role": "receive_coalesce_ack_enqueue",
         "routine_source": "task.routine",
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
+        "agent_backend": select_agent_backend(config),
+        "agent_entrypoint": "wechat_agent_backend.run_agent_session",
         "codex_entrypoint": "wechat_codex_sessions.run_codex_session",
         "codex_exec_mode": "resume_per_chat_worker_session",
+        "claude_exec_mode": "stable_per_chat_role_session_id",
         "codex_session": {
             "chat": config.get("chat_name") or "wechat-chat",
             "role": "worker",

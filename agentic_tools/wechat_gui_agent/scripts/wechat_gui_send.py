@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import datetime
-import fcntl
 import hashlib
 import json
 import os
@@ -22,6 +21,7 @@ import sys
 import time
 from typing import Any
 
+from file_lock import fcntl_compat as fcntl
 from wechat_mirror import DEFAULT_DB, record_event
 
 

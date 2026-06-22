@@ -64,6 +64,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     init_config.add_argument("--chatroom-id", default="")
     init_config.add_argument("--message-table", default="")
     init_config.add_argument("--self-wxid", default="")
+    init_config.add_argument("--agent-backend", choices=["codex", "claude"], default="codex", help="AI backend for direct monitor and worker tasks.")
     init_config.add_argument("--force", action="store_true")
     init_config.set_defaults(func=cmd_init_config)
 
@@ -243,6 +244,8 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def status_payload() -> dict[str, Any]:
+    runtime_paths = configured_runtime_paths()
+    backends = configured_agent_backends()
     return {
         "ok": True,
         "checked_at": datetime.now().isoformat(timespec="seconds"),
@@ -256,13 +259,62 @@ def status_payload() -> dict[str, Any]:
             "direct_monitor": tmux_status("labcanvas-wechat-direct-chatops"),
             "gui_monitor": tmux_status("labcanvas-wechat-chatops"),
         },
-        "queue": queue_summary(DEFAULT_QUEUE),
-        "mirror": mirror_summary(PRIVATE / "wechat_mirror.sqlite"),
+        "queue": queue_summary(runtime_paths["queue"]),
+        "mirror": mirror_summary(runtime_paths["mirror_db"]),
         "external_backend": external_backend_summary(),
         "codex_sessions": codex_session_summary(),
+        "agent_backends": backends,
         "media_sources": [str(path) for path in discover_media_sources()],
         "novnc_url": f"http://127.0.0.1:{DEFAULT_NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port={DEFAULT_NOVNC_PORT}&autoconnect=1&resize=remote",
     }
+
+
+def configured_runtime_paths() -> dict[str, Path]:
+    paths = {"queue": DEFAULT_QUEUE, "mirror_db": PRIVATE / "wechat_mirror.sqlite"}
+    for config_path in discover_direct_monitor_configs():
+        if not config_path.exists():
+            continue
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        queue = str(config.get("worker_queue") or "").strip()
+        mirror = str(config.get("mirror_db") or "").strip()
+        if queue:
+            paths["queue"] = Path(queue)
+        if mirror:
+            paths["mirror_db"] = Path(mirror)
+        break
+    return paths
+
+
+def configured_agent_backends() -> list[str]:
+    configured: list[str] = []
+    env_backend = normalize_agent_backend(os.environ.get("WECHAT_AGENT_BACKEND") or "")
+    if env_backend:
+        configured.append(env_backend)
+    for config_path in discover_direct_monitor_configs():
+        if not config_path.exists():
+            continue
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        backend = normalize_agent_backend(str(config.get("agent_backend") or ""))
+        if backend and backend not in configured:
+            configured.append(backend)
+    if not configured:
+        configured.append("codex")
+    return configured
+
+
+def normalize_agent_backend(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"claude", "claude-code", "claude_code", "anthropic"}:
+        return "claude"
+    if normalized in {"codex", "codex-cli", "openai"}:
+        return "codex"
+    return ""
 
 
 def run_wechat_action(action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -324,13 +376,17 @@ def cmd_health(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    commands = ["tmux", "Xvfb", "x11vnc", "websockify", "xdotool", "xclip", "import", "tesseract", "codex"]
+    agent_commands = configured_agent_backends()
+    commands = ["tmux", "Xvfb", "x11vnc", "websockify", "xdotool", "xclip", "import", "tesseract"]
+    commands.extend("claude" if backend == "claude" else "codex" for backend in agent_commands)
+    commands = list(dict.fromkeys(commands))
     checks = {name: shutil.which(name) or "" for name in commands}
     scripts = {
         path.name: path.exists()
         for path in (
             SCRIPTS / "wechat_virtual_desktop.sh",
             SCRIPTS / "wechat_supervisor_tmux.sh",
+            SCRIPTS / "wechat_agent_backend.py",
             SCRIPTS / "wechat_direct_chatops.py",
             SCRIPTS / "wechat_direct_backend.py",
             SCRIPTS / "wechat_task_worker.py",
@@ -342,7 +398,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         )
     }
     missing = [name for name, found in checks.items() if not found]
-    payload = {"ok": not missing and all(scripts.values()), "commands": checks, "scripts": scripts, "missing": missing}
+    payload = {
+        "ok": not missing and all(scripts.values()),
+        "commands": checks,
+        "agent_backends": agent_commands,
+        "scripts": scripts,
+        "missing": missing,
+    }
     print_payload(payload, args.json, "wechat doctor: " + ("ok" if payload["ok"] else "missing " + ", ".join(missing)))
     return 0 if payload["ok"] else 1
 
@@ -535,6 +597,8 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "state_path": str(PRIVATE / f"{safe_slug(args.chat)}-chatops.state.json"),
         "db_path": str(PRIVATE / "wechat_mirror.sqlite"),
         "output_dir": str(PACKAGE_ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F")),
+        "agent_backend": args.agent_backend,
+        "claude": {"model": "", "timeout_seconds": 60, "permission_mode": "bypassPermissions"},
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "workdir": str(PACKAGE_ROOT), "timeout_seconds": 60},
     }
     direct_config = {
@@ -578,6 +642,8 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "aginti", "imagegen", "image generation", "kicad", "gerber", "step", "stl", "3d", "labcanvas", "overview", "figure", "figure grid", "icons", "file", "image"],
         "poll_seconds": 0.8,
         "catchup_poll_seconds": 0.1,
+        "agent_backend": args.agent_backend,
+        "claude": {"model": "", "timeout_seconds": 60, "permission_mode": "bypassPermissions"},
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 60},
     }
     written = []

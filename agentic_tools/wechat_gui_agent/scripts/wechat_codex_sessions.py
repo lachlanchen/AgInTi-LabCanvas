@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-import fcntl
 import hashlib
 import json
 import os
@@ -13,6 +12,8 @@ import re
 import subprocess
 import tempfile
 from typing import Any
+
+from file_lock import fcntl_compat as fcntl
 
 
 ROOT = Path(__file__).resolve().parents[3]

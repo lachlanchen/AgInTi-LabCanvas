@@ -32,8 +32,8 @@
     "pyproject.toml"
   ],
   "scripts": {
-    "check": "node --check bin/labcanvas.js && node --check bin/app-auto-action.js && node --check bin/agenticapp.js && node --check scripts/npm-publish-from-env.js && node --check scripts/npm-release.js && node --check src/agenticapp/web/static/app.js",
-    "test": "npm run check && PYTHONPATH=src python -m unittest discover -s tests",
+    "check": "node --check bin/labcanvas.js && node --check bin/app-auto-action.js && node --check bin/agenticapp.js && node --check scripts/npm-publish-from-env.js && node --check scripts/npm-release.js && node --check scripts/run-python-tests.js && node --check src/agenticapp/web/static/app.js",
+    "test": "npm run check && node scripts/run-python-tests.js",
     "pack:dry-run": "npm pack --dry-run",
     "release:npm": "node scripts/npm-release.js",
     "release:npm:dry-run": "node scripts/npm-release.js patch --dry-run",

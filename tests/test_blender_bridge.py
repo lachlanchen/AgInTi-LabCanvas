@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import stat
 import unittest
 
@@ -20,7 +21,10 @@ class BlenderBridgeTests(unittest.TestCase):
         wrapper = ROOT / "bridges" / "codex_exec_blender.sh"
         mode = wrapper.stat().st_mode
 
-        self.assertTrue(mode & stat.S_IXUSR)
+        if os.name == "nt":
+            self.assertTrue(wrapper.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash"))
+        else:
+            self.assertTrue(mode & stat.S_IXUSR)
 
     def test_blender_bridge_script_exists(self):
         script = ROOT / "bridges" / "blender_building_bridge.py"
