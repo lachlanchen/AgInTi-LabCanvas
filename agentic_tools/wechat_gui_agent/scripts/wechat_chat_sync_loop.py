@@ -244,6 +244,7 @@ def open_chat_dry_run(args: argparse.Namespace, chat_name: str, target: dict[str
         json.dump({"targets": [target], "message": ""}, fh, ensure_ascii=False)
         targets_file = Path(fh.name)
     try:
+        env = chat_sync_gui_send_env(args)
         proc = subprocess.run(
             [
                 sys.executable,
@@ -260,9 +261,10 @@ def open_chat_dry_run(args: argparse.Namespace, chat_name: str, target: dict[str
                 str(args.output_dir),
             ],
             cwd=ROOT,
+            env=env,
             text=True,
             capture_output=True,
-            timeout=max(args.timeout, args.pause * 20, 30.0),
+            timeout=chat_sync_subprocess_timeout(args),
             check=False,
         )
     finally:
@@ -273,6 +275,21 @@ def open_chat_dry_run(args: argparse.Namespace, chat_name: str, target: dict[str
     if proc.stderr.strip():
         result["stderr_tail"] = proc.stderr.strip()[-1000:]
     return result
+
+
+def chat_sync_gui_send_env(args: argparse.Namespace) -> dict[str, str]:
+    env = os.environ.copy()
+    max_seconds = max(8, min(int(args.timeout), int(os.environ.get("WECHAT_CHAT_SYNC_GUI_SEND_MAX_SECONDS", "18"))))
+    title_retry = max(1.0, min(float(os.environ.get("WECHAT_CHAT_SYNC_TITLE_RETRY_SECONDS", "2.0")), float(max_seconds) / 2))
+    env.setdefault("WECHAT_GUI_SEND_MAX_SECONDS", str(max_seconds))
+    env.setdefault("WECHAT_TITLE_RETRY_SECONDS", str(title_retry))
+    env.setdefault("WECHAT_INITIAL_TITLE_WAIT", os.environ.get("WECHAT_CHAT_SYNC_INITIAL_TITLE_WAIT", "0.4"))
+    return env
+
+
+def chat_sync_subprocess_timeout(args: argparse.Namespace) -> float:
+    max_seconds = float(chat_sync_gui_send_env(args).get("WECHAT_GUI_SEND_MAX_SECONDS", "18"))
+    return max(max_seconds + 5.0, args.pause * 12, 12.0)
 
 
 if __name__ == "__main__":

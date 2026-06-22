@@ -192,6 +192,41 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertEqual(result["window_title"], "🍓我的设备")
         self.assertTrue(any(call[0] == "tesseract" for call in calls))
 
+    def test_title_guard_fast_rejects_specific_wrong_native_window_title(self):
+        module = load_wechat_gui_send()
+        original_run = module.run
+        calls = []
+        try:
+            def fake_run(command, *, env, check=True):
+                calls.append(command)
+                if command[:2] == ["xdotool", "getwindowname"]:
+                    return subprocess.CompletedProcess(command, 0, "EchoMind\n", "")
+                if command[0] == "tesseract":
+                    return subprocess.CompletedProcess(command, 0, "我的设备", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            result = module.verify_opened_title(
+                {},
+                module.Window("main", 489, 193, 1020, 739),
+                Path("/tmp/screen.png"),
+                module.TargetSpec(
+                    name="🍓我的设备",
+                    query="我的设备",
+                    expected_title="🍓我的设备",
+                    expected_title_aliases=("我的设备",),
+                ),
+                Path("/tmp/title.png"),
+                "open_click",
+            )
+        finally:
+            module.run = original_run
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["window_title_nonmatch"])
+        self.assertEqual(result["ocr_text"], "EchoMind")
+        self.assertFalse(any(call[0] == "tesseract" for call in calls))
+
     def test_title_guard_rejects_ai_search_native_window_title(self):
         module = load_wechat_gui_send()
         original_run = module.run

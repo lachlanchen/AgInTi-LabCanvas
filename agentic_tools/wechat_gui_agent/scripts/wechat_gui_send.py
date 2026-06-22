@@ -554,6 +554,20 @@ def verify_opened_title(
             "window_title": window_title,
             "compose_window": window_to_dict(window),
         }
+    if specific_window_title_nonmatch(window_title, expected):
+        return {
+            "ok": False,
+            "method": method,
+            "expected_title": target.expected_title,
+            "expected_title_aliases": list(target.expected_title_aliases),
+            "ocr_text": window_title,
+            "title_crop": "",
+            "title_crops": [],
+            "window_title": window_title,
+            "compose_window": window_to_dict(window),
+            "surface_reject_reason": window_reject_reason,
+            "window_title_nonmatch": True,
+        }
     ocr_texts: list[str] = []
     crop_paths: list[str] = []
     ok = False
@@ -653,6 +667,21 @@ def rejected_title_guard_result(
 
 def normalize_title(text: str) -> str:
     return "".join(ch.lower() for ch in str(text or "") if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def specific_window_title_nonmatch(window_title: str, expected: list[str]) -> bool:
+    observed = normalize_title(window_title)
+    if not observed:
+        return False
+    if any(item in observed for item in expected):
+        return False
+    generic_titles = {
+        "wechat",
+        "weixin",
+        "weixinforlinux",
+        "微信",
+    }
+    return observed not in generic_titles
 
 
 def chat_surface_reject_reason(text: str) -> str:

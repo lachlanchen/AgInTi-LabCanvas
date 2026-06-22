@@ -169,6 +169,17 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
         self.assertEqual(results[1]["skipped"], "send_lane_reserved")
         self.assertEqual(results[1]["active"][0]["id"], "appeared-after-first")
 
+    def test_chat_sync_gui_send_env_bounds_dry_open_timeout(self):
+        module = load_wechat_chat_sync_loop()
+        args = argparse.Namespace(timeout=60, pause=0.8)
+
+        env = module.chat_sync_gui_send_env(args)
+
+        self.assertEqual(env["WECHAT_GUI_SEND_MAX_SECONDS"], "18")
+        self.assertEqual(env["WECHAT_INITIAL_TITLE_WAIT"], "0.4")
+        self.assertLessEqual(float(env["WECHAT_TITLE_RETRY_SECONDS"]), 2.0)
+        self.assertLess(module.chat_sync_subprocess_timeout(args), 30)
+
 
 if __name__ == "__main__":
     unittest.main()

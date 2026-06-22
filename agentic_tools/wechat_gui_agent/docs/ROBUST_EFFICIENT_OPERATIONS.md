@@ -221,6 +221,11 @@ Expected signs:
   polling cannot hold the serialized GUI sender ahead of actual replies. It
   re-checks the queue before every configured target, not only once per cycle,
   so a newly claimed worker send can interrupt an in-progress sync pass;
+- the GUI sender fast-rejects a specific wrong native window title, such as
+  `EchoMind` while targeting `我的设备`, before running slow OCR. If a group
+  moves in the visible chat list, update its private `send_target` click points
+  so the first click lands on the intended row and fallback clicks remain only
+  backups;
 - worker loop is alive;
 - no unexpected `pending`, stale `in_progress`, or wrong-chat send errors.
 
