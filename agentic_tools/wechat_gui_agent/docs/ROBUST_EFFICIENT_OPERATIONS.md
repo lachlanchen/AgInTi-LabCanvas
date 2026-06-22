@@ -210,8 +210,12 @@ Set `WECHAT_WORKER_LAZYEDIT_REMOTE_LOG_COMMAND` in the ignored supervisor env to
 let the verifier inspect bounded AutoPublish logs. Login or QR markers should
 become `waiting_confirmation` with the same poststage stored, so the user can
 log in normally and approve the task to resume.
-Use `PYTHONPATH=src python -m agenticapp wechat selftest --suite publish-poststage --json`
-as the smoke test for this contract after worker or LazyEdit bridge changes.
+The tmux supervisor must start the worker through
+`wechat_worker_guarded_loop.sh`, which runs
+`PYTHONPATH=src python -m agenticapp wechat selftest --suite publish-poststage --json`
+before the worker loop. Keep this guard enabled so broken publish repair logic
+fails closed at startup/reload; `WECHAT_WORKER_SKIP_SELFTEST=1` is only for a
+temporary emergency bypass.
 
 ## Health Checks
 

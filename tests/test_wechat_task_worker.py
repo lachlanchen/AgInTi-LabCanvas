@@ -29,6 +29,15 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_supervisor_worker_uses_guarded_selftest_entrypoint(self) -> None:
+        supervisor = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_supervisor_tmux.sh"
+        wrapper = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_worker_guarded_loop.sh"
+
+        self.assertTrue(wrapper.exists())
+        self.assertTrue(wrapper.stat().st_mode & 0o111)
+        self.assertIn("wechat_worker_guarded_loop.sh", supervisor.read_text(encoding="utf-8"))
+        self.assertIn("wechat selftest --suite publish-poststage", wrapper.read_text(encoding="utf-8"))
+
     def test_worker_policy_selects_high_for_cad_or_pcb_tasks(self) -> None:
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "design a PCB and render the CAD in Blender"})

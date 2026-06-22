@@ -654,7 +654,14 @@ run `labcanvas wechat approve <task-id>` to resume verification. Set
 `WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH=1` to force the older general
 worker-agent fallback during testing.
 
-Run the focused self-test after changing this path:
+The tmux supervisor launches the worker through
+`agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh`, which
+runs this self-test before starting the long-running worker loop. If the
+self-test fails, the worker fails closed instead of silently processing publish
+tasks with a broken poststage. Set `WECHAT_WORKER_SKIP_SELFTEST=1` only for a
+temporary emergency bypass.
+
+Run the focused self-test manually after changing this path:
 
 ```bash
 PYTHONPATH=src python -m agenticapp wechat selftest --suite publish-poststage --json

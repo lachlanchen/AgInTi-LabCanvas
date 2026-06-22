@@ -334,6 +334,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             SCRIPTS / "wechat_direct_chatops.py",
             SCRIPTS / "wechat_direct_backend.py",
             SCRIPTS / "wechat_task_worker.py",
+            SCRIPTS / "wechat_worker_guarded_loop.sh",
             SCRIPTS / "wechat_routines.py",
             SCRIPTS / "wechat_chatops_bridge.py",
             SCRIPTS / "wechat_browser_assist.py",
