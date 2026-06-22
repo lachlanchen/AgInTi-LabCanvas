@@ -60,7 +60,9 @@ specialized stage contract for the `generated_video` routine.
   later.
 - `send_deferred_artifact`: backend work is complete but the MP4 has not reached
   WeChat; resend before continuing.
-- `send_deferred_locked`: WeChat GUI is locked; retry after normal unlock.
+- `send_deferred_locked`: WeChat GUI is locked, or the serialized send lane was
+  busy/timed out while another file/video send was active; retry after normal
+  unlock or after the active send finishes.
 - `generation_poststage_pending`: MP4 was delivered and LazyEdit/public publish
   is queued or still running.
 - `done`: only after the requested current-message stages have completed.

@@ -40,6 +40,7 @@ BACKEND_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wech
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_POLL_SECONDS = 0.8
 DEFAULT_CATCHUP_POLL_SECONDS = 0.1
+GUI_SEND_LOCK = PRIVATE / "wechat_gui_send.lock"
 
 
 def main() -> int:
@@ -398,16 +399,16 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     status = "sent"
                 except Exception as exc:
                     metrics["send_error"] = str(exc)[:500]
-                    status = "send-deferred-locked" if is_wechat_locked_error(exc) else "send-failed"
+                    status = deferred_send_status(exc) if is_deferable_send_error(exc) else "send-failed"
                     send_ok = False
-                    if status == "send-deferred-locked" and not task_enqueued:
+                    if status.startswith("send-deferred") and not task_enqueued:
                         deferred = enqueue_deferred_reply(
                             config,
                             trigger_row,
                             reply_text,
                             context_rows=context_rows,
-                            route_decision={"route_kind": "other_worker", "reason": "fast reply deferred because WeChat is locked"},
-                            reason="fast_reply_wechat_locked",
+                            route_decision={"route_kind": "other_worker", "reason": deferred_send_reason(exc)},
+                            reason=deferred_send_reason(exc),
                         )
                         task_enqueued = deferred["id"]
                 metrics["send_ms"] = elapsed_ms(started)
@@ -430,7 +431,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             if send_ok:
                 mark_responded_rows(state, focus_rows or [trigger_row])
                 response_sent = reply_text
-            elif task_enqueued and status == "send-deferred-locked":
+            elif task_enqueued and status.startswith("send-deferred"):
                 mark_responded_rows(state, focus_rows or [trigger_row])
         elif task_enqueued:
             mark_responded_rows(state, focus_rows or [trigger_row])
@@ -449,17 +450,17 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     status = "sent"
                 except Exception as exc:
                     metrics["send_error"] = str(exc)[:500]
-                    status = "send-deferred-locked" if is_wechat_locked_error(exc) else "send-failed"
+                    status = deferred_send_status(exc) if is_deferable_send_error(exc) else "send-failed"
                     send_ok = False
-                    if status == "send-deferred-locked":
+                    if status.startswith("send-deferred"):
                         source_row = latest_inbound_row(config, new_rows) or new_rows[-1]
                         deferred = enqueue_deferred_reply(
                             config,
                             source_row,
                             ack_text,
                             context_rows=new_rows,
-                            route_decision={"route_kind": "other_worker", "reason": "organizer ack deferred because WeChat is locked"},
-                            reason="organizer_ack_wechat_locked",
+                            route_decision={"route_kind": "other_worker", "reason": deferred_send_reason(exc)},
+                            reason=deferred_send_reason(exc),
                         )
                         task_enqueued = deferred["id"]
                 metrics["send_ms"] = elapsed_ms(started)
@@ -484,7 +485,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                 state["last_organizer_ack_local_id"] = latest_row.get("local_id") if latest_row else None
                 response_sent = ack_text
                 processed_local_id = latest_row.get("local_id") if latest_row else processed_local_id
-            elif status == "send-deferred-locked":
+            elif status.startswith("send-deferred"):
                 state["last_organizer_ack_at"] = datetime.now().isoformat(timespec="seconds")
                 state["last_organizer_ack_local_id"] = latest_row.get("local_id") if latest_row else None
                 processed_local_id = latest_row.get("local_id") if latest_row else processed_local_id
@@ -2956,7 +2957,7 @@ def send_gui_message(config: dict[str, Any], message: str) -> str:
             return send_gui_message_once(config, message)
         except Exception as exc:
             errors.append(f"attempt {attempt}: {truncate_text(str(exc), 1200)}")
-            if is_wechat_locked_error(exc):
+            if is_deferable_send_error(exc):
                 break
             if attempt < attempts and delay:
                 time.sleep(delay)
@@ -2964,6 +2965,8 @@ def send_gui_message(config: dict[str, Any], message: str) -> str:
 
 
 def send_gui_message_once(config: dict[str, Any], message: str) -> str:
+    if gui_send_lock_busy():
+        raise RuntimeError("WECHAT_SEND_BUSY: serialized GUI sender is already sending; defer this reply.")
     target = config.get("send_target")
     if isinstance(target, dict) and target.get("name"):
         with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
@@ -2989,15 +2992,20 @@ def send_gui_message_once(config: dict[str, Any], message: str) -> str:
         env = os.environ.copy()
         env.setdefault("WECHAT_INITIAL_TITLE_WAIT", str(config.get("send_initial_title_wait_seconds", 0.45)))
         env.setdefault("WECHAT_TITLE_RETRY_SECONDS", str(config.get("send_title_retry_seconds", 3.2)))
-        proc = subprocess.run(
-            command,
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=int(config.get("send_timeout_seconds", 60)),
-            env=env,
-        )
+        try:
+            proc = subprocess.run(
+                command,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=int(config.get("send_timeout_seconds", 60)),
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"WECHAT_SEND_TIMEOUT: GUI sender timed out after {exc.timeout} seconds; defer this reply."
+            ) from exc
     finally:
         if target_file:
             target_file.unlink(missing_ok=True)
@@ -3019,6 +3027,52 @@ def send_gui_message_once(config: dict[str, Any], message: str) -> str:
 def is_wechat_locked_error(exc: Exception | str) -> bool:
     text = str(exc).lower()
     return "wechat_locked" in text or "weixin for linux is locked" in text or "unlock on phone" in text
+
+
+def is_gui_send_busy_error(exc: Exception | str) -> bool:
+    text = str(exc).lower()
+    return "wechat_send_busy" in text or "serialized gui sender is already sending" in text
+
+
+def is_gui_send_timeout_error(exc: Exception | str) -> bool:
+    text = str(exc).lower()
+    return "wechat_send_timeout" in text or "timed out after" in text
+
+
+def is_deferable_send_error(exc: Exception | str) -> bool:
+    return is_wechat_locked_error(exc) or is_gui_send_busy_error(exc) or is_gui_send_timeout_error(exc)
+
+
+def deferred_send_status(exc: Exception | str) -> str:
+    if is_gui_send_busy_error(exc) or is_gui_send_timeout_error(exc):
+        return "send-deferred-busy"
+    return "send-deferred-locked"
+
+
+def deferred_send_reason(exc: Exception | str) -> str:
+    if is_gui_send_busy_error(exc):
+        return "gui_send_busy"
+    if is_gui_send_timeout_error(exc):
+        return "gui_send_timeout"
+    return "wechat_locked"
+
+
+def gui_send_lock_busy(lock_path: Path = GUI_SEND_LOCK) -> bool:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a", encoding="utf-8") as lock:
+        acquired = False
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except BlockingIOError:
+            return True
+        finally:
+            if acquired:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+    return False
 
 
 def load_state(path: Path) -> dict[str, Any]:

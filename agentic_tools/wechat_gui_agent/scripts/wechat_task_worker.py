@@ -30,6 +30,7 @@ LAZYEDIT_ROOT = Path(os.environ.get("LAZYEDIT_ROOT", "/home/lachlan/DiskMech/Pro
 LAZYEDIT_API_URL = os.environ.get("LAZYEDIT_API_URL", "http://127.0.0.1:18787").rstrip("/")
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
+GUI_SEND_LOCK = PRIVATE / "wechat_gui_send.lock"
 EFFORT_ORDER = ["low", "medium", "high", "xhigh"]
 CLAIMED_STATUS = "in_progress"
 SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
@@ -235,7 +236,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         task["completed_at"] = datetime.now().isoformat(timespec="seconds")
     task["result"] = result
     rewrite_task(queue, task)
-    if send_errors and send_errors_indicate_wechat_locked(send_errors):
+    if send_errors and send_errors_indicate_deferable(send_errors):
         event_status = "send-deferred-locked"
     elif send_errors:
         event_status = "send-failed"
@@ -315,9 +316,9 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
             task["post_artifact_send_errors"] = errors
             task.pop("send_deferred_reason", None)
             return
-        if send_errors_indicate_wechat_locked(errors):
+        if send_errors_indicate_deferable(errors):
             task["status"] = SEND_DEFERRED_LOCKED_STATUS
-            task["send_deferred_reason"] = "wechat_locked"
+            task["send_deferred_reason"] = send_deferred_reason_from_errors(errors)
         elif result_requires_file_delivery(task, result):
             task["status"] = SEND_DEFERRED_ARTIFACT_STATUS
             task["send_deferred_reason"] = "required_artifact_delivery"
@@ -599,6 +600,32 @@ def send_errors_indicate_wechat_locked(errors: list[str]) -> bool:
     return "wechat_locked" in text or "weixin for linux is locked" in text or "unlock on phone" in text
 
 
+def send_errors_indicate_gui_busy(errors: list[str]) -> bool:
+    text = "\n".join(str(error) for error in errors).lower()
+    return "wechat_send_busy" in text or "serialized gui sender is already sending" in text
+
+
+def send_errors_indicate_gui_timeout(errors: list[str]) -> bool:
+    text = "\n".join(str(error) for error in errors).lower()
+    return "wechat_send_timeout" in text or "timed out after" in text
+
+
+def send_errors_indicate_deferable(errors: list[str]) -> bool:
+    return (
+        send_errors_indicate_wechat_locked(errors)
+        or send_errors_indicate_gui_busy(errors)
+        or send_errors_indicate_gui_timeout(errors)
+    )
+
+
+def send_deferred_reason_from_errors(errors: list[str]) -> str:
+    if send_errors_indicate_gui_busy(errors):
+        return "gui_send_busy"
+    if send_errors_indicate_gui_timeout(errors):
+        return "gui_send_timeout"
+    return "wechat_locked"
+
+
 def should_send_worker_result(task: dict[str, Any], result: dict[str, Any]) -> bool:
     if not generated_video_result_is_nonterminal(task, result):
         return True
@@ -624,7 +651,7 @@ def send_result_with_retries(
             return []
         except Exception as exc:
             errors.append(f"attempt {attempt}: {exc}")
-            if send_errors_indicate_wechat_locked(errors):
+            if send_errors_indicate_deferable(errors):
                 break
             if attempt < attempts and delay:
                 import time
@@ -2920,17 +2947,24 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
 
 
 def run_send_subprocess(command: list[str], timeout: int | None = None) -> None:
+    if gui_send_lock_busy():
+        raise RuntimeError("WECHAT_SEND_BUSY: serialized GUI sender is already sending; defer this worker reply.")
     if timeout is None:
         timeout = int(os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"))
-    proc = subprocess.run(
-        command,
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-        env=wechat_send_env(),
-    )
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+            env=wechat_send_env(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"WECHAT_SEND_TIMEOUT: GUI sender timed out after {exc.timeout} seconds; defer this worker reply."
+        ) from exc
     if proc.returncode == 0:
         return
     stdout = (proc.stdout or "").strip()
@@ -2951,15 +2985,24 @@ def run_file_bridge_subprocess(command: list[str], timeout: int | None = None) -
                 os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"),
             )
         )
-    proc = subprocess.run(
-        command,
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-        env=wechat_send_env(),
-    )
+    lock = acquire_gui_send_lock_or_raise()
+    try:
+        try:
+            proc = subprocess.run(
+                command,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+                env=wechat_send_env(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"WECHAT_SEND_TIMEOUT: file bridge timed out after {exc.timeout} seconds; defer this worker reply."
+            ) from exc
+    finally:
+        release_gui_send_lock(lock)
     if proc.returncode == 0:
         return
     stdout = (proc.stdout or "").strip()
@@ -2970,6 +3013,42 @@ def run_file_bridge_subprocess(command: list[str], timeout: int | None = None) -
     if stderr:
         parts.append(f"stderr={stderr[-1200:]}")
     raise RuntimeError("; ".join(parts))
+
+
+def gui_send_lock_busy(lock_path: Path = GUI_SEND_LOCK) -> bool:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a", encoding="utf-8") as lock:
+        acquired = False
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except BlockingIOError:
+            return True
+        finally:
+            if acquired:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+    return False
+
+
+def acquire_gui_send_lock_or_raise(lock_path: Path = GUI_SEND_LOCK):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = lock_path.open("a", encoding="utf-8")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        lock.close()
+        raise RuntimeError("WECHAT_SEND_BUSY: serialized GUI sender is already sending; defer this worker reply.") from exc
+    return lock
+
+
+def release_gui_send_lock(lock) -> None:
+    try:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    finally:
+        lock.close()
 
 
 def wechat_send_env() -> dict[str, str]:

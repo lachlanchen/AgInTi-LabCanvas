@@ -425,11 +425,13 @@ by default; media/PDF/ZIP artifacts are the default auto-send candidates. Set
 
 If the official Linux client shows "Weixin for Linux is locked", do not bypass
 it with packet capture, decompilation, traffic decryption, session extraction,
-or private-protocol replay. The sender emits `WECHAT_LOCKED`, completed tasks
-move to `send_deferred_locked`, and the worker keeps processing new backend work
-while outbound replies wait in the private queue. The loop periodically retries
-deferred sends after `WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS` (default:
-300), or an operator can run:
+or private-protocol replay. The sender emits `WECHAT_LOCKED`; a concurrent GUI
+send or timeout emits `WECHAT_SEND_BUSY` or `WECHAT_SEND_TIMEOUT`. Completed
+tasks move to `send_deferred_locked` with `send_deferred_reason`, and the worker
+keeps processing new backend work while outbound replies wait in the private
+queue. The loop periodically retries deferred sends after
+`WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS` (default: 300), or an operator can
+run:
 
 ```bash
 python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --flush-deferred

@@ -1467,6 +1467,94 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(task["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
         self.assertEqual(task["send_deferred_reason"], "wechat_locked")
 
+    def test_send_result_defers_immediately_when_gui_sender_busy(self) -> None:
+        worker = load_worker()
+        calls = []
+        original = worker.send_result_once
+        try:
+            def busy_send(*args: object, **kwargs: object) -> None:
+                calls.append((args, kwargs))
+                raise RuntimeError("WECHAT_SEND_BUSY: serialized GUI sender is already sending")
+
+            worker.send_result_once = busy_send
+            task: dict[str, object] = {}
+            errors = worker.send_result_with_retries(
+                {"message": "ok", "confirmation": "", "files": []},
+                "EchoMind",
+                Path("/tmp/no-targets.json"),
+                task=task,
+            )
+            worker.apply_send_outcome(task, {"message": "ok", "confirmation": "", "files": []}, errors)
+        finally:
+            worker.send_result_once = original
+
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(worker.send_errors_indicate_deferable(errors))
+        self.assertEqual(task["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
+        self.assertEqual(task["send_deferred_reason"], "gui_send_busy")
+
+    def test_send_result_defers_immediately_when_gui_sender_times_out(self) -> None:
+        worker = load_worker()
+        calls = []
+        original = worker.send_result_once
+        try:
+            def timeout_send(*args: object, **kwargs: object) -> None:
+                calls.append((args, kwargs))
+                raise RuntimeError("WECHAT_SEND_TIMEOUT: GUI sender timed out after 120 seconds")
+
+            worker.send_result_once = timeout_send
+            task: dict[str, object] = {}
+            errors = worker.send_result_with_retries(
+                {"message": "ok", "confirmation": "", "files": []},
+                "EchoMind",
+                Path("/tmp/no-targets.json"),
+                task=task,
+            )
+            worker.apply_send_outcome(task, {"message": "ok", "confirmation": "", "files": []}, errors)
+        finally:
+            worker.send_result_once = original
+
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(worker.send_errors_indicate_deferable(errors))
+        self.assertEqual(task["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
+        self.assertEqual(task["send_deferred_reason"], "gui_send_timeout")
+
+    def test_run_send_subprocess_defers_when_gui_lock_is_busy(self) -> None:
+        worker = load_worker()
+        original_lock_busy = worker.gui_send_lock_busy
+        original_run = worker.subprocess.run
+        try:
+            worker.gui_send_lock_busy = lambda: True
+
+            def fail_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                raise AssertionError("busy send lane should not spawn a GUI sender")
+
+            worker.subprocess.run = fail_run
+            with self.assertRaisesRegex(RuntimeError, "WECHAT_SEND_BUSY"):
+                worker.run_send_subprocess(["python3", "-c", "print('unused')"], timeout=1)
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            worker.subprocess.run = original_run
+
+    def test_run_send_subprocess_timeout_is_deferable(self) -> None:
+        worker = load_worker()
+        original_lock_busy = worker.gui_send_lock_busy
+        original_run = worker.subprocess.run
+        try:
+            worker.gui_send_lock_busy = lambda: False
+
+            def timeout_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                raise subprocess.TimeoutExpired(command, 120)
+
+            worker.subprocess.run = timeout_run
+            with self.assertRaisesRegex(RuntimeError, "WECHAT_SEND_TIMEOUT") as context:
+                worker.run_send_subprocess(["python3", "-c", "print('unused')"], timeout=120)
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            worker.subprocess.run = original_run
+
+        self.assertTrue(worker.send_errors_indicate_deferable([str(context.exception)]))
+
     def test_claim_next_deferred_send_respects_backoff(self) -> None:
         worker = load_worker()
         original_backoff = worker.os.environ.get("WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS")

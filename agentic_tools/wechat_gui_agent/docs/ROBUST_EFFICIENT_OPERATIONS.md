@@ -53,8 +53,11 @@ workflow from scratch.
   it is missing, stop source-limited and ask for resend/opening the media.
 - GUI file delivery is a first-class state, not a best-effort afterthought.
 - Fast chat replies and organizer acknowledgements must also be durable. If the
-  GUI is locked, enqueue them as `send_deferred_locked` worker-outbox tasks
-  instead of dropping them.
+  GUI is locked, the serialized sender is busy, or the sender times out while a
+  file/video is being delivered, enqueue them as `send_deferred_locked`
+  worker-outbox tasks instead of dropping them. Preserve
+  `send_deferred_reason` as `wechat_locked`, `gui_send_busy`, or
+  `gui_send_timeout`.
 - Login, CAPTCHA, QR, payment, lock screen, and irreversible decisions wait for
   normal human approval.
 - Do not use packet interception, private-protocol replay, credential/session
@@ -100,7 +103,7 @@ workflow from scratch.
 | `in_progress` | Worker owns the task. | Complete, requeue, or fail with evidence. |
 | `generation_waiting` | Xiaoyunque/browser job is running or queued. | Deterministic CDP/status probe after `next_poll_at`. |
 | `send_deferred_artifact` | Result exists but required file was not sent. | Fix GUI/file send and flush deferred outbox. |
-| `send_deferred_locked` | WeChat is locked. | Unlock normally, then flush deferred outbox. |
+| `send_deferred_locked` | WeChat is locked, or the serialized GUI send lane was busy/timed out. | Unlock or wait for the active send, then flush deferred outbox. |
 | `generation_poststage_pending` | MP4 was delivered; LazyEdit/public publish is queued or still running. | Worker claims poststage after `next_poststage_at`. |
 | `waiting_confirmation` | Human approval required. | Approve/reject through CLI or web panel. |
 | `send_failed` | Non-deferred send failure. | Inspect evidence, fix target/title guard, resend stored result. |

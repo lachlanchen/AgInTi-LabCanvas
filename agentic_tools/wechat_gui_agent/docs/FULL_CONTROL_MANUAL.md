@@ -392,7 +392,7 @@ Then inspect fresh logs under `output/wechat_gui_agent/YYYY-MM-DD/`.
 | Wrong search row opens | Add `fallback_clicks` or use a verified `open_click`; keep OCR title guard enabled. |
 | Title OCR fails | Prefer native popup title matching; otherwise add stable `expected_title_aliases`, increase title wait, inspect title crop screenshots. |
 | Backend done but reply failed | Fix the sender/title guard, then run `python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --resend <task-id>` so work is not rerun. |
-| WeChat is locked | Do not bypass the lock. The sender returns `WECHAT_LOCKED`, worker results become `send_deferred_locked`, and `wechat_desktop_unlock_watchdog.py --loop --flush-deferred` performs the normal owner-authorized phone-side unlock before retrying. |
+| WeChat is locked or sender is busy | Do not bypass the lock or run parallel clickers. `WECHAT_LOCKED`, `WECHAT_SEND_BUSY`, and `WECHAT_SEND_TIMEOUT` become `send_deferred_locked` with `send_deferred_reason`, then the watchdog/worker flusher retries after unlock or the active send finishes. |
 | Text artifacts trigger file picker issues | Keep `.md`/`.txt`/`.json` as saved paths in the message; use `WECHAT_WORKER_SEND_FILES=0` to disable attachment sends or `WECHAT_WORKER_REQUIRE_FILE_SEND=1` for strict delivery. |
 | Task replies to wrong chat | Treat as a bug; check route contract, send target, state path, and title guard logs. |
 | File missing | Run same-chat media sync and verify exact local/server ids before retrying. |
