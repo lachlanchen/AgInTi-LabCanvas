@@ -779,6 +779,104 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(simple["model"], "gpt-5.3-codex-spark")
         self.assertEqual(simple["reasoning_effort"], "high")
 
+    def test_agent_first_route_can_enqueue_without_keyword_prefilter(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": [],
+            "agent_route_enabled": True,
+            "agent_route_prefilter": "agent_first",
+            "agent_router": {"default_model": "gpt-5.3-codex-spark", "default_reasoning_effort": "high", "timeout_seconds": 45},
+        }
+        row = self.row("blue notebook idea", local_id=9, server_id="srv-9")
+        original_session = direct_chatops.run_codex_session
+        try:
+            def fake_route_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                self.assertEqual(kwargs["role"], "route")
+                self.assertIn("blue notebook idea", prompt)
+                return {
+                    "ok": True,
+                    "message": json.dumps(
+                        {
+                            "route_kind": "research_or_summary",
+                            "project": "generic",
+                            "worker_needed": True,
+                            "needs_recent_media": False,
+                            "public_publish_intent": False,
+                            "public_publish_allowed": False,
+                            "external_action_allowed": False,
+                            "source_policy": "current_request_only",
+                            "reason": "agent classified as backend note expansion",
+                            "confidence": 0.82,
+                        }
+                    ),
+                }
+
+            direct_chatops.run_codex_session = fake_route_session  # type: ignore[assignment]
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original_session  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertIn("blue notebook idea", route["task"])
+        self.assertEqual(route["route_decision"]["route_kind"], "research_or_summary")
+        self.assertEqual(route["route_decision"]["route_agent_model"], "gpt-5.3-codex-spark")
+
+    def test_agent_first_chat_only_does_not_enqueue_worker(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": [],
+            "agent_route_enabled": True,
+            "agent_route_prefilter": "agent_first",
+        }
+        row = self.row("good morning", local_id=10, server_id="srv-10")
+        original_session = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+                "ok": True,
+                "message": '{"route_kind":"chat_only","worker_needed":false,"reason":"casual chat","confidence":0.9}',
+            }
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original_session  # type: ignore[assignment]
+
+        self.assertIsNone(route)
+
+    def test_agent_first_failure_without_heuristic_does_not_enqueue_everything(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": [],
+            "agent_route_enabled": True,
+            "agent_route_prefilter": "agent_first",
+        }
+        row = self.row("blue notebook idea", local_id=11, server_id="srv-11")
+        original_session = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {"ok": False, "message": "timeout"}  # type: ignore[assignment]
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original_session  # type: ignore[assignment]
+
+        self.assertIsNone(route)
+
     def test_research_complex_task_routes_to_worker_without_keyword(self) -> None:
         config = {
             "chat_name": "懒人科研",

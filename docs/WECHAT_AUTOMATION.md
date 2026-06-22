@@ -457,6 +457,12 @@ Worker model/effort can be tuned with `WECHAT_WORKER_CODEX_MODEL`,
 `WECHAT_WORKER_MIN_EFFORT`, `WECHAT_WORKER_MAX_EFFORT`, and
 `WECHAT_WORKER_MAX_CODEX_ATTEMPTS`; Spark worker models are ignored unless
 `WECHAT_ALLOW_SPARK_WORKER=1` is set intentionally.
+For triggerable non-language messages, direct monitors should use
+`agent_route_enabled=true` and `agent_route_prefilter=agent_first`. The per-chat
+`route` Codex session decides `route_kind`, project, source policy, and whether
+a worker is needed. Keyword and attachment heuristics remain only as a fallback
+and safety net, especially when the route agent fails on an already obvious
+task.
 
 If a download is blocked by login, consent, CAPTCHA, or another manual check,
 use the same isolated noVNC virtual desktop rather than bypassing the check:

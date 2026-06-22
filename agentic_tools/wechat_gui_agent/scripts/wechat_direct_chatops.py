@@ -98,6 +98,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 60},
         "codex_session_reuse": True,
         "agent_route_enabled": True,
+        "agent_route_prefilter": "agent_first",
         "agent_router": {
             "default_model": "gpt-5.3-codex-spark",
             "default_reasoning_effort": "high",
@@ -1339,23 +1340,31 @@ def immediate_task_route(
         return None
     current_request = combined_focus_request(config, row, context_rows, focus_rows=focus_rows)
     combined = current_request or visible_message_text(row)
-    lowered = combined.lower()
-    keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
     attachment_trigger = is_attachment_trigger(config, row)
     lalachan_task = is_lalachan_story_video_task(combined)
     complex_task = is_complex_research_task(config, combined, focus_rows=focus_rows)
     contextual_media_task = is_contextual_media_task(config, combined, row, context_rows, focus_rows=focus_rows)
     quoted_media_task = is_quote_reply_message(row) and references_recent_media(combined)
-    if (
-        not attachment_trigger
-        and not lalachan_task
-        and not complex_task
-        and not contextual_media_task
-        and not quoted_media_task
-        and not any(keyword and keyword in lowered for keyword in keywords)
-    ):
-        return None
-    route_decision = agent_route_decision(config, row, context_rows, focus_rows=focus_rows, current_request=combined)
+    heuristic_candidate = heuristic_worker_route_candidate(
+        config,
+        combined,
+        attachment_trigger=attachment_trigger,
+        lalachan_task=lalachan_task,
+        complex_task=complex_task,
+        contextual_media_task=contextual_media_task,
+        quoted_media_task=quoted_media_task,
+    )
+    agent_first = agent_route_prefilter_mode(config) == "agent_first" and bool(config.get("agent_route_enabled", False))
+    if agent_first:
+        route_decision = agent_route_decision(config, row, context_rows, focus_rows=focus_rows, current_request=combined)
+        if not route_decision_requires_worker(route_decision):
+            return None
+        if route_decision.get("route_agent_error") and not heuristic_candidate:
+            return None
+    else:
+        if not heuristic_candidate:
+            return None
+        route_decision = agent_route_decision(config, row, context_rows, focus_rows=focus_rows, current_request=combined)
     public_publish_allowed = bool(route_decision.get("public_publish_allowed"))
     route_kind = str(route_decision.get("route_kind") or "")
     route_project = str(route_decision.get("project") or "")
@@ -1436,6 +1445,42 @@ def immediate_task_route(
     return {"ack": ack, "task": task, "route_decision": route_decision}
 
 
+def agent_route_prefilter_mode(config: dict[str, Any]) -> str:
+    mode = str(config.get("agent_route_prefilter") or "").strip().lower().replace("-", "_")
+    if mode in {"agent_first", "heuristic"}:
+        return mode
+    return "agent_first" if bool(config.get("agent_route_enabled", False)) else "heuristic"
+
+
+def heuristic_worker_route_candidate(
+    config: dict[str, Any],
+    text: str,
+    *,
+    attachment_trigger: bool,
+    lalachan_task: bool,
+    complex_task: bool,
+    contextual_media_task: bool,
+    quoted_media_task: bool,
+) -> bool:
+    lowered = str(text or "").lower()
+    keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
+    return (
+        attachment_trigger
+        or lalachan_task
+        or complex_task
+        or contextual_media_task
+        or quoted_media_task
+        or any(keyword and keyword in lowered for keyword in keywords)
+    )
+
+
+def route_decision_requires_worker(route_decision: dict[str, Any]) -> bool:
+    route_kind = str(route_decision.get("route_kind") or "").strip()
+    if route_kind == "chat_only":
+        return False
+    return bool(route_decision.get("worker_needed", bool(route_kind)))
+
+
 def agent_route_decision(
     config: dict[str, Any],
     row: dict[str, Any],
@@ -1505,6 +1550,8 @@ Important distinction:
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
 - Old context can explain a follow-up, but old context cannot authorize a new public publish.
 - A video-generation request should use local/default reference assets unless the current request says this/that/same/attached/quoted video/image.
+- Return chat_only with worker_needed=false when the user is only chatting or when no backend/tool/file/artifact work is useful.
+- Use other_worker only when a backend Codex worker can materially finish the request; do not use it just because the message is ambiguous.
 
 JSON schema:
 {{

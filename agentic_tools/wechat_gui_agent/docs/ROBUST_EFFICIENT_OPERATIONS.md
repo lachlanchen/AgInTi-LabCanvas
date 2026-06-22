@@ -83,6 +83,11 @@ workflow from scratch.
 - Idle polling is local-only and should not spend model tokens.
 - Use fast-router Codex only for new actionable messages, ambiguous routing, or
   immediate lightweight replies.
+- Keep route classification agent-first for triggerable non-language chats:
+  `agent_route_enabled=true` with `agent_route_prefilter=agent_first` lets the
+  per-chat `route` Codex session choose `route_kind`, project, source policy,
+  and worker need before keyword lists. Keyword and attachment checks remain as
+  fallback and safety gates, not the primary capability map.
 - Reuse per-chat `fast` and `worker` sessions. Session keys must be scoped by
   exact chat title and role.
 - Coalesce short message bursts into one task, but preserve every focused row in

@@ -585,6 +585,11 @@ and external tooling are not blocked by the shell sandbox; set
 Set `WECHAT_WORKER_MIN_EFFORT`, `WECHAT_WORKER_MAX_EFFORT`, or
 `WECHAT_WORKER_MAX_CODEX_ATTEMPTS` to tune dynamic escalation. Spark worker
 models are ignored unless `WECHAT_ALLOW_SPARK_WORKER=1` is set intentionally.
+Direct monitors should keep `agent_route_enabled=true` and
+`agent_route_prefilter=agent_first` for triggerable non-language chats. The
+per-chat `route` Codex session classifies route kind, project, source policy,
+and worker need before keyword lists; deterministic heuristics remain fallback
+and safety logic.
 For login/CAPTCHA/download blocks, open a browser in the same isolated noVNC
 desktop with `labcanvas wechat browser-assist --url "<url>" --json`; the user
 handles the manual step and the worker continues after approval.
