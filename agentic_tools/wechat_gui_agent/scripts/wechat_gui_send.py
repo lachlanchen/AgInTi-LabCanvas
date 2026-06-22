@@ -434,7 +434,12 @@ def verify_opened_title(
     expected_titles = [target.expected_title, *target.expected_title_aliases]
     expected = [normalize_title(item) for item in expected_titles if normalize_title(item)]
     window_title = run(["xdotool", "getwindowname", window.wid], env=env, check=False).stdout.strip()
-    window_title_ok = bool(window_title) and any(item in normalize_title(window_title) for item in expected)
+    window_reject_reason = chat_surface_reject_reason(window_title)
+    window_title_ok = (
+        bool(window_title)
+        and not window_reject_reason
+        and any(item in normalize_title(window_title) for item in expected)
+    )
     if window_title_ok:
         return {
             "ok": True,
@@ -470,6 +475,20 @@ def verify_opened_title(
         text = proc.stdout.strip()
         ocr_texts.append(text)
         crop_paths.append(str(region_crop))
+        reject_reason = chat_surface_reject_reason(text)
+        if reject_reason:
+            return {
+                "ok": False,
+                "method": method,
+                "expected_title": target.expected_title,
+                "expected_title_aliases": list(target.expected_title_aliases),
+                "ocr_text": "\n".join(text for text in ocr_texts if text).strip(),
+                "title_crop": str(region_crop),
+                "title_crops": crop_paths,
+                "window_title": window_title,
+                "compose_window": window_to_dict(window),
+                "surface_reject_reason": reject_reason,
+            }
         observed = normalize_title(text)
         if any(item in observed for item in expected):
             ok = True
@@ -485,11 +504,37 @@ def verify_opened_title(
         "title_crops": crop_paths,
         "window_title": window_title,
         "compose_window": window_to_dict(window),
+        "surface_reject_reason": window_reject_reason,
     }
 
 
 def normalize_title(text: str) -> str:
     return "".join(ch.lower() for ch in str(text or "") if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def chat_surface_reject_reason(text: str) -> str:
+    lowered = str(text or "").lower()
+    normalized = normalize_title(text)
+    raw_markers = {
+        "ai search": "ai-search",
+        " - search": "search-webview",
+        "- search": "search-webview",
+        "ask a follow-up": "ai-search",
+    }
+    normalized_markers = {
+        "aisearch": "ai-search",
+        "问ai": "ai-search",
+        "問ai": "ai-search",
+        "快速回答": "ai-search",
+        "askafollowup": "ai-search",
+    }
+    for marker, reason in raw_markers.items():
+        if marker in lowered:
+            return reason
+    for marker, reason in normalized_markers.items():
+        if marker in normalized:
+            return reason
+    return ""
 
 
 def detect_wechat_locked(env: dict[str, str], window: Window, screenshot_path: Path, crop_path: Path) -> dict[str, Any]:

@@ -254,6 +254,14 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 status="done-sent",
                 db_path=mirror_db,
             )
+            direct_chatops.record_event(
+                chat_name="🍓我的设备",
+                action="direct_codex_reply",
+                direction="outbound",
+                message="已生成今天的 LALACHAN 故事《餐厅地板下的金光》，并保存到 LALACHAN 文件夹。",
+                status="sent",
+                db_path=mirror_db,
+            )
             row = self.row("Could you show me story here", server_id="srv-22", local_id=22)
             state: dict[str, object] = {"last_local_id": 21}
             original_read_new = direct_chatops.read_new_messages

@@ -171,6 +171,71 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertEqual(result["window_title"], "🍓我的设备")
         self.assertFalse(any(call[0] == "tesseract" for call in calls))
 
+    def test_title_guard_rejects_ai_search_native_window_title(self):
+        module = load_wechat_gui_send()
+        original_run = module.run
+        calls = []
+        try:
+            def fake_run(command, *, env, check=True):
+                calls.append(command)
+                if command[:2] == ["xdotool", "getwindowname"]:
+                    return subprocess.CompletedProcess(command, 0, "AI Search - 我的设备\n", "")
+                if command[0] == "tesseract":
+                    return subprocess.CompletedProcess(command, 0, "AI Search - 我的设备", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            result = module.verify_opened_title(
+                {},
+                module.Window("popup", 649, 206, 623, 666),
+                Path("/tmp/screen.png"),
+                module.TargetSpec(
+                    name="🍓我的设备",
+                    query="我的设备",
+                    expected_title="🍓我的设备",
+                    expected_title_aliases=("我的设备",),
+                ),
+                Path("/tmp/title.png"),
+                "result_click_double",
+            )
+        finally:
+            module.run = original_run
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["surface_reject_reason"], "ai-search")
+        self.assertTrue(any(call[0] == "tesseract" for call in calls))
+
+    def test_title_guard_rejects_ai_search_ocr_match(self):
+        module = load_wechat_gui_send()
+        original_run = module.run
+        try:
+            def fake_run(command, *, env, check=True):
+                if command[:2] == ["xdotool", "getwindowname"]:
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                if command[0] == "tesseract":
+                    return subprocess.CompletedProcess(command, 0, "我的设备 - Search\nAsk a follow-up...\n问AI", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            result = module.verify_opened_title(
+                {},
+                module.Window("popup", 649, 206, 623, 666),
+                Path("/tmp/screen.png"),
+                module.TargetSpec(
+                    name="🍓我的设备",
+                    query="我的设备",
+                    expected_title="🍓我的设备",
+                    expected_title_aliases=("我的设备",),
+                ),
+                Path("/tmp/title.png"),
+                "result_click_double",
+            )
+        finally:
+            module.run = original_run
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["surface_reject_reason"], "search-webview")
+
     def test_detect_wechat_locked_from_visible_screen(self):
         module = load_wechat_gui_send()
         original_run = module.run

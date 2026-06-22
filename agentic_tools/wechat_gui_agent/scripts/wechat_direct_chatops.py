@@ -1146,6 +1146,11 @@ def is_reusable_outbound_result(text: str) -> bool:
         "好的",
         "ok",
         "已保存",
+        "已生成",
+        "已准备",
+        "准备好了",
+        "generated",
+        "prepared",
         "saved",
     ]
     if len(collapsed) < 240 and any(lowered.startswith(prefix) for prefix in ack_prefixes):
