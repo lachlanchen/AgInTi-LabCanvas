@@ -425,6 +425,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "route and worker prompts preserve every safe explicit current instruction instead of shrinking to keyword matches",
             "queued worker tasks persist a machine-readable instruction contract",
             "legacy queued worker tasks backfill the instruction contract before execution",
+            "generated-video contracts allow cheap visible-cost Seedance Mini/vipnew or Fast VIP instead of blocking VIP labels blindly",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }

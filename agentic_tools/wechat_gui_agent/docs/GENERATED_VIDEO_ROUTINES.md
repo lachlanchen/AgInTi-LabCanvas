@@ -23,6 +23,12 @@ specialized stage contract for the `generated_video` routine.
      context.
    - Output: story markdown, prompt markdown, upload evidence, and either
      submitted monitor state or a verified MP4.
+   - Model policy: use the cheapest acceptable visible-cost Seedance model.
+     `Seedance 2.0 Mini 体验版` / `vipnew` with a visible cheap rate such as
+     `单秒限时低至4积分` is valid and preferred for cheap fast output. `Seedance
+     2.0 Fast` or `Fast VIP` is valid only when the visible per-second/total
+     cost is cheap and suitable. Unknown, hidden, or unexpectedly high cost
+     remains a blocker.
 
 3. `xyq_deterministic_monitor`
    - Owner: queue orchestrator.

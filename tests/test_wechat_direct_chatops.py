@@ -822,8 +822,9 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("ayachan.png", route["task"])
         self.assertIn("sasakun.jpeg", route["task"])
         self.assertIn("Trio.png", route["task"])
-        self.assertIn("Seedance 2.0 Fast", route["task"])
-        self.assertIn("non-VIP", route["task"])
+        self.assertIn("Seedance 2.0 Mini 体验版", route["task"])
+        self.assertIn("Fast VIP", route["task"])
+        self.assertIn("visible", route["task"])
         self.assertIn("Do not double-click", route["task"])
 
     def test_plain_story_generation_routes_to_story_worker_for_research_and_device_chats(self) -> None:

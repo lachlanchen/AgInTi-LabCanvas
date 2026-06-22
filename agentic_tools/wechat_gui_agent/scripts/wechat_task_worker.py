@@ -3484,7 +3484,7 @@ Generated-video route contract:
 - After a new MP4 is downloaded and verified, include it in the JSON `files` array so the outer worker sends it back to the source WeChat chat.
 - If `task.route_decision.public_publish_allowed` is false, public posting and AutoPublish public queue submission are forbidden even if older chat history mentions them.
 - LazyEdit import/process is a separate stage: do it only when the current request explicitly says LazyEdit/import/process, and use no-public-publish mode unless public publishing is also explicitly allowed.
-- For LALACHAN/Xiaoyunque, prefer non-VIP `Seedance 2.0 Fast` for "cheap" unless the current request explicitly says Mini; do not silently switch to Mini just because the task is 30s.
+- For LALACHAN/Xiaoyunque, choose the lowest visible-cost model that satisfies the current request. `Seedance 2.0 Mini 体验版` / `vipnew` with visible `单秒限时低至4积分` is acceptable and preferred for cheap fast output; `Seedance 2.0 Fast` or `Fast VIP` is also acceptable when the visible total/per-second cost is cheap and suitable. Do not treat the `VIP` label alone as a blocker, but do stop if the page hides cost, shows an unexpectedly high total, or conflicts with the user's budget.
 - Prefer these existing Xiaoyunque helpers from `/home/lachlan/.codex/skills/lalachan-xyq-browser-video`:
   `scripts/xyq_cdp_browser.py list-pages`
   `scripts/xyq_cdp_browser.py upload-images-verify PAGE_ID <8 reference images> --timeout 180 --screenshot {artifact_dir}/xyq_after_upload.png`
@@ -3523,11 +3523,11 @@ LALACHAN/RaraXia/AyaChan/SasaKun story-video generation:
 - Use `/home/lachlan/ProjectsLFS/LALACHAN` as the default root. If available, read `/home/lachlan/.codex/skills/lalachan-xyq-browser-video/SKILL.md` and `/home/lachlan/ProjectsLFS/LALACHAN/references/lalachan-story-video-handoff-for-wechat.md` for the current runbook.
 - First write a natural, understandable Chinese story with one clear setup -> problem -> action -> twist -> payoff chain. Save it under `/home/lachlan/ProjectsLFS/LALACHAN/references/stories/`.
 - Convert the story into a compact Xiaoyunque prompt and save it under `/home/lachlan/ProjectsLFS/LALACHAN/references/prompts/`.
-- Use the Xiaoyunque browser UI, not the API, unless explicitly requested. Default to 沉浸式短片, Seedance 2.0 Fast non-VIP, 15s, 4:3, mainly Chinese, with `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。`
-- For "cheap model", use non-VIP Seedance 2.0 Fast by default. Do not use Seedance 2.0 Mini unless the current user request explicitly says Mini or accepts Mini after seeing the cost.
+- Use the Xiaoyunque browser UI, not the API, unless explicitly requested. Default to 沉浸式短片, cheapest acceptable visible-cost Seedance model, 15s, 4:3, mainly Chinese, with `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。`
+- For "cheap model", prefer `Seedance 2.0 Mini 体验版` / `vipnew` when the page shows a cheap rate such as `单秒限时低至4积分`; otherwise use `Seedance 2.0 Fast` or `Fast VIP` only when its visible cost is cheap and acceptable.
 - Upload and verify the eight default reference images in this exact order: `words-card.jpg`, `LazyingArtRobot.png`, `display.png`, `patchwork-leather-notebook-luxury-clean-v2.png`, `raraxia.jpeg`, `ayachan.png`, `sasakun.jpeg`, `Trio.png`.
 - In the Xiaoyunque prompt, refer to uploaded images as 图1 through 图8. Do not paste local filesystem paths or file names into the prompt as scene text.
-- Before any paid submit, verify visible page state: mode, model, duration, ratio, prompt, all attachment uploads succeeded, non-VIP model, and point cost. Never double-click submit or retry if the job is queued/running.
+- Before any paid submit, verify visible page state: mode, exact model row, duration, ratio, prompt, all attachment uploads succeeded, per-second/total point cost, and whether VIP/vipnew is present. Never double-click submit or retry if the job is queued/running.
 - Monitor the thread, download the finished MP4, save/copy it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return the story path, prompt path, MP4 path, and relevant screenshots/logs in `files` where safe. The outer worker will send the MP4 back to the source WeChat chat.
 - If the current request asks for LazyEdit import/process, hand the verified MP4 to LazyEdit with no public publish unless public publishing is also explicitly requested. If the user asks to publish in the current request, then hand the verified MP4 to LazyEdit with the publish workflow below. Otherwise stop after generation/download/send-back and report the ready video path.
 
