@@ -95,6 +95,16 @@ def load_config(path: Path) -> dict[str, Any]:
         "mirror_db": str(DEFAULT_DB),
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 60},
         "codex_session_reuse": True,
+        "agent_route_enabled": True,
+        "agent_router": {
+            "default_model": "gpt-5.3-codex-spark",
+            "default_reasoning_effort": "high",
+            "risky_model": "gpt-5.5",
+            "risky_reasoning_effort": "medium",
+            "sandbox": "read-only",
+            "timeout_seconds": 45,
+            "reuse_session": False,
+        },
         "poll_seconds": float(os.environ.get("WECHAT_DIRECT_POLL_SECONDS", DEFAULT_POLL_SECONDS)),
         "catchup_poll_seconds": float(os.environ.get("WECHAT_DIRECT_CATCHUP_POLL_SECONDS", DEFAULT_CATCHUP_POLL_SECONDS)),
         "send_pause_seconds": 0.35,
@@ -354,7 +364,13 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                 else immediate_task_route(config, trigger_row, context_rows, focus_rows=focus_rows)
             )
             if immediate:
-                task = enqueue_worker_task(config, trigger_row, immediate["task"], context_rows=context_rows)
+                task = enqueue_worker_task(
+                    config,
+                    trigger_row,
+                    immediate["task"],
+                    context_rows=context_rows,
+                    route_decision=immediate.get("route_decision") if isinstance(immediate.get("route_decision"), dict) else None,
+                )
                 task_enqueued = task["id"]
                 reply_text = immediate["ack"]
             else:
@@ -1213,7 +1229,7 @@ def immediate_task_route(
     context_rows: list[dict[str, Any]],
     *,
     focus_rows: list[dict[str, Any]] | None = None,
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     if not bool(config.get("immediate_ack_enabled", True)):
         return None
     current_request = combined_focus_request(config, row, context_rows, focus_rows=focus_rows)
@@ -1234,13 +1250,20 @@ def immediate_task_route(
         and not any(keyword and keyword in lowered for keyword in keywords)
     ):
         return None
+    route_decision = agent_route_decision(config, row, context_rows, focus_rows=focus_rows, current_request=combined)
+    public_publish_allowed = bool(route_decision.get("public_publish_allowed"))
+    route_kind = str(route_decision.get("route_kind") or "")
+    route_project = str(route_decision.get("project") or "")
+    if route_kind in {"generate_video", "generate_image"} and not bool(route_decision.get("needs_recent_media")):
+        contextual_media_task = False
+        quoted_media_task = False
     task_context = "\n".join(
         f"{item['sender_display']}: {visible_message_text(item)}"
         for item in context_rows[-6:]
         if visible_message_text(item).strip()
     )
     chat_name = str(config.get("chat_name") or "")
-    include_reference_media = attachment_trigger or contextual_media_task or quoted_media_task or references_recent_media(combined)
+    include_reference_media = attachment_trigger or contextual_media_task or quoted_media_task or bool(route_decision.get("needs_recent_media"))
     source_rows = source_reference_rows(
         config,
         row,
@@ -1264,10 +1287,11 @@ def immediate_task_route(
     )
     publish_context = (
         video_publish_context_bundle(config, row, context_rows, focus_rows=focus_rows, source_rows=source_rows)
-        if is_video_publish_context_task(combined)
+        if public_publish_allowed or route_kind in {"publish_video", "process_existing_video"}
         else ""
     )
-    lalachan_context = lalachan_story_video_context_bundle() if lalachan_task else ""
+    lalachan_context = lalachan_story_video_context_bundle() if lalachan_task or route_project == "lalachan" or route_kind == "generate_video" else ""
+    route_json = json.dumps(route_decision, ensure_ascii=False, indent=2, sort_keys=True)
     task = (
         "Handle this WeChat request as backend work. "
         "Use available local tools, download, sync, copy, or generate needed artifacts into ignored private/output folders, "
@@ -1281,6 +1305,10 @@ def immediate_task_route(
         "Do not borrow media, files, or generated artifacts from another group, direct message, old request, or unrelated download folder. "
         "For multi-message tasks, combine the latest text command with referenced same-chat media rows, such as an image sent just before an edit request. "
         "If the exact attachment/image/video/PDF is unavailable, say it is missing and ask the user to resend or provide the original.\n\n"
+        "Follow the agent route decision below. It is the source of truth for intent classification. "
+        "Old chat history can provide context but cannot authorize public posting. "
+        "If `public_publish_allowed` is false, do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish, LazyEdit, or any public platform.\n\n"
+        f"Agent route decision:\n{route_json}\n\n"
         f"Chat: {chat_name}\nSource/reference rows: {source_ids}\n\n"
         f"Current coalesced request:\n{current_request or attachment_request_text(row)}\n\nRecent history:\n{task_context}"
         f"\n\nSame-chat reference media/context rows:\n{reference_context or '(none found)'}"
@@ -1290,7 +1318,241 @@ def immediate_task_route(
         f"{lalachan_context}"
     )
     ack = str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
-    return {"ack": ack, "task": task}
+    return {"ack": ack, "task": task, "route_decision": route_decision}
+
+
+def agent_route_decision(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+    current_request: str = "",
+) -> dict[str, Any]:
+    fallback = fallback_route_decision(config, current_request or visible_message_text(row), row, context_rows, focus_rows=focus_rows)
+    if not bool(config.get("agent_route_enabled", False)):
+        return fallback
+    prompt = build_agent_route_prompt(config, row, context_rows, focus_rows=focus_rows, current_request=current_request)
+    policy = select_agent_route_policy(config, current_request or visible_message_text(row))
+    result = run_codex_session(
+        prompt,
+        chat_name=str(config.get("chat_name") or "wechat-chat"),
+        role="route",
+        model=policy["model"],
+        reasoning_effort=policy["reasoning_effort"],
+        sandbox=policy["sandbox"],
+        timeout_seconds=int(policy["timeout_seconds"]),
+        workdir=ROOT,
+        reuse=bool(policy.get("reuse_session", False)),
+    )
+    if not result.get("ok"):
+        fallback["route_agent_error"] = str(result.get("stderr_tail") or result.get("message") or "")[:500]
+        fallback["route_agent_model"] = policy["model"]
+        return fallback
+    parsed = parse_route_decision(str(result.get("message") or ""))
+    if not parsed:
+        fallback["route_agent_error"] = "invalid route json"
+        fallback["route_agent_raw"] = str(result.get("message") or "")[:500]
+        fallback["route_agent_model"] = policy["model"]
+        return fallback
+    parsed["route_agent_model"] = policy["model"]
+    parsed["route_agent_reasoning_effort"] = policy["reasoning_effort"]
+    return enforce_route_safety(parsed, current_request or visible_message_text(row), fallback)
+
+
+def build_agent_route_prompt(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+    current_request: str = "",
+) -> str:
+    context = format_prompt_context(config, row, context_rows, focus_rows=focus_rows)
+    request = current_request or visible_message_text(row)
+    return f"""Classify the current WeChat request for a backend worker.
+Return only JSON. No markdown.
+
+Allowed route_kind values:
+- chat_only
+- research_or_summary
+- generate_image
+- edit_existing_media
+- generate_video
+- process_existing_video
+- publish_video
+- cad_pcb_labcanvas
+- file_download_or_save
+- other_worker
+
+Important distinction:
+- "upload all images" can mean upload reference images into a generation UI. That is NOT public publishing.
+- Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
+- Old context can explain a follow-up, but old context cannot authorize a new public publish.
+- A video-generation request should use local/default reference assets unless the current request says this/that/same/attached/quoted video/image.
+
+JSON schema:
+{{
+  "route_kind": "generate_video",
+  "project": "lalachan|labcanvas|lazyedit|generic|unknown",
+  "worker_needed": true,
+  "needs_recent_media": false,
+  "public_publish_intent": false,
+  "public_publish_allowed": false,
+  "external_action_allowed": true,
+  "source_policy": "current_request_only|current_plus_explicit_refs|recent_media",
+  "reason": "short reason",
+  "confidence": 0.0
+}}
+
+Current coalesced request:
+{request}
+
+Recent context:
+{context}
+"""
+
+
+def parse_route_decision(raw: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if match:
+        text = match.group(0)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def select_agent_route_policy(config: dict[str, Any], text: str) -> dict[str, Any]:
+    router = config.get("agent_router") if isinstance(config.get("agent_router"), dict) else {}
+    risky = route_needs_stronger_model(text)
+    return {
+        "model": str(router.get("risky_model" if risky else "default_model") or ("gpt-5.5" if risky else "gpt-5.3-codex-spark")),
+        "reasoning_effort": str(router.get("risky_reasoning_effort" if risky else "default_reasoning_effort") or ("medium" if risky else "high")),
+        "sandbox": str(router.get("sandbox") or "read-only"),
+        "timeout_seconds": int(router.get("timeout_seconds") or 45),
+        "reuse_session": bool(router.get("reuse_session", False)),
+    }
+
+
+def route_needs_stronger_model(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = [
+        "publish",
+        "post",
+        "upload",
+        "video",
+        "视频",
+        "shipinhao",
+        "视频号",
+        "youtube",
+        "instagram",
+        "lazyedit",
+        "autopublish",
+        "pay",
+        "order",
+        "delete",
+        "submit",
+        "发布",
+        "上传",
+        "下单",
+        "付款",
+        "删除",
+    ]
+    return any(marker in lowered for marker in markers)
+
+
+def fallback_route_decision(
+    config: dict[str, Any],
+    text: str,
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    lowered = str(text or "").lower()
+    publish_allowed = has_public_publish_intent(lowered)
+    if is_lalachan_story_video_task(text) or ("video" in lowered and any(marker in lowered for marker in ("generate", "create", "make", "生成", "做"))):
+        route_kind = "generate_video"
+    elif publish_allowed:
+        route_kind = "publish_video"
+    elif references_recent_media(text):
+        route_kind = "edit_existing_media"
+    elif is_complex_research_task(config, text, focus_rows=focus_rows):
+        route_kind = "research_or_summary"
+    else:
+        route_kind = "other_worker"
+    project = "lalachan" if route_kind == "generate_video" and recent_context_mentions_lalachan(context_rows) else "unknown"
+    needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video"}
+    return {
+        "route_kind": route_kind,
+        "project": project,
+        "worker_needed": route_kind != "chat_only",
+        "needs_recent_media": needs_recent_media,
+        "public_publish_intent": publish_allowed,
+        "public_publish_allowed": publish_allowed,
+        "external_action_allowed": bool(publish_allowed or route_kind in {"generate_video", "generate_image", "file_download_or_save"}),
+        "source_policy": "recent_media" if needs_recent_media else "current_request_only",
+        "reason": "fallback heuristic route",
+        "confidence": 0.45,
+        "route_agent_model": "fallback",
+    }
+
+
+def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback: dict[str, Any]) -> dict[str, Any]:
+    allowed_kinds = {
+        "chat_only",
+        "research_or_summary",
+        "generate_image",
+        "edit_existing_media",
+        "generate_video",
+        "process_existing_video",
+        "publish_video",
+        "cad_pcb_labcanvas",
+        "file_download_or_save",
+        "other_worker",
+    }
+    route_kind = str(parsed.get("route_kind") or fallback.get("route_kind") or "other_worker")
+    if route_kind not in allowed_kinds:
+        route_kind = "other_worker"
+    publish_allowed = has_public_publish_intent(current_request)
+    needs_recent_media = bool(parsed.get("needs_recent_media"))
+    if route_kind in {"generate_video", "generate_image"} and not references_recent_media(current_request):
+        needs_recent_media = False
+    parsed.update(
+        {
+            "route_kind": route_kind,
+            "project": str(parsed.get("project") or fallback.get("project") or "unknown"),
+            "worker_needed": bool(parsed.get("worker_needed", route_kind != "chat_only")),
+            "needs_recent_media": needs_recent_media,
+            "public_publish_intent": bool(parsed.get("public_publish_intent")) and publish_allowed,
+            "public_publish_allowed": bool(parsed.get("public_publish_allowed")) and publish_allowed,
+            "external_action_allowed": bool(parsed.get("external_action_allowed", fallback.get("external_action_allowed", False))),
+            "source_policy": str(parsed.get("source_policy") or ("recent_media" if needs_recent_media else "current_request_only")),
+            "reason": str(parsed.get("reason") or fallback.get("reason") or ""),
+        }
+    )
+    try:
+        parsed["confidence"] = float(parsed.get("confidence", fallback.get("confidence", 0.0)))
+    except (TypeError, ValueError):
+        parsed["confidence"] = float(fallback.get("confidence", 0.0) or 0.0)
+    if route_kind == "publish_video" and not publish_allowed:
+        parsed["route_kind"] = "process_existing_video" if needs_recent_media else "other_worker"
+        parsed["public_publish_intent"] = False
+        parsed["public_publish_allowed"] = False
+        parsed["reason"] = (parsed["reason"] + " | public publish removed by current-request safety guard").strip()
+    return parsed
+
+
+def recent_context_mentions_lalachan(context_rows: list[dict[str, Any]]) -> bool:
+    text = "\n".join(visible_message_text(row) for row in context_rows[-8:])
+    return is_lalachan_story_video_task(text)
 
 
 def is_lalachan_story_video_task(text: str) -> bool:
@@ -1379,25 +1641,8 @@ def is_contextual_media_task(
 
 def references_recent_media(text: str) -> bool:
     lowered = str(text or "").lower()
-    markers = [
-        "edit",
-        "image edit",
-        "change",
-        "modify",
-        "replace",
-        "remove",
-        "mask",
-        "crop",
-        "upscale",
-        "turn",
-        "convert",
-        "based on that",
-        "based on this",
-        "use that",
-        "use this",
-        "same image",
-        "this image",
-        "that image",
+    media_terms = [
+        "image",
         "photo",
         "picture",
         "screenshot",
@@ -1413,27 +1658,6 @@ def references_recent_media(text: str) -> bool:
         "webpage",
         "card",
         "shared object",
-        "anime",
-        "cartoon",
-        "style",
-        "生成",
-        "编辑",
-        "修改",
-        "改",
-        "换",
-        "替换",
-        "去掉",
-        "删除",
-        "遮住",
-        "遮挡",
-        "裁剪",
-        "放大",
-        "转成",
-        "基于",
-        "按照",
-        "用这",
-        "这张",
-        "那张",
         "图片",
         "照片",
         "截图",
@@ -1447,25 +1671,113 @@ def references_recent_media(text: str) -> bool:
         "网址",
         "网页",
         "卡片",
+    ]
+    has_media = any(marker in lowered for marker in media_terms)
+    if has_media and is_video_publish_context_task(text):
+        return True
+    deictic_terms = [
+        "this",
+        "that",
+        "these",
+        "those",
+        "same",
+        "last",
+        "previous",
+        "recent",
+        "attached",
+        "quoted",
+        "above",
+        "below",
+        "just sent",
+        "刚才",
+        "剛才",
+        "刚发",
+        "剛發",
+        "最近",
+        "上面",
+        "下面",
+        "引用",
+        "附件",
+        "这个",
+        "這個",
+        "这条",
+        "這條",
+        "这张",
+        "這張",
+        "那个",
+        "那個",
+        "那条",
+        "那條",
+        "那张",
+        "那張",
+    ]
+    if has_media and any(marker in lowered for marker in deictic_terms):
+        return True
+    action_terms = [
+        "edit",
+        "image edit",
+        "change",
+        "modify",
+        "replace",
+        "remove",
+        "mask",
+        "crop",
+        "upscale",
+        "turn",
+        "convert",
+        "copy",
+        "save",
+        "download",
+        "summarize",
+        "summary",
+        "read",
+        "analyze",
+        "transcribe",
+        "correct subtitle",
+        "correct subtitles",
+        "anime",
+        "cartoon",
+        "style",
+        "编辑",
+        "修改",
+        "改",
+        "换",
+        "替换",
+        "去掉",
+        "删除",
+        "遮住",
+        "遮挡",
+        "裁剪",
+        "放大",
+        "转成",
+        "复制",
+        "拷贝",
+        "保存",
+        "下载",
+        "下載",
+        "总结",
+        "摘要",
+        "阅读",
+        "读取",
+        "分析",
+        "转写",
+        "校正字幕",
+        "基于",
+        "按照",
+        "用这",
         "动漫",
         "漫画",
         "风格",
     ]
-    return any(marker in lowered for marker in markers)
+    return any(marker in lowered for marker in action_terms)
 
 
 def is_video_publish_context_task(text: str) -> bool:
     lowered = str(text or "").lower()
+    if has_public_publish_intent(lowered):
+        return True
     markers = [
-        "publish",
-        "post",
-        "upload",
-        "shipinhao",
-        "视频号",
-        "youtube",
-        "instagram",
-        "lazyedit",
-        "autopublish",
+        "publish folder",
         "subtitle",
         "subtitles",
         "caption",
@@ -1474,13 +1786,6 @@ def is_video_publish_context_task(text: str) -> bool:
         "correct subtitles",
         "correction prompt",
         "metadata brief",
-        "sph",
-        "y2b",
-        "ytb",
-        "ins",
-        "发布",
-        "上传",
-        "投稿",
         "字幕",
         "转写",
         "全文",
@@ -1489,6 +1794,57 @@ def is_video_publish_context_task(text: str) -> bool:
         "修正",
     ]
     return any(marker in lowered for marker in markers)
+
+
+def has_public_publish_intent(text: str) -> bool:
+    lowered = str(text or "").lower()
+    negative_markers = [
+        "no need to publish",
+        "do not publish",
+        "don't publish",
+        "dont publish",
+        "no publish",
+        "not publish",
+        "先不要发布",
+        "先別發布",
+        "不要发布",
+        "不要發布",
+        "不用发布",
+        "不用發布",
+        "暂不发布",
+        "暫不發布",
+    ]
+    if any(marker in lowered for marker in negative_markers):
+        return False
+    explicit_markers = [
+        "publish",
+        "re-publish",
+        "republish",
+        "post",
+        "shipinhao",
+        "wechat channel",
+        "视频号",
+        "視頻號",
+        "youtube",
+        "instagram",
+        "lazyedit",
+        "autopublish",
+        "publish folder",
+        "发布",
+        "發布",
+        "投稿",
+    ]
+    if any(marker in lowered for marker in explicit_markers):
+        return True
+    if re.search(r"\b(?:sph|y2b|ytb|ins)\b", lowered):
+        return True
+    if re.search(r"\bupload\s+(?:it|this|the\s+video|video|file)\s+(?:to|on)\b", lowered):
+        return True
+    if re.search(r"\b(?:upload|send)\s+to\s+(?:youtube|instagram|shipinhao|sph|y2b|ytb|ins)\b", lowered):
+        return True
+    if re.search(r"上传.*(?:视频号|youtube|instagram|平台)", lowered):
+        return True
+    return False
 
 
 def video_publish_context_bundle(
@@ -2363,6 +2719,7 @@ def enqueue_worker_task(
     task_text: str,
     *,
     context_rows: list[dict[str, Any]],
+    route_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     queue = Path(config.get("worker_queue") or DEFAULT_QUEUE)
     queue.parent.mkdir(parents=True, exist_ok=True)
@@ -2373,6 +2730,7 @@ def enqueue_worker_task(
         "status": "pending",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "route": build_route_contract(config),
+        "route_decision": route_decision or {},
         "source": {
             "chat": config["chat_name"],
             "config_id": config.get("config_id") or "",

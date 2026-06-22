@@ -302,13 +302,25 @@ labcanvas wechat queue --json
 
 Worker tasks default to `gpt-5.5` and pick effort from the current user request,
 not the long reusable queue playbook. Queued backend work starts at `medium`,
-uses `high` for CAD/PCB/Blender/file/video/tool execution, and uses `xhigh` for
-full autonomous tasks such as installs, GitHub commit/push, publishing,
-ordering, or "finish this end-to-end" requests. A timeout, empty result, or clear
-model failure retries upward through allowed effort levels up to `xhigh`.
+keeps generated-video browser work at `gpt-5.5` medium by default, uses `high`
+for CAD/PCB/Blender/file/tool execution, and uses `xhigh` for full autonomous
+tasks such as installs, GitHub commit/push, publishing, ordering, or "finish
+this end-to-end" requests. A timeout, empty result, or clear model failure
+retries upward through allowed effort levels up to `xhigh`.
 Missing exact sources, login/CAPTCHA, and user confirmation blockers do not
 trigger blind retries. If GUI delivery fails, the queue item is marked
 `send_failed` with the error instead of retrying indefinitely.
+
+Ambiguous media actions are classified by a route agent before they reach the
+worker. The route decision is stored on the queue item, and the worker must
+verify it against the current request before acting. Public posting through
+LazyEdit/AutoPublish, Shipinhao, YouTube, Instagram, or similar platforms is
+allowed only when the current user request explicitly asks to publish/post to a
+platform; old chat history is context, not permission.
+For `route_kind=generate_video`, the worker writes a route contract under the
+task artifact directory, the subsequent Codex/browser worker must re-check that
+contract before acting, and the result is rejected unless it contains a new MP4
+path or a clear submitted/running/blocked browser status.
 Before work starts, a queue item is claimed as `in_progress` under a file lock.
 This prevents a manual `worker once` and the persistent loop from handling the
 same request twice. Stale claims are reclaimed after

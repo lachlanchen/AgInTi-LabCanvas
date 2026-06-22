@@ -166,6 +166,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     try:
         result_text = run_worker_codex(task)
         result = parse_worker_result(result_text)
+        result = enforce_worker_result_contract(task, result, result_text)
         result = prepare_result_files(result, result_text)
     except Exception as exc:
         result_text = f"Worker failed before completion: {type(exc).__name__}: {str(exc)[:800]}"
@@ -525,7 +526,7 @@ def run_worker_codex(task: dict[str, Any]) -> str:
                 "result_excerpt": collapse_context_text(result, max_len=280),
             }
         )
-        next_policy = escalated_policy(policy, result)
+        next_policy = escalated_policy(policy, result, task=task)
         if not next_policy:
             break
         policy = next_policy
@@ -548,6 +549,7 @@ def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
+Before executing, inspect `task.route_decision` against the Current coalesced request and recent context. If they conflict, choose the safer interpretation and state the conflict instead of acting. If `task.route_decision` exists, treat it as the intent contract. If it says `route_kind=generate_video`, generate/import the requested new video and do not process an old WeChat MP4 as the output. If `public_publish_allowed` is false, do not publish/post/upload to Shipinhao, YouTube, Instagram, LazyEdit/AutoPublish public queues, or any public platform even if old context mentions publishing. Public posting requires an explicit publish/post/platform instruction in the current user request, not merely old history.
 Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
 Strict source isolation: the task's `chat`, `source.local_id`, `source.server_id`, `context`, and any explicit source/reference rows embedded in `request` define the only WeChat source. Never use media, files, or generated artifacts from another chat, another direct message, a nearby queue item, or an unrelated old task.
 If no exact matching source media is available for "this image", "this PDF", "this video", "last one", or a quoted command, return a source-limited message asking for the exact file/source. Do not synthesize or continue from unrelated media.
@@ -603,18 +605,19 @@ def worker_artifact_dir(task: dict[str, Any]) -> Path:
 
 
 def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+    preflight: dict[str, Any] = {}
+    if is_generate_video_task(task):
+        preflight["generated_video_contract"] = write_generated_video_contract(task, artifact_dir)
     if not is_video_publish_task(task):
-        return {}
+        return preflight
     context_path = artifact_dir / "lazyedit_correction_context.md"
     metadata_path = artifact_dir / "lazyedit_metadata_brief.md"
     context_path.write_text(build_lazyedit_correction_context(task), encoding="utf-8")
     metadata_path.write_text(build_lazyedit_metadata_brief(task), encoding="utf-8")
-    preflight: dict[str, Any] = {
-        "lazyedit_context": {
-            "correction_prompt_file": str(context_path),
-            "metadata_prompt_file": str(metadata_path),
-            "rule": "Pass correction_prompt_file to --correction-prompt-file and metadata_prompt_file to --metadata-prompt-file.",
-        }
+    preflight["lazyedit_context"] = {
+        "correction_prompt_file": str(context_path),
+        "metadata_prompt_file": str(metadata_path),
+        "rule": "Pass correction_prompt_file to --correction-prompt-file and metadata_prompt_file to --metadata-prompt-file.",
     }
     if should_preflight_autopublish(task):
         preflight["autopublish_video"] = run_autopublish_video_preflight(task)
@@ -651,49 +654,222 @@ def task_focus_text(task: dict[str, Any]) -> str:
 
 
 def is_video_publish_task(task: dict[str, Any]) -> bool:
+    route = task_route_decision(task)
+    if route:
+        route_kind = str(route.get("route_kind") or "")
+        if route_kind == "generate_video" and not bool(route.get("public_publish_allowed")):
+            return False
+        if route_kind == "publish_video":
+            return bool(route.get("public_publish_allowed"))
+        if route_kind in {"process_existing_video", "file_download_or_save"}:
+            return bool(route.get("needs_recent_media"))
     text = task_focus_text(task).lower()
-    markers = [
-        "publish",
-        "post",
-        "upload",
-        "shipinhao",
-        "视频号",
-        "youtube",
-        "instagram",
-        "lazyedit",
-        "autopublish",
-        "subtitle",
-        "caption",
-        "transcript",
-        "字幕",
-        "发布",
-        "上传",
-    ]
-    return any(marker in text for marker in markers)
+    if has_public_publish_intent(text):
+        return True
+    return any(marker in text for marker in ("subtitle", "caption", "transcript", "字幕", "转写", "校正"))
+
+
+def is_generate_video_task(task: dict[str, Any]) -> bool:
+    route = task_route_decision(task)
+    if route:
+        return str(route.get("route_kind") or "") == "generate_video"
+    text = task_focus_text(task).lower()
+    generation_markers = ("generate", "create", "make", "生成", "创作", "做")
+    return "video" in text and any(marker in text for marker in generation_markers)
 
 
 def should_preflight_autopublish(task: dict[str, Any]) -> bool:
+    route = task_route_decision(task)
+    if route:
+        route_kind = str(route.get("route_kind") or "")
+        if route_kind == "generate_video" and not bool(route.get("public_publish_allowed")):
+            return False
+        if route_kind == "publish_video":
+            return bool(route.get("public_publish_allowed"))
+        if route_kind in {"process_existing_video", "file_download_or_save"}:
+            return bool(route.get("needs_recent_media"))
     text = task_focus_text(task).lower()
-    markers = [
-        "nutstore",
-        "autopublish",
-        "publish folder",
+    if any(marker in text for marker in ("nutstore", "autopublish", "publish folder")):
+        return True
+    return has_public_publish_intent(text)
+
+
+def write_generated_video_contract(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+    contract = {
+        "task_id": task.get("id"),
+        "chat": task.get("chat"),
+        "source": task.get("source") or {},
+        "route_decision": task_route_decision(task),
+        "current_request": task_focus_text(task),
+        "rules": [
+            "Re-check route_decision against the current request before acting.",
+            "For route_kind=generate_video, create or import a new video; do not process old WeChat MP4 files.",
+            "Do not publish/post/upload to Shipinhao, YouTube, Instagram, LazyEdit, AutoPublish, or public queues unless public_publish_allowed is true.",
+            "If the browser cannot submit or download a new video, return an explicit blocked/in-progress status instead of claiming success.",
+        ],
+        "expected_artifacts": [
+            "story markdown",
+            "Xiaoyunque prompt markdown",
+            "verification screenshot/log",
+            "new MP4 or blocked/in-progress status",
+        ],
+    }
+    json_path = artifact_dir / "generated_video_route_contract.json"
+    md_path = artifact_dir / "generated_video_route_contract.md"
+    json_path.write_text(json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8")
+    md_path.write_text(format_generated_video_contract_markdown(contract), encoding="utf-8")
+    return {"json": str(json_path), "markdown": str(md_path), "rule": "Worker must satisfy this contract before reporting success."}
+
+
+def format_generated_video_contract_markdown(contract: dict[str, Any]) -> str:
+    lines = [
+        "# Generated Video Route Contract",
+        "",
+        f"- Task: {contract.get('task_id')}",
+        f"- Chat: {contract.get('chat')}",
+        f"- Source: {json.dumps(contract.get('source') or {}, ensure_ascii=False)}",
+        "",
+        "## Current Request",
+        str(contract.get("current_request") or "").strip() or "(empty)",
+        "",
+        "## Route Decision",
+        "```json",
+        json.dumps(contract.get("route_decision") or {}, ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "## Required Checks",
+    ]
+    for rule in contract.get("rules") or []:
+        lines.append(f"- {rule}")
+    lines.extend(["", "## Expected Artifacts"])
+    for artifact in contract.get("expected_artifacts") or []:
+        lines.append(f"- {artifact}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any], raw_text: str) -> dict[str, Any]:
+    if not is_generate_video_task(task):
+        return result
+    route = task_route_decision(task)
+    public_allowed = bool(route.get("public_publish_allowed")) if route else has_public_publish_intent(task_focus_text(task))
+    text = "\n".join(
+        [
+            str(result.get("message") or ""),
+            str(result.get("confirmation") or ""),
+            str(raw_text or ""),
+            "\n".join(str(item) for item in result.get("files") or []),
+        ]
+    )
+    lowered = text.lower()
+    public_markers = ("shipinhao", "视频号", "youtube", "instagram", "lazyedit", "autopublish", "public platform", "发布", "投稿")
+    if not public_allowed and any(marker in lowered for marker in public_markers):
+        guarded = dict(result)
+        guarded["message"] = (
+            "我已拦截这个结果：当前任务被路由为“生成新视频”，不是发布旧视频或走 LazyEdit/AutoPublish。"
+            "我没有把旧 WeChat 视频当成结果，也不会发布到视频号、YouTube、Instagram 或公共队列。"
+            "请继续使用 Xiaoyunque 生成/下载新 MP4；如果页面卡住，需要返回明确的浏览器阻塞状态。"
+        )
+        guarded["confirmation"] = guarded.get("confirmation") or ""
+        guarded["files"] = filter_generated_video_result_files(guarded.get("files") or [])
+        guarded["contract_guard"] = "blocked_public_publish_claim_for_generate_video"
+        return guarded
+    files = filter_generated_video_result_files(result.get("files") or [])
+    has_video = any(Path(str(path)).suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"} for path in files)
+    status_terms = (
+        "queued",
+        "running",
+        "generating",
+        "submitted",
+        "blocked",
+        "waiting",
+        "in progress",
+        "排队",
+        "生成中",
+        "已提交",
+        "等待",
+        "阻塞",
+        "卡住",
+    )
+    if has_video or any(term in lowered for term in status_terms):
+        guarded = dict(result)
+        guarded["files"] = files
+        return guarded
+    guarded = dict(result)
+    guarded["message"] = (
+        str(result.get("message") or "").strip()
+        + "\n\n生成视频任务还没有验证到新的 MP4、提交状态或明确阻塞原因；我已按路由合约停止把它当成完成。"
+        "下一步需要继续 Xiaoyunque 浏览器生成并返回新视频路径，或说明具体卡在哪个页面状态。"
+    ).strip()
+    guarded["files"] = files
+    guarded["contract_guard"] = "missing_generated_video_completion_evidence"
+    return guarded
+
+
+def filter_generated_video_result_files(files: list[Any]) -> list[str]:
+    safe: list[str] = []
+    blocked_fragments = ("AutoPublish", "autopublish", "lazyedit", "Nutstore Files/AutoPublish")
+    for raw in files:
+        value = str(raw)
+        if any(fragment in value for fragment in blocked_fragments):
+            continue
+        safe.append(value)
+    return safe
+
+
+def task_route_decision(task: dict[str, Any]) -> dict[str, Any]:
+    route = task.get("route_decision")
+    return route if isinstance(route, dict) else {}
+
+
+def has_public_publish_intent(text: str) -> bool:
+    lowered = str(text or "").lower()
+    negative_markers = [
+        "no need to publish",
+        "do not publish",
+        "don't publish",
+        "dont publish",
+        "no publish",
+        "not publish",
+        "先不要发布",
+        "先別發布",
+        "不要发布",
+        "不要發布",
+        "不用发布",
+        "不用發布",
+        "暂不发布",
+        "暫不發布",
+    ]
+    if any(marker in lowered for marker in negative_markers):
+        return False
+    explicit_markers = [
         "publish",
+        "re-publish",
+        "republish",
         "post",
-        "upload",
-        "lazyedit",
         "shipinhao",
+        "wechat channel",
         "视频号",
+        "視頻號",
         "youtube",
         "instagram",
-        "sph",
-        "y2b",
-        "ytb",
-        "ins",
+        "lazyedit",
+        "autopublish",
+        "publish folder",
         "发布",
-        "上传",
+        "發布",
+        "投稿",
     ]
-    return any(marker in text for marker in markers)
+    if any(marker in lowered for marker in explicit_markers):
+        return True
+    if re.search(r"\b(?:sph|y2b|ytb|ins)\b", lowered):
+        return True
+    if re.search(r"\bupload\s+(?:it|this|the\s+video|video|file)\s+(?:to|on)\b", lowered):
+        return True
+    if re.search(r"\b(?:upload|send)\s+to\s+(?:youtube|instagram|shipinhao|sph|y2b|ytb|ins)\b", lowered):
+        return True
+    if re.search(r"上传.*(?:视频号|youtube|instagram|平台)", lowered):
+        return True
+    return False
 
 
 def build_lazyedit_correction_context(task: dict[str, Any]) -> str:
@@ -823,7 +999,10 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
 def should_deterministic_video_publish(task: dict[str, Any]) -> bool:
     if os.environ.get("WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH"):
         return False
-    text = json.dumps(task, ensure_ascii=False).lower()
+    route = task_route_decision(task)
+    if route:
+        return str(route.get("route_kind") or "") == "publish_video" and bool(route.get("public_publish_allowed"))
+    text = task_focus_text(task).lower()
     negative_markers = [
         "no need to publish",
         "do not publish",
@@ -842,32 +1021,7 @@ def should_deterministic_video_publish(task: dict[str, Any]) -> bool:
     ]
     if any(marker in text for marker in negative_markers):
         return False
-    direct_markers = [
-        "publish it",
-        "publish this",
-        "publish the video",
-        "post it",
-        "post this",
-        "upload it",
-        "upload this",
-        "发布它",
-        "發布它",
-        "发布这个",
-        "發布這個",
-        "发布视频",
-        "發布影片",
-        "上传这个",
-        "上傳這個",
-        "sph",
-        "shipinhao",
-        "视频号",
-        "視頻號",
-        "youtube",
-        "y2b",
-        "ytb",
-        "instagram",
-    ]
-    return any(marker in text for marker in direct_markers) or bool(re.search(r"\b(?:sph|y2b|ytb|ins)\b", text))
+    return has_public_publish_intent(text)
 
 
 def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, Any]) -> str | None:
@@ -1129,10 +1283,32 @@ def redact_command(command: list[str]) -> list[str]:
     return [item if ".private" not in item else "<private-path>" for item in command]
 
 
+def build_generated_video_tool_context(task: dict[str, Any]) -> str:
+    if not is_generate_video_task(task):
+        return ""
+    artifact_dir = str(task.get("artifact_dir") or worker_artifact_dir(task))
+    return f"""
+
+Generated-video route contract:
+- This task is classified as `generate_video`. Before doing anything, re-check `task.route_decision` against the current request and follow the safer interpretation if they conflict.
+- Use the route contract saved in `{artifact_dir}/generated_video_route_contract.md` as the handoff for any subsequent agent or browser helper.
+- Do not process old WeChat MP4 files, Nutstore AutoPublish files, LazyEdit videos, or public platform jobs as the output for this task.
+- If `task.route_decision.public_publish_allowed` is false, public posting and AutoPublish/LazyEdit queue submission are forbidden even if older chat history mentions them.
+- For LALACHAN/Xiaoyunque, prefer non-VIP `Seedance 2.0 Fast` for "cheap" unless the current request explicitly says Mini; do not silently switch to Mini just because the task is 30s.
+- Prefer these existing Xiaoyunque helpers from `/home/lachlan/.codex/skills/lalachan-xyq-browser-video`:
+  `scripts/xyq_cdp_browser.py list-pages`
+  `scripts/xyq_cdp_browser.py upload-images-verify PAGE_ID <8 reference images> --timeout 180 --screenshot {artifact_dir}/xyq_after_upload.png`
+  `scripts/xyq_cdp_browser.py type-prompt PAGE_ID <prompt.md> --wait 0.5`
+  `scripts/xyq_chrome/watch_thread_dom_download.py --page-id PAGE_ID --thread-url THREAD_URL --output-dir {artifact_dir} --filename result.mp4 --copy-to /home/lachlan/ProjectsLFS/LALACHAN/Videos`
+- A valid final result must include a new MP4 path, or clearly say the browser job is submitted/running/blocked and include the screenshot/log path.
+"""
+
+
 def build_worker_tool_context(task: dict[str, Any]) -> str:
     artifact_dir = str(task.get("artifact_dir") or worker_artifact_dir(task))
     prompt_text = str(task.get("request") or "").strip()
     quoted_prompt = json.dumps(prompt_text or "prepare CAD/PCB/Blender artifacts", ensure_ascii=False)
+    generated_video_note = build_generated_video_tool_context(task)
     return f"""LabCanvas tool playbook:
 - Use `{artifact_dir}` as the preferred working/output folder for new artifacts.
 - Match every input file/media path to this task's exact `chat`, `source.local_id`, `source.server_id`, explicit source/reference rows in `request`, or source-scoped context text. Do not borrow files from another group/direct chat or from unrelated previous worker tasks.
@@ -1150,6 +1326,7 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
 - For existing KiCad/OpenSCAD/Blender workflows, prefer the commands emitted by `studio lab-task`; they know the repo's PCB, CAD, Gerber, STEP, STL, and render locations.
 - For AgInTi figure requests, return the editable SVG grid plus AgInTi prompt/request/manifest files; if live image generation is enabled and `imagePaths` contains PNG/JPG outputs, include those image paths too.
 - For PCB render requests, return the KiCad/board PNG preview and any STEP/Gerber zip when available. For CAD/Blender render requests, return the PNG render plus STEP/STL/source spec when useful.
+{generated_video_note}
 
 LALACHAN/RaraXia/AyaChan/SasaKun story-video generation:
 - For requests mentioning LALACHAN, RaraXia/Rara Xia/啦啦侠, AyaChan/Aya Chan/阿芽酱, SasaKun/Sasa Kun/飒飒君, Xiaoyunque/小云雀, XYQ, or Seedance, treat the task as a LALACHAN repo workflow rather than a generic video prompt.
@@ -1157,11 +1334,12 @@ LALACHAN/RaraXia/AyaChan/SasaKun story-video generation:
 - First write a natural, understandable Chinese story with one clear setup -> problem -> action -> twist -> payoff chain. Save it under `/home/lachlan/ProjectsLFS/LALACHAN/references/stories/`.
 - Convert the story into a compact Xiaoyunque prompt and save it under `/home/lachlan/ProjectsLFS/LALACHAN/references/prompts/`.
 - Use the Xiaoyunque browser UI, not the API, unless explicitly requested. Default to 沉浸式短片, Seedance 2.0 Fast non-VIP, 15s, 4:3, mainly Chinese, with `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。`
+- For "cheap model", use non-VIP Seedance 2.0 Fast by default. Do not use Seedance 2.0 Mini unless the current user request explicitly says Mini or accepts Mini after seeing the cost.
 - Upload and verify the eight default reference images in this exact order: `words-card.jpg`, `LazyingArtRobot.png`, `display.png`, `patchwork-leather-notebook-luxury-clean-v2.png`, `raraxia.jpeg`, `ayachan.png`, `sasakun.jpeg`, `Trio.png`.
 - In the Xiaoyunque prompt, refer to uploaded images as 图1 through 图8. Do not paste local filesystem paths or file names into the prompt as scene text.
 - Before any paid submit, verify visible page state: mode, model, duration, ratio, prompt, all attachment uploads succeeded, non-VIP model, and point cost. Never double-click submit or retry if the job is queued/running.
 - Monitor the thread, download the finished MP4, save/copy it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return the story path, prompt path, MP4 path, and relevant screenshots/logs in `files` where safe.
-- If the user asks to publish, then hand the verified MP4 to LazyEdit with the publish workflow below. Otherwise stop after generation/import and report the ready video path.
+- If the user asks to publish in the current request, then hand the verified MP4 to LazyEdit with the publish workflow below. Otherwise stop after generation/import and report the ready video path. Ignore any skill default that says to submit to LazyEdit or AutoPublish when `task.route_decision.public_publish_allowed` is false.
 
 LazyEdit/AutoPublish video publishing:
 - For publish, re-publish, Shipinhao, YouTube, Instagram, AutoPublish, LazyEdit, subtitle-correction, metadata, or platform-monitoring requests, first read the repo-local workflow:
@@ -1311,7 +1489,9 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "高光谱",
         "高光譜",
     ]
-    if any(keyword in text for keyword in xhigh_keywords) or len(text) > 5000:
+    if is_generate_video_task(task) and not bool(task_route_decision(task).get("public_publish_allowed")):
+        effort = "medium"
+    elif any(keyword in text for keyword in xhigh_keywords) or len(text) > 5000:
         effort = "xhigh"
     elif any(keyword in text for keyword in high_keywords) or len(text) > 2200:
         effort = "high"
@@ -1423,7 +1603,9 @@ def worker_sandbox() -> str:
     return aliases.get(raw, raw or "danger-full-access")
 
 
-def escalated_policy(policy: dict[str, Any], result: str) -> dict[str, Any] | None:
+def escalated_policy(policy: dict[str, Any], result: str, *, task: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    if task is not None and is_generate_video_task(task) and generated_video_result_has_progress(result):
+        return None
     if not worker_result_needs_escalation(result):
         return None
     effort = str(policy.get("reasoning_effort") or "medium")
@@ -1444,6 +1626,29 @@ def escalated_policy(policy: dict[str, Any], result: str) -> dict[str, Any] | No
         "timeout_seconds": timeout_for_effort(next_effort),
         "escalated_from": effort,
     }
+
+
+def generated_video_result_has_progress(result: str) -> bool:
+    text = str(result or "").lower()
+    markers = [
+        ".mp4",
+        ".mov",
+        ".webm",
+        "submitted",
+        "queued",
+        "running",
+        "generating",
+        "blocked",
+        "waiting",
+        "in progress",
+        "已提交",
+        "排队",
+        "生成中",
+        "等待",
+        "阻塞",
+        "卡住",
+    ]
+    return any(marker in text for marker in markers)
 
 
 def worker_result_needs_escalation(result: str) -> bool:

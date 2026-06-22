@@ -383,6 +383,117 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertFalse(worker.is_video_publish_task(task))
         self.assertFalse(worker.should_preflight_autopublish(task))
 
+    def test_generate_video_route_blocks_old_publish_context_and_preflight(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-generate-video",
+            "chat": "🍓我的设备",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "project": "lalachan",
+                "needs_recent_media": False,
+                "public_publish_allowed": False,
+                "reason": "current request asks to generate a new video",
+            },
+            "request": (
+                "Handle this WeChat request as backend work.\n\n"
+                "Agent route decision:\n{\"route_kind\":\"generate_video\",\"public_publish_allowed\":false}\n\n"
+                "Current coalesced request:\n"
+                "Could you generate the video ? 30s cheap model and upload all images. Same profile and port\n\n"
+                "Recent history:\n"
+                "陈喵瞄秒妙: 已完成发布：video_id=393 platforms=shipinhao,youtube,instagram\n"
+                "陈苗: <msg><videomsg md5=\"old-video\" /></msg>"
+            ),
+            "source": {"local_id": 29, "sender_display": "陈苗"},
+            "context": [
+                {"local_id": 14, "sender_display": "陈苗", "content": '<msg><videomsg md5="old-video" /></msg>'},
+                {"local_id": 18, "sender_display": "bot", "content": "已完成发布：video_id=393 platforms=shipinhao,youtube,instagram"},
+                {"local_id": 29, "sender_display": "陈苗", "content": "Could you generate the video ? 30s cheap model and upload all images. Same profile and port"},
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            preflight = worker.prepare_worker_preflight(task, tmp_path)
+            self.assertIn("generated_video_contract", preflight)
+            contract = preflight["generated_video_contract"]
+            self.assertTrue(Path(contract["json"]).is_file())
+            contract_text = Path(contract["markdown"]).read_text(encoding="utf-8")
+
+        self.assertIn("route_kind", contract_text)
+        self.assertIn("Do not publish", contract_text)
+        self.assertNotIn("lazyedit_context", preflight)
+        self.assertNotIn("autopublish_video", preflight)
+        self.assertFalse(worker.is_video_publish_task(task))
+        self.assertFalse(worker.should_preflight_autopublish(task))
+        self.assertFalse(worker.should_deterministic_video_publish(task))
+
+    def test_generate_video_route_rewrites_false_publish_result(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-generate-video",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "public_publish_allowed": False,
+            },
+            "request": (
+                "Current coalesced request:\n"
+                "Could you generate the video ? 30s cheap model and upload all images. Same profile and port"
+            ),
+        }
+        result = {
+            "message": "已自动完成 LazyEdit 处理并发布到 shipinhao,youtube,instagram",
+            "files": ["/home/lachlan/Nutstore Files/AutoPublish/old_COMPLETED.mp4"],
+            "confirmation": "",
+        }
+
+        guarded = worker.enforce_worker_result_contract(task, result, json.dumps(result, ensure_ascii=False))
+
+        self.assertIn("拦截", guarded["message"])
+        self.assertIn("生成新视频", guarded["message"])
+        self.assertEqual(guarded["files"], [])
+        self.assertEqual(guarded["contract_guard"], "blocked_public_publish_claim_for_generate_video")
+
+    def test_generate_video_route_requires_video_or_status_evidence(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-generate-video",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "public_publish_allowed": False,
+            },
+            "request": "Current coalesced request:\nCould you generate the video?",
+        }
+        result = {"message": "已准备提示词。", "files": ["/tmp/prompt.md"], "confirmation": ""}
+
+        guarded = worker.enforce_worker_result_contract(task, result, "已准备提示词。")
+
+        self.assertIn("还没有验证到新的 MP4", guarded["message"])
+        self.assertEqual(guarded["files"], ["/tmp/prompt.md"])
+        self.assertEqual(guarded["contract_guard"], "missing_generated_video_completion_evidence")
+
+    def test_generate_video_route_uses_medium_policy_and_no_progress_escalation(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-generate-video",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "public_publish_allowed": False,
+            },
+            "request": (
+                "Current coalesced request:\n"
+                "Could you generate the video ? 30s cheap model and upload all images. Same profile and port\n\n"
+                "Recent history:\nold publish context should not make this xhigh"
+            ),
+        }
+
+        policy = worker.choose_worker_policy(task)
+        next_policy = worker.escalated_policy(policy, "已提交 Xiaoyunque 生成，正在生成中。", task=task)
+
+        self.assertEqual(policy["model"], "gpt-5.5")
+        self.assertEqual(policy["reasoning_effort"], "medium")
+        self.assertIsNone(next_policy)
+
     def test_exact_video_preflight_failure_returns_deterministic_fail_closed_result(self) -> None:
         worker = load_worker()
         task = {

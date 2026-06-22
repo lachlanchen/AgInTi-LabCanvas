@@ -586,6 +586,67 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("non-VIP", route["task"])
         self.assertIn("Do not double-click", route["task"])
 
+    def test_generate_video_followup_does_not_inherit_old_publish_or_videos(self) -> None:
+        config = {
+            "chat_name": "🍓我的设备",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "attachment_trigger_local_types": [43],
+            "chat_purpose": "personal_organizer",
+            "immediate_ack_enabled": True,
+            "slow_task_keywords": ["video", "upload"],
+            "agent_route_enabled": False,
+        }
+        old_video = self.row(
+            "<msg><videomsg md5=\"old-video\" length=\"19452344\" /></msg>",
+            local_id=14,
+            server_id="vid-14",
+            local_type=43,
+        )
+        old_publish = self.row("已完成发布：video_id=393；platforms=shipinhao,youtube,instagram", sender="self", local_id=18, server_id="bot-18")
+        revised_story = self.row("我重新改成更简单的 LALACHAN 故事了。Saved files: story.md prompt.md", sender="self", local_id=28, server_id="bot-28")
+        command = self.row(
+            "Could you generate the video ? 30s cheap model and upload all images. Same profile and port",
+            local_id=29,
+            server_id="cmd-29",
+        )
+
+        route = direct_chatops.immediate_task_route(config, command, [old_video, old_publish, revised_story, command], focus_rows=[command])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        task = route["task"]
+        self.assertEqual(route["route_decision"]["route_kind"], "generate_video")
+        self.assertFalse(route["route_decision"]["public_publish_allowed"])
+        self.assertFalse(route["route_decision"]["needs_recent_media"])
+        self.assertIn("Agent route decision", task)
+        self.assertIn("LALACHAN/RaraXia story-video generation contract", task)
+        self.assertIn("Same-chat reference media/context rows:\n(none found)", task)
+        self.assertNotIn("local_id=14", task)
+        self.assertNotIn("Video publish/subtitle context bundle", task)
+
+    def test_route_policy_uses_stronger_model_for_ambiguous_video_upload(self) -> None:
+        config = {
+            "agent_router": {
+                "default_model": "gpt-5.3-codex-spark",
+                "default_reasoning_effort": "high",
+                "risky_model": "gpt-5.5",
+                "risky_reasoning_effort": "medium",
+                "sandbox": "read-only",
+                "timeout_seconds": 45,
+            }
+        }
+
+        risky = direct_chatops.select_agent_route_policy(config, "generate the video and upload all images")
+        simple = direct_chatops.select_agent_route_policy(config, "summarize the note")
+
+        self.assertEqual(risky["model"], "gpt-5.5")
+        self.assertEqual(risky["reasoning_effort"], "medium")
+        self.assertEqual(simple["model"], "gpt-5.3-codex-spark")
+        self.assertEqual(simple["reasoning_effort"], "high")
+
     def test_research_complex_task_routes_to_worker_without_keyword(self) -> None:
         config = {
             "chat_name": "懒人科研",

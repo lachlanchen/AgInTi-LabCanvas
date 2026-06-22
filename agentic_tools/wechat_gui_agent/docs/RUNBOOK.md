@@ -67,12 +67,23 @@ message needs a route decision or reply.
 
 The worker loop chooses its effort separately and defaults to `gpt-5.5`. It
 classifies the current user request, not the long reusable queue playbook.
-Queued backend tasks start at medium, use high for CAD/PCB/Blender/file/video
-tool execution, and use xhigh for full autonomous tasks such as installs,
-GitHub commit/push, publishing, ordering, or end-to-end execution. A clear
-model failure, timeout, or empty answer retries upward through allowed effort
-levels up to xhigh. Missing exact source files, login/CAPTCHA, and approval
-blockers do not trigger blind retries.
+Queued backend tasks start at medium, keep generated-video browser work on
+`gpt-5.5` medium by default, use high for CAD/PCB/Blender/file/tool execution,
+and use xhigh for full autonomous tasks such as installs, GitHub commit/push,
+publishing, ordering, or end-to-end execution. A clear model failure, timeout,
+or empty answer retries upward through allowed effort levels up to xhigh.
+Missing exact source files, login/CAPTCHA, and approval blockers do not trigger
+blind retries.
+
+For ambiguous media tasks, the fast monitor writes an agent route decision into
+the queue item. The worker must check that route against the current request
+before executing. Publishing to LazyEdit/AutoPublish, Shipinhao, YouTube,
+Instagram, or any public platform requires explicit current-message publish/post
+intent; prior chat history cannot authorize it.
+For `route_kind=generate_video`, the worker writes a generated-video route
+contract into the task artifact directory, any subsequent worker/browser agent
+must re-check it before acting, and the final result must include a new MP4 path
+or an explicit submitted/running/blocked Xiaoyunque status.
 
 Each group keeps two reusable Codex sessions by default: `fast` for immediate
 router replies and `worker` for backend work. The ignored registry is
