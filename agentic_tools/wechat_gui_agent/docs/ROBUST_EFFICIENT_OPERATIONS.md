@@ -52,6 +52,9 @@ workflow from scratch.
 - Source media must match the same chat and exact source or quoted message. If
   it is missing, stop source-limited and ask for resend/opening the media.
 - GUI file delivery is a first-class state, not a best-effort afterthought.
+- Fast chat replies and organizer acknowledgements must also be durable. If the
+  GUI is locked, enqueue them as `send_deferred_locked` worker-outbox tasks
+  instead of dropping them.
 - Login, CAPTCHA, QR, payment, lock screen, and irreversible decisions wait for
   normal human approval.
 - Do not use packet interception, private-protocol replay, credential/session
@@ -160,6 +163,9 @@ tail -n 80 output/wechat_gui_agent/$(date +%F)/supervisor-worker.log
 If the monitor is caught up and no task exists, the message was not actionable
 or was filtered. If a task exists, follow its state instead of sending a manual
 duplicate.
+For live smoke tests, simple messages such as `ping`, `test`, `best`, `在吗`, or
+`测试` are actionable in organizer/link-inbox chats and should return a short
+health acknowledgement or become a deferred outbox task if WeChat is locked.
 
 Wrong or mixed chat:
 

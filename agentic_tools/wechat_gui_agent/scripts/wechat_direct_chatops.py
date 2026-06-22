@@ -400,6 +400,16 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     metrics["send_error"] = str(exc)[:500]
                     status = "send-deferred-locked" if is_wechat_locked_error(exc) else "send-failed"
                     send_ok = False
+                    if status == "send-deferred-locked" and not task_enqueued:
+                        deferred = enqueue_deferred_reply(
+                            config,
+                            trigger_row,
+                            reply_text,
+                            context_rows=context_rows,
+                            route_decision={"route_kind": "other_worker", "reason": "fast reply deferred because WeChat is locked"},
+                            reason="fast_reply_wechat_locked",
+                        )
+                        task_enqueued = deferred["id"]
                 metrics["send_ms"] = elapsed_ms(started)
             if send_ok:
                 remember_sent_reply(config, state, reply_text)
@@ -441,6 +451,17 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     metrics["send_error"] = str(exc)[:500]
                     status = "send-deferred-locked" if is_wechat_locked_error(exc) else "send-failed"
                     send_ok = False
+                    if status == "send-deferred-locked":
+                        source_row = latest_inbound_row(config, new_rows) or new_rows[-1]
+                        deferred = enqueue_deferred_reply(
+                            config,
+                            source_row,
+                            ack_text,
+                            context_rows=new_rows,
+                            route_decision={"route_kind": "other_worker", "reason": "organizer ack deferred because WeChat is locked"},
+                            reason="organizer_ack_wechat_locked",
+                        )
+                        task_enqueued = deferred["id"]
                 metrics["send_ms"] = elapsed_ms(started)
             latest_row = latest_inbound_row(config, new_rows)
             record_event(
@@ -838,6 +859,13 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "grocery",
         "calendar",
         "remind",
+        "ping",
+        "test",
+        "best",
+        "alive",
+        "are you alive",
+        "respond",
+        "reply",
         "summarize",
         "summary",
         "summarize this",
@@ -910,6 +938,14 @@ def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
         "请",
         "能不能",
         "可以",
+        "测试",
+        "測試",
+        "测一下",
+        "測一下",
+        "在吗",
+        "在嗎",
+        "回一下",
+        "回复",
         "保存",
         "记录",
         "记一下",
@@ -2717,6 +2753,7 @@ For personal organizer chat purpose:
 - Treat the group as a shared inbox for notes, memos, todos, groceries, calendar items, beat-board/story ideas, writing/language/money ideas, and lightweight requests.
 - The local organizer has already saved and tagged incoming messages. Do not mention the database or storage implementation.
 - Reply when the latest context asks you to save, organize, list, summarize, schedule, remind, plan, or clarify something. For plain side conversation, return NO_REPLY.
+- Reply to simple health-check messages such as "ping", "test", "best", "在吗", or "测试" with one short acknowledgement.
 - Keep confirmations short. Use ACK+TASK for export, long summaries, files, calendar planning, or backend work.
 - If a note is incomplete, acknowledge the saved item and ask one concise missing-detail question only when it is needed for action.
 """
@@ -2832,6 +2869,64 @@ def enqueue_worker_task(
         direction="internal",
         message=task_text,
         status="queued",
+        db_path=Path(config.get("mirror_db", DEFAULT_DB)),
+        metadata=task,
+    )
+    return task
+
+
+def enqueue_deferred_reply(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    reply_text: str,
+    *,
+    context_rows: list[dict[str, Any]],
+    route_decision: dict[str, Any] | None = None,
+    reason: str = "wechat_locked",
+) -> dict[str, Any]:
+    """Persist a fast reply so the worker outbox can send it after unlock."""
+    queue = Path(config.get("worker_queue") or DEFAULT_QUEUE)
+    queue.parent.mkdir(parents=True, exist_ok=True)
+    task = {
+        "id": datetime.now().strftime("%Y%m%d%H%M%S") + f"-deferred-{row['local_id']}",
+        "chat": config["chat_name"],
+        "request": "Deferred fast WeChat reply; send stored result only, do not rerun backend work.",
+        "status": "send_deferred_locked",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "completed_at": datetime.now().isoformat(timespec="seconds"),
+        "last_send_attempt_at": datetime.now().isoformat(timespec="seconds"),
+        "send_deferred_reason": reason,
+        "route": build_route_contract(config),
+        "route_decision": route_decision or {"route_kind": "other_worker", "reason": reason},
+        "source": {
+            "chat": config["chat_name"],
+            "config_id": config.get("config_id") or "",
+            "message_table": config.get("message_table") or "",
+            "server_id": row["server_id"],
+            "local_id": row["local_id"],
+            "sender": row["sender"],
+            "sender_display": row["sender_display"],
+        },
+        "context": [
+            {
+                "local_id": item["local_id"],
+                "sender": item["sender"],
+                "sender_display": item["sender_display"],
+                "content": item["content"],
+            }
+            for item in context_rows[-8:]
+        ],
+        "result": {"message": reply_text, "confirmation": "", "files": [], "raw": reply_text},
+    }
+    ensure_task_routine_contract(task)
+    with queue.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(task, ensure_ascii=False) + "\n")
+    record_event(
+        chat_name=config["chat_name"],
+        action="deferred_fast_reply_enqueue",
+        direction="internal",
+        message=reply_text,
+        status="send_deferred_locked",
         db_path=Path(config.get("mirror_db", DEFAULT_DB)),
         metadata=task,
     )

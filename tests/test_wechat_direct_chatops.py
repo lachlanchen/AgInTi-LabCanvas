@@ -352,6 +352,34 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(result["metrics"]["reused_previous_result"])
         self.assertEqual(result["state"]["responded_server_ids"], ["srv-22"])
 
+    def test_deferred_fast_reply_is_persisted_for_worker_flush(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            config = {
+                "chat_name": "鏈接",
+                "message_table": "MSG_demo",
+                "state_path": str(Path(tmp) / "state.json"),
+                "worker_queue": str(queue),
+                "mirror_db": str(Path(tmp) / "mirror.sqlite"),
+                "send_target": {"name": "鏈接", "expected_title": "鏈接"},
+            }
+            row = self.row("best", local_id=12, server_id="srv-12", sender="self")
+
+            task = direct_chatops.enqueue_deferred_reply(
+                config,
+                row,
+                "在线，已收到。",
+                context_rows=[row],
+                reason="test_wechat_locked",
+            )
+            saved = json.loads(queue.read_text(encoding="utf-8").strip())
+
+        self.assertEqual(task["status"], "send_deferred_locked")
+        self.assertEqual(saved["status"], "send_deferred_locked")
+        self.assertEqual(saved["result"]["message"], "在线，已收到。")
+        self.assertEqual(saved["routine"]["id"], "general_worker")
+        self.assertEqual(saved["route"]["expected_title"], "鏈接")
+
     def test_story_edit_request_does_not_reuse_previous_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             mirror_db = Path(tmp) / "mirror.sqlite"
@@ -1034,6 +1062,9 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("记一下：明天买牛奶")))
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("could you summarize my notes?")))
+        self.assertTrue(direct_chatops.should_respond(config, {}, self.row("best")))
+        self.assertTrue(direct_chatops.should_respond(config, {}, self.row("ping")))
+        self.assertTrue(direct_chatops.should_respond(config, {}, self.row("测试")))
         self.assertFalse(direct_chatops.should_respond(config, {}, self.row("今天路上人很多")))
 
     def test_web_clip_inbox_routes_plain_links_for_summary(self) -> None:
