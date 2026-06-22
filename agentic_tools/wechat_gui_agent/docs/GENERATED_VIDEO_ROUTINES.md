@@ -1,0 +1,62 @@
+# Generated Video Routines
+
+This workflow is a fixed orchestration routine for WeChat-triggered LALACHAN,
+Xiaoyunque, LazyEdit, and public publishing tasks. Agents should supervise the
+routine and resolve blockers; they should not invent a new path when a stage
+already has an entrypoint.
+
+## Routine Stages
+
+1. `route_contract`
+   - Owner: fast chat agent.
+   - Entrypoint: `prepare_worker_preflight()` and `write_generated_video_contract()`.
+   - Output: `generated_video_route_contract.json` and `.md` with current-request
+     permissions only.
+
+2. `story_and_prompt`
+   - Owner: worker agent.
+   - Entrypoint: `run_worker_codex_once()` with the LALACHAN/Xiaoyunque tool
+     context.
+   - Output: story markdown, prompt markdown, upload evidence, and either
+     submitted monitor state or a verified MP4.
+
+3. `xyq_deterministic_monitor`
+   - Owner: queue orchestrator.
+   - Entrypoint: `deterministic_generated_video_monitor_result()`.
+   - Output: downloaded MP4, or `generation_waiting` with `next_poll_at`.
+   - Long renders wait through queue state and CDP probes, not a multi-hour model
+     call.
+
+4. `wechat_artifact_delivery_gate`
+   - Owner: queue orchestrator and GUI sender.
+   - Entrypoint: `send_result_with_retries()` and `apply_send_outcome()`.
+   - Requirement: the MP4 must be sent to the source WeChat chat and recorded in
+     `sent_file_paths`.
+   - Failure state: `send_deferred_artifact` or `send_deferred_locked`.
+   - No LazyEdit or public publishing poststage may start before this gate passes.
+
+5. `lazyedit_poststage`
+   - Owner: queue orchestrator.
+   - Entrypoint: `deterministic_generated_video_poststage_result()`.
+   - Requirement: current request explicitly permits LazyEdit import/process.
+   - Timeout/running state: `generation_poststage_pending` with `next_poststage_at`.
+
+6. `public_publish`
+   - Owner: queue orchestrator via LazyEdit.
+   - Entrypoint: `run_generated_video_lazyedit_command(..., publish=True)`.
+   - Requirement: current request explicitly permits public publish and names or
+     implies platforms. Old chat history cannot authorize posting.
+
+## State Rules
+
+- `generation_waiting`: browser job submitted or still rendering; monitor again
+  later.
+- `send_deferred_artifact`: backend work is complete but the MP4 has not reached
+  WeChat; resend before continuing.
+- `send_deferred_locked`: WeChat GUI is locked; retry after normal unlock.
+- `generation_poststage_pending`: MP4 was delivered and LazyEdit/public publish
+  is queued or still running.
+- `done`: only after the requested current-message stages have completed.
+
+The WeChat group is a command mirror. The durable system is the monitor, queue,
+session registry, deterministic routines, and worker supervisor.

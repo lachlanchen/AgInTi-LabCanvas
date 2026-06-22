@@ -423,7 +423,11 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertIn("route_kind", contract_text)
         self.assertIn("Stage Permissions", contract_text)
+        self.assertIn("Orchestration Routine", contract_text)
+        self.assertIn("wechat_artifact_delivery_gate", contract_text)
         self.assertFalse(contract_data["stage_permissions"]["lazyedit_import"])
+        self.assertIn("orchestration_routine", contract_data)
+        self.assertIn("wechat_artifact_delivery_gate", [item["id"] for item in contract_data["orchestration_routine"]])
         self.assertIn("Do not publish", contract_text)
         self.assertNotIn("lazyedit_context", preflight)
         self.assertNotIn("autopublish_video", preflight)
@@ -641,6 +645,21 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertTrue(stages["lazyedit_import"])
         self.assertFalse(stages["public_publish"])
 
+    def test_generated_video_tool_context_requires_orchestration_routine(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {"route_kind": "generate_video", "public_publish_allowed": True},
+            "request": "Current coalesced request:\nGenerate the video, send it back, and publish to SPH.",
+        }
+
+        context = worker.build_generated_video_tool_context(task)
+
+        self.assertIn("routine orchestration job", context)
+        self.assertIn("Orchestration routine", context)
+        self.assertIn("wechat_artifact_delivery_gate", context)
+        self.assertIn("lazyedit_poststage", context)
+        self.assertIn("public_publish", context)
+
     def test_generated_video_stage_permissions_allow_requested_publish_platforms_only(self) -> None:
         worker = load_worker()
         task = {
@@ -714,7 +733,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("下载完成", payload["message"])
         self.assertEqual(payload["files"], [str(video.resolve())])
 
-    def test_generation_waiting_resume_downloads_then_runs_requested_lazyedit(self) -> None:
+    def test_generation_waiting_resume_downloads_then_queues_requested_lazyedit_after_send(self) -> None:
         worker = load_worker()
         calls: list[dict[str, object]] = []
 
@@ -744,22 +763,45 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             }
 
             original = worker.run_generated_video_lazyedit_command
+            worker.run_generated_video_lazyedit_command = fake_lazyedit
+
             try:
-                worker.run_generated_video_lazyedit_command = fake_lazyedit
                 with mock.patch.object(worker, "generated_video_watcher_script", return_value=watcher):
                     with mock.patch.object(worker.subprocess, "run", return_value=subprocess.CompletedProcess(["watcher"], 0, f"DONE output={video}\n", "")):
                         raw = worker.deterministic_generated_video_monitor_result(task)
+
+                self.assertIsNotNone(raw)
+                payload = json.loads(raw or "{}")
+                self.assertIn("已排队", payload["message"])
+                self.assertIn("LazyEdit import/process", payload["message"])
+                self.assertEqual(payload["files"], [str(video.resolve())])
+                self.assertEqual(calls, [])
+
+                result = worker.parse_worker_result(raw or "")
+                result = worker.prepare_result_files(result, raw or "")
+                worker.apply_send_outcome(task, result, [])
+
+                self.assertEqual(task["status"], worker.SEND_DEFERRED_ARTIFACT_STATUS)
+                self.assertEqual(task["send_deferred_reason"], "required_artifact_delivery_before_poststage")
+
+                task["sent_file_paths"] = [str(video.resolve())]
+                worker.apply_send_outcome(task, result, [])
+                self.assertEqual(task["status"], worker.GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS)
+                self.assertEqual(task["generated_video_poststage"]["video_path"], str(video.resolve()))
+                self.assertFalse(task["generated_video_poststage"]["publish"])
+
+                task["status"] = worker.CLAIMED_STATUS
+                raw_poststage = worker.deterministic_generated_video_poststage_result(task)
             finally:
                 worker.run_generated_video_lazyedit_command = original
 
-        self.assertIsNotNone(raw)
-        payload = json.loads(raw or "{}")
-        self.assertIn("LazyEdit import/process stage requested", payload["message"])
-        self.assertEqual(payload["files"], [str(video.resolve())])
+        self.assertIsNotNone(raw_poststage)
+        poststage_payload = json.loads(raw_poststage or "{}")
+        self.assertIn("LazyEdit import/process 后续阶段", poststage_payload["message"])
         self.assertEqual(calls[0]["video_path"], video.resolve())
         self.assertFalse(calls[0]["publish"])
 
-    def test_generation_waiting_resume_downloads_then_publishes_requested_platforms(self) -> None:
+    def test_generation_waiting_resume_downloads_then_queues_requested_publish_after_send(self) -> None:
         worker = load_worker()
         calls: list[dict[str, object]] = []
 
@@ -793,21 +835,106 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             }
 
             original = worker.run_generated_video_lazyedit_command
+            worker.run_generated_video_lazyedit_command = fake_lazyedit
+
             try:
-                worker.run_generated_video_lazyedit_command = fake_lazyedit
                 with mock.patch.object(worker, "generated_video_watcher_script", return_value=watcher):
                     with mock.patch.object(worker.subprocess, "run", return_value=subprocess.CompletedProcess(["watcher"], 0, f"DONE output={video}\n", "")):
                         raw = worker.deterministic_generated_video_monitor_result(task)
+
+                self.assertIsNotNone(raw)
+                payload = json.loads(raw or "{}")
+                self.assertIn("已排队", payload["message"])
+                self.assertIn("LazyEdit 并发布", payload["message"])
+                self.assertEqual(payload["files"], [str(video.resolve())])
+                self.assertEqual(calls, [])
+
+                result = worker.parse_worker_result(raw or "")
+                result = worker.prepare_result_files(result, raw or "")
+                worker.apply_send_outcome(task, result, [])
+
+                self.assertEqual(task["status"], worker.SEND_DEFERRED_ARTIFACT_STATUS)
+                self.assertEqual(task["send_deferred_reason"], "required_artifact_delivery_before_poststage")
+
+                task["sent_file_paths"] = [str(video.resolve())]
+                worker.apply_send_outcome(task, result, [])
+                self.assertEqual(task["status"], worker.GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS)
+                self.assertEqual(task["generated_video_poststage"]["video_path"], str(video.resolve()))
+                self.assertTrue(task["generated_video_poststage"]["publish"])
+                self.assertEqual(task["generated_video_poststage"]["platforms"], ["shipinhao", "youtube", "instagram"])
+
+                task["status"] = worker.CLAIMED_STATUS
+                raw_poststage = worker.deterministic_generated_video_poststage_result(task)
             finally:
                 worker.run_generated_video_lazyedit_command = original
 
-        self.assertIsNotNone(raw)
-        payload = json.loads(raw or "{}")
-        self.assertIn("LazyEdit/public publish stage requested", payload["message"])
-        self.assertEqual(payload["files"], [str(video.resolve())])
+        self.assertIsNotNone(raw_poststage)
+        poststage_payload = json.loads(raw_poststage or "{}")
+        self.assertIn("LazyEdit/public publish 后续阶段", poststage_payload["message"])
         self.assertEqual(calls[0]["video_path"], video.resolve())
         self.assertTrue(calls[0]["publish"])
         self.assertEqual(worker.detect_publish_platforms(calls[0]["task"], current_only=True), ["shipinhao", "youtube", "instagram"])
+
+    def test_generated_video_poststage_task_reclaims_after_artifact_delivery(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            video = Path(tmp) / "generated.mp4"
+            video.write_bytes(b"video")
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-video-poststage",
+                        "status": worker.GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS,
+                        "poststage_queued_at": "2026-01-01T00:00:00",
+                        "next_poststage_at": 0,
+                        "generated_video_poststage": {
+                            "kind": "lazyedit_import",
+                            "video_path": str(video),
+                            "publish": False,
+                        },
+                    }
+                ],
+            )
+            claimed = worker.claim_next_pending(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["status"], worker.CLAIMED_STATUS)
+        self.assertEqual(claimed["poststage_history"][0]["kind"], "lazyedit_import")
+
+    def test_generated_video_poststage_timeout_requeues_without_completion(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "generated.mp4"
+            video.write_bytes(b"video")
+            task = {
+                "id": "task-video-poststage-timeout",
+                "status": worker.CLAIMED_STATUS,
+                "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+                "request": "Current coalesced request:\nGenerate the video and upload it to LazyEdit only.",
+                "generated_video_poststage": {
+                    "kind": "lazyedit_import",
+                    "video_path": str(video),
+                    "publish": False,
+                    "monitor": {},
+                },
+            }
+
+            original = worker.run_generated_video_lazyedit_command
+            try:
+                worker.run_generated_video_lazyedit_command = lambda *_args, **_kwargs: {"ok": False, "status": "timeout"}
+                raw = worker.deterministic_generated_video_poststage_result(task)
+            finally:
+                worker.run_generated_video_lazyedit_command = original
+
+            result = worker.parse_worker_result(raw or "")
+            worker.apply_send_outcome(task, result, [])
+
+        self.assertEqual(task["status"], worker.GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS)
+        self.assertEqual(task["poststage_last_status"], "timeout")
+        self.assertIn("next_poststage_at", task)
 
     def test_generated_video_final_mp4_is_sent_before_done_message(self) -> None:
         worker = load_worker()

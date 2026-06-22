@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import fcntl
 import json
 import os
@@ -35,6 +35,7 @@ SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
 SEND_DEFERRED_ARTIFACT_STATUS = "send_deferred_artifact"
 SEND_RETRYING_STATUS = "send_retrying"
 GENERATED_VIDEO_WAITING_STATUS = "generation_waiting"
+GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS = "generation_poststage_pending"
 DEFAULT_STALE_IN_PROGRESS_SECONDS = 60 * 60
 DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS = 5 * 60
 DEFAULT_GENERATED_VIDEO_POLL_BACKOFF_SECONDS = 5 * 60
@@ -211,7 +212,8 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         apply_send_outcome(task, result, send_errors)
     else:
         apply_send_outcome(task, result, [])
-    if task.get("status") == GENERATED_VIDEO_WAITING_STATUS:
+    live_statuses = {GENERATED_VIDEO_WAITING_STATUS, GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS}
+    if task.get("status") in live_statuses:
         task["last_generation_status_at"] = datetime.now().isoformat(timespec="seconds")
         task.pop("completed_at", None)
     else:
@@ -224,6 +226,8 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         event_status = "send-failed"
     elif task.get("status") == GENERATED_VIDEO_WAITING_STATUS:
         event_status = "generation-waiting"
+    elif task.get("status") == GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS:
+        event_status = "generation-poststage-pending"
     elif result["confirmation"]:
         event_status = "waiting-confirmation-sent" if send else "waiting-confirmation"
     else:
@@ -300,6 +304,18 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
         else:
             task["status"] = "send_failed"
         return
+    poststage = generated_video_poststage_from_result(result)
+    if poststage:
+        if generated_video_poststage_delivery_complete(task, poststage):
+            task["status"] = GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS
+            task["generated_video_poststage"] = poststage
+            task["poststage_queued_at"] = datetime.now().isoformat(timespec="seconds")
+            task.pop("send_errors", None)
+            task.pop("send_deferred_reason", None)
+        else:
+            task["status"] = SEND_DEFERRED_ARTIFACT_STATUS
+            task["send_deferred_reason"] = "required_artifact_delivery_before_poststage"
+        return
     task["status"] = "waiting_confirmation" if result.get("confirmation") else "done"
     task.pop("send_errors", None)
     task.pop("send_deferred_reason", None)
@@ -310,6 +326,8 @@ def generated_video_result_is_nonterminal(task: dict[str, Any], result: dict[str
         return False
     if result.get("confirmation"):
         return False
+    if generated_video_poststage_retry_from_result(result):
+        return True
     if generated_video_has_file(result):
         return False
     status_probe = ((task.get("preflight") or {}).get("generated_video_status") if isinstance(task.get("preflight"), dict) else None)
@@ -338,6 +356,30 @@ def result_requires_file_delivery(task: dict[str, Any] | None, result: dict[str,
     return bool((result.get("data") or {}).get("require_file_delivery")) if isinstance(result.get("data"), dict) else False
 
 
+def generated_video_poststage_from_result(result: dict[str, Any]) -> dict[str, Any]:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    poststage = data.get("generated_video_poststage")
+    return dict(poststage) if isinstance(poststage, dict) else {}
+
+
+def generated_video_poststage_retry_from_result(result: dict[str, Any]) -> dict[str, Any]:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    retry = data.get("generated_video_poststage_retry")
+    return dict(retry) if isinstance(retry, dict) else {}
+
+
+def generated_video_poststage_delivery_complete(task: dict[str, Any], poststage: dict[str, Any]) -> bool:
+    video_path = str(poststage.get("video_path") or "")
+    if not video_path:
+        return True
+    try:
+        resolved = str(Path(video_path).expanduser().resolve())
+    except OSError:
+        resolved = video_path
+    sent_files = {str(item) for item in task.get("sent_file_paths") or []}
+    return resolved in sent_files
+
+
 def generated_video_result_text(result: dict[str, Any]) -> str:
     parts = [
         str(result.get("message") or ""),
@@ -349,6 +391,22 @@ def generated_video_result_text(result: dict[str, Any]) -> str:
 
 
 def schedule_generated_video_poll(task: dict[str, Any], result: dict[str, Any]) -> None:
+    poststage_retry = generated_video_poststage_retry_from_result(result)
+    if poststage_retry:
+        try:
+            retry_seconds = max(60.0, float(poststage_retry.get("retry_seconds") or 600))
+        except (TypeError, ValueError):
+            retry_seconds = 600.0
+        now = datetime.now()
+        task["status"] = GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS
+        task["generated_video_poststage"] = poststage_retry.get("poststage") or task.get("generated_video_poststage") or {}
+        task["next_poststage_at"] = (now + timedelta(seconds=retry_seconds)).timestamp()
+        task["next_poststage_at_iso"] = datetime.fromtimestamp(float(task["next_poststage_at"])).isoformat(timespec="seconds")
+        task["poststage_wait_count"] = int(task.get("poststage_wait_count") or 0) + 1
+        task["poststage_last_status"] = poststage_retry.get("status") or "retry"
+        task["poststage_last_outcome"] = poststage_retry.get("outcome") or {}
+        task.pop("completed_at", None)
+        return
     now = datetime.now()
     backoff = generated_video_next_poll_seconds(task, result)
     task["status"] = GENERATED_VIDEO_WAITING_STATUS
@@ -637,7 +695,12 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
         now_text = now.isoformat(timespec="seconds")
         for index, task in enumerate(tasks):
             status = str(task.get("status") or "")
-            if status == "pending" or stale_in_progress(task, now) or generated_video_poll_ready(task, now):
+            if (
+                status == "pending"
+                or stale_in_progress(task, now)
+                or generated_video_poll_ready(task, now)
+                or generated_video_poststage_ready(task, now)
+            ):
                 if status == CLAIMED_STATUS:
                     task.setdefault("claim_history", []).append(
                         {
@@ -652,6 +715,14 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
                             "wait_count": task.get("generation_wait_count"),
                             "next_poll_at_iso": task.get("next_poll_at_iso"),
                             "claimed_at": now_text,
+                        }
+                    )
+                if status == GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS:
+                    task.setdefault("poststage_history", []).append(
+                        {
+                            "queued_at": task.get("poststage_queued_at"),
+                            "claimed_at": now_text,
+                            "kind": (task.get("generated_video_poststage") or {}).get("kind"),
                         }
                     )
                 task["status"] = CLAIMED_STATUS
@@ -675,6 +746,19 @@ def generated_video_poll_ready(task: dict[str, Any], now: datetime) -> bool:
     except (TypeError, ValueError):
         next_poll = 0.0
     return now.timestamp() >= next_poll
+
+
+def generated_video_poststage_ready(task: dict[str, Any], now: datetime) -> bool:
+    if str(task.get("status") or "") != GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS:
+        return False
+    if task.get("confirmation"):
+        return False
+    raw = task.get("next_poststage_at")
+    try:
+        next_poststage = float(raw)
+    except (TypeError, ValueError):
+        next_poststage = 0.0
+    return now.timestamp() >= next_poststage
 
 
 def claim_next_deferred_send(path: Path) -> dict[str, Any] | None:
@@ -968,6 +1052,66 @@ def generated_video_stage_permissions(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def generated_video_orchestration_routine(task: dict[str, Any]) -> list[dict[str, Any]]:
+    stages = generated_video_stage_permissions(task)
+    publish_platforms = stages.get("publish_platforms") or []
+    return [
+        {
+            "id": "route_contract",
+            "enabled": True,
+            "owner": "fast_chat_agent",
+            "entrypoint": "prepare_worker_preflight -> write_generated_video_contract",
+            "success": "route_decision and stage_permissions are persisted before worker execution",
+        },
+        {
+            "id": "story_and_prompt",
+            "enabled": bool(stages.get("story_generation")),
+            "owner": "worker_agent",
+            "entrypoint": "run_worker_codex_once with LALACHAN/Xiaoyunque tool context",
+            "success": "story markdown, Xiaoyunque prompt, and browser submission evidence are saved",
+        },
+        {
+            "id": "xyq_submit_or_resume",
+            "enabled": bool(stages.get("video_generation")),
+            "owner": "worker_agent",
+            "entrypoint": "Xiaoyunque browser helpers; return submitted/running/blocked state or MP4",
+            "success": "new MP4 path or resumable monitor state with thread_url/page_id",
+        },
+        {
+            "id": "xyq_deterministic_monitor",
+            "enabled": bool(stages.get("video_generation")),
+            "owner": "queue_orchestrator",
+            "entrypoint": "deterministic_generated_video_monitor_result",
+            "success": "downloaded MP4 or generation_waiting requeue with next_poll_at",
+        },
+        {
+            "id": "wechat_artifact_delivery_gate",
+            "enabled": bool(stages.get("wechat_send_back")),
+            "owner": "queue_orchestrator",
+            "entrypoint": "send_result_with_retries -> apply_send_outcome",
+            "success": "sent_file_paths contains the generated MP4 before any poststage starts",
+            "failure": "send_deferred_artifact or send_deferred_locked; LazyEdit/public publish remains blocked",
+        },
+        {
+            "id": "lazyedit_poststage",
+            "enabled": bool(stages.get("lazyedit_import")),
+            "owner": "queue_orchestrator",
+            "entrypoint": "deterministic_generated_video_poststage_result",
+            "depends_on": "wechat_artifact_delivery_gate",
+            "success": "LazyEdit import/process completes or requeues generation_poststage_pending",
+        },
+        {
+            "id": "public_publish",
+            "enabled": bool(stages.get("public_publish")),
+            "owner": "queue_orchestrator",
+            "entrypoint": "run_generated_video_lazyedit_command --platforms",
+            "depends_on": "lazyedit_poststage",
+            "platforms": publish_platforms,
+            "success": "requested public platforms finish or poststage requeues for later verification",
+        },
+    ]
+
+
 def should_preflight_autopublish(task: dict[str, Any]) -> bool:
     route = task_route_decision(task)
     if route:
@@ -993,8 +1137,10 @@ def write_generated_video_contract(task: dict[str, Any], artifact_dir: Path) -> 
         "route_decision": task_route_decision(task),
         "current_request": task_focus_text(task),
         "stage_permissions": stages,
+        "orchestration_routine": generated_video_orchestration_routine(task),
         "rules": [
             "Re-check route_decision against the current request before acting.",
+            "Follow orchestration_routine in order; do not invent a new workflow for routine stages.",
             "For route_kind=generate_video, create or import a new video; do not process old WeChat MP4 files.",
             "Always send the verified generated MP4 back to the source WeChat chat when GUI sending is available.",
             "Treat story generation, video generation/download/send-back, LazyEdit import/process, and public publishing as separate stages.",
@@ -1115,6 +1261,17 @@ def format_generated_video_contract_markdown(contract: dict[str, Any]) -> str:
     ]
     for rule in contract.get("rules") or []:
         lines.append(f"- {rule}")
+    lines.extend(["", "## Orchestration Routine"])
+    for routine in contract.get("orchestration_routine") or []:
+        if not isinstance(routine, dict):
+            continue
+        enabled = "enabled" if routine.get("enabled") else "disabled"
+        line = f"- `{routine.get('id')}` ({enabled}, owner: {routine.get('owner')})"
+        if routine.get("depends_on"):
+            line += f"; after `{routine.get('depends_on')}`"
+        if routine.get("entrypoint"):
+            line += f"; entrypoint: {routine.get('entrypoint')}"
+        lines.append(line)
     lines.extend(["", "## Expected Artifacts"])
     for artifact in contract.get("expected_artifacts") or []:
         lines.append(f"- {artifact}")
@@ -1352,6 +1509,9 @@ def run_autopublish_video_preflight(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
+    poststage = deterministic_generated_video_poststage_result(task)
+    if poststage is not None:
+        return poststage
     generated_video = deterministic_generated_video_monitor_result(task)
     if generated_video is not None:
         return generated_video
@@ -1391,6 +1551,65 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
         "请重新发送原视频，或在 WeChat 里点开这条视频让客户端缓存完整 MP4；缓存到本地后我会继续保存到 Nutstore/AutoPublish 并走 LazyEdit 发布链路。"
     )
     return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
+
+
+def deterministic_generated_video_poststage_result(task: dict[str, Any]) -> str | None:
+    if not is_generate_video_task(task) or str(task.get("status") or "") != CLAIMED_STATUS:
+        return None
+    poststage = task.get("generated_video_poststage") if isinstance(task.get("generated_video_poststage"), dict) else {}
+    if not poststage:
+        return None
+    video_path = Path(str(poststage.get("video_path") or "")).expanduser()
+    if not video_path.is_file():
+        return json.dumps(
+            {
+                "message": f"生成视频后续阶段暂不能继续：找不到已回传的视频文件 {video_path}。",
+                "files": [],
+                "confirmation": "",
+            },
+            ensure_ascii=False,
+        )
+    monitor = poststage.get("monitor") if isinstance(poststage.get("monitor"), dict) else {}
+    publish = bool(poststage.get("publish"))
+    outcome = run_generated_video_lazyedit_command(video_path.resolve(), task, monitor, publish=publish)
+    status = outcome.get("status") or ("done" if outcome.get("ok") else "failed")
+    if status in {"timeout", "running", "queued"}:
+        retry_seconds = int(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_POSTSTAGE_RETRY_SECONDS", "600"))
+        if publish:
+            stage = "LazyEdit/public publish"
+        else:
+            stage = "LazyEdit import/process"
+        return json.dumps(
+            {
+                "message": (
+                    f"生成视频的 {stage} 后续阶段仍在运行或超时未确认：status={status}。"
+                    "我会保留任务并稍后继续检查，不会重复回传 MP4，也不会当作完成。"
+                ),
+                "files": [],
+                "confirmation": "",
+                "generated_video_poststage_retry": {
+                    "status": status,
+                    "retry_seconds": retry_seconds,
+                    "poststage": poststage,
+                    "outcome": outcome,
+                },
+            },
+            ensure_ascii=False,
+        )
+    if publish:
+        platforms = ",".join(detect_publish_platforms(task, current_only=True))
+        message = f"已继续完成生成视频的 LazyEdit/public publish 后续阶段：status={status}; platforms={platforms}."
+    else:
+        message = f"已继续完成生成视频的 LazyEdit import/process 后续阶段：status={status}; no public publish."
+    return json.dumps(
+        {
+            "message": message,
+            "files": [],
+            "confirmation": "",
+            "poststage": {"status": status, "publish": publish, "outcome": outcome},
+        },
+        ensure_ascii=False,
+    )
 
 
 def deterministic_generated_video_monitor_result(task: dict[str, Any]) -> str | None:
@@ -1484,27 +1703,47 @@ def run_generated_video_monitor(task: dict[str, Any], monitor: dict[str, Any]) -
     stderr = proc.stderr or ""
     output_path = generated_video_output_path(stdout, output_dir / filename)
     if proc.returncode == 0 and output_path and output_path.is_file():
-        message = f"Xiaoyunque 视频已生成并下载完成：{output_path}"
-        files = [str(output_path)]
-        lazyedit_message = maybe_run_generated_video_lazyedit_stage(output_path, task, monitor)
-        if lazyedit_message:
-            message += "\n" + lazyedit_message
-        return json.dumps({"message": message, "files": files, "confirmation": ""}, ensure_ascii=False)
+        return generated_video_completion_result(output_path, task, monitor, abnormal=False)
     if output_path and output_path.is_file():
-        return json.dumps(
-            {
-                "message": f"监控命令返回异常，但已经找到生成视频文件：{output_path}",
-                "files": [str(output_path)],
-                "confirmation": "",
-            },
-            ensure_ascii=False,
-        )
+        return generated_video_completion_result(output_path, task, monitor, abnormal=True)
     combined = collapse_context_text(stdout + "\n" + stderr, max_len=900)
     if proc.returncode == 0:
         status = "Xiaoyunque 监控结束但没有找到 MP4；我会继续低频监控，避免重复提交。"
     else:
         status = "Xiaoyunque 监控暂未拿到 MP4，可能仍在生成、页面未暴露下载、或需要人工处理。"
     return json.dumps({"message": f"{status} last_log={combined}", "files": [], "confirmation": ""}, ensure_ascii=False)
+
+
+def generated_video_completion_result(output_path: Path, task: dict[str, Any], monitor: dict[str, Any], *, abnormal: bool) -> str:
+    resolved = output_path.resolve()
+    stages = generated_video_stage_permissions(task)
+    message = (
+        f"监控命令返回异常，但已经找到生成视频文件：{resolved}"
+        if abnormal
+        else f"Xiaoyunque 视频已生成并下载完成：{resolved}"
+    )
+    data: dict[str, Any] = {
+        "require_file_delivery": True,
+        "generated_video": {
+            "status": "downloaded",
+            "video_path": str(resolved),
+            "stage_permissions": stages,
+        },
+    }
+    if stages.get("lazyedit_import"):
+        publish = bool(stages.get("public_publish"))
+        data["generated_video_poststage"] = {
+            "kind": "lazyedit_public_publish" if publish else "lazyedit_import",
+            "video_path": str(resolved),
+            "publish": publish,
+            "platforms": stages.get("publish_platforms") or [],
+            "monitor": dict(monitor),
+        }
+        if publish:
+            message += "\n已排队：先把 MP4 回传到本群；送达后 worker 会自动继续 LazyEdit 并发布到请求的平台。"
+        else:
+            message += "\n已排队：先把 MP4 回传到本群；送达后 worker 会自动继续 LazyEdit import/process（不公开发布）。"
+    return json.dumps({"message": message, "files": [str(resolved)], "confirmation": "", **data}, ensure_ascii=False)
 
 
 def generated_video_watcher_script() -> Path | None:
@@ -1905,14 +2144,20 @@ def build_generated_video_tool_context(task: dict[str, Any]) -> str:
         return ""
     artifact_dir = str(task.get("artifact_dir") or worker_artifact_dir(task))
     stages = json.dumps(generated_video_stage_permissions(task), ensure_ascii=False, indent=2)
+    routine = json.dumps(generated_video_orchestration_routine(task), ensure_ascii=False, indent=2)
     return f"""
 
 Generated-video route contract:
 - This task is classified as `generate_video`. Before doing anything, re-check `task.route_decision` against the current request and follow the safer interpretation if they conflict.
 - Use the route contract saved in `{artifact_dir}/generated_video_route_contract.md` as the handoff for any subsequent agent or browser helper.
+- Treat this as a routine orchestration job. Follow the orchestration routine below in order; do not invent a new approach for stages that already have an entrypoint.
 - Stage permissions from the current request:
 ```json
 {stages}
+```
+- Orchestration routine:
+```json
+{routine}
 ```
 - Do not process old WeChat MP4 files, Nutstore AutoPublish files, LazyEdit videos, or public platform jobs as the output for this task.
 - After a new MP4 is downloaded and verified, include it in the JSON `files` array so the outer worker sends it back to the source WeChat chat.

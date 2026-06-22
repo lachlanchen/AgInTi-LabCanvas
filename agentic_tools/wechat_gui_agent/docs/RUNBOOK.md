@@ -84,6 +84,10 @@ For `route_kind=generate_video`, the worker writes a generated-video route
 contract into the task artifact directory, any subsequent worker/browser agent
 must re-check it before acting, and the final result must include a new MP4 path
 or an explicit submitted/running/blocked Xiaoyunque status.
+That contract carries an `orchestration_routine` with fixed owners and
+entrypoints. Use `docs/GENERATED_VIDEO_ROUTINES.md` as the operator reference:
+the agent supervises those routines and handles blockers instead of planning a
+new workflow each time.
 Submitted Xiaoyunque jobs remain in the queue as `generation_waiting`. The
 worker records thread/page monitor state, runs short status-probe cycles instead
 of one fixed long timeout, derives the next poll from the visible page status,
@@ -109,7 +113,8 @@ the system can wait for hours without holding an expensive model call open.
 Generated-video file delivery is mandatory: the MP4 is sent before the final
 done message, recorded in `sent_file_paths`, and a file-send failure leaves the
 task in `send_deferred_artifact` or `send_deferred_locked` for retry instead of
-marking it complete.
+marking it complete. LazyEdit/import and public publishing are poststages and
+may only enter `generation_poststage_pending` after this delivery gate passes.
 If a Codex worker times out before it returns `thread_url`/`page_id`, the worker
 discovers active Xiaoyunque pages from Chrome CDP and resumes monitoring from
 the matching `thread_id` instead of sending the timeout as the final answer.

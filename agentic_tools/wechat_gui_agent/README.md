@@ -321,6 +321,10 @@ For `route_kind=generate_video`, the worker writes a route contract under the
 task artifact directory, the subsequent Codex/browser worker must re-check that
 contract before acting, and the result is rejected unless it contains a new MP4
 path or a clear submitted/running/blocked browser status.
+The contract also includes an `orchestration_routine`; agents should supervise
+that fixed stage list instead of inventing a new implementation path. The
+routine is documented in
+[`docs/GENERATED_VIDEO_ROUTINES.md`](docs/GENERATED_VIDEO_ROUTINES.md).
 Submitted Xiaoyunque jobs are treated as resumable queue work, not as completed
 answers. The worker stores the thread/page monitor state, suppresses routine
 "still generating" messages by default, runs short deterministic status-probe
@@ -355,7 +359,9 @@ present, the worker sends that file before the completion text and records it in
 the task's sent-file ledger. If the GUI file send fails or WeChat is locked, the
 task stays `send_deferred_artifact` or `send_deferred_locked` so the resend loop
 can finish delivery later; it is not marked done without returning the MP4 to
-the source group.
+the source group. LazyEdit import/process and public publishing are queued as
+`generation_poststage_pending` only after `sent_file_paths` proves that the MP4
+was delivered to the source chat.
 Before work starts, a queue item is claimed as `in_progress` under a file lock.
 This prevents a manual `worker once` and the persistent loop from handling the
 same request twice. Stale claims are reclaimed after
