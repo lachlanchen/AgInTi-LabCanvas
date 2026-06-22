@@ -96,6 +96,11 @@ old history cannot authorize LazyEdit import or public posting. A request for
 generation alone stops after download, verification, and WeChat send-back; a
 request that mentions LazyEdit imports/processes with `--no-publish`; a request
 that explicitly names publish/post/platforms may proceed to public publish.
+For a request that says to generate and publish, the automated system owns the
+full chain: generate/monitor, download, verify, return the MP4 to WeChat, submit
+to LazyEdit, and publish exactly once to the requested platforms such as
+SPH/Shipinhao, Instagram, and YouTube. Do not rely on an operator manually
+running the terminal commands outside the worker.
 WeChat should be treated as a mirror command box for the persistent worker, not
 as the execution engine itself. The supervisor keeps monitors and the worker
 alive, Codex sessions are reused per exact chat/role when reasoning is needed,

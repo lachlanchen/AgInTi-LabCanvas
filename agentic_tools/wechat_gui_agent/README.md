@@ -338,6 +338,12 @@ The generated-video route contract records `stage_permissions` from the current
 request only: story/video generation, WeChat send-back, LazyEdit import/process,
 and public publish are separate booleans. Old chat history can provide context
 but cannot authorize LazyEdit or platform posting.
+Capability contract: when the current WeChat request explicitly asks for
+generation plus publication, the system must run the whole chain itself:
+generate/monitor, download, verify, send the MP4 back, submit to LazyEdit, and
+publish exactly once to the requested platforms such as SPH/Shipinhao,
+Instagram, and YouTube. This path must not depend on a human manually running
+the same commands from a terminal.
 Treat WeChat as a mirror command box for the persistent Codex worker. The durable
 agent is the running monitor, queue, session registry, and worker supervisor:
 messages become queue tasks, Codex worker turns are resumed per chat/role when

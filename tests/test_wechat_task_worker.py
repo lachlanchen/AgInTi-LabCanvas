@@ -759,6 +759,56 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(calls[0]["video_path"], video.resolve())
         self.assertFalse(calls[0]["publish"])
 
+    def test_generation_waiting_resume_downloads_then_publishes_requested_platforms(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+
+        def fake_lazyedit(video_path: Path, task: dict[str, object], monitor: dict[str, object], *, publish: bool) -> dict[str, object]:
+            calls.append({"video_path": video_path, "task": task, "monitor": monitor, "publish": publish})
+            return {"ok": True, "status": "done", "platforms": worker.detect_publish_platforms(task, current_only=True)}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            watcher = tmp_path / "watch_thread_dom_download.py"
+            watcher.write_text("# watcher", encoding="utf-8")
+            video = tmp_path / "generated.mp4"
+            video.write_bytes(b"video")
+            task = {
+                "id": "task-video-publish",
+                "status": worker.CLAIMED_STATUS,
+                "artifact_dir": str(tmp_path),
+                "claim_history": [{"status": worker.GENERATED_VIDEO_WAITING_STATUS}],
+                "route_decision": {"route_kind": "generate_video", "public_publish_allowed": True},
+                "request": (
+                    "Current coalesced request:\n"
+                    "Generate the video, send it back here, and publish to SPH Ins y2b.\n\n"
+                    "Recent history:\nold message mentioned only YouTube"
+                ),
+                "generated_video_monitor": {
+                    "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                    "page_id": "PAGE123456",
+                    "output_dir": str(tmp_path),
+                    "filename": "generated.mp4",
+                },
+            }
+
+            original = worker.run_generated_video_lazyedit_command
+            try:
+                worker.run_generated_video_lazyedit_command = fake_lazyedit
+                with mock.patch.object(worker, "generated_video_watcher_script", return_value=watcher):
+                    with mock.patch.object(worker.subprocess, "run", return_value=subprocess.CompletedProcess(["watcher"], 0, f"DONE output={video}\n", "")):
+                        raw = worker.deterministic_generated_video_monitor_result(task)
+            finally:
+                worker.run_generated_video_lazyedit_command = original
+
+        self.assertIsNotNone(raw)
+        payload = json.loads(raw or "{}")
+        self.assertIn("LazyEdit/public publish stage requested", payload["message"])
+        self.assertEqual(payload["files"], [str(video.resolve())])
+        self.assertEqual(calls[0]["video_path"], video.resolve())
+        self.assertTrue(calls[0]["publish"])
+        self.assertEqual(worker.detect_publish_platforms(calls[0]["task"], current_only=True), ["shipinhao", "youtube", "instagram"])
+
     def test_generated_video_final_mp4_is_sent_before_done_message(self) -> None:
         worker = load_worker()
         calls: list[tuple[str, str]] = []
@@ -923,6 +973,30 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("--process-timeout 10800", shell_command)
         self.assertIn("--publish-timeout 10800", shell_command)
         self.assertEqual(calls[0]["kwargs"]["timeout"], 21600)
+
+    def test_generated_video_lazyedit_command_publishes_requested_platforms(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+
+        def fake_run(command, **kwargs):
+            calls.append({"command": command, "kwargs": kwargs})
+            return subprocess.CompletedProcess(command, 0, '{"ok": true}', "")
+
+        with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+            outcome = worker.run_generated_video_lazyedit_command(
+                Path("/tmp/generated.mp4"),
+                {
+                    "route_decision": {"route_kind": "generate_video", "public_publish_allowed": True},
+                    "request": "Current coalesced request:\npublish this generated video to SPH Ins y2b",
+                },
+                {},
+                publish=True,
+            )
+
+        self.assertTrue(outcome["ok"])
+        shell_command = calls[0]["command"][2]
+        self.assertIn("--platforms shipinhao,youtube,instagram", shell_command)
+        self.assertNotIn("--no-publish", shell_command)
 
     def test_exact_video_preflight_failure_returns_deterministic_fail_closed_result(self) -> None:
         worker = load_worker()
