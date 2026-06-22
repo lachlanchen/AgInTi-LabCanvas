@@ -113,7 +113,7 @@ workflow from scratch.
 | `in_progress` | Worker owns the task. | Complete, requeue, or fail with evidence. |
 | `generation_waiting` | Xiaoyunque/browser job is running or queued. | Deterministic CDP/status probe after `next_poll_at`. |
 | `send_deferred_artifact` | Result exists but required file was not sent. | Fix GUI/file send and flush deferred outbox. |
-| `send_deferred_locked` | WeChat is locked, or the serialized GUI send lane was busy/timed out. | Unlock or wait for the active send, then flush deferred outbox. |
+| `send_deferred_locked` | WeChat is locked, or the serialized GUI send lane was busy/timed out. | Unlock or wait for the active send, then flush deferred outbox. `gui_send_busy` uses a short retry once the lock is free. |
 | `generation_poststage_pending` | MP4 was delivered; LazyEdit/public publish is queued or still running. | Worker claims poststage after `next_poststage_at`. |
 | `waiting_confirmation` | Human approval required. | Approve/reject through CLI or web panel. |
 | `send_failed` | Non-deferred send failure. | Inspect evidence, fix target/title guard, resend stored result. |

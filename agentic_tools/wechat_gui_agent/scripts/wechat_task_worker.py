@@ -927,6 +927,17 @@ def repair_missing_artifact_deliveries(path: Path) -> dict[str, Any]:
 
 
 def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
+    reason = str(task.get("send_deferred_reason") or "")
+    if reason == "gui_send_busy":
+        if gui_send_lock_busy():
+            return False
+        backoff = int(os.environ.get("WECHAT_WORKER_BUSY_SEND_BACKOFF_SECONDS", "15"))
+        if backoff <= 0:
+            return True
+        last = parse_iso_datetime(str(task.get("last_send_attempt_at") or task.get("resent_at") or task.get("completed_at") or ""))
+        if not last:
+            return True
+        return (now - last).total_seconds() >= backoff
     backoff = int(os.environ.get("WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS", DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS))
     if backoff <= 0:
         return True

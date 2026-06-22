@@ -432,8 +432,11 @@ send or timeout emits `WECHAT_SEND_BUSY` or `WECHAT_SEND_TIMEOUT`. Completed
 tasks move to `send_deferred_locked` with `send_deferred_reason`, and the worker
 keeps processing new backend work while outbound replies wait in the private
 queue. The loop periodically retries deferred sends after
-`WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS` (default: 300), or an operator can
-run:
+`WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS` (default: 300). For
+`send_deferred_reason=gui_send_busy`, the worker first verifies that the
+serialized GUI send lock is free and then uses
+`WECHAT_WORKER_BUSY_SEND_BACKOFF_SECONDS` (default: 15) so stale busy states
+recover quickly without running parallel clickers. An operator can also run:
 
 ```bash
 python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --flush-deferred
