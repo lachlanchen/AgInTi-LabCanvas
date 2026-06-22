@@ -58,6 +58,11 @@ workflow from scratch.
   worker-outbox tasks instead of dropping them. Preserve
   `send_deferred_reason` as `wechat_locked`, `gui_send_busy`,
   `gui_send_timeout`, `wechat_entry_required`, or `title_guard_blank`.
+- Worker reloads must not leave orphaned GUI send helpers holding the send lock
+  forever. Before checking the serialized send lane, the worker reaps stale
+  orphaned `wechat_gui_send.py` processes older than
+  `WECHAT_WORKER_STALE_GUI_SEND_SECONDS` while leaving non-orphaned active sends
+  under the normal timeout.
 - Direct monitor state writes must be atomic. A restart or concurrent stop
   cannot leave a half-written JSON state file.
 - Login, CAPTCHA, QR, payment, lock screen, and irreversible decisions wait for
@@ -76,7 +81,7 @@ workflow from scratch.
 | Slow task enqueue | Fast monitor | `enqueue_worker_task()` | Put full source context and `task.routine` into queue once; avoid duplicate work. |
 | Worker execution | Worker | `wechat_task_worker.py --loop --send` | Write routine contract, supervise stages, dynamic model effort, retry only weak/failing outputs. |
 | Generated video | Queue orchestrator | `GENERATED_VIDEO_ROUTINES.md` | Store route contract, wait via queue/CDP, deliver MP4 before poststage. |
-| Exact video publish | Worker | `wechat_autopublish_video.py` + LazyEdit CLI | Use exact message IDs; fail closed if media is missing. |
+| Exact video publish | Worker | same-chat artifact ledger, `wechat_autopublish_video.py`, LazyEdit CLI | Match quoted video MD5/size against same-chat generated/sent artifacts first; if not found, use exact WeChat message IDs/cache before failing closed. |
 | GUI send | Sender | `wechat_gui_send.py` | Serialize with lock, OCR/title guard, screenshots, deferred outbox. |
 | Browser assist | Human + worker | `wechat_browser_assist.py` | Use only for login/CAPTCHA/download confirmation or blocked web UI. |
 
@@ -165,6 +170,25 @@ generated-video route contract with `stage_permissions` and
 
 If the MP4 cannot be sent, do not import to LazyEdit or publish. Leave the task
 in `send_deferred_artifact` or `send_deferred_locked`.
+
+## Exact Video Publish Contract
+
+For `route_kind=publish_video` or an explicit current-message publish request,
+the worker resolves the source in this order:
+
+1. extract quoted video `md5`/`length` metadata from the task context;
+2. search only same-chat queued task history for prior `sent_file_paths`,
+   result files, generated-video outputs, and task artifact MP4s;
+3. accept a file only when MD5 matches, or when no MD5 exists and byte length
+   matches a same-chat sent/generated artifact;
+4. copy the exact match into Nutstore AutoPublish with a `_COMPLETED` name;
+5. pass the original generation/source task summary into the LazyEdit
+   correction and metadata prompt files.
+6. if no ledger match exists, run `wechat_autopublish_video.py` with exact
+   `message_local_ids` and optionally `--fetch-gui`.
+
+If both the WeChat cache and artifact ledger fail, stop source-limited. Do not
+reuse a nearby video, another group’s artifact, or an older unrelated task.
 
 ## Health Checks
 

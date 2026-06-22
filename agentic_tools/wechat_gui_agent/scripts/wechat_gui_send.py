@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -56,6 +57,7 @@ class WeChatLockedError(RuntimeError):
 
 
 def main() -> int:
+    install_process_timeout()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--display", default=":97", help="X display running WeChat. Default: :97.")
     parser.add_argument("--target", action="append", default=[], help="Chat/group/contact name. Repeatable.")
@@ -105,7 +107,10 @@ def main() -> int:
     lock_path = PRIVATE / "wechat_gui_send.lock"
     results = []
     with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SystemExit("WECHAT_SEND_BUSY: serialized GUI sender is already sending; defer this send.")
         for index, target in enumerate(targets, start=1):
             result = send_one(
                 env,
@@ -137,6 +142,18 @@ def main() -> int:
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0
+
+
+def install_process_timeout() -> None:
+    timeout = int(os.environ.get("WECHAT_GUI_SEND_MAX_SECONDS", "45"))
+    if timeout <= 0:
+        return
+
+    def _raise_timeout(_signum: int, _frame: Any) -> None:
+        raise TimeoutError(f"WECHAT_SEND_TIMEOUT: GUI sender exceeded {timeout} seconds")
+
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.alarm(timeout)
 
 
 def load_targets(cli_targets: list[str], targets_file: Path | None, default_message: str) -> tuple[list[TargetSpec], str]:
@@ -1002,12 +1019,18 @@ def require_tools(*names: str) -> None:
 
 
 def run(command: list[str], *, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:
+    timeout = float(os.environ.get("WECHAT_GUI_COMMAND_TIMEOUT", "8"))
     try:
-        proc = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+        proc = subprocess.run(command, env=env, capture_output=True, text=True, check=False, timeout=timeout)
     except FileNotFoundError as exc:
         if not check:
             return subprocess.CompletedProcess(command, 127, "", str(exc))
         raise RuntimeError(f"{command[0]} is not installed or not on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        message = f"{' '.join(command)} timed out after {exc.timeout} seconds"
+        if not check:
+            return subprocess.CompletedProcess(command, 124, exc.stdout or "", message)
+        raise RuntimeError(message) from exc
     if check and proc.returncode != 0:
         raise RuntimeError(f"{' '.join(command)} failed: {proc.stderr.strip()}")
     return proc
@@ -1021,6 +1044,9 @@ def safe_name(value: str) -> str:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except TimeoutError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(124)
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
         raise SystemExit(130)

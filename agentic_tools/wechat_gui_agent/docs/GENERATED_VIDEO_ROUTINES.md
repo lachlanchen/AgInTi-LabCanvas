@@ -53,6 +53,9 @@ specialized stage contract for the `generated_video` routine.
    - Entrypoint: `run_generated_video_lazyedit_command(..., publish=True)`.
    - Requirement: current request explicitly permits public publish and names or
      implies platforms. Old chat history cannot authorize posting.
+   - Existing generated videos quoted later are resolved by exact WeChat video
+     MD5/length against same-chat task artifacts, then copied to AutoPublish
+     with the original source task summary passed into LazyEdit prompt files.
 
 ## State Rules
 

@@ -403,6 +403,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, '{"ok": true, "status": "copied", "target": "/tmp/demo_COMPLETED.mp4"}', "")
 
         with tempfile.TemporaryDirectory() as tmp:
+            task["queue_path"] = str(Path(tmp) / "empty_queue.jsonl")
+            worker.write_tasks(Path(task["queue_path"]), [])
             with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
                 preflight = worker.prepare_worker_preflight(task, Path(tmp))
 
@@ -420,6 +422,77 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("--message-local-id", calls[0])
         self.assertIn("14", calls[0])
         self.assertIn("--fetch-gui", calls[0])
+
+    def test_video_publish_preflight_uses_same_chat_artifact_ledger_when_wechat_cache_misses(self) -> None:
+        worker = load_worker()
+        video_bytes = b"generated-video-bytes"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source_video = tmp_path / "restaurant_gold_box_30s_2026-06-22_wechat.mp4"
+            source_video.write_bytes(video_bytes)
+            md5 = worker.file_md5(source_video)
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "source-task",
+                        "chat": "🍓我的设备",
+                        "request": "Generate the restaurant gold box video from the original prompt and script.",
+                        "status": "done",
+                        "result": {"message": "Generated and sent the compressed MP4.", "files": [str(source_video)]},
+                        "sent_file_paths": [str(source_video)],
+                        "artifact_dir": str(tmp_path),
+                    }
+                ],
+            )
+            task = {
+                "id": "publish-task",
+                "queue_path": str(queue),
+                "chat": "🍓我的设备",
+                "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+                "request": "Current coalesced request:\n发布这个视频，用它的生成脚本 prompt 和视频本身发布",
+                "source": {"local_id": 50, "sender_display": "陈苗"},
+                "context": [
+                    {
+                        "local_id": 47,
+                        "sender_display": "陈喵瞄秒妙",
+                        "content": f'<msg><videomsg md5="{md5}" length="{len(video_bytes)}" /></msg>',
+                    },
+                    {"local_id": 50, "sender_display": "陈苗", "content": "发布这个视频"},
+                ],
+            }
+
+            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                payload = {
+                    "ok": False,
+                    "error": "no matching mirrored video found",
+                    "recent_video_messages": [{"chat": "🍓我的设备", "recent_video_rows": 1}],
+                }
+                return subprocess.CompletedProcess(command, 1, json.dumps(payload), "")
+
+            with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+                with mock.patch.dict(worker.os.environ, {"LABCANVAS_AUTOPUBLISH_DIR": str(tmp_path / "AutoPublish")}):
+                    preflight = worker.prepare_worker_preflight(task, tmp_path / "artifact")
+
+            autopub = preflight["autopublish_video"]
+            target = Path(autopub["target"])
+            context_text = Path(preflight["lazyedit_context"]["correction_prompt_file"]).read_text(encoding="utf-8")
+            target_name = target.name
+            target_exists = target.is_file()
+            target_bytes = target.read_bytes() if target_exists else b""
+
+        self.assertTrue(autopub["ok"])
+        self.assertEqual(autopub["status"], "artifact-ledger-match")
+        self.assertEqual(autopub["md5"], md5)
+        self.assertEqual(autopub["bytes"], len(video_bytes))
+        self.assertEqual(autopub["source_task"]["id"], "source-task")
+        self.assertIn("same-chat-task-ledger", autopub["matched_by"])
+        self.assertTrue(target_name.endswith("_COMPLETED.mp4"))
+        self.assertTrue(target_exists)
+        self.assertEqual(target_bytes, video_bytes)
+        self.assertIn("artifact-ledger-match", context_text)
+        self.assertIn("original prompt and script", context_text)
 
     def test_lalachan_story_request_ignores_old_video_publish_context_for_preflight(self) -> None:
         worker = load_worker()

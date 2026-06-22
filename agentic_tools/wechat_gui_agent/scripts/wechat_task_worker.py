@@ -6,11 +6,14 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta
 import fcntl
+import hashlib
+import html
 import json
 import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -29,6 +32,7 @@ PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 LAZYEDIT_PUBLISH_SKILL = ROOT / "agentic_tools" / "wechat_gui_agent" / "skills" / "lazyedit-publish-workflow" / "SKILL.md"
 LAZYEDIT_ROOT = Path(os.environ.get("LAZYEDIT_ROOT", "/home/lachlan/DiskMech/Projects/lazyedit"))
 LAZYEDIT_API_URL = os.environ.get("LAZYEDIT_API_URL", "http://127.0.0.1:18787").rstrip("/")
+DEFAULT_AUTOPUBLISH_DIR = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/home/lachlan/Nutstore Files/AutoPublish/AutoPublish"))
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 GUI_SEND_LOCK = PRIVATE / "wechat_gui_send.lock"
@@ -204,6 +208,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
             print(json.dumps({"status": "no-pending-task"}, ensure_ascii=False))
         return False
     log_worker_event("claimed", task)
+    task["queue_path"] = str(queue)
     try:
         result_text = run_worker_codex(task)
         result = parse_worker_result(result_text)
@@ -1161,7 +1166,8 @@ Follow the routine supervisor contract. The contract is saved in `task.routine_c
 Exception for WeChat video-to-AutoPublish requests: if the task asks to copy/download a WeChat video to Nutstore AutoPublish and the recent context contains a same-chat video row, first run:
 `PYTHONPATH=src python -m agenticapp wechat autopublish-video --chat "<chat>" --sync --fetch-gui --since-minutes 720 --json`
 This opens the chat in the isolated WeChat desktop, clicks the latest visible video so the official client caches the MP4, media-syncs it, and atomically copies it to `/home/lachlan/Nutstore Files/AutoPublish/AutoPublish`. Only report missing source after that command fails or returns no matching video.
-If `task.preflight.autopublish_video` exists and has `ok: false` for a task with `message_local_ids`, fail closed: do not publish, transcode, or reuse any nearby/older video. Report that the exact WeChat row was not cached and include the safe next action.
+If `task.preflight.autopublish_video` has `status: "artifact-ledger-match"`, treat its `target` as the exact source video: it was matched by same-chat task history plus WeChat video MD5/size and copied into AutoPublish for LazyEdit. Use the resolved source material in the LazyEdit context.
+If `task.preflight.autopublish_video` exists and has `ok: false` for a task with `message_local_ids`, fail closed only after its `artifact_resolution.ok` is also false or missing: do not publish, transcode, or reuse any nearby/older video. Report that neither the exact WeChat cache nor the same-chat artifact ledger contained the referenced source, and include the safe next action.
 
 {routine_context}
 
@@ -1212,6 +1218,7 @@ def worker_artifact_dir(task: dict[str, Any]) -> Path:
 
 
 def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+    artifact_dir.mkdir(parents=True, exist_ok=True)
     preflight: dict[str, Any] = {}
     if is_generate_video_task(task):
         preflight["generated_video_contract"] = write_generated_video_contract(task, artifact_dir)
@@ -1222,15 +1229,25 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         return preflight
     context_path = artifact_dir / "lazyedit_correction_context.md"
     metadata_path = artifact_dir / "lazyedit_metadata_brief.md"
-    context_path.write_text(build_lazyedit_correction_context(task), encoding="utf-8")
-    metadata_path.write_text(build_lazyedit_metadata_brief(task), encoding="utf-8")
     preflight["lazyedit_context"] = {
         "correction_prompt_file": str(context_path),
         "metadata_prompt_file": str(metadata_path),
         "rule": "Pass correction_prompt_file to --correction-prompt-file and metadata_prompt_file to --metadata-prompt-file.",
     }
     if should_preflight_autopublish(task):
-        preflight["autopublish_video"] = run_autopublish_video_preflight(task)
+        artifact_resolution = resolve_exact_video_artifact_preflight(
+            task,
+            {"ok": False, "status": "wechat-cache-not-run", "reason": "same-chat artifact ledger checked first"},
+        )
+        if bool(artifact_resolution.get("ok")):
+            preflight["autopublish_video"] = artifact_resolution
+        else:
+            autopub = run_autopublish_video_preflight(task)
+            if not bool(autopub.get("ok")):
+                autopub["artifact_resolution"] = artifact_resolution
+            preflight["autopublish_video"] = autopub
+    context_path.write_text(build_lazyedit_correction_context(task, preflight=preflight), encoding="utf-8")
+    metadata_path.write_text(build_lazyedit_metadata_brief(task, preflight=preflight), encoding="utf-8")
     return preflight
 
 
@@ -1663,7 +1680,7 @@ def has_public_publish_intent(text: str) -> bool:
     return False
 
 
-def build_lazyedit_correction_context(task: dict[str, Any]) -> str:
+def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[str, Any] | None = None) -> str:
     lines = [
         "# LazyEdit Correction Context",
         "",
@@ -1684,6 +1701,27 @@ def build_lazyedit_correction_context(task: dict[str, Any]) -> str:
             f"- local_id={row.get('local_id')} sender={row.get('sender_display') or row.get('sender')}: "
             f"{collapse_context_text(row.get('content'))}"
         )
+    autopub = (preflight or {}).get("autopublish_video") if isinstance(preflight, dict) else None
+    if isinstance(autopub, dict):
+        lines.extend(
+            [
+                "",
+                "## Resolved Source Material",
+                json.dumps(
+                    {
+                        "status": autopub.get("status"),
+                        "target": autopub.get("target"),
+                        "source_path": autopub.get("source_path"),
+                        "matched_by": autopub.get("matched_by"),
+                        "md5": autopub.get("md5"),
+                        "bytes": autopub.get("bytes"),
+                        "source_task": autopub.get("source_task"),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            ]
+        )
     lines.extend(
         [
             "",
@@ -1699,7 +1737,7 @@ def build_lazyedit_correction_context(task: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def build_lazyedit_metadata_brief(task: dict[str, Any]) -> str:
+def build_lazyedit_metadata_brief(task: dict[str, Any], *, preflight: dict[str, Any] | None = None) -> str:
     request = collapse_context_text(task.get("request")) or "WeChat video publish request"
     context_lines = []
     for row in task.get("context") or []:
@@ -1708,6 +1746,16 @@ def build_lazyedit_metadata_brief(task: dict[str, Any]) -> str:
         text = collapse_context_text(row.get("content"))
         if text:
             context_lines.append(text)
+    source_task = {}
+    autopub = (preflight or {}).get("autopublish_video") if isinstance(preflight, dict) else None
+    if isinstance(autopub, dict) and isinstance(autopub.get("source_task"), dict):
+        source_task = autopub["source_task"]
+        excerpt = collapse_context_text(source_task.get("request_excerpt"), max_len=360)
+        if excerpt:
+            context_lines.append(excerpt)
+        result_excerpt = collapse_context_text(source_task.get("result_message_excerpt"), max_len=360)
+        if result_excerpt:
+            context_lines.append(result_excerpt)
     return (
         "# LazyEdit Metadata Brief\n\n"
         "Use this only for public-facing title, description, keywords, and platform notes.\n"
@@ -1762,6 +1810,236 @@ def run_autopublish_video_preflight(task: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def resolve_exact_video_artifact_preflight(task: dict[str, Any], original_preflight: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a quoted/generated WeChat video through same-chat task artifacts."""
+    refs = extract_video_reference_metadata(task)
+    if not refs["md5s"] and not refs["sizes"]:
+        return {
+            "ok": False,
+            "status": "artifact-ledger-miss",
+            "error": "no video md5 or length tokens in task context",
+            "message_local_ids": extract_video_local_ids_from_task(task),
+        }
+    queue_path = task_queue_path(task)
+    if not queue_path.is_file():
+        return {
+            "ok": False,
+            "status": "artifact-ledger-miss",
+            "error": f"queue not found: {queue_path}",
+            "message_local_ids": extract_video_local_ids_from_task(task),
+            "refs": refs,
+        }
+    try:
+        tasks = read_tasks(queue_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "ok": False,
+            "status": "artifact-ledger-miss",
+            "error": f"could not read queue: {type(exc).__name__}: {str(exc)[:300]}",
+            "message_local_ids": extract_video_local_ids_from_task(task),
+            "refs": refs,
+        }
+    matches = exact_video_artifact_matches(task, tasks, refs)
+    if not matches:
+        return {
+            "ok": False,
+            "status": "artifact-ledger-miss",
+            "error": "no same-chat sent/generated video artifact matched the referenced md5/length",
+            "message_local_ids": extract_video_local_ids_from_task(task),
+            "refs": refs,
+            "queue": str(queue_path),
+        }
+    match = matches[0]
+    target = copy_exact_video_artifact_to_autopublish(match["path"], task)
+    return {
+        "ok": True,
+        "status": "artifact-ledger-match",
+        "target": str(target),
+        "target_name": target.name,
+        "source_path": str(match["path"]),
+        "bytes": match["bytes"],
+        "md5": match.get("md5"),
+        "matched_by": match["matched_by"],
+        "message_local_ids": extract_video_local_ids_from_task(task),
+        "source_task": match.get("source_task") or {},
+        "refs": refs,
+        "queue": str(queue_path),
+        "wechat_cache_preflight": original_preflight,
+        "rule": "Exact same-chat artifact fallback: WeChat cache miss was recovered by md5/length match against prior generated/sent task output.",
+    }
+
+
+def task_queue_path(task: dict[str, Any]) -> Path:
+    raw = str(task.get("queue_path") or os.environ.get("WECHAT_WORKER_QUEUE") or "")
+    return Path(raw).expanduser() if raw else DEFAULT_QUEUE
+
+
+def extract_video_reference_metadata(task: dict[str, Any]) -> dict[str, Any]:
+    raw = json.dumps(task, ensure_ascii=False)
+    text = html.unescape(raw).replace('\\"', '"')
+    md5s: list[str] = []
+    sizes: list[int] = []
+    server_ids: list[str] = []
+    for key in ("md5", "newmd5", "rawmd5", "originsourcemd5", "filemd5"):
+        for value in re.findall(rf'\b{key}\s*=\s*["\']?([0-9A-Fa-f]{{32,64}})["\']?', text):
+            add_once(md5s, value.lower())
+    for value in re.findall(r"<md5>\s*([0-9A-Fa-f]{32,64})\s*</md5>", text):
+        add_once(md5s, value.lower())
+    for key in ("length", "rawlength", "cdnvideourl_size"):
+        for value in re.findall(rf'\b{key}\s*=\s*["\']?([0-9]{{4,}})["\']?', text):
+            try:
+                add_once(sizes, int(value))
+            except ValueError:
+                continue
+    for value in re.findall(r"\b(?:svrid|server_id|serverId|MsgSvrID)\s*[=:]\s*[\"']?([0-9]{8,})", text):
+        add_once(server_ids, value)
+    return {
+        "md5s": md5s[:8],
+        "sizes": sizes[:8],
+        "server_ids": server_ids[:8],
+        "local_ids": extract_video_local_ids_from_task(task),
+    }
+
+
+def exact_video_artifact_matches(task: dict[str, Any], tasks: list[dict[str, Any]], refs: dict[str, Any]) -> list[dict[str, Any]]:
+    chat = str(task.get("chat") or "")
+    current_id = str(task.get("id") or "")
+    md5s = {str(item).lower() for item in refs.get("md5s") or []}
+    sizes = {int(item) for item in refs.get("sizes") or [] if int_or_none(item) is not None}
+    matches: list[dict[str, Any]] = []
+    for source_task in tasks:
+        if not isinstance(source_task, dict):
+            continue
+        if current_id and str(source_task.get("id") or "") == current_id:
+            continue
+        if chat and str(source_task.get("chat") or "") != chat:
+            continue
+        for path in collect_task_video_paths(source_task):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if sizes and stat.st_size not in sizes and not md5s:
+                continue
+            path_md5 = ""
+            matched_by: list[str] = []
+            if md5s:
+                path_md5 = file_md5(path)
+                if path_md5 not in md5s:
+                    continue
+                matched_by.append(f"md5:{path_md5}")
+            if sizes and stat.st_size in sizes:
+                matched_by.append(f"bytes:{stat.st_size}")
+            if not matched_by:
+                continue
+            matched_by.append("same-chat-task-ledger")
+            matches.append(
+                {
+                    "path": path,
+                    "bytes": stat.st_size,
+                    "md5": path_md5 or None,
+                    "mtime": stat.st_mtime,
+                    "matched_by": matched_by,
+                    "source_task": summarize_video_source_task(source_task, path),
+                }
+            )
+    matches.sort(key=lambda item: (len(item["matched_by"]), float(item["mtime"])), reverse=True)
+    return matches
+
+
+def collect_task_video_paths(task: dict[str, Any]) -> list[Path]:
+    paths: list[Path] = []
+
+    def add(raw: Any) -> None:
+        if not raw:
+            return
+        path = Path(str(raw)).expanduser()
+        if path.suffix.lower() not in VIDEO_SUFFIXES:
+            return
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return
+        if resolved.is_file() and resolved not in paths:
+            paths.append(resolved)
+
+    for key in ("sent_file_paths", "artifact_file_paths", "files"):
+        value = task.get(key)
+        if isinstance(value, list):
+            for item in value:
+                add(item)
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    for item in result.get("files") or []:
+        add(item)
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    for section_name in ("generated_video_status", "autopublish_video"):
+        section = preflight.get(section_name) if isinstance(preflight, dict) else {}
+        if not isinstance(section, dict):
+            continue
+        add(section.get("target"))
+        add(section.get("source_path"))
+        for item in section.get("files") or []:
+            add(item)
+    monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
+    for item in monitor.get("files") or []:
+        add(item)
+    artifact_dir = task.get("artifact_dir")
+    if artifact_dir:
+        root = Path(str(artifact_dir)).expanduser()
+        if root.is_dir():
+            for path in sorted(root.glob("*.mp4"), key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True):
+                add(path)
+    return paths
+
+
+def summarize_video_source_task(task: dict[str, Any], path: Path) -> dict[str, Any]:
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    return {
+        "id": task.get("id"),
+        "chat": task.get("chat"),
+        "created_at": task.get("created_at"),
+        "completed_at": task.get("completed_at"),
+        "source": task.get("source") or {},
+        "request_excerpt": collapse_context_text(task_focus_text(task) or task.get("request"), max_len=1200),
+        "result_message_excerpt": collapse_context_text(result.get("message"), max_len=800),
+        "artifact_dir": task.get("artifact_dir"),
+        "matched_file": str(path),
+        "sent_file_paths": task.get("sent_file_paths") or [],
+    }
+
+
+def copy_exact_video_artifact_to_autopublish(source: Path, task: dict[str, Any]) -> Path:
+    dest_dir = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR") or str(DEFAULT_AUTOPUBLISH_DIR)).expanduser()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stem = safe_slug(source.stem)
+    if not stem.endswith("_completed"):
+        stem = f"{stem}_COMPLETED"
+    target = dest_dir / f"{stem}{source.suffix.lower()}"
+    if target.exists():
+        try:
+            if target.stat().st_size == source.stat().st_size and file_md5(target) == file_md5(source):
+                return target
+        except OSError:
+            pass
+        suffix = safe_slug(str(task.get("id") or datetime.now().strftime("%Y%m%d%H%M%S")))
+        target = dest_dir / f"{stem}_{suffix}{source.suffix.lower()}"
+    shutil.copy2(source, target)
+    return target
+
+
+def file_md5(path: Path) -> str:
+    digest = hashlib.md5()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def add_once(items: list[Any], value: Any) -> None:
+    if value not in items:
+        items.append(value)
+
+
 def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
     poststage = deterministic_generated_video_poststage_result(task)
     if poststage is not None:
@@ -1798,11 +2076,19 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
         source_state = "看到了对应的 WeChat 视频消息，但官方客户端还没有把这一条完整 MP4 缓存到本地。"
     else:
         source_state = "没有在本地解密消息库中找到对应的 WeChat 视频行。"
+    artifact_resolution = autopub.get("artifact_resolution") if isinstance(autopub.get("artifact_resolution"), dict) else {}
+    artifact_state = ""
+    if artifact_resolution:
+        artifact_state = (
+            "我也检查了同一微信群的任务 artifact ledger，"
+            f"没有找到匹配该视频 md5/length 的已生成或已发送 MP4（{artifact_resolution.get('error') or 'no match'}）。"
+        )
     message = (
         "我没有发布这个视频。"
         f"{source_state}"
-        "为了避免误发布，我已按 exact local_id fail-closed 规则停止，没有使用附近的旧视频或上一次视频。"
-        "请重新发送原视频，或在 WeChat 里点开这条视频让客户端缓存完整 MP4；缓存到本地后我会继续保存到 Nutstore/AutoPublish 并走 LazyEdit 发布链路。"
+        f"{artifact_state}"
+        "为了避免误发布，我已按 exact-source fail-closed 规则停止，没有使用附近的旧视频或上一次视频。"
+        "请重新发送原视频，或在 WeChat 里点开这条视频让客户端缓存完整 MP4；如果这是我生成过的视频，请确保对应任务 artifact 仍在本机输出目录。"
     )
     return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
 
@@ -3145,6 +3431,7 @@ def run_file_bridge_subprocess(command: list[str], timeout: int | None = None) -
 
 
 def gui_send_lock_busy(lock_path: Path = GUI_SEND_LOCK) -> bool:
+    reap_stale_orphaned_gui_senders()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a", encoding="utf-8") as lock:
         acquired = False
@@ -3163,6 +3450,7 @@ def gui_send_lock_busy(lock_path: Path = GUI_SEND_LOCK) -> bool:
 
 
 def acquire_gui_send_lock_or_raise(lock_path: Path = GUI_SEND_LOCK):
+    reap_stale_orphaned_gui_senders()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock = lock_path.open("a", encoding="utf-8")
     try:
@@ -3178,6 +3466,58 @@ def release_gui_send_lock(lock) -> None:
         fcntl.flock(lock, fcntl.LOCK_UN)
     finally:
         lock.close()
+
+
+def reap_stale_orphaned_gui_senders() -> None:
+    """Kill orphaned GUI send helpers that can hold the fcntl send lane forever."""
+    if os.environ.get("WECHAT_WORKER_DISABLE_STALE_SEND_REAPER") == "1":
+        return
+    max_age = int(os.environ.get("WECHAT_WORKER_STALE_GUI_SEND_SECONDS", "180"))
+    if max_age <= 0:
+        return
+    try:
+        proc = subprocess.run(
+            ["pgrep", "-f", "agentic_tools/wechat_gui_agent/scripts/wechat_gui_send.py"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    for raw_pid in proc.stdout.split():
+        try:
+            pid = int(raw_pid)
+        except ValueError:
+            continue
+        if pid <= 0 or pid == os.getpid():
+            continue
+        try:
+            stat_proc = subprocess.run(
+                ["ps", "-o", "ppid=,etimes=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=2,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        parts = stat_proc.stdout.split()
+        if len(parts) < 2:
+            continue
+        try:
+            ppid = int(parts[0])
+            age = int(parts[1])
+        except ValueError:
+            continue
+        if ppid != 1 or age < max_age:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        except OSError:
+            continue
 
 
 def wechat_send_env() -> dict[str, str]:

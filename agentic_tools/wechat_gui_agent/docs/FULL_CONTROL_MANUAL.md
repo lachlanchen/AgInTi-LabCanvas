@@ -316,6 +316,15 @@ labcanvas wechat autopublish-video --chat "<CHAT_NAME>" --message-local-id 14 --
 `--fetch-gui` opens the official client and clicks the visible video so WeChat
 caches the MP4 before the tool copies it to Nutstore AutoPublish.
 
+For bot-sent/generated videos, `wechat_task_worker.py` checks the same-chat
+artifact ledger before spending time on a GUI cache fetch. It extracts quoted
+video `md5`/`length` tokens from the task, searches only prior tasks from the
+same chat, verifies the matching MP4, copies it into Nutstore AutoPublish with
+a `_COMPLETED` name, and includes the source task request/result summary in
+the LazyEdit correction and metadata prompt files. If the ledger cannot prove
+an exact match, the worker falls back to the command above. No MD5/length match
+and no exact WeChat cache means no publish.
+
 ## GUI Send Path
 
 Dry-run target opening:
