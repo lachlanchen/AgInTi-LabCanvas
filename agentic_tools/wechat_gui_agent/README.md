@@ -327,7 +327,10 @@ answers. The worker stores the thread/page monitor state, suppresses routine
 cycles, schedules the next poll from page status such as `还需 N 分钟`, `排队`, or
 `生成中`, and sends the verified MP4 back to the source WeChat chat when it is
 ready. There is no fixed "3 hour then fail" answer; ambiguous or blocked status
-is escalated to the worker/agent, while normal rendering waits cheaply.
+is escalated to the worker/agent, while normal rendering waits cheaply. If a
+Codex worker times out before returning structured monitor state, the worker
+discovers the active Xiaoyunque `thread_id` from Chrome CDP and continues from
+that page instead of posting the timeout as the final answer.
 LazyEdit import/process is a separate stage and requires an explicit current
 request for LazyEdit/import/process. Public posting still requires explicit
 current-message publish/post/platform intent.

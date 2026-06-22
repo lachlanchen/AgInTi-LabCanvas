@@ -218,7 +218,9 @@ in order, verify non-VIP `Seedance 2.0 Fast`, generate/download the MP4, verify
 with `ffprobe`, and send the verified MP4 back to the source WeChat chat. A
 submitted Xiaoyunque job stays as `generation_waiting` and is checked by short
 status-probe cycles; the next poll is based on page state rather than a fixed
-long timeout. LazyEdit import/process and public publish are separate current
+long timeout. If the agent times out before returning monitor state, the worker
+discovers the active Xiaoyunque `thread_id` through Chrome CDP and resumes from
+that page. LazyEdit import/process and public publish are separate current
 request permissions. It returns
 plain text or JSON:
 

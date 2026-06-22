@@ -91,6 +91,9 @@ and suppresses routine progress messages unless
 `WECHAT_WORKER_SEND_GENERATION_PROGRESS=1`. When the MP4 is downloaded and
 verified, the worker sends it back to the original WeChat chat. LazyEdit
 import/process and public publishing are separate opt-in stages.
+If a Codex worker times out before it returns `thread_url`/`page_id`, the worker
+discovers active Xiaoyunque pages from Chrome CDP and resumes monitoring from
+the matching `thread_id` instead of sending the timeout as the final answer.
 
 Each group keeps two reusable Codex sessions by default: `fast` for immediate
 router replies and `worker` for backend work. The ignored registry is

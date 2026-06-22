@@ -542,6 +542,38 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertTrue(worker.generated_video_result_is_nonterminal(task, result))
         self.assertFalse(worker.should_send_worker_result(task, result))
 
+    def test_generate_video_timeout_discovers_xyq_thread_from_browser(self) -> None:
+        worker = load_worker()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    [
+                        {"type": "page", "id": "PAGE123456", "title": "小云雀网页版", "url": "https://xyq.jianying.com/home?thread_id=abc&agent_name=pippit_nest_agent"},
+                        {"type": "page", "id": "OTHER", "title": "Other", "url": "https://example.com"},
+                    ],
+                    ensure_ascii=False,
+                ).encode("utf-8")
+
+        task = {
+            "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+            "request": "Current coalesced request:\nCould you generate a LALACHAN video with Xiaoyunque?",
+        }
+        result = {"message": "Worker failed: timeout", "files": [], "confirmation": ""}
+
+        with mock.patch.object(worker.urllib.request, "urlopen", return_value=FakeResponse()):
+            worker.apply_send_outcome(task, result, [])
+
+        self.assertEqual(task["status"], worker.GENERATED_VIDEO_WAITING_STATUS)
+        self.assertEqual(task["generated_video_monitor"]["page_id"], "PAGE123456")
+        self.assertIn("thread_id=abc", task["generated_video_monitor"]["thread_url"])
+
     def test_generate_video_status_backoff_uses_page_status(self) -> None:
         worker = load_worker()
 
@@ -611,6 +643,42 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertFalse(worker.has_public_publish_intent("upload the generated video to LazyEdit only"))
         self.assertTrue(worker.wants_lazyedit_import("upload the generated video to LazyEdit only"))
         self.assertTrue(worker.has_public_publish_intent("publish the generated video to YouTube"))
+
+    def test_generated_video_lazyedit_stage_separates_import_from_public_publish(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+
+        def fake_lazyedit(video_path: Path, task: dict[str, object], monitor: dict[str, object], *, publish: bool) -> dict[str, object]:
+            calls.append({"video_path": video_path, "publish": publish, "task": task, "monitor": monitor})
+            return {"ok": True, "status": "done"}
+
+        original = worker.run_generated_video_lazyedit_command
+        try:
+            worker.run_generated_video_lazyedit_command = fake_lazyedit
+            import_msg = worker.maybe_run_generated_video_lazyedit_stage(
+                Path("/tmp/generated.mp4"),
+                {
+                    "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+                    "request": "Current coalesced request:\nupload the generated video to LazyEdit only",
+                },
+                {},
+            )
+            publish_msg = worker.maybe_run_generated_video_lazyedit_stage(
+                Path("/tmp/generated.mp4"),
+                {
+                    "route_decision": {"route_kind": "generate_video", "public_publish_allowed": True},
+                    "request": "Current coalesced request:\npublish the generated video to SPH Ins y2b",
+                },
+                {},
+            )
+        finally:
+            worker.run_generated_video_lazyedit_command = original
+
+        self.assertIn("no public publish", import_msg)
+        self.assertFalse(calls[0]["publish"])
+        self.assertIn("public publish", publish_msg)
+        self.assertTrue(calls[1]["publish"])
+        self.assertEqual(worker.detect_publish_platforms(calls[1]["task"]), ["shipinhao", "youtube", "instagram"])
 
     def test_exact_video_preflight_failure_returns_deterministic_fail_closed_result(self) -> None:
         worker = load_worker()

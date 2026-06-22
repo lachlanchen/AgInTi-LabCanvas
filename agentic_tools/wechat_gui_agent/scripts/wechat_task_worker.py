@@ -310,6 +310,8 @@ def generated_video_result_is_nonterminal(task: dict[str, Any], result: dict[str
         return True
     monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
     text = generated_video_result_text(result)
+    if "timeout" in text or "timed out" in text:
+        return True
     if monitor.get("thread_url") and monitor.get("page_id") and worker_result_needs_escalation(text):
         return True
     return any(marker in text for marker in GENERATED_VIDEO_PENDING_TERMS)
@@ -336,10 +338,15 @@ def schedule_generated_video_poll(task: dict[str, Any], result: dict[str, Any]) 
     task["next_poll_at"] = (now.timestamp() + max(1, backoff))
     task["next_poll_at_iso"] = datetime.fromtimestamp(float(task["next_poll_at"])).isoformat(timespec="seconds")
     task["generation_wait_count"] = int(task.get("generation_wait_count") or 0) + 1
-    task["generated_video_monitor"] = merge_generated_video_monitor(
+    monitor = merge_generated_video_monitor(
         task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {},
         result,
     )
+    if not (monitor.get("thread_url") and monitor.get("page_id")):
+        discovered = discover_generated_video_monitor_from_browser(task)
+        if discovered:
+            monitor.update(discovered)
+    task["generated_video_monitor"] = monitor
     task.setdefault("generation_started_at", now.isoformat(timespec="seconds"))
 
 
@@ -409,6 +416,45 @@ def merge_generated_video_monitor(existing: dict[str, Any], result: dict[str, An
 
 def clean_url_token(value: str) -> str:
     return str(value or "").strip().strip("\"'`").rstrip(".,;:)]}>")
+
+
+def discover_generated_video_monitor_from_browser(task: dict[str, Any]) -> dict[str, str]:
+    cdp_url = os.environ.get("WECHAT_WORKER_XYQ_CDP_URL") or os.environ.get("XYQ_CDP_URL") or "http://127.0.0.1:9222"
+    try:
+        with urllib.request.urlopen(f"{cdp_url}/json/list", timeout=5) as response:
+            pages = json.loads(response.read().decode("utf-8", errors="replace"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        return {}
+    if not isinstance(pages, list):
+        return {}
+    candidates: list[dict[str, Any]] = []
+    for page in pages:
+        if not isinstance(page, dict) or page.get("type") != "page":
+            continue
+        url = str(page.get("url") or "")
+        if "xyq.jianying.com" not in url or "thread_id=" not in url:
+            continue
+        candidates.append(page)
+    if not candidates:
+        return {}
+    request_text = task_focus_text(task).lower()
+    if "lalachan" in request_text or "小云雀" in request_text or "seedance" in request_text:
+        preferred = [
+            page for page in candidates
+            if "pippit_nest_agent" in str(page.get("url") or "")
+            or "integrated-agent" in str(page.get("url") or "")
+        ]
+        if preferred:
+            candidates = preferred
+    page = candidates[0]
+    return {
+        "cdp_url": cdp_url,
+        "page_id": str(page.get("id") or ""),
+        "thread_url": str(page.get("url") or ""),
+        "title": str(page.get("title") or ""),
+        "discovered_from": "chrome_cdp_pages",
+        "discovered_at": datetime.now().isoformat(timespec="seconds"),
+    }
 
 
 def send_errors_indicate_wechat_locked(errors: list[str]) -> bool:
