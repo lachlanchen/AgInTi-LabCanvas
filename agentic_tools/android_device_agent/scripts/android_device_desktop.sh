@@ -11,11 +11,13 @@ VNC_PORT="${ANDROID_DEVICE_VNC_PORT:-5929}"
 NOVNC_PORT="${ANDROID_DEVICE_NOVNC_PORT:-6129}"
 SERIAL="${ANDROID_SERIAL:-}"
 ACTION="start"
+OPEN_WECHAT="0"
+WAKE_DEVICE="1"
 
 usage() {
   cat <<'EOF'
 Usage:
-  android_device_desktop.sh [start|stop|restart|status] [--serial SERIAL]
+  android_device_desktop.sh [start|stop|restart|status] [--serial SERIAL] [--open-wechat]
 
 Starts a dedicated tmux-held noVNC desktop running scrcpy for an Android device.
 
@@ -24,6 +26,10 @@ Environment defaults:
   ANDROID_DEVICE_DISPLAY=:99
   ANDROID_DEVICE_VNC_PORT=5929
   ANDROID_DEVICE_NOVNC_PORT=6129
+
+Options:
+  --open-wechat       Launch mobile WeChat after starting the mirror.
+  --no-wake          Do not wake/dismiss the non-secure keyguard first.
 EOF
 }
 
@@ -31,6 +37,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     start|stop|restart|status) ACTION="$1"; shift ;;
     --serial) SERIAL="$2"; shift 2 ;;
+    --open-wechat) OPEN_WECHAT="1"; shift ;;
+    --no-wake) WAKE_DEVICE="0"; shift ;;
     --help|-h) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -88,8 +96,16 @@ start_session() {
     echo "Android device is not reachable: $serial" >&2
     exit 6
   fi
+  if [[ "$WAKE_DEVICE" == "1" ]]; then
+    adb -s "$serial" shell input keyevent 224 >/dev/null 2>&1 || true
+    adb -s "$serial" shell wm dismiss-keyguard >/dev/null 2>&1 || true
+    adb -s "$serial" shell svc power stayon true >/dev/null 2>&1 || true
+  fi
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "$SESSION already running"
+    if [[ "$OPEN_WECHAT" == "1" ]]; then
+      adb -s "$serial" shell monkey -p com.tencent.mm -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+    fi
     status
     return
   fi
@@ -113,6 +129,9 @@ start_session() {
     --window-height 1080)
   tmux new-session -d -s "$SESSION" "cd '$ROOT' && $command; exec bash"
   sleep 2
+  if [[ "$OPEN_WECHAT" == "1" ]]; then
+    adb -s "$serial" shell monkey -p com.tencent.mm -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+  fi
   status
 }
 

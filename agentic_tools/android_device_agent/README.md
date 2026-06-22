@@ -26,12 +26,23 @@ agentic_tools/android_device_agent/scripts/android_device_desktop.sh start --ser
 Open the printed noVNC URL. The desktop runs `scrcpy` for direct mouse/keyboard
 control and keeps the phone awake while connected.
 
+To start the mirror and bring mobile WeChat to the foreground:
+
+```bash
+agentic_tools/android_device_agent/scripts/android_device_desktop.sh restart \
+  --serial <MIX2S_SERIAL> \
+  --open-wechat
+```
+
 Defaults:
 
 - X display: `:99`
 - VNC: `127.0.0.1:5929`
 - noVNC: `http://127.0.0.1:6129/...`
 - tmux session: `labcanvas-android-mix2s`
+
+Detailed MIX 2S and mobile-WeChat desktop-unlock steps are in
+`docs/MIX2S_ADB_SCRCPY_RUNBOOK.md`.
 
 Stop only the Android desktop session:
 
