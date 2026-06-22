@@ -32,6 +32,7 @@ DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 EFFORT_ORDER = ["low", "medium", "high", "xhigh"]
 CLAIMED_STATUS = "in_progress"
 SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
+SEND_DEFERRED_ARTIFACT_STATUS = "send_deferred_artifact"
 SEND_RETRYING_STATUS = "send_retrying"
 GENERATED_VIDEO_WAITING_STATUS = "generation_waiting"
 DEFAULT_STALE_IN_PROGRESS_SECONDS = 60 * 60
@@ -290,6 +291,9 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
         if send_errors_indicate_wechat_locked(errors):
             task["status"] = SEND_DEFERRED_LOCKED_STATUS
             task["send_deferred_reason"] = "wechat_locked"
+        elif result_requires_file_delivery(task, result):
+            task["status"] = SEND_DEFERRED_ARTIFACT_STATUS
+            task["send_deferred_reason"] = "required_artifact_delivery"
         else:
             task["status"] = "send_failed"
         return
@@ -319,6 +323,16 @@ def generated_video_result_is_nonterminal(task: dict[str, Any], result: dict[str
 
 def generated_video_has_file(result: dict[str, Any]) -> bool:
     return any(Path(str(path)).suffix.lower() in VIDEO_SUFFIXES for path in result.get("files") or [])
+
+
+def result_requires_file_delivery(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
+    if not result.get("files"):
+        return False
+    if os.environ.get("WECHAT_WORKER_REQUIRE_FILE_SEND", "0") == "1":
+        return True
+    if task is not None and is_generate_video_task(task) and generated_video_has_file(result):
+        return True
+    return bool((result.get("data") or {}).get("require_file_delivery")) if isinstance(result.get("data"), dict) else False
 
 
 def generated_video_result_text(result: dict[str, Any]) -> str:
@@ -509,21 +523,42 @@ def send_result_once(
     if task is not None and files_to_note:
         task["unsent_saved_files"] = [str(path) for path in files_to_note]
     message = message_with_saved_file_note(str(result.get("message") or ""), files_to_note)
+    require_file_delivery = result_requires_file_delivery(task, result)
+    file_errors = []
+    sent_files = {str(path) for path in (task or {}).get("sent_file_paths", [])}
+
+    def send_files() -> None:
+        nonlocal file_errors
+        for file_path in files_to_send:
+            resolved = str(file_path.expanduser().resolve())
+            if resolved in sent_files:
+                continue
+            try:
+                send_file(file_path, target_chat, send_targets, target=target)
+                sent_files.add(resolved)
+                if task is not None:
+                    task["sent_file_paths"] = sorted(sent_files)
+            except Exception as exc:
+                error = {"path": str(file_path), "error": f"{type(exc).__name__}: {str(exc)[:500]}"}
+                file_errors.append(error)
+                if require_file_delivery:
+                    break
+                if os.environ.get("WECHAT_WORKER_REQUIRE_FILE_SEND", "0") == "1":
+                    break
+        if file_errors and task is not None:
+            task.setdefault("file_send_errors", []).extend(file_errors)
+        if file_errors and require_file_delivery:
+            detail = "; ".join(f"{item['path']}: {item['error']}" for item in file_errors[:3])
+            raise RuntimeError(f"required artifact delivery failed: {detail}")
+
+    if require_file_delivery:
+        send_files()
     if message:
         send_message(message, target_chat, send_targets, target=target)
     if result["confirmation"]:
         send_message(result["confirmation"], target_chat, send_targets, target=target)
-    file_errors = []
-    for file_path in files_to_send:
-        try:
-            send_file(file_path, target_chat, send_targets, target=target)
-        except Exception as exc:
-            error = {"path": str(file_path), "error": f"{type(exc).__name__}: {str(exc)[:500]}"}
-            file_errors.append(error)
-            if os.environ.get("WECHAT_WORKER_REQUIRE_FILE_SEND", "0") == "1":
-                raise
-    if file_errors and task is not None:
-        task.setdefault("file_send_errors", []).extend(file_errors)
+    if not require_file_delivery:
+        send_files()
 
 
 def partition_result_files_for_wechat(files: list[str]) -> tuple[list[Path], list[Path]]:
@@ -643,7 +678,7 @@ def claim_next_deferred_send(path: Path) -> dict[str, Any] | None:
         now_text = now.isoformat(timespec="seconds")
         for index, task in enumerate(tasks):
             status = str(task.get("status") or "")
-            if status not in {SEND_DEFERRED_LOCKED_STATUS, SEND_RETRYING_STATUS}:
+            if status not in {SEND_DEFERRED_LOCKED_STATUS, SEND_DEFERRED_ARTIFACT_STATUS, SEND_RETRYING_STATUS}:
                 continue
             if status == SEND_RETRYING_STATUS and not stale_send_retrying(task, now):
                 continue

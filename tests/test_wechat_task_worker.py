@@ -637,6 +637,88 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("下载完成", payload["message"])
         self.assertEqual(payload["files"], [str(video.resolve())])
 
+    def test_generated_video_final_mp4_is_sent_before_done_message(self) -> None:
+        worker = load_worker()
+        calls: list[tuple[str, str]] = []
+        original_message = worker.send_message
+        original_file = worker.send_file
+        try:
+            worker.send_message = lambda message, *_args, **_kwargs: calls.append(("message", str(message)))
+            worker.send_file = lambda file_path, *_args, **_kwargs: calls.append(("file", str(Path(file_path).resolve())))
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                mp4 = tmp_path / "generated.mp4"
+                mp4.write_bytes(b"video")
+                targets = tmp_path / "targets.json"
+                targets.write_text(
+                    json.dumps({"🍓我的设备": {"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备"}}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                task = {
+                    "chat": "🍓我的设备",
+                    "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+                    "request": "Current coalesced request:\nCould you generate the video?",
+                }
+                errors = worker.send_result_with_retries(
+                    {"message": "done", "confirmation": "", "files": [str(mp4)]},
+                    "🍓我的设备",
+                    targets,
+                    task=task,
+                )
+        finally:
+            worker.send_message = original_message
+            worker.send_file = original_file
+
+        self.assertEqual(errors, [])
+        self.assertEqual(calls[0][0], "file")
+        self.assertEqual(calls[1], ("message", "done"))
+        self.assertIn("generated.mp4", "\n".join(task["sent_file_paths"]))
+
+    def test_generated_video_mp4_send_failure_keeps_task_send_failed(self) -> None:
+        worker = load_worker()
+        messages: list[str] = []
+        original_message = worker.send_message
+        original_file = worker.send_file
+        original_delay = worker.os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY")
+        try:
+            worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = "0"
+            worker.send_message = lambda message, *_args, **_kwargs: messages.append(str(message))
+
+            def fail_file(*_args, **_kwargs):
+                raise RuntimeError("file picker unavailable")
+
+            worker.send_file = fail_file
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                mp4 = tmp_path / "generated.mp4"
+                mp4.write_bytes(b"video")
+                targets = tmp_path / "targets.json"
+                targets.write_text(
+                    json.dumps({"🍓我的设备": {"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备"}}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                task = {
+                    "chat": "🍓我的设备",
+                    "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+                    "request": "Current coalesced request:\nCould you generate the video?",
+                }
+                result = {"message": "done", "confirmation": "", "files": [str(mp4)]}
+                errors = worker.send_result_with_retries(result, "🍓我的设备", targets, task=task)
+                worker.apply_send_outcome(task, result, errors)
+        finally:
+            worker.send_message = original_message
+            worker.send_file = original_file
+            if original_delay is None:
+                worker.os.environ.pop("WECHAT_WORKER_SEND_RETRY_DELAY", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = original_delay
+
+        self.assertTrue(errors)
+        self.assertEqual(task["status"], worker.SEND_DEFERRED_ARTIFACT_STATUS)
+        self.assertEqual(task["send_deferred_reason"], "required_artifact_delivery")
+        self.assertEqual(messages, [])
+        self.assertIn("file_send_errors", task)
+
     def test_lazyedit_import_is_not_public_publish_intent(self) -> None:
         worker = load_worker()
 
@@ -828,6 +910,38 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 )
                 self.assertIsNone(worker.claim_next_deferred_send(queue))
                 worker.os.environ["WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS"] = "0"
+                claimed = worker.claim_next_deferred_send(queue)
+        finally:
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS"] = original_backoff
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+        self.assertEqual(claimed["send_retry_count"], 1)
+
+    def test_claim_next_deferred_send_handles_required_artifact_delivery(self) -> None:
+        worker = load_worker()
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS")
+        try:
+            worker.os.environ["WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS"] = "0"
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-artifact-deferred",
+                            "chat": "🍓我的设备",
+                            "status": worker.SEND_DEFERRED_ARTIFACT_STATUS,
+                            "send_deferred_reason": "required_artifact_delivery",
+                            "last_send_attempt_at": "2026-01-01T00:00:00",
+                            "result": {"message": "done", "confirmation": "", "files": ["/tmp/generated.mp4"]},
+                        }
+                    ],
+                )
                 claimed = worker.claim_next_deferred_send(queue)
         finally:
             if original_backoff is None:

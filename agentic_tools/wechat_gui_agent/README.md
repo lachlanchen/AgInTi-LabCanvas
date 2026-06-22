@@ -334,6 +334,13 @@ that page instead of posting the timeout as the final answer.
 LazyEdit import/process is a separate stage and requires an explicit current
 request for LazyEdit/import/process. Public posting still requires explicit
 current-message publish/post/platform intent.
+
+Generated-video MP4 delivery is strict by default. When a finished video path is
+present, the worker sends that file before the completion text and records it in
+the task's sent-file ledger. If the GUI file send fails or WeChat is locked, the
+task stays `send_deferred_artifact` or `send_deferred_locked` so the resend loop
+can finish delivery later; it is not marked done without returning the MP4 to
+the source group.
 Before work starts, a queue item is claimed as `in_progress` under a file lock.
 This prevents a manual `worker once` and the persistent loop from handling the
 same request twice. Stale claims are reclaimed after

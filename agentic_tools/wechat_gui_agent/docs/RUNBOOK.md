@@ -91,6 +91,10 @@ and suppresses routine progress messages unless
 `WECHAT_WORKER_SEND_GENERATION_PROGRESS=1`. When the MP4 is downloaded and
 verified, the worker sends it back to the original WeChat chat. LazyEdit
 import/process and public publishing are separate opt-in stages.
+Generated-video file delivery is mandatory: the MP4 is sent before the final
+done message, recorded in `sent_file_paths`, and a file-send failure leaves the
+task in `send_deferred_artifact` or `send_deferred_locked` for retry instead of
+marking it complete.
 If a Codex worker times out before it returns `thread_url`/`page_id`, the worker
 discovers active Xiaoyunque pages from Chrome CDP and resumes monitoring from
 the matching `thread_id` instead of sending the timeout as the final answer.

@@ -221,7 +221,10 @@ status-probe cycles; the next poll is based on page state rather than a fixed
 long timeout. If the agent times out before returning monitor state, the worker
 discovers the active Xiaoyunque `thread_id` through Chrome CDP and resumes from
 that page. LazyEdit import/process and public publish are separate current
-request permissions. It returns
+request permissions. For generated-video tasks, MP4 delivery is strict: the file
+is sent before the completion text, successful sends are recorded in the task
+ledger, and file-send failure keeps the task retryable instead of marking it
+done by moving it to `send_deferred_artifact` or `send_deferred_locked`. It returns
 plain text or JSON:
 
 ```json
