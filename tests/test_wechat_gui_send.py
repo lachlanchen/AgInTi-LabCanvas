@@ -14,6 +14,9 @@ def load_wechat_gui_send():
     spec = importlib.util.spec_from_file_location("wechat_gui_send_for_tests", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    scripts_dir = str(path.parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -48,6 +51,22 @@ class WeChatGuiSendTests(unittest.TestCase):
         ])
         self.assertIn(("fallback_click_2", (240, 335)), candidates)
         self.assertIn(("fallback_click_3", (165, 170)), candidates)
+
+    def test_explicit_click_candidates_try_fallback_before_derived_points(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="EchoMind",
+            query="EchoMind",
+            expected_title="EchoMind",
+            result_click=(165, 100),
+            fallback_clicks=((165, 170),),
+        )
+
+        candidates = module.target_explicit_click_candidates(target)
+
+        self.assertEqual(candidates[0], ("result_click", (165, 100)))
+        self.assertEqual(candidates[1], ("fallback_click_1", (165, 170)))
+        self.assertIn(("result_click_row_center", (165, 74)), candidates[2:])
 
     def test_title_guard_does_not_accept_full_page_left_list_match(self):
         module = load_wechat_gui_send()

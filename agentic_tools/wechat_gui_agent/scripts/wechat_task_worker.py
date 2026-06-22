@@ -611,6 +611,11 @@ def send_errors_indicate_gui_timeout(errors: list[str]) -> bool:
     return "wechat_send_timeout" in text or "timed out after" in text
 
 
+def send_errors_indicate_wechat_entry_required(errors: list[str]) -> bool:
+    text = "\n".join(str(error) for error in errors).lower()
+    return "wechat_entry_required" in text or "not in the main chat ui" in text
+
+
 def send_errors_indicate_blank_title_guard(errors: list[str]) -> bool:
     text = "\n".join(str(error) for error in errors).lower()
     return "opened chat title guard failed" in text and "ocr=''" in text
@@ -621,6 +626,7 @@ def send_errors_indicate_deferable(errors: list[str]) -> bool:
         send_errors_indicate_wechat_locked(errors)
         or send_errors_indicate_gui_busy(errors)
         or send_errors_indicate_gui_timeout(errors)
+        or send_errors_indicate_wechat_entry_required(errors)
         or send_errors_indicate_blank_title_guard(errors)
     )
 
@@ -630,6 +636,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
         return "gui_send_busy"
     if send_errors_indicate_gui_timeout(errors):
         return "gui_send_timeout"
+    if send_errors_indicate_wechat_entry_required(errors):
+        return "wechat_entry_required"
     if send_errors_indicate_blank_title_guard(errors):
         return "title_guard_blank"
     return "wechat_locked"
@@ -968,6 +976,26 @@ def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
         if not last:
             return True
         return (now - last).total_seconds() >= backoff
+    if reason == "gui_send_timeout":
+        if gui_send_lock_busy():
+            return False
+        backoff = int(os.environ.get("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS", "15"))
+        if backoff <= 0:
+            return True
+        last = parse_iso_datetime(str(task.get("last_send_attempt_at") or task.get("resent_at") or task.get("completed_at") or ""))
+        if not last:
+            return True
+        return (now - last).total_seconds() >= backoff
+    if reason == "wechat_entry_required":
+        if gui_send_lock_busy():
+            return False
+        backoff = int(os.environ.get("WECHAT_WORKER_ENTRY_SEND_BACKOFF_SECONDS", "15"))
+        if backoff <= 0:
+            return True
+        last = parse_iso_datetime(str(task.get("last_send_attempt_at") or task.get("resent_at") or task.get("completed_at") or ""))
+        if not last:
+            return True
+        return (now - last).total_seconds() >= backoff
     if reason == "title_guard_blank":
         backoff = int(os.environ.get("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS", "20"))
         if backoff <= 0:
@@ -1010,7 +1038,7 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
 
 def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
     reason = str(task.get("send_deferred_reason") or "")
-    if reason not in {"gui_send_busy", "gui_send_timeout", "title_guard_blank"}:
+    if reason not in {"gui_send_busy", "gui_send_timeout", "wechat_entry_required", "title_guard_blank"}:
         return False
     max_retries = int(os.environ.get("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES", "5"))
     if max_retries < 0:

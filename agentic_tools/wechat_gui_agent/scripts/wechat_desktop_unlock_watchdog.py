@@ -66,6 +66,19 @@ def watchdog_once(args: argparse.Namespace) -> dict[str, Any]:
         "desktop": lock_state,
         "action": "noop",
     }
+    if lock_state.get("status") == "entry_required":
+        if args.dry_run:
+            payload["action"] = "would_enter_weixin"
+            return payload
+        keep_android_awake(args.adb, args.serial)
+        entered = enter_weixin_on_desktop(args.display, lock_state)
+        time.sleep(3.0)
+        after = desktop_lock_state(args.display, args.output_dir)
+        payload.update({"action": "enter_weixin", "entry": entered, "after": after})
+        payload["ok"] = bool(entered.get("ok")) and after.get("status") not in {"locked", "entry_required", "no_window"}
+        if payload["ok"] and args.flush_deferred:
+            payload["flush_deferred"] = flush_deferred_once()
+        return payload
     if lock_state.get("status") != "locked":
         keep_android_awake(args.adb, args.serial)
         return payload
@@ -105,6 +118,15 @@ def desktop_lock_state(display: str, output_dir: Path) -> dict[str, Any]:
         lock = detect_wechat_locked(env, window, shot, crop)
     except Exception as exc:
         return {"ok": False, "status": "detect_failed", "error": str(exc)[:500]}
+    if window.width < 500 or window.height < 500:
+        return {
+            "ok": True,
+            "status": "entry_required",
+            "window": {"x": window.x, "y": window.y, "width": window.width, "height": window.height},
+            "screenshot": str(shot),
+            "lock_crop": str(crop),
+            "ocr_text": "",
+        }
     status = "locked" if lock.get("locked") else "unlocked"
     evidence_shot = shot
     evidence_crop = Path(str(lock.get("lock_crop") or crop))
@@ -124,6 +146,26 @@ def desktop_lock_state(display: str, output_dir: Path) -> dict[str, Any]:
         "lock_crop": str(evidence_crop),
         "ocr_text": ocr_text,
     }
+
+
+def enter_weixin_on_desktop(display: str, lock_state: dict[str, Any]) -> dict[str, Any]:
+    window = lock_state.get("window") if isinstance(lock_state.get("window"), dict) else {}
+    try:
+        x = int(window.get("x", 0))
+        y = int(window.get("y", 0))
+        width = int(window.get("width", 0))
+        height = int(window.get("height", 0))
+    except (TypeError, ValueError):
+        return {"ok": False, "reason": "invalid_window_geometry", "window": window}
+    if width <= 0 or height <= 0:
+        return {"ok": False, "reason": "invalid_window_geometry", "window": window}
+    env = os.environ.copy()
+    env["DISPLAY"] = display
+    env["XAUTHORITY"] = env.get("XAUTHORITY", "")
+    click_x = x + width // 2
+    click_y = y + int(height * 0.76)
+    run(["xdotool", "mousemove", str(click_x), str(click_y), "click", "1"], env=env, check=False)
+    return {"ok": True, "click": [click_x, click_y], "window": window}
 
 
 def apply_desktop_keep_awake(display: str) -> None:

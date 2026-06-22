@@ -57,7 +57,7 @@ workflow from scratch.
   file/video is being delivered, enqueue them as `send_deferred_locked`
   worker-outbox tasks instead of dropping them. Preserve
   `send_deferred_reason` as `wechat_locked`, `gui_send_busy`,
-  `gui_send_timeout`, or `title_guard_blank`.
+  `gui_send_timeout`, `wechat_entry_required`, or `title_guard_blank`.
 - Direct monitor state writes must be atomic. A restart or concurrent stop
   cannot leave a half-written JSON state file.
 - Login, CAPTCHA, QR, payment, lock screen, and irreversible decisions wait for
@@ -119,7 +119,7 @@ workflow from scratch.
 | `in_progress` | Worker owns the task. | Complete, requeue, or fail with evidence. |
 | `generation_waiting` | Xiaoyunque/browser job is running or queued. | Deterministic CDP/status probe after `next_poll_at`. |
 | `send_deferred_artifact` | Result exists but required file was not sent. | Fix GUI/file send and flush deferred outbox. |
-| `send_deferred_locked` | WeChat is locked, or the serialized GUI send lane was busy/timed out. | Unlock or wait for the active send, then flush deferred outbox. `gui_send_busy` uses a short retry once the lock is free. |
+| `send_deferred_locked` | WeChat is locked, at the Enter Weixin gate, or the serialized GUI send lane was busy/timed out. | Unlock, enter the client, or wait for the active send, then flush deferred outbox. `gui_send_busy`, `gui_send_timeout`, and `wechat_entry_required` use short retries once the lane is free. |
 | `generation_poststage_pending` | MP4 was delivered; LazyEdit/public publish is queued or still running. | Worker claims poststage after `next_poststage_at`. |
 | `waiting_confirmation` | Human approval required. | Approve/reject through CLI or web panel. |
 | `send_failed` | Non-deferred send failure. | Inspect evidence, fix target/title guard, resend stored result. |
@@ -221,6 +221,9 @@ WeChat locked:
   an owner-authorized Android phone is attached;
 - the watchdog only uses the normal mobile WeChat `桌面微信已锁定` / `已登录设备`
   controls and refuses to handle phone credential prompts;
+- if the Linux client restarts to the small `Enter Weixin` gate, the watchdog
+  clicks that normal desktop entry button and then flushes one deferred outbox
+  item;
 - after unlock, run `wechat_task_worker.py --flush-deferred` or let the
   watchdog/worker loop flush automatically.
 
@@ -234,6 +237,8 @@ Blank title guard:
   `send_deferred_reason=title_guard_blank` and are retried with a short backoff.
 - Nonblank wrong titles remain fail-closed because they may indicate cross-chat
   risk.
+- If a stale click point opens a wrong popup, `wechat_gui_send.py` closes that
+  non-target WeChat window before trying the next configured fallback click.
 - Transient GUI send retries are bounded by
   `WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES` so one broken outbox item cannot
   monopolize the worker.

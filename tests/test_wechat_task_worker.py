@@ -1564,6 +1564,16 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(worker.send_deferred_reason_from_errors(blank), "title_guard_blank")
         self.assertFalse(worker.send_errors_indicate_deferable(wrong))
 
+    def test_wechat_entry_required_error_is_retryable(self) -> None:
+        worker = load_worker()
+        errors = [
+            "attempt 1: send command failed with exit 1; "
+            "stderr=WECHAT_ENTRY_REQUIRED: WeChat is visible but not in the main chat UI"
+        ]
+
+        self.assertTrue(worker.send_errors_indicate_deferable(errors))
+        self.assertEqual(worker.send_deferred_reason_from_errors(errors), "wechat_entry_required")
+
     def test_claim_next_deferred_send_repairs_retryable_send_failed(self) -> None:
         worker = load_worker()
         original_backoff = worker.os.environ.get("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS")
@@ -1733,6 +1743,111 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 worker.os.environ["WECHAT_WORKER_BUSY_SEND_BACKOFF_SECONDS"] = original_backoff
 
         self.assertIsNone(claimed)
+
+    def test_claim_next_deferred_send_retries_gui_timeout_when_lane_free(self) -> None:
+        worker = load_worker()
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS")
+        original_lock_busy = worker.gui_send_lock_busy
+        try:
+            worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = "0"
+            worker.gui_send_lock_busy = lambda: False
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-gui-timeout",
+                            "chat": "EchoMind",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "send_deferred_reason": "gui_send_timeout",
+                            "last_send_attempt_at": "2026-01-01T00:00:00",
+                            "result": {"message": "ok", "confirmation": "", "files": []},
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = original_backoff
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+        self.assertEqual(claimed["send_retry_count"], 1)
+
+    def test_claim_next_deferred_send_waits_for_timeout_when_gui_lane_busy(self) -> None:
+        worker = load_worker()
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS")
+        original_lock_busy = worker.gui_send_lock_busy
+        try:
+            worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = "0"
+            worker.gui_send_lock_busy = lambda: True
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-gui-timeout",
+                            "chat": "EchoMind",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "send_deferred_reason": "gui_send_timeout",
+                            "last_send_attempt_at": "2026-01-01T00:00:00",
+                            "result": {"message": "ok", "confirmation": "", "files": []},
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = original_backoff
+
+        self.assertIsNone(claimed)
+
+    def test_claim_next_deferred_send_retries_entry_required_when_lane_free(self) -> None:
+        worker = load_worker()
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_ENTRY_SEND_BACKOFF_SECONDS")
+        original_lock_busy = worker.gui_send_lock_busy
+        try:
+            worker.os.environ["WECHAT_WORKER_ENTRY_SEND_BACKOFF_SECONDS"] = "0"
+            worker.gui_send_lock_busy = lambda: False
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-entry-required",
+                            "chat": "EchoMind",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "send_deferred_reason": "wechat_entry_required",
+                            "last_send_attempt_at": "2026-01-01T00:00:00",
+                            "result": {"message": "ok", "confirmation": "", "files": []},
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_ENTRY_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_ENTRY_SEND_BACKOFF_SECONDS"] = original_backoff
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+        self.assertEqual(claimed["send_retry_count"], 1)
 
     def test_claim_next_deferred_send_handles_required_artifact_delivery(self) -> None:
         worker = load_worker()

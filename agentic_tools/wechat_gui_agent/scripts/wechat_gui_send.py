@@ -96,7 +96,10 @@ def main() -> int:
     close_secondary_wechat_windows(env, window)
     if window.width < 500 or window.height < 500:
         screenshot(env, args.output_dir / "login_or_small_window.png")
-        raise SystemExit("WeChat is visible but not in the main chat UI; approve login on phone first.")
+        raise SystemExit(
+            "WECHAT_ENTRY_REQUIRED: WeChat is visible but not in the main chat UI; "
+            "click Enter Weixin or approve login on phone first."
+        )
 
     PRIVATE.mkdir(parents=True, exist_ok=True)
     lock_path = PRIVATE / "wechat_gui_send.lock"
@@ -394,6 +397,8 @@ def open_target(
         attempts.append(guard)
         if guard["ok"]:
             return guard
+        close_non_target_wechat_windows(env, window, target)
+        focus(env, window)
 
     if not (allow_search and target.allow_search):
         guard = attempts[-1] if attempts else verify("search_disabled_current")
@@ -434,13 +439,13 @@ def target_explicit_click_candidates(target: TargetSpec) -> list[tuple[str, tupl
         seen.add(point)
 
     add("result_click", target.result_click)
+    for index, point in enumerate(target.fallback_clicks, start=1):
+        add(f"fallback_click_{index}", point)
     if target.result_click:
         x, y = target.result_click
         add("result_click_row_center", (x, max(70, y - 26)))
         add("result_click_title_offset", (x + 35, max(70, y - 26)))
         add("result_click_preview_offset", (x + 35, y))
-    for index, point in enumerate(target.fallback_clicks, start=1):
-        add(f"fallback_click_{index}", point)
     return candidates
 
 
