@@ -16,6 +16,11 @@ import wechat_direct_chatops as direct_chatops  # noqa: E402
 
 
 class WeChatDirectChatopsPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.mirror_db = str(Path(self._tmpdir.name) / "wechat_mirror.sqlite")
+
     def base_config(self) -> dict[str, object]:
         return {
             "chat_name": "EchoMind",
@@ -26,6 +31,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             "trigger_local_types": [1],
             "analysis_mode": "echomind_language",
             "silent_danger_enabled": True,
+            "mirror_db": self.mirror_db,
         }
 
     def row(
