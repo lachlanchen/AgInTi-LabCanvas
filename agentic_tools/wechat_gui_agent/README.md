@@ -100,6 +100,13 @@ For low-latency chatops, the supervisor defaults to:
 - `WECHAT_DECRYPT_REFRESH_INTERVAL=1` for the shared decrypted cache refresh.
 - `gpt-5.5` with `medium` reasoning and a 60 second timeout for the fast agent.
 
+If commands are sent from the same logged-in account on mobile, set
+`allow_human_self_messages=true` and `self_message_policy=human_commands` while
+keeping `ignore_self_messages=true`, `respond_to_self=false`,
+`self_messages_text_only=true`, and `ignore_probable_bot_self_replies=true`.
+This allows human self text commands but blocks bot replies and self-sent files
+from recursively triggering new tasks.
+
 To monitor multiple groups, create one ignored direct config per group and set
 `WECHAT_DIRECT_CONFIGS` in `.private/wechat_supervisor.local.env`:
 

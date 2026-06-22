@@ -117,6 +117,10 @@ def load_config(path: Path) -> dict[str, Any]:
         "respond_to_all": False,
         "respond_to_self": False,
         "ignore_self_messages": True,
+        "allow_human_self_messages": False,
+        "self_message_policy": "ignore",
+        "self_messages_text_only": True,
+        "ignore_probable_bot_self_replies": True,
         "bot_reply_memory_limit": 20,
         "trigger_local_types": [1],
         "attachment_trigger_local_types": [3, 34, 42, 43, 47, 48, 49],
@@ -518,7 +522,7 @@ def latest_inbound_row(config: dict[str, Any], rows: list[dict[str, Any]]) -> di
 def is_inbound_user_row(config: dict[str, Any], row: dict[str, Any]) -> bool:
     self_wxid = str(config.get("self_wxid") or "")
     if self_wxid and row.get("sender") == self_wxid:
-        return False
+        return allow_human_self_messages(config) and not self_message_skip_reason(config, {}, row)
     return True
 
 
@@ -555,7 +559,9 @@ def latest_force_replay_rows(config: dict[str, Any], rows: list[dict[str, Any]],
     self_wxid = str(config.get("self_wxid") or "")
     candidates = []
     for row in rows:
-        if self_wxid and row.get("sender") == self_wxid:
+        if self_wxid and row.get("sender") == self_wxid and not allow_human_self_messages(config):
+            continue
+        if self_wxid and row.get("sender") == self_wxid and self_message_skip_reason(config, {}, row):
             continue
         if is_dangerous_message(config, visible_message_text(row)):
             continue
@@ -720,12 +726,9 @@ def should_respond(config: dict[str, Any], state: dict[str, Any], row: dict[str,
 def response_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dict[str, Any]) -> str:
     self_wxid = str(config.get("self_wxid") or "")
     if self_wxid and row["sender"] == self_wxid:
-        if bool(config.get("ignore_self_messages", True)):
-            return "self_ignored"
-        if is_remembered_sent_reply(state, row["content"]):
-            return "self_loop_guard"
-        if not bool(config.get("respond_to_self", False)):
-            return "self_disabled"
+        reason = self_message_skip_reason(config, state, row)
+        if reason:
+            return reason
     allowed_local_types = {int(item) for item in config.get("trigger_local_types", [1])}
     base_type, _ = split_message_type(row.get("local_type"))
     attachment_trigger = is_attachment_trigger(config, row)
@@ -748,6 +751,70 @@ def response_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dic
             return "" if organizer_response_candidate(config, text) else "no_trigger"
         return "" if meaningful_request_text(text, config.get("trigger_prefixes", [])) else "no_trigger"
     return "" if any(prefix in text for prefix in config.get("trigger_prefixes", [])) else "no_trigger"
+
+
+def self_message_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dict[str, Any]) -> str:
+    if is_remembered_sent_reply(state, row["content"]):
+        return "self_loop_guard"
+    if looks_like_bot_self_reply(config, visible_message_text(row)):
+        return "self_bot_reply"
+    if allow_human_self_messages(config):
+        if bool(config.get("self_messages_text_only", True)):
+            base_type, _ = split_message_type(row.get("local_type"))
+            if base_type != 1 and not is_quote_reply_message(row):
+                return "self_non_text"
+        return ""
+    if bool(config.get("ignore_self_messages", True)):
+        return "self_ignored"
+    if not bool(config.get("respond_to_self", False)):
+        return "self_disabled"
+    return ""
+
+
+def allow_human_self_messages(config: dict[str, Any]) -> bool:
+    policy = str(config.get("self_message_policy") or "").strip().lower()
+    return bool(config.get("allow_human_self_messages", False)) or policy in {
+        "allow",
+        "commands",
+        "human_commands",
+        "human-self-commands",
+    }
+
+
+def looks_like_bot_self_reply(config: dict[str, Any], text: str) -> bool:
+    if not bool(config.get("ignore_probable_bot_self_replies", True)):
+        return False
+    collapsed = collapse_text(text)
+    if not collapsed:
+        return False
+    lowered = collapsed.lower()
+    configured_prefixes = [
+        str(config.get("immediate_ack_text") or ""),
+        str(config.get("attachment_ack_text") or ""),
+    ]
+    organizer = config.get("organizer") if isinstance(config.get("organizer"), dict) else {}
+    configured_prefixes.append(str(organizer.get("ack_saved_text") or ""))
+    bot_prefixes = [
+        "收到，我先处理",
+        "收到，我来处理",
+        "已保存",
+        "已生成",
+        "已准备",
+        "准备好了",
+        "我已打开人工辅助浏览器",
+        "我没有发布这个视频",
+        "我已拦截这个结果",
+        "已继续完成生成视频",
+        "已自动完成 exact 视频保存",
+        "视频已严格按 exact source 保存",
+        "可以，附上刚生成的",
+        "已按当前路由",
+    ]
+    for prefix in [*configured_prefixes, *bot_prefixes]:
+        normalized = collapse_text(prefix).lower()
+        if normalized and lowered.startswith(normalized):
+            return True
+    return False
 
 
 def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
@@ -2592,7 +2659,7 @@ def format_prompt_context(
         elif item.get("local_id") in focus_local_ids:
             role = "FOCUS"
         elif self_wxid and sender == self_wxid:
-            role = "BOT_SELF"
+            role = "SELF_USER" if allow_human_self_messages(config) and not looks_like_bot_self_reply(config, visible_message_text(item)) else "BOT_SELF"
         else:
             role = "CONTEXT"
         lines.append(

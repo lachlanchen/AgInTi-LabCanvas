@@ -83,6 +83,38 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         state = {"sent_reply_texts": ["你好\nPinyin: nǐ hǎo"]}
         self.assertFalse(direct_chatops.should_respond(config, state, self.row("你好\nPinyin: nǐ hǎo", sender="self")))
 
+    def test_human_self_commands_can_be_enabled_without_attachment_loops(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+
+        self.assertTrue(direct_chatops.should_respond(config, {}, self.row("could you summarize this", sender="self")))
+        self.assertEqual(
+            direct_chatops.response_skip_reason(config, {}, self.row("<msg><img md5=\"abc\" /></msg>", sender="self", local_type=3)),
+            "self_non_text",
+        )
+        self.assertEqual(
+            direct_chatops.response_skip_reason(config, {}, self.row("收到，我先处理，完成后把结果发回来。", sender="self")),
+            "self_bot_reply",
+        )
+
+    def test_human_self_context_is_not_labeled_bot_self_when_enabled(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        context = direct_chatops.format_prompt_context(
+            config,
+            self.row("latest", local_id=3),
+            [
+                self.row("self context", sender="self", local_id=1),
+                self.row("收到，我先处理，完成后把结果发回来。", sender="self", local_id=2),
+                self.row("latest", local_id=3),
+            ],
+        )
+
+        self.assertIn("SELF_USER local_id=1", context)
+        self.assertIn("BOT_SELF local_id=2", context)
+
     def test_system_rows_do_not_trigger(self) -> None:
         self.assertFalse(direct_chatops.should_respond(self.base_config(), {}, self.row("你修改群名为 EchoMind", local_type=10000)))
 

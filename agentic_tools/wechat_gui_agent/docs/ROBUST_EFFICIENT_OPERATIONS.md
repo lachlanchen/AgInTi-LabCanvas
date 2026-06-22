@@ -32,6 +32,12 @@ long waits do not hold a model call open.
 - Never mix context, media, files, Codex sessions, or generated artifacts across
   chats.
 - Every live send must pass the send target and title guard.
+- For the common phone-to-desktop workflow, enable
+  `allow_human_self_messages=true` with `self_message_policy=human_commands`.
+  Keep `ignore_self_messages=true`, `respond_to_self=false`,
+  `self_messages_text_only=true`, and `ignore_probable_bot_self_replies=true`.
+  This lets same-account mobile text commands control the system while blocking
+  the bot's own acknowledgements and returned files from looping.
 - Old history can explain context, but cannot authorize LazyEdit, public
   posting, purchases, deletion, or other irreversible actions.
 - Source media must match the same chat and exact source or quoted message. If
@@ -121,6 +127,10 @@ Expected signs:
 
 - all monitored configs have distinct `state_path`;
 - `ignore_self_messages` is true in production;
+- `allow_human_self_messages` is true when the account owner sends commands from
+  the same logged-in mobile account;
+- `self_messages_text_only` and `ignore_probable_bot_self_replies` are true to
+  prevent self-file and bot-reply loops;
 - send targets have title guards;
 - direct monitors are caught up or intentionally stale because no new DB rows
   exist;
