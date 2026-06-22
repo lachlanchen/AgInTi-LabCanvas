@@ -212,6 +212,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         return False
     log_worker_event("claimed", task)
     task["queue_path"] = str(queue)
+    ensure_runtime_instruction_contract(task)
     try:
         result_text = run_worker_codex(task)
         result = parse_worker_result(result_text)
@@ -1378,9 +1379,16 @@ Task:
 
 
 def worker_execution_contract(task: dict[str, Any]) -> dict[str, Any]:
+    instruction = worker_instruction_contract(task)
     contract = task.get("execution_contract") if isinstance(task.get("execution_contract"), dict) else {}
     if contract:
-        return contract
+        merged = dict(contract)
+        merged.setdefault("instruction_contract", instruction)
+        return merged
+    return default_worker_execution_contract(task, instruction)
+
+
+def default_worker_execution_contract(task: dict[str, Any], instruction: dict[str, Any]) -> dict[str, Any]:
     return {
         "wechat_role": "message_transport_only",
         "monitor_role": "receive_coalesce_ack_enqueue",
@@ -1393,13 +1401,13 @@ def worker_execution_contract(task: dict[str, Any]) -> dict[str, Any]:
             "role": "worker",
             "reuse": True,
         },
-        "instruction_contract": worker_instruction_contract(task),
+        "instruction_contract": instruction,
     }
 
 
 def worker_instruction_contract(task: dict[str, Any]) -> dict[str, Any]:
     contract = task.get("instruction_contract") if isinstance(task.get("instruction_contract"), dict) else {}
-    if contract:
+    if instruction_contract_complete(contract):
         return contract
     route = task_route_decision(task)
     return {
@@ -1414,6 +1422,27 @@ def worker_instruction_contract(task: dict[str, Any]) -> dict[str, Any]:
         "route_kind": str(route.get("route_kind") or "other_worker"),
         "chat": str(task.get("chat") or "wechat-chat"),
     }
+
+
+def instruction_contract_complete(contract: dict[str, Any]) -> bool:
+    return bool(
+        contract.get("current_request_authoritative")
+        and contract.get("preserve_safe_explicit_instructions")
+        and contract.get("no_keyword_shrink")
+        and contract.get("use_agent_reasoning")
+    )
+
+
+def ensure_runtime_instruction_contract(task: dict[str, Any]) -> None:
+    instruction = worker_instruction_contract(task)
+    task["instruction_contract"] = instruction
+    execution = task.get("execution_contract") if isinstance(task.get("execution_contract"), dict) else {}
+    if execution:
+        execution = dict(execution)
+        execution["instruction_contract"] = instruction
+        task["execution_contract"] = execution
+    else:
+        task["execution_contract"] = default_worker_execution_contract(task, instruction)
 
 
 def worker_artifact_dir(task: dict[str, Any]) -> Path:

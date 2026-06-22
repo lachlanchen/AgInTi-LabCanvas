@@ -345,6 +345,24 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("Follow every safe, explicit instruction", str(calls[0]["prompt"]))
         self.assertIn("do not collapse the request to a smaller hardcoded action", str(calls[0]["prompt"]))
 
+    def test_worker_backfills_instruction_contract_for_legacy_task(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "legacy-task",
+            "chat": "懒人科研",
+            "request": "Current coalesced request:\nmake a CAD render and send it back",
+            "route_decision": {"route_kind": "cad_pcb_labcanvas"},
+            "execution_contract": {"codex_exec_mode": "resume_per_chat_worker_session"},
+        }
+
+        worker.ensure_runtime_instruction_contract(task)
+
+        self.assertTrue(task["instruction_contract"]["current_request_authoritative"])
+        self.assertTrue(task["instruction_contract"]["preserve_safe_explicit_instructions"])
+        self.assertTrue(task["instruction_contract"]["no_keyword_shrink"])
+        self.assertEqual(task["instruction_contract"]["route_kind"], "cad_pcb_labcanvas")
+        self.assertEqual(task["execution_contract"]["instruction_contract"], task["instruction_contract"])
+
     def test_worker_writes_routine_contract_before_codex(self) -> None:
         worker = load_worker()
         calls: list[dict[str, object]] = []

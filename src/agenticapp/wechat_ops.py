@@ -424,6 +424,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "route and worker Codex exec calls resume exact per-chat sessions by role",
             "route and worker prompts preserve every safe explicit current instruction instead of shrinking to keyword matches",
             "queued worker tasks persist a machine-readable instruction contract",
+            "legacy queued worker tasks backfill the instruction contract before execution",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -499,6 +500,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "route_agent_reuses_session",
             "test": direct_prefix + "test_agent_first_route_can_enqueue_without_keyword_prefilter",
+        },
+        {
+            "id": "legacy_task_instruction_contract_backfill",
+            "test": worker_prefix + "test_worker_backfills_instruction_contract_for_legacy_task",
         },
         {
             "id": "supervisor_uses_guarded_worker_entrypoint",
