@@ -17,7 +17,7 @@ import tempfile
 import time
 from typing import Any
 
-from wechat_gui_send import find_wechat_window, focus, paste_text, run as run_gui
+from wechat_gui_send import detect_wechat_locked, find_wechat_window, focus, paste_text, run as run_gui
 from wechat_mirror import DEFAULT_DB, record_event
 
 
@@ -115,12 +115,12 @@ def main() -> int:
             action="send_file",
             direction="outbound",
             message=str(args.file.resolve()),
-            status="sent-file-clicked",
+            status="sent-file-submitted",
             db_path=config.db_path,
             screenshot_path=str(evidence),
             metadata={"source": "wechat_chatops_bridge", "path": str(args.file.resolve())},
         )
-        print(json.dumps({"status": "sent-file-clicked", "screenshot": str(evidence)}, ensure_ascii=False, indent=2))
+        print(json.dumps({"status": "sent-file-submitted", "screenshot": str(evidence)}, ensure_ascii=False, indent=2))
         return 0
 
     if not args.once and not args.loop:
@@ -394,6 +394,9 @@ def send_file_current_chat(env: dict[str, str], window: Any, file_path: Path, ou
     if not path.exists():
         raise SystemExit(f"File does not exist: {path}")
     focus(env, window)
+    preflight = output_dir / f"{prefix}-preflight.png"
+    run_gui(["import", "-window", "root", str(preflight)], env=env, check=False)
+    raise_if_wechat_locked(env, window, preflight, output_dir / f"{prefix}-preflight-lock.png", "before file selection")
     # Native WeChat Linux exposes a folder icon in the composer toolbar. This
     # opens a GTK/Qt file chooser where Ctrl+L accepts an absolute path.
     run_gui(
@@ -416,7 +419,19 @@ def send_file_current_chat(env: dict[str, str], window: Any, file_path: Path, ou
     time.sleep(1.2)
     sent = output_dir / f"{prefix}-sent.png"
     run_gui(["import", "-window", "root", str(sent)], env=env, check=False)
+    raise_if_wechat_locked(env, window, sent, output_dir / f"{prefix}-sent-lock.png", "after file selection")
     return sent
+
+
+def raise_if_wechat_locked(env: dict[str, str], window: Any, screenshot_path: Path, crop_path: Path, stage: str) -> None:
+    locked = detect_wechat_locked(env, window, screenshot_path, crop_path)
+    if not locked.get("locked"):
+        return
+    ocr_text = str(locked.get("ocr_text") or "").replace("\n", " ")[:300]
+    raise SystemExit(
+        "WECHAT_LOCKED: file send blocked "
+        f"{stage}; screenshot={screenshot_path}; lock_crop={locked.get('lock_crop')}; ocr={ocr_text}"
+    )
 
 
 def preprocess_chat_crop(screenshot: Path, output_path: Path, window: Any) -> Path:

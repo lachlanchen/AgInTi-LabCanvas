@@ -138,6 +138,16 @@ run:
 labcanvas wechat worker repair-artifacts
 ```
 
+File-send success must mean WeChat accepted the attachment, not merely that the
+automation clicked the file-picker button. The visible-chat bridge captures a
+preflight screenshot and a post-send screenshot, runs the same locked/entry
+surface detector used by `wechat_gui_send.py`, and exits with `WECHAT_LOCKED`
+instead of recording success if the client surface is not usable. If desktop
+delivery is unreliable but an owner-authorized Android device is attached, use
+the Android share-sheet fallback, then verify the phone chat list or mirror DB
+shows the target chat with `[视频]`, `[图片]`, or `[文件]` at the new timestamp
+before treating the artifact as delivered.
+
 ## Generated Video Contract
 
 For `route_kind=generate_video`, the task artifact directory must contain a

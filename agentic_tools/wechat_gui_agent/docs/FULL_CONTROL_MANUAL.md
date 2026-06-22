@@ -254,6 +254,13 @@ task done if the follow-up text or confirmation send fails. Keep
 busy, or timeout. The next flush should skip already sent files and retry only
 the missing user-facing text/confirmation.
 
+Do not treat a file-picker click as artifact delivery. The visible-chat bridge
+must preflight and post-check the WeChat surface and emit `WECHAT_LOCKED` or a
+send failure if the client did not accept the attachment. If delivery falls
+back to an owner-authorized Android phone, verify the target chat list or
+mirror row shows a new `[视频]`, `[图片]`, or `[文件]` entry before closing the
+task.
+
 LazyEdit import/process and public publish are separate current
 request permissions encoded as `stage_permissions` in the route contract. Old
 history may provide story or subtitle context, but it cannot authorize LazyEdit
