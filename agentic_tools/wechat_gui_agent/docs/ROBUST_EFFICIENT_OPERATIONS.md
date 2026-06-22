@@ -178,6 +178,8 @@ Expected signs:
 - send targets have title guards;
 - direct monitors are caught up or intentionally stale because no new DB rows
   exist;
+- `chat-sync` is running when multiple groups must respond even if the Linux
+  client has not recently opened those conversations;
 - worker loop is alive;
 - no unexpected `pending`, stale `in_progress`, or wrong-chat send errors.
 
@@ -194,6 +196,10 @@ tail -n 80 output/wechat_gui_agent/$(date +%F)/supervisor-worker.log
 If the monitor is caught up and no task exists, the message was not actionable
 or was filtered. If a task exists, follow its state instead of sending a manual
 duplicate.
+If the source group has no fresh DB rows even though the user sent a message,
+run or check `wechat_chat_sync_loop.py`: it dry-opens the configured chat with
+the normal title guard and no send action, then the direct monitor can process
+newly materialized rows.
 For live smoke tests, simple messages such as `ping`, `test`, `best`, `在吗`, or
 `测试` are actionable in organizer/link-inbox chats and should return a short
 health acknowledgement or become a deferred outbox task if WeChat is locked.
@@ -217,6 +223,10 @@ WeChat locked:
 
 - do not bypass the lock, decrypt traffic, or forge protocol requests;
 - backend work may continue and results become `send_deferred_locked`;
+- if a required MP4/PDF/image was already sent but the final text fails, keep
+  `sent_file_paths`, record `post_artifact_send_errors`, and leave the task
+  `send_deferred_locked` so the next flush sends the missing text instead of
+  falsely closing the task;
 - keep `wechat_desktop_unlock_watchdog.py --loop --flush-deferred` running when
   an owner-authorized Android phone is attached;
 - the watchdog only uses the normal mobile WeChat `桌面微信已锁定` / `已登录设备`

@@ -110,6 +110,12 @@ run with `WECHAT_DIRECT_POLL_SECONDS=0.8`,
 `WECHAT_DECRYPT_REFRESH_INTERVAL=1`; each group config should use `gpt-5.5`
 with medium reasoning for immediate replies and leave heavier work to the worker
 queue.
+The same supervisor also runs `wechat_chat_sync_loop.py` by default. That loop
+uses the guarded GUI opener in dry-run mode to visit configured chats without
+sending anything. This is necessary on Linux WeChat when inactive groups do not
+materialize new message rows until the desktop client opens that conversation.
+Set `WECHAT_CHAT_SYNC_PRIORITY` in private supervisor env to visit high-value
+groups first.
 Private send targets should include `expected_title`; the GUI sender OCR-checks
 the opened chat header before composing and fails closed if the wrong chat is
 visible. Add `fallback_clicks` when WeChat search results appear at different

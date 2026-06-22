@@ -313,9 +313,12 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
         task["send_errors"] = errors
         task["last_send_attempt_at"] = datetime.now().isoformat(timespec="seconds")
         if result_requires_file_delivery(task, result) and required_file_delivery_complete(task, result):
-            task["status"] = "waiting_confirmation" if result.get("confirmation") else "done"
             task["post_artifact_send_errors"] = errors
-            task.pop("send_deferred_reason", None)
+            if send_errors_indicate_deferable(errors):
+                task["status"] = SEND_DEFERRED_LOCKED_STATUS
+                task["send_deferred_reason"] = send_deferred_reason_from_errors(errors)
+            else:
+                task["status"] = "send_failed"
             return
         if send_errors_indicate_deferable(errors):
             task["status"] = SEND_DEFERRED_LOCKED_STATUS

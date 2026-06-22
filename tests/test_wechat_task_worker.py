@@ -1188,7 +1188,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertNotIn("sent_file_paths", task)
         self.assertIn("file_send_errors", task)
 
-    def test_mp4_sent_then_text_lock_closes_artifact_delivery(self) -> None:
+    def test_mp4_sent_then_text_lock_stays_deferred(self) -> None:
         worker = load_worker()
         original_message = worker.send_message
         original_file = worker.send_file
@@ -1227,10 +1227,10 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = original_delay
 
         self.assertTrue(errors)
-        self.assertEqual(task["status"], "done")
+        self.assertEqual(task["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
         self.assertIn("sent-before-lock.mp4", "\n".join(task["sent_file_paths"]))
         self.assertIn("post_artifact_send_errors", task)
-        self.assertNotIn("send_deferred_reason", task)
+        self.assertEqual(task["send_deferred_reason"], "wechat_locked")
 
     def test_lazyedit_import_is_not_public_publish_intent(self) -> None:
         worker = load_worker()

@@ -62,7 +62,7 @@ tmux sessions:
 
 | Session | Purpose |
 | --- | --- |
-| `labcanvas-wechat` | WeChat desktop, decrypt refresh, one direct monitor per chat, worker, media sync. |
+| `labcanvas-wechat` | WeChat desktop, decrypt refresh, one direct monitor per chat, worker, media sync, and chat materialization sync. |
 | `labcanvas-web-wechat` | LabCanvas web control panel for status and manual actions. |
 
 Within `labcanvas-wechat`, `wechat_supervisor_tmux.sh` creates:
@@ -74,6 +74,7 @@ Within `labcanvas-wechat`, `wechat_supervisor_tmux.sh` creates:
 | `direct-*` | `wechat_direct_chatops.py --loop --send --no-decrypt` | Fast per-chat monitor. |
 | `worker` | `wechat_task_worker.py --loop --send` | Slow backend task executor. |
 | `media-sync` | `wechat_media_sync_loop.sh` | Background media/file cache import. |
+| `chat-sync` | `wechat_chat_sync_loop.py --loop` | Dry-opens configured chats so inactive Linux WeChat conversations materialize fresh DB rows. Use `WECHAT_CHAT_SYNC_PRIORITY` to visit important groups first. |
 
 Use `hold reload-workers` or `stack restart` after code/config changes. These
 keep the WeChat GUI alive and respawn only monitors, worker, media sync, and web
@@ -92,6 +93,7 @@ WeChat, which may require phone confirmation.
 | `wechat_direct_chatops.py` | Direct DB polling, mirror sync, fast route decision, ACK/reply, worker enqueue. |
 | `wechat_routines.py` | Named routine registry and stage contracts for queued worker tasks. |
 | `wechat_task_worker.py` | Queue claim, model effort selection, LabCanvas worker prompt, artifact/file return. |
+| `wechat_chat_sync_loop.py` | No-send GUI opener that cycles direct configs and keeps multi-chat DB ingestion fresh. |
 | `wechat_media_sync.py` | Copy same-chat files/images/videos from WeChat folders into private storage. |
 | `wechat_media_sync_loop.sh` | Repeat `media-sync` for configured chats. |
 | `wechat_autopublish_video.py` | Resolve exact WeChat video rows and copy MP4 to Nutstore AutoPublish. |
@@ -243,7 +245,16 @@ submitted Xiaoyunque job stays as `generation_waiting` and is checked by short
 status-probe cycles; the next poll is based on page state rather than a fixed
 long timeout. If the agent times out before returning monitor state, the worker
 discovers the active Xiaoyunque `thread_id` through Chrome CDP and resumes from
-that page. LazyEdit import/process and public publish are separate current
+the browser state instead of closing the task.
+
+For required artifact delivery, file/video send success is not enough to mark a
+task done if the follow-up text or confirmation send fails. Keep
+`sent_file_paths`, store `post_artifact_send_errors`, and leave the task in
+`send_deferred_locked` when the failure is `WECHAT_LOCKED`, entry-required,
+busy, or timeout. The next flush should skip already sent files and retry only
+the missing user-facing text/confirmation.
+
+LazyEdit import/process and public publish are separate current
 request permissions encoded as `stage_permissions` in the route contract. Old
 history may provide story or subtitle context, but it cannot authorize LazyEdit
 or public posting. For generated-video tasks, MP4 delivery is strict: the file
@@ -398,6 +409,7 @@ Then inspect fresh logs under `output/wechat_gui_agent/YYYY-MM-DD/`.
 | noVNC is blank | Run `labcanvas wechat desktop keep-awake`; check `labcanvas wechat status`. |
 | Login expired | Stop sends and ask the user to approve login in noVNC or on phone. |
 | Wrong search row opens | Add `fallback_clicks` or use a verified `open_click`; keep OCR title guard enabled. |
+| Direct DB is stale for an inactive group | Keep the `chat-sync` supervisor window running. It dry-opens configured chats with `wechat_gui_send.py` without `--send`, which prompts Linux WeChat to materialize new rows for the direct monitors. |
 | Title OCR fails | Prefer native popup title matching; otherwise add stable `expected_title_aliases`, inspect title crop screenshots, and keep the default minimum title wait/retry window. Blank OCR (`OCR=''`) is retryable as `title_guard_blank`; nonblank wrong titles fail closed. Wrong popups are closed before fallback clicks continue. |
 | Backend done but reply failed | Fix the sender/title guard, then run `python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --resend <task-id>` so work is not rerun. |
 | WeChat is locked, at entry, or sender is busy | Do not bypass the lock or run parallel clickers. `WECHAT_LOCKED`, `WECHAT_ENTRY_REQUIRED`, `WECHAT_SEND_BUSY`, `WECHAT_SEND_TIMEOUT`, and blank title-guard OCR become `send_deferred_locked` with `send_deferred_reason`, then the watchdog/worker flusher retries after unlock, Enter Weixin, or the active send finishes. GUI subprocess timeouts kill the whole process group so clipboard/helper children cannot hold the lane. |
