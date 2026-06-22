@@ -225,6 +225,118 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertIn("as LazyResearch / 懒人科研", prompt)
 
+    def test_previous_result_request_reuses_same_chat_mirror_without_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mirror_db = Path(tmp) / "mirror.sqlite"
+            config = {
+                "chat_name": "🍓我的设备",
+                "self_wxid": "self",
+                "trigger_prefixes": ["@LazyingArt"],
+                "respond_to_all": True,
+                "trigger_local_types": [1],
+                "analysis_mode": "",
+                "chat_purpose": "personal_organizer",
+                "immediate_ack_enabled": True,
+                "slow_task_keywords": ["story"],
+                "mirror_db": str(mirror_db),
+                "worker_queue": str(Path(tmp) / "queue.jsonl"),
+            }
+            previous_story = (
+                "《餐厅地板下的金光》\n\n"
+                "啦啦侠、阿芽酱、飒飒君和庄子机器人走进一家老餐厅。"
+                "老板说地板下面一直发金光，大家小心打开木板，发现一堆纪念金币。"
+            )
+            direct_chatops.record_event(
+                chat_name="🍓我的设备",
+                action="worker_task",
+                direction="outbound",
+                message=previous_story,
+                status="done-sent",
+                db_path=mirror_db,
+            )
+            row = self.row("Could you show me story here", server_id="srv-22", local_id=22)
+            state: dict[str, object] = {"last_local_id": 21}
+            original_read_new = direct_chatops.read_new_messages
+            original_history = direct_chatops.read_recent_history
+            original_run_codex = direct_chatops.run_codex
+            original_enqueue = direct_chatops.enqueue_worker_task
+            try:
+                direct_chatops.read_new_messages = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+                direct_chatops.read_recent_history = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+
+                def fail_run_codex(*_args: object, **_kwargs: object) -> str:
+                    raise AssertionError("reuse route should not call fast Codex")
+
+                def fail_enqueue(*_args: object, **_kwargs: object) -> dict[str, object]:
+                    raise AssertionError("reuse route should not enqueue worker")
+
+                direct_chatops.run_codex = fail_run_codex  # type: ignore[assignment]
+                direct_chatops.enqueue_worker_task = fail_enqueue  # type: ignore[assignment]
+                result = direct_chatops.run_once(config, state, send=False, no_decrypt=True)
+            finally:
+                direct_chatops.read_new_messages = original_read_new  # type: ignore[assignment]
+                direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
+                direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
+                direct_chatops.enqueue_worker_task = original_enqueue  # type: ignore[assignment]
+
+        self.assertEqual(result["response_sent"], previous_story)
+        self.assertEqual(result["tasks_enqueued"], 0)
+        self.assertTrue(result["metrics"]["reused_previous_result"])
+        self.assertEqual(result["state"]["responded_server_ids"], ["srv-22"])
+
+    def test_previous_result_reuse_does_not_cross_chat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mirror_db = Path(tmp) / "mirror.sqlite"
+            direct_chatops.record_event(
+                chat_name="鏈接",
+                action="worker_task",
+                direction="outbound",
+                message="这是另一个群里的长结果，不能拿到我的设备群里复用。" * 4,
+                status="done-sent",
+                db_path=mirror_db,
+            )
+            config = {
+                "chat_name": "🍓我的设备",
+                "self_wxid": "self",
+                "trigger_prefixes": ["@LazyingArt"],
+                "respond_to_all": True,
+                "trigger_local_types": [1],
+                "mirror_db": str(mirror_db),
+            }
+            row = self.row("Could you show me story here", server_id="srv-22", local_id=22)
+
+            reply = direct_chatops.previous_result_reuse_reply(config, row, [row], focus_rows=[row])
+
+        self.assertIsNone(reply)
+
+    def test_previous_result_reuse_does_not_steal_contextual_media_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mirror_db = Path(tmp) / "mirror.sqlite"
+            direct_chatops.record_event(
+                chat_name="懒人科研",
+                action="worker_task",
+                direction="outbound",
+                message="这是上一条很长的研究总结，不能拿来替代当前图片编辑任务。" * 4,
+                status="done-sent",
+                db_path=mirror_db,
+            )
+            config = {
+                "chat_name": "懒人科研",
+                "self_wxid": "self",
+                "trigger_prefixes": ["@LazyingArt"],
+                "respond_to_all": True,
+                "trigger_local_types": [1],
+                "attachment_trigger_local_types": [3, 49],
+                "chat_purpose": "research",
+                "mirror_db": str(mirror_db),
+            }
+            image = self.row("<msg><img md5=\"abc\" /></msg>", local_id=10, server_id="img-10", local_type=3)
+            command = self.row("send this image after editing", local_id=11, server_id="txt-11")
+
+            reply = direct_chatops.previous_result_reuse_reply(config, command, [image, command], focus_rows=[command])
+
+        self.assertIsNone(reply)
+
     def test_prompt_context_labels_latest_and_self_rows(self) -> None:
         config = self.base_config()
         rows = [

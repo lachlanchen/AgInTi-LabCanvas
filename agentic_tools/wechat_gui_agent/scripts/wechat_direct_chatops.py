@@ -344,24 +344,28 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         started = time.monotonic()
         context_rows = read_recent_history(config, trigger_row["local_id"], limit=int(config.get("history_limit", 24))) or new_rows
         metrics["context_ms"] = elapsed_ms(started)
-        immediate = (
-            None
-            if is_language_analysis_mode(config)
-            else immediate_task_route(config, trigger_row, context_rows, focus_rows=focus_rows)
-        )
-        if immediate:
-            task = enqueue_worker_task(config, trigger_row, immediate["task"], context_rows=context_rows)
-            task_enqueued = task["id"]
-            reply_text = immediate["ack"]
+        reply_text = previous_result_reuse_reply(config, trigger_row, context_rows, focus_rows=focus_rows)
+        if reply_text:
+            metrics["reused_previous_result"] = True
         else:
-            started = time.monotonic()
-            response = run_codex(config, trigger_row, context_rows, focus_rows=focus_rows)
-            metrics["codex_ms"] = elapsed_ms(started)
-            routed = parse_fast_response(response)
-            if routed["task"]:
-                task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=context_rows)
+            immediate = (
+                None
+                if is_language_analysis_mode(config)
+                else immediate_task_route(config, trigger_row, context_rows, focus_rows=focus_rows)
+            )
+            if immediate:
+                task = enqueue_worker_task(config, trigger_row, immediate["task"], context_rows=context_rows)
                 task_enqueued = task["id"]
-            reply_text = routed["chat"] or routed["ack"]
+                reply_text = immediate["ack"]
+            else:
+                started = time.monotonic()
+                response = run_codex(config, trigger_row, context_rows, focus_rows=focus_rows)
+                metrics["codex_ms"] = elapsed_ms(started)
+                routed = parse_fast_response(response)
+                if routed["task"]:
+                    task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=context_rows)
+                    task_enqueued = task["id"]
+                reply_text = routed["chat"] or routed["ack"]
         if reply_text and reply_text != "NO_REPLY":
             status = "dry-run-response"
             screenshot = None
@@ -1016,6 +1020,158 @@ def message_kind(row: dict[str, Any]) -> str:
         49: "file/link",
         10000: "system",
     }.get(local_type, f"type-{local_type}")
+
+
+def previous_result_reuse_reply(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+) -> str | None:
+    current_request = combined_focus_request(config, row, context_rows, focus_rows=focus_rows) or visible_message_text(row)
+    if is_attachment_trigger(config, row) or is_quote_reply_message(row):
+        return None
+    if is_contextual_media_task(config, current_request, row, context_rows, focus_rows=focus_rows):
+        return None
+    if not is_previous_result_reuse_request(current_request):
+        return None
+    reply = latest_context_reusable_result(config, row, context_rows) or latest_mirror_reusable_result(config)
+    if not reply:
+        return None
+    return clamp_reused_reply(config, reply)
+
+
+def is_previous_result_reuse_request(text: str) -> bool:
+    normalized = collapse_text(strip_group_sender_prefix(str(text or ""))).lower()
+    if not normalized:
+        return False
+    action_terms = [
+        "show",
+        "send",
+        "resend",
+        "repost",
+        "paste",
+        "display",
+        "give me",
+        "put",
+        "发",
+        "重发",
+        "再发",
+        "贴",
+        "展示",
+        "给我看",
+        "给我发",
+        "发给我",
+    ]
+    reference_terms = [
+        "previous",
+        "last",
+        "again",
+        "result",
+        "answer",
+        "story",
+        "全文",
+        "上次",
+        "刚才",
+        "之前",
+        "结果",
+        "答案",
+        "故事",
+    ]
+    return any(term in normalized for term in action_terms) and any(term in normalized for term in reference_terms)
+
+
+def latest_context_reusable_result(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+) -> str:
+    self_wxid = str(config.get("self_wxid") or "")
+    for item in reversed(context_rows):
+        if item.get("local_id") == row.get("local_id"):
+            continue
+        if self_wxid and item.get("sender") != self_wxid:
+            continue
+        text = visible_message_text(item)
+        if is_reusable_outbound_result(text):
+            return text.strip()
+    return ""
+
+
+def latest_mirror_reusable_result(config: dict[str, Any], *, limit: int = 30) -> str:
+    db_path = Path(config.get("mirror_db", DEFAULT_DB))
+    chat_name = str(config.get("chat_name") or "")
+    if not chat_name or not db_path.exists():
+        return ""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT messages.body, messages.status
+                FROM messages
+                JOIN chats ON chats.id = messages.chat_id
+                WHERE chats.name = ?
+                  AND messages.direction = 'outbound'
+                  AND messages.status IN ('sent', 'done-sent', 'waiting-confirmation-sent')
+                ORDER BY messages.id DESC
+                LIMIT ?
+                """,
+                (chat_name, limit),
+            ).fetchall()
+    except sqlite3.Error:
+        return ""
+    seen: set[str] = set()
+    for body, _status in rows:
+        text = str(body or "").strip()
+        normalized = normalize_sent_text(text)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        if is_reusable_outbound_result(text):
+            return text
+    return ""
+
+
+def is_reusable_outbound_result(text: str) -> bool:
+    stripped = str(text or "").strip()
+    collapsed = collapse_text(stripped)
+    lowered = collapsed.lower()
+    if len(collapsed) < 50:
+        return False
+    if re.fullmatch(r"[/~.\w\u4e00-\u9fff -]+\.[A-Za-z0-9]{1,8}", collapsed):
+        return False
+    ack_prefixes = [
+        "收到",
+        "好的",
+        "ok",
+        "已保存",
+        "saved",
+    ]
+    if len(collapsed) < 240 and any(lowered.startswith(prefix) for prefix in ack_prefixes):
+        return False
+    blocked_fragments = [
+        "我先处理",
+        "完成后",
+        "i will",
+        "i'll",
+        "handle this wechat request",
+        "worker_enqueue",
+        "queued",
+        "send-failed",
+    ]
+    if any(fragment in lowered for fragment in blocked_fragments):
+        return False
+    return True
+
+
+def clamp_reused_reply(config: dict[str, Any], text: str) -> str:
+    reply = str(text or "").strip()
+    max_chars = max(200, int(config.get("max_reply_chars", 1200)))
+    if len(reply) <= max_chars:
+        return reply
+    note = "\n\n（上一条结果较长，先重发前半部分；需要全文可以继续说“发全文”。）"
+    return reply[: max_chars - len(note)] + note
 
 
 def immediate_task_route(
