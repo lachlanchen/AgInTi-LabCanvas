@@ -93,7 +93,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "state_path": str(DEFAULT_STATE),
         "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
         "mirror_db": str(DEFAULT_DB),
-        "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 30},
+        "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 60},
         "codex_session_reuse": True,
         "poll_seconds": float(os.environ.get("WECHAT_DIRECT_POLL_SECONDS", DEFAULT_POLL_SECONDS)),
         "catchup_poll_seconds": float(os.environ.get("WECHAT_DIRECT_CATCHUP_POLL_SECONDS", DEFAULT_CATCHUP_POLL_SECONDS)),
@@ -1045,6 +1045,34 @@ def previous_result_reuse_reply(
 def is_previous_result_reuse_request(text: str) -> bool:
     normalized = collapse_text(strip_group_sender_prefix(str(text or ""))).lower()
     if not normalized:
+        return False
+    modification_terms = [
+        "optimize",
+        "polish",
+        "rewrite",
+        "revise",
+        "improve",
+        "edit",
+        "fix",
+        "correct",
+        "change",
+        "make it",
+        "better",
+        "strange",
+        "unnatural",
+        "优化",
+        "潤色",
+        "润色",
+        "改写",
+        "重写",
+        "修改",
+        "修正",
+        "改进",
+        "更好",
+        "奇怪",
+        "不自然",
+    ]
+    if any(term in normalized for term in modification_terms):
         return False
     action_terms = [
         "show",
@@ -2181,7 +2209,7 @@ def run_codex(
         chat_name=str(config.get("chat_name") or "wechat-chat"),
         role="fast",
         model=str(codex.get("model", "gpt-5.5")),
-        reasoning_effort=str(codex.get("reasoning_effort", "low")),
+        reasoning_effort=str(codex.get("reasoning_effort", "medium")),
         sandbox=str(codex.get("sandbox", "read-only")),
         timeout_seconds=int(codex.get("timeout_seconds", 60)),
         workdir=ROOT,

@@ -169,7 +169,7 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["window_title"], "🍓我的设备")
-        self.assertFalse(any(call[0] == "tesseract" for call in calls))
+        self.assertTrue(any(call[0] == "tesseract" for call in calls))
 
     def test_title_guard_rejects_ai_search_native_window_title(self):
         module = load_wechat_gui_send()
@@ -235,6 +235,41 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["surface_reject_reason"], "search-webview")
+
+    def test_title_guard_rejects_matching_title_with_ai_search_surface(self):
+        module = load_wechat_gui_send()
+        original_run = module.run
+        try:
+            def fake_run(command, *, env, check=True):
+                if command[:2] == ["xdotool", "getwindowname"]:
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                if command[0] == "tesseract":
+                    path = str(command[1])
+                    if "-surface-" in path:
+                        return subprocess.CompletedProcess(command, 0, "AI Search - 我的设备\nAsk a follow-up...\n问AI", "")
+                    return subprocess.CompletedProcess(command, 0, "🍓我的设备", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            result = module.verify_opened_title(
+                {},
+                module.Window("main", 489, 193, 1020, 739),
+                Path("/tmp/screen.png"),
+                module.TargetSpec(
+                    name="🍓我的设备",
+                    query="我的设备",
+                    expected_title="🍓我的设备",
+                    expected_title_aliases=("我的设备",),
+                ),
+                Path("/tmp/title.png"),
+                "result_click_double",
+            )
+        finally:
+            module.run = original_run
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["surface_reject_reason"], "ai-search")
+        self.assertIn("AI Search", result["surface_ocr_text"])
 
     def test_detect_wechat_locked_from_visible_screen(self):
         module = load_wechat_gui_send()
@@ -341,6 +376,107 @@ class WeChatGuiSendTests(unittest.TestCase):
             module.record_event = original_record_event
 
         self.assertEqual(result["status"], "dry-run-opened")
+
+    def test_open_target_falls_back_after_failed_open_click(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="🍓我的设备",
+            query="我的设备",
+            expected_title="🍓我的设备",
+            expected_title_aliases=("我的设备",),
+            open_click=(135, 166),
+            result_click=(165, 125),
+        )
+        original_click = module.click
+        original_double_click = module.double_click
+        original_screenshot = module.screenshot
+        original_verify = module.verify_opened_title
+        original_title_candidates = module.title_window_candidates
+        original_sleep = module.time.sleep
+        original_monotonic = module.time.monotonic
+        calls = []
+        clock = {"value": 0.0}
+        try:
+            module.click = lambda _env, x, y: calls.append(("click", x, y))
+            module.double_click = lambda _env, x, y: calls.append(("double", x, y))
+            module.screenshot = lambda _env, _path: None
+            module.title_window_candidates = lambda _env, window: [window]
+            module.time.sleep = lambda _seconds: None
+
+            def fake_monotonic():
+                clock["value"] += 10.0
+                return clock["value"]
+
+            def fake_verify(_env, window, _screenshot, _target, _crop, method):
+                calls.append(("verify", method))
+                return {
+                    "ok": method == "result_click_direct_double",
+                    "method": method,
+                    "ocr_text": "🍓我的设备" if method == "result_click_direct_double" else "File Transfer",
+                    "compose_window": module.window_to_dict(window),
+                }
+
+            module.time.monotonic = fake_monotonic
+            module.verify_opened_title = fake_verify
+            result = module.open_target(
+                {},
+                module.Window("1", 100, 200, 1000, 700),
+                target,
+                0,
+                Path("/tmp"),
+                "wechat-open-target-test",
+                False,
+                False,
+            )
+        finally:
+            module.click = original_click
+            module.double_click = original_double_click
+            module.screenshot = original_screenshot
+            module.verify_opened_title = original_verify
+            module.title_window_candidates = original_title_candidates
+            module.time.sleep = original_sleep
+            module.time.monotonic = original_monotonic
+
+        self.assertTrue(result["ok"])
+        self.assertIn(("verify", "open_click"), calls)
+        self.assertIn(("verify", "open_click_double"), calls)
+        self.assertIn(("verify", "result_click_direct_double"), calls)
+
+    def test_close_non_target_wechat_windows_keeps_target_popup(self):
+        module = load_wechat_gui_send()
+        original_run = module.run
+        closed = []
+        try:
+            def fake_run(command, *, env, check=True):
+                if command[:3] == ["xdotool", "search", "--onlyvisible"]:
+                    return subprocess.CompletedProcess(command, 0, "main\nfile\nmine\n", "")
+                if command[:2] == ["xdotool", "getwindowgeometry"]:
+                    wid = command[-1]
+                    if wid == "main":
+                        return subprocess.CompletedProcess(command, 0, "X=0\nY=0\nWIDTH=1000\nHEIGHT=700\n", "")
+                    return subprocess.CompletedProcess(command, 0, "X=100\nY=100\nWIDTH=600\nHEIGHT=500\n", "")
+                if command[:2] == ["xdotool", "getwindowname"]:
+                    return subprocess.CompletedProcess(command, 0, "🍓我的设备\n" if command[-1] == "mine" else "File Transfer\n", "")
+                if command[:2] == ["xdotool", "windowclose"]:
+                    closed.append(command[-1])
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            module.close_non_target_wechat_windows(
+                {},
+                module.Window("main", 0, 0, 1000, 700),
+                module.TargetSpec(
+                    name="🍓我的设备",
+                    query="我的设备",
+                    expected_title="🍓我的设备",
+                    expected_title_aliases=("我的设备",),
+                ),
+            )
+        finally:
+            module.run = original_run
+
+        self.assertEqual(closed, ["file"])
 
     def test_same_screenshot_detects_identical_files(self):
         module = load_wechat_gui_send()

@@ -61,11 +61,12 @@ labcanvas wechat health --json
 
 The fast monitor is tuned for immediate responses: idle polling is 0.8 seconds,
 catch-up polling is 0.1 seconds when rows are waiting, the decrypt refresh loop
-runs every 1 second, and the fast agent should use `gpt-5.5` with low reasoning.
+runs every 1 second, and the fast agent should use `gpt-5.5` with medium reasoning.
 Polling itself is local DB/file work; it only spends Codex tokens when a new
 message needs a route decision or reply.
 
-The worker loop chooses its effort separately and defaults to `gpt-5.5`.
+The worker loop chooses its effort separately and defaults to `gpt-5.5`. It
+classifies the current user request, not the long reusable queue playbook.
 Queued backend tasks start at medium, use high for CAD/PCB/Blender/file/video
 tool execution, and use xhigh for full autonomous tasks such as installs,
 GitHub commit/push, publishing, ordering, or end-to-end execution. A clear

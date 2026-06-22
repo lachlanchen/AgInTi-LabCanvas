@@ -52,6 +52,37 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertEqual(policy["reasoning_effort"], "medium")
 
+    def test_worker_policy_ignores_boilerplate_length_for_story_edit(self) -> None:
+        worker = load_worker()
+        boilerplate = (
+            "Handle this WeChat request as backend work. "
+            "Use LabCanvas, GitHub, MCP, install, publish, submit order, fully control, and robust automation. "
+        ) * 80
+        request = (
+            f"{boilerplate}\n\n"
+            "Current coalesced request:\n"
+            "陈苗: Could you optimize the story? The words and sentences are strange. "
+            "Please show me here and make each sentence understandable.\n\n"
+            "Recent history:\n"
+            "陈喵瞄秒妙: 《餐厅地板下的金光》..."
+        )
+        policy = worker.choose_worker_policy({"chat": "🍓我的设备", "request": request})
+
+        self.assertEqual(policy["reasoning_effort"], "medium")
+
+    def test_worker_policy_uses_current_request_for_complex_followup(self) -> None:
+        worker = load_worker()
+        request = (
+            "Reusable execution instructions mentioning only generic files.\n\n"
+            "Current coalesced request:\n"
+            "陈苗: fully implement the WeChat automation, commit and push\n\n"
+            "Recent history:\n"
+            "陈喵瞄秒妙: previous short answer"
+        )
+        policy = worker.choose_worker_policy({"request": request})
+
+        self.assertEqual(policy["reasoning_effort"], "xhigh")
+
     def test_worker_policy_escalates_weak_low_result(self) -> None:
         worker = load_worker()
         next_policy = worker.escalated_policy(

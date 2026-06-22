@@ -292,6 +292,65 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(result["metrics"]["reused_previous_result"])
         self.assertEqual(result["state"]["responded_server_ids"], ["srv-22"])
 
+    def test_story_edit_request_does_not_reuse_previous_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mirror_db = Path(tmp) / "mirror.sqlite"
+            queue_path = Path(tmp) / "queue.jsonl"
+            config = {
+                "chat_name": "🍓我的设备",
+                "self_wxid": "self",
+                "trigger_prefixes": ["@LazyingArt"],
+                "respond_to_all": True,
+                "trigger_local_types": [1],
+                "analysis_mode": "",
+                "chat_purpose": "personal_organizer",
+                "immediate_ack_enabled": True,
+                "slow_task_keywords": ["story"],
+                "mirror_db": str(mirror_db),
+                "worker_queue": str(queue_path),
+            }
+            direct_chatops.record_event(
+                chat_name="🍓我的设备",
+                action="worker_task",
+                direction="outbound",
+                message="这是上一版很长的故事正文，不能在用户要求修改时直接重发。" * 4,
+                status="done-sent",
+                db_path=mirror_db,
+            )
+            row = self.row(
+                "Could you optimize the story? The words and sentences are strange. And show me here?",
+                server_id="srv-25",
+                local_id=25,
+            )
+            state: dict[str, object] = {"last_local_id": 24}
+            original_read_new = direct_chatops.read_new_messages
+            original_history = direct_chatops.read_recent_history
+            original_run_codex = direct_chatops.run_codex
+            try:
+                direct_chatops.read_new_messages = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+                direct_chatops.read_recent_history = lambda *_args, **_kwargs: [row]  # type: ignore[assignment]
+
+                def fail_run_codex(*_args: object, **_kwargs: object) -> str:
+                    raise AssertionError("story edit request should route directly to the worker")
+
+                direct_chatops.run_codex = fail_run_codex  # type: ignore[assignment]
+                result = direct_chatops.run_once(config, state, send=False, no_decrypt=True)
+            finally:
+                direct_chatops.read_new_messages = original_read_new  # type: ignore[assignment]
+                direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
+                direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
+
+            queued = [json.loads(line) for line in queue_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(result["tasks_enqueued"], 1)
+        self.assertEqual(result["response_sent"], "收到，我先处理，完成后把结果发回来。")
+        self.assertNotIn("reused_previous_result", result["metrics"])
+        self.assertEqual(result["state"]["responded_server_ids"], ["srv-25"])
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["chat"], "🍓我的设备")
+        self.assertIn("optimize the story", queued[0]["request"])
+        self.assertIn("words and sentences are strange", queued[0]["request"])
+
     def test_previous_result_reuse_does_not_cross_chat(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             mirror_db = Path(tmp) / "mirror.sqlite"
@@ -827,7 +886,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             queued = [json.loads(line) for line in Path(config["worker_queue"]).read_text(encoding="utf-8").splitlines()]
             self.assertEqual(queued[0]["route"], task["route"])
 
-    def test_default_direct_config_uses_low_reasoning_fast_polling(self) -> None:
+    def test_default_direct_config_uses_medium_reasoning_fast_polling(self) -> None:
         with self.subTest("defaults"):
             import json
 
@@ -837,8 +896,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 config = direct_chatops.load_config(Path(handle.name))
 
         self.assertEqual(config["codex"]["model"], "gpt-5.5")
-        self.assertEqual(config["codex"]["reasoning_effort"], "low")
-        self.assertEqual(config["codex"]["timeout_seconds"], 30)
+        self.assertEqual(config["codex"]["reasoning_effort"], "medium")
+        self.assertEqual(config["codex"]["timeout_seconds"], 60)
         self.assertEqual(config["poll_seconds"], 0.8)
         self.assertEqual(config["catchup_poll_seconds"], 0.1)
         self.assertEqual(config["send_pause_seconds"], 0.35)

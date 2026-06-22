@@ -108,7 +108,7 @@ refreshed cache, which avoids concurrent decrypt stalls. The fast path should
 run with `WECHAT_DIRECT_POLL_SECONDS=0.8`,
 `WECHAT_DIRECT_CATCHUP_POLL_SECONDS=0.1`, and
 `WECHAT_DECRYPT_REFRESH_INTERVAL=1`; each group config should use `gpt-5.5`
-with low reasoning for immediate replies and leave heavier work to the worker
+with medium reasoning for immediate replies and leave heavier work to the worker
 queue.
 Private send targets should include `expected_title`; the GUI sender OCR-checks
 the opened chat header before composing and fails closed if the wrong chat is
@@ -158,9 +158,11 @@ The supervisor creates panes for:
 The direct monitor is intentionally a lightweight router. Idle polling only
 checks local decrypted rows and mirror state, so it does not spend model tokens.
 Model calls happen when a new message needs a quick reply or a task must be
-queued. Worker tasks choose `gpt-5.5` effort automatically: low for simple
-follow-ups, medium for paper/PDF/search/research/figure work, and high for CAD,
-PCB, Blender/OpenSCAD, install, GitHub, ordering, or other full execution work.
+queued. Worker tasks choose `gpt-5.5` effort from the current user request,
+not from the long queue playbook: medium for simple follow-ups and
+paper/PDF/search/research/figure work, high for CAD, PCB, Blender/OpenSCAD,
+install, GitHub, ordering, or other full execution work, and xhigh only for
+full autonomous end-to-end tasks.
 For LabCanvas tool work, research-chat keywords such as `aginti`, `image
 generation`, `figure grid`, `icons`, `kicad`, `gerber`, `step`, `stl`, `3d`,
 and `labcanvas` route directly to the worker. The worker prompt advertises

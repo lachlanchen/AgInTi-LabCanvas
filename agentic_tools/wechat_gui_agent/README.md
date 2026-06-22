@@ -96,7 +96,7 @@ For low-latency chatops, the supervisor defaults to:
 - `WECHAT_DIRECT_POLL_SECONDS=0.8` for idle direct DB polling.
 - `WECHAT_DIRECT_CATCHUP_POLL_SECONDS=0.1` when rows are waiting.
 - `WECHAT_DECRYPT_REFRESH_INTERVAL=1` for the shared decrypted cache refresh.
-- `gpt-5.5` with `low` reasoning and a 60 second timeout for the fast agent.
+- `gpt-5.5` with `medium` reasoning and a 60 second timeout for the fast agent.
 
 To monitor multiple groups, create one ignored direct config per group and set
 `WECHAT_DIRECT_CONFIGS` in `.private/wechat_supervisor.local.env`:
@@ -300,15 +300,15 @@ labcanvas wechat worker once --send
 labcanvas wechat queue --json
 ```
 
-Worker tasks default to `gpt-5.5` and pick effort from task difficulty. Queued
-backend work starts at `medium`, uses `high` for CAD/PCB/Blender/file/video/tool
-execution, and uses `xhigh` for full autonomous tasks such as installs, GitHub
-commit/push, publishing, ordering, or "finish this end-to-end" requests. A
-timeout, empty result, or clear model failure retries upward through allowed
-effort levels up to `xhigh`. Missing exact sources, login/CAPTCHA, and user
-confirmation blockers do not trigger blind retries. If GUI delivery fails, the
-queue item is marked `send_failed` with the error instead of retrying
-indefinitely.
+Worker tasks default to `gpt-5.5` and pick effort from the current user request,
+not the long reusable queue playbook. Queued backend work starts at `medium`,
+uses `high` for CAD/PCB/Blender/file/video/tool execution, and uses `xhigh` for
+full autonomous tasks such as installs, GitHub commit/push, publishing,
+ordering, or "finish this end-to-end" requests. A timeout, empty result, or clear
+model failure retries upward through allowed effort levels up to `xhigh`.
+Missing exact sources, login/CAPTCHA, and user confirmation blockers do not
+trigger blind retries. If GUI delivery fails, the queue item is marked
+`send_failed` with the error instead of retrying indefinitely.
 Before work starts, a queue item is claimed as `in_progress` under a file lock.
 This prevents a manual `worker once` and the persistent loop from handling the
 same request twice. Stale claims are reclaimed after

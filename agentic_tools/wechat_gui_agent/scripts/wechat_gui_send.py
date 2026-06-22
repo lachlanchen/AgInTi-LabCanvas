@@ -221,6 +221,7 @@ def send_one(
     mirror_db: Path,
     index: int,
 ) -> dict[str, str]:
+    close_non_target_wechat_windows(env, window, target)
     focus(env, window)
     shot_prefix = f"{index:02d}-{safe_name(target.name)}"
     before_path = out_dir / f"{shot_prefix}-before.png"
@@ -365,13 +366,29 @@ def open_target(
         if current_guard["ok"]:
             return current_guard
 
+    attempts: list[dict[str, Any]] = []
+
     if target.open_click:
         click(env, window.x + target.open_click[0], window.y + target.open_click[1])
-        return verify("open_click")
+        guard = verify("open_click")
+        attempts.append(guard)
+        if guard["ok"]:
+            return guard
+        double_click(env, window.x + target.open_click[0], window.y + target.open_click[1])
+        guard = verify("open_click_double")
+        attempts.append(guard)
+        if guard["ok"]:
+            return guard
+
+    for label, point in target_explicit_click_candidates(target):
+        double_click(env, window.x + point[0], window.y + point[1])
+        guard = verify(f"{label}_direct_double")
+        attempts.append(guard)
+        if guard["ok"]:
+            return guard
 
     search_for_target(env, window, target.query, pause)
     screenshot(env, out_dir / f"{shot_prefix}-search.png")
-    attempts: list[dict[str, Any]] = []
     for label, point in target_click_candidates(target):
         double_click(env, window.x + point[0], window.y + point[1])
         guard = verify(f"{label}_double")
@@ -385,6 +402,28 @@ def open_target(
     if attempts:
         guard = {**guard, "attempts": attempts}
     return guard
+
+
+def target_explicit_click_candidates(target: TargetSpec) -> list[tuple[str, tuple[int, int]]]:
+    """Click only operator-configured visible-list points before search fallback."""
+    candidates: list[tuple[str, tuple[int, int]]] = []
+    seen: set[tuple[int, int]] = set()
+
+    def add(label: str, point: tuple[int, int] | None) -> None:
+        if point is None or point in seen:
+            return
+        candidates.append((label, point))
+        seen.add(point)
+
+    add("result_click", target.result_click)
+    if target.result_click:
+        x, y = target.result_click
+        add("result_click_row_center", (x, max(70, y - 26)))
+        add("result_click_title_offset", (x + 35, max(70, y - 26)))
+        add("result_click_preview_offset", (x + 35, y))
+    for index, point in enumerate(target.fallback_clicks, start=1):
+        add(f"fallback_click_{index}", point)
+    return candidates
 
 
 def target_click_candidates(target: TargetSpec) -> list[tuple[str, tuple[int, int]]]:
@@ -441,6 +480,19 @@ def verify_opened_title(
         and any(item in normalize_title(window_title) for item in expected)
     )
     if window_title_ok:
+        surface_guard = detect_rejected_chat_surface(env, window, screenshot_path, crop_path)
+        if surface_guard["reason"]:
+            return rejected_title_guard_result(
+                method,
+                target,
+                "",
+                [],
+                window_title,
+                window,
+                surface_guard["reason"],
+                surface_guard.get("ocr_text", ""),
+                surface_guard.get("crop", ""),
+            )
         return {
             "ok": True,
             "method": method,
@@ -491,6 +543,19 @@ def verify_opened_title(
             }
         observed = normalize_title(text)
         if any(item in observed for item in expected):
+            surface_guard = detect_rejected_chat_surface(env, window, screenshot_path, region_crop)
+            if surface_guard["reason"]:
+                return rejected_title_guard_result(
+                    method,
+                    target,
+                    "\n".join(text for text in ocr_texts if text).strip(),
+                    crop_paths,
+                    window_title,
+                    window,
+                    surface_guard["reason"],
+                    surface_guard.get("ocr_text", ""),
+                    surface_guard.get("crop", ""),
+                )
             ok = True
             crop_path = region_crop
             break
@@ -505,6 +570,34 @@ def verify_opened_title(
         "window_title": window_title,
         "compose_window": window_to_dict(window),
         "surface_reject_reason": window_reject_reason,
+    }
+
+
+def rejected_title_guard_result(
+    method: str,
+    target: TargetSpec,
+    ocr_text: str,
+    crop_paths: list[str],
+    window_title: str,
+    window: Window,
+    reason: str,
+    surface_ocr_text: str = "",
+    surface_crop: str = "",
+) -> dict[str, Any]:
+    combined_ocr = "\n".join(text for text in (ocr_text, surface_ocr_text) if text).strip()
+    return {
+        "ok": False,
+        "method": method,
+        "expected_title": target.expected_title,
+        "expected_title_aliases": list(target.expected_title_aliases),
+        "ocr_text": combined_ocr,
+        "title_crop": surface_crop or (crop_paths[-1] if crop_paths else ""),
+        "title_crops": crop_paths,
+        "window_title": window_title,
+        "compose_window": window_to_dict(window),
+        "surface_reject_reason": reason,
+        "surface_ocr_text": surface_ocr_text,
+        "surface_crop": surface_crop,
     }
 
 
@@ -535,6 +628,62 @@ def chat_surface_reject_reason(text: str) -> str:
         if marker in normalized:
             return reason
     return ""
+
+
+def detect_rejected_chat_surface(
+    env: dict[str, str],
+    window: Window,
+    screenshot_path: Path,
+    crop_path: Path,
+) -> dict[str, str]:
+    ocr_texts: list[str] = []
+    crop_paths: list[str] = []
+    for region in chat_surface_guard_regions(window):
+        region_crop = crop_path.with_name(f"{crop_path.stem}-surface-{region['label']}{crop_path.suffix}")
+        try:
+            run(
+                [
+                    "convert",
+                    str(screenshot_path),
+                    "-crop",
+                    f"{region['width']}x{region['height']}+{region['left']}+{region['top']}",
+                    "-colorspace",
+                    "Gray",
+                    "-resize",
+                    "160%",
+                    str(region_crop),
+                ],
+                env=env,
+            )
+        except Exception as exc:
+            return {"reason": "", "ocr_text": "", "crop": "", "error": str(exc)[:500]}
+        proc = run(["tesseract", str(region_crop), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "6"], env=env, check=False)
+        text = proc.stdout.strip()
+        ocr_texts.append(text)
+        crop_paths.append(str(region_crop))
+        reason = chat_surface_reject_reason(text)
+        if reason:
+            return {"reason": reason, "ocr_text": text, "crop": str(region_crop)}
+    return {"reason": "", "ocr_text": "\n".join(text for text in ocr_texts if text).strip(), "crop": crop_paths[-1] if crop_paths else ""}
+
+
+def chat_surface_guard_regions(window: Window) -> list[dict[str, int | str]]:
+    return [
+        {
+            "label": "top",
+            "left": window.x,
+            "top": window.y,
+            "width": window.width,
+            "height": min(120, window.height),
+        },
+        {
+            "label": "bottom",
+            "left": window.x + max(0, int(window.width * 0.30)),
+            "top": window.y + max(0, window.height - 180),
+            "width": max(300, int(window.width * 0.70)),
+            "height": min(180, window.height),
+        },
+    ]
 
 
 def detect_wechat_locked(env: dict[str, str], window: Window, screenshot_path: Path, crop_path: Path) -> dict[str, Any]:
@@ -717,6 +866,38 @@ def close_secondary_wechat_windows(env: dict[str, str], main: Window) -> None:
         if 20_000 <= area < min(main_area, int(main_area * 0.25)):
             run(["xdotool", "windowclose", wid], env=env, check=False)
     time.sleep(0.5)
+
+
+def close_non_target_wechat_windows(env: dict[str, str], main: Window, target: TargetSpec) -> None:
+    expected = [
+        normalize_title(item)
+        for item in (target.expected_title, *target.expected_title_aliases, target.name)
+        if normalize_title(item)
+    ]
+    ids = run(["xdotool", "search", "--onlyvisible", "--class", "wechat"], env=env, check=False).stdout.split()
+    main_area = main.width * main.height
+    for wid in ids:
+        if wid == main.wid:
+            continue
+        geom = run(["xdotool", "getwindowgeometry", "--shell", wid], env=env, check=False).stdout
+        values: dict[str, int] = {}
+        for line in geom.splitlines():
+            if "=" not in line:
+                continue
+            key_name, raw = line.split("=", 1)
+            try:
+                values[key_name] = int(raw)
+            except ValueError:
+                pass
+        area = values.get("WIDTH", 0) * values.get("HEIGHT", 0)
+        if area < 20_000 or area > int(main_area * 0.95):
+            continue
+        title = run(["xdotool", "getwindowname", wid], env=env, check=False).stdout.strip()
+        normalized_title = normalize_title(title)
+        if normalized_title and any(item in normalized_title for item in expected):
+            continue
+        run(["xdotool", "windowclose", wid], env=env, check=False)
+    time.sleep(0.3)
 
 
 def focus(env: dict[str, str], window: Window) -> None:

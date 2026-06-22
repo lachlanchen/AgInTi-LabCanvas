@@ -1206,7 +1206,7 @@ def safe_slug(value: str) -> str:
 
 
 def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
-    text = json.dumps(task, ensure_ascii=False).lower()
+    text = worker_policy_text(task).lower()
     xhigh_keywords = [
         "deep research",
         "fully implement",
@@ -1326,6 +1326,46 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "sandbox": worker_sandbox(),
         "timeout_seconds": timeout_for_effort(effort),
     }
+
+
+def worker_policy_text(task: dict[str, Any]) -> str:
+    """Return only user/task-relevant text for effort selection.
+
+    Queue entries can contain long reusable playbooks and source-isolation
+    instructions. Those are important for execution but should not make a small
+    edit or writing task look like an xhigh autonomous implementation task.
+    """
+    request = str(task.get("request") or "")
+    focused = extract_current_request_for_policy(request)
+    pieces = [focused or request]
+    source = task.get("source")
+    if isinstance(source, dict):
+        pieces.append(str(source.get("chat") or ""))
+    context = task.get("context")
+    if isinstance(context, list):
+        for item in context[-3:]:
+            if isinstance(item, dict):
+                pieces.append(str(item.get("content") or ""))
+    return "\n".join(piece for piece in pieces if piece).strip()
+
+
+def extract_current_request_for_policy(request: str) -> str:
+    text = str(request or "")
+    patterns = [
+        ("Current coalesced request:", "\n\nRecent history:"),
+        ("Current request:", "\n\nRecent history:"),
+        ("Current message:", "\n\nRecent history:"),
+    ]
+    for start_marker, end_marker in patterns:
+        start = text.find(start_marker)
+        if start < 0:
+            continue
+        start += len(start_marker)
+        end = text.find(end_marker, start)
+        if end < 0:
+            end = len(text)
+        return text[start:end].strip()
+    return ""
 
 
 def worker_model() -> str:

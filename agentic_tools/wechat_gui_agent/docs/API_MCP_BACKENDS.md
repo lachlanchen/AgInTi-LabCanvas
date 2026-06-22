@@ -19,7 +19,7 @@ For this machine, keep the native Linux WeChat stack:
 
 1. Direct decrypted local DB polling for low-latency reads.
 2. Purpose-specific fast agent per group.
-3. `gpt-5.5` low reasoning for immediate chat replies.
+3. `gpt-5.5` medium reasoning for immediate chat replies.
 4. Worker queue for slow CAD, PDF, GitHub, JLC/Wenext, and file tasks.
 5. Guarded official GUI sending with title OCR and a global send lock.
 

@@ -345,7 +345,7 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "state_path": str(PRIVATE / f"{safe_slug(args.chat)}-chatops.state.json"),
         "db_path": str(PRIVATE / "wechat_mirror.sqlite"),
         "output_dir": str(PACKAGE_ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F")),
-        "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "workdir": str(PACKAGE_ROOT), "timeout_seconds": 60},
+        "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "workdir": str(PACKAGE_ROOT), "timeout_seconds": 60},
     }
     direct_config = {
         "chat_name": args.chat,
@@ -371,7 +371,7 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "aginti", "imagegen", "image generation", "kicad", "gerber", "step", "stl", "3d", "labcanvas", "overview", "figure", "figure grid", "icons", "file", "image"],
         "poll_seconds": 0.8,
         "catchup_poll_seconds": 0.1,
-        "codex": {"model": "gpt-5.5", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 60},
+        "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 60},
     }
     written = []
     for path, data in ((DEFAULT_CHAT_CONFIG, chat_config), (DEFAULT_DIRECT_CONFIG, direct_config)):
@@ -1165,7 +1165,7 @@ def direct_config_health(path: Path) -> dict[str, Any]:
         "poll_seconds": float(config.get("poll_seconds", 0.8)),
         "catchup_poll_seconds": float(config.get("catchup_poll_seconds", 0.1)),
         "codex_model": str(codex.get("model") or "gpt-5.5"),
-        "codex_reasoning_effort": str(codex.get("reasoning_effort") or "low"),
+        "codex_reasoning_effort": str(codex.get("reasoning_effort") or "medium"),
         "codex_timeout_seconds": int(codex.get("timeout_seconds") or 60),
         "last_seen_at": str(state.get("last_seen_at") or ""),
         "last_loop_at": str(state.get("last_loop_at") or ""),
