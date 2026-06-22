@@ -391,7 +391,9 @@ present, the worker sends that file before the completion text and records it in
 the task's sent-file ledger. If the GUI file send fails or WeChat is locked, the
 task stays `send_deferred_artifact` or `send_deferred_locked` so the resend loop
 can finish delivery later; it is not marked done without returning the MP4 to
-the source group. LazyEdit import/process and public publishing are queued as
+the source group. Opening the guarded target chat in dry-run mode is only a
+preflight; the file-picker attachment bridge must exit successfully before the
+ledger is updated. LazyEdit import/process and public publishing are queued as
 `generation_poststage_pending` only after `sent_file_paths` proves that the MP4
 was delivered to the source chat.
 The same rule applies to returned video/audio files from file-save or download

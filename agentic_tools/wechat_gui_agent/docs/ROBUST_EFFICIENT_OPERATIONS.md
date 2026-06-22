@@ -110,7 +110,10 @@ workflow from scratch.
 Returned video/audio files are required delivery artifacts for every route, not
 only `generate_video`. The worker must send media before completion text,
 record success in `sent_file_paths`, and keep the queue item deferred if the GUI
-cannot attach the media. If old rows were closed without the media ledger, run:
+cannot attach the media. A guarded `dry-run-opened` chat event only proves the
+target chat was opened; the attachment bridge must also exit successfully before
+`sent_file_paths` is updated. If old rows were closed without the media ledger,
+run:
 
 ```bash
 labcanvas wechat worker repair-artifacts

@@ -2905,20 +2905,17 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
             target_file.unlink(missing_ok=True)
     elif os.environ.get("WECHAT_ALLOW_UNGUARDED_SEND", "0") != "1":
         raise RuntimeError(f"Refusing unguarded WeChat file send for {chat}: missing send_target")
-    subprocess.run(
+    run_file_bridge_subprocess(
         [
             sys.executable,
             str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_chatops_bridge.py"),
             "--config",
-            str(PRIVATE / "lazy-research-chatops.local.json"),
+            os.environ.get("WECHAT_WORKER_FILE_SEND_CONFIG", str(PRIVATE / "lazy-research-chatops.local.json")),
             "--chat",
             chat,
             "--file",
             str(file_path.expanduser().resolve()),
-        ],
-        cwd=ROOT,
-        check=False,
-        env=wechat_send_env(),
+        ]
     )
 
 
@@ -2939,6 +2936,35 @@ def run_send_subprocess(command: list[str], timeout: int | None = None) -> None:
     stdout = (proc.stdout or "").strip()
     stderr = (proc.stderr or "").strip()
     parts = [f"send command failed with exit {proc.returncode}"]
+    if stdout:
+        parts.append(f"stdout={stdout[-1200:]}")
+    if stderr:
+        parts.append(f"stderr={stderr[-1200:]}")
+    raise RuntimeError("; ".join(parts))
+
+
+def run_file_bridge_subprocess(command: list[str], timeout: int | None = None) -> None:
+    if timeout is None:
+        timeout = int(
+            os.environ.get(
+                "WECHAT_WORKER_FILE_SEND_TIMEOUT_SECONDS",
+                os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"),
+            )
+        )
+    proc = subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+        env=wechat_send_env(),
+    )
+    if proc.returncode == 0:
+        return
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    parts = [f"file bridge failed with exit {proc.returncode}"]
     if stdout:
         parts.append(f"stdout={stdout[-1200:]}")
     if stderr:

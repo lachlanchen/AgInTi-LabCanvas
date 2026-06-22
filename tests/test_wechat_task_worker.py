@@ -1144,6 +1144,50 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(task["status"], "done")
         self.assertIn("saved-video.mp4", "\n".join(task["sent_file_paths"]))
 
+    def test_real_mp4_bridge_failure_blocks_required_delivery(self) -> None:
+        worker = load_worker()
+        original_run_send = worker.run_send_subprocess
+        original_bridge = worker.run_file_bridge_subprocess
+        original_delay = worker.os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY")
+        try:
+            worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = "0"
+            worker.run_send_subprocess = lambda *_args, **_kwargs: None
+
+            def fail_bridge(*_args, **_kwargs):
+                raise RuntimeError("file bridge failed with exit 1")
+
+            worker.run_file_bridge_subprocess = fail_bridge
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                mp4 = tmp_path / "bridge-failed.mp4"
+                mp4.write_bytes(b"video")
+                targets = tmp_path / "targets.json"
+                targets.write_text(
+                    json.dumps({"🍓我的设备": {"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备"}}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                task = {
+                    "chat": "🍓我的设备",
+                    "route_decision": {"route_kind": "file_download_or_save", "public_publish_allowed": False},
+                    "request": "Current coalesced request:\nSend me the saved video.",
+                }
+                result = {"message": "done", "confirmation": "", "files": [str(mp4)]}
+                errors = worker.send_result_with_retries(result, "🍓我的设备", targets, task=task)
+                worker.apply_send_outcome(task, result, errors)
+        finally:
+            worker.run_send_subprocess = original_run_send
+            worker.run_file_bridge_subprocess = original_bridge
+            if original_delay is None:
+                worker.os.environ.pop("WECHAT_WORKER_SEND_RETRY_DELAY", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = original_delay
+
+        self.assertTrue(errors)
+        self.assertEqual(task["status"], worker.SEND_DEFERRED_ARTIFACT_STATUS)
+        self.assertEqual(task["send_deferred_reason"], "required_artifact_delivery")
+        self.assertNotIn("sent_file_paths", task)
+        self.assertIn("file_send_errors", task)
+
     def test_mp4_sent_then_text_lock_closes_artifact_delivery(self) -> None:
         worker = load_worker()
         original_message = worker.send_message
