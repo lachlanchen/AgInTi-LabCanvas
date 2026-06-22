@@ -229,6 +229,12 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(saved["routine"]["id"], "labcanvas_cad_pcb")
         self.assertTrue(saved["routine"]["stages"])
         self.assertEqual(saved["route"]["chat"], "懒人科研")
+        self.assertEqual(saved["execution_contract"]["wechat_role"], "message_transport_only")
+        self.assertEqual(saved["execution_contract"]["worker_entrypoint"], "wechat_task_worker.run_task_orchestrator")
+        self.assertEqual(saved["execution_contract"]["codex_entrypoint"], "wechat_codex_sessions.run_codex_session")
+        self.assertEqual(saved["execution_contract"]["codex_exec_mode"], "resume_per_chat_worker_session")
+        self.assertEqual(saved["execution_contract"]["codex_session"]["chat"], "懒人科研")
+        self.assertTrue(saved["execution_contract"]["codex_session"]["reuse"])
 
     def test_enabled_attachment_chats_route_images_voice_and_location(self) -> None:
         config = {

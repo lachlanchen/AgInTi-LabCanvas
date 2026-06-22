@@ -36,7 +36,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertTrue(wrapper.exists())
         self.assertTrue(wrapper.stat().st_mode & 0o111)
         self.assertIn("wechat_worker_guarded_loop.sh", supervisor.read_text(encoding="utf-8"))
-        self.assertIn("wechat selftest --suite publish-poststage", wrapper.read_text(encoding="utf-8"))
+        self.assertIn("wechat selftest --suite all", wrapper.read_text(encoding="utf-8"))
 
     def test_worker_policy_selects_high_for_cad_or_pcb_tasks(self) -> None:
         worker = load_worker()
@@ -219,6 +219,11 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(calls[0]["role"], "worker")
         self.assertIn("fragment or follow-up", str(calls[0]["prompt"]))
         self.assertIn("Central orchestrator handoff", str(calls[0]["prompt"]))
+        self.assertIn("WeChat is only the message transport", str(calls[0]["prompt"]))
+        self.assertIn("Execution contract", str(calls[0]["prompt"]))
+        self.assertIn("message_transport_only", str(calls[0]["prompt"]))
+        self.assertIn("resume_per_chat_worker_session", str(calls[0]["prompt"]))
+        self.assertIn("wechat_codex_sessions.run_codex_session", str(calls[0]["prompt"]))
         self.assertIn("central routine orchestrator", str(calls[0]["prompt"]))
         self.assertIn("Routine supervisor contract", str(calls[0]["prompt"]))
         self.assertIn("routine_contract.md", str(calls[0]["prompt"]))
@@ -328,6 +333,9 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(task["orchestrator"]["last_action"], "resume_codex_worker_session")
         self.assertEqual(calls[0]["chat_name"], "懒人科研")
         self.assertEqual(calls[0]["role"], "worker")
+        self.assertEqual(calls[0]["reuse"], True)
+        self.assertIn("Execution contract", str(calls[0]["prompt"]))
+        self.assertIn("resume_per_chat_worker_session", str(calls[0]["prompt"]))
         self.assertEqual(calls[0]["reuse"], True)
         self.assertIn("Central orchestrator handoff", str(calls[0]["prompt"]))
 

@@ -2947,6 +2947,7 @@ def enqueue_worker_task(
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "route": build_route_contract(config),
         "route_decision": route_decision or {},
+        "execution_contract": build_execution_contract(config, route_decision or {}),
         "source": {
             "chat": config["chat_name"],
             "config_id": config.get("config_id") or "",
@@ -2979,6 +2980,29 @@ def enqueue_worker_task(
         metadata=task,
     )
     return task
+
+
+def build_execution_contract(config: dict[str, Any], route_decision: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "wechat_role": "message_transport_only",
+        "monitor_role": "receive_coalesce_ack_enqueue",
+        "routine_source": "task.routine",
+        "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
+        "codex_entrypoint": "wechat_codex_sessions.run_codex_session",
+        "codex_exec_mode": "resume_per_chat_worker_session",
+        "codex_session": {
+            "chat": config.get("chat_name") or "wechat-chat",
+            "role": "worker",
+            "reuse": True,
+        },
+        "route_kind": str(route_decision.get("route_kind") or "other_worker"),
+        "rules": [
+            "WeChat receives messages and returns artifacts; it does not own backend reasoning.",
+            "The direct monitor only routes and queues nontrivial work.",
+            "The worker supervises routine stages, then resumes the exact chat's Codex worker session.",
+            "Artifacts and replies must go back through the guarded sender for the same source chat.",
+        ],
+    }
 
 
 def enqueue_deferred_reply(

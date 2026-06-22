@@ -53,7 +53,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     routines.set_defaults(func=cmd_routines)
 
     selftest = nested.add_parser("selftest", help="Run focused automation self-tests for critical WeChat routines.")
-    selftest.add_argument("--suite", choices=["publish-poststage"], default="publish-poststage")
+    selftest.add_argument("--suite", choices=["publish-poststage", "transport-resume", "all"], default="publish-poststage")
     selftest.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     selftest.set_defaults(func=cmd_selftest)
 
@@ -365,9 +365,7 @@ def cmd_routines(args: argparse.Namespace) -> int:
 
 
 def cmd_selftest(args: argparse.Namespace) -> int:
-    if args.suite != "publish-poststage":
-        raise ValueError(f"Unsupported selftest suite: {args.suite}")
-    checks = publish_poststage_selftest_checks()
+    checks = selftest_checks_for_suite(args.suite)
     results = []
     for check in checks:
         proc = run_command(
@@ -390,14 +388,40 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         "suite": args.suite,
         "checked_at": datetime.now().isoformat(timespec="seconds"),
         "results": results,
-        "contract": [
+        "contract": selftest_contract_for_suite(args.suite),
+    }
+    print_payload(payload, args.json, f"wechat selftest {args.suite}: " + ("ok" if payload["ok"] else "failed"))
+    return 0 if payload["ok"] else 1
+
+
+def selftest_checks_for_suite(suite: str) -> list[dict[str, str]]:
+    if suite == "publish-poststage":
+        return publish_poststage_selftest_checks()
+    if suite == "transport-resume":
+        return transport_resume_selftest_checks()
+    if suite == "all":
+        return publish_poststage_selftest_checks() + transport_resume_selftest_checks()
+    raise ValueError(f"Unsupported selftest suite: {suite}")
+
+
+def selftest_contract_for_suite(suite: str) -> list[str]:
+    contracts: dict[str, list[str]] = {
+        "publish-poststage": [
             "missing LazyEdit publish job triggers the worker's real publish command",
             "existing LazyEdit/remote job is monitored and not duplicated",
             "remote platform login blockers become waiting_confirmation with poststage preserved",
         ],
+        "transport-resume": [
+            "WeChat queue rows carry a message-transport execution contract",
+            "nontrivial worker tasks resume the exact chat's Codex worker session",
+            "the tmux worker starts through the guarded self-test entrypoint",
+        ],
     }
-    print_payload(payload, args.json, f"wechat selftest {args.suite}: " + ("ok" if payload["ok"] else "failed"))
-    return 0 if payload["ok"] else 1
+    if suite == "all":
+        return contracts["publish-poststage"] + contracts["transport-resume"]
+    if suite in contracts:
+        return contracts[suite]
+    raise ValueError(f"Unsupported selftest suite: {suite}")
 
 
 def publish_poststage_selftest_checks() -> list[dict[str, str]]:
@@ -418,6 +442,25 @@ def publish_poststage_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "remote_login_log_detection",
             "test": prefix + "test_detect_remote_publish_login_blocker_from_log",
+        },
+    ]
+
+
+def transport_resume_selftest_checks() -> list[dict[str, str]]:
+    worker_prefix = "tests.test_wechat_task_worker.WeChatTaskWorkerTests."
+    direct_prefix = "tests.test_wechat_direct_chatops.WeChatDirectChatopsPolicyTests."
+    return [
+        {
+            "id": "queued_task_has_transport_contract",
+            "test": direct_prefix + "test_enqueue_worker_task_persists_routine_contract",
+        },
+        {
+            "id": "worker_resumes_codex_session",
+            "test": worker_prefix + "test_orchestrator_resumes_codex_session_for_nontrivial_stage",
+        },
+        {
+            "id": "supervisor_uses_guarded_worker_entrypoint",
+            "test": worker_prefix + "test_supervisor_worker_uses_guarded_selftest_entrypoint",
         },
     ]
 

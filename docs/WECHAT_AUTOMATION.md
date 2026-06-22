@@ -656,20 +656,24 @@ worker-agent fallback during testing.
 
 The tmux supervisor launches the worker through
 `agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh`, which
-runs this self-test before starting the long-running worker loop. If the
-self-test fails, the worker fails closed instead of silently processing publish
-tasks with a broken poststage. Set `WECHAT_WORKER_SKIP_SELFTEST=1` only for a
-temporary emergency bypass.
+runs `PYTHONPATH=src python -m agenticapp wechat selftest --suite all --json`
+before starting the long-running worker loop. If the self-test fails, the worker
+fails closed instead of silently processing tasks with a broken transport,
+routine, Codex resume, or publish poststage path. Set
+`WECHAT_WORKER_SKIP_SELFTEST=1` only for a temporary emergency bypass.
 
 Run the focused self-test manually after changing this path:
 
 ```bash
 PYTHONPATH=src python -m agenticapp wechat selftest --suite publish-poststage --json
+PYTHONPATH=src python -m agenticapp wechat selftest --suite transport-resume --json
+PYTHONPATH=src python -m agenticapp wechat selftest --suite all --json
 ```
 
-It verifies that the system itself reissues a missing publish job, does not
-duplicate an existing job, and turns platform login blockers into resumable
-`waiting_confirmation` tasks.
+These verify that the system itself treats WeChat as message transport, writes a
+routine/execution contract, resumes the exact chat's Codex worker session,
+reissues a missing publish job, avoids duplicate publish jobs, and turns
+platform login blockers into resumable `waiting_confirmation` tasks.
 
 ```bash
 curl -fsS http://127.0.0.1:18787/api/autopublish/queue | jq '.jobs[:8]'

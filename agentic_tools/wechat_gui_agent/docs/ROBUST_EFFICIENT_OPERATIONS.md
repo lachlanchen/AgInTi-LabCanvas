@@ -212,10 +212,11 @@ become `waiting_confirmation` with the same poststage stored, so the user can
 log in normally and approve the task to resume.
 The tmux supervisor must start the worker through
 `wechat_worker_guarded_loop.sh`, which runs
-`PYTHONPATH=src python -m agenticapp wechat selftest --suite publish-poststage --json`
-before the worker loop. Keep this guard enabled so broken publish repair logic
-fails closed at startup/reload; `WECHAT_WORKER_SKIP_SELFTEST=1` is only for a
-temporary emergency bypass.
+`PYTHONPATH=src python -m agenticapp wechat selftest --suite all --json`
+before the worker loop. Keep this guard enabled so broken message transport,
+routine contract, Codex resume, or publish repair logic fails closed at
+startup/reload; `WECHAT_WORKER_SKIP_SELFTEST=1` is only for a temporary
+emergency bypass.
 
 ## Health Checks
 

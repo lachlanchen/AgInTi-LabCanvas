@@ -18,6 +18,7 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m agenticapp studio figure-grid "optical icons 2x3" --rows 2 --cols 3`: run the same artifact action as the web canvas.
 - `PYTHONPATH=src python -m agenticapp studio dispatch blender "Prepare an editable paper figure setup"`: dry-run a configured target and register the envelope as an artifact.
 - `PYTHONPATH=src python -m agenticapp wechat worker --chat "懒人科研" enqueue "Use LabCanvas to render a PCB and CAD preview"`: enqueue slower WeChat backend work that can call CAD, PCB, Blender, and LabCanvas tools.
+- `PYTHONPATH=src python -m agenticapp wechat selftest --suite all --json`: prove WeChat transport, routine contracts, Codex resume, and publish poststage repair work together.
 - `PYTHONPATH=src python -m agenticapp wechat selftest --suite publish-poststage --json`: prove the WeChat worker can repair missing LazyEdit publish jobs, avoid duplicates, and pause on login blockers.
 - `PYTHONPATH=src python -m unittest discover -s tests`: run the full test suite.
 - `scripts/install_blender_portable.sh`: install a no-sudo Blender binary under `~/.local/share/labcanvas/blender`.
@@ -45,6 +46,7 @@ Paper figure generation must stay editable and atomic. Do not treat a generated 
 Research chat messages that mention LabCanvas, AgInTi image generation, KiCad, Gerber, STEP/STL, CAD, PCB, Blender, figures, icons, or renders should be routed to the worker queue. The fast monitor should only ACK and enqueue. The worker may run `studio figure-grid`, `studio lab-task`, `render-scene`, AgInTi image generation, KiCad, OpenSCAD, and Blender commands, then return generated PNG/PDF/SVG/MP4/MOV/audio/STEP/STL/ZIP/KiCad artifacts in the `files` array so the GUI sender can deliver them to WeChat.
 Video publishing requests should use `agentic_tools/wechat_gui_agent/skills/lazyedit-publish-workflow/SKILL.md`: resolve exact same-chat video media with `labcanvas wechat autopublish-video`, process/publish through LazyEdit's `scripts/lazyedit_publish.py`, monitor local and remote queues, and stop for human QR/CAPTCHA/login steps. Preserve the worker's video publish/subtitle context bundle as `--correction-prompt-file`, create a separate concise `--metadata-prompt-file`, and only return safe source-scoped media artifacts.
 The tmux supervisor must launch `wechat_worker_guarded_loop.sh`, not the raw worker, so the publish-poststage self-test runs before the worker loop starts.
+Treat WeChat as message transport only: nontrivial messages should become queued tasks with `task.routine` and `execution_contract`, then `wechat_task_worker.run_task_orchestrator` resumes the exact chat's Codex worker session through `wechat_codex_sessions.run_codex_session`.
 When changing WeChat automation behavior, also update `agentic_tools/wechat_gui_agent/docs/ROBUST_EFFICIENT_OPERATIONS.md`. Treat it as the reliability contract for per-chat isolation, token-efficient routing, queue states, artifact delivery gates, and recovery playbooks.
 
 ## Commit & Pull Request Guidelines
