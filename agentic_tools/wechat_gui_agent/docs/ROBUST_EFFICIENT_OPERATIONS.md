@@ -43,12 +43,13 @@ that contract rather than designing a new workflow from scratch.
   target.
 - Never mix context, media, files, Codex sessions, or generated artifacts across
   chats.
-- All monitored non-EchoMind chats share the same backend routine skill surface:
-  CAD/PCB/LabCanvas, editable figures, story/script, file/media, video,
-  publish, and research requests should reach the shared worker routines when
-  the current message asks for them.
-- EchoMind remains language-learning only. It may analyze Japanese, Chinese,
-  and English, but it must not enqueue backend routine work.
+- All monitored chats share the same backend routine skill surface when the
+  current message explicitly asks for tool or artifact work: CAD/PCB/LabCanvas,
+  editable figures, story/script, file/media, video, publish, writing, LaTeX,
+  PDF, and research requests should reach the shared worker routines.
+- EchoMind remains language-learning by default for ordinary Japanese, Chinese,
+  and English practice, but explicit backend/tool/artifact instructions route
+  through the same worker routines.
 - Every live send must pass the send target and title guard.
 - For the common phone-to-desktop workflow, enable
   `allow_human_self_messages=true` with `self_message_policy=human_commands`.
@@ -99,13 +100,16 @@ that contract rather than designing a new workflow from scratch.
 - Idle polling is local-only and should not spend model tokens.
 - Use fast-router Codex only for new actionable messages, ambiguous routing, or
   immediate lightweight replies.
-- Keep route classification agent-first for triggerable non-language chats:
+- Keep route classification agent-first for triggerable monitored chats:
   `agent_route_enabled=true` with `agent_route_prefilter=agent_first` lets the
   per-chat `route` Codex session choose `route_kind`, project, source policy,
   and worker need before keyword lists. `agent_router.reuse_session=true` is
   the default, so repeated requests in one chat resume the same route thread.
-  Keyword and attachment checks remain as fallback and safety gates, not the
-  primary capability map.
+  Keyword and attachment checks remain auxiliary fallback and safety gates, not
+  the primary capability map.
+- Keep `immediate_route_enabled=true` for monitored chats that should enqueue
+  backend work. `immediate_ack_enabled=false` only suppresses the visible ack;
+  it must not be used as the routing kill switch.
 - The current coalesced request is authoritative. Route and worker prompts must
   preserve every safe explicit instruction, including multi-stage requests, and
   must not shrink a request to a smaller hardcoded action because one keyword

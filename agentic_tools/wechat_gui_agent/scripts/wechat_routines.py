@@ -29,6 +29,7 @@ COMMON_RULES = (
     "Re-check the current request, route_decision, source chat, and source local_id before every external action.",
     "Use only same-chat source rows, explicit references, and source-scoped synced media.",
     "Save evidence and generated artifacts under the task artifact directory or other ignored output/private folders.",
+    "List every safe generated or fetched artifact in the worker JSON files array so the sender can attach it back to the source chat by default.",
     "Return blockers as stateful status or confirmation instead of silently completing partial work.",
     "Do not treat a file-picker click as artifact delivery; required files need a verified send, deferred state, or explicit blocker evidence.",
 )
@@ -90,7 +91,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
             },
         ),
         required_gates=("artifact_delivery_gate",),
-        artifact_policy="Return preview images plus editable SVG/manifest/TeX/source files where available.",
+        artifact_policy="Return preview images plus editable SVG/manifest/TeX/source files by default when safe.",
         rules=COMMON_RULES
         + (
             "Keep generated figures atomic: overview, parts, prompts, source files, and manifests must stay editable.",
@@ -123,7 +124,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
                 "success": "story text and safe saved Markdown/source files are returned to the source chat",
             },
         ),
-        artifact_policy="Return the story/script text in the message and include saved Markdown/source files when useful.",
+        artifact_policy="Return the story/script text in the message and attach saved Markdown/source files by default when safe.",
         rules=COMMON_RULES
         + (
             "Do not substitute image generation for a story/script request.",
@@ -158,7 +159,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
             },
         ),
         required_gates=("artifact_delivery_gate",),
-        artifact_policy="Return full-view PNG renders first, then STEP/STL/Gerber/Blend/source files when safe.",
+        artifact_policy="Return full-view PNG renders first, then attach STEP/STL/Gerber/Blend/source files when safe.",
         rules=COMMON_RULES
         + (
             "Use existing repo CAD/PCB CLI routines before raw GUI automation.",
@@ -193,8 +194,8 @@ ROUTINES: dict[str, RoutineDefinition] = {
         ),
         required_gates=("exact_source_resolution", "artifact_delivery_gate"),
         artifact_policy=(
-            "Return the requested safe media/file as a WeChat attachment when supported; "
-            "text-like artifacts may be returned as saved paths. Do not close required artifact work "
+            "Return the requested safe media/file as a WeChat attachment by default, including text/source artifacts. "
+            "Do not close required artifact work "
             "until delivery is verified, deferred, or blocked with evidence."
         ),
         rules=COMMON_RULES
@@ -294,7 +295,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
             },
         ),
         required_gates=("wechat_artifact_delivery_gate",),
-        artifact_policy="A generated MP4 must be delivered to the source chat before LazyEdit/public poststage.",
+        artifact_policy="A generated MP4 and any safe story/prompt/source artifacts must be delivered to the source chat before LazyEdit/public poststage.",
         rules=COMMON_RULES
         + (
             "Do not process old WeChat MP4, LazyEdit, or AutoPublish files as the new generated-video output.",

@@ -138,6 +138,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "analysis_mode": "",
         "silent_danger_enabled": True,
         "danger_keywords": DEFAULT_DANGER_KEYWORDS,
+        "immediate_route_enabled": True,
         "immediate_ack_enabled": True,
         "immediate_ack_text": "收到，我先处理，完成后把结果发回来。",
         "slow_task_keywords": [
@@ -1341,9 +1342,7 @@ def immediate_task_route(
     *,
     focus_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    if is_language_analysis_mode(config):
-        return None
-    if not bool(config.get("immediate_ack_enabled", True)):
+    if not bool(config.get("immediate_route_enabled", True)):
         return None
     current_request = combined_focus_request(config, row, context_rows, focus_rows=focus_rows)
     combined = current_request or visible_message_text(row)
@@ -1434,7 +1433,8 @@ def immediate_task_route(
     task = (
         "Handle this WeChat request as backend work. "
         "Use available local tools, download, sync, copy, or generate needed artifacts into ignored private/output folders, "
-        "and return a concise message plus any safe files/images/videos/audio/PDFs to send back. "
+        "and return a concise message plus all safe generated or fetched artifacts to send back, not just filesystem paths. "
+        "Artifacts include full stories, Markdown, LaTeX, PDFs, images, renders, CAD/PCB exports, source manifests, videos, audio, archives, and previews. "
         "Follow every safe, explicit instruction in the current coalesced request; if the user asks for multiple stages, preserve those stages and complete them in order or leave a resumable state. "
         "Do not shrink a broad safe request to a smaller hardcoded action just because a keyword matched first. "
         "For any WeChat attachment or shared object, inspect the structured message text and recent synced media first: "
@@ -1462,7 +1462,11 @@ def immediate_task_route(
         f"{story_context}"
         f"{lalachan_context}"
     )
-    ack = str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
+    ack = (
+        str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
+        if bool(config.get("immediate_ack_enabled", True))
+        else ""
+    )
     return {"ack": ack, "task": task, "route_decision": route_decision}
 
 
@@ -1495,6 +1499,7 @@ def heuristic_worker_route_candidate(
         or quoted_media_task
         or file_download_task
         or story_or_script_task
+        or is_document_artifact_task(text)
         or is_unified_backend_request(config, text)
         or any(keyword and keyword in lowered for keyword in keywords)
     )
@@ -1575,6 +1580,7 @@ Allowed route_kind values:
 Important distinction:
 - The current coalesced request is authoritative. Preserve every safe explicit instruction and classify toward the closest backend routine instead of dropping stages.
 - If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
+- Every monitored chat, including EchoMind, can ask for backend work such as CAD/PCB, image or figure generation, video generation, video publication, file/media handling, writing, Markdown, LaTeX, PDFs, and other artifact tasks. EchoMind is language-learning by default only when the message is ordinary language practice.
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
 - Keyword heuristics are safety fallbacks only; the route agent should reason over the full current request and recent same-chat context.
 - "upload all images" can mean upload reference images into a generation UI. That is NOT public publishing.
@@ -1672,7 +1678,9 @@ def fallback_route_decision(
 ) -> dict[str, Any]:
     lowered = str(text or "").lower()
     publish_allowed = has_public_publish_intent(lowered)
-    if is_file_download_or_save_task(text):
+    if is_document_artifact_task(text):
+        route_kind = "other_worker"
+    elif is_file_download_or_save_task(text):
         route_kind = "file_download_or_save"
     elif is_cad_pcb_labcanvas_task(text):
         route_kind = "cad_pcb_labcanvas"
@@ -2263,10 +2271,19 @@ def is_research_or_summary_task(text: str) -> bool:
 
 
 def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
-    if is_language_analysis_mode(config):
-        return False
     lowered = str(text or "").lower()
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
+    if is_language_analysis_mode(config):
+        return (
+            is_file_download_or_save_task(text)
+            or is_cad_pcb_labcanvas_task(text)
+            or has_video_generation_intent(text)
+            or is_story_or_script_task(text)
+            or has_public_publish_intent(text)
+            or is_image_generation_task(text)
+            or is_document_artifact_task(text)
+            or any(keyword and keyword in lowered for keyword in keywords)
+        )
     return (
         is_file_download_or_save_task(text)
         or is_cad_pcb_labcanvas_task(text)
@@ -2275,8 +2292,17 @@ def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
         or has_public_publish_intent(text)
         or is_image_generation_task(text)
         or is_research_or_summary_task(text)
+        or is_document_artifact_task(text)
         or any(keyword and keyword in lowered for keyword in keywords)
     )
+
+
+def is_document_artifact_task(text: str) -> bool:
+    """Small fallback wake gate; route/worker agents remain the primary classifier."""
+    lowered = str(text or "").lower()
+    document_terms = ("latex", "tex", "markdown", "md", "pdf", "report", "document", "slides", "beamer", "文档", "文檔", "报告")
+    action_terms = ("write", "generate", "create", "make", "compile", "export", "send", "return", "写", "生成", "编译", "編譯", "导出", "发送")
+    return any(term in lowered for term in document_terms) and any(term in lowered for term in action_terms)
 
 
 def is_video_publish_context_task(text: str) -> bool:

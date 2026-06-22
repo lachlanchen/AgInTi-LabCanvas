@@ -2367,7 +2367,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(payload["repaired_count"], 0)
         self.assertEqual(tasks[0]["status"], "done")
 
-    def test_send_result_notes_markdown_files_without_gui_file_send(self) -> None:
+    def test_send_result_attaches_markdown_files_by_default(self) -> None:
         worker = load_worker()
         messages: list[str] = []
         files: list[Path] = []
@@ -2392,10 +2392,26 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             worker.send_message = original_message
             worker.send_file = original_file
 
-        self.assertEqual(files, [Path("/tmp/preview.png")])
-        self.assertEqual(task["unsent_saved_files"], ["/tmp/story.md"])
-        self.assertIn("Saved files:", messages[0])
-        self.assertIn("/tmp/story.md", messages[0])
+        self.assertEqual(files, [Path("/tmp/story.md"), Path("/tmp/preview.png")])
+        self.assertNotIn("unsent_saved_files", task)
+        self.assertEqual(messages, ["done"])
+
+    def test_required_delivery_includes_source_and_cad_artifacts(self) -> None:
+        worker = load_worker()
+        result = {
+            "files": [
+                "/tmp/story.md",
+                "/tmp/paper.tex",
+                "/tmp/render.png",
+                "/tmp/board.kicad_pcb",
+                "/tmp/model.step",
+                "/tmp/video.mp4",
+            ]
+        }
+
+        required = [path.suffix for path in worker.required_delivery_file_paths(result)]
+
+        self.assertEqual(required, [".md", ".tex", ".png", ".kicad_pcb", ".step", ".mp4"])
 
     def test_worker_send_message_disables_wechat_search_by_default(self) -> None:
         worker = load_worker()
@@ -2434,7 +2450,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertNotIn("--no-search", calls[0])
         self.assertIn("--allow-search", calls[0])
 
-    def test_optional_file_send_failure_does_not_retry_whole_message(self) -> None:
+    def test_required_file_send_failure_blocks_completion_message(self) -> None:
         worker = load_worker()
         sent_messages: list[str] = []
         original_message = worker.send_message
@@ -2472,8 +2488,9 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             worker.send_message = original_message
             worker.send_file = original_file
 
-        self.assertEqual(errors, [])
-        self.assertEqual(sent_messages, ["done"])
+        self.assertEqual(len(errors), 2)
+        self.assertIn("required artifact delivery failed", errors[0])
+        self.assertEqual(sent_messages, [])
         self.assertIn("file_send_errors", task)
 
     def test_worker_route_guard_rejects_cross_chat_send(self) -> None:

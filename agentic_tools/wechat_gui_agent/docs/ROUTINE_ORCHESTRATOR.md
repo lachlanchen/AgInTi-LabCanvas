@@ -52,14 +52,14 @@ Current routines:
 
 Routing scope:
 
-- All monitored non-EchoMind chats use the same backend routine skill surface:
-  懒人科研, 鏈接, 写作 外语 挣钱, 🍓我的设备, and `lachlanchan` can route CAD/PCB,
-  LabCanvas, figure/image, file/media, story/script, video, publish, and
-  research tasks to these routines when the current message asks for them.
-- EchoMind is intentionally different. It stays a language-learning chat for
-  Japanese/Chinese/English analysis and must not enqueue backend worker
-  routines, even if a message mentions images, CAD, videos, downloads, or
-  publishing.
+- All monitored chats use the same backend routine skill surface for explicit
+  tool or artifact requests: EchoMind, 懒人科研, 鏈接, 写作 外语 挣钱, 🍓我的设备,
+  and `lachlanchan` can route CAD/PCB, LabCanvas, figure/image, file/media,
+  story/script, video, publish, writing, LaTeX, PDF, and research tasks to these
+  routines when the current message asks for them.
+- EchoMind is intentionally language-learning by default. Ordinary
+  Japanese/Chinese/English practice stays in the language reply path; explicit
+  backend instructions use the shared route/worker agents.
 
 ## Contract Rules
 

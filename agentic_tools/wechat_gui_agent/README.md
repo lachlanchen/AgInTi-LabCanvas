@@ -550,6 +550,10 @@ as `EchoMind` can use:
   "trigger_local_types": [1],
   "chat_purpose": "language_learning",
   "analysis_mode": "echomind_language",
+  "immediate_route_enabled": true,
+  "immediate_ack_enabled": false,
+  "agent_route_enabled": true,
+  "agent_route_prefilter": "agent_first",
   "codex": {"model": "gpt-5.5", "reasoning_effort": "medium"}
 }
 ```
@@ -558,6 +562,11 @@ EchoMind replies to normal messages with Japanese furigana/romaji, Chinese
 pinyin, grammar notes, and English glosses. The direct monitor silently ignores
 messages that request secrets, credentials, payment/order actions, destructive
 commands, prompt disclosure, or bot rule changes.
+EchoMind is language-learning by default, not language-only: explicit
+CAD/PCB/image/video/publish/writing/LaTeX/PDF artifact requests route through
+the same per-chat route agent and worker routines as other monitored chats.
+Use `immediate_ack_enabled: false` only to suppress the visible acknowledgement;
+leave `immediate_route_enabled: true` so backend work still enters the queue.
 Keep `ignore_self_messages: true` so EchoMind does not analyze or repeat its own
 previous output. Enable `respond_to_self` only for short manual tests where
 phone-sent messages from the same logged-in account should trigger replies.
@@ -586,7 +595,7 @@ Set `WECHAT_WORKER_MIN_EFFORT`, `WECHAT_WORKER_MAX_EFFORT`, or
 `WECHAT_WORKER_MAX_CODEX_ATTEMPTS` to tune dynamic escalation. Spark worker
 models are ignored unless `WECHAT_ALLOW_SPARK_WORKER=1` is set intentionally.
 Direct monitors should keep `agent_route_enabled=true` and
-`agent_route_prefilter=agent_first` for triggerable non-language chats. The
+`agent_route_prefilter=agent_first` for monitored chats. The
 per-chat `route` Codex session classifies route kind, project, source policy,
 and worker need before keyword lists; deterministic heuristics remain fallback
 and safety logic.

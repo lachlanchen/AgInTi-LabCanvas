@@ -79,21 +79,52 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             )
         )
 
-    def test_echomind_stays_language_only_for_backend_requests(self) -> None:
+    def test_echomind_routes_explicit_backend_requests(self) -> None:
         config = self.base_config()
-        config["agent_route_enabled"] = False
-        row = self.row("Could you send me the generated video in the group?", local_id=72, server_id="srv-72")
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row("Could you render a KiCad PCB and send back the STEP and PDF?", local_id=72, server_id="srv-72")
         context = [
-            self.row("Xiaoyunque 视频已生成并下载完成。30.434 秒，4:3，已保存到 LALACHAN/Videos。", sender="self", local_id=70),
+            self.row("普通语言学习消息仍然应该直接分析，不进入后端工具。", sender="self", local_id=70),
             row,
         ]
+        original = direct_chatops.run_codex_session
+        try:
+            def fake_route_agent(prompt: str, **kwargs: object) -> dict[str, object]:
+                self.assertEqual(kwargs["role"], "route")
+                self.assertIn("Every monitored chat, including EchoMind", prompt)
+                return {
+                    "ok": True,
+                    "message": json.dumps(
+                        {
+                            "route_kind": "cad_pcb_labcanvas",
+                            "project": "labcanvas",
+                            "worker_needed": True,
+                            "needs_recent_media": False,
+                            "public_publish_intent": False,
+                            "public_publish_allowed": False,
+                            "external_action_allowed": True,
+                            "source_policy": "current_request_only",
+                            "reason": "explicit backend artifact request",
+                            "confidence": 0.95,
+                        }
+                    ),
+                }
 
-        route = direct_chatops.immediate_task_route(config, row, context, focus_rows=[row])
+            direct_chatops.run_codex_session = fake_route_agent  # type: ignore[assignment]
+            route = direct_chatops.immediate_task_route(config, row, context, focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
 
-        self.assertIsNone(route)
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "cad_pcb_labcanvas")
+        self.assertEqual(route["route_decision"]["route_agent_model"], "gpt-5.3-codex-spark")
+        self.assertIn("all safe generated or fetched artifacts", route["task"])
 
-    def test_all_non_echomind_chats_share_backend_route_skills(self) -> None:
+    def test_all_monitored_chats_share_backend_route_skills_for_explicit_work(self) -> None:
         chats = [
+            ("EchoMind", "language_learning", "echomind_language"),
             ("懒人科研", "research"),
             ("鏈接", "web_clip_inbox"),
             ("写作 外语 挣钱", "writing_language_money"),
@@ -108,18 +139,120 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             ("generate a Xiaoyunque video for LALACHAN", "generate_video"),
             ("download and send back this PDF", "file_download_or_save"),
         ]
-        for chat_name, purpose in chats:
-            for message, expected_kind in cases:
-                with self.subTest(chat=chat_name, message=message):
-                    config = self.backend_chat_config(chat_name, purpose)
-                    row = self.row(message, local_id=72, server_id=f"{chat_name}-{expected_kind}")
-                    route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        expected_by_message = dict(cases)
+        original = direct_chatops.run_codex_session
+        try:
+            def fake_route_agent(prompt: str, **kwargs: object) -> dict[str, object]:
+                self.assertEqual(kwargs["role"], "route")
+                route_kind = next(kind for message, kind in expected_by_message.items() if message in prompt)
+                return {
+                    "ok": True,
+                    "message": json.dumps(
+                        {
+                            "route_kind": route_kind,
+                            "project": "labcanvas" if route_kind in {"cad_pcb_labcanvas", "generate_image"} else "generic",
+                            "worker_needed": True,
+                            "needs_recent_media": route_kind == "file_download_or_save",
+                            "public_publish_intent": False,
+                            "public_publish_allowed": False,
+                            "external_action_allowed": True,
+                            "source_policy": "current_request_only",
+                            "reason": "route agent classified explicit work",
+                            "confidence": 0.9,
+                        }
+                    ),
+                }
 
-                    self.assertIsNotNone(route)
-                    assert route is not None
-                    self.assertEqual(route["route_decision"]["route_kind"], expected_kind)
-                    self.assertTrue(route["route_decision"]["worker_needed"])
-                    self.assertIn(f"Chat: {chat_name}", route["task"])
+            direct_chatops.run_codex_session = fake_route_agent  # type: ignore[assignment]
+            for chat_item in chats:
+                chat_name, purpose, *analysis_mode = chat_item
+                for message, expected_kind in cases:
+                    with self.subTest(chat=chat_name, message=message):
+                        config = self.backend_chat_config(chat_name, purpose)
+                        config["agent_route_enabled"] = True
+                        config["agent_route_prefilter"] = "agent_first"
+                        if analysis_mode:
+                            config["analysis_mode"] = analysis_mode[0]
+                        row = self.row(message, local_id=72, server_id=f"{chat_name}-{expected_kind}")
+                        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+                        self.assertIsNotNone(route)
+                        assert route is not None
+                        self.assertEqual(route["route_decision"]["route_kind"], expected_kind)
+                        self.assertTrue(route["route_decision"]["worker_needed"])
+                        self.assertIn(f"Chat: {chat_name}", route["task"])
+                        expected_model = "gpt-5.5" if direct_chatops.route_needs_stronger_model(message) else "gpt-5.3-codex-spark"
+                        self.assertEqual(route["route_decision"]["route_agent_model"], expected_model)
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+    def test_obvious_document_artifact_overrides_route_agent_chat_only(self) -> None:
+        config = self.backend_chat_config("懒人科研", "research")
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row("please compile this LaTeX report to PDF and send it back", local_id=80, server_id="srv-80")
+        original = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+                "ok": True,
+                "message": json.dumps(
+                    {
+                        "route_kind": "chat_only",
+                        "project": "unknown",
+                        "worker_needed": False,
+                        "needs_recent_media": False,
+                        "public_publish_intent": False,
+                        "public_publish_allowed": False,
+                        "external_action_allowed": False,
+                        "source_policy": "current_request_only",
+                        "reason": "mistakenly treated as chat",
+                        "confidence": 0.2,
+                    }
+                ),
+            }
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "other_worker")
+        self.assertEqual(route["route_decision"]["route_agent_overridden"], "agent_chat_only_despite_worker_heuristic")
+        self.assertIn("LaTeX report", route["task"])
+
+    def test_ack_disabled_still_routes_backend_task_without_ack_text(self) -> None:
+        config = self.base_config()
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        config["immediate_ack_enabled"] = False
+        row = self.row("generate a figure diagram and send the image back", local_id=81, server_id="srv-81")
+        original = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+                "ok": True,
+                "message": json.dumps(
+                    {
+                        "route_kind": "generate_image",
+                        "project": "labcanvas",
+                        "worker_needed": True,
+                        "needs_recent_media": False,
+                        "public_publish_intent": False,
+                        "public_publish_allowed": False,
+                        "external_action_allowed": True,
+                        "source_policy": "current_request_only",
+                        "reason": "explicit image artifact request",
+                        "confidence": 0.9,
+                    }
+                ),
+            }
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["ack"], "")
+        self.assertEqual(route["route_decision"]["route_kind"], "generate_image")
 
     def test_worker_heuristic_overrides_agent_chat_only_for_generated_video_request(self) -> None:
         config = self.backend_chat_config("🍓我的设备", "device_inbox")
