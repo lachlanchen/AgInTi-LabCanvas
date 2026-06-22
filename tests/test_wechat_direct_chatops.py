@@ -398,6 +398,17 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             direct_chatops.response_skip_reason(config, {}, self.row("收到，我先处理，完成后把结果发回来。", sender="self")),
             "self_bot_reply",
         )
+        self.assertEqual(
+            direct_chatops.response_skip_reason(
+                config,
+                {},
+                self.row("Full story:\n\n# Today Story\n\n今天的纪念日，外面很冷。", sender="self"),
+            ),
+            "self_bot_reply",
+        )
+        self.assertTrue(
+            direct_chatops.should_respond(config, {}, self.row("Show me the story here full story explicit story", sender="self"))
+        )
 
     def test_human_self_context_is_not_labeled_bot_self_when_enabled(self) -> None:
         config = self.base_config()

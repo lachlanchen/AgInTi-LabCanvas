@@ -821,13 +821,17 @@ def looks_like_bot_self_reply(config: dict[str, Any], text: str) -> bool:
     ]
     organizer = config.get("organizer") if isinstance(config.get("organizer"), dict) else {}
     configured_prefixes.append(str(organizer.get("ack_saved_text") or ""))
+    configured_prefixes.extend(str(item) for item in config.get("bot_self_reply_prefixes", []) or [])
     bot_prefixes = [
         "收到，我先处理",
         "收到，我来处理",
         "已保存",
         "已生成",
+        "已确认发布完成",
         "已准备",
         "准备好了",
+        "full story:",
+        "saved files:",
         "我已打开人工辅助浏览器",
         "我没有发布这个视频",
         "我已拦截这个结果",
@@ -2838,6 +2842,9 @@ def strip_group_sender_prefix(text: str) -> str:
         return text
     first, rest = text.split("\n", 1)
     stripped = first.strip()
+    label = stripped.rstrip(":：").strip().lower()
+    if label in {"full story", "saved files"}:
+        return text
     if stripped.endswith(":") and not stripped.startswith("<") and len(stripped) <= 96:
         return rest.strip()
     return text
