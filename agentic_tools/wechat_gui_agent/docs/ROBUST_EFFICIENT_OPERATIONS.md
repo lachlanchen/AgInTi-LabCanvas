@@ -56,8 +56,10 @@ workflow from scratch.
   GUI is locked, the serialized sender is busy, or the sender times out while a
   file/video is being delivered, enqueue them as `send_deferred_locked`
   worker-outbox tasks instead of dropping them. Preserve
-  `send_deferred_reason` as `wechat_locked`, `gui_send_busy`, or
-  `gui_send_timeout`.
+  `send_deferred_reason` as `wechat_locked`, `gui_send_busy`,
+  `gui_send_timeout`, or `title_guard_blank`.
+- Direct monitor state writes must be atomic. A restart or concurrent stop
+  cannot leave a half-written JSON state file.
 - Login, CAPTCHA, QR, payment, lock screen, and irreversible decisions wait for
   normal human approval.
 - Do not use packet interception, private-protocol replay, credential/session
@@ -88,6 +90,10 @@ workflow from scratch.
   per-chat `route` Codex session choose `route_kind`, project, source policy,
   and worker need before keyword lists. Keyword and attachment checks remain as
   fallback and safety gates, not the primary capability map.
+- The route model cannot suppress hard artifact work. If the current coalesced
+  request clearly asks to send/save/download/copy a file, video, image, audio,
+  PDF, or generated artifact, route it to the worker even if the route model
+  mistakenly returns `chat_only`.
 - Do not use the WeChat search box for normal sending. GUI delivery should use
   the currently verified chat, a configured `open_click`, or configured
   `fallback_clicks`; otherwise defer/fail closed. If the task needs web/source
@@ -217,6 +223,27 @@ WeChat locked:
   controls and refuses to handle phone credential prompts;
 - after unlock, run `wechat_task_worker.py --flush-deferred` or let the
   watchdog/worker loop flush automatically.
+
+Blank title guard:
+
+- `Opened chat title guard failed ... OCR=''` is treated as a transient
+  rendering/OCR miss, not as a wrong-chat proof.
+- The sender waits at least 0.8 seconds before title OCR and retries title
+  checks for at least 8 seconds so a selected chat can finish loading.
+- Blank title-guard failures enter `send_deferred_locked` with
+  `send_deferred_reason=title_guard_blank` and are retried with a short backoff.
+- Nonblank wrong titles remain fail-closed because they may indicate cross-chat
+  risk.
+- Transient GUI send retries are bounded by
+  `WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES` so one broken outbox item cannot
+  monopolize the worker.
+
+Stuck GUI sender:
+
+- Worker and direct sender subprocesses run in their own process group.
+- On `WECHAT_SEND_TIMEOUT`, the whole process group is killed, including
+  clipboard/GUI helper children, and the task is deferred instead of leaving a
+  live process holding the send lane.
 
 Long Xiaoyunque/LazyEdit work:
 

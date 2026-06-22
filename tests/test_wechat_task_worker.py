@@ -1522,38 +1522,118 @@ class WeChatTaskWorkerTests(unittest.TestCase):
     def test_run_send_subprocess_defers_when_gui_lock_is_busy(self) -> None:
         worker = load_worker()
         original_lock_busy = worker.gui_send_lock_busy
-        original_run = worker.subprocess.run
+        original_run = worker.run_subprocess_group
         try:
             worker.gui_send_lock_busy = lambda: True
 
             def fail_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
                 raise AssertionError("busy send lane should not spawn a GUI sender")
 
-            worker.subprocess.run = fail_run
+            worker.run_subprocess_group = fail_run
             with self.assertRaisesRegex(RuntimeError, "WECHAT_SEND_BUSY"):
                 worker.run_send_subprocess(["python3", "-c", "print('unused')"], timeout=1)
         finally:
             worker.gui_send_lock_busy = original_lock_busy
-            worker.subprocess.run = original_run
+            worker.run_subprocess_group = original_run
 
     def test_run_send_subprocess_timeout_is_deferable(self) -> None:
         worker = load_worker()
         original_lock_busy = worker.gui_send_lock_busy
-        original_run = worker.subprocess.run
+        original_run = worker.run_subprocess_group
         try:
             worker.gui_send_lock_busy = lambda: False
 
             def timeout_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
                 raise subprocess.TimeoutExpired(command, 120)
 
-            worker.subprocess.run = timeout_run
+            worker.run_subprocess_group = timeout_run
             with self.assertRaisesRegex(RuntimeError, "WECHAT_SEND_TIMEOUT") as context:
                 worker.run_send_subprocess(["python3", "-c", "print('unused')"], timeout=120)
         finally:
             worker.gui_send_lock_busy = original_lock_busy
-            worker.subprocess.run = original_run
+            worker.run_subprocess_group = original_run
 
         self.assertTrue(worker.send_errors_indicate_deferable([str(context.exception)]))
+
+    def test_blank_title_guard_error_is_retryable_but_wrong_title_is_not(self) -> None:
+        worker = load_worker()
+        blank = ["attempt 1: Opened chat title guard failed for EchoMind: OCR=''."]
+        wrong = ["attempt 1: Opened chat title guard failed for EchoMind: OCR='OtherChat'."]
+
+        self.assertTrue(worker.send_errors_indicate_deferable(blank))
+        self.assertEqual(worker.send_deferred_reason_from_errors(blank), "title_guard_blank")
+        self.assertFalse(worker.send_errors_indicate_deferable(wrong))
+
+    def test_claim_next_deferred_send_repairs_retryable_send_failed(self) -> None:
+        worker = load_worker()
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS")
+        try:
+            worker.os.environ["WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS"] = "0"
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-send-failed",
+                            "chat": "EchoMind",
+                            "status": "send_failed",
+                            "send_errors": ["attempt 1: Opened chat title guard failed for EchoMind: OCR=''."],
+                            "created_at": "2026-06-22T00:00:00",
+                            "completed_at": "2026-06-22T00:00:00",
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+
+                self.assertIsNotNone(claimed)
+                assert claimed is not None
+                self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+                self.assertEqual(claimed["send_deferred_reason"], "title_guard_blank")
+                self.assertEqual(claimed["send_retry_count"], 1)
+        finally:
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS"] = original_backoff
+
+    def test_claim_next_deferred_send_stops_transient_retry_loop(self) -> None:
+        worker = load_worker()
+        original_max = worker.os.environ.get("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES")
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS")
+        try:
+            worker.os.environ["WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES"] = "2"
+            worker.os.environ["WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS"] = "0"
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-loop",
+                            "chat": "EchoMind",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "send_deferred_reason": "title_guard_blank",
+                            "send_retry_count": 2,
+                            "send_errors": ["attempt 1: Opened chat title guard failed for EchoMind: OCR=''."],
+                        }
+                    ],
+                )
+
+                self.assertIsNone(worker.claim_next_deferred_send(queue))
+                tasks = worker.read_tasks(queue)
+                self.assertEqual(tasks[0]["status"], "send_failed")
+                self.assertIn("retry limit reached", tasks[0]["send_errors"][-1])
+        finally:
+            if original_max is None:
+                worker.os.environ.pop("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES"] = original_max
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS"] = original_backoff
 
     def test_claim_next_deferred_send_respects_backoff(self) -> None:
         worker = load_worker()

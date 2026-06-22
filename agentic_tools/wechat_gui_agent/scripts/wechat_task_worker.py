@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -610,11 +611,17 @@ def send_errors_indicate_gui_timeout(errors: list[str]) -> bool:
     return "wechat_send_timeout" in text or "timed out after" in text
 
 
+def send_errors_indicate_blank_title_guard(errors: list[str]) -> bool:
+    text = "\n".join(str(error) for error in errors).lower()
+    return "opened chat title guard failed" in text and "ocr=''" in text
+
+
 def send_errors_indicate_deferable(errors: list[str]) -> bool:
     return (
         send_errors_indicate_wechat_locked(errors)
         or send_errors_indicate_gui_busy(errors)
         or send_errors_indicate_gui_timeout(errors)
+        or send_errors_indicate_blank_title_guard(errors)
     )
 
 
@@ -623,6 +630,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
         return "gui_send_busy"
     if send_errors_indicate_gui_timeout(errors):
         return "gui_send_timeout"
+    if send_errors_indicate_blank_title_guard(errors):
+        return "title_guard_blank"
     return "wechat_locked"
 
 
@@ -856,13 +865,32 @@ def claim_next_deferred_send(path: Path) -> dict[str, Any] | None:
         tasks = read_tasks(path)
         now = datetime.now()
         now_text = now.isoformat(timespec="seconds")
+        changed = False
         for index, task in enumerate(tasks):
             status = str(task.get("status") or "")
-            if status not in {SEND_DEFERRED_LOCKED_STATUS, SEND_DEFERRED_ARTIFACT_STATUS, SEND_RETRYING_STATUS}:
+            if status == "send_failed":
+                if not failed_send_retryable(task, now):
+                    continue
+                task.setdefault("send_failed_repair_history", []).append(
+                    {
+                        "repaired_at": now_text,
+                        "reason": send_deferred_reason_from_errors([str(item) for item in task.get("send_errors") or []]),
+                        "from_status": "send_failed",
+                    }
+                )
+            elif status not in {SEND_DEFERRED_LOCKED_STATUS, SEND_DEFERRED_ARTIFACT_STATUS, SEND_RETRYING_STATUS}:
                 continue
             if status == SEND_RETRYING_STATUS and not stale_send_retrying(task, now):
                 continue
             if status == SEND_DEFERRED_LOCKED_STATUS and not deferred_send_backoff_elapsed(task, now):
+                continue
+            if transient_send_retry_limit_reached(task):
+                task["status"] = "send_failed"
+                task.setdefault("send_errors", []).append(
+                    f"transient send retry limit reached ({int(task.get('send_retry_count') or 0)} attempts)"
+                )
+                tasks[index] = task
+                changed = True
                 continue
             task["status"] = SEND_RETRYING_STATUS
             task["worker_id"] = worker_id
@@ -871,6 +899,8 @@ def claim_next_deferred_send(path: Path) -> dict[str, Any] | None:
             tasks[index] = task
             write_tasks(path, tasks)
             return task
+        if changed:
+            write_tasks(path, tasks)
         return None
 
 
@@ -938,6 +968,14 @@ def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
         if not last:
             return True
         return (now - last).total_seconds() >= backoff
+    if reason == "title_guard_blank":
+        backoff = int(os.environ.get("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS", "20"))
+        if backoff <= 0:
+            return True
+        last = parse_iso_datetime(str(task.get("last_send_attempt_at") or task.get("resent_at") or task.get("completed_at") or ""))
+        if not last:
+            return True
+        return (now - last).total_seconds() >= backoff
     backoff = int(os.environ.get("WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS", DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS))
     if backoff <= 0:
         return True
@@ -957,6 +995,27 @@ def stale_send_retrying(task: dict[str, Any], now: datetime) -> bool:
     if not claimed_at:
         return True
     return (now - claimed_at).total_seconds() > timeout
+
+
+def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
+    errors = [str(item) for item in task.get("send_errors") or []]
+    if not send_errors_indicate_deferable(errors):
+        return False
+    max_retries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", "5"))
+    if max_retries >= 0 and int(task.get("send_retry_count") or 0) >= max_retries:
+        return False
+    task["send_deferred_reason"] = send_deferred_reason_from_errors(errors)
+    return deferred_send_backoff_elapsed(task, now)
+
+
+def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
+    reason = str(task.get("send_deferred_reason") or "")
+    if reason not in {"gui_send_busy", "gui_send_timeout", "title_guard_blank"}:
+        return False
+    max_retries = int(os.environ.get("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES", "5"))
+    if max_retries < 0:
+        return False
+    return int(task.get("send_retry_count") or 0) >= max_retries
 
 
 def stale_in_progress(task: dict[str, Any], now: datetime) -> bool:
@@ -2969,21 +3028,35 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
     )
 
 
+def run_subprocess_group(command: list[str], *, timeout: int, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.Popen(
+        command,
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = proc.communicate()
+        raise subprocess.TimeoutExpired(command, exc.timeout, output=stdout, stderr=stderr) from exc
+    return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+
+
 def run_send_subprocess(command: list[str], timeout: int | None = None) -> None:
     if gui_send_lock_busy():
         raise RuntimeError("WECHAT_SEND_BUSY: serialized GUI sender is already sending; defer this worker reply.")
     if timeout is None:
         timeout = int(os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"))
     try:
-        proc = subprocess.run(
-            command,
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
-            env=wechat_send_env(),
-        )
+        proc = run_subprocess_group(command, timeout=timeout, env=wechat_send_env())
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
             f"WECHAT_SEND_TIMEOUT: GUI sender timed out after {exc.timeout} seconds; defer this worker reply."
@@ -3011,15 +3084,7 @@ def run_file_bridge_subprocess(command: list[str], timeout: int | None = None) -
     lock = acquire_gui_send_lock_or_raise()
     try:
         try:
-            proc = subprocess.run(
-                command,
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=timeout,
-                env=wechat_send_env(),
-            )
+            proc = run_subprocess_group(command, timeout=timeout, env=wechat_send_env())
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
                 f"WECHAT_SEND_TIMEOUT: file bridge timed out after {exc.timeout} seconds; defer this worker reply."
@@ -3076,8 +3141,8 @@ def release_gui_send_lock(lock) -> None:
 
 def wechat_send_env() -> dict[str, str]:
     env = os.environ.copy()
-    env.setdefault("WECHAT_INITIAL_TITLE_WAIT", os.environ.get("WECHAT_WORKER_INITIAL_TITLE_WAIT", "0.45"))
-    env.setdefault("WECHAT_TITLE_RETRY_SECONDS", os.environ.get("WECHAT_WORKER_TITLE_RETRY_SECONDS", "3.2"))
+    env.setdefault("WECHAT_INITIAL_TITLE_WAIT", os.environ.get("WECHAT_WORKER_INITIAL_TITLE_WAIT", "0.8"))
+    env.setdefault("WECHAT_TITLE_RETRY_SECONDS", os.environ.get("WECHAT_WORKER_TITLE_RETRY_SECONDS", "8.0"))
     return env
 
 

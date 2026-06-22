@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -365,11 +366,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         if reply_text:
             metrics["reused_previous_result"] = True
         else:
-            immediate = (
-                None
-                if is_language_analysis_mode(config)
-                else immediate_task_route(config, trigger_row, context_rows, focus_rows=focus_rows)
-            )
+            immediate = immediate_task_route(config, trigger_row, context_rows, focus_rows=focus_rows)
             if immediate:
                 task = enqueue_worker_task(
                     config,
@@ -1345,6 +1342,7 @@ def immediate_task_route(
     complex_task = is_complex_research_task(config, combined, focus_rows=focus_rows)
     contextual_media_task = is_contextual_media_task(config, combined, row, context_rows, focus_rows=focus_rows)
     quoted_media_task = is_quote_reply_message(row) and references_recent_media(combined)
+    file_download_task = is_file_download_or_save_task(combined)
     heuristic_candidate = heuristic_worker_route_candidate(
         config,
         combined,
@@ -1353,12 +1351,19 @@ def immediate_task_route(
         complex_task=complex_task,
         contextual_media_task=contextual_media_task,
         quoted_media_task=quoted_media_task,
+        file_download_task=file_download_task,
     )
     agent_first = agent_route_prefilter_mode(config) == "agent_first" and bool(config.get("agent_route_enabled", False))
     if agent_first:
         route_decision = agent_route_decision(config, row, context_rows, focus_rows=focus_rows, current_request=combined)
         if not route_decision_requires_worker(route_decision):
-            return None
+            if not heuristic_candidate:
+                return None
+            fallback = fallback_route_decision(config, combined, row, context_rows, focus_rows=focus_rows)
+            fallback["route_agent_overridden"] = "agent_chat_only_despite_worker_heuristic"
+            fallback["route_agent_original_kind"] = str(route_decision.get("route_kind") or "")
+            fallback["route_agent_original_reason"] = str(route_decision.get("reason") or "")[:300]
+            route_decision = fallback
         if route_decision.get("route_agent_error") and not heuristic_candidate:
             return None
     else:
@@ -1461,6 +1466,7 @@ def heuristic_worker_route_candidate(
     complex_task: bool,
     contextual_media_task: bool,
     quoted_media_task: bool,
+    file_download_task: bool,
 ) -> bool:
     lowered = str(text or "").lower()
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
@@ -1470,6 +1476,7 @@ def heuristic_worker_route_candidate(
         or complex_task
         or contextual_media_task
         or quoted_media_task
+        or file_download_task
         or any(keyword and keyword in lowered for keyword in keywords)
     )
 
@@ -1640,7 +1647,9 @@ def fallback_route_decision(
 ) -> dict[str, Any]:
     lowered = str(text or "").lower()
     publish_allowed = has_public_publish_intent(lowered)
-    if is_lalachan_story_video_task(text) or ("video" in lowered and any(marker in lowered for marker in ("generate", "create", "make", "生成", "做"))):
+    if is_file_download_or_save_task(text):
+        route_kind = "file_download_or_save"
+    elif is_lalachan_story_video_task(text) or ("video" in lowered and re.search(r"\b(generate|create|make)\b", lowered) is not None) or ("视频" in lowered and any(marker in lowered for marker in ("生成", "做"))):
         route_kind = "generate_video"
     elif publish_allowed:
         route_kind = "publish_video"
@@ -1650,8 +1659,8 @@ def fallback_route_decision(
         route_kind = "research_or_summary"
     else:
         route_kind = "other_worker"
-    project = "lalachan" if route_kind == "generate_video" and recent_context_mentions_lalachan(context_rows) else "unknown"
-    needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video"}
+    project = "lalachan" if route_kind in {"generate_video", "file_download_or_save", "process_existing_video"} and recent_context_mentions_lalachan(context_rows) else "unknown"
+    needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save"}
     return {
         "route_kind": route_kind,
         "project": project,
@@ -1932,6 +1941,55 @@ def references_recent_media(text: str) -> bool:
         "风格",
     ]
     return any(marker in lowered for marker in action_terms)
+
+
+def is_file_download_or_save_task(text: str) -> bool:
+    lowered = str(text or "").lower()
+    media_terms = [
+        "video",
+        "mp4",
+        "mov",
+        "file",
+        "attachment",
+        "pdf",
+        "image",
+        "photo",
+        "picture",
+        "audio",
+        "voice",
+        "generated video",
+        "视频",
+        "影片",
+        "文件",
+        "附件",
+        "图片",
+        "照片",
+        "音频",
+        "语音",
+        "生成的视频",
+    ]
+    action_terms = [
+        "send",
+        "send me",
+        "send back",
+        "give me",
+        "resend",
+        "copy",
+        "save",
+        "download",
+        "attach",
+        "发",
+        "发送",
+        "发给",
+        "给我",
+        "重发",
+        "补发",
+        "复制",
+        "保存",
+        "下载",
+        "下載",
+    ]
+    return any(term in lowered for term in media_terms) and any(term in lowered for term in action_terms)
 
 
 def is_video_publish_context_task(text: str) -> bool:
@@ -3012,47 +3070,40 @@ def send_gui_message(config: dict[str, Any], message: str) -> str:
 
 
 def send_gui_message_once(config: dict[str, Any], message: str) -> str:
+    target = config.get("send_target")
+    if not (isinstance(target, dict) and target.get("name")):
+        raise RuntimeError(f"Refusing unguarded WeChat send for {config.get('chat_name') or 'wechat-chat'}: missing send_target")
     if gui_send_lock_busy():
         raise RuntimeError("WECHAT_SEND_BUSY: serialized GUI sender is already sending; defer this reply.")
-    target = config.get("send_target")
-    if isinstance(target, dict) and target.get("name"):
-        with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
-            target_file = Path(handle.name)
-            json.dump({"message": message, "targets": [target]}, handle, ensure_ascii=False)
-        command = [
-            sys.executable,
-            str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
-            "--display",
-            str(config.get("display") or ":97"),
-            "--targets-file",
-            str(target_file),
-            "--send",
-            "--prefer-current",
-            "--pause",
-            str(config.get("send_pause_seconds", 0.35)),
-            "--mirror-db",
-            str(Path(config.get("mirror_db", DEFAULT_DB))),
-        ]
-        if gui_search_allowed(config, target):
-            command.append("--allow-search")
-        else:
-            command.append("--no-search")
+    with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
+        target_file = Path(handle.name)
+        json.dump({"message": message, "targets": [target]}, handle, ensure_ascii=False)
+    command = [
+        sys.executable,
+        str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
+        "--display",
+        str(config.get("display") or ":97"),
+        "--targets-file",
+        str(target_file),
+        "--send",
+        "--prefer-current",
+        "--pause",
+        str(config.get("send_pause_seconds", 0.35)),
+        "--mirror-db",
+        str(Path(config.get("mirror_db", DEFAULT_DB))),
+    ]
+    if gui_search_allowed(config, target):
+        command.append("--allow-search")
     else:
-        raise RuntimeError(f"Refusing unguarded WeChat send for {config.get('chat_name') or 'wechat-chat'}: missing send_target")
+        command.append("--no-search")
     try:
         env = os.environ.copy()
-        env.setdefault("WECHAT_INITIAL_TITLE_WAIT", str(config.get("send_initial_title_wait_seconds", 0.45)))
-        env.setdefault("WECHAT_TITLE_RETRY_SECONDS", str(config.get("send_title_retry_seconds", 3.2)))
+        initial_wait = max(float(config.get("send_initial_title_wait_seconds", 0.45)), float(os.environ.get("WECHAT_DIRECT_MIN_INITIAL_TITLE_WAIT", "0.8")))
+        title_retry = max(float(config.get("send_title_retry_seconds", 3.2)), float(os.environ.get("WECHAT_DIRECT_MIN_TITLE_RETRY_SECONDS", "8.0")))
+        env.setdefault("WECHAT_INITIAL_TITLE_WAIT", str(initial_wait))
+        env.setdefault("WECHAT_TITLE_RETRY_SECONDS", str(title_retry))
         try:
-            proc = subprocess.run(
-                command,
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=int(config.get("send_timeout_seconds", 60)),
-                env=env,
-            )
+            proc = run_subprocess_group(command, timeout=int(config.get("send_timeout_seconds", 60)), env=env)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
                 f"WECHAT_SEND_TIMEOUT: GUI sender timed out after {exc.timeout} seconds; defer this reply."
@@ -3073,6 +3124,28 @@ def send_gui_message_once(config: dict[str, Any], message: str) -> str:
         return ""
     except Exception:
         return ""
+
+
+def run_subprocess_group(command: list[str], *, timeout: int, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.Popen(
+        command,
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = proc.communicate()
+        raise subprocess.TimeoutExpired(command, exc.timeout, output=stdout, stderr=stderr) from exc
+    return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
 
 
 def is_wechat_locked_error(exc: Exception | str) -> bool:
@@ -3096,8 +3169,18 @@ def is_gui_send_timeout_error(exc: Exception | str) -> bool:
     return "wechat_send_timeout" in text or "timed out after" in text
 
 
+def is_blank_title_guard_error(exc: Exception | str) -> bool:
+    text = str(exc).lower()
+    return "opened chat title guard failed" in text and "ocr=''" in text
+
+
 def is_deferable_send_error(exc: Exception | str) -> bool:
-    return is_wechat_locked_error(exc) or is_gui_send_busy_error(exc) or is_gui_send_timeout_error(exc)
+    return (
+        is_wechat_locked_error(exc)
+        or is_gui_send_busy_error(exc)
+        or is_gui_send_timeout_error(exc)
+        or is_blank_title_guard_error(exc)
+    )
 
 
 def deferred_send_status(exc: Exception | str) -> str:
@@ -3111,6 +3194,8 @@ def deferred_send_reason(exc: Exception | str) -> str:
         return "gui_send_busy"
     if is_gui_send_timeout_error(exc):
         return "gui_send_timeout"
+    if is_blank_title_guard_error(exc):
+        return "title_guard_blank"
     return "wechat_locked"
 
 
@@ -3140,7 +3225,9 @@ def load_state(path: Path) -> dict[str, Any]:
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 if __name__ == "__main__":

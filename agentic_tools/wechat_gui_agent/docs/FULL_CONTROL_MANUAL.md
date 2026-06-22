@@ -194,6 +194,10 @@ The normal receive path is direct local data, not screen OCR:
    rows, attachment triggers, and chat purpose.
 6. The fast agent returns one of `CHAT`, `ACK+TASK`, or `NO_REPLY`.
 
+Direct monitor state is written atomically. If a monitor is killed during a
+write, the next restart should see either the old valid JSON state or the new
+valid JSON state, not a concatenated partial file.
+
 Polling is local DB/file work. It spends model tokens only when a new message
 needs a route decision, a language/research answer, or a worker task.
 
@@ -210,6 +214,10 @@ labcanvas wechat routines --json
 
 Before a worker task is queued, the fast monitor converts the route decision
 into a named routine from `wechat_routines.py`. The task stores `task.routine`.
+For hard artifact requests, deterministic guards override a bad `chat_only`
+route: if the current coalesced request asks to send/save/download/copy a file,
+video, image, audio, PDF, or generated artifact, the task is queued for the
+worker even when the route model misclassifies it as chat.
 When the worker claims the task, it writes `routine_contract.json` and
 `routine_contract.md` in the task artifact directory and includes that contract
 in the worker prompt. The worker supervises routine stages and resolves blockers
@@ -390,9 +398,9 @@ Then inspect fresh logs under `output/wechat_gui_agent/YYYY-MM-DD/`.
 | noVNC is blank | Run `labcanvas wechat desktop keep-awake`; check `labcanvas wechat status`. |
 | Login expired | Stop sends and ask the user to approve login in noVNC or on phone. |
 | Wrong search row opens | Add `fallback_clicks` or use a verified `open_click`; keep OCR title guard enabled. |
-| Title OCR fails | Prefer native popup title matching; otherwise add stable `expected_title_aliases`, increase title wait, inspect title crop screenshots. |
+| Title OCR fails | Prefer native popup title matching; otherwise add stable `expected_title_aliases`, inspect title crop screenshots, and keep the default minimum title wait/retry window. Blank OCR (`OCR=''`) is retryable as `title_guard_blank`; nonblank wrong titles fail closed. |
 | Backend done but reply failed | Fix the sender/title guard, then run `python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --resend <task-id>` so work is not rerun. |
-| WeChat is locked or sender is busy | Do not bypass the lock or run parallel clickers. `WECHAT_LOCKED`, `WECHAT_SEND_BUSY`, and `WECHAT_SEND_TIMEOUT` become `send_deferred_locked` with `send_deferred_reason`, then the watchdog/worker flusher retries after unlock or the active send finishes. `gui_send_busy` retries use `WECHAT_WORKER_BUSY_SEND_BACKOFF_SECONDS` after confirming the GUI lock is free. |
+| WeChat is locked or sender is busy | Do not bypass the lock or run parallel clickers. `WECHAT_LOCKED`, `WECHAT_SEND_BUSY`, `WECHAT_SEND_TIMEOUT`, and blank title-guard OCR become `send_deferred_locked` with `send_deferred_reason`, then the watchdog/worker flusher retries after unlock or the active send finishes. GUI subprocess timeouts kill the whole process group so clipboard/helper children cannot hold the lane. |
 | Text artifacts trigger file picker issues | Keep `.md`/`.txt`/`.json` as saved paths in the message; use `WECHAT_WORKER_SEND_FILES=0` to disable attachment sends or `WECHAT_WORKER_REQUIRE_FILE_SEND=1` for strict delivery. |
 | Task replies to wrong chat | Treat as a bug; check route contract, send target, state path, and title guard logs. |
 | File missing | Run same-chat media sync and verify exact local/server ids before retrying. |
