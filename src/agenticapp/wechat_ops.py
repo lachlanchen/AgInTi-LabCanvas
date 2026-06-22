@@ -1191,6 +1191,11 @@ def sanitize_loop_metrics(raw: Any) -> dict[str, Any]:
         "organizer_messages",
         "organizer_items",
         "organizer_error",
+        "trigger_candidates",
+        "focus_rows",
+        "coalesced_trigger_rows",
+        "skip_reasons",
+        "send_error",
     }
     return {key: raw[key] for key in allowed if key in raw}
 

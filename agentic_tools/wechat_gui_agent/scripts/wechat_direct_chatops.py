@@ -320,8 +320,17 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     response_sent = None
     task_enqueued = None
     processed_local_id = None
-    trigger_rows = [row for row in new_rows if should_respond(config, state, row)]
+    skip_counts: dict[str, int] = {}
+    trigger_rows = []
+    for row in new_rows:
+        skip_reason = response_skip_reason(config, state, row)
+        if skip_reason:
+            skip_counts[skip_reason] = skip_counts.get(skip_reason, 0) + 1
+        else:
+            trigger_rows.append(row)
     metrics["trigger_candidates"] = len(trigger_rows)
+    if skip_counts:
+        metrics["skip_reasons"] = skip_counts
     trigger_row = None
     focus_rows: list[dict[str, Any]] = []
     if trigger_rows:
@@ -685,34 +694,40 @@ def sync_row_to_mirror(config: dict[str, Any], row: dict[str, Any]) -> None:
 
 
 def should_respond(config: dict[str, Any], state: dict[str, Any], row: dict[str, Any]) -> bool:
+    return response_skip_reason(config, state, row) == ""
+
+
+def response_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dict[str, Any]) -> str:
     self_wxid = str(config.get("self_wxid") or "")
     if self_wxid and row["sender"] == self_wxid:
         if bool(config.get("ignore_self_messages", True)):
-            return False
+            return "self_ignored"
         if is_remembered_sent_reply(state, row["content"]):
-            return False
+            return "self_loop_guard"
         if not bool(config.get("respond_to_self", False)):
-            return False
+            return "self_disabled"
     allowed_local_types = {int(item) for item in config.get("trigger_local_types", [1])}
     base_type, _ = split_message_type(row.get("local_type"))
     attachment_trigger = is_attachment_trigger(config, row)
     quote_trigger = is_quote_reply_message(row)
     if allowed_local_types and base_type not in allowed_local_types and not attachment_trigger and not quote_trigger:
-        return False
+        return "unsupported_type"
     if str(row["server_id"]) in set(state.get("responded_server_ids", [])):
-        return False
+        return "already_responded"
     text = visible_message_text(row)
     if is_dangerous_message(config, text):
-        return False
+        return "danger"
     if attachment_trigger:
-        return True
+        return ""
     if quote_trigger:
-        return bool(config.get("respond_to_all", False)) or any(prefix in text for prefix in config["trigger_prefixes"])
+        if bool(config.get("respond_to_all", False)) or any(prefix in text for prefix in config.get("trigger_prefixes", [])):
+            return ""
+        return "no_trigger"
     if bool(config.get("respond_to_all", False)):
         if is_personal_organizer_chat(config):
-            return organizer_response_candidate(config, text)
-        return meaningful_request_text(text, config.get("trigger_prefixes", []))
-    return any(prefix in text for prefix in config["trigger_prefixes"])
+            return "" if organizer_response_candidate(config, text) else "no_trigger"
+        return "" if meaningful_request_text(text, config.get("trigger_prefixes", [])) else "no_trigger"
+    return "" if any(prefix in text for prefix in config.get("trigger_prefixes", [])) else "no_trigger"
 
 
 def organizer_response_candidate(config: dict[str, Any], text: str) -> bool:
@@ -2217,6 +2232,22 @@ def build_route_contract(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def send_gui_message(config: dict[str, Any], message: str) -> str:
+    attempts = max(1, int(os.environ.get("WECHAT_DIRECT_SEND_RETRIES", str(config.get("send_retries", 2)))))
+    delay = max(0.0, float(os.environ.get("WECHAT_DIRECT_SEND_RETRY_DELAY", str(config.get("send_retry_delay_seconds", 1.0)))))
+    errors: list[str] = []
+    for attempt in range(1, attempts + 1):
+        try:
+            return send_gui_message_once(config, message)
+        except Exception as exc:
+            errors.append(f"attempt {attempt}: {truncate_text(str(exc), 1200)}")
+            if is_wechat_locked_error(exc):
+                break
+            if attempt < attempts and delay:
+                time.sleep(delay)
+    raise RuntimeError("; ".join(errors))
+
+
+def send_gui_message_once(config: dict[str, Any], message: str) -> str:
     target = config.get("send_target")
     if isinstance(target, dict) and target.get("name"):
         with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:

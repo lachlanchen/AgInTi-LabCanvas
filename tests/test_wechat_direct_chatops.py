@@ -58,6 +58,16 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
     def test_self_messages_are_ignored(self) -> None:
         self.assertFalse(direct_chatops.should_respond(self.base_config(), {}, self.row("你好", sender="self")))
+        self.assertEqual(
+            direct_chatops.response_skip_reason(self.base_config(), {}, self.row("你好", sender="self")),
+            "self_ignored",
+        )
+
+    def test_non_trigger_message_reports_skip_reason(self) -> None:
+        config = self.base_config()
+        config["respond_to_all"] = False
+        self.assertFalse(direct_chatops.should_respond(config, {}, self.row("普通消息")))
+        self.assertEqual(direct_chatops.response_skip_reason(config, {}, self.row("普通消息")), "no_trigger")
 
     def test_self_messages_can_be_enabled_with_loop_guard(self) -> None:
         config = self.base_config()
@@ -628,6 +638,35 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(kwargs["timeout"], 12)
         self.assertEqual(kwargs["env"]["WECHAT_INITIAL_TITLE_WAIT"], "0.4")
         self.assertEqual(kwargs["env"]["WECHAT_TITLE_RETRY_SECONDS"], "2.5")
+
+    def test_send_gui_message_retries_transient_failure(self) -> None:
+        calls: list[dict[str, object]] = []
+        original_run = direct_chatops.subprocess.run
+        try:
+            def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                calls.append({"command": command, "kwargs": kwargs})
+                if len(calls) == 1:
+                    return subprocess.CompletedProcess(command, 1, "", "title guard failed")
+                stdout = '{"results":[{"screenshot_prefix":"01-EchoMind"}]}'
+                return subprocess.CompletedProcess(command, 0, stdout, "")
+
+            direct_chatops.subprocess.run = fake_run  # type: ignore[assignment]
+            screenshot = direct_chatops.send_gui_message(
+                {
+                    "chat_name": "EchoMind",
+                    "display": ":97",
+                    "send_target": {"name": "EchoMind", "query": "EchoMind", "expected_title": "EchoMind"},
+                    "mirror_db": "/tmp/wechat-mirror.sqlite",
+                    "send_retries": 2,
+                    "send_retry_delay_seconds": 0,
+                },
+                "hi",
+            )
+        finally:
+            direct_chatops.subprocess.run = original_run  # type: ignore[assignment]
+
+        self.assertIn("01-EchoMind-sent.png", screenshot)
+        self.assertEqual(len(calls), 2)
 
     def test_send_gui_message_refuses_missing_guarded_target(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Refusing unguarded WeChat send"):
