@@ -184,11 +184,14 @@ Missing image/video/file:
 
 WeChat locked:
 
-- do not bypass the lock;
-- backend work may continue;
-- results become `send_deferred_locked`;
-- after normal unlock, run `wechat_task_worker.py --flush-deferred` or let the
-  loop flush automatically.
+- do not bypass the lock, decrypt traffic, or forge protocol requests;
+- backend work may continue and results become `send_deferred_locked`;
+- keep `wechat_desktop_unlock_watchdog.py --loop --flush-deferred` running when
+  an owner-authorized Android phone is attached;
+- the watchdog only uses the normal mobile WeChat `桌面微信已锁定` / `已登录设备`
+  controls and refuses to handle phone credential prompts;
+- after unlock, run `wechat_task_worker.py --flush-deferred` or let the
+  watchdog/worker loop flush automatically.
 
 Long Xiaoyunque/LazyEdit work:
 

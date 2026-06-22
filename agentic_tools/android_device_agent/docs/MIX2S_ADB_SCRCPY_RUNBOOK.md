@@ -60,6 +60,19 @@ adb -s <ADB_SERIAL> shell monkey -p com.tencent.mm -c android.intent.category.LA
 Use this only when the account owner requests unlocking the logged-in desktop
 session. On a MIX 2S at `1080x2160`:
 
+Run the guarded LabCanvas watchdog once:
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat unlock-watchdog once \
+  --serial <ADB_SERIAL> \
+  --flush-deferred
+```
+
+The watchdog first checks that the Linux WeChat window is actually locked. If it
+is not locked, it only refreshes keep-awake settings.
+
+Manual equivalent:
+
 1. Open mobile WeChat. If the chat list shows `桌面微信已锁定`, tap the banner:
 
    ```bash

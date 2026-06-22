@@ -52,6 +52,20 @@ restarting WeChat:
 labcanvas wechat desktop keep-awake
 ```
 
+The full supervisor also starts `unlock-watchdog` by default. It detects the
+official Linux WeChat locked screen, then uses the already-authorized Android
+phone's normal mobile WeChat controls to unlock the desktop session and flush
+deferred sends:
+
+```bash
+labcanvas wechat unlock-watchdog once --serial <ADB_SERIAL> --flush-deferred
+labcanvas wechat unlock-watchdog start --serial <ADB_SERIAL> --flush-deferred
+```
+
+Set `WECHAT_UNLOCK_WATCHDOG=0` before starting the supervisor to disable this
+phone-side watchdog. It does not bypass phone credentials or private WeChat
+protocols.
+
 ## Persistent ChatOps
 
 Create ignored private configs first:
@@ -73,8 +87,9 @@ tmux attach -t labcanvas-wechat
 ```
 
 The supervisor keeps a virtual desktop/decrypt window, one fast direct-monitor
-window per configured group, plus worker and media-sync windows. Monitor,
-worker, and media processes restart automatically if they exit. Incoming
+window per configured group, plus worker, media-sync, and unlock-watchdog
+windows. Monitor, worker, media, and watchdog processes restart automatically
+if they exit. Incoming
 mentions can get an immediate ACK while longer work is queued for
 `wechat_task_worker.py`, which can send a final message plus PDFs/images/files
 back through the official WeChat GUI.

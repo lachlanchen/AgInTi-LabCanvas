@@ -17,6 +17,11 @@ LOG_DIR="$ROOT/output/wechat_gui_agent/$(date +%F)"
 PY="$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_decrypt/.venv/bin/python"
 DIRECT_POLL_SECONDS="${WECHAT_DIRECT_POLL_SECONDS:-0.8}"
 DIRECT_CATCHUP_POLL_SECONDS="${WECHAT_DIRECT_CATCHUP_POLL_SECONDS:-0.1}"
+WECHAT_DISPLAY="${WECHAT_DISPLAY:-:97}"
+UNLOCK_WATCHDOG="${WECHAT_UNLOCK_WATCHDOG:-1}"
+UNLOCK_INTERVAL="${WECHAT_UNLOCK_INTERVAL:-20}"
+UNLOCK_ADB_SERIAL="${WECHAT_UNLOCK_ADB_SERIAL:-${ANDROID_SERIAL:-}}"
+UNLOCK_FLUSH_DEFERRED="${WECHAT_UNLOCK_FLUSH_DEFERRED:-1}"
 export WECHAT_DECRYPT_REFRESH_INTERVAL="${WECHAT_DECRYPT_REFRESH_INTERVAL:-1}"
 export WECHAT_RESTART_DELAY="${WECHAT_RESTART_DELAY:-2}"
 mkdir -p "$LOG_DIR"
@@ -79,6 +84,9 @@ Environment:
   WECHAT_MEDIA_SOURCES        optional colon-separated folders to sync
   WECHAT_MEDIA_CHATS          optional comma-separated chat names to mirror
   WECHAT_CHAT_NAME            fallback chat name for media-sync events
+  WECHAT_UNLOCK_WATCHDOG      1 to keep desktop WeChat unlocked by phone UI, default 1
+  WECHAT_UNLOCK_ADB_SERIAL    optional Android serial for phone-side unlock
+  WECHAT_UNLOCK_INTERVAL      watchdog poll interval, default 20 seconds
 EOF
 }
 
@@ -125,6 +133,19 @@ respawn_or_new_pane_by_start_command() {
   fi
 }
 
+unlock_watchdog_command() {
+  local args=(python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_desktop_unlock_watchdog.py --display "$WECHAT_DISPLAY" --interval "$UNLOCK_INTERVAL" --loop)
+  if [[ -n "$UNLOCK_ADB_SERIAL" ]]; then
+    args+=(--serial "$UNLOCK_ADB_SERIAL")
+  fi
+  if [[ "$UNLOCK_FLUSH_DEFERRED" != "0" ]]; then
+    args+=(--flush-deferred)
+  fi
+  printf "cd %q && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh unlock-watchdog " "$ROOT"
+  printf "%q " "${args[@]}"
+  printf ">> %q 2>&1" "$LOG_DIR/supervisor-unlock-watchdog.log"
+}
+
 reload_worker_windows() {
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Session not running: $SESSION" >&2
@@ -145,6 +166,9 @@ reload_worker_windows() {
     "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh worker python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-worker.log' 2>&1"
   respawn_or_new_window "media-sync" \
     "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' WECHAT_MEDIA_CHATS='$MEDIA_CHATS' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
+  if [[ "$UNLOCK_WATCHDOG" != "0" ]]; then
+    respawn_or_new_window "unlock-watchdog" "$(unlock_watchdog_command)"
+  fi
   tmux select-window -t "$SESSION:desktop" >/dev/null 2>&1 || true
   echo "Reloaded worker/monitor windows without restarting the WeChat desktop."
   echo "Logs: $LOG_DIR"
@@ -174,6 +198,9 @@ case "$action" in
       "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh worker python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-worker.log' 2>&1"
     tmux new-window -t "$SESSION" -n media-sync \
       "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' WECHAT_MEDIA_CHATS='$MEDIA_CHATS' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
+    if [[ "$UNLOCK_WATCHDOG" != "0" ]]; then
+      tmux new-window -t "$SESSION" -n unlock-watchdog "$(unlock_watchdog_command)"
+    fi
     tmux select-layout -t "$SESSION:desktop" tiled >/dev/null
     tmux select-window -t "$SESSION:desktop" >/dev/null
     echo "Started tmux session: $SESSION"

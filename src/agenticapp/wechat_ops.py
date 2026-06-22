@@ -68,6 +68,16 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     desktop.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     desktop.set_defaults(func=cmd_desktop)
 
+    unlock = nested.add_parser("unlock-watchdog", help="Keep official desktop WeChat unlocked through the owner's Android WeChat UI.")
+    unlock.add_argument("action", choices=["once", "start", "stop", "restart", "status"], nargs="?", default="once")
+    unlock.add_argument("--display", default=DEFAULT_DISPLAY)
+    unlock.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL", ""))
+    unlock.add_argument("--interval", type=float, default=20)
+    unlock.add_argument("--flush-deferred", action="store_true", help="Flush one deferred WeChat outbox item after unlocking.")
+    unlock.add_argument("--dry-run", action="store_true")
+    unlock.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    unlock.set_defaults(func=cmd_unlock_watchdog)
+
     browser = nested.add_parser("browser-assist", help="Open a browser in the isolated virtual desktop for manual login/CAPTCHA/download help.")
     browser.add_argument("--url", default="about:blank")
     browser.add_argument("--display", default=DEFAULT_DISPLAY)
@@ -466,6 +476,68 @@ def cmd_browser_assist(args: argparse.Namespace) -> int:
         print(proc.stdout, end="")
     if proc.stderr:
         print(proc.stderr, file=sys.stderr, end="")
+    return proc.returncode
+
+
+def cmd_unlock_watchdog(args: argparse.Namespace) -> int:
+    session = "labcanvas-wechat-unlock-watchdog"
+    if args.action == "status":
+        standalone = tmux_status(session)
+        supervisor = tmux_window_status("labcanvas-wechat", "unlock-watchdog")
+        payload = {
+            "running": standalone["running"] or supervisor["running"],
+            "status": "running" if standalone["running"] or supervisor["running"] else "not-running",
+            "standalone": standalone,
+            "supervisor": supervisor,
+        }
+        print_payload(payload, getattr(args, "json", False), f"wechat unlock-watchdog: {payload['status']}")
+        return 0 if payload["running"] else 1
+    if args.action == "stop":
+        stopped = kill_tmux(session)
+        supervisor_stopped = kill_tmux_window("labcanvas-wechat", "unlock-watchdog")
+        payload = {"ok": True, "stopped": stopped, "supervisor_window_stopped": supervisor_stopped, "session": session}
+        print_payload(payload, getattr(args, "json", False), "stopped" if stopped else "not running")
+        return 0
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_desktop_unlock_watchdog.py"),
+        "--display",
+        args.display,
+        "--interval",
+        str(args.interval),
+    ]
+    if args.serial:
+        command += ["--serial", args.serial]
+    if args.flush_deferred:
+        command.append("--flush-deferred")
+    if args.dry_run:
+        command.append("--dry-run")
+    if args.action == "once":
+        proc = run_command(command, capture=True)
+        if getattr(args, "json", False):
+            try:
+                print(json.dumps(json.loads(proc.stdout), ensure_ascii=False, indent=2))
+            except json.JSONDecodeError:
+                print(json.dumps({"ok": proc.returncode == 0, "stdout": proc.stdout, "stderr": proc.stderr}, ensure_ascii=False, indent=2))
+        else:
+            print(proc.stdout, end="")
+            if proc.stderr:
+                print(proc.stderr, file=sys.stderr, end="")
+        return proc.returncode
+    if args.action == "restart":
+        kill_tmux(session)
+    if tmux_status(session)["running"]:
+        payload = tmux_status(session)
+        print_payload(payload, getattr(args, "json", False), f"wechat unlock-watchdog: {payload['status']}")
+        return 0
+    command.append("--loop")
+    command_text = " ".join(shlex.quote(part) for part in command)
+    log_dir = PACKAGE_ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    tmux_command = f"cd {shlex.quote(str(PACKAGE_ROOT))} && {command_text} >> {shlex.quote(str(log_dir / 'unlock-watchdog.log'))} 2>&1"
+    proc = run_command(["tmux", "new-session", "-d", "-s", session, tmux_command], capture=True)
+    payload = {"ok": proc.returncode == 0, "session": session, "log": str(log_dir / "unlock-watchdog.log"), "status": tmux_status(session)}
+    print_payload(payload, getattr(args, "json", False), f"started {session}")
     return proc.returncode
 
 
@@ -1457,6 +1529,34 @@ def tmux_status(session: str) -> dict[str, Any]:
         return {"session": session, "running": False, "status": "not-running"}
     panes = tmux_session_panes(session)
     return {"session": session, "running": True, "status": "running", "panes": panes}
+
+
+def tmux_window_status(session: str, window_name: str) -> dict[str, Any]:
+    if shutil.which("tmux") is None:
+        return {"session": session, "window": window_name, "running": False, "status": "missing-tmux"}
+    check = run_command(["tmux", "has-session", "-t", session], capture=True)
+    if check.returncode != 0:
+        return {"session": session, "window": window_name, "running": False, "status": "session-not-running"}
+    windows = run_command(["tmux", "list-windows", "-t", session, "-F", "#{window_id}\t#{window_name}"], capture=True)
+    for line in windows.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        window_id, name = line.split("\t", 1)
+        if name != window_name:
+            continue
+        proc = run_command(["tmux", "list-panes", "-t", window_id, "-F", "#{pane_index}: #{pane_current_command} #{pane_pid}"], capture=True)
+        return {"session": session, "window": window_name, "running": True, "status": "running", "panes": proc.stdout.splitlines()}
+    return {"session": session, "window": window_name, "running": False, "status": "window-not-running"}
+
+
+def kill_tmux_window(session: str, window_name: str) -> bool:
+    if shutil.which("tmux") is None:
+        return False
+    check = tmux_window_status(session, window_name)
+    if not check["running"]:
+        return False
+    proc = run_command(["tmux", "kill-window", "-t", f"{session}:{window_name}"], capture=True)
+    return proc.returncode == 0
 
 
 def tmux_session_panes(session: str) -> list[str]:
