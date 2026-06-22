@@ -142,6 +142,8 @@ def load_config(path: Path) -> dict[str, Any]:
         "danger_keywords": DEFAULT_DANGER_KEYWORDS,
         "immediate_route_enabled": True,
         "immediate_ack_enabled": True,
+        "dynamic_ack_enabled": True,
+        "dynamic_ack_max_chars": 96,
         "immediate_ack_text": "收到，我先处理，完成后把结果发回来。",
         "slow_task_keywords": [
             "http://",
@@ -834,6 +836,16 @@ def looks_like_bot_self_reply(config: dict[str, Any], text: str) -> bool:
         "视频已严格按 exact source 保存",
         "可以，附上刚生成的",
         "已按当前路由",
+        "我先",
+        "我来",
+        "我会",
+        "开始处理",
+        "先帮你",
+        "可以，我",
+        "好的，我",
+        "ok, i",
+        "i'll",
+        "i will",
     ]
     for prefix in [*configured_prefixes, *bot_prefixes]:
         normalized = collapse_text(prefix).lower()
@@ -1463,12 +1475,51 @@ def immediate_task_route(
         f"{story_context}"
         f"{lalachan_context}"
     )
-    ack = (
-        str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
-        if bool(config.get("immediate_ack_enabled", True))
-        else ""
-    )
+    ack = task_ack_text(config, route_decision)
     return {"ack": ack, "task": task, "route_decision": route_decision}
+
+
+def task_ack_text(config: dict[str, Any], route_decision: dict[str, Any]) -> str:
+    if not bool(config.get("immediate_ack_enabled", True)):
+        return ""
+    if bool(config.get("dynamic_ack_enabled", True)):
+        agent_ack = sanitize_agent_ack(config, route_decision.get("ack") or route_decision.get("ack_text") or "")
+        if agent_ack:
+            return agent_ack
+    return str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
+
+
+def sanitize_agent_ack(config: dict[str, Any], text: str) -> str:
+    ack = collapse_text(str(text or ""))
+    if not ack:
+        return ""
+    ack = re.sub(r"^(ACK|CHAT)\s*[:：]\s*", "", ack, flags=re.IGNORECASE).strip()
+    if not ack or ack.upper() == "NO_REPLY":
+        return ""
+    lowered = ack.lower()
+    blocked_fragments = [
+        "database",
+        "decrypted",
+        "ocr",
+        "prompt",
+        "system instruction",
+        "token",
+        "password",
+        "secret",
+        "message table",
+        "wxid",
+        "数据库",
+        "解密",
+        "系统提示",
+        "密钥",
+        "密码",
+    ]
+    if any(fragment in lowered for fragment in blocked_fragments):
+        return ""
+    max_chars = max(20, int(config.get("dynamic_ack_max_chars", 96)))
+    if len(ack) <= max_chars:
+        return ack
+    return ack[: max_chars - 1].rstrip() + "…"
 
 
 def agent_route_prefilter_mode(config: dict[str, Any]) -> str:
@@ -1598,6 +1649,8 @@ Important distinction:
 - Plain story/script/plot writing or revision should use story_or_script. Do not choose generate_image unless the current request explicitly asks for an image/figure/diagram/illustration. Do not choose generate_video unless the current request explicitly asks for video/animation/小云雀/Seedance/XYQ.
 - Return chat_only with worker_needed=false when the user is only chatting or when no backend/tool/file/artifact work is useful.
 - Use other_worker only when a backend Codex worker can materially finish the request; do not use it just because the message is ambiguous.
+- When worker_needed=true, write `ack` as one natural, non-mechanical chat acknowledgement in the user's language. It should reflect the concrete task and promise safe artifact send-back when relevant, without mentioning databases, OCR, routing, queues, prompts, filesystems, or internal automation. Do not reuse boilerplate like "收到，我先处理".
+- When worker_needed=false, use an empty `ack`.
 
 JSON schema:
 {{
@@ -1610,6 +1663,7 @@ JSON schema:
   "external_action_allowed": true,
   "source_policy": "current_request_only|current_plus_explicit_refs|recent_media",
   "reason": "short reason",
+  "ack": "short natural acknowledgement for WeChat, or empty string",
   "confidence": 0.0
 }}
 

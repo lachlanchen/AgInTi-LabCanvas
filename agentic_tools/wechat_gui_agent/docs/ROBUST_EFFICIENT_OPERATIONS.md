@@ -115,6 +115,11 @@ that contract rather than designing a new workflow from scratch.
 - Keep `immediate_route_enabled=true` for monitored chats that should enqueue
   backend work. `immediate_ack_enabled=false` only suppresses the visible ack;
   it must not be used as the routing kill switch.
+- Keep chat-facing wording agent-led when a route agent is already invoked:
+  `dynamic_ack_enabled=true` lets the route JSON carry a short contextual
+  `ack`, while deterministic ACK strings remain fallback only. Safety gates,
+  source isolation, and queue state may be hardcoded; visible responses should
+  not become repetitive mechanical templates.
 - The current coalesced request is authoritative. Route and worker prompts must
   preserve every safe explicit instruction, including multi-stage requests, and
   must not shrink a request to a smaller hardcoded action because one keyword

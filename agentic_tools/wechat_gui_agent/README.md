@@ -605,6 +605,10 @@ Direct monitors should keep `agent_route_enabled=true` and
 per-chat `route` Codex session classifies route kind, project, source policy,
 and worker need before keyword lists; deterministic heuristics remain fallback
 and safety logic.
+When `dynamic_ack_enabled=true`, that same route decision can provide the
+short visible ACK, so task confirmations are contextual instead of mechanical.
+The static `immediate_ack_text` remains a fallback when the agent omits an ACK
+or produces text that mentions internals.
 For login/CAPTCHA/download blocks, open a browser in the same isolated noVNC
 desktop with `labcanvas wechat browser-assist --url "<url>" --json`; the user
 handles the manual step and the worker continues after approval.

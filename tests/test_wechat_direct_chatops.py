@@ -254,6 +254,73 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(route["ack"], "")
         self.assertEqual(route["route_decision"]["route_kind"], "generate_image")
 
+    def test_route_agent_can_supply_dynamic_task_ack(self) -> None:
+        config = self.base_config()
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row("generate a figure diagram and send the image back", local_id=82, server_id="srv-82")
+        original = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+                "ok": True,
+                "message": json.dumps(
+                    {
+                        "route_kind": "generate_image",
+                        "project": "labcanvas",
+                        "worker_needed": True,
+                        "needs_recent_media": False,
+                        "public_publish_intent": False,
+                        "public_publish_allowed": False,
+                        "external_action_allowed": True,
+                        "source_policy": "current_request_only",
+                        "reason": "explicit image artifact request",
+                        "ack": "我会生成这张图，并把可查看的图片发回群里。",
+                        "confidence": 0.9,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["ack"], "我会生成这张图，并把可查看的图片发回群里。")
+
+    def test_internal_dynamic_ack_falls_back_to_static_text(self) -> None:
+        config = self.base_config()
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row("download this PDF", local_id=83, server_id="srv-83")
+        original = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+                "ok": True,
+                "message": json.dumps(
+                    {
+                        "route_kind": "file_download_or_save",
+                        "project": "generic",
+                        "worker_needed": True,
+                        "needs_recent_media": True,
+                        "public_publish_intent": False,
+                        "public_publish_allowed": False,
+                        "external_action_allowed": True,
+                        "source_policy": "recent_media",
+                        "reason": "download request",
+                        "ack": "I will inspect the decrypted database row and queue metadata.",
+                        "confidence": 0.9,
+                    }
+                ),
+            }
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["ack"], "收到，我先处理，完成后把结果发回来。")
+
     def test_worker_heuristic_overrides_agent_chat_only_for_generated_video_request(self) -> None:
         config = self.backend_chat_config("🍓我的设备", "device_inbox")
         config["agent_route_enabled"] = True
