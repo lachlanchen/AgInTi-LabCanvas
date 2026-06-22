@@ -7,6 +7,8 @@ evidence screenshots, and mirrors send/read events into a local SQLite database.
 For the complete operator map of CLI commands, tmux sessions, scripts, private
 state files, route guards, media sync, worker tasks, skills, and safety rules,
 read [docs/FULL_CONTROL_MANUAL.md](docs/FULL_CONTROL_MANUAL.md).
+For the reliability and efficiency contract used by future agents, read
+[docs/ROBUST_EFFICIENT_OPERATIONS.md](docs/ROBUST_EFFICIENT_OPERATIONS.md).
 
 ## Start The Desktop
 

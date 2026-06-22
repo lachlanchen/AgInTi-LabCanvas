@@ -3,6 +3,10 @@
 This workflow controls the native Linux WeChat client through an isolated
 virtual desktop. Use it for explicit, small tasks where a human can inspect the
 target before sending.
+For system-wide reliability invariants, efficiency policy, state meanings, and
+recovery playbooks, keep
+[`ROBUST_EFFICIENT_OPERATIONS.md`](ROBUST_EFFICIENT_OPERATIONS.md) open while
+changing monitor or worker behavior.
 
 ## 1. Launch
 

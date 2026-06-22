@@ -6,6 +6,8 @@ channel. The design keeps input, output, and worker execution separate:
 For the complete script, skill, private-state, tmux, media, worker, and
 no-crosstalk operating manual, see
 [agentic_tools/wechat_gui_agent/docs/FULL_CONTROL_MANUAL.md](../agentic_tools/wechat_gui_agent/docs/FULL_CONTROL_MANUAL.md).
+For the reliability and efficiency contract, see
+[agentic_tools/wechat_gui_agent/docs/ROBUST_EFFICIENT_OPERATIONS.md](../agentic_tools/wechat_gui_agent/docs/ROBUST_EFFICIENT_OPERATIONS.md).
 
 ```text
 Linux WeChat GUI + local encrypted DB

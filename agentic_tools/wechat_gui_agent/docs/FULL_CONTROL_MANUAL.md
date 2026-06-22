@@ -7,6 +7,11 @@ mirrors, private media sync, worker queues, and explicit human approval gates.
 It does not mean packet interception, TLS bypass, credential extraction, private
 protocol replay, CAPTCHA bypass, or unsafe account automation.
 
+Use [`ROBUST_EFFICIENT_OPERATIONS.md`](ROBUST_EFFICIENT_OPERATIONS.md) as the
+reliability contract for invariants, token policy, state recovery, and change
+checklists. Use [`GENERATED_VIDEO_ROUTINES.md`](GENERATED_VIDEO_ROUTINES.md) for
+the fixed generated-video/LazyEdit/public-publish routine.
+
 ## Control Layers
 
 ```text

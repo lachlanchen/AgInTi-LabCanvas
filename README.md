@@ -41,7 +41,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | PCB manufacturing | KiCad HYBEC and Lumileds boards, DRC/ERC, JLCPCB Gerber ZIPs | [pcb](pcb) |
 | LabVIEW automation | Linux install probe, MCP candidate research, stdio-to-HTTP bridge | [agentic_tools/labview_mcp_agent](agentic_tools/labview_mcp_agent) |
 | Android control | Dedicated noVNC/scrcpy desktop and ADB wrapper for the Mi MIX 2S real device plus matching AVD profile | [docs/ANDROID_DEVICE_CONTROL.md](docs/ANDROID_DEVICE_CONTROL.md) |
-| WeChat chatops | Isolated Linux GUI, direct local message mirror, fast ACK agent, strict per-chat media isolation, AgInTi figure generation plus CAD/PCB/Blender worker queue, file/PDF/render return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md), [full control manual](agentic_tools/wechat_gui_agent/docs/FULL_CONTROL_MANUAL.md) |
+| WeChat chatops | Isolated Linux GUI, direct local message mirror, fast ACK agent, strict per-chat media isolation, AgInTi figure generation plus CAD/PCB/Blender worker queue, file/PDF/render return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md), [full control manual](agentic_tools/wechat_gui_agent/docs/FULL_CONTROL_MANUAL.md), [robust operations](agentic_tools/wechat_gui_agent/docs/ROBUST_EFFICIENT_OPERATIONS.md) |
 | App routing | Blender, BioRender, Unity, Unreal, and custom target dispatch | [docs/RESEARCH.md](docs/RESEARCH.md) |
 
 ## Quick Start
