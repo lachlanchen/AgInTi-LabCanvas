@@ -48,6 +48,10 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     control.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     control.set_defaults(func=cmd_control_map)
 
+    routines = nested.add_parser("routines", help="List reusable WeChat worker routines and stage contracts.")
+    routines.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    routines.set_defaults(func=cmd_routines)
+
     init_config = nested.add_parser("init-config", help="Write ignored private config templates.")
     init_config.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     init_config.add_argument("--chat", default="wechat-chat")
@@ -315,6 +319,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             SCRIPTS / "wechat_direct_chatops.py",
             SCRIPTS / "wechat_direct_backend.py",
             SCRIPTS / "wechat_task_worker.py",
+            SCRIPTS / "wechat_routines.py",
             SCRIPTS / "wechat_chatops_bridge.py",
             SCRIPTS / "wechat_browser_assist.py",
             SCRIPTS / "wechat_media_sync.py",
@@ -329,6 +334,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def cmd_control_map(args: argparse.Namespace) -> int:
     payload = control_map_payload()
     print_payload(payload, args.json, f"wechat control-map: {payload['score']['label']} {payload['score']['ready_layers']}/{payload['score']['total_layers']} layers ready")
+    return 0
+
+
+def cmd_routines(args: argparse.Namespace) -> int:
+    sys.path.insert(0, str(SCRIPTS))
+    from wechat_routines import list_routines
+
+    routines = list_routines()
+    payload = {"ok": True, "count": len(routines), "routines": routines}
+    summary = "wechat routines: " + ", ".join(str(item.get("id") or "") for item in routines)
+    print_payload(payload, args.json, summary)
     return 0
 
 
@@ -826,6 +842,7 @@ def queue_summary(path: Path, *, limit: int = 8) -> dict[str, Any]:
                 "id": task.get("id", ""),
                 "chat": task.get("chat", ""),
                 "status": task.get("status", ""),
+                "routine": (task.get("routine") or {}).get("id", "") if isinstance(task.get("routine"), dict) else "",
                 "created_at": task.get("created_at", ""),
                 "completed_at": task.get("completed_at", ""),
                 "request": str(task.get("request") or "")[:240],

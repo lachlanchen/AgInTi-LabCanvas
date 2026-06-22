@@ -27,6 +27,7 @@ except ModuleNotFoundError:  # Tests and dry policy checks should not require th
 from wechat_codex_sessions import run_codex_session
 from wechat_memory import organize_messages
 from wechat_mirror import DEFAULT_DB, record_event
+from wechat_routines import build_routine_contract, ensure_task_routine_contract
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -1359,6 +1360,13 @@ def immediate_task_route(
     )
     lalachan_context = lalachan_story_video_context_bundle() if lalachan_task or route_project == "lalachan" or route_kind == "generate_video" else ""
     route_json = json.dumps(route_decision, ensure_ascii=False, indent=2, sort_keys=True)
+    routine_contract = build_routine_contract(
+        route_decision,
+        current_request or attachment_request_text(row),
+        chat=chat_name,
+        source={"local_id": row.get("local_id"), "server_id": row.get("server_id")},
+    )
+    routine_json = json.dumps(routine_contract, ensure_ascii=False, indent=2, sort_keys=True)
     task = (
         "Handle this WeChat request as backend work. "
         "Use available local tools, download, sync, copy, or generate needed artifacts into ignored private/output folders, "
@@ -1378,6 +1386,7 @@ def immediate_task_route(
         "If `public_publish_allowed` is false, do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish public queues, or any public platform. "
         "LazyEdit import/process is allowed only when the current request explicitly asks for LazyEdit/import/process.\n\n"
         f"Agent route decision:\n{route_json}\n\n"
+        f"Routine supervisor contract:\n{routine_json}\n\n"
         f"Chat: {chat_name}\nSource/reference rows: {source_ids}\n\n"
         f"Current coalesced request:\n{current_request or attachment_request_text(row)}\n\nRecent history:\n{task_context}"
         f"\n\nSame-chat reference media/context rows:\n{reference_context or '(none found)'}"
@@ -2814,6 +2823,7 @@ def enqueue_worker_task(
             for item in context_rows[-8:]
         ],
     }
+    ensure_task_routine_contract(task)
     with queue.open("a", encoding="utf-8") as f:
         f.write(json.dumps(task, ensure_ascii=False) + "\n")
     record_event(

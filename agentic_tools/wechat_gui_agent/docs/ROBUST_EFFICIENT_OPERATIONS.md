@@ -13,6 +13,7 @@ official WeChat client
   -> local decrypted mirror
   -> per-chat fast monitor
   -> route decision and source context
+  -> routine contract
   -> JSONL worker queue
   -> deterministic routines and Codex worker sessions
   -> artifact delivery gate
@@ -24,6 +25,14 @@ coalesces bursts, classifies intent, saves memory items, and enqueues slow work.
 The worker owns tool execution, artifact creation, long browser jobs, and final
 deliverables. Deterministic routines own polling, resend, and poststage work so
 long waits do not hold a model call open.
+
+The routine registry is implemented in
+`agentic_tools/wechat_gui_agent/scripts/wechat_routines.py` and documented in
+`agentic_tools/wechat_gui_agent/docs/ROUTINE_ORCHESTRATOR.md`. Every queued
+worker task must carry `task.routine`; when claimed, the worker writes
+`routine_contract.json` and `routine_contract.md` into the task artifact
+directory. The Codex worker supervises that contract rather than designing a new
+workflow from scratch.
 
 ## Non-Negotiable Invariants
 
@@ -55,8 +64,9 @@ long waits do not hold a model call open.
 | Direct receive | Fast monitor | `wechat_direct_chatops.py --loop` | Poll local decrypted DB; no Codex call unless new rows need routing/reply. |
 | Memory/inbox | Fast monitor | organizer config + `wechat_memory.py` | Deterministic save/ACK for ordinary notes. |
 | Media sync | Media loop | `wechat_media_sync_loop.sh` | Copy only same-chat files/media into ignored private storage. |
-| Slow task enqueue | Fast monitor | `enqueue_worker_task()` | Put full source context into queue once; avoid duplicate work. |
-| Worker execution | Worker | `wechat_task_worker.py --loop --send` | Dynamic model effort; retry only weak/failing outputs. |
+| Routine selection | Fast monitor | `wechat_routines.py` | Convert route decisions into named routines and stage contracts. |
+| Slow task enqueue | Fast monitor | `enqueue_worker_task()` | Put full source context and `task.routine` into queue once; avoid duplicate work. |
+| Worker execution | Worker | `wechat_task_worker.py --loop --send` | Write routine contract, supervise stages, dynamic model effort, retry only weak/failing outputs. |
 | Generated video | Queue orchestrator | `GENERATED_VIDEO_ROUTINES.md` | Store route contract, wait via queue/CDP, deliver MP4 before poststage. |
 | Exact video publish | Worker | `wechat_autopublish_video.py` + LazyEdit CLI | Use exact message IDs; fail closed if media is missing. |
 | GUI send | Sender | `wechat_gui_send.py` | Serialize with lock, OCR/title guard, screenshots, deferred outbox. |

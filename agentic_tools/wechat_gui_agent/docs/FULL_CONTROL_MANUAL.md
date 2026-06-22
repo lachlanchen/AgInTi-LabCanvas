@@ -90,6 +90,7 @@ WeChat, which may require phone confirmation.
 | `wechat_direct_backend.py` | Install/probe/decrypt wrapper for optional `ylytdeng/wechat-decrypt`. |
 | `wechat_decrypt_refresh_loop.sh` | Locked incremental refresh loop for decrypted DB cache. |
 | `wechat_direct_chatops.py` | Direct DB polling, mirror sync, fast route decision, ACK/reply, worker enqueue. |
+| `wechat_routines.py` | Named routine registry and stage contracts for queued worker tasks. |
 | `wechat_task_worker.py` | Queue claim, model effort selection, LabCanvas worker prompt, artifact/file return. |
 | `wechat_media_sync.py` | Copy same-chat files/images/videos from WeChat folders into private storage. |
 | `wechat_media_sync_loop.sh` | Repeat `media-sync` for configured chats. |
@@ -204,7 +205,16 @@ Slow work goes through `.private/wechat_task_queue.jsonl`.
 labcanvas wechat worker enqueue --chat "<CHAT_NAME>" "summarize this PDF"
 labcanvas wechat worker once --send
 labcanvas wechat queue --json
+labcanvas wechat routines --json
 ```
+
+Before a worker task is queued, the fast monitor converts the route decision
+into a named routine from `wechat_routines.py`. The task stores `task.routine`.
+When the worker claims the task, it writes `routine_contract.json` and
+`routine_contract.md` in the task artifact directory and includes that contract
+in the worker prompt. The worker supervises routine stages and resolves blockers
+instead of designing a fresh workflow for every message. See
+`docs/ROUTINE_ORCHESTRATOR.md`.
 
 The worker chooses effort based on task difficulty:
 
@@ -340,7 +350,7 @@ skill. The skill should always remind future agents to:
 - use the LabCanvas CLI and existing scripts instead of ad hoc GUI commands;
 - keep secrets and decrypted DBs private;
 - use one config/state file per chat;
-- preserve route contracts and title guards;
+- preserve route contracts, routine contracts, and title guards;
 - source-limit media/files to the same chat and exact source rows;
 - use browser assist or approval for protected or irreversible steps.
 

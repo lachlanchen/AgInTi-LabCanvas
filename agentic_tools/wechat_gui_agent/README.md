@@ -9,6 +9,9 @@ state files, route guards, media sync, worker tasks, skills, and safety rules,
 read [docs/FULL_CONTROL_MANUAL.md](docs/FULL_CONTROL_MANUAL.md).
 For the reliability and efficiency contract used by future agents, read
 [docs/ROBUST_EFFICIENT_OPERATIONS.md](docs/ROBUST_EFFICIENT_OPERATIONS.md).
+For the reusable routine registry that keeps agents supervising known workflows
+instead of inventing new ones, read
+[docs/ROUTINE_ORCHESTRATOR.md](docs/ROUTINE_ORCHESTRATOR.md).
 
 ## Start The Desktop
 
@@ -65,6 +68,7 @@ labcanvas wechat hold start
 labcanvas wechat stack start --web-port 19474
 labcanvas wechat status
 labcanvas wechat control-map --json
+labcanvas wechat routines --json
 tmux attach -t labcanvas-wechat
 ```
 
@@ -74,6 +78,10 @@ worker, and media processes restart automatically if they exit. Incoming
 mentions can get an immediate ACK while longer work is queued for
 `wechat_task_worker.py`, which can send a final message plus PDFs/images/files
 back through the official WeChat GUI.
+Each queued backend task stores a named routine contract from
+`wechat_routines.py`; the worker writes `routine_contract.json` and
+`routine_contract.md` before invoking Codex, then supervises that routine's
+stages and artifact gates.
 
 Use `labcanvas wechat hold restart` or `labcanvas wechat hold reload-workers`
 after code changes; these commands do not restart the WeChat desktop. Use

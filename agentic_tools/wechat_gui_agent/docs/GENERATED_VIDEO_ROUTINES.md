@@ -5,6 +5,10 @@ Xiaoyunque, LazyEdit, and public publishing tasks. Agents should supervise the
 routine and resolve blockers; they should not invent a new path when a stage
 already has an entrypoint.
 
+The general routine registry is `agentic_tools/wechat_gui_agent/scripts/wechat_routines.py`
+and the operator guide is `docs/ROUTINE_ORCHESTRATOR.md`. This document is the
+specialized stage contract for the `generated_video` routine.
+
 ## Routine Stages
 
 1. `route_contract`

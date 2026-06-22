@@ -190,6 +190,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(calls[0]["chat_name"], "懒人科研")
         self.assertEqual(calls[0]["role"], "worker")
         self.assertIn("fragment or follow-up", str(calls[0]["prompt"]))
+        self.assertIn("Routine supervisor contract", str(calls[0]["prompt"]))
+        self.assertIn("routine_contract.md", str(calls[0]["prompt"]))
         self.assertIn("Avoid sending the same answer again", str(calls[0]["prompt"]))
         self.assertIn("Strict source isolation", str(calls[0]["prompt"]))
         self.assertIn("Never use media, files, or generated artifacts from another chat", str(calls[0]["prompt"]))
@@ -225,6 +227,51 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("fail closed", str(calls[0]["prompt"]))
         self.assertIn("nearby/older video", str(calls[0]["prompt"]))
         self.assertIn("files", str(calls[0]["prompt"]))
+
+    def test_worker_writes_routine_contract_before_codex(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+        original_session = worker.run_codex_session
+        original_artifact_dir = worker.worker_artifact_dir
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                artifact_dir = Path(tmp) / "task-artifacts"
+
+                def fake_artifact_dir(_task: dict[str, object]) -> Path:
+                    return artifact_dir
+
+                def fake_run_codex_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                    calls.append({"prompt": prompt, **kwargs})
+                    return {"ok": True, "message": "done", "thread_id": "thread-worker", "resumed": False}
+
+                worker.worker_artifact_dir = fake_artifact_dir
+                worker.run_codex_session = fake_run_codex_session
+                task = {
+                    "id": "task-routine",
+                    "chat": "懒人科研",
+                    "request": "Current coalesced request:\nrender this PCB in Blender\n\nRecent history:\n",
+                    "route_decision": {"route_kind": "cad_pcb_labcanvas", "project": "labcanvas"},
+                    "source": {"local_id": 7},
+                }
+
+                result = worker.run_worker_codex_once(
+                    task,
+                    {"model": "gpt-5.5", "reasoning_effort": "high", "sandbox": "workspace-write", "timeout_seconds": 300},
+                )
+                routine_json = artifact_dir / "routine_contract.json"
+                routine_md = artifact_dir / "routine_contract.md"
+                payload = json.loads(routine_json.read_text(encoding="utf-8"))
+                routine_md_exists = routine_md.exists()
+        finally:
+            worker.run_codex_session = original_session
+            worker.worker_artifact_dir = original_artifact_dir
+
+        self.assertEqual(result, "done")
+        self.assertEqual(task["routine"]["id"], "labcanvas_cad_pcb")
+        self.assertEqual(payload["id"], "labcanvas_cad_pcb")
+        self.assertTrue(routine_md_exists)
+        self.assertIn("routine_contract", task)
+        self.assertIn("labcanvas_cad_pcb", str(calls[0]["prompt"]))
 
     def test_worker_policy_selects_high_for_lalachan_video_generation(self) -> None:
         worker = load_worker()

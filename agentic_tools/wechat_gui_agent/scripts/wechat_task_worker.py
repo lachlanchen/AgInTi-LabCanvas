@@ -20,6 +20,7 @@ import urllib.request
 
 from wechat_codex_sessions import run_codex_session
 from wechat_mirror import DEFAULT_DB, record_event
+from wechat_routines import ensure_task_routine_contract, routine_prompt_context, write_routine_contract
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -892,12 +893,15 @@ def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
     artifact_dir = worker_artifact_dir(task)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     task.setdefault("artifact_dir", str(artifact_dir))
+    ensure_task_routine_contract(task)
+    task["routine_contract"] = write_routine_contract(task, artifact_dir)
     preflight = prepare_worker_preflight(task, artifact_dir)
     if preflight:
         task["preflight"] = preflight
     deterministic = deterministic_preflight_result(task)
     if deterministic is not None:
         return deterministic
+    routine_context = routine_prompt_context(task)
     tool_context = build_worker_tool_context(task)
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
@@ -906,10 +910,13 @@ Before executing, inspect `task.route_decision` against the Current coalesced re
 Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
 Strict source isolation: the task's `chat`, `source.local_id`, `source.server_id`, `context`, and any explicit source/reference rows embedded in `request` define the only WeChat source. Never use media, files, or generated artifacts from another chat, another direct message, a nearby queue item, or an unrelated old task.
 If no exact matching source media is available for "this image", "this PDF", "this video", "last one", or a quoted command, return a source-limited message asking for the exact file/source. Do not synthesize or continue from unrelated media.
+Follow the routine supervisor contract. The contract is saved in `task.routine_contract`; use it as the routine checklist and update task state through the existing queue/status mechanisms instead of inventing an ad hoc workflow.
 Exception for WeChat video-to-AutoPublish requests: if the task asks to copy/download a WeChat video to Nutstore AutoPublish and the recent context contains a same-chat video row, first run:
 `PYTHONPATH=src python -m agenticapp wechat autopublish-video --chat "<chat>" --sync --fetch-gui --since-minutes 720 --json`
 This opens the chat in the isolated WeChat desktop, clicks the latest visible video so the official client caches the MP4, media-syncs it, and atomically copies it to `/home/lachlan/Nutstore Files/AutoPublish/AutoPublish`. Only report missing source after that command fails or returns no matching video.
 If `task.preflight.autopublish_video` exists and has `ok: false` for a task with `message_local_ids`, fail closed: do not publish, transcode, or reuse any nearby/older video. Report that the exact WeChat row was not cached and include the safe next action.
+
+{routine_context}
 
 {tool_context}
 

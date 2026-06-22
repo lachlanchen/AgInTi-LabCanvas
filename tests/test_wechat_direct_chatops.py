@@ -139,6 +139,34 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("Strict source isolation", route["task"])
         self.assertIn("Chat: 懒人科研", route["task"])
         self.assertIn("local_id=1", route["task"])
+        self.assertIn("Routine supervisor contract", route["task"])
+
+    def test_enqueue_worker_task_persists_routine_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            config = {
+                "chat_name": "懒人科研",
+                "message_table": "MSG_demo",
+                "state_path": str(Path(tmp) / "state.json"),
+                "worker_queue": str(queue),
+                "mirror_db": str(Path(tmp) / "mirror.sqlite"),
+                "send_target": {"name": "懒人科研", "expected_title": "懒人科研"},
+            }
+            row = self.row("render a PCB in Blender", local_id=9, server_id="srv-9")
+
+            task = direct_chatops.enqueue_worker_task(
+                config,
+                row,
+                "Current coalesced request:\nrender a PCB in Blender\n\nRecent history:\n",
+                context_rows=[row],
+                route_decision={"route_kind": "cad_pcb_labcanvas", "project": "labcanvas"},
+            )
+            saved = json.loads(queue.read_text(encoding="utf-8").strip())
+
+        self.assertEqual(task["routine"]["id"], "labcanvas_cad_pcb")
+        self.assertEqual(saved["routine"]["id"], "labcanvas_cad_pcb")
+        self.assertTrue(saved["routine"]["stages"])
+        self.assertEqual(saved["route"]["chat"], "懒人科研")
 
     def test_enabled_attachment_chats_route_images_voice_and_location(self) -> None:
         config = {
