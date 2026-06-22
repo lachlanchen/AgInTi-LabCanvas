@@ -223,7 +223,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     target_chat = str(task.get("chat") or chat)
     send_now = send and should_send_worker_result(task, result)
     if send and not send_now:
-        task["send_suppressed_reason"] = "generated_video_nonterminal_status"
+        task["send_suppressed_reason"] = "nonterminal_routine_status"
         task["send_suppressed_at"] = datetime.now().isoformat(timespec="seconds")
     send_errors = send_result_with_retries(result, target_chat, send_targets, task=task) if send_now else []
     if result.get("skipped_files"):
@@ -236,9 +236,11 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         apply_send_outcome(task, result, send_errors)
     else:
         apply_send_outcome(task, result, [])
-    live_statuses = {GENERATED_VIDEO_WAITING_STATUS, GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS}
+    live_statuses = {GENERATED_VIDEO_WAITING_STATUS, GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS, EXISTING_VIDEO_PUBLISH_PENDING_STATUS}
     if task.get("status") in live_statuses:
-        task["last_generation_status_at"] = datetime.now().isoformat(timespec="seconds")
+        task["last_live_status_at"] = datetime.now().isoformat(timespec="seconds")
+        if task.get("status") in {GENERATED_VIDEO_WAITING_STATUS, GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS}:
+            task["last_generation_status_at"] = task["last_live_status_at"]
         task.pop("completed_at", None)
     else:
         task["completed_at"] = datetime.now().isoformat(timespec="seconds")
@@ -1209,21 +1211,66 @@ def run_worker_codex(task: dict[str, Any]) -> str:
 
 
 def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
+    return run_task_orchestrator(task, policy)
+
+
+def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
+    """Central routine supervisor for a queued WeChat task.
+
+    Deterministic code only handles mature routine stages such as source
+    resolution, cheap status probes, and delivery gates. Any ambiguous,
+    repair-oriented, or tool-heavy work falls through to the resumed per-chat
+    Codex worker session below.
+    """
     artifact_dir = worker_artifact_dir(task)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     task.setdefault("artifact_dir", str(artifact_dir))
     ensure_task_routine_contract(task)
     task["routine_contract"] = write_routine_contract(task, artifact_dir)
+    task["orchestrator"] = {
+        "mode": "routine_supervisor",
+        "routine_id": (task.get("routine") or {}).get("id") if isinstance(task.get("routine"), dict) else None,
+        "stage": task_orchestrator_stage(task),
+        "policy": {
+            "model": policy.get("model"),
+            "reasoning_effort": policy.get("reasoning_effort"),
+            "timeout_seconds": policy.get("timeout_seconds"),
+            "reuse_session": bool(policy.get("reuse_session", True)),
+        },
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
     preflight = prepare_worker_preflight(task, artifact_dir)
     if preflight:
         task["preflight"] = preflight
     deterministic = deterministic_preflight_result(task)
     if deterministic is not None:
+        task["orchestrator"]["last_action"] = "deterministic_routine_stage"
+        task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
         return deterministic
+    task["orchestrator"]["last_action"] = "resume_codex_worker_session"
+    task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
+    return run_worker_agent_session(task, policy)
+
+
+def task_orchestrator_stage(task: dict[str, Any]) -> str:
+    if isinstance(task.get("existing_video_publish_poststage"), dict) and task.get("existing_video_publish_poststage"):
+        return "existing_video_publish_poststage"
+    if isinstance(task.get("generated_video_poststage"), dict) and task.get("generated_video_poststage"):
+        return "generated_video_poststage"
+    if isinstance(task.get("generated_video_monitor"), dict) and task.get("generated_video_monitor"):
+        return "generated_video_monitor"
+    if isinstance(task.get("routine"), dict) and task["routine"].get("id"):
+        return f"routine:{task['routine']['id']}"
+    return "routine:unclassified"
+
+
+def run_worker_agent_session(task: dict[str, Any], policy: dict[str, Any]) -> str:
     routine_context = routine_prompt_context(task)
     tool_context = build_worker_tool_context(task)
+    orchestrator_context = json.dumps(task.get("orchestrator") or {}, ensure_ascii=False, indent=2)
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
+You are being resumed by the central routine orchestrator. Treat the routine contract and orchestrator handoff as the execution center: inspect current stage, use mature routine entrypoints first, repair blockers, and only invent a new approach if no routine stage applies.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 Before executing, inspect `task.route_decision` against the Current coalesced request and recent context. If they conflict, choose the safer interpretation and state the conflict instead of acting. If `task.route_decision` exists, treat it as the intent contract. If it says `route_kind=generate_video`, generate/import the requested new video and do not process an old WeChat MP4 as the output. Treat stages separately: story writing, video generation/download/send-back, LazyEdit import/process, and public publishing are independent permissions. If `public_publish_allowed` is false, do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish public queues, or any public platform even if old context mentions publishing. Public posting requires an explicit publish/post/platform instruction in the current user request, not merely old history. LazyEdit import/process is allowed only when the current request explicitly asks for LazyEdit/import/process.
 Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
@@ -1237,6 +1284,11 @@ If `task.preflight.autopublish_video` has `status: "artifact-ledger-match"`, tre
 If `task.preflight.autopublish_video` exists and has `ok: false` for a task with `message_local_ids`, fail closed only after its `artifact_resolution.ok` is also false or missing: do not publish, transcode, or reuse any nearby/older video. Report that neither the exact WeChat cache nor the same-chat artifact ledger contained the referenced source, and include the safe next action.
 
 {routine_context}
+
+Central orchestrator handoff:
+```json
+{orchestrator_context}
+```
 
 {tool_context}
 

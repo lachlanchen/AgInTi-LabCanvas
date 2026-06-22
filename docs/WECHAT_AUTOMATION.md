@@ -16,11 +16,20 @@ Linux WeChat GUI + local encrypted DB
 fast direct monitor -> ACK / short reply
         |
         v
-private JSONL worker queue -> Codex/LabCanvas work -> message + files
+private JSONL worker queue -> routine orchestrator -> Codex/LabCanvas work
+        |
+        v
+message + files
         |
         v
 official WeChat GUI sender
 ```
+
+The worker is centered on `run_task_orchestrator()`: deterministic scripts run
+only mature routine stages such as exact source lookup, status probes, and
+delivery gates; nontrivial execution resumes the same per-chat Codex worker
+session with the routine contract and orchestrator handoff. This keeps the
+automation agentic without re-solving known workflows from scratch.
 
 ## Installable CLI
 

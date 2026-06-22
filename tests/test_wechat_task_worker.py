@@ -209,6 +209,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(calls[0]["chat_name"], "懒人科研")
         self.assertEqual(calls[0]["role"], "worker")
         self.assertIn("fragment or follow-up", str(calls[0]["prompt"]))
+        self.assertIn("Central orchestrator handoff", str(calls[0]["prompt"]))
+        self.assertIn("central routine orchestrator", str(calls[0]["prompt"]))
         self.assertIn("Routine supervisor contract", str(calls[0]["prompt"]))
         self.assertIn("routine_contract.md", str(calls[0]["prompt"]))
         self.assertIn("Avoid sending the same answer again", str(calls[0]["prompt"]))
@@ -246,6 +248,79 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("fail closed", str(calls[0]["prompt"]))
         self.assertIn("nearby/older video", str(calls[0]["prompt"]))
         self.assertIn("files", str(calls[0]["prompt"]))
+        self.assertEqual(worker.task_orchestrator_stage({"routine": {"id": "research_summary"}}), "routine:research_summary")
+        self.assertEqual(calls[0]["reuse"], True)
+
+    def test_orchestrator_runs_deterministic_stage_without_codex_session(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "publish-missing-source",
+            "chat": "🍓我的设备",
+            "request": "Current coalesced request:\npublish this video to YouTube",
+            "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+            "context": [
+                {"local_id": 14, "sender_display": "陈苗", "content": '<msg><videomsg md5="bea815fa6ed81bbd5da77ac6895c5fd9" /></msg>'},
+                {"local_id": 16, "sender_display": "陈苗", "content": "publish this video"},
+            ],
+        }
+
+        def forbidden_session(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("deterministic routine stage should not start Codex")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(worker, "worker_artifact_dir", return_value=Path(tmp)):
+                with mock.patch.object(
+                    worker,
+                    "prepare_worker_preflight",
+                    return_value={
+                        "autopublish_video": {
+                            "ok": False,
+                            "message_local_ids": [14],
+                            "recent_video_messages": [{"chat": "🍓我的设备", "recent_video_rows": 1}],
+                            "artifact_resolution": {"ok": False, "error": "no same-chat artifact match"},
+                        }
+                    },
+                ):
+                    with mock.patch.object(worker, "run_codex_session", side_effect=forbidden_session):
+                        result = worker.run_task_orchestrator(
+                            task,
+                            {"model": "gpt-5.5", "reasoning_effort": "high", "sandbox": "danger-full-access", "timeout_seconds": 600},
+                        )
+
+        self.assertIn("我没有发布这个视频", result)
+        self.assertEqual(task["orchestrator"]["last_action"], "deterministic_routine_stage")
+        self.assertEqual(task["orchestrator"]["mode"], "routine_supervisor")
+
+    def test_orchestrator_resumes_codex_session_for_nontrivial_stage(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+
+        def fake_run_codex_session(prompt: str, **kwargs: object) -> dict[str, object]:
+            calls.append({"prompt": prompt, **kwargs})
+            return {"ok": True, "message": '{"message":"done","files":[],"confirmation":""}', "thread_id": "thread-worker", "resumed": True}
+
+        task = {
+            "id": "research-task",
+            "chat": "懒人科研",
+            "request": "Current coalesced request:\nsummarize this paper",
+            "route_decision": {"route_kind": "research_or_summary"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(worker, "worker_artifact_dir", return_value=Path(tmp)):
+                with mock.patch.object(worker, "prepare_worker_preflight", return_value={}):
+                    with mock.patch.object(worker, "run_codex_session", side_effect=fake_run_codex_session):
+                        result = worker.run_task_orchestrator(
+                            task,
+                            {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "danger-full-access", "timeout_seconds": 300},
+                        )
+
+        self.assertIn("done", result)
+        self.assertEqual(task["orchestrator"]["last_action"], "resume_codex_worker_session")
+        self.assertEqual(calls[0]["chat_name"], "懒人科研")
+        self.assertEqual(calls[0]["role"], "worker")
+        self.assertEqual(calls[0]["reuse"], True)
+        self.assertIn("Central orchestrator handoff", str(calls[0]["prompt"]))
 
     def test_worker_writes_routine_contract_before_codex(self) -> None:
         worker = load_worker()

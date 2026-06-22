@@ -54,10 +54,19 @@ Every worker task should contain `task.routine`. When claimed, the worker writes
 directory. The worker prompt includes the routine contract before the tool
 playbook.
 
+`wechat_task_worker.py` uses `run_task_orchestrator()` as the central execution
+boundary. The orchestrator always writes the routine contract, records
+`task.orchestrator`, runs cheap deterministic routine stages first, and resumes
+the same per-chat Codex worker session for reasoning, repair, browser work, or
+tool-heavy execution. Deterministic code should not grow into a second agent; it
+should provide mature stage probes and gates that the resumed worker can trust.
+
 Required behavior:
 
 - select routines from the current `route_decision` and current request;
 - treat route and routine contracts as source-of-truth intent boundaries;
+- route all nontrivial execution through the resumed worker session with
+  `role=worker`, `reuse=True`, and the orchestrator handoff in the prompt;
 - preserve per-chat source isolation;
 - keep long waits in queue state, not one long model call;
 - send or defer required artifacts through the artifact delivery gate;
