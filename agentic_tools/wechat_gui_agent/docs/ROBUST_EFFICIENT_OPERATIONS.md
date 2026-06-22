@@ -110,6 +110,9 @@ that contract rather than designing a new workflow from scratch.
   preserve every safe explicit instruction, including multi-stage requests, and
   must not shrink a request to a smaller hardcoded action because one keyword
   matched first.
+- Every queued worker task should persist `instruction_contract` with
+  `current_request_authoritative`, `preserve_safe_explicit_instructions`, and
+  `no_keyword_shrink` so the resumed worker can inspect the rule as data.
 - The route model cannot suppress hard artifact work. If the current coalesced
   request clearly asks to send/save/download/copy a file, video, image, audio,
   PDF, or generated artifact, route it to the worker even if the route model

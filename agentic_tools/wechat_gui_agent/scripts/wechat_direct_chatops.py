@@ -3233,6 +3233,7 @@ def enqueue_worker_task(
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "route": build_route_contract(config),
         "route_decision": route_decision or {},
+        "instruction_contract": build_instruction_contract(config, route_decision or {}),
         "execution_contract": build_execution_contract(config, route_decision or {}),
         "source": {
             "chat": config["chat_name"],
@@ -3269,6 +3270,7 @@ def enqueue_worker_task(
 
 
 def build_execution_contract(config: dict[str, Any], route_decision: dict[str, Any]) -> dict[str, Any]:
+    instruction_contract = build_instruction_contract(config, route_decision)
     return {
         "wechat_role": "message_transport_only",
         "monitor_role": "receive_coalesce_ack_enqueue",
@@ -3282,12 +3284,30 @@ def build_execution_contract(config: dict[str, Any], route_decision: dict[str, A
             "reuse": True,
         },
         "route_kind": str(route_decision.get("route_kind") or "other_worker"),
+        "instruction_contract": instruction_contract,
         "rules": [
             "WeChat receives messages and returns artifacts; it does not own backend reasoning.",
             "The direct monitor only routes and queues nontrivial work.",
             "The worker supervises routine stages, then resumes the exact chat's Codex worker session.",
             "Artifacts and replies must go back through the guarded sender for the same source chat.",
+            "The current coalesced request is authoritative for all safe explicit instructions.",
+            "Do not shrink a broad request to a smaller hardcoded action because one keyword matched first.",
         ],
+    }
+
+
+def build_instruction_contract(config: dict[str, Any], route_decision: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "current_request_authoritative": True,
+        "preserve_safe_explicit_instructions": True,
+        "multi_stage_policy": "complete_in_order_or_persist_resumable_state",
+        "no_keyword_shrink": True,
+        "use_agent_reasoning": "resume_exact_chat_route_and_worker_sessions",
+        "hardcoded_logic_role": "safety_source_isolation_and_deterministic_gates_only",
+        "same_chat_source_isolation": True,
+        "irreversible_actions_require_current_message_intent": True,
+        "route_kind": str(route_decision.get("route_kind") or "other_worker"),
+        "chat": str(config.get("chat_name") or "wechat-chat"),
     }
 
 

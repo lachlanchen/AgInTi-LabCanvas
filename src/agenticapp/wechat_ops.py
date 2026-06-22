@@ -423,6 +423,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "EchoMind remains language-learning only and does not enqueue backend worker routines",
             "route and worker Codex exec calls resume exact per-chat sessions by role",
             "route and worker prompts preserve every safe explicit current instruction instead of shrinking to keyword matches",
+            "queued worker tasks persist a machine-readable instruction contract",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }

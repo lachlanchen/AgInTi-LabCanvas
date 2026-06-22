@@ -339,6 +339,9 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("resume_per_chat_worker_session", str(calls[0]["prompt"]))
         self.assertEqual(calls[0]["reuse"], True)
         self.assertIn("Central orchestrator handoff", str(calls[0]["prompt"]))
+        self.assertIn("Instruction contract", str(calls[0]["prompt"]))
+        self.assertIn("current_request_authoritative", str(calls[0]["prompt"]))
+        self.assertIn("no_keyword_shrink", str(calls[0]["prompt"]))
         self.assertIn("Follow every safe, explicit instruction", str(calls[0]["prompt"]))
         self.assertIn("do not collapse the request to a smaller hardcoded action", str(calls[0]["prompt"]))
 

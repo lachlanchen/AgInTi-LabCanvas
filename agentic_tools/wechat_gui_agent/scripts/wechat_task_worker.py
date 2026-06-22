@@ -1301,12 +1301,13 @@ def run_worker_agent_session(task: dict[str, Any], policy: dict[str, Any]) -> st
     tool_context = build_worker_tool_context(task)
     orchestrator_context = json.dumps(task.get("orchestrator") or {}, ensure_ascii=False, indent=2)
     execution_context = json.dumps(worker_execution_contract(task), ensure_ascii=False, indent=2)
+    instruction_context = json.dumps(worker_instruction_contract(task), ensure_ascii=False, indent=2)
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
 WeChat is only the message transport: it receives user messages and returns safe files/messages. Backend execution belongs to the routine orchestrator and the resumed per-chat Codex exec worker session.
 You are being resumed by the central routine orchestrator. Treat the routine contract and orchestrator handoff as the execution center: inspect current stage, use mature routine entrypoints first, repair blockers, and only invent a new approach if no routine stage applies.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
-Follow every safe, explicit instruction in the current coalesced request. If the user asks for multiple stages, do them in order or persist a resumable state for unfinished stages; do not collapse the request to a smaller hardcoded action just because one routine or keyword matched.
+Follow the machine-readable instruction contract below. Follow every safe, explicit instruction in the current coalesced request. If the user asks for multiple stages, do them in order or persist a resumable state for unfinished stages; do not collapse the request to a smaller hardcoded action just because one routine or keyword matched.
 Before executing, inspect `task.route_decision` against the Current coalesced request and recent context. If they conflict, choose the safer interpretation and state the conflict instead of acting. If `task.route_decision` exists, treat it as the intent contract. If it says `route_kind=generate_video`, generate/import the requested new video and do not process an old WeChat MP4 as the output. Treat stages separately: story writing, video generation/download/send-back, LazyEdit import/process, and public publishing are independent permissions. If `public_publish_allowed` is false, do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish public queues, or any public platform even if old context mentions publishing. Public posting requires an explicit publish/post/platform instruction in the current user request, not merely old history. LazyEdit import/process is allowed only when the current request explicitly asks for LazyEdit/import/process.
 Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
 Strict source isolation: the task's `chat`, `source.local_id`, `source.server_id`, `context`, and any explicit source/reference rows embedded in `request` define the only WeChat source. Never use media, files, or generated artifacts from another chat, another direct message, a nearby queue item, or an unrelated old task.
@@ -1328,6 +1329,11 @@ Central orchestrator handoff:
 Execution contract:
 ```json
 {execution_context}
+```
+
+Instruction contract:
+```json
+{instruction_context}
 ```
 
 {tool_context}
@@ -1387,6 +1393,26 @@ def worker_execution_contract(task: dict[str, Any]) -> dict[str, Any]:
             "role": "worker",
             "reuse": True,
         },
+        "instruction_contract": worker_instruction_contract(task),
+    }
+
+
+def worker_instruction_contract(task: dict[str, Any]) -> dict[str, Any]:
+    contract = task.get("instruction_contract") if isinstance(task.get("instruction_contract"), dict) else {}
+    if contract:
+        return contract
+    route = task_route_decision(task)
+    return {
+        "current_request_authoritative": True,
+        "preserve_safe_explicit_instructions": True,
+        "multi_stage_policy": "complete_in_order_or_persist_resumable_state",
+        "no_keyword_shrink": True,
+        "use_agent_reasoning": "resume_exact_chat_route_and_worker_sessions",
+        "hardcoded_logic_role": "safety_source_isolation_and_deterministic_gates_only",
+        "same_chat_source_isolation": True,
+        "irreversible_actions_require_current_message_intent": True,
+        "route_kind": str(route.get("route_kind") or "other_worker"),
+        "chat": str(task.get("chat") or "wechat-chat"),
     }
 
 

@@ -274,6 +274,11 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(saved["execution_contract"]["codex_exec_mode"], "resume_per_chat_worker_session")
         self.assertEqual(saved["execution_contract"]["codex_session"]["chat"], "懒人科研")
         self.assertTrue(saved["execution_contract"]["codex_session"]["reuse"])
+        self.assertTrue(saved["instruction_contract"]["current_request_authoritative"])
+        self.assertTrue(saved["instruction_contract"]["preserve_safe_explicit_instructions"])
+        self.assertTrue(saved["instruction_contract"]["no_keyword_shrink"])
+        self.assertEqual(saved["instruction_contract"]["use_agent_reasoning"], "resume_exact_chat_route_and_worker_sessions")
+        self.assertEqual(saved["execution_contract"]["instruction_contract"], saved["instruction_contract"])
 
     def test_enabled_attachment_chats_route_images_voice_and_location(self) -> None:
         config = {
