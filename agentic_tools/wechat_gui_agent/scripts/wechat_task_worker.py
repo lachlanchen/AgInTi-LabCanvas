@@ -1143,6 +1143,8 @@ def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
 def stale_in_progress(task: dict[str, Any], now: datetime) -> bool:
     if task.get("status") != CLAIMED_STATUS:
         return False
+    if claimed_worker_process_dead(task):
+        return True
     timeout = int(os.environ.get("WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS", DEFAULT_STALE_IN_PROGRESS_SECONDS))
     if timeout <= 0:
         return False
@@ -1150,6 +1152,29 @@ def stale_in_progress(task: dict[str, Any], now: datetime) -> bool:
     if not claimed_at:
         return False
     return (now - claimed_at).total_seconds() > timeout
+
+
+def claimed_worker_process_dead(task: dict[str, Any]) -> bool:
+    worker_id = str(task.get("worker_id") or "")
+    if not worker_id.startswith("pid:"):
+        return False
+    try:
+        pid = int(worker_id.split(":", 1)[1])
+    except ValueError:
+        return False
+    if pid <= 0 or pid == os.getpid():
+        return False
+    return not process_alive(pid)
+
+
+def process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def parse_iso_datetime(value: str) -> datetime | None:
@@ -4224,6 +4249,9 @@ def wechat_send_env() -> dict[str, str]:
     env = os.environ.copy()
     env.setdefault("WECHAT_INITIAL_TITLE_WAIT", os.environ.get("WECHAT_WORKER_INITIAL_TITLE_WAIT", "0.8"))
     env.setdefault("WECHAT_TITLE_RETRY_SECONDS", os.environ.get("WECHAT_WORKER_TITLE_RETRY_SECONDS", "8.0"))
+    worker_timeout = int(os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"))
+    gui_timeout = os.environ.get("WECHAT_WORKER_GUI_SEND_MAX_SECONDS", str(max(45, worker_timeout - 5)))
+    env.setdefault("WECHAT_GUI_SEND_MAX_SECONDS", gui_timeout)
     return env
 
 

@@ -433,6 +433,11 @@ inside WeChat search. Text-like artifacts such as `.md`, `.txt`, `.json`, and
 media/PDF/ZIP artifacts are the default auto-send candidates. Set
 `WECHAT_WORKER_SEND_FILES=0` to report all paths only, or
 `WECHAT_WORKER_REQUIRE_FILE_SEND=1` when attachment delivery must fail the task.
+The worker also passes `WECHAT_GUI_SEND_MAX_SECONDS` to each GUI-send subprocess
+so the inner WeChat sender alarm is slightly shorter than
+`WECHAT_WORKER_SEND_TIMEOUT_SECONDS`; tune
+`WECHAT_WORKER_GUI_SEND_MAX_SECONDS` on slow remote desktops instead of leaving
+the GUI sender at its short standalone default.
 
 If the official Linux client shows "Weixin for Linux is locked", do not bypass
 it with packet capture, decompilation, traffic decryption, session extraction,

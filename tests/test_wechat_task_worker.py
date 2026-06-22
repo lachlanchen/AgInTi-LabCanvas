@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime
 import io
 import importlib.util
 import json
@@ -2538,6 +2539,37 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(claimed["claim_history"][0]["worker_id"], "pid:old")
         self.assertEqual(rows[0]["claim_history"][0]["worker_id"], "pid:old")
 
+    def test_claim_next_pending_recovers_dead_worker_pid_immediately(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "task-1",
+                        "chat": "demo",
+                        "request": "publish",
+                        "status": "in_progress",
+                        "worker_id": "pid:999999",
+                        "claimed_at": datetime.now().isoformat(timespec="seconds"),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(worker, "process_alive", return_value=False):
+                claimed = worker.claim_next_pending(queue)
+            rows = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], "task-1")
+        self.assertEqual(claimed["status"], "in_progress")
+        self.assertEqual(claimed["claim_history"][0]["worker_id"], "pid:999999")
+        self.assertEqual(rows[0]["claim_history"][0]["worker_id"], "pid:999999")
+
     def test_worker_sandbox_can_be_downgraded_by_env(self) -> None:
         worker = load_worker()
         original = worker.os.environ.get("WECHAT_WORKER_CODEX_SANDBOX")
@@ -2549,6 +2581,28 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 worker.os.environ.pop("WECHAT_WORKER_CODEX_SANDBOX", None)
             else:
                 worker.os.environ["WECHAT_WORKER_CODEX_SANDBOX"] = original
+
+    def test_wechat_send_env_extends_gui_alarm_to_worker_timeout(self) -> None:
+        worker = load_worker()
+        originals = {
+            "WECHAT_WORKER_SEND_TIMEOUT_SECONDS": worker.os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS"),
+            "WECHAT_WORKER_GUI_SEND_MAX_SECONDS": worker.os.environ.get("WECHAT_WORKER_GUI_SEND_MAX_SECONDS"),
+            "WECHAT_GUI_SEND_MAX_SECONDS": worker.os.environ.get("WECHAT_GUI_SEND_MAX_SECONDS"),
+        }
+        try:
+            worker.os.environ["WECHAT_WORKER_SEND_TIMEOUT_SECONDS"] = "180"
+            worker.os.environ.pop("WECHAT_WORKER_GUI_SEND_MAX_SECONDS", None)
+            worker.os.environ.pop("WECHAT_GUI_SEND_MAX_SECONDS", None)
+
+            env = worker.wechat_send_env()
+        finally:
+            for key, value in originals.items():
+                if value is None:
+                    worker.os.environ.pop(key, None)
+                else:
+                    worker.os.environ[key] = value
+
+        self.assertEqual(env["WECHAT_GUI_SEND_MAX_SECONDS"], "175")
 
 
 if __name__ == "__main__":

@@ -414,6 +414,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
         "transport-resume": [
             "WeChat queue rows carry a message-transport execution contract",
             "nontrivial worker tasks resume the exact chat's Codex worker session",
+            "dead worker PID claims are reclaimed immediately after restart",
+            "GUI sender alarm is aligned with the worker send timeout",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -457,6 +459,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "worker_resumes_codex_session",
             "test": worker_prefix + "test_orchestrator_resumes_codex_session_for_nontrivial_stage",
+        },
+        {
+            "id": "dead_worker_claim_reclaimed",
+            "test": worker_prefix + "test_claim_next_pending_recovers_dead_worker_pid_immediately",
+        },
+        {
+            "id": "gui_send_alarm_aligned",
+            "test": worker_prefix + "test_wechat_send_env_extends_gui_alarm_to_worker_timeout",
         },
         {
             "id": "supervisor_uses_guarded_worker_entrypoint",
