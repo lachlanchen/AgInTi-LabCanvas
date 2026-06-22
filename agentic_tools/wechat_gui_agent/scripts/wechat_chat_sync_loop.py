@@ -26,6 +26,25 @@ ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 SUPERVISOR_ENV = PRIVATE / "wechat_supervisor.local.env"
 GUI_SEND = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"
+DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
+SEND_LANE_ACTIVE_STATUSES = {
+    "pending",
+    "in_progress",
+    "send_retrying",
+    "send_deferred_artifact",
+    "send_deferred_locked",
+    "generation_waiting",
+    "generation_poststage_pending",
+}
+SEND_LANE_RETRY_REASONS = {
+    "gui_send_busy",
+    "gui_send_timeout",
+    "wechat_entry_required",
+    "wechat_locked",
+    "title_guard_blank",
+    "required_artifact_delivery",
+    "required_artifact_delivery_before_poststage",
+}
 
 
 def main() -> int:
@@ -40,6 +59,18 @@ def main() -> int:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--only", action="append", default=[], help="Only sync a chat name. Repeatable.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F"))
+    parser.add_argument(
+        "--queue",
+        type=Path,
+        default=Path(os.environ.get("WECHAT_WORKER_QUEUE", str(DEFAULT_QUEUE))),
+        help="Worker queue used to avoid taking the GUI send lock while replies are pending.",
+    )
+    parser.add_argument(
+        "--yield-to-queue",
+        action=argparse.BooleanOptionalAction,
+        default=os.environ.get("WECHAT_CHAT_SYNC_YIELD_TO_QUEUE", "1") != "0",
+        help="Skip dry-open sync while worker replies or artifact sends need the GUI send lane.",
+    )
     args = parser.parse_args()
 
     while True:
@@ -51,11 +82,24 @@ def main() -> int:
 
 
 def sync_once(args: argparse.Namespace) -> list[dict[str, Any]]:
+    if getattr(args, "yield_to_queue", True):
+        send_lane = queue_send_lane_busy(Path(args.queue))
+        if send_lane["busy"]:
+            result = send_lane_reserved_result(args, send_lane)
+            emit_target_event(result)
+            return [result]
+
     configs = prioritize_configs(discover_configs(args.configs), args.priority)
     only = {item.strip() for item in args.only if item.strip()}
     results: list[dict[str, Any]] = []
     for config_path in configs:
         try:
+            if getattr(args, "yield_to_queue", True):
+                send_lane = queue_send_lane_busy(Path(args.queue))
+                if send_lane["busy"]:
+                    results.append(send_lane_reserved_result(args, send_lane))
+                    emit_target_event(results[-1])
+                    break
             config = json.loads(config_path.read_text(encoding="utf-8"))
             if config.get("desktop_sync_watch") is False:
                 results.append({"config": str(config_path), "ok": True, "skipped": "desktop_sync_watch_false"})
@@ -73,6 +117,48 @@ def sync_once(args: argparse.Namespace) -> list[dict[str, Any]]:
             results.append({"config": str(config_path), "ok": False, "error": str(exc)[:500]})
             emit_target_event(results[-1])
     return results
+
+
+def send_lane_reserved_result(args: argparse.Namespace, send_lane: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "skipped": "send_lane_reserved",
+        "queue": str(args.queue),
+        "active": send_lane["active"],
+    }
+
+
+def queue_send_lane_busy(queue_path: Path) -> dict[str, Any]:
+    """Return active queue rows that should get first use of the GUI sender."""
+    if not queue_path.exists():
+        return {"busy": False, "active": []}
+    active: list[dict[str, Any]] = []
+    try:
+        lines = queue_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        return {"busy": True, "active": [{"id": "", "status": "queue_read_error", "reason": str(exc)[:200]}]}
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            task = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        status = str(task.get("status") or "")
+        reason = str(task.get("send_deferred_reason") or "")
+        is_send_retry = status in {"send_deferred_artifact", "send_deferred_locked"} and reason in SEND_LANE_RETRY_REASONS
+        is_active = status in SEND_LANE_ACTIVE_STATUSES and status not in {"send_deferred_artifact", "send_deferred_locked"}
+        if not (is_active or is_send_retry):
+            continue
+        active.append(
+            {
+                "id": str(task.get("id") or ""),
+                "chat": str(task.get("chat") or ""),
+                "status": status,
+                "reason": reason,
+            }
+        )
+    return {"busy": bool(active), "active": active[:12]}
 
 
 def discover_configs(raw_configs: str) -> list[Path]:

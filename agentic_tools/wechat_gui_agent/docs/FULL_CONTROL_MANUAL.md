@@ -81,6 +81,13 @@ keep the WeChat GUI alive and respawn only monitors, worker, media sync, and web
 processes. Use `restart-all` only when it is acceptable to close and reopen
 WeChat, which may require phone confirmation.
 
+`chat-sync` is intentionally lower priority than outbound replies. By default
+it checks `.private/wechat_task_queue.jsonl` and returns `send_lane_reserved`
+instead of dry-opening chats when the queue has pending work, retryable
+deferred sends, artifact delivery, or long-running poststage work that may need
+the serialized GUI sender. It checks at the start of a cycle and before every
+target, so a worker send that appears mid-cycle stops further dry-open actions.
+
 ## Script Inventory
 
 | Script | Main use |
@@ -159,6 +166,11 @@ Rules:
 - Use `chat_purpose` to separate research, language learning, web clips,
   personal organizer, and direct-message behavior.
 - Prefer `expected_title_aliases` for emoji/OCR issues.
+- Prefer configured visible-list row coordinates over search. The sender tries
+  single-click open first, then double-click fallback, and only sends after the
+  exact title guard passes.
+- Blank-pane OCR noise such as `OCR='3 - oO\n|'` is retryable as
+  `title_guard_blank`; real wrong-chat title text remains a hard failure.
 - `allow_title_guard_fallback` is for dry-run review only. Live sends still fail
   closed unless `allow_live_title_guard_fallback` is deliberately set for a
   known single-chat workflow.

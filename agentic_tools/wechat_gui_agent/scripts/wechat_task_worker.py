@@ -621,7 +621,17 @@ def send_errors_indicate_wechat_entry_required(errors: list[str]) -> bool:
 
 def send_errors_indicate_blank_title_guard(errors: list[str]) -> bool:
     text = "\n".join(str(error) for error in errors).lower()
-    return "opened chat title guard failed" in text and "ocr=''" in text
+    if "opened chat title guard failed" not in text:
+        return False
+    if "ocr=''" in text or 'ocr=""' in text:
+        return True
+    for match in re.finditer(r"ocr=(['\"])(.*?)\1", text, flags=re.DOTALL):
+        observed = match.group(2).replace("\\n", "").replace("\\r", "")
+        compact = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", observed)
+        has_cjk = bool(re.search(r"[\u4e00-\u9fff]", compact))
+        if not compact or ((not has_cjk and len(compact) <= 3) or compact in {"3oo", "30o", "3o0", "300"}):
+            return True
+    return False
 
 
 def send_errors_indicate_deferable(errors: list[str]) -> bool:

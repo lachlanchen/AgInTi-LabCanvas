@@ -392,6 +392,11 @@ def open_target(
             return guard
 
     for label, point in target_explicit_click_candidates(target):
+        click(env, window.x + point[0], window.y + point[1])
+        guard = verify(f"{label}_direct")
+        attempts.append(guard)
+        if guard["ok"]:
+            return guard
         double_click(env, window.x + point[0], window.y + point[1])
         guard = verify(f"{label}_direct_double")
         attempts.append(guard)
@@ -413,6 +418,11 @@ def open_target(
     search_for_target(env, window, target.query, pause)
     screenshot(env, out_dir / f"{shot_prefix}-search.png")
     for label, point in target_click_candidates(target):
+        click(env, window.x + point[0], window.y + point[1])
+        guard = verify(label)
+        attempts.append(guard)
+        if guard["ok"]:
+            return guard
         double_click(env, window.x + point[0], window.y + point[1])
         guard = verify(f"{label}_double")
         attempts.append(guard)

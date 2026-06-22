@@ -471,7 +471,71 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn(("verify", "open_click"), calls)
         self.assertIn(("verify", "open_click_double"), calls)
+        self.assertIn(("verify", "result_click_direct"), calls)
         self.assertIn(("verify", "result_click_direct_double"), calls)
+
+    def test_open_target_tries_single_click_for_explicit_candidate_before_double(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="EchoMind",
+            query="EchoMind",
+            expected_title="EchoMind",
+            result_click=(165, 100),
+        )
+        original_click = module.click
+        original_double_click = module.double_click
+        original_screenshot = module.screenshot
+        original_verify = module.verify_opened_title
+        original_title_candidates = module.title_window_candidates
+        original_sleep = module.time.sleep
+        original_monotonic = module.time.monotonic
+        calls = []
+        clock = {"value": 0.0}
+        try:
+            module.click = lambda _env, x, y: calls.append(("click", x, y))
+            module.double_click = lambda _env, x, y: calls.append(("double", x, y))
+            module.screenshot = lambda _env, _path: None
+            module.title_window_candidates = lambda _env, window: [window]
+            module.time.sleep = lambda _seconds: None
+
+            def fake_monotonic():
+                clock["value"] += 10.0
+                return clock["value"]
+
+            def fake_verify(_env, window, _screenshot, _target, _crop, method):
+                calls.append(("verify", method))
+                return {
+                    "ok": method == "result_click_direct",
+                    "method": method,
+                    "ocr_text": "EchoMind" if method == "result_click_direct" else "blank",
+                    "compose_window": module.window_to_dict(window),
+                }
+
+            module.time.monotonic = fake_monotonic
+            module.verify_opened_title = fake_verify
+            result = module.open_target(
+                {},
+                module.Window("1", 100, 200, 1000, 700),
+                target,
+                0,
+                Path("/tmp"),
+                "wechat-open-target-single-click-test",
+                False,
+                False,
+                False,
+            )
+        finally:
+            module.click = original_click
+            module.double_click = original_double_click
+            module.screenshot = original_screenshot
+            module.verify_opened_title = original_verify
+            module.title_window_candidates = original_title_candidates
+            module.time.sleep = original_sleep
+            module.time.monotonic = original_monotonic
+
+        self.assertTrue(result["ok"])
+        self.assertIn(("verify", "result_click_direct"), calls)
+        self.assertNotIn(("verify", "result_click_direct_double"), calls)
 
     def test_open_target_no_search_never_opens_search_box(self):
         module = load_wechat_gui_send()

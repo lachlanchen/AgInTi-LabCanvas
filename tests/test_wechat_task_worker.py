@@ -131,6 +131,25 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             else:
                 worker.os.environ["WECHAT_ALLOW_SPARK_WORKER"] = original_allow
 
+    def test_blank_title_guard_detects_short_ascii_ocr_noise(self) -> None:
+        worker = load_worker()
+        errors = [
+            "RuntimeError: Opened chat title guard failed for EchoMind: OCR='3 - oO\\n|'.",
+        ]
+
+        self.assertTrue(worker.send_errors_indicate_blank_title_guard(errors))
+        self.assertTrue(worker.send_errors_indicate_deferable(errors))
+        self.assertEqual(worker.send_deferred_reason_from_errors(errors), "title_guard_blank")
+
+    def test_blank_title_guard_does_not_hide_real_wrong_chat_title(self) -> None:
+        worker = load_worker()
+        errors = [
+            "RuntimeError: Opened chat title guard failed for EchoMind: OCR='鏈接'.",
+        ]
+
+        self.assertFalse(worker.send_errors_indicate_blank_title_guard(errors))
+        self.assertFalse(worker.send_errors_indicate_deferable(errors))
+
     def test_worker_policy_does_not_escalate_missing_source_or_manual_blocker(self) -> None:
         worker = load_worker()
 

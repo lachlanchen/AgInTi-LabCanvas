@@ -96,9 +96,11 @@ workflow from scratch.
   mistakenly returns `chat_only`.
 - Do not use the WeChat search box for normal sending. GUI delivery should use
   the currently verified chat, a configured `open_click`, or configured
-  `fallback_clicks`; otherwise defer/fail closed. If the task needs web/source
-  search, use the controlled browser or browser-assist workflow instead of
-  WeChat search.
+  `fallback_clicks`; otherwise defer/fail closed. Configured visible-list rows
+  are opened with a normal single click before double-click fallback, because
+  double-clicking can leave some Linux WeChat builds on a blank right pane. If
+  the task needs web/source search, use the controlled browser or
+  browser-assist workflow instead of WeChat search.
 - Reuse per-chat `fast` and `worker` sessions. Session keys must be scoped by
   exact chat title and role.
 - Coalesce short message bursts into one task, but preserve every focused row in
@@ -190,6 +192,11 @@ Expected signs:
   exist;
 - `chat-sync` is running when multiple groups must respond even if the Linux
   client has not recently opened those conversations;
+- `chat-sync` yields with `send_lane_reserved` when the worker queue has
+  pending, active, retryable deferred, or artifact-send tasks, so dry-open
+  polling cannot hold the serialized GUI sender ahead of actual replies. It
+  re-checks the queue before every configured target, not only once per cycle,
+  so a newly claimed worker send can interrupt an in-progress sync pass;
 - worker loop is alive;
 - no unexpected `pending`, stale `in_progress`, or wrong-chat send errors.
 
@@ -210,6 +217,9 @@ If the source group has no fresh DB rows even though the user sent a message,
 run or check `wechat_chat_sync_loop.py`: it dry-opens the configured chat with
 the normal title guard and no send action, then the direct monitor can process
 newly materialized rows.
+If old send failures contain title-guard OCR noise such as `OCR='3 - oO\n|'`,
+the worker treats it as a retryable `title_guard_blank` blank-pane failure,
+while real wrong-chat titles remain non-retryable.
 For live smoke tests, simple messages such as `ping`, `test`, `best`, `在吗`, or
 `测试` are actionable in organizer/link-inbox chats and should return a short
 health acknowledgement or become a deferred outbox task if WeChat is locked.
