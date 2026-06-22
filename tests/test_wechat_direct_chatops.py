@@ -923,8 +923,10 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertEqual(risky["model"], "gpt-5.5")
         self.assertEqual(risky["reasoning_effort"], "medium")
+        self.assertTrue(risky["reuse_session"])
         self.assertEqual(simple["model"], "gpt-5.3-codex-spark")
         self.assertEqual(simple["reasoning_effort"], "high")
+        self.assertTrue(simple["reuse_session"])
 
     def test_agent_first_route_can_enqueue_without_keyword_prefilter(self) -> None:
         config = {
@@ -945,6 +947,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         try:
             def fake_route_session(prompt: str, **kwargs: object) -> dict[str, object]:
                 self.assertEqual(kwargs["role"], "route")
+                self.assertEqual(kwargs["chat_name"], "懒人科研")
+                self.assertTrue(kwargs["reuse"])
                 self.assertIn("blue notebook idea", prompt)
                 return {
                     "ok": True,

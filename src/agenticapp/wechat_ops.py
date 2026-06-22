@@ -421,6 +421,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "plain story/script requests route to the same worker capability set in research and device chats",
             "all non-EchoMind monitored chats share the backend routine skill surface",
             "EchoMind remains language-learning only and does not enqueue backend worker routines",
+            "route and worker Codex exec calls resume exact per-chat sessions by role",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -494,6 +495,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": direct_prefix + "test_echomind_stays_language_only_for_backend_requests",
         },
         {
+            "id": "route_agent_reuses_session",
+            "test": direct_prefix + "test_agent_first_route_can_enqueue_without_keyword_prefilter",
+        },
+        {
             "id": "supervisor_uses_guarded_worker_entrypoint",
             "test": worker_prefix + "test_supervisor_worker_uses_guarded_selftest_entrypoint",
         },
@@ -534,6 +539,18 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "chat_purpose": "research",
         "analysis_mode": "",
         "silent_danger_enabled": True,
+        "codex_session_reuse": True,
+        "agent_route_enabled": True,
+        "agent_route_prefilter": "agent_first",
+        "agent_router": {
+            "default_model": "gpt-5.3-codex-spark",
+            "default_reasoning_effort": "high",
+            "risky_model": "gpt-5.5",
+            "risky_reasoning_effort": "medium",
+            "sandbox": "read-only",
+            "timeout_seconds": 45,
+            "reuse_session": True,
+        },
         "auto_media_sync_on_task": True,
         "media_sync_since_minutes": 180,
         "media_sync_context_window_seconds": 300,

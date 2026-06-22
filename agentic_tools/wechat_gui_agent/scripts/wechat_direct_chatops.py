@@ -107,7 +107,7 @@ def load_config(path: Path) -> dict[str, Any]:
             "risky_reasoning_effort": "medium",
             "sandbox": "read-only",
             "timeout_seconds": 45,
-            "reuse_session": False,
+            "reuse_session": True,
         },
         "poll_seconds": float(os.environ.get("WECHAT_DIRECT_POLL_SECONDS", DEFAULT_POLL_SECONDS)),
         "catchup_poll_seconds": float(os.environ.get("WECHAT_DIRECT_CATCHUP_POLL_SECONDS", DEFAULT_CATCHUP_POLL_SECONDS)),
@@ -1625,7 +1625,7 @@ def select_agent_route_policy(config: dict[str, Any], text: str) -> dict[str, An
         "reasoning_effort": str(router.get("risky_reasoning_effort" if risky else "default_reasoning_effort") or ("medium" if risky else "high")),
         "sandbox": str(router.get("sandbox") or "read-only"),
         "timeout_seconds": int(router.get("timeout_seconds") or 45),
-        "reuse_session": bool(router.get("reuse_session", False)),
+        "reuse_session": bool(router.get("reuse_session", True)),
     }
 
 

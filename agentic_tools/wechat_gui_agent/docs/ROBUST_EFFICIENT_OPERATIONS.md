@@ -102,8 +102,10 @@ that contract rather than designing a new workflow from scratch.
 - Keep route classification agent-first for triggerable non-language chats:
   `agent_route_enabled=true` with `agent_route_prefilter=agent_first` lets the
   per-chat `route` Codex session choose `route_kind`, project, source policy,
-  and worker need before keyword lists. Keyword and attachment checks remain as
-  fallback and safety gates, not the primary capability map.
+  and worker need before keyword lists. `agent_router.reuse_session=true` is
+  the default, so repeated requests in one chat resume the same route thread.
+  Keyword and attachment checks remain as fallback and safety gates, not the
+  primary capability map.
 - The route model cannot suppress hard artifact work. If the current coalesced
   request clearly asks to send/save/download/copy a file, video, image, audio,
   PDF, or generated artifact, route it to the worker even if the route model
