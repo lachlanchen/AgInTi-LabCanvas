@@ -63,6 +63,12 @@ Required behavior:
 - require current-message permission for public publish, purchases, deletion,
   payment, and other irreversible actions.
 
+The artifact delivery gate is a routine stage, not a best-effort send. A
+file-picker click is not proof. Required media/files must be either verified as
+sent by the guarded bridge or mirror/phone evidence, left in a deferred send
+state such as `send_deferred_locked`, or blocked with evidence the worker can
+resume from.
+
 ## Adding A Routine
 
 1. Add a `RoutineDefinition` in `wechat_routines.py`.

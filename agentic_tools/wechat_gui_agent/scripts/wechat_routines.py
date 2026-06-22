@@ -30,6 +30,7 @@ COMMON_RULES = (
     "Use only same-chat source rows, explicit references, and source-scoped synced media.",
     "Save evidence and generated artifacts under the task artifact directory or other ignored output/private folders.",
     "Return blockers as stateful status or confirmation instead of silently completing partial work.",
+    "Do not treat a file-picker click as artifact delivery; required files need a verified send, deferred state, or explicit blocker evidence.",
 )
 
 
@@ -150,13 +151,18 @@ ROUTINES: dict[str, RoutineDefinition] = {
                 "success": "requested file is copied, downloaded, or blocked with evidence",
             },
             {
-                "id": "return_saved_path",
+                "id": "artifact_delivery_gate",
                 "owner": "queue_orchestrator",
-                "entrypoint": "send_result_with_retries",
-                "success": "safe file or saved path is returned to the source chat",
+                "entrypoint": "prepare_result_files -> send_result_with_retries -> apply_send_outcome",
+                "success": "safe file/media/path is returned, or the task is left deferred/blocked with evidence",
             },
         ),
-        required_gates=("exact_source_resolution",),
+        required_gates=("exact_source_resolution", "artifact_delivery_gate"),
+        artifact_policy=(
+            "Return the requested safe media/file as a WeChat attachment when supported; "
+            "text-like artifacts may be returned as saved paths. Do not close required artifact work "
+            "until delivery is verified, deferred, or blocked with evidence."
+        ),
         rules=COMMON_RULES
         + (
             "Never use nearby media if exact local_id/token matching fails.",

@@ -52,6 +52,22 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertIn("artifact_delivery_gate", contract["required_gates"])
         self.assertIn("atomic", " ".join(contract["rules"]))
 
+    def test_file_download_routine_requires_verified_artifact_delivery(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "file_download_or_save"},
+            "send me the generated video",
+            task_id="task-video",
+            chat="🍓我的设备",
+        )
+        stage_ids = [stage["id"] for stage in contract["stages"]]
+
+        self.assertEqual(contract["id"], "file_download_save")
+        self.assertIn("artifact_delivery_gate", contract["required_gates"])
+        self.assertIn("artifact_delivery_gate", stage_ids)
+        self.assertIn("file-picker click", " ".join(contract["rules"]))
+        self.assertIn("verified", contract["artifact_policy"])
+
     def test_write_routine_contract_creates_json_and_markdown(self) -> None:
         routines = load_routines()
         task = {
