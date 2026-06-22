@@ -202,6 +202,14 @@ status, do not say published. Return the current stage to WeChat and keep the
 task in `publish_poststage_pending` until all requested platforms have terminal
 LazyEdit/remote evidence, a public URL, or an explicit failure that the worker
 can repair or report.
+If the poststage finds an imported LazyEdit `video_id` but no local publish job,
+the deterministic routine must start the actual LazyEdit publish command from
+the stored correction and metadata prompts, record the reissue count, and then
+continue polling. Existing running or queued jobs are monitored, not duplicated.
+Set `WECHAT_WORKER_LAZYEDIT_REMOTE_LOG_COMMAND` in the ignored supervisor env to
+let the verifier inspect bounded AutoPublish logs. Login or QR markers should
+become `waiting_confirmation` with the same poststage stored, so the user can
+log in normally and approve the task to resume.
 
 ## Health Checks
 

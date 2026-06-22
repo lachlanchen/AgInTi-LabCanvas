@@ -1649,6 +1649,138 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(task["existing_video_publish_poststage"]["video_id"], 393)
         self.assertIn("next_publish_poststage_at", task)
 
+    def test_publish_poststage_reissues_lazyedit_when_no_local_job_exists(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            correction = Path(tmp) / "correction.md"
+            metadata = Path(tmp) / "metadata.md"
+            target = Path(tmp) / "exact_video_COMPLETED.mp4"
+            correction.write_text("story context", encoding="utf-8")
+            metadata.write_text("metadata brief", encoding="utf-8")
+            target.write_bytes(b"video")
+            task = {
+                "id": "publish-task",
+                "status": worker.CLAIMED_STATUS,
+                "request": "Current coalesced request:\npublish this video to sph and youtube",
+                "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+                "existing_video_publish_poststage": {
+                    "kind": "existing_video_publish",
+                    "video_id": 393,
+                    "platforms": ["shipinhao", "youtube"],
+                    "target": str(target),
+                    "lazyedit_context": {
+                        "correction_prompt_file": str(correction),
+                        "metadata_prompt_file": str(metadata),
+                    },
+                },
+            }
+            calls: list[dict[str, object]] = []
+
+            def fake_publish(**kwargs: object) -> dict[str, object]:
+                calls.append(kwargs)
+                return {"ok": True, "status": "done", "payload": {}}
+
+            queue_responses = [
+                {"jobs": []},
+                {"jobs": [{"video_id": 393, "id": 203, "status": "running", "remote_job_id": "job-1", "platforms": ["shipinhao", "youtube"]}]},
+            ]
+            with mock.patch.object(worker, "lazyedit_api_get", side_effect=queue_responses):
+                with mock.patch.object(worker, "remote_publish_jobs_for", return_value=[{}]):
+                    with mock.patch.object(worker, "run_lazyedit_publish_command", side_effect=fake_publish):
+                        raw = worker.deterministic_existing_video_publish_poststage_result(task)
+
+        payload = json.loads(raw or "{}")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["video_id"], 393)
+        self.assertEqual(calls[0]["platforms"], ["shipinhao", "youtube"])
+        self.assertEqual(calls[0]["correction_prompt"], str(correction))
+        self.assertEqual(calls[0]["metadata_prompt"], str(metadata))
+        self.assertEqual(task["publish_poststage_reissue_count"], 1)
+        self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
+        self.assertIn("publish_poststage_retry", payload)
+        self.assertIn("publish_reissue", payload)
+
+    def test_publish_poststage_does_not_reissue_when_local_job_exists(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "publish-task",
+            "status": worker.CLAIMED_STATUS,
+            "request": "Current coalesced request:\npublish this video to YouTube",
+            "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+            "existing_video_publish_poststage": {
+                "kind": "existing_video_publish",
+                "video_id": 393,
+                "platforms": ["youtube"],
+                "target": "/tmp/exact_video_COMPLETED.mp4",
+            },
+        }
+
+        with mock.patch.object(
+            worker,
+            "lazyedit_api_get",
+            return_value={"jobs": [{"video_id": 393, "id": 203, "status": "running", "remote_job_id": "job-1", "platforms": ["youtube"]}]},
+        ):
+            with mock.patch.object(worker, "remote_publish_jobs_for", return_value=[{}]):
+                with mock.patch.object(worker, "run_lazyedit_publish_command") as publish:
+                    raw = worker.deterministic_existing_video_publish_poststage_result(task)
+
+        payload = json.loads(raw or "{}")
+        publish.assert_not_called()
+        self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
+        self.assertIn("publish_poststage_retry", payload)
+        self.assertNotIn("publish_reissue", payload)
+
+    def test_publish_poststage_login_blocker_waits_for_confirmation(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "publish-task",
+            "status": worker.CLAIMED_STATUS,
+            "request": "Current coalesced request:\npublish this video to sph",
+            "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+            "existing_video_publish_poststage": {
+                "kind": "existing_video_publish",
+                "video_id": 393,
+                "platforms": ["shipinhao"],
+                "target": "/tmp/exact_video_COMPLETED.mp4",
+            },
+        }
+
+        with mock.patch.object(
+            worker,
+            "lazyedit_api_get",
+            return_value={"jobs": [{"video_id": 393, "id": 203, "status": "running", "remote_job_id": "job-1", "platforms": ["shipinhao"]}]},
+        ):
+            with mock.patch.object(worker, "remote_publish_jobs_for", return_value=[{}]):
+                with mock.patch.object(
+                    worker,
+                    "lazyedit_remote_blocker",
+                    return_value={"stage": "waiting_login", "kind": "remote_login_required", "message": "Remote login required."},
+                ):
+                    raw = worker.deterministic_existing_video_publish_poststage_result(task)
+
+        payload = json.loads(raw or "{}")
+        self.assertEqual(payload["publish_stage"]["stage"], "waiting_login")
+        self.assertIn("Please complete the platform login", payload["confirmation"])
+        self.assertIn("poststage", payload)
+        self.assertNotIn("publish_poststage_retry", payload)
+
+        result = {"message": payload["message"], "confirmation": payload["confirmation"], "files": [], "data": payload}
+        worker.apply_send_outcome(task, result, [])
+        self.assertEqual(task["status"], "waiting_confirmation")
+        self.assertEqual(task["existing_video_publish_poststage"]["video_id"], 393)
+
+    def test_detect_remote_publish_login_blocker_from_log(self) -> None:
+        worker = load_worker()
+        blocker = worker.detect_remote_publish_blocker_from_log(
+            [{"id": 203, "filename": "demo_COMPLETED.zip", "remote_job_id": "job-1", "status": "running"}],
+            [{"id": "job-1", "status": "running"}],
+            "Received publish request: demo_COMPLETED.zip\nLogin iframe detected.\nLogin required, will check again in 5 seconds...",
+        )
+
+        self.assertEqual(blocker["stage"], "waiting_login")
+        self.assertEqual(blocker["kind"], "remote_login_required")
+        self.assertIn("demo_COMPLETED.zip", blocker["matched"])
+
     def test_save_to_publish_folder_without_publish_does_not_auto_publish(self) -> None:
         worker = load_worker()
         task = {

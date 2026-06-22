@@ -72,6 +72,13 @@ Required behavior:
 - send or defer required artifacts through the artifact delivery gate;
 - keep LazyEdit/public publish work in `publish_poststage_pending` until
   requested platforms have terminal LazyEdit/remote evidence;
+- when an existing-video publish poststage has a LazyEdit `video_id` but no
+  local publish job, reissue the real LazyEdit publish command from the stored
+  prompt files once before handing repair to a Codex worker session;
+- monitor existing local/remote publish jobs instead of starting duplicates;
+- if a configured remote AutoPublish log scan detects platform login or QR
+  requirements, return `waiting_confirmation` with the poststage preserved so
+  approval resumes the same job;
 - require current-message permission for public publish, purchases, deletion,
   payment, and other irreversible actions.
 

@@ -639,8 +639,18 @@ return code, import, queued job, submitted job, or running remote job is not
 publication proof. The worker may say “queued”, “running”, or “not verified”,
 but it must only say “published” after all requested platforms have terminal
 LazyEdit/remote evidence, a public URL, or equivalent platform proof. Incomplete
-publication stays in `publish_poststage_pending` for deterministic probes and
-the same chat’s resumed Codex worker session to repair. Set
+publication stays in `publish_poststage_pending` for deterministic probes. If a
+current-message publish task has an imported LazyEdit `video_id` but no local
+publish job, the poststage routine reissues `scripts/lazyedit_publish.py` once
+from the stored correction and metadata prompt files, records
+`publish_poststage_reissue_count`, and keeps polling. If a job already exists,
+the routine only monitors it; it does not duplicate the upload. The same chat’s
+resumed Codex worker session repairs only after those mature gates cannot
+progress. When `WECHAT_WORKER_LAZYEDIT_REMOTE_LOG_COMMAND` is configured, the
+worker also scans bounded AutoPublish logs; repeated login markers such as
+`Login iframe detected` move the task to `waiting_confirmation` with the
+publish poststage preserved. Complete platform login in the browser/noVNC, then
+run `labcanvas wechat approve <task-id>` to resume verification. Set
 `WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH=1` to force the older general
 worker-agent fallback during testing.
 

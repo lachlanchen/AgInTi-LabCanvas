@@ -33,6 +33,7 @@ LAZYEDIT_PUBLISH_SKILL = ROOT / "agentic_tools" / "wechat_gui_agent" / "skills" 
 LAZYEDIT_ROOT = Path(os.environ.get("LAZYEDIT_ROOT", "/home/lachlan/DiskMech/Projects/lazyedit"))
 LAZYEDIT_API_URL = os.environ.get("LAZYEDIT_API_URL", "http://127.0.0.1:18787").rstrip("/")
 LAZYEDIT_REMOTE_QUEUE_URL = os.environ.get("LAZYEDIT_REMOTE_QUEUE_URL", "http://lazyingart:8081/publish/queue")
+LAZYEDIT_REMOTE_LOG_COMMAND = os.environ.get("WECHAT_WORKER_LAZYEDIT_REMOTE_LOG_COMMAND", "")
 DEFAULT_AUTOPUBLISH_DIR = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/home/lachlan/Nutstore Files/AutoPublish/AutoPublish"))
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
@@ -363,6 +364,12 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
         task["send_deferred_reason"] = "required_artifact_delivery"
         task["last_send_attempt_at"] = datetime.now().isoformat(timespec="seconds")
         return
+    if result.get("confirmation"):
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        poststage = data.get("poststage") if isinstance(data.get("poststage"), dict) else {}
+        if poststage and is_video_publish_task(task):
+            task["existing_video_publish_poststage"] = poststage
+            task["publish_poststage_blocked_at"] = datetime.now().isoformat(timespec="seconds")
     task["status"] = "waiting_confirmation" if result.get("confirmation") else "done"
     task.pop("send_errors", None)
     task.pop("send_deferred_reason", None)
@@ -2628,6 +2635,8 @@ def run_generated_video_lazyedit_command(video_path: Path, task: dict[str, Any],
         f"--publish-timeout {publish_timeout}",
         "--json",
     ]
+    if LAZYEDIT_REMOTE_LOG_COMMAND:
+        command_parts.append(f"--remote-log-command {shell_quote(LAZYEDIT_REMOTE_LOG_COMMAND)}")
     if publish:
         command_parts.append(f"--platforms {','.join(detect_publish_platforms(task, current_only=True))}")
     else:
@@ -2735,22 +2744,30 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
         "confirmation": "",
         "publish_stage": verification,
     }
+    confirmation = publish_stage_confirmation(verification)
+    if confirmation:
+        payload["confirmation"] = confirmation
     if not bool(verification.get("verified")):
-        payload["publish_poststage_retry"] = {
-            "status": verification.get("stage") or "not_verified",
-            "retry_seconds": publish_stage_retry_seconds(verification),
-            "poststage": {
-                "kind": "existing_video_publish",
-                "stage": verification.get("stage") or "not_verified",
-                "video_id": video_id,
-                "platforms": platforms,
-                "target": str(target),
-                "target_name": target.name,
-                "source_path": autopub.get("source_path"),
-                "autopublish_video": autopub,
-            },
-            "outcome": compact_publish_outcome(outcome),
+        poststage = {
+            "kind": "existing_video_publish",
+            "stage": verification.get("stage") or "not_verified",
+            "video_id": video_id,
+            "platforms": platforms,
+            "target": str(target),
+            "target_name": target.name,
+            "source_path": autopub.get("source_path"),
+            "autopublish_video": autopub,
+            "lazyedit_context": lazy_context,
         }
+        if confirmation:
+            payload["poststage"] = poststage
+        else:
+            payload["publish_poststage_retry"] = {
+                "status": verification.get("stage") or "not_verified",
+                "retry_seconds": publish_stage_retry_seconds(verification),
+                "poststage": poststage,
+                "outcome": compact_publish_outcome(outcome),
+            }
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -2832,6 +2849,8 @@ def run_lazyedit_publish_command(
         f"--publish-timeout {publish_timeout}",
         "--json",
     ]
+    if LAZYEDIT_REMOTE_LOG_COMMAND:
+        command_parts.append(f"--remote-log-command {shell_quote(LAZYEDIT_REMOTE_LOG_COMMAND)}")
     if correction_prompt:
         command_parts.append(f"--correction-prompt-file {shell_quote(correction_prompt)}")
     if metadata_prompt:
@@ -2888,6 +2907,35 @@ def deterministic_existing_video_publish_poststage_result(task: dict[str, Any]) 
     target = Path(str(poststage.get("target") or poststage.get("target_name") or ""))
     verification = verify_lazyedit_publish_stage(video_id, platforms, target, {"status": "probe"})
     stage = str(verification.get("stage") or "not_verified")
+    if should_reissue_existing_video_publish(task, poststage, verification):
+        outcome = run_existing_video_publish_from_poststage(task, poststage, video_id, platforms)
+        task["publish_poststage_reissue_count"] = int(task.get("publish_poststage_reissue_count") or 0) + 1
+        task["publish_poststage_last_reissue_at"] = datetime.now().isoformat(timespec="seconds")
+        task["publish_poststage_last_reissue_outcome"] = compact_publish_outcome(outcome)
+        verification = verify_lazyedit_publish_stage(video_id, platforms, target, outcome)
+        stage = str(verification.get("stage") or "not_verified")
+        message = summarize_lazyedit_publish_outcome(video_id, platforms, target, outcome, verification=verification)
+        payload = {
+            "message": message,
+            "files": [],
+            "confirmation": "",
+            "publish_stage": verification,
+            "publish_reissue": compact_publish_outcome(outcome),
+        }
+        confirmation = publish_stage_confirmation(verification)
+        if confirmation:
+            payload["confirmation"] = confirmation
+        if not bool(verification.get("verified")):
+            if confirmation:
+                payload["poststage"] = poststage
+            else:
+                payload["publish_poststage_retry"] = {
+                    "status": stage,
+                    "retry_seconds": publish_stage_retry_seconds(verification),
+                    "poststage": poststage,
+                    "outcome": compact_publish_outcome(outcome),
+                }
+        return json.dumps(payload, ensure_ascii=False)
     wait_count = int(task.get("publish_poststage_wait_count") or 0)
     probe_only_retries = int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_PROBE_ONLY_RETRIES", "1"))
     if stage in {"no_local_job", "failed", "unverified_done"} and wait_count >= probe_only_retries:
@@ -2902,14 +2950,52 @@ def deterministic_existing_video_publish_poststage_result(task: dict[str, Any]) 
         "confirmation": "",
         "publish_stage": verification,
     }
+    confirmation = publish_stage_confirmation(verification)
+    if confirmation:
+        payload["confirmation"] = confirmation
     if not bool(verification.get("verified")):
-        payload["publish_poststage_retry"] = {
-            "status": stage,
-            "retry_seconds": publish_stage_retry_seconds(verification),
-            "poststage": poststage,
-            "outcome": {"status": "probe"},
-        }
+        if confirmation:
+            payload["poststage"] = poststage
+        else:
+            payload["publish_poststage_retry"] = {
+                "status": stage,
+                "retry_seconds": publish_stage_retry_seconds(verification),
+                "poststage": poststage,
+                "outcome": {"status": "probe"},
+            }
     return json.dumps(payload, ensure_ascii=False)
+
+
+def should_reissue_existing_video_publish(task: dict[str, Any], poststage: dict[str, Any], verification: dict[str, Any]) -> bool:
+    if os.environ.get("WECHAT_WORKER_DISABLE_EXISTING_VIDEO_PUBLISH_REISSUE"):
+        return False
+    if str(verification.get("stage") or "") != "no_local_job":
+        return False
+    if not int_or_none(poststage.get("video_id")):
+        return False
+    if not poststage.get("platforms"):
+        return False
+    max_reissues = int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_MAX_REISSUES", "1"))
+    if int(task.get("publish_poststage_reissue_count") or 0) >= max_reissues:
+        return False
+    return should_deterministic_video_publish(task)
+
+
+def run_existing_video_publish_from_poststage(
+    task: dict[str, Any],
+    poststage: dict[str, Any],
+    video_id: int,
+    platforms: list[str],
+) -> dict[str, Any]:
+    lazy_context = poststage.get("lazyedit_context") if isinstance(poststage.get("lazyedit_context"), dict) else {}
+    if not lazy_context and isinstance(task.get("preflight"), dict):
+        lazy_context = task["preflight"].get("lazyedit_context") if isinstance(task["preflight"].get("lazyedit_context"), dict) else {}
+    return run_lazyedit_publish_command(
+        video_id=video_id,
+        platforms=platforms,
+        correction_prompt=str(lazy_context.get("correction_prompt_file") or ""),
+        metadata_prompt=str(lazy_context.get("metadata_prompt_file") or ""),
+    )
 
 
 def verify_lazyedit_publish_stage(video_id: int, platforms: list[str], target: Path, outcome: dict[str, Any]) -> dict[str, Any]:
@@ -2943,6 +3029,9 @@ def verify_lazyedit_publish_stage(video_id: int, platforms: list[str], target: P
         stage = "publish_running"
     else:
         stage = "unverified_done"
+    blocker = lazyedit_remote_blocker(local_jobs, remote_jobs) if not verified else {}
+    if blocker:
+        stage = str(blocker.get("stage") or stage)
     return {
         "verified": verified,
         "stage": stage,
@@ -2951,8 +3040,74 @@ def verify_lazyedit_publish_stage(video_id: int, platforms: list[str], target: P
         "verified_platforms": sorted(verified_platforms),
         "local_jobs": compact_publish_jobs(local_jobs),
         "remote_jobs": compact_publish_jobs(remote_jobs),
+        "blocker": blocker,
         "source": target.name if str(target) else "",
         "rule": "Do not say published unless all requested platforms have terminal platform evidence.",
+    }
+
+
+def lazyedit_remote_blocker(local_jobs: list[dict[str, Any]], remote_jobs: list[dict[str, Any]]) -> dict[str, Any]:
+    if not LAZYEDIT_REMOTE_LOG_COMMAND:
+        return {}
+    if not any(job_is_active(job, remote_jobs[index] if index < len(remote_jobs) else {}) for index, job in enumerate(local_jobs)):
+        return {}
+    try:
+        proc = subprocess.run(
+            ["bash", "-lc", LAZYEDIT_REMOTE_LOG_COMMAND],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=float(os.environ.get("WECHAT_WORKER_LAZYEDIT_REMOTE_LOG_TIMEOUT", "15")),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    log = ((proc.stdout or "") + "\n" + (proc.stderr or ""))[-12000:]
+    return detect_remote_publish_blocker_from_log(local_jobs, remote_jobs, log)
+
+
+def job_is_active(job: dict[str, Any], remote: dict[str, Any]) -> bool:
+    status = normalized_status(job.get("status"))
+    remote_status = normalized_status(job.get("remote_status") or remote.get("status"))
+    return status in {"queued", "running", "pending"} or remote_status in {"queued", "running", "pending"}
+
+
+def detect_remote_publish_blocker_from_log(
+    local_jobs: list[dict[str, Any]],
+    remote_jobs: list[dict[str, Any]],
+    log: str,
+) -> dict[str, Any]:
+    if not log:
+        return {}
+    lowered = log.lower()
+    login_markers = (
+        "login iframe detected",
+        "login required",
+        "not logged in yet",
+        "扫码",
+        "登录",
+        "登入",
+    )
+    if not any(marker in lowered for marker in login_markers):
+        return {}
+    identifiers: list[str] = []
+    for index, job in enumerate(local_jobs):
+        remote = remote_jobs[index] if index < len(remote_jobs) else {}
+        for key in ("remote_job_id", "filename"):
+            value = str(job.get(key) or "")
+            if value:
+                identifiers.append(value)
+        for key in ("id", "job_id", "filename"):
+            value = str(remote.get(key) or "")
+            if value:
+                identifiers.append(value)
+    matched = [identifier for identifier in identifiers if identifier and identifier in log]
+    if not matched:
+        return {}
+    return {
+        "stage": "waiting_login",
+        "kind": "remote_login_required",
+        "matched": matched[:4],
+        "message": "Remote AutoPublish is waiting for platform login or QR confirmation.",
     }
 
 
@@ -3069,7 +3224,20 @@ def publish_stage_retry_seconds(verification: dict[str, Any]) -> int:
         return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_RUNNING_RETRY_SECONDS", "600"))
     if stage == "no_local_job":
         return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_IMPORT_RETRY_SECONDS", "180"))
+    if stage == "waiting_login":
+        return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_LOGIN_RETRY_SECONDS", "1800"))
     return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_RETRY_SECONDS", "600"))
+
+
+def publish_stage_confirmation(verification: dict[str, Any]) -> str:
+    if str(verification.get("stage") or "") != "waiting_login":
+        return ""
+    blocker = verification.get("blocker") if isinstance(verification.get("blocker"), dict) else {}
+    message = str(blocker.get("message") or "Remote AutoPublish is waiting for platform login or QR confirmation.")
+    return (
+        f"{message} Please complete the platform login in the AutoPublish browser/noVNC, "
+        "then approve this waiting task so the worker can resume verification. I will not mark it as published until the queue has terminal evidence."
+    )
 
 
 def summarize_lazyedit_publish_outcome(
