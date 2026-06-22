@@ -107,12 +107,32 @@ respawn_or_new_window() {
   fi
 }
 
+respawn_or_new_pane_by_start_command() {
+  local label="$1"
+  local needle="$2"
+  local command="$3"
+  local pane_id
+  pane_id="$(
+    tmux list-panes -a -F '#{session_name}	#{pane_id}	#{pane_start_command}' |
+      awk -F '\t' -v session="$SESSION" -v needle="$needle" '$1 == session && index($3, needle) { print $2; exit }'
+  )"
+  if [[ -n "$pane_id" ]]; then
+    tmux respawn-pane -k -t "$pane_id" "$command"
+    echo "Reloaded pane: $label"
+  else
+    tmux new-window -t "$SESSION" -n "$label" "$command"
+    echo "Started missing window: $label"
+  fi
+}
+
 reload_worker_windows() {
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Session not running: $SESSION" >&2
     echo "Use start or restart-all only when you intentionally want to launch the WeChat client." >&2
     return 1
   fi
+  respawn_or_new_pane_by_start_command "decrypt-refresh" "wechat_decrypt_refresh_loop.sh" \
+    "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh decrypt-refresh agentic_tools/wechat_gui_agent/scripts/wechat_decrypt_refresh_loop.sh >> '$LOG_DIR/supervisor-decrypt-refresh.log' 2>&1"
   IFS=',' read -r -a DIRECT_CONFIGS <<< "$CONFIGS"
   for direct_config in "${DIRECT_CONFIGS[@]}"; do
     direct_config="$(echo "$direct_config" | xargs)"
