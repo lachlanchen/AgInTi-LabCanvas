@@ -419,8 +419,11 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             contract = preflight["generated_video_contract"]
             self.assertTrue(Path(contract["json"]).is_file())
             contract_text = Path(contract["markdown"]).read_text(encoding="utf-8")
+            contract_data = json.loads(Path(contract["json"]).read_text(encoding="utf-8"))
 
         self.assertIn("route_kind", contract_text)
+        self.assertIn("Stage Permissions", contract_text)
+        self.assertFalse(contract_data["stage_permissions"]["lazyedit_import"])
         self.assertIn("Do not publish", contract_text)
         self.assertNotIn("lazyedit_context", preflight)
         self.assertNotIn("autopublish_video", preflight)
@@ -453,6 +456,27 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("生成新视频", guarded["message"])
         self.assertEqual(guarded["files"], [])
         self.assertEqual(guarded["contract_guard"], "blocked_public_publish_claim_for_generate_video")
+
+    def test_generate_video_route_rewrites_unrequested_lazyedit_result(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-generate-video",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "public_publish_allowed": False,
+            },
+            "request": "Current coalesced request:\nGenerate the video and send the MP4 back here.",
+        }
+        result = {
+            "message": "已完成 LazyEdit 导入和处理。",
+            "files": [],
+            "confirmation": "",
+        }
+
+        guarded = worker.enforce_worker_result_contract(task, result, json.dumps(result, ensure_ascii=False))
+
+        self.assertIn("拦截", guarded["message"])
+        self.assertEqual(guarded["contract_guard"], "blocked_unrequested_lazyedit_for_generate_video")
 
     def test_generate_video_route_requires_video_or_status_evidence(self) -> None:
         worker = load_worker()
@@ -578,9 +602,62 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         worker = load_worker()
 
         self.assertEqual(worker.generated_video_status_backoff_seconds("大约还需 8 分钟"), 312)
+        self.assertEqual(worker.generated_video_status_backoff_seconds("预计还需 3 小时"), 1800)
+        self.assertEqual(worker.generated_video_status_backoff_seconds("about 3 hours remaining"), 1800)
+        self.assertEqual(worker.generated_video_status_backoff_seconds("about 12 minutes remaining"), 468)
         self.assertEqual(worker.generated_video_status_backoff_seconds("排队等待中"), 300)
         self.assertEqual(worker.generated_video_status_backoff_seconds("生成中"), 120)
         self.assertEqual(worker.generated_video_status_backoff_seconds("", "please generate 30s video"), 180)
+
+    def test_generated_video_stage_permissions_are_current_request_only(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+            "request": (
+                "Current coalesced request:\n"
+                "Generate a new Xiaoyunque video and send it back here.\n\n"
+                "Recent history:\n"
+                "old message said upload to LazyEdit and publish to YouTube"
+            ),
+        }
+
+        stages = worker.generated_video_stage_permissions(task)
+
+        self.assertTrue(stages["video_generation"])
+        self.assertTrue(stages["wechat_send_back"])
+        self.assertFalse(stages["lazyedit_import"])
+        self.assertFalse(stages["public_publish"])
+        self.assertEqual(stages["publish_platforms"], [])
+
+    def test_generated_video_stage_permissions_allow_lazyedit_without_publish(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+            "request": "Current coalesced request:\nGenerate the video, upload it to LazyEdit only, and send the MP4 back.",
+        }
+
+        stages = worker.generated_video_stage_permissions(task)
+
+        self.assertTrue(stages["lazyedit_import"])
+        self.assertFalse(stages["public_publish"])
+
+    def test_generated_video_stage_permissions_allow_requested_publish_platforms_only(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {"route_kind": "generate_video", "public_publish_allowed": True},
+            "request": (
+                "Current coalesced request:\n"
+                "Generate the video and publish to SPH only.\n\n"
+                "Recent history:\n"
+                "old message mentioned YouTube and Instagram"
+            ),
+        }
+
+        stages = worker.generated_video_stage_permissions(task)
+
+        self.assertTrue(stages["lazyedit_import"])
+        self.assertTrue(stages["public_publish"])
+        self.assertEqual(stages["publish_platforms"], ["shipinhao"])
 
     def test_generated_video_waiting_task_reclaims_only_after_poll_time(self) -> None:
         worker = load_worker()
@@ -761,6 +838,46 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("public publish", publish_msg)
         self.assertTrue(calls[1]["publish"])
         self.assertEqual(worker.detect_publish_platforms(calls[1]["task"]), ["shipinhao", "youtube", "instagram"])
+
+    def test_generated_video_lazyedit_command_uses_long_no_publish_defaults(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+        original_values = {
+            key: worker.os.environ.get(key)
+            for key in (
+                "WECHAT_WORKER_GENERATED_VIDEO_LAZYEDIT_TIMEOUT",
+                "WECHAT_WORKER_LAZYEDIT_PROCESS_TIMEOUT",
+                "WECHAT_WORKER_LAZYEDIT_REMOTE_TIMEOUT",
+            )
+        }
+        try:
+            for key in original_values:
+                worker.os.environ.pop(key, None)
+
+            def fake_run(command, **kwargs):
+                calls.append({"command": command, "kwargs": kwargs})
+                return subprocess.CompletedProcess(command, 0, '{"ok": true}', "")
+
+            with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+                outcome = worker.run_generated_video_lazyedit_command(
+                    Path("/tmp/generated.mp4"),
+                    {"request": "Current coalesced request:\nupload it to LazyEdit only"},
+                    {},
+                    publish=False,
+                )
+        finally:
+            for key, value in original_values.items():
+                if value is None:
+                    worker.os.environ.pop(key, None)
+                else:
+                    worker.os.environ[key] = value
+
+        self.assertTrue(outcome["ok"])
+        shell_command = calls[0]["command"][2]
+        self.assertIn("--no-publish", shell_command)
+        self.assertIn("--process-timeout 10800", shell_command)
+        self.assertIn("--publish-timeout 10800", shell_command)
+        self.assertEqual(calls[0]["kwargs"]["timeout"], 21600)
 
     def test_exact_video_preflight_failure_returns_deterministic_fail_closed_result(self) -> None:
         worker = load_worker()
