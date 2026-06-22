@@ -394,6 +394,14 @@ can finish delivery later; it is not marked done without returning the MP4 to
 the source group. LazyEdit import/process and public publishing are queued as
 `generation_poststage_pending` only after `sent_file_paths` proves that the MP4
 was delivered to the source chat.
+The same rule applies to returned video/audio files from file-save or download
+routes: media files are required artifacts, not optional saved-path notes. To
+repair old queue rows that were closed before this invariant, run:
+
+```bash
+labcanvas wechat worker repair-artifacts
+```
+
 Before work starts, a queue item is claimed as `in_progress` under a file lock.
 This prevents a manual `worker once` and the persistent loop from handling the
 same request twice. Stale claims are reclaimed after

@@ -1065,6 +1065,129 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(messages, [])
         self.assertIn("file_send_errors", task)
 
+    def test_non_generated_video_mp4_send_failure_blocks_text_only_completion(self) -> None:
+        worker = load_worker()
+        messages: list[str] = []
+        original_message = worker.send_message
+        original_file = worker.send_file
+        original_delay = worker.os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY")
+        try:
+            worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = "0"
+            worker.send_message = lambda message, *_args, **_kwargs: messages.append(str(message))
+
+            def fail_file(*_args, **_kwargs):
+                raise RuntimeError("file picker unavailable")
+
+            worker.send_file = fail_file
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                mp4 = tmp_path / "saved-video.mp4"
+                mp4.write_bytes(b"video")
+                targets = tmp_path / "targets.json"
+                targets.write_text(
+                    json.dumps({"🍓我的设备": {"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备"}}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                task = {
+                    "chat": "🍓我的设备",
+                    "route_decision": {"route_kind": "file_download_or_save", "public_publish_allowed": False},
+                    "request": "Current coalesced request:\nSend me the saved video.",
+                }
+                result = {"message": "done", "confirmation": "", "files": [str(mp4)]}
+                errors = worker.send_result_with_retries(result, "🍓我的设备", targets, task=task)
+                worker.apply_send_outcome(task, result, errors)
+        finally:
+            worker.send_message = original_message
+            worker.send_file = original_file
+            if original_delay is None:
+                worker.os.environ.pop("WECHAT_WORKER_SEND_RETRY_DELAY", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = original_delay
+
+        self.assertTrue(errors)
+        self.assertEqual(messages, [])
+        self.assertEqual(task["status"], worker.SEND_DEFERRED_ARTIFACT_STATUS)
+        self.assertEqual(task["send_deferred_reason"], "required_artifact_delivery")
+
+    def test_non_generated_video_mp4_send_success_records_required_delivery(self) -> None:
+        worker = load_worker()
+        calls: list[tuple[str, str]] = []
+        original_message = worker.send_message
+        original_file = worker.send_file
+        try:
+            worker.send_message = lambda message, *_args, **_kwargs: calls.append(("message", str(message)))
+            worker.send_file = lambda file_path, *_args, **_kwargs: calls.append(("file", str(Path(file_path).resolve())))
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                mp4 = tmp_path / "saved-video.mp4"
+                mp4.write_bytes(b"video")
+                targets = tmp_path / "targets.json"
+                targets.write_text(
+                    json.dumps({"🍓我的设备": {"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备"}}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                task = {
+                    "chat": "🍓我的设备",
+                    "route_decision": {"route_kind": "file_download_or_save", "public_publish_allowed": False},
+                    "request": "Current coalesced request:\nSend me the saved video.",
+                }
+                result = {"message": "done", "confirmation": "", "files": [str(mp4)]}
+                errors = worker.send_result_with_retries(result, "🍓我的设备", targets, task=task)
+                worker.apply_send_outcome(task, result, errors)
+        finally:
+            worker.send_message = original_message
+            worker.send_file = original_file
+
+        self.assertEqual(errors, [])
+        self.assertEqual(calls[0][0], "file")
+        self.assertEqual(calls[1], ("message", "done"))
+        self.assertEqual(task["status"], "done")
+        self.assertIn("saved-video.mp4", "\n".join(task["sent_file_paths"]))
+
+    def test_mp4_sent_then_text_lock_closes_artifact_delivery(self) -> None:
+        worker = load_worker()
+        original_message = worker.send_message
+        original_file = worker.send_file
+        original_delay = worker.os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY")
+        try:
+            worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = "0"
+
+            def fail_message(*_args, **_kwargs):
+                raise RuntimeError("WECHAT_LOCKED: Weixin for Linux is locked")
+
+            worker.send_message = fail_message
+            worker.send_file = lambda *_args, **_kwargs: None
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                mp4 = tmp_path / "sent-before-lock.mp4"
+                mp4.write_bytes(b"video")
+                targets = tmp_path / "targets.json"
+                targets.write_text(
+                    json.dumps({"🍓我的设备": {"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备"}}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                task = {
+                    "chat": "🍓我的设备",
+                    "route_decision": {"route_kind": "file_download_or_save", "public_publish_allowed": False},
+                    "request": "Current coalesced request:\nSend me the saved video.",
+                }
+                result = {"message": "done", "confirmation": "", "files": [str(mp4)]}
+                errors = worker.send_result_with_retries(result, "🍓我的设备", targets, task=task)
+                worker.apply_send_outcome(task, result, errors)
+        finally:
+            worker.send_message = original_message
+            worker.send_file = original_file
+            if original_delay is None:
+                worker.os.environ.pop("WECHAT_WORKER_SEND_RETRY_DELAY", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = original_delay
+
+        self.assertTrue(errors)
+        self.assertEqual(task["status"], "done")
+        self.assertIn("sent-before-lock.mp4", "\n".join(task["sent_file_paths"]))
+        self.assertIn("post_artifact_send_errors", task)
+        self.assertNotIn("send_deferred_reason", task)
+
     def test_lazyedit_import_is_not_public_publish_intent(self) -> None:
         worker = load_worker()
 
@@ -1363,6 +1486,61 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         assert claimed is not None
         self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
         self.assertEqual(claimed["send_retry_count"], 1)
+
+    def test_repair_missing_artifact_delivery_requeues_done_mp4(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            video = tmp_path / "unsent.mp4"
+            video.write_bytes(b"video")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-done-unsent",
+                        "chat": "🍓我的设备",
+                        "status": "done",
+                        "completed_at": "2026-01-01T00:00:00",
+                        "result": {"message": "sent", "confirmation": "", "files": [str(video)]},
+                    }
+                ],
+            )
+
+            payload = worker.repair_missing_artifact_deliveries(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(payload["repaired_count"], 1)
+        self.assertEqual(tasks[0]["status"], worker.SEND_DEFERRED_ARTIFACT_STATUS)
+        self.assertEqual(tasks[0]["send_deferred_reason"], "required_artifact_delivery")
+        self.assertNotIn("completed_at", tasks[0])
+
+    def test_repair_missing_artifact_delivery_skips_sent_mp4(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            video = tmp_path / "sent.mp4"
+            video.write_bytes(b"video")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-done-sent",
+                        "chat": "🍓我的设备",
+                        "status": "done",
+                        "completed_at": "2026-01-01T00:00:00",
+                        "sent_file_paths": [str(video.resolve())],
+                        "result": {"message": "sent", "confirmation": "", "files": [str(video)]},
+                    }
+                ],
+            )
+
+            payload = worker.repair_missing_artifact_deliveries(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(payload["repaired_count"], 0)
+        self.assertEqual(tasks[0]["status"], "done")
 
     def test_send_result_notes_markdown_files_without_gui_file_send(self) -> None:
         worker = load_worker()

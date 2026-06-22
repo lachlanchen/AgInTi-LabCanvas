@@ -107,6 +107,15 @@ workflow from scratch.
 | `worker_failed` | Backend failed before a useful result. | Fix source/tool issue; rerun only if safe. |
 | `done` | Requested stages completed. | No action. |
 
+Returned video/audio files are required delivery artifacts for every route, not
+only `generate_video`. The worker must send media before completion text,
+record success in `sent_file_paths`, and keep the queue item deferred if the GUI
+cannot attach the media. If old rows were closed without the media ledger, run:
+
+```bash
+labcanvas wechat worker repair-artifacts
+```
+
 ## Generated Video Contract
 
 For `route_kind=generate_video`, the task artifact directory must contain a

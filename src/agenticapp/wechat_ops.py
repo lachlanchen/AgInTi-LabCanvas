@@ -113,7 +113,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     send.set_defaults(func=cmd_send)
 
     worker = nested.add_parser("worker", help="Enqueue or process slower backend tasks.")
-    worker.add_argument("action", choices=["enqueue", "once", "loop"])
+    worker.add_argument("action", choices=["enqueue", "once", "loop", "repair-artifacts"])
     worker.add_argument("request", nargs="*", help="Task text for enqueue.")
     worker.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
     worker.add_argument("--chat", default="wechat-chat")
@@ -618,6 +618,8 @@ def cmd_worker(args: argparse.Namespace) -> int:
         command.append("--once")
     elif args.action == "loop":
         command.append("--loop")
+    elif args.action == "repair-artifacts":
+        command.append("--repair-missing-artifacts")
     if args.send:
         command.append("--send")
     return run_command(command, capture=False).returncode

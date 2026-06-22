@@ -38,6 +38,9 @@ specialized stage contract for the `generated_video` routine.
      `sent_file_paths`.
    - Failure state: `send_deferred_artifact` or `send_deferred_locked`.
    - No LazyEdit or public publishing poststage may start before this gate passes.
+   - The same required-media gate applies when an MP4/audio file is returned by
+     a file-save/download route; use `labcanvas wechat worker repair-artifacts`
+     to requeue older rows that lack `sent_file_paths`.
 
 5. `lazyedit_poststage`
    - Owner: queue orchestrator.

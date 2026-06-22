@@ -95,12 +95,20 @@ DEFAULT_AUTO_SEND_SUFFIXES = {
     ".mov",
     ".m4v",
     ".webm",
+    ".mkv",
+    ".avi",
     ".mp3",
     ".m4a",
+    ".aac",
     ".wav",
+    ".ogg",
+    ".amr",
+    ".opus",
 }
 DEFAULT_MAX_OUTBOUND_BYTES = 100 * 1024 * 1024
-VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
+VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
+AUDIO_SUFFIXES = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".amr", ".opus"}
+DEFAULT_REQUIRED_DELIVERY_SUFFIXES = VIDEO_SUFFIXES | AUDIO_SUFFIXES
 GENERATED_VIDEO_PENDING_TERMS = (
     "submitted",
     "queued",
@@ -130,6 +138,7 @@ def main() -> int:
     parser.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS, help="Ignored JSON mapping chat names to GUI target specs.")
     parser.add_argument("--resend", help="Send an existing task result by task id without rerunning the worker.")
     parser.add_argument("--flush-deferred", action="store_true", help="Try one deferred locked send without running new worker tasks.")
+    parser.add_argument("--repair-missing-artifacts", action="store_true", help="Requeue completed tasks whose required media files were not sent.")
     args = parser.parse_args()
 
     if args.enqueue:
@@ -150,6 +159,11 @@ def main() -> int:
     if args.flush_deferred:
         return 0 if flush_one_deferred_send(args.queue, args.chat, send_targets=args.send_targets, log_idle=True) else 1
 
+    if args.repair_missing_artifacts:
+        payload = repair_missing_artifact_deliveries(args.queue)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
     if args.once or args.loop:
         while True:
             processed = process_one(args.queue, args.chat, send=args.send, send_targets=args.send_targets, log_idle=not args.loop)
@@ -160,7 +174,7 @@ def main() -> int:
 
                 time.sleep(args.poll_seconds)
         return 0
-    raise SystemExit("Use --enqueue, --once, --loop, --resend, or --flush-deferred")
+    raise SystemExit("Use --enqueue, --once, --loop, --resend, --flush-deferred, or --repair-missing-artifacts")
 
 
 def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Path = DEFAULT_SEND_TARGETS) -> int:
@@ -296,6 +310,11 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
     if errors:
         task["send_errors"] = errors
         task["last_send_attempt_at"] = datetime.now().isoformat(timespec="seconds")
+        if result_requires_file_delivery(task, result) and required_file_delivery_complete(task, result):
+            task["status"] = "waiting_confirmation" if result.get("confirmation") else "done"
+            task["post_artifact_send_errors"] = errors
+            task.pop("send_deferred_reason", None)
+            return
         if send_errors_indicate_wechat_locked(errors):
             task["status"] = SEND_DEFERRED_LOCKED_STATUS
             task["send_deferred_reason"] = "wechat_locked"
@@ -316,6 +335,11 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
         else:
             task["status"] = SEND_DEFERRED_ARTIFACT_STATUS
             task["send_deferred_reason"] = "required_artifact_delivery_before_poststage"
+        return
+    if result_requires_file_delivery(task, result) and not required_file_delivery_complete(task, result):
+        task["status"] = SEND_DEFERRED_ARTIFACT_STATUS
+        task["send_deferred_reason"] = "required_artifact_delivery"
+        task["last_send_attempt_at"] = datetime.now().isoformat(timespec="seconds")
         return
     task["status"] = "waiting_confirmation" if result.get("confirmation") else "done"
     task.pop("send_errors", None)
@@ -352,9 +376,38 @@ def result_requires_file_delivery(task: dict[str, Any] | None, result: dict[str,
         return False
     if os.environ.get("WECHAT_WORKER_REQUIRE_FILE_SEND", "0") == "1":
         return True
+    if required_delivery_file_paths(result):
+        return True
     if task is not None and is_generate_video_task(task) and generated_video_has_file(result):
         return True
     return bool((result.get("data") or {}).get("require_file_delivery")) if isinstance(result.get("data"), dict) else False
+
+
+def required_delivery_suffixes() -> set[str]:
+    raw = os.environ.get("WECHAT_WORKER_REQUIRED_FILE_SUFFIXES")
+    if raw is None:
+        return set(DEFAULT_REQUIRED_DELIVERY_SUFFIXES)
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def required_delivery_file_paths(result: dict[str, Any]) -> list[Path]:
+    suffixes = required_delivery_suffixes()
+    if not suffixes:
+        return []
+    required: list[Path] = []
+    for raw in result.get("files") or []:
+        path = Path(str(raw))
+        if path.suffix.lower() in suffixes:
+            required.append(path.expanduser().resolve())
+    return required
+
+
+def required_file_delivery_complete(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
+    required = {str(path) for path in required_delivery_file_paths(result)}
+    if not required:
+        return True
+    sent = {str(Path(str(path)).expanduser().resolve()) for path in (task or {}).get("sent_file_paths", [])}
+    return required.issubset(sent)
 
 
 def generated_video_poststage_from_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -620,6 +673,10 @@ def send_result_once(
         if file_errors and require_file_delivery:
             detail = "; ".join(f"{item['path']}: {item['error']}" for item in file_errors[:3])
             raise RuntimeError(f"required artifact delivery failed: {detail}")
+        if require_file_delivery and task is not None and not required_file_delivery_complete(task, result):
+            missing = sorted(set(str(path) for path in required_delivery_file_paths(result)) - sent_files)
+            detail = "; ".join(missing[:3])
+            raise RuntimeError(f"required artifact delivery incomplete: {detail}")
 
     if require_file_delivery:
         send_files()
@@ -788,6 +845,58 @@ def claim_next_deferred_send(path: Path) -> dict[str, Any] | None:
             write_tasks(path, tasks)
             return task
         return None
+
+
+def repair_missing_artifact_deliveries(path: Path) -> dict[str, Any]:
+    """Move completed required-media tasks back to the deferred outbox."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    repaired: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    active_statuses = {
+        "pending",
+        CLAIMED_STATUS,
+        SEND_DEFERRED_LOCKED_STATUS,
+        SEND_DEFERRED_ARTIFACT_STATUS,
+        SEND_RETRYING_STATUS,
+        GENERATED_VIDEO_WAITING_STATUS,
+        GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS,
+    }
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        for index, task in enumerate(tasks):
+            status = str(task.get("status") or "")
+            if status in active_statuses:
+                continue
+            result = task.get("result")
+            if not isinstance(result, dict):
+                continue
+            required = required_delivery_file_paths(result)
+            if not required or required_file_delivery_complete(task, result):
+                continue
+            missing_existing = [str(item) for item in required if item.exists()]
+            missing_absent = [str(item) for item in required if not item.exists()]
+            if not missing_existing:
+                skipped.append({"id": task.get("id"), "chat": task.get("chat"), "reason": "required_files_missing", "files": missing_absent})
+                continue
+            task.setdefault("repair_history", []).append(
+                {
+                    "from_status": status,
+                    "reason": "required_media_not_sent",
+                    "repaired_at": datetime.now().isoformat(timespec="seconds"),
+                    "required_files": [str(item) for item in required],
+                    "sent_file_paths": task.get("sent_file_paths") or [],
+                }
+            )
+            task["status"] = SEND_DEFERRED_ARTIFACT_STATUS
+            task["send_deferred_reason"] = "required_artifact_delivery"
+            task["last_send_attempt_at"] = "1970-01-01T00:00:00"
+            task.pop("completed_at", None)
+            tasks[index] = task
+            repaired.append({"id": task.get("id"), "chat": task.get("chat"), "from_status": status, "files": missing_existing})
+        write_tasks(path, tasks)
+    return {"ok": True, "queue": str(path), "repaired_count": len(repaired), "repaired": repaired, "skipped": skipped}
 
 
 def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
@@ -2813,7 +2922,9 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
     )
 
 
-def run_send_subprocess(command: list[str], timeout: int = 60) -> None:
+def run_send_subprocess(command: list[str], timeout: int | None = None) -> None:
+    if timeout is None:
+        timeout = int(os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"))
     proc = subprocess.run(
         command,
         cwd=ROOT,
