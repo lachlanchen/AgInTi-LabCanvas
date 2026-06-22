@@ -2865,27 +2865,35 @@ def unique_strings(values: list[str]) -> list[str]:
     return result
 
 
+def gui_search_allowed_for_target(target: dict[str, Any]) -> bool:
+    return bool(target.get("allow_search", False))
+
+
 def send_message(message: str, chat: str, send_targets: Path, *, target: dict[str, Any] | None = None) -> None:
     target = target if target is not None else guarded_send_target(chat, send_targets)
     if target:
+        command = [
+            sys.executable,
+            str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
+            "--targets-file",
+            "",
+            "--send",
+            "--prefer-current",
+            "--pause",
+            os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
+            "--mirror-db",
+            str(DEFAULT_DB),
+        ]
         with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
             target_file = Path(handle.name)
             json.dump({"message": message, "targets": [target]}, handle, ensure_ascii=False)
+        command[command.index("--targets-file") + 1] = str(target_file)
+        if gui_search_allowed_for_target(target):
+            command.append("--allow-search")
+        else:
+            command.append("--no-search")
         try:
-            run_send_subprocess(
-                [
-                    sys.executable,
-                    str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
-                    "--targets-file",
-                    str(target_file),
-                    "--send",
-                    "--prefer-current",
-                    "--pause",
-                    os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
-                    "--mirror-db",
-                    str(DEFAULT_DB),
-                ],
-            )
+            run_send_subprocess(command)
         finally:
             target_file.unlink(missing_ok=True)
         return
@@ -2913,21 +2921,25 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
         raise ValueError(f"Refusing outbound file {file_path}: {reason}")
     target = target if target is not None else guarded_send_target(chat, send_targets)
     if target:
+        command = [
+            sys.executable,
+            str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
+            "--targets-file",
+            "",
+            "--prefer-current",
+            "--pause",
+            os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
+        ]
         with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
             target_file = Path(handle.name)
             json.dump({"message": "", "targets": [target]}, handle, ensure_ascii=False)
+        command[command.index("--targets-file") + 1] = str(target_file)
+        if gui_search_allowed_for_target(target):
+            command.append("--allow-search")
+        else:
+            command.append("--no-search")
         try:
-            run_send_subprocess(
-                [
-                    sys.executable,
-                    str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
-                    "--targets-file",
-                    str(target_file),
-                    "--prefer-current",
-                    "--pause",
-                    os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
-                ],
-            )
+            run_send_subprocess(command)
         finally:
             target_file.unlink(missing_ok=True)
     elif os.environ.get("WECHAT_ALLOW_UNGUARDED_SEND", "0") != "1":

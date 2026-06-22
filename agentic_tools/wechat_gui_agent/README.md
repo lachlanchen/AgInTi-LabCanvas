@@ -596,10 +596,12 @@ handles the manual step and the worker continues after approval.
 Private send targets should include `expected_title`; before composing, the GUI
 sender OCR-checks the opened chat header and fails closed if the wrong group is
 visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel
-raw click/paste senders against the same WeChat desktop. If WeChat opens a
-small floating chat or search window, the sender closes secondary WeChat windows
-and retries configured `fallback_clicks` before using Return. If OCR repeatedly
-misreads a group title, add `expected_title_aliases` for the observed OCR text.
+raw click/paste senders against the same WeChat desktop. Do not use WeChat
+search as the normal send path; the sender uses the current verified chat plus
+configured `open_click`/`fallback_clicks` and otherwise fails closed. Use the
+controlled browser/browser-assist workflow for web/source searches. If OCR
+repeatedly misreads a group title, add `expected_title_aliases` for the observed
+OCR text.
 
 ## Group Creation
 

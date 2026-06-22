@@ -415,11 +415,13 @@ result without rerunning the task:
 python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --resend <task-id>
 ```
 
-The guarded sender supports search results that open as a separate WeChat chat
-window. It checks native X window titles first, then OCR crops, and composes
-into the verified popup or main chat window. Text-like artifacts such as `.md`,
-`.txt`, `.json`, and `.csv` are reported as saved paths in the outgoing message
-by default; media/PDF/ZIP artifacts are the default auto-send candidates. Set
+The guarded sender does not use the WeChat search box by default. It first
+checks the current visible chat, then only configured `open_click` or
+`fallback_clicks`, and fails closed if the target title cannot be verified. Web
+or source search belongs in the controlled browser/browser-assist workflow, not
+inside WeChat search. Text-like artifacts such as `.md`, `.txt`, `.json`, and
+`.csv` are reported as saved paths in the outgoing message by default;
+media/PDF/ZIP artifacts are the default auto-send candidates. Set
 `WECHAT_WORKER_SEND_FILES=0` to report all paths only, or
 `WECHAT_WORKER_REQUIRE_FILE_SEND=1` when attachment delivery must fail the task.
 

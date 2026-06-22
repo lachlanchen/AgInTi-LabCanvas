@@ -1704,6 +1704,43 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("Saved files:", messages[0])
         self.assertIn("/tmp/story.md", messages[0])
 
+    def test_worker_send_message_disables_wechat_search_by_default(self) -> None:
+        worker = load_worker()
+        calls: list[list[str]] = []
+        original_run_send = worker.run_send_subprocess
+        try:
+            worker.run_send_subprocess = lambda command, **_kwargs: calls.append(command)
+            worker.send_message(
+                "done",
+                "🍓我的设备",
+                Path("/tmp/no-targets.json"),
+                target={"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备"},
+            )
+        finally:
+            worker.run_send_subprocess = original_run_send
+
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--no-search", calls[0])
+
+    def test_worker_send_message_allows_wechat_search_only_when_configured(self) -> None:
+        worker = load_worker()
+        calls: list[list[str]] = []
+        original_run_send = worker.run_send_subprocess
+        try:
+            worker.run_send_subprocess = lambda command, **_kwargs: calls.append(command)
+            worker.send_message(
+                "done",
+                "🍓我的设备",
+                Path("/tmp/no-targets.json"),
+                target={"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备", "allow_search": True},
+            )
+        finally:
+            worker.run_send_subprocess = original_run_send
+
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("--no-search", calls[0])
+        self.assertIn("--allow-search", calls[0])
+
     def test_optional_file_send_failure_does_not_retry_whole_message(self) -> None:
         worker = load_worker()
         sent_messages: list[str] = []

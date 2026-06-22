@@ -48,6 +48,7 @@ class TargetSpec:
     result_click: tuple[int, int] | None = None
     fallback_clicks: tuple[tuple[int, int], ...] = ()
     open_click: tuple[int, int] | None = None
+    allow_search: bool = False
 
 
 class WeChatLockedError(RuntimeError):
@@ -69,6 +70,8 @@ def main() -> int:
     parser.add_argument("--pause", type=float, default=1.2, help="Pause between GUI actions.")
     parser.add_argument("--skip-title-guard", action="store_true", help="Do not OCR-check the opened chat title before composing.")
     parser.add_argument("--prefer-current", action="store_true", help="If the visible chat title already matches, send there without searching first.")
+    parser.add_argument("--allow-search", action="store_true", help="Allow WeChat search fallback. Disabled by default.")
+    parser.add_argument("--no-search", action="store_true", help="Compatibility flag; search is already disabled unless --allow-search is passed.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F"))
     parser.add_argument("--mirror-db", type=Path, default=DEFAULT_DB, help="SQLite mirror database path.")
     args = parser.parse_args()
@@ -111,6 +114,7 @@ def main() -> int:
                 args.pause,
                 args.skip_title_guard,
                 args.prefer_current,
+                args.allow_search and not args.no_search,
                 args.output_dir,
                 args.mirror_db,
                 index,
@@ -173,6 +177,7 @@ def target_from_raw(raw: Any) -> TargetSpec:
         result_click=point_from_raw(raw.get("result_click")),
         fallback_clicks=points_from_raw(raw.get("fallback_clicks")),
         open_click=point_from_raw(raw.get("open_click")),
+        allow_search=bool(raw.get("allow_search", False)) and not bool(raw.get("no_search")),
     )
 
 
@@ -217,6 +222,7 @@ def send_one(
     pause: float,
     skip_title_guard: bool,
     prefer_current: bool,
+    allow_search: bool,
     out_dir: Path,
     mirror_db: Path,
     index: int,
@@ -242,7 +248,7 @@ def send_one(
                 "WECHAT_LOCKED: Weixin for Linux is locked and requires normal phone-side unlock before GUI sends."
             )
 
-    guard = open_target(env, window, target, pause, out_dir, shot_prefix, skip_title_guard, prefer_current)
+    guard = open_target(env, window, target, pause, out_dir, shot_prefix, skip_title_guard, prefer_current, allow_search)
     opened_path = out_dir / f"{shot_prefix}-opened.png"
     if not guard["ok"]:
         fallback_allowed = target.allow_title_guard_fallback and (not do_send or target.allow_live_title_guard_fallback)
@@ -335,6 +341,7 @@ def open_target(
     shot_prefix: str,
     skip_title_guard: bool,
     prefer_current: bool = False,
+    allow_search: bool = True,
 ) -> dict[str, Any]:
     def verify(label: str) -> dict[str, Any]:
         time.sleep(max(pause, float(os.environ.get("WECHAT_INITIAL_TITLE_WAIT", "1.2"))))
@@ -361,12 +368,13 @@ def open_target(
                 return last_guard
             time.sleep(max(pause, 1.0))
 
+    attempts: list[dict[str, Any]] = []
+
     if prefer_current:
         current_guard = verify("current")
         if current_guard["ok"]:
             return current_guard
-
-    attempts: list[dict[str, Any]] = []
+        attempts.append(current_guard)
 
     if target.open_click:
         click(env, window.x + target.open_click[0], window.y + target.open_click[1])
@@ -386,6 +394,16 @@ def open_target(
         attempts.append(guard)
         if guard["ok"]:
             return guard
+
+    if not (allow_search and target.allow_search):
+        guard = attempts[-1] if attempts else verify("search_disabled_current")
+        return {
+            **guard,
+            "ok": False,
+            "method": str(guard.get("method") or "search_disabled"),
+            "search_disabled": True,
+            "attempts": attempts,
+        }
 
     search_for_target(env, window, target.query, pause)
     screenshot(env, out_dir / f"{shot_prefix}-search.png")

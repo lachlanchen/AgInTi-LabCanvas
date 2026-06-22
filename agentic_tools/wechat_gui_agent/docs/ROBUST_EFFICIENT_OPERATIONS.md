@@ -88,6 +88,11 @@ workflow from scratch.
   per-chat `route` Codex session choose `route_kind`, project, source policy,
   and worker need before keyword lists. Keyword and attachment checks remain as
   fallback and safety gates, not the primary capability map.
+- Do not use the WeChat search box for normal sending. GUI delivery should use
+  the currently verified chat, a configured `open_click`, or configured
+  `fallback_clicks`; otherwise defer/fail closed. If the task needs web/source
+  search, use the controlled browser or browser-assist workflow instead of
+  WeChat search.
 - Reuse per-chat `fast` and `worker` sessions. Session keys must be scoped by
   exact chat title and role.
 - Coalesce short message bursts into one task, but preserve every focused row in

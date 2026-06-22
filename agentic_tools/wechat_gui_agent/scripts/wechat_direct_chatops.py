@@ -3033,6 +3033,10 @@ def send_gui_message_once(config: dict[str, Any], message: str) -> str:
             "--mirror-db",
             str(Path(config.get("mirror_db", DEFAULT_DB))),
         ]
+        if gui_search_allowed(config, target):
+            command.append("--allow-search")
+        else:
+            command.append("--no-search")
     else:
         raise RuntimeError(f"Refusing unguarded WeChat send for {config.get('chat_name') or 'wechat-chat'}: missing send_target")
     try:
@@ -3074,6 +3078,12 @@ def send_gui_message_once(config: dict[str, Any], message: str) -> str:
 def is_wechat_locked_error(exc: Exception | str) -> bool:
     text = str(exc).lower()
     return "wechat_locked" in text or "weixin for linux is locked" in text or "unlock on phone" in text
+
+
+def gui_search_allowed(config: dict[str, Any], target: dict[str, Any]) -> bool:
+    if "send_allow_search" in config:
+        return bool(config.get("send_allow_search"))
+    return bool(target.get("allow_search", False))
 
 
 def is_gui_send_busy_error(exc: Exception | str) -> bool:

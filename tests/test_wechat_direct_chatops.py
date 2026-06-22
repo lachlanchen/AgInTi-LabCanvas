@@ -1113,6 +1113,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         command = calls[0]["command"]
         kwargs = calls[0]["kwargs"]
         self.assertIn("--prefer-current", command)
+        self.assertIn("--no-search", command)
         self.assertIn("--pause", command)
         self.assertIn("0.25", command)
         self.assertEqual(kwargs["timeout"], 12)
@@ -1151,6 +1152,36 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertIn("01-EchoMind-sent.png", screenshot)
         self.assertEqual(len(calls), 2)
+
+    def test_send_gui_message_allows_search_only_when_configured(self) -> None:
+        calls: list[list[str]] = []
+        original_run = direct_chatops.subprocess.run
+        original_lock_busy = direct_chatops.gui_send_lock_busy
+        try:
+            direct_chatops.gui_send_lock_busy = lambda: False  # type: ignore[assignment]
+
+            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                stdout = '{"results":[{"screenshot_prefix":"01-EchoMind"}]}'
+                return subprocess.CompletedProcess(command, 0, stdout, "")
+
+            direct_chatops.subprocess.run = fake_run  # type: ignore[assignment]
+            direct_chatops.send_gui_message(
+                {
+                    "chat_name": "EchoMind",
+                    "display": ":97",
+                    "send_target": {"name": "EchoMind", "query": "EchoMind", "expected_title": "EchoMind", "allow_search": True},
+                    "mirror_db": "/tmp/wechat-mirror.sqlite",
+                },
+                "hi",
+            )
+        finally:
+            direct_chatops.subprocess.run = original_run  # type: ignore[assignment]
+            direct_chatops.gui_send_lock_busy = original_lock_busy  # type: ignore[assignment]
+
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("--no-search", calls[0])
+        self.assertIn("--allow-search", calls[0])
 
     def test_send_gui_message_defers_when_gui_lock_is_busy(self) -> None:
         original_run = direct_chatops.subprocess.run

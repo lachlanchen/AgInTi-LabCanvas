@@ -37,6 +37,7 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertEqual(target.expected_title_aliases, ("Echo Mind",))
         self.assertTrue(target.allow_title_guard_fallback)
+        self.assertFalse(target.allow_search)
         self.assertEqual(target.fallback_clicks, ((165, 100), (240, 335), (165, 170)))
         candidates = module.target_click_candidates(target)
         self.assertEqual(candidates[:4], [
@@ -328,6 +329,7 @@ class WeChatGuiSendTests(unittest.TestCase):
                     0,
                     False,
                     True,
+                    True,
                     Path("/tmp"),
                     Path("/tmp/wechat-mirror.sqlite"),
                     1,
@@ -373,6 +375,7 @@ class WeChatGuiSendTests(unittest.TestCase):
                 False,
                 0,
                 False,
+                True,
                 True,
                 Path("/tmp"),
                 Path("/tmp/wechat-mirror.sqlite"),
@@ -450,6 +453,78 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertIn(("verify", "open_click"), calls)
         self.assertIn(("verify", "open_click_double"), calls)
         self.assertIn(("verify", "result_click_direct_double"), calls)
+
+    def test_open_target_no_search_never_opens_search_box(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="🍓我的设备",
+            query="我的设备",
+            expected_title="🍓我的设备",
+            expected_title_aliases=("我的设备",),
+        )
+        original_search = module.search_for_target
+        original_key = module.key
+        original_screenshot = module.screenshot
+        original_verify = module.verify_opened_title
+        original_title_candidates = module.title_window_candidates
+        original_sleep = module.time.sleep
+        original_monotonic = module.time.monotonic
+        clock = {"value": 0.0}
+        try:
+            module.search_for_target = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("search should not open"))  # type: ignore[assignment]
+            module.key = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Return should not select search result"))  # type: ignore[assignment]
+            module.screenshot = lambda _env, _path: None
+            module.title_window_candidates = lambda _env, window: [window]
+            module.time.sleep = lambda _seconds: None
+
+            def fake_monotonic():
+                clock["value"] += 10.0
+                return clock["value"]
+
+            def fake_verify(_env, window, _screenshot, _target, _crop, method):
+                return {
+                    "ok": False,
+                    "method": method,
+                    "ocr_text": "鏈接",
+                    "compose_window": module.window_to_dict(window),
+                }
+
+            module.time.monotonic = fake_monotonic
+            module.verify_opened_title = fake_verify
+            result = module.open_target(
+                {},
+                module.Window("1", 100, 200, 1000, 700),
+                target,
+                0,
+                Path("/tmp"),
+                "wechat-open-no-search-test",
+                False,
+                True,
+                False,
+            )
+        finally:
+            module.search_for_target = original_search
+            module.key = original_key
+            module.screenshot = original_screenshot
+            module.verify_opened_title = original_verify
+            module.title_window_candidates = original_title_candidates
+            module.time.sleep = original_sleep
+            module.time.monotonic = original_monotonic
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["search_disabled"])
+        self.assertEqual(result["method"], "current")
+
+    def test_target_search_requires_explicit_opt_in(self):
+        module = load_wechat_gui_send()
+
+        default_target = module.target_from_raw({"name": "EchoMind", "query": "EchoMind"})
+        allowed_target = module.target_from_raw({"name": "EchoMind", "query": "EchoMind", "allow_search": True})
+        blocked_target = module.target_from_raw({"name": "EchoMind", "query": "EchoMind", "allow_search": True, "no_search": True})
+
+        self.assertFalse(default_target.allow_search)
+        self.assertTrue(allowed_target.allow_search)
+        self.assertFalse(blocked_target.allow_search)
 
     def test_close_non_target_wechat_windows_keeps_target_popup(self):
         module = load_wechat_gui_send()
