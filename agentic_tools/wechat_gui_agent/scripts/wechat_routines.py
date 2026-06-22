@@ -97,6 +97,40 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "Do not treat a generated bitmap as the only source of truth when editable output is requested.",
         ),
     ),
+    "story_script_generation": RoutineDefinition(
+        id="story_script_generation",
+        title="Story, Script, Or Prompt Writing",
+        route_kinds=("story_or_script",),
+        purpose="Write, revise, polish, or prepare story/script/prompt text while preserving the requested characters and context.",
+        default_effort="medium",
+        stages=(
+            {
+                "id": "context_resolution",
+                "owner": "queue_orchestrator",
+                "entrypoint": "same-chat current request + recent story context",
+                "success": "characters, requested language/style, and previous story references are identified",
+            },
+            {
+                "id": "story_or_script_write",
+                "owner": "worker_agent",
+                "entrypoint": "Codex worker with LALACHAN/story critic skill when applicable",
+                "success": "requested story/script/prompt text is written or revised coherently",
+            },
+            {
+                "id": "deliver_text_and_sources",
+                "owner": "queue_orchestrator",
+                "entrypoint": "send_result_with_retries",
+                "success": "story text and safe saved Markdown/source files are returned to the source chat",
+            },
+        ),
+        artifact_policy="Return the story/script text in the message and include saved Markdown/source files when useful.",
+        rules=COMMON_RULES
+        + (
+            "Do not substitute image generation for a story/script request.",
+            "If the user also asks for images or video, draft the story first, then satisfy the explicit visual/video stage.",
+            "For LALACHAN/RaraXia/AyaChan/SasaKun story work, use the LALACHAN story quality rules; do not start Xiaoyunque video generation unless video is explicitly requested.",
+        ),
+    ),
     "labcanvas_cad_pcb": RoutineDefinition(
         id="labcanvas_cad_pcb",
         title="LabCanvas CAD/PCB/Blender Artifact",
@@ -332,8 +366,13 @@ def routine_id_for_route(route_decision: dict[str, Any] | None, request_text: st
     lowered = str(request_text or "").lower()
     if any(marker in lowered for marker in ("pcb", "kicad", "openscad", "blender", "cad", "gerber", "render", "渲染", "电路板")):
         return "labcanvas_cad_pcb"
-    if any(marker in lowered for marker in ("lalachan", "raraxia", "ayachan", "sasakun", "xiaoyunque", "seedance", "小云雀", "啦啦侠", "阿芽酱", "飒飒君")):
+    if any(marker in lowered for marker in ("xiaoyunque", "seedance", "小云雀")) or (
+        any(marker in lowered for marker in ("lalachan", "raraxia", "ayachan", "sasakun", "啦啦侠", "阿芽酱", "飒飒君"))
+        and any(marker in lowered for marker in ("video", "mp4", "视频", "影片", "短片", "动画", "動畫"))
+    ):
         return "generated_video"
+    if any(marker in lowered for marker in ("story", "script", "plot", "narrative", "dialogue", "故事", "剧本", "劇本", "脚本", "腳本", "提示词", "提示詞")):
+        return "story_script_generation"
     if any(marker in lowered for marker in ("lazyedit", "autopublish", "shipinhao", "视频号", "youtube", "instagram")):
         return "video_publish_existing"
     if any(marker in lowered for marker in ("image", "figure", "diagram", "aginti", "biorender", "图片", "图", "示意图")):

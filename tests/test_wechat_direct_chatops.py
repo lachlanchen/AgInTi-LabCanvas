@@ -782,6 +782,50 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("non-VIP", route["task"])
         self.assertIn("Do not double-click", route["task"])
 
+    def test_plain_story_generation_routes_to_story_worker_for_research_and_device_chats(self) -> None:
+        for chat_name, purpose in (("懒人科研", "research"), ("🍓我的设备", "personal_organizer")):
+            with self.subTest(chat=chat_name):
+                config = {
+                    "chat_name": chat_name,
+                    "self_wxid": "self",
+                    "trigger_prefixes": ["@LazyingArt"],
+                    "respond_to_all": True,
+                    "trigger_local_types": [1],
+                    "chat_purpose": purpose,
+                    "immediate_ack_enabled": True,
+                    "slow_task_keywords": [],
+                    "agent_route_enabled": False,
+                }
+                row = self.row("Could you generate a short story about RaraXia and AyaChan finding a hidden notebook?")
+
+                route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+                self.assertIsNotNone(route)
+                assert route is not None
+                self.assertEqual(route["route_decision"]["route_kind"], "story_or_script")
+                self.assertIn("story_script_generation", route["task"])
+                self.assertIn("Do not substitute image generation", route["task"])
+                self.assertNotIn("LALACHAN/RaraXia story-video generation contract", route["task"])
+
+    def test_plain_story_prompt_overrides_agent_image_misroute(self) -> None:
+        fallback = {"route_kind": "story_or_script", "worker_needed": True, "confidence": 0.45}
+
+        decision = direct_chatops.enforce_route_safety(
+            {
+                "route_kind": "generate_image",
+                "project": "generic",
+                "worker_needed": True,
+                "needs_recent_media": False,
+                "reason": "mistaken image route",
+                "confidence": 0.8,
+            },
+            "please generate a story about a scientist and a robot",
+            fallback,
+        )
+
+        self.assertEqual(decision["route_kind"], "story_or_script")
+        self.assertTrue(decision["worker_needed"])
+
     def test_generate_video_followup_does_not_inherit_old_publish_or_videos(self) -> None:
         config = {
             "chat_name": "🍓我的设备",

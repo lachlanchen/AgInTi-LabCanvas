@@ -31,6 +31,21 @@ class WeChatRoutineTests(unittest.TestCase):
 
         self.assertEqual(routine_id, "generated_video")
 
+    def test_route_kind_selects_story_script_routine(self) -> None:
+        routines = load_routines()
+        routine_id = routines.routine_id_for_route(
+            {"route_kind": "story_or_script", "project": "lalachan"},
+            "write a RaraXia and AyaChan story",
+        )
+
+        self.assertEqual(routine_id, "story_script_generation")
+
+    def test_text_fallback_selects_story_before_visual_routines(self) -> None:
+        routines = load_routines()
+        routine_id = routines.routine_id_for_route({}, "generate a story about RaraXia and AyaChan")
+
+        self.assertEqual(routine_id, "story_script_generation")
+
     def test_text_fallback_selects_labcanvas_cad_pcb(self) -> None:
         routines = load_routines()
         routine_id = routines.routine_id_for_route({}, "render this PCB in Blender and export Gerbers")

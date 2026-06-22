@@ -418,6 +418,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "GUI sender alarm is aligned with the worker send timeout",
             "chat-sync dry-open alarm is long enough to refresh inactive groups",
             "chat-sync retryable failures back off per chat without blocking other groups",
+            "plain story/script requests route to the same worker capability set in research and device chats",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -477,6 +478,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "chat_sync_failure_backoff_isolated",
             "test": "tests.test_wechat_chat_sync_loop.WeChatChatSyncLoopTests.test_sync_once_backs_off_retryable_failure_without_blocking_other_chats",
+        },
+        {
+            "id": "story_route_unified_research_device",
+            "test": direct_prefix + "test_plain_story_generation_routes_to_story_worker_for_research_and_device_chats",
         },
         {
             "id": "supervisor_uses_guarded_worker_entrypoint",

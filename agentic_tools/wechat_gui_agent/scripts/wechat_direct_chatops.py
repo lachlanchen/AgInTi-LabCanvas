@@ -1343,6 +1343,7 @@ def immediate_task_route(
     contextual_media_task = is_contextual_media_task(config, combined, row, context_rows, focus_rows=focus_rows)
     quoted_media_task = is_quote_reply_message(row) and references_recent_media(combined)
     file_download_task = is_file_download_or_save_task(combined)
+    story_or_script_task = is_story_or_script_task(combined)
     heuristic_candidate = heuristic_worker_route_candidate(
         config,
         combined,
@@ -1352,6 +1353,7 @@ def immediate_task_route(
         contextual_media_task=contextual_media_task,
         quoted_media_task=quoted_media_task,
         file_download_task=file_download_task,
+        story_or_script_task=story_or_script_task,
     )
     agent_first = agent_route_prefilter_mode(config) == "agent_first" and bool(config.get("agent_route_enabled", False))
     if agent_first:
@@ -1409,7 +1411,8 @@ def immediate_task_route(
         if public_publish_allowed or route_kind in {"publish_video", "process_existing_video"}
         else ""
     )
-    lalachan_context = lalachan_story_video_context_bundle() if lalachan_task or route_project == "lalachan" or route_kind == "generate_video" else ""
+    story_context = lalachan_story_text_context_bundle() if route_kind == "story_or_script" and route_project == "lalachan" else ""
+    lalachan_context = lalachan_story_video_context_bundle() if lalachan_task or route_kind == "generate_video" else ""
     route_json = json.dumps(route_decision, ensure_ascii=False, indent=2, sort_keys=True)
     routine_contract = build_routine_contract(
         route_decision,
@@ -1444,6 +1447,7 @@ def immediate_task_route(
         f"\n\nAutomatic media sync:\n{media_sync_status or '(not run)'}"
         f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
         f"{publish_context}"
+        f"{story_context}"
         f"{lalachan_context}"
     )
     ack = str(config.get("attachment_ack_text") or config.get("immediate_ack_text") or "收到，我先处理，完成后把结果发回来。")
@@ -1467,6 +1471,7 @@ def heuristic_worker_route_candidate(
     contextual_media_task: bool,
     quoted_media_task: bool,
     file_download_task: bool,
+    story_or_script_task: bool,
 ) -> bool:
     lowered = str(text or "").lower()
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
@@ -1477,6 +1482,7 @@ def heuristic_worker_route_candidate(
         or contextual_media_task
         or quoted_media_task
         or file_download_task
+        or story_or_script_task
         or any(keyword and keyword in lowered for keyword in keywords)
     )
 
@@ -1543,6 +1549,7 @@ Return only JSON. No markdown.
 Allowed route_kind values:
 - chat_only
 - research_or_summary
+- story_or_script
 - generate_image
 - edit_existing_media
 - generate_video
@@ -1557,6 +1564,7 @@ Important distinction:
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
 - Old context can explain a follow-up, but old context cannot authorize a new public publish.
 - A video-generation request should use local/default reference assets unless the current request says this/that/same/attached/quoted video/image.
+- Plain story/script/plot writing or revision should use story_or_script. Do not choose generate_image unless the current request explicitly asks for an image/figure/diagram/illustration. Do not choose generate_video unless the current request explicitly asks for video/animation/小云雀/Seedance/XYQ.
 - Return chat_only with worker_needed=false when the user is only chatting or when no backend/tool/file/artifact work is useful.
 - Use other_worker only when a backend Codex worker can materially finish the request; do not use it just because the message is ambiguous.
 
@@ -1649,8 +1657,10 @@ def fallback_route_decision(
     publish_allowed = has_public_publish_intent(lowered)
     if is_file_download_or_save_task(text):
         route_kind = "file_download_or_save"
-    elif is_lalachan_story_video_task(text) or ("video" in lowered and re.search(r"\b(generate|create|make)\b", lowered) is not None) or ("视频" in lowered and any(marker in lowered for marker in ("生成", "做"))):
+    elif is_lalachan_story_video_task(text) or has_video_generation_intent(text):
         route_kind = "generate_video"
+    elif is_story_or_script_task(text):
+        route_kind = "story_or_script"
     elif publish_allowed:
         route_kind = "publish_video"
     elif references_recent_media(text):
@@ -1659,7 +1669,7 @@ def fallback_route_decision(
         route_kind = "research_or_summary"
     else:
         route_kind = "other_worker"
-    project = "lalachan" if route_kind in {"generate_video", "file_download_or_save", "process_existing_video"} and recent_context_mentions_lalachan(context_rows) else "unknown"
+    project = "lalachan" if route_kind in {"generate_video", "story_or_script", "file_download_or_save", "process_existing_video"} and (mentions_lalachan_project(text) or recent_context_mentions_lalachan(context_rows)) else "unknown"
     needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save"}
     return {
         "route_kind": route_kind,
@@ -1668,7 +1678,7 @@ def fallback_route_decision(
         "needs_recent_media": needs_recent_media,
         "public_publish_intent": publish_allowed,
         "public_publish_allowed": publish_allowed,
-        "external_action_allowed": bool(publish_allowed or route_kind in {"generate_video", "generate_image", "file_download_or_save"}),
+        "external_action_allowed": bool(publish_allowed or route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save"}),
         "source_policy": "recent_media" if needs_recent_media else "current_request_only",
         "reason": "fallback heuristic route",
         "confidence": 0.45,
@@ -1680,6 +1690,7 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     allowed_kinds = {
         "chat_only",
         "research_or_summary",
+        "story_or_script",
         "generate_image",
         "edit_existing_media",
         "generate_video",
@@ -1692,6 +1703,11 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     route_kind = str(parsed.get("route_kind") or fallback.get("route_kind") or "other_worker")
     if route_kind not in allowed_kinds:
         route_kind = "other_worker"
+    if route_kind in {"generate_image", "generate_video"} and is_story_or_script_task(current_request):
+        if route_kind == "generate_image" and not has_visual_generation_intent(current_request):
+            route_kind = "story_or_script"
+        if route_kind == "generate_video" and not has_video_generation_intent(current_request):
+            route_kind = "story_or_script"
     publish_allowed = has_public_publish_intent(current_request)
     needs_recent_media = bool(parsed.get("needs_recent_media"))
     if route_kind in {"generate_video", "generate_image"} and not references_recent_media(current_request):
@@ -1723,10 +1739,16 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
 
 def recent_context_mentions_lalachan(context_rows: list[dict[str, Any]]) -> bool:
     text = "\n".join(visible_message_text(row) for row in context_rows[-8:])
-    return is_lalachan_story_video_task(text)
+    return mentions_lalachan_project(text)
 
 
 def is_lalachan_story_video_task(text: str) -> bool:
+    if not has_video_generation_intent(text):
+        return False
+    return mentions_lalachan_project(text)
+
+
+def mentions_lalachan_project(text: str) -> bool:
     lowered = str(text or "").lower()
     markers = [
         "lalachan",
@@ -1746,26 +1768,108 @@ def is_lalachan_story_video_task(text: str) -> bool:
         "庄子机器人",
         "小云雀",
     ]
-    has_lalachan_marker = any(marker in lowered for marker in markers)
-    generation_markers = [
+    return any(marker in lowered for marker in markers)
+
+
+def is_story_or_script_task(text: str) -> bool:
+    lowered = str(text or "").lower()
+    story_markers = [
         "story",
+        "script",
+        "plot",
+        "narrative",
+        "dialogue",
+        "scene",
         "prompt",
-        "video",
+        "故事",
+        "剧本",
+        "劇本",
+        "脚本",
+        "腳本",
+        "情节",
+        "情節",
+        "对白",
+        "對白",
+        "台词",
+        "台詞",
+        "提示词",
+        "提示詞",
+        "分镜",
+        "分鏡",
+    ]
+    action_markers = [
         "generate",
         "create",
         "write",
+        "draft",
         "make",
-        "publish",
-        "故事",
-        "提示词",
-        "视频",
+        "revise",
+        "rewrite",
+        "optimize",
+        "polish",
+        "improve",
+        "edit",
         "生成",
         "创作",
+        "創作",
         "写",
-        "做",
-        "发布",
+        "改",
+        "优化",
+        "優化",
+        "润色",
+        "潤色",
+        "修改",
+        "给我",
+        "給我",
     ]
-    return has_lalachan_marker and any(marker in lowered for marker in generation_markers)
+    return any(marker in lowered for marker in story_markers) and any(marker in lowered for marker in action_markers)
+
+
+def has_video_generation_intent(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if any(marker in lowered for marker in ("xiaoyunque", "seedance", "xyq", "小云雀")):
+        return True
+    if any(marker in lowered for marker in ("video", "mp4", "movie", "film", "animation", "animate", "视频", "影片", "短片", "动画", "動畫")):
+        return any(
+            marker in lowered
+            for marker in ("generate", "create", "make", "write", "do", "生成", "做", "创作", "創作", "制作", "製作")
+        )
+    return False
+
+
+def has_visual_generation_intent(text: str) -> bool:
+    lowered = str(text or "").lower()
+    visual_markers = [
+        "image",
+        "picture",
+        "photo",
+        "figure",
+        "diagram",
+        "illustration",
+        "icon",
+        "poster",
+        "render",
+        "draw",
+        "图片",
+        "圖",
+        "图",
+        "图像",
+        "圖像",
+        "照片",
+        "示意图",
+        "示意圖",
+        "插图",
+        "插圖",
+        "图标",
+        "圖標",
+        "海报",
+        "海報",
+        "渲染",
+        "做",
+        "画",
+        "畫",
+    ]
+    return any(marker in lowered for marker in visual_markers)
 
 
 def lalachan_story_video_context_bundle() -> str:
@@ -1791,6 +1895,19 @@ LALACHAN/RaraXia story-video generation contract:
 - Before any paid submit, verify visible page state: mode, model, duration, ratio, prompt text, all attachment uploads succeeded, non-VIP model, and point cost. Do not double-click or resubmit if a job is queued/running.
 - Monitor the submitted thread, download the finished MP4, copy/save it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return safe paths to the story, prompt, screenshots/logs, and MP4 so the outer worker can send the MP4 back to the source WeChat chat.
 - If the current request asks for LazyEdit import/process, hand the downloaded MP4 to LazyEdit without public publish unless public publishing is also explicitly requested. If the user asks to publish, use the normal LazyEdit publish workflow; otherwise stop after local video generation/download/send-back and report the ready path.
+"""
+
+
+def lalachan_story_text_context_bundle() -> str:
+    return """
+
+LALACHAN/RaraXia story-only writing context:
+- Treat this as story/script writing, not image generation and not Xiaoyunque video generation.
+- Characters: 啦啦侠 / RaraXia / Rara Xia, 阿芽酱 / AyaChan / Aya Chan, 飒飒君 / SasaKun / Sasa Kun, plus 庄子机器人 only when useful.
+- Write a natural, understandable Chinese story with one clear setup -> problem -> action -> twist -> payoff chain.
+- Keep dialogue concrete and human; avoid vague inspirational narration and over-abstract lesson language.
+- Save useful drafts under `/home/lachlan/ProjectsLFS/LALACHAN/references/stories/` when working in the LALACHAN project.
+- If the current request only asks for a story/script/prompt, return the story text and saved path. Do not start image generation, Xiaoyunque, LazyEdit, AutoPublish, or public posting unless the current request explicitly asks for those stages.
 """
 
 

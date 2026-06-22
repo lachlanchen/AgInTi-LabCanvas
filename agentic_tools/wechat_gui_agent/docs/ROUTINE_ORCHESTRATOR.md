@@ -37,6 +37,9 @@ Current routines:
   answers.
 - `editable_figure_image`: AgInTi/image/BioRender-style figure work with
   editable parts, manifests, SVG/TeX, and previews.
+- `story_script_generation`: story, script, plot, dialogue, and prompt writing
+  or revision. This route is shared by 懒人科研 and 🍓我的设备, and it must draft
+  the requested text before any explicitly requested image/video stage.
 - `labcanvas_cad_pcb`: CAD, PCB, OpenSCAD, KiCad, Blender, renders, Gerbers,
   STEP/STL, and device design.
 - `file_download_save`: exact-source file, media, link, and download handling.
