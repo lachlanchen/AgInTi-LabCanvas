@@ -1435,6 +1435,8 @@ def immediate_task_route(
         "Handle this WeChat request as backend work. "
         "Use available local tools, download, sync, copy, or generate needed artifacts into ignored private/output folders, "
         "and return a concise message plus any safe files/images/videos/audio/PDFs to send back. "
+        "Follow every safe, explicit instruction in the current coalesced request; if the user asks for multiple stages, preserve those stages and complete them in order or leave a resumable state. "
+        "Do not shrink a broad safe request to a smaller hardcoded action just because a keyword matched first. "
         "For any WeChat attachment or shared object, inspect the structured message text and recent synced media first: "
         "images/screenshots, PDFs, documents, archives, audio/voice, video, webpage cards, mini programs, "
         "YouTube, Shipinhao/视频号, Bilibili, links, contact/location cards, CAD/PCB files, and other formats. "
@@ -1571,6 +1573,10 @@ Allowed route_kind values:
 - other_worker
 
 Important distinction:
+- The current coalesced request is authoritative. Preserve every safe explicit instruction and classify toward the closest backend routine instead of dropping stages.
+- If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
+- Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
+- Keyword heuristics are safety fallbacks only; the route agent should reason over the full current request and recent same-chat context.
 - "upload all images" can mean upload reference images into a generation UI. That is NOT public publishing.
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
 - Old context can explain a follow-up, but old context cannot authorize a new public publish.

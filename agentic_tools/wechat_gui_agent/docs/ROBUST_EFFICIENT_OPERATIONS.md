@@ -106,6 +106,10 @@ that contract rather than designing a new workflow from scratch.
   the default, so repeated requests in one chat resume the same route thread.
   Keyword and attachment checks remain as fallback and safety gates, not the
   primary capability map.
+- The current coalesced request is authoritative. Route and worker prompts must
+  preserve every safe explicit instruction, including multi-stage requests, and
+  must not shrink a request to a smaller hardcoded action because one keyword
+  matched first.
 - The route model cannot suppress hard artifact work. If the current coalesced
   request clearly asks to send/save/download/copy a file, video, image, audio,
   PDF, or generated artifact, route it to the worker even if the route model

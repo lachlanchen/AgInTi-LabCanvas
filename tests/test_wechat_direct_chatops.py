@@ -949,6 +949,9 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 self.assertEqual(kwargs["role"], "route")
                 self.assertEqual(kwargs["chat_name"], "懒人科研")
                 self.assertTrue(kwargs["reuse"])
+                self.assertIn("current coalesced request is authoritative", prompt)
+                self.assertIn("Preserve every safe explicit instruction", prompt)
+                self.assertIn("Keyword heuristics are safety fallbacks only", prompt)
                 self.assertIn("blue notebook idea", prompt)
                 return {
                     "ok": True,
