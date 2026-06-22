@@ -416,6 +416,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "nontrivial worker tasks resume the exact chat's Codex worker session",
             "dead worker PID claims are reclaimed immediately after restart",
             "GUI sender alarm is aligned with the worker send timeout",
+            "chat-sync dry-open alarm is long enough to refresh inactive groups",
+            "chat-sync retryable failures back off per chat without blocking other groups",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -467,6 +469,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "gui_send_alarm_aligned",
             "test": worker_prefix + "test_wechat_send_env_extends_gui_alarm_to_worker_timeout",
+        },
+        {
+            "id": "chat_sync_gui_alarm_aligned",
+            "test": "tests.test_wechat_chat_sync_loop.WeChatChatSyncLoopTests.test_chat_sync_gui_send_env_uses_sync_timeout_for_dry_open",
+        },
+        {
+            "id": "chat_sync_failure_backoff_isolated",
+            "test": "tests.test_wechat_chat_sync_loop.WeChatChatSyncLoopTests.test_sync_once_backs_off_retryable_failure_without_blocking_other_chats",
         },
         {
             "id": "supervisor_uses_guarded_worker_entrypoint",

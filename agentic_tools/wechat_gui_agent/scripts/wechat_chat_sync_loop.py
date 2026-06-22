@@ -54,6 +54,12 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=float(os.environ.get("WECHAT_CHAT_SYNC_INTERVAL", "45")))
     parser.add_argument("--pause", type=float, default=float(os.environ.get("WECHAT_CHAT_SYNC_PAUSE", "0.8")))
     parser.add_argument("--timeout", type=float, default=float(os.environ.get("WECHAT_CHAT_SYNC_TIMEOUT", "60")))
+    parser.add_argument(
+        "--failure-backoff",
+        type=float,
+        default=env_float("WECHAT_CHAT_SYNC_FAILURE_BACKOFF_SECONDS", 300.0),
+        help="Seconds to skip a chat after a retryable dry-open failure such as timeout or noisy title OCR.",
+    )
     parser.add_argument("--priority", default=os.environ.get("WECHAT_CHAT_SYNC_PRIORITY", ""), help="Comma-separated chat names to sync first.")
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--once", action="store_true")
@@ -73,15 +79,16 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    failure_backoff_until: dict[str, float] = {}
     while True:
-        results = sync_once(args)
+        results = sync_once(args, failure_backoff_until=failure_backoff_until)
         print(json.dumps({"checked_at": datetime.now().isoformat(timespec="seconds"), "results": results}, ensure_ascii=False), flush=True)
         if args.once or not args.loop:
             return 0 if all(item.get("ok") for item in results) else 1
         time.sleep(max(args.interval, 5.0))
 
 
-def sync_once(args: argparse.Namespace) -> list[dict[str, Any]]:
+def sync_once(args: argparse.Namespace, failure_backoff_until: dict[str, float] | None = None) -> list[dict[str, Any]]:
     if getattr(args, "yield_to_queue", True):
         send_lane = queue_send_lane_busy(Path(args.queue))
         if send_lane["busy"]:
@@ -111,12 +118,87 @@ def sync_once(args: argparse.Namespace) -> list[dict[str, Any]]:
                 results.append({"config": str(config_path), "chat": chat_name, "ok": True, "skipped": "not_selected"})
                 emit_target_event(results[-1])
                 continue
-            results.append(open_chat_dry_run(args, chat_name, target))
+            backoff_result = chat_sync_backoff_result(chat_name, failure_backoff_until)
+            if backoff_result:
+                results.append(backoff_result)
+                emit_target_event(results[-1])
+                continue
+            result = open_chat_dry_run(args, chat_name, target)
+            apply_chat_sync_backoff(args, chat_name, result, failure_backoff_until)
+            results.append(result)
             emit_target_event(results[-1])
         except Exception as exc:
             results.append({"config": str(config_path), "ok": False, "error": str(exc)[:500]})
             emit_target_event(results[-1])
     return results
+
+
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def chat_sync_backoff_result(chat_name: str, failure_backoff_until: dict[str, float] | None) -> dict[str, Any] | None:
+    if not failure_backoff_until:
+        return None
+    retry_at = failure_backoff_until.get(chat_name)
+    if not retry_at:
+        return None
+    now = time.time()
+    if now >= retry_at:
+        failure_backoff_until.pop(chat_name, None)
+        return None
+    return {
+        "chat": chat_name,
+        "ok": True,
+        "skipped": "failure_backoff",
+        "seconds_remaining": round(retry_at - now, 1),
+        "retry_at": datetime.fromtimestamp(retry_at).isoformat(timespec="seconds"),
+    }
+
+
+def apply_chat_sync_backoff(
+    args: argparse.Namespace,
+    chat_name: str,
+    result: dict[str, Any],
+    failure_backoff_until: dict[str, float] | None,
+) -> None:
+    if failure_backoff_until is None:
+        return
+    if result.get("ok"):
+        failure_backoff_until.pop(chat_name, None)
+        return
+    if not chat_sync_failure_retryable(result):
+        return
+    seconds = max(0.0, float(getattr(args, "failure_backoff", 300.0)))
+    if seconds <= 0:
+        return
+    retry_at = time.time() + seconds
+    failure_backoff_until[chat_name] = retry_at
+    result["failure_backoff_seconds"] = seconds
+    result["retry_at"] = datetime.fromtimestamp(retry_at).isoformat(timespec="seconds")
+
+
+def chat_sync_failure_retryable(result: dict[str, Any]) -> bool:
+    try:
+        if int(result.get("returncode", -999)) == 124:
+            return True
+    except (TypeError, ValueError):
+        pass
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("stderr_tail", "stdout_tail", "error")
+    ).lower()
+    retryable_markers = (
+        "wechat_send_timeout",
+        "opened chat title guard failed",
+        "title guard failed",
+        "ocr=",
+        "wechat_locked",
+    )
+    return any(marker in text for marker in retryable_markers)
 
 
 def send_lane_reserved_result(args: argparse.Namespace, send_lane: dict[str, Any]) -> dict[str, Any]:
@@ -279,7 +361,8 @@ def open_chat_dry_run(args: argparse.Namespace, chat_name: str, target: dict[str
 
 def chat_sync_gui_send_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
-    max_seconds = max(8, min(int(args.timeout), int(os.environ.get("WECHAT_CHAT_SYNC_GUI_SEND_MAX_SECONDS", "18"))))
+    default_max = max(20, int(float(args.timeout)) - 5)
+    max_seconds = max(8, min(int(args.timeout), int(os.environ.get("WECHAT_CHAT_SYNC_GUI_SEND_MAX_SECONDS", str(default_max)))))
     title_retry = max(1.0, min(float(os.environ.get("WECHAT_CHAT_SYNC_TITLE_RETRY_SECONDS", "2.0")), float(max_seconds) / 2))
     env.setdefault("WECHAT_GUI_SEND_MAX_SECONDS", str(max_seconds))
     env.setdefault("WECHAT_TITLE_RETRY_SECONDS", str(title_retry))

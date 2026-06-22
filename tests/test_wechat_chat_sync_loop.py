@@ -169,16 +169,87 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
         self.assertEqual(results[1]["skipped"], "send_lane_reserved")
         self.assertEqual(results[1]["active"][0]["id"], "appeared-after-first")
 
-    def test_chat_sync_gui_send_env_bounds_dry_open_timeout(self):
+    def test_sync_once_backs_off_retryable_failure_without_blocking_other_chats(self):
+        module = load_wechat_chat_sync_loop()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        root = Path(temp_dir.name)
+        first = root / "first.json"
+        second = root / "second.json"
+        first.write_text(json.dumps({"chat_name": "first", "send_target": {"name": "first"}}), encoding="utf-8")
+        second.write_text(json.dumps({"chat_name": "second", "send_target": {"name": "second"}}), encoding="utf-8")
+        opened = []
+        backoff = {}
+        original_open = module.open_chat_dry_run
+        original_emit = module.emit_target_event
+        try:
+            def fake_open(_args, chat_name, _target):
+                opened.append(chat_name)
+                if chat_name == "first":
+                    return {
+                        "chat": chat_name,
+                        "ok": False,
+                        "returncode": 124,
+                        "stderr_tail": "WECHAT_SEND_TIMEOUT: GUI sender exceeded 55 seconds",
+                    }
+                return {"chat": chat_name, "ok": True}
+
+            module.open_chat_dry_run = fake_open
+            module.emit_target_event = lambda _result: None
+            args = argparse.Namespace(
+                configs=f"{first},{second}",
+                display=":97",
+                interval=45,
+                pause=0.8,
+                timeout=60,
+                priority="",
+                loop=False,
+                once=True,
+                only=[],
+                output_dir=Path("/tmp"),
+                queue=Path("/tmp/missing-wechat-queue.jsonl"),
+                yield_to_queue=False,
+                failure_backoff=300,
+            )
+
+            results = module.sync_once(args, failure_backoff_until=backoff)
+            opened.clear()
+            second_results = module.sync_once(args, failure_backoff_until=backoff)
+        finally:
+            module.open_chat_dry_run = original_open
+            module.emit_target_event = original_emit
+
+        self.assertEqual(results[0]["chat"], "first")
+        self.assertFalse(results[0]["ok"])
+        self.assertEqual(results[0]["failure_backoff_seconds"], 300)
+        self.assertIn("retry_at", results[0])
+        self.assertEqual(results[1], {"chat": "second", "ok": True})
+        self.assertEqual(second_results[0]["skipped"], "failure_backoff")
+        self.assertEqual(second_results[0]["chat"], "first")
+        self.assertEqual(second_results[1], {"chat": "second", "ok": True})
+        self.assertEqual(opened, ["second"])
+
+    def test_chat_sync_failure_retryable_covers_timeout_and_noisy_title_guard(self):
+        module = load_wechat_chat_sync_loop()
+
+        self.assertTrue(module.chat_sync_failure_retryable({"returncode": 124}))
+        self.assertTrue(
+            module.chat_sync_failure_retryable(
+                {"returncode": 1, "stderr_tail": "RuntimeError: Opened chat title guard failed: OCR='3 - oO\\n|'."}
+            )
+        )
+        self.assertFalse(module.chat_sync_failure_retryable({"returncode": 1, "stderr_tail": "missing config"}))
+
+    def test_chat_sync_gui_send_env_uses_sync_timeout_for_dry_open(self):
         module = load_wechat_chat_sync_loop()
         args = argparse.Namespace(timeout=60, pause=0.8)
 
         env = module.chat_sync_gui_send_env(args)
 
-        self.assertEqual(env["WECHAT_GUI_SEND_MAX_SECONDS"], "18")
+        self.assertEqual(env["WECHAT_GUI_SEND_MAX_SECONDS"], "55")
         self.assertEqual(env["WECHAT_INITIAL_TITLE_WAIT"], "0.4")
         self.assertLessEqual(float(env["WECHAT_TITLE_RETRY_SECONDS"]), 2.0)
-        self.assertLess(module.chat_sync_subprocess_timeout(args), 30)
+        self.assertEqual(module.chat_sync_subprocess_timeout(args), 60)
 
 
 if __name__ == "__main__":

@@ -244,6 +244,9 @@ Expected signs:
   exist;
 - `chat-sync` is running when multiple groups must respond even if the Linux
   client has not recently opened those conversations;
+- `chat-sync` dry-open uses a GUI sender alarm derived from
+  `WECHAT_CHAT_SYNC_TIMEOUT` so inactive groups are not starved by the short
+  standalone sender default;
 - `chat-sync` yields with `send_lane_reserved` when the worker queue has
   pending, active, retryable deferred, or artifact-send tasks, so dry-open
   polling cannot hold the serialized GUI sender ahead of actual replies. It
@@ -273,7 +276,12 @@ duplicate.
 If the source group has no fresh DB rows even though the user sent a message,
 run or check `wechat_chat_sync_loop.py`: it dry-opens the configured chat with
 the normal title guard and no send action, then the direct monitor can process
-newly materialized rows.
+newly materialized rows. On slow remote desktops, raise
+`WECHAT_CHAT_SYNC_TIMEOUT` or `WECHAT_CHAT_SYNC_GUI_SEND_MAX_SECONDS` instead of
+letting dry-open attempts fail at the short standalone GUI sender timeout.
+If one configured chat repeatedly times out or returns noisy blank title OCR,
+leave `WECHAT_CHAT_SYNC_FAILURE_BACKOFF_SECONDS` enabled so the loop retries it
+periodically without blocking refresh of the other groups.
 If old send failures contain title-guard OCR noise such as `OCR='3 - oO\n|'`,
 the worker treats it as a retryable `title_guard_blank` blank-pane failure,
 while real wrong-chat titles remain non-retryable.

@@ -114,8 +114,12 @@ The same supervisor also runs `wechat_chat_sync_loop.py` by default. That loop
 uses the guarded GUI opener in dry-run mode to visit configured chats without
 sending anything. This is necessary on Linux WeChat when inactive groups do not
 materialize new message rows until the desktop client opens that conversation.
-Set `WECHAT_CHAT_SYNC_PRIORITY` in private supervisor env to visit high-value
-groups first.
+The dry-open sender alarm defaults to `WECHAT_CHAT_SYNC_TIMEOUT - 5`, so slow
+remote desktops still get enough time to pass the title guard. Set
+`WECHAT_CHAT_SYNC_PRIORITY` in private supervisor env to visit high-value groups
+first. Retryable dry-open failures such as GUI timeouts or noisy blank title OCR
+are isolated with `WECHAT_CHAT_SYNC_FAILURE_BACKOFF_SECONDS` so one slow chat
+does not keep later groups from being refreshed.
 Private send targets should include `expected_title`; the GUI sender OCR-checks
 the opened chat header before composing and fails closed if the wrong chat is
 visible. Add `fallback_clicks` when WeChat search results appear at different
