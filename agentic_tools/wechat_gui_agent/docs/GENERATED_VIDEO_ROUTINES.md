@@ -9,6 +9,14 @@ The general routine registry is `agentic_tools/wechat_gui_agent/scripts/wechat_r
 and the operator guide is `docs/ROUTINE_ORCHESTRATOR.md`. This document is the
 specialized stage contract for the `generated_video` routine.
 
+Core boundary: generation is not publication. Generation means story/prompt
+creation, Xiaoyunque submission, monitoring, MP4 download, verification, and
+WeChat send-back. Publication means posting to public platforms such as
+Shipinhao/视频号, YouTube, Instagram, or public AutoPublish queues, and it is
+allowed only when the current request explicitly asks for public publish/post.
+Uploading reference images/assets into Xiaoyunque is part of generation, not
+publication.
+
 ## Routine Stages
 
 1. `route_contract`

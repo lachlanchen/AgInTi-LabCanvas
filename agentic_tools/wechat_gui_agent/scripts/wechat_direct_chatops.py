@@ -1582,6 +1582,8 @@ Important distinction:
 - If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
 - Every monitored chat, including EchoMind, can ask for backend work such as CAD/PCB, image or figure generation, video generation, video publication, file/media handling, writing, Markdown, LaTeX, PDFs, and other artifact tasks. EchoMind is language-learning by default only when the message is ordinary language practice.
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
+- Generation is not publication. A request to generate/create/make a video means create/download/send back the artifact unless the current request also explicitly says publish/post to a public platform.
+- Uploading reference images/assets into a generation UI is not public publishing. Do not set public_publish_allowed=true for "upload all images" unless the destination is a public platform such as Shipinhao, YouTube, Instagram, or 视频号.
 - Keyword heuristics are safety fallbacks only; the route agent should reason over the full current request and recent same-chat context.
 - "upload all images" can mean upload reference images into a generation UI. That is NOT public publishing.
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
@@ -1775,6 +1777,12 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     except (TypeError, ValueError):
         parsed["confidence"] = float(fallback.get("confidence", 0.0) or 0.0)
     if route_kind == "publish_video" and not publish_allowed:
+        if fallback_kind == "generate_video" or has_video_generation_intent(current_request):
+            parsed["route_kind"] = "generate_video"
+            parsed["needs_recent_media"] = False
+            parsed["source_policy"] = "current_request_only"
+            parsed["reason"] = (parsed["reason"] + " | public publish removed; generation route restored by current-request safety guard").strip()
+            return parsed
         parsed["route_kind"] = "process_existing_video" if needs_recent_media else "other_worker"
         parsed["public_publish_intent"] = False
         parsed["public_publish_allowed"] = False

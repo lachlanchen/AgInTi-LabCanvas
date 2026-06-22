@@ -899,9 +899,13 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         stages = worker.generated_video_stage_permissions(task)
 
         self.assertTrue(stages["video_generation"])
+        self.assertTrue(stages["generation"])
         self.assertTrue(stages["wechat_send_back"])
         self.assertFalse(stages["lazyedit_import"])
         self.assertFalse(stages["public_publish"])
+        self.assertFalse(stages["publication"])
+        self.assertFalse(stages["generation_is_publication"])
+        self.assertIn("generation creates/downloads/sends artifacts", stages["stage_boundary"])
         self.assertEqual(stages["publish_platforms"], [])
 
     def test_generated_video_stage_permissions_allow_lazyedit_without_publish(self) -> None:
@@ -915,6 +919,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertTrue(stages["lazyedit_import"])
         self.assertFalse(stages["public_publish"])
+        self.assertFalse(stages["publication"])
 
     def test_generated_video_tool_context_requires_orchestration_routine(self) -> None:
         worker = load_worker()
@@ -947,6 +952,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertTrue(stages["lazyedit_import"])
         self.assertTrue(stages["public_publish"])
+        self.assertTrue(stages["publication"])
+        self.assertFalse(stages["generation_is_publication"])
         self.assertEqual(stages["publish_platforms"], ["shipinhao"])
 
     def test_generated_video_waiting_task_reclaims_only_after_poll_time(self) -> None:

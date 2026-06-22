@@ -426,6 +426,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "queued worker tasks persist a machine-readable instruction contract",
             "legacy queued worker tasks backfill the instruction contract before execution",
             "generated-video contracts choose relatively cheaper Seedance models without blocking tasks on model selection",
+            "generated-video generation is not public publication; reference-image upload does not authorize publish",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -501,6 +502,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "route_agent_reuses_session",
             "test": direct_prefix + "test_agent_first_route_can_enqueue_without_keyword_prefilter",
+        },
+        {
+            "id": "generation_upload_not_public_publish",
+            "test": direct_prefix + "test_publish_route_false_positive_restores_generation_when_upload_is_reference_assets",
+        },
+        {
+            "id": "generated_video_stage_boundary",
+            "test": worker_prefix + "test_generated_video_stage_permissions_are_current_request_only",
         },
         {
             "id": "legacy_task_instruction_contract_backfill",

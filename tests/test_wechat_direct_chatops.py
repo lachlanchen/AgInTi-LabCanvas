@@ -1045,6 +1045,44 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertNotIn("local_id=14", task)
         self.assertNotIn("Video publish/subtitle context bundle", task)
 
+    def test_publish_route_false_positive_restores_generation_when_upload_is_reference_assets(self) -> None:
+        fallback = {
+            "route_kind": "generate_video",
+            "project": "lalachan",
+            "worker_needed": True,
+            "needs_recent_media": False,
+            "public_publish_intent": False,
+            "public_publish_allowed": False,
+            "external_action_allowed": True,
+            "source_policy": "current_request_only",
+            "reason": "fallback generation route",
+            "confidence": 0.45,
+        }
+        parsed = {
+            "route_kind": "publish_video",
+            "project": "lazyedit",
+            "worker_needed": True,
+            "needs_recent_media": False,
+            "public_publish_intent": True,
+            "public_publish_allowed": True,
+            "external_action_allowed": True,
+            "source_policy": "current_request_only",
+            "reason": "mistook upload all images for public posting",
+            "confidence": 0.8,
+        }
+
+        decision = direct_chatops.enforce_route_safety(
+            parsed,
+            "Could you generate the video, use cheap model, and upload all images to Xiaoyunque?",
+            fallback,
+        )
+
+        self.assertEqual(decision["route_kind"], "generate_video")
+        self.assertFalse(decision["public_publish_allowed"])
+        self.assertFalse(decision["needs_recent_media"])
+        self.assertEqual(decision["source_policy"], "current_request_only")
+        self.assertIn("generation route restored", decision["reason"])
+
     def test_route_policy_uses_stronger_model_for_ambiguous_video_upload(self) -> None:
         config = {
             "agent_router": {

@@ -191,6 +191,12 @@ generated-video route contract with `stage_permissions` and
 5. only then queue LazyEdit import/process;
 6. publish only if the current request explicitly allows it.
 
+Generation is not publication. A generation request creates/downloads/verifies
+the video and sends artifacts back to the source chat; it does not authorize
+LazyEdit import, AutoPublish, Shipinhao, YouTube, Instagram, or any public
+posting. Uploading reference images/assets into Xiaoyunque is generation-stage
+input handling, not publication.
+
 If the MP4 cannot be sent, do not import to LazyEdit or publish. Leave the task
 in `send_deferred_artifact` or `send_deferred_locked`.
 

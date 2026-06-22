@@ -1570,13 +1570,21 @@ def generated_video_stage_permissions(task: dict[str, Any]) -> dict[str, Any]:
     route_kind = str(route.get("route_kind") or "")
     public_publish = bool(route.get("public_publish_allowed")) if route else has_public_publish_intent(text)
     lazyedit_import = wants_lazyedit_import(text) or public_publish
+    story_generation = route_kind == "generate_video" or any(marker in lowered for marker in ("story", "script", "prompt", "故事", "脚本", "劇本", "提示词", "提示詞", "lalachan", "raraxia", "ayachan", "sasakun", "啦啦侠", "阿芽酱", "飒飒君"))
+    video_generation = route_kind == "generate_video" or any(marker in lowered for marker in ("video", "mp4", "视频", "影片", "小云雀", "seedance", "xyq"))
     return {
-        "story_generation": route_kind == "generate_video" or any(marker in lowered for marker in ("story", "script", "prompt", "故事", "脚本", "劇本", "提示词", "提示詞", "lalachan", "raraxia", "ayachan", "sasakun", "啦啦侠", "阿芽酱", "飒飒君")),
-        "video_generation": route_kind == "generate_video" or any(marker in lowered for marker in ("video", "mp4", "视频", "影片", "小云雀", "seedance", "xyq")),
+        "story_generation": story_generation,
+        "video_generation": video_generation,
+        "generation": bool(story_generation or video_generation),
         "wechat_send_back": True,
         "lazyedit_import": lazyedit_import,
         "public_publish": public_publish,
+        "publication": public_publish,
         "publish_platforms": detect_publish_platforms(task, current_only=True) if public_publish else [],
+        "generation_is_publication": False,
+        "stage_boundary": "generation creates/downloads/sends artifacts; publication posts to public platforms and requires explicit current-message permission",
+        "lazyedit_requires_current_request": True,
+        "public_publish_requires_current_request": True,
         "scope": "current_request_only",
     }
 
@@ -1673,6 +1681,7 @@ def write_generated_video_contract(task: dict[str, Any], artifact_dir: Path) -> 
             "For route_kind=generate_video, create or import a new video; do not process old WeChat MP4 files.",
             "Always send the verified generated MP4 back to the source WeChat chat when GUI sending is available.",
             "Treat story generation, video generation/download/send-back, LazyEdit import/process, and public publishing as separate stages.",
+            "Generation is not publication: generating/downloading/sending a video never authorizes LazyEdit import or public posting.",
             "Do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish, or public queues unless stage_permissions.public_publish is true.",
             "Do not import/process in LazyEdit unless stage_permissions.lazyedit_import is true.",
             "If the browser cannot submit or download a new video, return an explicit blocked/in-progress status instead of claiming success.",
@@ -3507,6 +3516,7 @@ Generated-video route contract:
 ```
 - Do not process old WeChat MP4 files, Nutstore AutoPublish files, LazyEdit videos, or public platform jobs as the output for this task.
 - After a new MP4 is downloaded and verified, include it in the JSON `files` array so the outer worker sends it back to the source WeChat chat.
+- Generation is not publication: creating/downloading/sending the MP4 does not authorize LazyEdit import, AutoPublish, or public posting.
 - If `task.route_decision.public_publish_allowed` is false, public posting and AutoPublish public queue submission are forbidden even if older chat history mentions them.
 - LazyEdit import/process is a separate stage: do it only when the current request explicitly says LazyEdit/import/process, and use no-public-publish mode unless public publishing is also explicitly allowed.
 - For LALACHAN/Xiaoyunque, model selection must not block the task. Choose a relatively cheaper suitable model from the available page options and proceed. Prefer `Seedance 2.0 Mini 体验版` / `vipnew` when it shows `单秒限时低至4积分`; otherwise use the cheapest suitable `Seedance 2.0 Fast`, `Fast VIP`, or available Seedance row. Pause only for real non-model blockers such as no credits, recharge/payment approval, disabled submit, login, CAPTCHA, or an explicit user budget limit.
