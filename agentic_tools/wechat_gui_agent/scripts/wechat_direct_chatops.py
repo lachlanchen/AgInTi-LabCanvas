@@ -1307,7 +1307,9 @@ def immediate_task_route(
         "If the exact attachment/image/video/PDF is unavailable, say it is missing and ask the user to resend or provide the original.\n\n"
         "Follow the agent route decision below. It is the source of truth for intent classification. "
         "Old chat history can provide context but cannot authorize public posting. "
-        "If `public_publish_allowed` is false, do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish, LazyEdit, or any public platform.\n\n"
+        "Treat stages separately: story writing, video generation/download/send-back, LazyEdit import/process, and public publishing are independent permissions. "
+        "If `public_publish_allowed` is false, do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish public queues, or any public platform. "
+        "LazyEdit import/process is allowed only when the current request explicitly asks for LazyEdit/import/process.\n\n"
         f"Agent route decision:\n{route_json}\n\n"
         f"Chat: {chat_name}\nSource/reference rows: {source_ids}\n\n"
         f"Current coalesced request:\n{current_request or attachment_request_text(row)}\n\nRecent history:\n{task_context}"
@@ -1618,8 +1620,8 @@ LALACHAN/RaraXia story-video generation contract:
 - The prompt should refer to uploaded images as 图1 through 图8. Never paste local filesystem paths or file names into the Xiaoyunque prompt as visible scene text.
 - Default setup: 沉浸式短片, Seedance 2.0 Fast non-VIP, 15s, 4:3, mainly Chinese, and include `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。`
 - Before any paid submit, verify visible page state: mode, model, duration, ratio, prompt text, all attachment uploads succeeded, non-VIP model, and point cost. Do not double-click or resubmit if a job is queued/running.
-- Monitor the submitted thread, download the finished MP4, copy/save it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return safe paths to the story, prompt, screenshots/logs, and MP4.
-- If the user asks to publish, hand the downloaded MP4 to LazyEdit using the normal publish workflow; otherwise stop after local video generation/import and report the ready path.
+- Monitor the submitted thread, download the finished MP4, copy/save it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return safe paths to the story, prompt, screenshots/logs, and MP4 so the outer worker can send the MP4 back to the source WeChat chat.
+- If the current request asks for LazyEdit import/process, hand the downloaded MP4 to LazyEdit without public publish unless public publishing is also explicitly requested. If the user asks to publish, use the normal LazyEdit publish workflow; otherwise stop after local video generation/download/send-back and report the ready path.
 """
 
 
@@ -1827,9 +1829,6 @@ def has_public_publish_intent(text: str) -> bool:
         "視頻號",
         "youtube",
         "instagram",
-        "lazyedit",
-        "autopublish",
-        "publish folder",
         "发布",
         "發布",
         "投稿",
@@ -1837,8 +1836,6 @@ def has_public_publish_intent(text: str) -> bool:
     if any(marker in lowered for marker in explicit_markers):
         return True
     if re.search(r"\b(?:sph|y2b|ytb|ins)\b", lowered):
-        return True
-    if re.search(r"\bupload\s+(?:it|this|the\s+video|video|file)\s+(?:to|on)\b", lowered):
         return True
     if re.search(r"\b(?:upload|send)\s+to\s+(?:youtube|instagram|shipinhao|sph|y2b|ytb|ins)\b", lowered):
         return True

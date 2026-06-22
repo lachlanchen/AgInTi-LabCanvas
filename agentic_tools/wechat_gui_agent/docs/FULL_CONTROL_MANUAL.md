@@ -215,7 +215,11 @@ browser assist. It also recognizes LALACHAN/RaraXia/AyaChan/SasaKun requests
 from WeChat and routes them as a story-video workflow: write/save the Chinese
 story, save the Xiaoyunque prompt, upload the eight LALACHAN reference images
 in order, verify non-VIP `Seedance 2.0 Fast`, generate/download the MP4, verify
-with `ffprobe`, and only publish through LazyEdit when requested. It returns
+with `ffprobe`, and send the verified MP4 back to the source WeChat chat. A
+submitted Xiaoyunque job stays as `generation_waiting` and is checked by short
+status-probe cycles; the next poll is based on page state rather than a fixed
+long timeout. LazyEdit import/process and public publish are separate current
+request permissions. It returns
 plain text or JSON:
 
 ```json

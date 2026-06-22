@@ -969,7 +969,12 @@ def require_tools(*names: str) -> None:
 
 
 def run(command: list[str], *, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+    try:
+        proc = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+    except FileNotFoundError as exc:
+        if not check:
+            return subprocess.CompletedProcess(command, 127, "", str(exc))
+        raise RuntimeError(f"{command[0]} is not installed or not on PATH") from exc
     if check and proc.returncode != 0:
         raise RuntimeError(f"{' '.join(command)} failed: {proc.stderr.strip()}")
     return proc

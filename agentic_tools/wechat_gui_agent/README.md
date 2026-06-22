@@ -321,6 +321,16 @@ For `route_kind=generate_video`, the worker writes a route contract under the
 task artifact directory, the subsequent Codex/browser worker must re-check that
 contract before acting, and the result is rejected unless it contains a new MP4
 path or a clear submitted/running/blocked browser status.
+Submitted Xiaoyunque jobs are treated as resumable queue work, not as completed
+answers. The worker stores the thread/page monitor state, suppresses routine
+"still generating" messages by default, runs short deterministic status-probe
+cycles, schedules the next poll from page status such as `还需 N 分钟`, `排队`, or
+`生成中`, and sends the verified MP4 back to the source WeChat chat when it is
+ready. There is no fixed "3 hour then fail" answer; ambiguous or blocked status
+is escalated to the worker/agent, while normal rendering waits cheaply.
+LazyEdit import/process is a separate stage and requires an explicit current
+request for LazyEdit/import/process. Public posting still requires explicit
+current-message publish/post/platform intent.
 Before work starts, a queue item is claimed as `in_progress` under a file lock.
 This prevents a manual `worker once` and the persistent loop from handling the
 same request twice. Stale claims are reclaimed after

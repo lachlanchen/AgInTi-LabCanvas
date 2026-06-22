@@ -494,6 +494,124 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertIsNone(next_policy)
 
+    def test_generate_video_progress_stays_waiting_not_done(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-generate-video",
+            "chat": "🍓我的设备",
+            "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+            "request": "Current coalesced request:\nCould you generate the video?",
+        }
+        result = {
+            "message": "已提交 Xiaoyunque，正在生成中。thread_url=https://xyq.jianying.com/home?thread_id=abc",
+            "files": [],
+            "confirmation": "",
+            "raw": '{"generation":{"status":"submitted","thread_url":"https://xyq.jianying.com/home?thread_id=abc","page_id":"PAGE123456"}}',
+            "data": {"generation": {"status": "submitted", "thread_url": "https://xyq.jianying.com/home?thread_id=abc", "page_id": "PAGE123456"}},
+        }
+
+        worker.apply_send_outcome(task, result, [])
+
+        self.assertEqual(task["status"], worker.GENERATED_VIDEO_WAITING_STATUS)
+        self.assertIn("next_poll_at", task)
+        self.assertEqual(task["generated_video_monitor"]["thread_url"], "https://xyq.jianying.com/home?thread_id=abc")
+        self.assertEqual(task["generated_video_monitor"]["page_id"], "PAGE123456")
+
+    def test_generate_video_progress_is_not_sent_by_default(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+            "request": "Current coalesced request:\nCould you generate a 30s video?",
+        }
+        result = {"message": "已提交 Xiaoyunque，生成中。", "files": [], "confirmation": ""}
+
+        self.assertFalse(worker.should_send_worker_result(task, result))
+
+    def test_generate_video_timeout_with_monitor_state_keeps_waiting(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+            "request": "Current coalesced request:\nCould you generate a video?",
+            "generated_video_monitor": {
+                "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                "page_id": "PAGE123456",
+            },
+        }
+        result = {"message": "Worker failed: timed out before completing the task.", "files": [], "confirmation": ""}
+
+        self.assertTrue(worker.generated_video_result_is_nonterminal(task, result))
+        self.assertFalse(worker.should_send_worker_result(task, result))
+
+    def test_generate_video_status_backoff_uses_page_status(self) -> None:
+        worker = load_worker()
+
+        self.assertEqual(worker.generated_video_status_backoff_seconds("大约还需 8 分钟"), 312)
+        self.assertEqual(worker.generated_video_status_backoff_seconds("排队等待中"), 300)
+        self.assertEqual(worker.generated_video_status_backoff_seconds("生成中"), 120)
+        self.assertEqual(worker.generated_video_status_backoff_seconds("", "please generate 30s video"), 180)
+
+    def test_generated_video_waiting_task_reclaims_only_after_poll_time(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-video",
+                        "status": worker.GENERATED_VIDEO_WAITING_STATUS,
+                        "generation_wait_count": 1,
+                        "next_poll_at": 9999999999,
+                    }
+                ],
+            )
+            self.assertIsNone(worker.claim_next_pending(queue))
+            rows = worker.read_tasks(queue)
+            rows[0]["next_poll_at"] = 0
+            worker.write_tasks(queue, rows)
+            claimed = worker.claim_next_pending(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["status"], worker.CLAIMED_STATUS)
+        self.assertEqual(claimed["generation_poll_history"][0]["wait_count"], 1)
+
+    def test_generated_video_monitor_download_result_returns_mp4(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            watcher = tmp_path / "watch_thread_dom_download.py"
+            watcher.write_text("# watcher", encoding="utf-8")
+            video = tmp_path / "task-video.mp4"
+            video.write_bytes(b"video")
+            task = {
+                "id": "task-video",
+                "artifact_dir": str(tmp_path),
+                "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+                "request": "Current coalesced request:\nCould you generate the video?",
+            }
+            monitor = {
+                "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                "page_id": "PAGE123456",
+                "output_dir": str(tmp_path),
+                "filename": "task-video.mp4",
+            }
+
+            with mock.patch.object(worker, "generated_video_watcher_script", return_value=watcher):
+                with mock.patch.object(worker.subprocess, "run", return_value=subprocess.CompletedProcess(["watcher"], 0, f"DONE output={video}\n", "")):
+                    raw = worker.run_generated_video_monitor(task, monitor)
+
+        payload = json.loads(raw)
+        self.assertIn("下载完成", payload["message"])
+        self.assertEqual(payload["files"], [str(video.resolve())])
+
+    def test_lazyedit_import_is_not_public_publish_intent(self) -> None:
+        worker = load_worker()
+
+        self.assertFalse(worker.has_public_publish_intent("upload the generated video to LazyEdit only"))
+        self.assertTrue(worker.wants_lazyedit_import("upload the generated video to LazyEdit only"))
+        self.assertTrue(worker.has_public_publish_intent("publish the generated video to YouTube"))
+
     def test_exact_video_preflight_failure_returns_deterministic_fail_closed_result(self) -> None:
         worker = load_worker()
         task = {

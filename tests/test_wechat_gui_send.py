@@ -3,6 +3,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -336,6 +337,14 @@ class WeChatGuiSendTests(unittest.TestCase):
             module.screenshot = original_screenshot
             module.open_target = original_open_target
             module.record_event = original_record_event
+
+    def test_run_check_false_handles_missing_gui_tool(self):
+        module = load_wechat_gui_send()
+        with mock.patch.object(module.subprocess, "run", side_effect=FileNotFoundError("missing")):
+            result = module.run(["xdotool", "search", "--class", "wechat"], env={}, check=False)
+
+        self.assertEqual(result.returncode, 127)
+        self.assertIn("missing", result.stderr)
 
     def test_relaxed_title_guard_still_allows_dry_open_review(self):
         module = load_wechat_gui_send()

@@ -84,6 +84,13 @@ For `route_kind=generate_video`, the worker writes a generated-video route
 contract into the task artifact directory, any subsequent worker/browser agent
 must re-check it before acting, and the final result must include a new MP4 path
 or an explicit submitted/running/blocked Xiaoyunque status.
+Submitted Xiaoyunque jobs remain in the queue as `generation_waiting`. The
+worker records thread/page monitor state, runs short status-probe cycles instead
+of one fixed long timeout, derives the next poll from the visible page status,
+and suppresses routine progress messages unless
+`WECHAT_WORKER_SEND_GENERATION_PROGRESS=1`. When the MP4 is downloaded and
+verified, the worker sends it back to the original WeChat chat. LazyEdit
+import/process and public publishing are separate opt-in stages.
 
 Each group keeps two reusable Codex sessions by default: `fast` for immediate
 router replies and `worker` for backend work. The ignored registry is
