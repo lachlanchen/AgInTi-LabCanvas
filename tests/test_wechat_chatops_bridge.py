@@ -110,6 +110,14 @@ class WeChatChatOpsBridgeTests(unittest.TestCase):
         self.assertIn("manual-file-preflight.png", lock_checks)
         self.assertIn("manual-file-sent.png", lock_checks)
         self.assertTrue(any(call[:2] == ["xdotool", "key"] and call[2] == "Return" for call in calls))
+        self.assertTrue(any(call[:2] == ["xdotool", "key"] and call[2] == "Escape" for call in calls))
+        self.assertTrue(
+            any(
+                call[:2] == ["xdotool", "mousemove"]
+                and call[2:5] == ["942", "666", "click"]
+                for call in calls
+            )
+        )
 
 
 if __name__ == "__main__":

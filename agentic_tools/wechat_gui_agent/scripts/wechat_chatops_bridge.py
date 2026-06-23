@@ -397,6 +397,7 @@ def send_file_current_chat(env: dict[str, str], window: Any, file_path: Path, ou
     preflight = output_dir / f"{prefix}-preflight.png"
     run_gui(["import", "-window", "root", str(preflight)], env=env, check=False)
     raise_if_wechat_locked(env, window, preflight, output_dir / f"{prefix}-preflight-lock.png", "before file selection")
+    clear_current_chat_composer(env, window)
     # Native WeChat Linux exposes a folder icon in the composer toolbar. This
     # opens a GTK/Qt file chooser where Ctrl+L accepts an absolute path.
     run_gui(
@@ -415,12 +416,46 @@ def send_file_current_chat(env: dict[str, str], window: Any, file_path: Path, ou
     time.sleep(1.0)
     selected = output_dir / f"{prefix}-selected.png"
     run_gui(["import", "-window", "root", str(selected)], env=env, check=False)
-    run_gui(["xdotool", "key", "Return"], env=env, check=False)
+    click_send_button(env, window)
     time.sleep(1.2)
     sent = output_dir / f"{prefix}-sent.png"
     run_gui(["import", "-window", "root", str(sent)], env=env, check=False)
     raise_if_wechat_locked(env, window, sent, output_dir / f"{prefix}-sent-lock.png", "after file selection")
     return sent
+
+
+def clear_current_chat_composer(env: dict[str, str], window: Any) -> None:
+    run_gui(
+        [
+            "xdotool",
+            "mousemove",
+            str(window.x + int(window.width * 0.66)),
+            str(window.y + window.height - 90),
+            "click",
+            "1",
+        ],
+        env=env,
+        check=False,
+    )
+    time.sleep(0.2)
+    for key_name in ("Escape", "Escape", "ctrl+a", "BackSpace", "Delete"):
+        run_gui(["xdotool", "key", key_name], env=env, check=False)
+        time.sleep(0.1)
+
+
+def click_send_button(env: dict[str, str], window: Any) -> None:
+    run_gui(
+        [
+            "xdotool",
+            "mousemove",
+            str(window.x + window.width - 58),
+            str(window.y + window.height - 34),
+            "click",
+            "1",
+        ],
+        env=env,
+        check=False,
+    )
 
 
 def raise_if_wechat_locked(env: dict[str, str], window: Any, screenshot_path: Path, crop_path: Path, stage: str) -> None:

@@ -257,6 +257,43 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertIsNone(route)
 
+    def test_agent_completion_note_reason_does_not_override_to_worker(self) -> None:
+        config = self.backend_chat_config("鏈接", "web_clip_inbox")
+        config["analysis_mode"] = "internet_clip_inbox"
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row(
+            "已按这条 DeepTech 卡片做了可用总结：公众号正文被微信验证页拦截，"
+            "未直接读到全文；我基于卡片元数据整理了核心观点。",
+            sender="self",
+            local_id=125,
+            server_id="srv-125",
+        )
+        original = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+                "ok": True,
+                "message": json.dumps(
+                    {
+                        "route_kind": "chat_only",
+                        "project": "unknown",
+                        "worker_needed": False,
+                        "needs_recent_media": False,
+                        "public_publish_intent": False,
+                        "public_publish_allowed": False,
+                        "external_action_allowed": False,
+                        "source_policy": "current_request_only",
+                        "reason": "Latest content is a repeat completion note; no new user task is present.",
+                        "confidence": 0.95,
+                    }
+                ),
+            }
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+        self.assertIsNone(route)
+
     def test_ack_disabled_still_routes_backend_task_without_ack_text(self) -> None:
         config = self.base_config()
         config["agent_route_enabled"] = True

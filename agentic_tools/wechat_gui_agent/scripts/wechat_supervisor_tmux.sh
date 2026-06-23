@@ -192,12 +192,29 @@ worker_command() {
     "$ROOT" "$label" "$QUEUE" "$LOG_DIR/supervisor-$label.log"
 }
 
+stop_gui_senders_for_reload() {
+  local pids
+  pids="$(pgrep -f '[w]echat_gui_agent/scripts/wechat_gui_send.py' || true)"
+  [[ -n "$pids" ]] || return 0
+  echo "Stopping GUI send helper(s) before reload: $pids"
+  for pid in $pids; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  sleep 0.5
+  for pid in $pids; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
 reload_worker_windows() {
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Session not running: $SESSION" >&2
     echo "Use start or restart-all only when you intentionally want to launch the WeChat client." >&2
     return 1
   fi
+  stop_gui_senders_for_reload
   respawn_or_new_pane_by_start_command "decrypt-refresh" "wechat_decrypt_refresh_loop.sh" \
     "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh decrypt-refresh agentic_tools/wechat_gui_agent/scripts/wechat_decrypt_refresh_loop.sh >> '$LOG_DIR/supervisor-decrypt-refresh.log' 2>&1"
   IFS=',' read -r -a DIRECT_CONFIGS <<< "$CONFIGS"

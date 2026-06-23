@@ -314,14 +314,7 @@ def send_one(
     compose_window = window_from_guard(guard) or window
     focus(env, compose_window)
 
-    # Click the message composer. This is deliberately biased toward the lower
-    # right pane so it does not send from the search box.
-    click(env, compose_window.x + int(compose_window.width * 0.66), compose_window.y + compose_window.height - 80)
-    time.sleep(pause)
-    hotkey(env, "ctrl+a")
-    time.sleep(0.2)
-    key(env, "BackSpace")
-    time.sleep(0.2)
+    clear_composer(env, compose_window, pause)
     paste_text(env, message)
     time.sleep(pause)
     composed_path = out_dir / f"{shot_prefix}-composed.png"
@@ -352,6 +345,20 @@ def send_one(
         metadata={"target": target.__dict__, "guard": guard},
     )
     return {"target": target.name, "status": status, "screenshot_prefix": shot_prefix}
+
+
+def clear_composer(env: dict[str, str], window: Window, pause: float) -> None:
+    """Clear stale text or attachment drafts before composing a new send."""
+    # Click the message composer. This is deliberately biased toward the lower
+    # right pane so it does not send from the search box.
+    click(env, window.x + int(window.width * 0.66), window.y + window.height - 80)
+    time.sleep(pause)
+    for key_name in ("Escape", "Escape", "ctrl+a", "BackSpace", "Delete"):
+        if "+" in key_name:
+            hotkey(env, key_name)
+        else:
+            key(env, key_name)
+        time.sleep(0.15)
 
 
 def open_target(

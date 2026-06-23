@@ -68,6 +68,46 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertEqual(policy["reasoning_effort"], "medium")
 
+    def test_research_route_blocks_video_publish_preflight_fallback(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "research-with-boilerplate-video-words",
+            "chat": "鏈接",
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "needs_recent_media": True,
+                "public_publish_allowed": False,
+            },
+            "request": (
+                "Handle this WeChat request as backend work. Generic tool playbook mentions "
+                "video, subtitle, caption, LazyEdit, AutoPublish, and publish folder.\n\n"
+                "Current coalesced request:\n"
+                "Summarize this WeChat article card about Michael Jordan and economics."
+            ),
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            preflight = worker.prepare_worker_preflight(task, Path(tmp))
+
+        self.assertEqual(preflight, {})
+        self.assertFalse(worker.is_video_publish_task(task))
+        self.assertFalse(worker.should_preflight_autopublish(task))
+
+    def test_matching_lazyedit_publish_jobs_deduplicates_numeric_string_ids(self) -> None:
+        worker = load_worker()
+        with mock.patch.object(
+            worker,
+            "lazyedit_api_get",
+            return_value={"jobs": [{"id": "210", "video_id": 404, "status": "done"}]},
+        ):
+            jobs = worker.matching_lazyedit_publish_jobs(
+                404,
+                {"payload": {"publish_job": {"job": {"id": 210, "video_id": 404, "status": "done"}}}},
+            )
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["id"], "210")
+
     def test_worker_policy_uses_routine_default_for_long_research_summary(self) -> None:
         worker = load_worker()
         request = (
@@ -2813,6 +2853,26 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(task["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
         self.assertEqual(task["send_deferred_reason"], "gui_send_timeout")
 
+    def test_reaper_kills_orphaned_gui_sender_after_short_timeout(self) -> None:
+        worker = load_worker()
+        run_calls = [
+            subprocess.CompletedProcess(["pgrep"], 0, "1234\n", ""),
+            subprocess.CompletedProcess(["ps"], 0, "1 16\n", ""),
+        ]
+        with mock.patch.object(worker.subprocess, "run", side_effect=run_calls), mock.patch.object(
+            worker.os, "kill"
+        ) as kill_mock, mock.patch.dict(
+            worker.os.environ,
+            {
+                "WECHAT_WORKER_ORPHAN_GUI_SEND_SECONDS": "15",
+                "WECHAT_WORKER_STALE_GUI_SEND_SECONDS": "180",
+            },
+            clear=False,
+        ):
+            worker.reap_stale_orphaned_gui_senders()
+
+        kill_mock.assert_called_once_with(1234, worker.signal.SIGTERM)
+
     def test_run_send_subprocess_defers_when_gui_lock_is_busy(self) -> None:
         worker = load_worker()
         original_lock_busy = worker.gui_send_lock_busy
@@ -2907,6 +2967,66 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 worker.os.environ.pop("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", None)
             else:
                 worker.os.environ["WECHAT_WORKER_FAILED_SEND_MAX_RETRIES"] = original_max_retries
+
+    def test_claim_next_deferred_send_recovers_transport_failed_after_retry_limit(self) -> None:
+        worker = load_worker()
+        original_timeout_backoff = worker.os.environ.get("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS")
+        original_failed_max = worker.os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES")
+        original_transient_max = worker.os.environ.get("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES")
+        original_recovery = worker.os.environ.get("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES")
+        original_lock_busy = worker.gui_send_lock_busy
+        try:
+            worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = "0"
+            worker.os.environ["WECHAT_WORKER_FAILED_SEND_MAX_RETRIES"] = "0"
+            worker.os.environ["WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES"] = "5"
+            worker.os.environ["WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES"] = "1"
+            worker.gui_send_lock_busy = lambda: False
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-timeout-send-failed",
+                            "chat": "鏈接",
+                            "status": "send_failed",
+                            "send_deferred_reason": "gui_send_timeout",
+                            "send_retry_count": 5,
+                            "send_errors": [
+                                "attempt 1: send command failed with exit 124; stderr=WECHAT_SEND_TIMEOUT",
+                                "transient send retry limit reached (5 attempts)",
+                            ],
+                            "result": {"message": "summary", "confirmation": "", "files": []},
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+
+                self.assertIsNotNone(claimed)
+                assert claimed is not None
+                self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+                self.assertEqual(claimed["send_retry_count"], 1)
+                self.assertEqual(claimed["send_failed_recovery_count"], 1)
+                self.assertEqual(claimed["send_deferred_reason"], "gui_send_timeout")
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            if original_timeout_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = original_timeout_backoff
+            if original_failed_max is None:
+                worker.os.environ.pop("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_FAILED_SEND_MAX_RETRIES"] = original_failed_max
+            if original_transient_max is None:
+                worker.os.environ.pop("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES"] = original_transient_max
+            if original_recovery is None:
+                worker.os.environ.pop("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES"] = original_recovery
 
     def test_claim_next_deferred_send_stops_transient_retry_loop(self) -> None:
         worker = load_worker()
@@ -3026,6 +3146,49 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 self.assertIsNotNone(claimed)
                 assert claimed is not None
                 self.assertEqual(claimed["id"], "verified-publish")
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = original_backoff
+
+    def test_claim_next_deferred_send_uses_newest_within_same_priority(self) -> None:
+        worker = load_worker()
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS")
+        original_lock_busy = worker.gui_send_lock_busy
+        try:
+            worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = "0"
+            worker.gui_send_lock_busy = lambda: False
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "older-summary",
+                            "chat": "鏈接",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "send_deferred_reason": "gui_send_timeout",
+                            "last_send_attempt_at": "2026-06-23T10:00:00",
+                            "result": {"message": "older", "files": []},
+                        },
+                        {
+                            "id": "newer-summary",
+                            "chat": "鏈接",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "send_deferred_reason": "gui_send_timeout",
+                            "last_send_attempt_at": "2026-06-23T10:30:00",
+                            "result": {"message": "newer", "files": []},
+                        },
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+
+                self.assertIsNotNone(claimed)
+                assert claimed is not None
+                self.assertEqual(claimed["id"], "newer-summary")
         finally:
             worker.gui_send_lock_busy = original_lock_busy
             if original_backoff is None:
@@ -3436,6 +3599,33 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(tasks[0]["send_deferred_reason"], "required_artifact_delivery")
         self.assertNotIn("completed_at", tasks[0])
 
+    def test_repair_missing_artifact_delivery_skips_best_effort_research_files(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            summary = tmp_path / "summary.md"
+            summary.write_text("summary", encoding="utf-8")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-done-research",
+                        "chat": "鏈接",
+                        "status": "done",
+                        "completed_at": "2026-01-01T00:00:00",
+                        "route_decision": {"route_kind": "research_or_summary"},
+                        "result": {"message": "sent", "confirmation": "", "files": [str(summary)]},
+                    }
+                ],
+            )
+
+            payload = worker.repair_missing_artifact_deliveries(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(payload["repaired_count"], 0)
+        self.assertEqual(tasks[0]["status"], "done")
+
     def test_repair_missing_artifact_delivery_skips_sent_mp4(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -3508,6 +3698,44 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         required = [path.suffix for path in worker.required_delivery_file_paths(result)]
 
         self.assertEqual(required, [".md", ".tex", ".png", ".kicad_pcb", ".step", ".mp4"])
+
+    def test_research_summary_files_are_best_effort_unless_explicitly_required(self) -> None:
+        worker = load_worker()
+        task = {"route_decision": {"route_kind": "research_or_summary"}}
+        result = {"message": "summary", "files": ["/tmp/summary.md", "/tmp/thumb.png"]}
+
+        self.assertFalse(worker.result_requires_file_delivery(task, result))
+        result["data"] = {"require_file_delivery": True}
+        self.assertTrue(worker.result_requires_file_delivery(task, result))
+
+    def test_load_send_target_registry_overrides_direct_coordinates(self) -> None:
+        worker = load_worker()
+        direct = {
+            "name": "鏈接",
+            "query": "鏈接",
+            "expected_title": "鏈接",
+            "result_click": [165, 125],
+            "fallback_clicks": [[165, 100]],
+        }
+        registry = {
+            "鏈接": {
+                "name": "鏈接",
+                "query": "鏈接",
+                "expected_title": "鏈接",
+                "result_click": [165, 170],
+                "fallback_clicks": [[165, 170], [240, 170]],
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(worker, "load_direct_config_send_target", return_value=direct):
+            target_path = Path(tmp) / "send_targets.json"
+            target_path.write_text(json.dumps(registry, ensure_ascii=False), encoding="utf-8")
+
+            target = worker.load_send_target("鏈接", target_path)
+
+        self.assertIsNotNone(target)
+        assert target is not None
+        self.assertEqual(target["result_click"], [165, 170])
+        self.assertEqual(target["fallback_clicks"], [[165, 170], [240, 170]])
 
     def test_worker_send_message_disables_wechat_search_by_default(self) -> None:
         worker = load_worker()

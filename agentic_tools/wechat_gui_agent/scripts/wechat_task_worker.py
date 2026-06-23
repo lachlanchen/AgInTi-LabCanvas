@@ -501,6 +501,9 @@ def result_requires_file_delivery(task: dict[str, Any] | None, result: dict[str,
         return False
     if os.environ.get("WECHAT_WORKER_REQUIRE_FILE_SEND", "0") == "1":
         return True
+    route = task_route_decision(task or {})
+    if route and str(route.get("route_kind") or "") == "research_or_summary":
+        return bool((result.get("data") or {}).get("require_file_delivery")) if isinstance(result.get("data"), dict) else False
     if required_delivery_file_paths(result):
         return True
     if task is not None and is_generate_video_task(task) and generated_video_has_file(result):
@@ -1431,7 +1434,7 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
                 continue
             candidates.append(index)
         if candidates:
-            candidates.sort(key=lambda idx: (deferred_send_priority(tasks[idx]), str(tasks[idx].get("created_at") or "")))
+            candidates.sort(key=lambda idx: (deferred_send_priority(tasks[idx]), -deferred_send_sort_timestamp(tasks[idx])))
             index = candidates[0]
             task = tasks[index]
             task["status"] = SEND_RETRYING_STATUS
@@ -1452,6 +1455,14 @@ def deferred_send_priority(task: dict[str, Any]) -> int:
     if result_requires_file_delivery(task, task.get("result") if isinstance(task.get("result"), dict) else {}):
         return 2
     return 1
+
+
+def deferred_send_sort_timestamp(task: dict[str, Any]) -> float:
+    for key in ("last_send_attempt_at", "created_at", "completed_at", "resent_at"):
+        value = parse_iso_datetime(str(task.get(key) or ""))
+        if value:
+            return value.timestamp()
+    return 0.0
 
 
 def verified_publish_send_completion(task: dict[str, Any]) -> bool:
@@ -1491,6 +1502,8 @@ def repair_missing_artifact_deliveries(path: Path) -> dict[str, Any]:
                 continue
             result = task.get("result")
             if not isinstance(result, dict):
+                continue
+            if not result_requires_file_delivery(task, result):
                 continue
             required = required_delivery_file_paths(result)
             if not required or required_file_delivery_complete(task, result):
@@ -1571,7 +1584,7 @@ def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
 def stale_send_retrying(task: dict[str, Any], now: datetime) -> bool:
     if task.get("status") != SEND_RETRYING_STATUS:
         return False
-    timeout = int(os.environ.get("WECHAT_WORKER_STALE_SEND_RETRY_SECONDS", "180"))
+    timeout = int(os.environ.get("WECHAT_WORKER_STALE_SEND_RETRY_SECONDS", "45"))
     if timeout <= 0:
         return False
     claimed_at = parse_iso_datetime(str(task.get("send_retry_claimed_at") or ""))
@@ -1589,7 +1602,14 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
     else:
         max_retries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", "0"))
     if max_retries >= 0 and int(task.get("send_retry_count") or 0) >= max_retries:
-        return False
+        max_recoveries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES", "10"))
+        recoveries = int(task.get("send_failed_recovery_count") or 0)
+        if max_recoveries < 0 or recoveries < max_recoveries:
+            task["send_retry_count"] = 0
+            task["send_failed_recovery_count"] = recoveries + 1
+            task["send_failed_recovered_at"] = now.isoformat(timespec="seconds")
+        else:
+            return False
     task["send_deferred_reason"] = send_deferred_reason_from_errors(errors)
     if not task["send_deferred_reason"] and verified_publish_send_completion(task):
         task["send_deferred_reason"] = "gui_send_timeout"
@@ -2046,12 +2066,13 @@ def is_video_publish_task(task: dict[str, Any]) -> bool:
     route = task_route_decision(task)
     if route:
         route_kind = str(route.get("route_kind") or "")
-        if route_kind == "generate_video" and not bool(route.get("public_publish_allowed")):
-            return False
+        if route_kind == "generate_video":
+            return bool(route.get("public_publish_allowed"))
         if route_kind == "publish_video":
             return bool(route.get("public_publish_allowed"))
         if route_kind in {"process_existing_video", "file_download_or_save"}:
             return bool(route.get("needs_recent_media"))
+        return False
     text = task_focus_text(task).lower()
     if has_public_publish_intent(text):
         return True
@@ -2163,6 +2184,7 @@ def should_preflight_autopublish(task: dict[str, Any]) -> bool:
             return bool(route.get("public_publish_allowed"))
         if route_kind in {"process_existing_video", "file_download_or_save"}:
             return bool(route.get("needs_recent_media"))
+        return False
     text = task_focus_text(task).lower()
     if any(marker in text for marker in ("nutstore", "autopublish", "publish folder")):
         return True
@@ -4550,6 +4572,14 @@ def matching_lazyedit_publish_jobs(video_id: int, outcome: dict[str, Any]) -> li
     return jobs
 
 
+def same_local_job_id(left: Any, right: Any) -> bool:
+    left_int = int_or_none(left)
+    right_int = int_or_none(right)
+    if left_int is not None and right_int is not None:
+        return left_int == right_int
+    return str(left or "") == str(right or "")
+
+
 def remote_publish_jobs_for(local_jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not local_jobs or not LAZYEDIT_REMOTE_QUEUE_URL:
         return [{} for _ in local_jobs]
@@ -5589,7 +5619,8 @@ def reap_stale_orphaned_gui_senders() -> None:
     if os.environ.get("WECHAT_WORKER_DISABLE_STALE_SEND_REAPER") == "1":
         return
     max_age = int(os.environ.get("WECHAT_WORKER_STALE_GUI_SEND_SECONDS", "180"))
-    if max_age <= 0:
+    orphan_max_age = int(os.environ.get("WECHAT_WORKER_ORPHAN_GUI_SEND_SECONDS", "15"))
+    if max_age <= 0 and orphan_max_age <= 0:
         return
     try:
         proc = subprocess.run(
@@ -5626,7 +5657,8 @@ def reap_stale_orphaned_gui_senders() -> None:
             age = int(parts[1])
         except ValueError:
             continue
-        if ppid != 1 or age < max_age:
+        age_limit = orphan_max_age if ppid == 1 else max_age
+        if age_limit <= 0 or age < age_limit:
             continue
         try:
             os.kill(pid, signal.SIGTERM)
@@ -5698,10 +5730,7 @@ def load_send_target(chat: str, path: Path) -> dict[str, Any] | None:
     if isinstance(raw, dict):
         registry_target = raw
     if direct_target and registry_target:
-        merged = {**registry_target, **direct_target}
-        if not merged.get("fallback_clicks") and registry_target.get("fallback_clicks"):
-            merged["fallback_clicks"] = registry_target["fallback_clicks"]
-        return merged
+        return {**direct_target, **registry_target}
     return direct_target or registry_target
 
 

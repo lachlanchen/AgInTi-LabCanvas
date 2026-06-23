@@ -1876,8 +1876,21 @@ def route_agent_chat_only_is_completion_status(route_decision: dict[str, Any]) -
     reason = collapse_text(str(route_decision.get("reason") or "")).lower()
     return (
         ("bot" in reason and ("completion" in reason or "status" in reason or "reply" in reason))
+        or "completion note" in reason
+        or "completion/status" in reason
+        or "status recap" in reason
         or "no new backend work" in reason
         or "no new user request" in reason
+        or "no new user task" in reason
+        or "no backend task" in reason
+        or "not a new user" in reason
+        or "not a new task" in reason
+        or "no new task" in reason
+        or "no new action" in reason
+        or "no-op" in reason
+        or "repeat completion" in reason
+        or "repeats prior completion" in reason
+        or "repeated completion" in reason
         or "already done" in reason
         or "already published" in reason
     )

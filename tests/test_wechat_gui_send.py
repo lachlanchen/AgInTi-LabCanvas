@@ -444,6 +444,32 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "dry-run-opened")
 
+    def test_clear_composer_removes_stale_draft_before_paste(self):
+        module = load_wechat_gui_send()
+        calls = []
+        original_click = module.click
+        original_key = module.key
+        original_hotkey = module.hotkey
+        original_sleep = module.time.sleep
+        try:
+            module.click = lambda _env, x, y: calls.append(("click", x, y))
+            module.key = lambda _env, name: calls.append(("key", name))
+            module.hotkey = lambda _env, name: calls.append(("hotkey", name))
+            module.time.sleep = lambda _seconds: None
+
+            module.clear_composer({}, module.Window("1", 10, 20, 1000, 700), 0)
+        finally:
+            module.click = original_click
+            module.key = original_key
+            module.hotkey = original_hotkey
+            module.time.sleep = original_sleep
+
+        self.assertEqual(calls[0], ("click", 670, 640))
+        self.assertIn(("key", "Escape"), calls)
+        self.assertIn(("hotkey", "ctrl+a"), calls)
+        self.assertIn(("key", "BackSpace"), calls)
+        self.assertIn(("key", "Delete"), calls)
+
     def test_open_target_falls_back_after_failed_open_click(self):
         module = load_wechat_gui_send()
         target = module.TargetSpec(
