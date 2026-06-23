@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -632,6 +633,101 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(result["search_disabled"])
         self.assertEqual(result["method"], "current")
+
+    def test_visible_chat_list_match_reads_target_row_from_tsv(self):
+        module = load_wechat_gui_send()
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t10\t1\t1\t1\t64\t164\t58\t15\t24.3\t懒",
+                "5\t1\t10\t1\t1\t2\t88\t160\t9\t28\t96.5\t人",
+                "5\t1\t10\t1\t1\t3\t96\t164\t26\t15\t95.7\t科研",
+                "5\t1\t11\t1\t1\t1\t267\t168\t25\t8\t86.0\t10:14",
+            ]
+        )
+
+        match = module.visible_chat_list_match_from_tsv(
+            tsv,
+            module.TargetSpec(
+                name="懒人科研",
+                query="懒人科研",
+                expected_title="懒人科研",
+                expected_title_aliases=("SR AEF",),
+            ),
+        )
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match["text"], "懒人科研")
+        self.assertGreater(match["center_y"], 160)
+
+    def test_open_target_clicks_visible_chat_list_match_before_static_rows(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="懒人科研",
+            query="懒人科研",
+            expected_title="懒人科研",
+            result_click=(165, 100),
+        )
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t10\t1\t1\t1\t64\t164\t58\t15\t80\t懒",
+                "5\t1\t10\t1\t1\t2\t88\t160\t9\t28\t80\t人",
+                "5\t1\t10\t1\t1\t3\t96\t164\t26\t15\t80\t科研",
+            ]
+        )
+        original_click = module.click
+        original_run = module.run
+        original_screenshot = module.screenshot
+        original_verify = module.verify_opened_title
+        original_title_candidates = module.title_window_candidates
+        original_sleep = module.time.sleep
+        clicks = []
+        try:
+            module.click = lambda _env, x, y: clicks.append((x, y))
+            module.screenshot = lambda _env, path: Path(path).write_bytes(b"fake screenshot")
+            module.title_window_candidates = lambda _env, window: [window]
+            module.time.sleep = lambda _seconds: None
+
+            def fake_run(command, *, env, check=True):
+                if command[0] == "tesseract":
+                    return subprocess.CompletedProcess(command, 0, tsv, "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            def fake_verify(_env, window, _screenshot, _target, _crop, method):
+                return {
+                    "ok": method.startswith("visible_chat_list_ocr"),
+                    "method": method,
+                    "ocr_text": "懒人科研",
+                    "compose_window": module.window_to_dict(window),
+                }
+
+            module.run = fake_run
+            module.verify_opened_title = fake_verify
+            with tempfile.TemporaryDirectory() as tmp:
+                result = module.open_target(
+                    {},
+                    module.Window("1", 100, 200, 1000, 700),
+                    target,
+                    0,
+                    Path(tmp),
+                    "wechat-visible-row-test",
+                    False,
+                    False,
+                    False,
+                )
+        finally:
+            module.click = original_click
+            module.run = original_run
+            module.screenshot = original_screenshot
+            module.verify_opened_title = original_verify
+            module.title_window_candidates = original_title_candidates
+            module.time.sleep = original_sleep
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(clicks, [(265, 434)])
+        self.assertEqual(result["visible_chat_list_match"]["text"], "懒人科研")
 
     def test_target_search_requires_explicit_opt_in(self):
         module = load_wechat_gui_send()

@@ -99,10 +99,17 @@ publication.
    - Existing generated videos quoted later are resolved by exact WeChat video
      MD5/length against same-chat task artifacts, then copied to AutoPublish
      with the original source task summary passed into LazyEdit prompt files.
+   - LazyEdit execution must use `source ... && conda activate lazyedit &&
+     python scripts/lazyedit_publish.py ... --json`; an empty JSON payload after
+     zero exit means the publish command did not actually submit a job.
    - “Queued”, “submitted”, “running”, or “imported” are not “published”.
      Existing-video publish work uses `publish_poststage_pending` until all
      requested platforms have terminal LazyEdit/remote evidence or public URL
      proof.
+   - After terminal evidence exists, the outbox still owns WeChat completion
+     delivery. If desktop GUI send is blocked by a blank title guard or timeout,
+     a verified text-only completion may use the Android ADB fallback, but only
+     after screenshot OCR matches the exact source chat title.
 
 ## State Rules
 

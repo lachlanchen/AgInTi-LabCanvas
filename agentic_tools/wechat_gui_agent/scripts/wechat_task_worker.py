@@ -313,7 +313,8 @@ def flush_one_deferred_send(
     send_targets: Path = DEFAULT_SEND_TARGETS,
     log_idle: bool = True,
 ) -> bool:
-    task = claim_next_deferred_send(queue)
+    chat_filter = chat if chat and chat != "wechat-chat" else None
+    task = claim_next_deferred_send(queue, chat_filter=chat_filter)
     if not task:
         if log_idle:
             print(json.dumps({"status": "no-deferred-send-ready"}, ensure_ascii=False))
@@ -324,6 +325,8 @@ def flush_one_deferred_send(
         task["status"] = "send_failed"
         task["send_errors"] = ["stored result missing or invalid; cannot flush deferred send"]
     else:
+        result = refresh_existing_video_publish_deferred_result(task, result)
+        task["result"] = result
         target_chat = str(task.get("chat") or chat)
         errors = send_result_with_retries(result, target_chat, send_targets, task=task)
         apply_send_outcome(task, result, errors)
@@ -341,6 +344,57 @@ def flush_one_deferred_send(
     print(json.dumps(task, ensure_ascii=False, indent=2))
     log_worker_event(str(task.get("status") or "unknown"), task)
     return True
+
+
+def refresh_existing_video_publish_deferred_result(task: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """Re-probe publish state before retrying a deferred status message."""
+    if not is_video_publish_task(task):
+        return result
+    poststage = task.get("existing_video_publish_poststage") if isinstance(task.get("existing_video_publish_poststage"), dict) else {}
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    if not poststage and isinstance(data.get("poststage"), dict):
+        poststage = data["poststage"]
+    if not poststage:
+        return result
+    video_id = int_or_none(poststage.get("video_id"))
+    if video_id is None:
+        return result
+    platforms = [str(item) for item in poststage.get("platforms") or detect_publish_platforms(task)]
+    target = Path(str(poststage.get("target") or poststage.get("target_name") or ""))
+    verification = verify_lazyedit_publish_stage(video_id, platforms, target, {"status": "probe"})
+    old_stage = ""
+    if isinstance(data.get("publish_stage"), dict):
+        old_stage = str(data["publish_stage"].get("stage") or "")
+    if not verification.get("verified") and str(verification.get("stage") or "") == old_stage:
+        return result
+    message = summarize_lazyedit_publish_outcome(video_id, platforms, target, {"status": "probe"}, verification=verification)
+    payload: dict[str, Any] = {
+        "message": message,
+        "files": [],
+        "confirmation": "",
+        "publish_stage": verification,
+    }
+    confirmation = publish_stage_confirmation(verification)
+    if confirmation:
+        payload["confirmation"] = confirmation
+        payload["poststage"] = poststage
+    elif not bool(verification.get("verified")):
+        payload["publish_poststage_retry"] = {
+            "status": verification.get("stage") or "not_verified",
+            "retry_seconds": publish_stage_retry_seconds(verification),
+            "poststage": poststage,
+            "outcome": {"status": "probe"},
+        }
+    task["publish_deferred_refresh_at"] = datetime.now().isoformat(timespec="seconds")
+    task["publish_deferred_refresh_from"] = old_stage
+    task["publish_deferred_refresh_to"] = verification.get("stage")
+    return {
+        "message": str(payload.get("message") or ""),
+        "confirmation": str(payload.get("confirmation") or ""),
+        "files": [],
+        "raw": json.dumps(payload, ensure_ascii=False),
+        "data": payload,
+    }
 
 
 def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: list[str]) -> None:
@@ -812,6 +866,12 @@ def send_result_with_retries(
                 import time
 
                 time.sleep(delay)
+    if task is not None and android_text_fallback_allowed(task, result, errors):
+        try:
+            send_result_text_via_android_fallback(result, target_chat, task)
+            return []
+        except Exception as exc:
+            errors.append(f"android fallback: {type(exc).__name__}: {str(exc)[:500]}")
     return errors
 
 
@@ -868,6 +928,172 @@ def send_result_once(
         send_message(result["confirmation"], target_chat, send_targets, target=target)
     if not require_file_delivery:
         send_files()
+
+
+def android_text_fallback_allowed(task: dict[str, Any], result: dict[str, Any], errors: list[str]) -> bool:
+    if os.environ.get("WECHAT_WORKER_ANDROID_TEXT_FALLBACK", "1") != "1":
+        return False
+    if not errors or not send_errors_indicate_deferable(errors):
+        return False
+    if not (verified_publish_send_completion(task) or verified_publish_result_completion(result)):
+        return False
+    if result.get("files"):
+        return False
+    return bool(android_publish_completion_message(result))
+
+
+def android_publish_completion_message(result: dict[str, Any]) -> str:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    publish_stage = data.get("publish_stage") if isinstance(data.get("publish_stage"), dict) else {}
+    if not (publish_stage.get("verified") or str(publish_stage.get("stage") or "") == "published_verified"):
+        return ""
+    video_id = publish_stage.get("video_id")
+    platforms = [str(item) for item in publish_stage.get("verified_platforms") or publish_stage.get("requested_platforms") or []]
+    local_jobs = publish_stage.get("local_jobs") if isinstance(publish_stage.get("local_jobs"), list) else []
+    remote_jobs = publish_stage.get("remote_jobs") if isinstance(publish_stage.get("remote_jobs"), list) else []
+    local_job = next((item for item in local_jobs if isinstance(item, dict)), {})
+    remote_job = next((item for item in remote_jobs if isinstance(item, dict)), {})
+    local_id = local_job.get("id") or ""
+    remote_id = remote_job.get("id") or local_job.get("remote_job_id") or ""
+    parts = ["Published OK"]
+    if video_id not in (None, ""):
+        parts.append(f"video_id {video_id}")
+    if platforms:
+        parts.append(f"platforms {' '.join(platforms)} done")
+    if local_id:
+        parts.append(f"LazyEdit job {local_id}")
+    if remote_id:
+        parts.append(f"remote job {remote_id}")
+    return sanitize_android_input_text(". ".join(parts) + ".")
+
+
+def send_result_text_via_android_fallback(result: dict[str, Any], target_chat: str, task: dict[str, Any]) -> None:
+    message = android_publish_completion_message(result)
+    if not message:
+        raise RuntimeError("no android fallback message")
+    adb = os.environ.get("ADB", "adb")
+    serial = resolve_android_serial(adb, os.environ.get("ANDROID_SERIAL", ""))
+    require_android_tools(adb)
+    android_shell(adb, serial, ["input", "keyevent", "224"], check=False)
+    android_shell(adb, serial, ["wm", "dismiss-keyguard"], check=False)
+    android_shell(adb, serial, ["svc", "power", "stayon", "true"], check=False)
+    before = android_screenshot(adb, serial, task, "before-send")
+    ocr_text = android_header_ocr(before)
+    if not android_title_matches(target_chat, ocr_text):
+        raise RuntimeError(f"android target title guard failed for {target_chat}: OCR={ocr_text!r}")
+    tap = parse_xy_env("WECHAT_WORKER_ANDROID_COMPOSER_TAP", (430, 2035))
+    android_shell(adb, serial, ["input", "tap", str(tap[0]), str(tap[1])])
+    time.sleep(float(os.environ.get("WECHAT_WORKER_ANDROID_AFTER_TAP_DELAY", "0.6")))
+    android_shell(adb, serial, ["input", "text", android_input_token(message)])
+    time.sleep(float(os.environ.get("WECHAT_WORKER_ANDROID_AFTER_TEXT_DELAY", "0.6")))
+    typed = android_screenshot(adb, serial, task, "typed")
+    send_tap = parse_xy_env("WECHAT_WORKER_ANDROID_SEND_TAP", (980, 1275))
+    android_shell(adb, serial, ["input", "tap", str(send_tap[0]), str(send_tap[1])])
+    time.sleep(float(os.environ.get("WECHAT_WORKER_ANDROID_AFTER_SEND_DELAY", "1.0")))
+    after = android_screenshot(adb, serial, task, "sent")
+    task["android_text_fallback_send"] = {
+        "sent_at": datetime.now().isoformat(timespec="seconds"),
+        "serial": serial,
+        "chat": target_chat,
+        "ocr_title": ocr_text,
+        "message": message,
+        "screenshots": {
+            "before": str(before),
+            "typed": str(typed),
+            "after": str(after),
+        },
+    }
+
+
+def require_android_tools(adb: str) -> None:
+    missing = [tool for tool in (adb, "convert", "tesseract") if shutil.which(tool) is None]
+    if missing:
+        raise RuntimeError(f"android fallback missing tools: {', '.join(missing)}")
+
+
+def resolve_android_serial(adb: str, serial: str) -> str:
+    if serial:
+        state = subprocess.run([adb, "-s", serial, "get-state"], capture_output=True, text=True, check=False)
+        if state.returncode == 0 and state.stdout.strip() == "device":
+            return serial
+        raise RuntimeError(f"android device {serial} is not available")
+    proc = subprocess.run([adb, "devices"], capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(f"adb devices failed: {(proc.stderr or proc.stdout).strip()[:300]}")
+    devices = [line.split()[0] for line in proc.stdout.splitlines()[1:] if len(line.split()) >= 2 and line.split()[1] == "device"]
+    if len(devices) == 1:
+        return devices[0]
+    if not devices:
+        raise RuntimeError("no authorized android device available")
+    raise RuntimeError(f"multiple android devices available: {', '.join(devices)}")
+
+
+def android_shell(adb: str, serial: str, command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.run([adb, "-s", serial, "shell", *command], capture_output=True, text=True, check=False)
+    if check and proc.returncode != 0:
+        raise RuntimeError(f"adb shell failed: {' '.join(command)}: {(proc.stderr or proc.stdout).strip()[:300]}")
+    return proc
+
+
+def android_screenshot(adb: str, serial: str, task: dict[str, Any], label: str) -> Path:
+    out_dir = ROOT / "output" / "android_device_agent" / datetime.now().strftime("%F")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    task_id = safe_slug(str(task.get("id") or "task"))
+    path = out_dir / f"{task_id}-{label}-{datetime.now().strftime('%H%M%S')}.png"
+    proc = subprocess.run([adb, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True, check=False)
+    if proc.returncode != 0:
+        err = proc.stderr.decode(errors="replace") if isinstance(proc.stderr, bytes) else str(proc.stderr)
+        raise RuntimeError(f"android screenshot failed: {err[:300]}")
+    path.write_bytes(proc.stdout)
+    return path
+
+
+def android_header_ocr(screenshot: Path) -> str:
+    crop = os.environ.get("WECHAT_WORKER_ANDROID_HEADER_CROP", "720x140+180+80")
+    langs = os.environ.get("WECHAT_WORKER_ANDROID_OCR_LANGS", "chi_sim+chi_tra+eng")
+    psm = os.environ.get("WECHAT_WORKER_ANDROID_OCR_PSM", "6")
+    header = screenshot.with_name(f"{screenshot.stem}-header.png")
+    proc = subprocess.run(["convert", str(screenshot), "-crop", crop, str(header)], capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(f"android header crop failed: {(proc.stderr or proc.stdout).strip()[:300]}")
+    ocr = subprocess.run(["tesseract", str(header), "stdout", "-l", langs, "--psm", psm], capture_output=True, text=True, check=False)
+    if ocr.returncode != 0:
+        raise RuntimeError(f"android header OCR failed: {(ocr.stderr or ocr.stdout).strip()[:300]}")
+    return ocr.stdout.strip()
+
+
+def android_title_matches(target_chat: str, ocr_text: str) -> bool:
+    return normalize_android_title(target_chat) in normalize_android_title(ocr_text)
+
+
+def normalize_android_title(value: str) -> str:
+    return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", value)
+
+
+def sanitize_android_input_text(value: str) -> str:
+    ascii_text = value.encode("ascii", errors="ignore").decode("ascii")
+    ascii_text = re.sub(r"[^A-Za-z0-9 .,;:!?_/@#+=()\\-]+", " ", ascii_text)
+    return re.sub(r"\s+", " ", ascii_text).strip()
+
+
+def android_input_token(value: str) -> str:
+    text = sanitize_android_input_text(value)
+    if not text:
+        raise RuntimeError("android input text is empty after sanitization")
+    return text.replace("%", "%25").replace(" ", "%s")
+
+
+def parse_xy_env(name: str, default: tuple[int, int]) -> tuple[int, int]:
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    parts = [part.strip() for part in raw.split(",")]
+    if len(parts) != 2:
+        return default
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return default
 
 
 def partition_result_files_for_wechat(files: list[str]) -> tuple[list[Path], list[Path]]:
@@ -1163,7 +1389,7 @@ def existing_video_publish_poststage_ready(task: dict[str, Any], now: datetime) 
     return now.timestamp() >= next_poststage
 
 
-def claim_next_deferred_send(path: Path) -> dict[str, Any] | None:
+def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict[str, Any] | None:
     """Claim one deferred send if its retry backoff has elapsed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
@@ -1174,7 +1400,10 @@ def claim_next_deferred_send(path: Path) -> dict[str, Any] | None:
         now = datetime.now()
         now_text = now.isoformat(timespec="seconds")
         changed = False
+        candidates: list[int] = []
         for index, task in enumerate(tasks):
+            if chat_filter and str(task.get("chat") or "") != chat_filter:
+                continue
             status = str(task.get("status") or "")
             if status == "send_failed":
                 if not failed_send_retryable(task, now):
@@ -1200,6 +1429,11 @@ def claim_next_deferred_send(path: Path) -> dict[str, Any] | None:
                 tasks[index] = task
                 changed = True
                 continue
+            candidates.append(index)
+        if candidates:
+            candidates.sort(key=lambda idx: (deferred_send_priority(tasks[idx]), str(tasks[idx].get("created_at") or "")))
+            index = candidates[0]
+            task = tasks[index]
             task["status"] = SEND_RETRYING_STATUS
             task["worker_id"] = worker_id
             task["send_retry_claimed_at"] = now_text
@@ -1210,6 +1444,27 @@ def claim_next_deferred_send(path: Path) -> dict[str, Any] | None:
         if changed:
             write_tasks(path, tasks)
         return None
+
+
+def deferred_send_priority(task: dict[str, Any]) -> int:
+    if verified_publish_send_completion(task):
+        return 0
+    if result_requires_file_delivery(task, task.get("result") if isinstance(task.get("result"), dict) else {}):
+        return 2
+    return 1
+
+
+def verified_publish_send_completion(task: dict[str, Any]) -> bool:
+    result = task.get("result")
+    if not isinstance(result, dict):
+        return False
+    return verified_publish_result_completion(result)
+
+
+def verified_publish_result_completion(result: dict[str, Any]) -> bool:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    publish_stage = data.get("publish_stage") if isinstance(data.get("publish_stage"), dict) else {}
+    return bool(publish_stage.get("verified")) or str(publish_stage.get("stage") or "") == "published_verified"
 
 
 def repair_missing_artifact_deliveries(path: Path) -> dict[str, Any]:
@@ -1327,12 +1582,17 @@ def stale_send_retrying(task: dict[str, Any], now: datetime) -> bool:
 
 def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
     errors = [str(item) for item in task.get("send_errors") or []]
-    if not send_errors_indicate_deferable(errors):
+    if not send_errors_indicate_deferable(errors) and not verified_publish_send_completion(task):
         return False
-    max_retries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", "0"))
+    if verified_publish_send_completion(task):
+        max_retries = int(os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", "12"))
+    else:
+        max_retries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", "0"))
     if max_retries >= 0 and int(task.get("send_retry_count") or 0) >= max_retries:
         return False
     task["send_deferred_reason"] = send_deferred_reason_from_errors(errors)
+    if not task["send_deferred_reason"] and verified_publish_send_completion(task):
+        task["send_deferred_reason"] = "gui_send_timeout"
     return deferred_send_backoff_elapsed(task, now)
 
 
@@ -1340,7 +1600,10 @@ def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
     reason = str(task.get("send_deferred_reason") or "")
     if reason not in {"gui_send_busy", "gui_send_timeout", "wechat_entry_required", "title_guard_blank"}:
         return False
-    max_retries = int(os.environ.get("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES", "5"))
+    if verified_publish_send_completion(task):
+        max_retries = int(os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", "12"))
+    else:
+        max_retries = int(os.environ.get("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES", "5"))
     if max_retries < 0:
         return False
     return int(task.get("send_retry_count") or 0) >= max_retries
@@ -3660,26 +3923,14 @@ def run_generated_video_lazyedit_command(video_path: Path, task: dict[str, Any],
         command_parts.append(f"--correction-prompt-file {shell_quote(story_file)}")
     if prompt_file:
         command_parts.append(f"--metadata-prompt-file {shell_quote(prompt_file)}")
-    command = ["bash", "-lc", " ".join(command_parts)]
-    try:
-        proc = subprocess.run(
-            command,
-            cwd=LAZYEDIT_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as exc:
-        return {"ok": False, "status": "timeout", "stdout": (exc.stdout or "")[-4000:], "stderr": (exc.stderr or "")[-4000:]}
-    return {
-        "ok": proc.returncode == 0,
-        "status": "done" if proc.returncode == 0 else "failed",
-        "returncode": proc.returncode,
-        "stdout": proc.stdout[-8000:],
-        "stderr": proc.stderr[-4000:],
-        "payload": parse_last_json_object(proc.stdout),
-    }
+    command = ["bash", "-lc", lazyedit_shell_command(command_parts)]
+    return run_lazyedit_publish_subprocess(
+        command,
+        timeout=timeout,
+        video_id=None,
+        platforms=detect_publish_platforms(task, current_only=True) if publish else [],
+        target=video_path,
+    )
 
 
 def should_deterministic_video_publish(task: dict[str, Any]) -> bool:
@@ -3716,6 +3967,19 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
         return None
     target = Path(target_raw)
     if not target.is_file():
+        source_path = Path(str(autopub.get("source_path") or "")).expanduser()
+        if source_path.is_file():
+            target = source_path
+        else:
+            return json.dumps(
+                {
+                    "message": f"视频已匹配但 AutoPublish 目标文件不存在：{target.name or target_raw}。我没有发布；请重新触发保存或重新发送视频。",
+                    "files": [],
+                    "confirmation": "",
+                },
+                ensure_ascii=False,
+            )
+    if not target.is_file():
         return json.dumps(
             {
                 "message": f"视频已匹配但 AutoPublish 目标文件不存在：{target.name or target_raw}。我没有发布；请重新触发保存或重新发送视频。",
@@ -3724,9 +3988,13 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
             },
             ensure_ascii=False,
         )
-    timeout = float(os.environ.get("WECHAT_WORKER_LAZYEDIT_IMPORT_TIMEOUT", "360"))
-    poll = float(os.environ.get("WECHAT_WORKER_LAZYEDIT_IMPORT_POLL_SECONDS", "5"))
-    video_id = wait_for_lazyedit_import(target, timeout=timeout, poll_seconds=poll)
+    video_id = known_lazyedit_video_id_for_autopub(autopub)
+    if video_id is None:
+        timeout = float(os.environ.get("WECHAT_WORKER_LAZYEDIT_IMPORT_TIMEOUT", "360"))
+        poll = float(os.environ.get("WECHAT_WORKER_LAZYEDIT_IMPORT_POLL_SECONDS", "5"))
+        video_id = wait_for_lazyedit_import(target, timeout=timeout, poll_seconds=poll)
+    else:
+        timeout = 0.0
     if video_id is None:
         return json.dumps(
             {
@@ -3748,6 +4016,7 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
         platforms=platforms,
         correction_prompt=correction_prompt,
         metadata_prompt=metadata_prompt,
+        target=target,
     )
     verification = verify_lazyedit_publish_stage(video_id, platforms, target, outcome)
     message = summarize_lazyedit_publish_outcome(video_id, platforms, target, outcome, verification=verification)
@@ -3782,6 +4051,26 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
                 "outcome": compact_publish_outcome(outcome),
             }
     return json.dumps(payload, ensure_ascii=False)
+
+
+def known_lazyedit_video_id_for_autopub(autopub: dict[str, Any]) -> int | None:
+    for key in ("video_id", "lazyedit_video_id"):
+        value = int_or_none(autopub.get(key))
+        if value is not None:
+            return value
+    source_task = autopub.get("source_task") if isinstance(autopub.get("source_task"), dict) else {}
+    texts = [
+        source_task.get("result_message_excerpt"),
+        source_task.get("request_excerpt"),
+        source_task.get("result"),
+    ]
+    for text in texts:
+        if not text:
+            continue
+        match = re.search(r"\bvideo_id\s*[=:]\s*(\d+)\b", str(text), flags=re.I)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def wait_for_lazyedit_import(target: Path, *, timeout: float, poll_seconds: float) -> int | None:
@@ -3842,6 +4131,7 @@ def run_lazyedit_publish_command(
     platforms: list[str],
     correction_prompt: str,
     metadata_prompt: str,
+    target: Path | None = None,
 ) -> dict[str, Any]:
     timeout = float(os.environ.get("WECHAT_WORKER_LAZYEDIT_PUBLISH_TIMEOUT", "10800"))
     process_timeout = os.environ.get("WECHAT_WORKER_LAZYEDIT_PROCESS_TIMEOUT", "3600")
@@ -3868,7 +4158,71 @@ def run_lazyedit_publish_command(
         command_parts.append(f"--correction-prompt-file {shell_quote(correction_prompt)}")
     if metadata_prompt:
         command_parts.append(f"--metadata-prompt-file {shell_quote(metadata_prompt)}")
-    command = ["bash", "-lc", " ".join(command_parts)]
+    command = ["bash", "-lc", lazyedit_shell_command(command_parts)]
+    return run_lazyedit_publish_subprocess(
+        command,
+        timeout=timeout,
+        video_id=video_id,
+        platforms=platforms,
+        target=target,
+    )
+
+
+def run_lazyedit_publish_subprocess(
+    command: list[str],
+    *,
+    timeout: float,
+    video_id: int | None,
+    platforms: list[str],
+    target: Path | None,
+) -> dict[str, Any]:
+    if not lazyedit_publish_watchdog_enabled() or video_id is None:
+        return run_lazyedit_publish_subprocess_blocking(command, timeout=timeout)
+    poll_seconds = lazyedit_publish_watchdog_poll_seconds()
+    start = time.monotonic()
+    next_probe = start + poll_seconds
+    proc = subprocess.Popen(
+        command,
+        cwd=LAZYEDIT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        while True:
+            remaining = max(0.0, timeout - (time.monotonic() - start))
+            if remaining <= 0:
+                proc.kill()
+                stdout, stderr = proc.communicate(timeout=10)
+                return {"ok": False, "status": "timeout", "stdout": (stdout or "")[-4000:], "stderr": (stderr or "")[-4000:], "command": command[-1] if command else ""}
+            try:
+                stdout, stderr = proc.communicate(timeout=min(1.0, remaining))
+                completed = subprocess.CompletedProcess(command, proc.returncode, stdout or "", stderr or "")
+                return lazyedit_publish_proc_result(completed, command=command)
+            except subprocess.TimeoutExpired:
+                now = time.monotonic()
+                if now < next_probe:
+                    continue
+                next_probe = now + poll_seconds
+                verification = verify_lazyedit_publish_stage(video_id, platforms, target or Path(""), {"status": "running"})
+                if str(verification.get("stage") or "") == "waiting_login":
+                    terminate_process(proc)
+                    stdout, stderr = proc.communicate(timeout=10)
+                    return {
+                        "ok": False,
+                        "status": "waiting_login",
+                        "returncode": proc.returncode,
+                        "stdout": (stdout or "")[-8000:],
+                        "stderr": (stderr or "")[-4000:],
+                        "payload": {"publish_stage": verification},
+                        "command": command[-1] if command else "",
+                    }
+    except Exception:
+        terminate_process(proc)
+        raise
+
+
+def run_lazyedit_publish_subprocess_blocking(command: list[str], *, timeout: float) -> dict[str, Any]:
     try:
         proc = subprocess.run(
             command,
@@ -3879,14 +4233,57 @@ def run_lazyedit_publish_command(
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
-        return {"ok": False, "status": "timeout", "stdout": (exc.stdout or "")[-4000:], "stderr": (exc.stderr or "")[-4000:]}
+        return {"ok": False, "status": "timeout", "stdout": (exc.stdout or "")[-4000:], "stderr": (exc.stderr or "")[-4000:], "command": command[-1] if command else ""}
+    return lazyedit_publish_proc_result(proc, command=command)
+
+
+def lazyedit_publish_watchdog_enabled() -> bool:
+    if os.environ.get("WECHAT_WORKER_LAZYEDIT_PUBLISH_WATCHDOG", "1") == "0":
+        return False
+    return bool(LAZYEDIT_REMOTE_LOG_COMMAND)
+
+
+def lazyedit_publish_watchdog_poll_seconds() -> float:
+    try:
+        return max(5.0, float(os.environ.get("WECHAT_WORKER_LAZYEDIT_PUBLISH_WATCHDOG_SECONDS", "30")))
+    except ValueError:
+        return 30.0
+
+
+def terminate_process(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+def lazyedit_shell_command(command_parts: list[str]) -> str:
+    if len(command_parts) < 3:
+        return " ".join(command_parts)
+    return " && ".join([command_parts[0], command_parts[1], " ".join(command_parts[2:])])
+
+
+def lazyedit_publish_proc_result(proc: subprocess.CompletedProcess[str], *, command: list[str]) -> dict[str, Any]:
+    payload = parse_last_json_object(proc.stdout)
+    ok = proc.returncode == 0 and bool(payload)
+    if ok:
+        status = "done"
+    elif proc.returncode == 0:
+        status = "no_json_output"
+    else:
+        status = "failed"
     return {
-        "ok": proc.returncode == 0,
-        "status": "done" if proc.returncode == 0 else "failed",
+        "ok": ok,
+        "status": status,
         "returncode": proc.returncode,
         "stdout": proc.stdout[-8000:],
         "stderr": proc.stderr[-4000:],
-        "payload": parse_last_json_object(proc.stdout),
+        "payload": payload,
+        "command": command[-1] if command else "",
     }
 
 
@@ -3988,7 +4385,7 @@ def should_reissue_existing_video_publish(task: dict[str, Any], poststage: dict[
         return False
     if not poststage.get("platforms"):
         return False
-    max_reissues = int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_MAX_REISSUES", "1"))
+    max_reissues = int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_MAX_REISSUES", "3"))
     if int(task.get("publish_poststage_reissue_count") or 0) >= max_reissues:
         return False
     return should_deterministic_video_publish(task)
@@ -4008,6 +4405,7 @@ def run_existing_video_publish_from_poststage(
         platforms=platforms,
         correction_prompt=str(lazy_context.get("correction_prompt_file") or ""),
         metadata_prompt=str(lazy_context.get("metadata_prompt_file") or ""),
+        target=Path(str(poststage.get("target") or poststage.get("target_name") or "")),
     )
 
 
@@ -4889,7 +5287,10 @@ def file_entries_from_json(data: Any) -> list[str]:
 
 
 def prepare_result_files(result: dict[str, Any], raw_text: str) -> dict[str, Any]:
-    candidates = unique_strings([*result.get("files", []), *extract_artifact_paths(raw_text)])
+    raw_files = result.get("files") or []
+    if not isinstance(raw_files, list):
+        raw_files = [raw_files]
+    candidates = unique_strings([*raw_files, *extract_artifact_paths(raw_text)])
     files: list[str] = []
     skipped: list[dict[str, str]] = []
     for candidate in candidates:

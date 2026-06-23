@@ -37,10 +37,13 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertTrue(wrapper.exists())
         self.assertTrue(wrapper.stat().st_mode & 0o111)
         supervisor_text = supervisor.read_text(encoding="utf-8")
+        wrapper_text = wrapper.read_text(encoding="utf-8")
         self.assertIn("wechat_worker_guarded_loop.sh", supervisor_text)
         self.assertIn('WORKER_COUNT="${WECHAT_WORKER_COUNT:-2}"', supervisor_text)
         self.assertIn("worker_window_name", supervisor_text)
-        self.assertIn("wechat selftest --suite all", wrapper.read_text(encoding="utf-8"))
+        self.assertIn("wechat selftest --suite all", wrapper_text)
+        self.assertIn("wechat_supervisor.local.env", wrapper_text)
+        self.assertIn('source "$PRIVATE_ENV"', wrapper_text)
 
     def test_worker_policy_selects_high_for_cad_or_pcb_tasks(self) -> None:
         worker = load_worker()
@@ -2222,6 +2225,75 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(calls[0]["platforms"], ["shipinhao", "youtube", "instagram"])
         self.assertEqual(calls[0]["video_id"], 393)
 
+    def test_exact_video_publish_falls_back_to_artifact_source_path(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "exact_video_COMPLETED.mp4"
+            missing_target = Path(tmp) / "exact_video_completed.mp4"
+            source.write_bytes(b"video")
+            task = {
+                "request": "publish this video to YouTube",
+                "preflight": {
+                    "autopublish_video": {
+                        "ok": True,
+                        "status": "artifact-ledger-match",
+                        "target": str(missing_target),
+                        "source_path": str(source),
+                    },
+                },
+            }
+            seen: list[Path] = []
+
+            def fake_wait(target: Path, **_: object) -> int:
+                seen.append(target)
+                return 393
+
+            with mock.patch.object(worker, "wait_for_lazyedit_import", side_effect=fake_wait):
+                with mock.patch.object(worker, "run_lazyedit_publish_command", return_value={"ok": True, "status": "done", "payload": {}}):
+                    with mock.patch.object(worker, "lazyedit_api_get", return_value={"jobs": [{"video_id": 393, "id": 203, "status": "running", "platforms": ["youtube"]}]}):
+                        with mock.patch.object(worker, "remote_publish_jobs_for", return_value=[{}]):
+                            raw = worker.deterministic_preflight_result(task)
+
+        payload = json.loads(raw or "{}")
+        self.assertEqual(seen, [source])
+        self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
+
+    def test_exact_video_publish_uses_known_lazyedit_video_id_from_source_task(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "quoted_video_COMPLETED.mp4"
+            source.write_bytes(b"video")
+            task = {
+                "request": "publish this quoted video to sph youtube instagram",
+                "preflight": {
+                    "autopublish_video": {
+                        "ok": True,
+                        "status": "artifact-ledger-match",
+                        "target": str(source),
+                        "source_path": str(source),
+                        "source_task": {
+                            "result_message_excerpt": "未确认发布完成；video_id=404；source=quoted_video_COMPLETED.mp4",
+                        },
+                    },
+                },
+            }
+            calls: list[dict[str, object]] = []
+
+            def fake_publish(**kwargs: object) -> dict[str, object]:
+                calls.append(kwargs)
+                return {"ok": True, "status": "done", "payload": {}}
+
+            with mock.patch.object(worker, "wait_for_lazyedit_import") as wait_import:
+                with mock.patch.object(worker, "run_lazyedit_publish_command", side_effect=fake_publish):
+                    with mock.patch.object(worker, "lazyedit_api_get", return_value={"jobs": [{"video_id": 404, "id": 210, "status": "running", "platforms": ["shipinhao", "youtube", "instagram"]}]}):
+                        with mock.patch.object(worker, "remote_publish_jobs_for", return_value=[{}]):
+                            raw = worker.deterministic_preflight_result(task)
+
+        payload = json.loads(raw or "{}")
+        wait_import.assert_not_called()
+        self.assertEqual(calls[0]["video_id"], 404)
+        self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
+
     def test_exact_video_publish_requires_terminal_platform_verification(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2342,6 +2414,93 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("publish_poststage_retry", payload)
         self.assertIn("publish_reissue", payload)
 
+    def test_lazyedit_publish_command_uses_shell_stage_separators(self) -> None:
+        worker = load_worker()
+        command = worker.lazyedit_shell_command([
+            "source ~/miniconda3/etc/profile.d/conda.sh",
+            "conda activate lazyedit",
+            "python scripts/lazyedit_publish.py",
+            "--video-id 393",
+            "--json",
+        ])
+
+        self.assertIn("source ~/miniconda3/etc/profile.d/conda.sh && conda activate lazyedit && python scripts/lazyedit_publish.py", command)
+        self.assertNotIn("conda.sh conda activate", command)
+
+    def test_lazyedit_publish_zero_exit_without_json_is_failure(self) -> None:
+        worker = load_worker()
+        proc = subprocess.CompletedProcess(["bash", "-lc", "true"], 0, stdout="", stderr="")
+
+        result = worker.lazyedit_publish_proc_result(proc, command=["bash", "-lc", "true"])
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "no_json_output")
+        self.assertEqual(result["payload"], {})
+
+    def test_lazyedit_publish_watchdog_returns_login_blocker(self) -> None:
+        worker = load_worker()
+
+        class FakeProc:
+            returncode: int | None = None
+
+            def __init__(self) -> None:
+                self.terminated = False
+
+            def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+                if not self.terminated:
+                    raise subprocess.TimeoutExpired(["bash", "-lc", "cmd"], timeout)
+                return "", ""
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def terminate(self) -> None:
+                self.terminated = True
+                self.returncode = -15
+
+            def wait(self, timeout: float | None = None) -> int:
+                if self.returncode is None:
+                    self.returncode = -15
+                return self.returncode
+
+            def kill(self) -> None:
+                self.terminated = True
+                self.returncode = -9
+
+        original_log_command = worker.LAZYEDIT_REMOTE_LOG_COMMAND
+        fake_proc = FakeProc()
+        try:
+            worker.LAZYEDIT_REMOTE_LOG_COMMAND = "ssh demo tail-log"
+            with mock.patch.object(worker, "lazyedit_publish_watchdog_poll_seconds", return_value=0.0):
+                with mock.patch.object(worker.subprocess, "Popen", return_value=fake_proc):
+                    with mock.patch.object(
+                        worker,
+                        "verify_lazyedit_publish_stage",
+                        return_value={
+                            "verified": False,
+                            "stage": "waiting_login",
+                            "video_id": 404,
+                            "requested_platforms": ["shipinhao"],
+                            "local_jobs": [{"id": 210, "video_id": 404, "status": "running"}],
+                            "remote_jobs": [{"id": "job-1", "status": "running"}],
+                            "blocker": {"kind": "remote_login_required"},
+                        },
+                    ):
+                        result = worker.run_lazyedit_publish_command(
+                            video_id=404,
+                            platforms=["shipinhao"],
+                            correction_prompt="",
+                            metadata_prompt="",
+                            target=Path("/tmp/quoted_COMPLETED.mp4"),
+                        )
+        finally:
+            worker.LAZYEDIT_REMOTE_LOG_COMMAND = original_log_command
+
+        self.assertEqual(result["status"], "waiting_login")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["payload"]["publish_stage"]["stage"], "waiting_login")
+        self.assertEqual(fake_proc.returncode, -15)
+
     def test_publish_poststage_does_not_reissue_when_local_job_exists(self) -> None:
         worker = load_worker()
         task = {
@@ -2411,6 +2570,68 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(task["status"], "waiting_confirmation")
         self.assertEqual(task["existing_video_publish_poststage"]["video_id"], 393)
 
+    def test_deferred_publish_send_reverifies_before_retrying_stale_status(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            target = Path(tmp) / "exact_video_COMPLETED.mp4"
+            target.write_bytes(b"video")
+            task = {
+                "id": "publish-task",
+                "chat": "懒人科研",
+                "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                "send_deferred_reason": "gui_send_busy",
+                "last_send_attempt_at": "1970-01-01T00:00:00",
+                "request": "Current coalesced request:\npublish this video to sph youtube instagram",
+                "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+                "existing_video_publish_poststage": {
+                    "kind": "existing_video_publish",
+                    "video_id": 404,
+                    "platforms": ["shipinhao", "youtube", "instagram"],
+                    "target": str(target),
+                },
+                "result": {
+                    "message": "未确认发布完成；stage=waiting_login",
+                    "confirmation": "Please login.",
+                    "files": [],
+                    "data": {"publish_stage": {"stage": "waiting_login"}},
+                },
+            }
+            queue.write_text(json.dumps(task, ensure_ascii=False) + "\n", encoding="utf-8")
+            sent: list[str] = []
+
+            def fake_send(result: dict[str, object], *_args: object, **_kwargs: object) -> list[str]:
+                sent.append(str(result.get("message") or ""))
+                return []
+
+            with mock.patch.object(worker, "gui_send_lock_busy", return_value=False):
+                with mock.patch.object(worker, "send_result_with_retries", side_effect=fake_send):
+                    with mock.patch.object(worker, "record_event"):
+                        with mock.patch.object(
+                            worker,
+                            "verify_lazyedit_publish_stage",
+                            return_value={
+                                "verified": True,
+                                "stage": "published_verified",
+                                "video_id": 404,
+                                "requested_platforms": ["shipinhao", "youtube", "instagram"],
+                                "verified_platforms": ["shipinhao", "youtube", "instagram"],
+                                "local_jobs": [{"id": 210, "video_id": 404, "status": "done", "remote_status": "done"}],
+                                "remote_jobs": [{"id": "job-1", "status": "done"}],
+                                "blocker": {},
+                                "source": target.name,
+                            },
+                        ):
+                            handled = worker.flush_one_deferred_send(queue, "懒人科研", log_idle=False)
+
+            rows = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+        self.assertTrue(handled)
+        self.assertIn("已确认发布完成", sent[0])
+        self.assertEqual(rows[0]["status"], "done")
+        self.assertEqual(rows[0]["publish_deferred_refresh_from"], "waiting_login")
+        self.assertEqual(rows[0]["publish_deferred_refresh_to"], "published_verified")
+
     def test_detect_remote_publish_login_blocker_from_log(self) -> None:
         worker = load_worker()
         blocker = worker.detect_remote_publish_blocker_from_log(
@@ -2444,6 +2665,13 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertEqual(prepared["files"], [])
         self.assertEqual(prepared["skipped_files"][0]["reason"], "private-path")
+
+    def test_worker_result_treats_null_files_as_empty(self) -> None:
+        worker = load_worker()
+
+        prepared = worker.prepare_result_files({"message": "ok", "confirmation": "", "files": None}, "")
+
+        self.assertEqual(prepared["files"], [])
 
     def test_send_result_retries_transient_failure(self) -> None:
         worker = load_worker()
@@ -2679,6 +2907,233 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 worker.os.environ.pop("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS", None)
             else:
                 worker.os.environ["WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS"] = original_backoff
+
+    def test_claim_next_deferred_send_can_filter_chat(self) -> None:
+        worker = load_worker()
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS")
+        original_lock_busy = worker.gui_send_lock_busy
+        try:
+            worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = "0"
+            worker.gui_send_lock_busy = lambda: False
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "other-chat",
+                            "chat": "鏈接",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "send_deferred_reason": "gui_send_timeout",
+                            "result": {"message": "other", "files": []},
+                        },
+                        {
+                            "id": "publish-chat",
+                            "chat": "懒人科研",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "send_deferred_reason": "gui_send_timeout",
+                            "result": {"message": "publish", "files": []},
+                        },
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue, chat_filter="懒人科研")
+
+                self.assertIsNotNone(claimed)
+                assert claimed is not None
+                self.assertEqual(claimed["id"], "publish-chat")
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = original_backoff
+
+    def test_claim_next_deferred_send_prioritizes_verified_publish_completion(self) -> None:
+        worker = load_worker()
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS")
+        original_lock_busy = worker.gui_send_lock_busy
+        try:
+            worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = "0"
+            worker.gui_send_lock_busy = lambda: False
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "older-summary",
+                            "chat": "鏈接",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "send_deferred_reason": "gui_send_timeout",
+                            "created_at": "2026-06-23T10:00:00",
+                            "result": {"message": "summary", "files": []},
+                        },
+                        {
+                            "id": "verified-publish",
+                            "chat": "懒人科研",
+                            "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                            "send_deferred_reason": "gui_send_timeout",
+                            "created_at": "2026-06-23T10:10:00",
+                            "result": {
+                                "message": "published",
+                                "files": [],
+                                "data": {"publish_stage": {"verified": True, "stage": "published_verified"}},
+                            },
+                        },
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+
+                self.assertIsNotNone(claimed)
+                assert claimed is not None
+                self.assertEqual(claimed["id"], "verified-publish")
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = original_backoff
+
+    def test_verified_publish_completion_has_larger_transient_retry_budget(self) -> None:
+        worker = load_worker()
+        original_max = worker.os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES")
+        try:
+            worker.os.environ["WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES"] = "12"
+            task = {
+                "send_deferred_reason": "gui_send_timeout",
+                "send_retry_count": 5,
+                "result": {
+                    "message": "published",
+                    "files": [],
+                    "data": {"publish_stage": {"verified": True, "stage": "published_verified"}},
+                },
+            }
+
+            self.assertFalse(worker.transient_send_retry_limit_reached(task))
+        finally:
+            if original_max is None:
+                worker.os.environ.pop("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES"] = original_max
+
+    def test_verified_publish_send_failed_is_retryable(self) -> None:
+        worker = load_worker()
+        original_max = worker.os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES")
+        original_backoff = worker.os.environ.get("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS")
+        original_lock_busy = worker.gui_send_lock_busy
+        try:
+            worker.os.environ["WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES"] = "12"
+            worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = "0"
+            worker.gui_send_lock_busy = lambda: False
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "verified-publish-failed-send",
+                            "chat": "懒人科研",
+                            "status": "send_failed",
+                            "send_deferred_reason": "gui_send_timeout",
+                            "send_retry_count": 5,
+                            "send_errors": [
+                                "attempt 1: send command failed with exit -15",
+                                "transient send retry limit reached (5 attempts)",
+                            ],
+                            "result": {
+                                "message": "published",
+                                "files": [],
+                                "data": {"publish_stage": {"verified": True, "stage": "published_verified"}},
+                            },
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue, chat_filter="懒人科研")
+
+                self.assertIsNotNone(claimed)
+                assert claimed is not None
+                self.assertEqual(claimed["id"], "verified-publish-failed-send")
+                self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            if original_max is None:
+                worker.os.environ.pop("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES"] = original_max
+            if original_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = original_backoff
+
+    def test_android_publish_completion_message_is_ascii_and_contains_evidence(self) -> None:
+        worker = load_worker()
+        result = {
+            "message": "已确认发布完成。",
+            "files": [],
+            "data": {
+                "publish_stage": {
+                    "verified": True,
+                    "stage": "published_verified",
+                    "video_id": 404,
+                    "verified_platforms": ["shipinhao", "youtube", "instagram"],
+                    "local_jobs": [{"id": 210, "remote_job_id": "job-1"}],
+                    "remote_jobs": [{"id": "job-1"}],
+                }
+            },
+        }
+
+        message = worker.android_publish_completion_message(result)
+
+        self.assertEqual(message.encode("ascii").decode("ascii"), message)
+        self.assertIn("video_id 404", message)
+        self.assertIn("shipinhao youtube instagram", message)
+        self.assertIn("LazyEdit job 210", message)
+        self.assertIn("remote job job-1", message)
+
+    def test_verified_publish_send_uses_android_fallback_after_title_guard_blank(self) -> None:
+        worker = load_worker()
+        original_flag = worker.os.environ.get("WECHAT_WORKER_ANDROID_TEXT_FALLBACK")
+        result = {
+            "message": "已确认发布完成。",
+            "files": [],
+            "data": {
+                "publish_stage": {
+                    "verified": True,
+                    "stage": "published_verified",
+                    "video_id": 404,
+                    "verified_platforms": ["shipinhao", "youtube", "instagram"],
+                    "local_jobs": [{"id": 210, "remote_job_id": "job-1"}],
+                    "remote_jobs": [{"id": "job-1"}],
+                }
+            },
+        }
+        task = {"id": "publish-task", "chat": "懒人科研"}
+        calls: list[str] = []
+
+        def fail_gui(*_args, **_kwargs):
+            raise RuntimeError("Opened chat title guard failed for 懒人科研: OCR=''.")
+
+        def fake_android(_result, target_chat, _task):
+            calls.append(target_chat)
+            _task["android_text_fallback_send"] = {"sent_at": "now"}
+
+        try:
+            worker.os.environ["WECHAT_WORKER_ANDROID_TEXT_FALLBACK"] = "1"
+            with mock.patch.object(worker, "send_result_once", side_effect=fail_gui):
+                with mock.patch.object(worker, "send_result_text_via_android_fallback", side_effect=fake_android):
+                    errors = worker.send_result_with_retries(result, "懒人科研", Path("/tmp/send-targets.json"), task=task)
+        finally:
+            if original_flag is None:
+                worker.os.environ.pop("WECHAT_WORKER_ANDROID_TEXT_FALLBACK", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_ANDROID_TEXT_FALLBACK"] = original_flag
+
+        self.assertEqual(errors, [])
+        self.assertEqual(calls, ["懒人科研"])
+        self.assertIn("android_text_fallback_send", task)
 
     def test_claim_next_deferred_send_respects_backoff(self) -> None:
         worker = load_worker()

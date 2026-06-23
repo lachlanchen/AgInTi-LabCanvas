@@ -58,6 +58,9 @@ deletion, purchases, or another unsafe/irreversible decision.
   `sent_file_paths`.
 - Poststage: after delivery, run LazyEdit/import and public publish only when
   `stage_permissions` allow them.
+- LazyEdit publish commands must run as `source ... && conda activate lazyedit
+  && python scripts/lazyedit_publish.py ... --json`; empty JSON after exit 0 is
+  a failed submission, not success.
 - Follow-up send/save: when the user says the video is already generated or asks
   to send/download/save the video, resolve the newest bounded-age same-chat MP4
   from the worker artifact ledger. Return it through `files` so the guarded
@@ -83,6 +86,10 @@ deletion, purchases, or another unsafe/irreversible decision.
 - Do not use old AutoPublish/WeChat MP4s as output for a new generation task.
 - If GUI send fails, leave `send_deferred_artifact` or `send_deferred_locked`
   with retry state.
+- If a public publish is already verified but desktop WeChat cannot safely send
+  the completion text, use the guarded Android ADB text fallback only when OCR
+  confirms the phone is open to the exact target chat. Record the Android
+  screenshot evidence in the task before marking it done.
 - If a probe sees login/CAPTCHA/payment/credit blockers, keep the task
   resumable and request the specific confirmation.
 - Treat `积分不足`/`余额不足` as a real blocker only when no completed MP4 is

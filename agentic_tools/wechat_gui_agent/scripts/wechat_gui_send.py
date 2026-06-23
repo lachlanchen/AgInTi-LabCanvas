@@ -8,9 +8,11 @@ uses the visible GUI, and stores screenshots for review.
 from __future__ import annotations
 
 import argparse
+import csv
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -396,6 +398,28 @@ def open_target(
             return current_guard
         attempts.append(current_guard)
 
+    if os.environ.get("WECHAT_VISIBLE_CHAT_LIST_OCR", "1") != "0":
+        match = click_visible_chat_list_match(env, window, target, out_dir, shot_prefix)
+        if match:
+            guard = verify(f"visible_chat_list_ocr:{match['text']}")
+            attempts.append({**guard, "visible_chat_list_match": match})
+            if guard["ok"]:
+                return {**guard, "visible_chat_list_match": match}
+            double_click(env, window.x + int(match["click_x"]), window.y + int(match["click_y"]))
+            guard = verify(f"visible_chat_list_ocr_double:{match['text']}")
+            attempts.append({**guard, "visible_chat_list_match": match})
+            if guard["ok"]:
+                return {**guard, "visible_chat_list_match": match}
+            if not (allow_search and target.allow_search):
+                return {
+                    **guard,
+                    "ok": False,
+                    "method": str(guard.get("method") or "visible_chat_list_ocr"),
+                    "search_disabled": True,
+                    "attempts": attempts,
+                    "visible_chat_list_match": match,
+                }
+
     if target.open_click:
         click(env, window.x + target.open_click[0], window.y + target.open_click[1])
         guard = verify("open_click")
@@ -452,6 +476,124 @@ def open_target(
     if attempts:
         guard = {**guard, "attempts": attempts}
     return guard
+
+
+def click_visible_chat_list_match(
+    env: dict[str, str],
+    window: Window,
+    target: TargetSpec,
+    out_dir: Path,
+    shot_prefix: str,
+) -> dict[str, Any] | None:
+    """Click a matching row already visible in the left chat list."""
+    region = chat_list_crop_region(window)
+    if region is None:
+        return None
+    screenshot_path = out_dir / f"{shot_prefix}-chat-list-source.png"
+    crop_path = out_dir / f"{shot_prefix}-chat-list.png"
+    screenshot(env, screenshot_path)
+    if not screenshot_path.exists():
+        return None
+    run(
+        [
+            "convert",
+            str(screenshot_path),
+            "-crop",
+            f"{region['width']}x{region['height']}+{region['left']}+{region['top']}",
+            str(crop_path),
+        ],
+        env=env,
+    )
+    proc = run(["tesseract", str(crop_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "11", "tsv"], env=env, check=False)
+    match = visible_chat_list_match_from_tsv(proc.stdout, target)
+    if not match:
+        return None
+    click_x = target.result_click[0] if target.result_click else int(region["left"] - window.x + 110)
+    click_y = int(region["top"] - window.y + float(match["center_y"]))
+    click(env, window.x + click_x, window.y + click_y)
+    return {
+        **match,
+        "crop": str(crop_path),
+        "click_x": click_x,
+        "click_y": click_y,
+    }
+
+
+def chat_list_crop_region(window: Window) -> dict[str, int] | None:
+    """Return a conservative crop of the left chat list, excluding the sidebar."""
+    if window.width < 760 or window.height < 360:
+        return None
+    left = window.x + 60
+    top = window.y + 60
+    right = window.x + min(370, max(300, int(window.width * 0.36)))
+    bottom = window.y + window.height
+    return {
+        "left": left,
+        "top": top,
+        "width": max(240, right - left),
+        "height": max(220, bottom - top),
+    }
+
+
+def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[str, Any] | None:
+    expected = [
+        normalize_title(item)
+        for item in (target.expected_title, *target.expected_title_aliases, target.name, target.query)
+        if normalize_title(item)
+    ]
+    if not expected:
+        return None
+    rows: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    reader = csv.DictReader(io.StringIO(tsv_text), delimiter="\t")
+    for raw in reader:
+        text = str(raw.get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            left = int(float(raw.get("left") or 0))
+            top = int(float(raw.get("top") or 0))
+            width = int(float(raw.get("width") or 0))
+            height = int(float(raw.get("height") or 0))
+        except ValueError:
+            continue
+        if width <= 0 or height <= 0:
+            continue
+        key = (
+            str(raw.get("block_num") or ""),
+            str(raw.get("par_num") or ""),
+            str(raw.get("line_num") or ""),
+        )
+        rows.setdefault(key, []).append({"text": text, "left": left, "top": top, "width": width, "height": height})
+    matches: list[dict[str, Any]] = []
+    for words in rows.values():
+        words.sort(key=lambda item: (int(item["left"]), int(item["top"])))
+        text = "".join(str(item["text"]) for item in words)
+        normalized = normalize_title(text)
+        if not normalized or not any(item in normalized for item in expected):
+            continue
+        min_left = min(int(item["left"]) for item in words)
+        max_right = max(int(item["left"]) + int(item["width"]) for item in words)
+        min_top = min(int(item["top"]) for item in words)
+        max_bottom = max(int(item["top"]) + int(item["height"]) for item in words)
+        # Chat titles normally start after the avatar column. This avoids
+        # matching incidental text in timestamps, previews, or the side rail.
+        if min_left < 45 or min_left > 210:
+            continue
+        matches.append(
+            {
+                "text": text,
+                "normalized": normalized,
+                "left": min_left,
+                "top": min_top,
+                "right": max_right,
+                "bottom": max_bottom,
+                "center_y": (min_top + max_bottom) / 2.0,
+            }
+        )
+    if not matches:
+        return None
+    matches.sort(key=lambda item: (int(item["top"]), abs(int(item["left"]) - 65)))
+    return matches[0]
 
 
 def target_explicit_click_candidates(target: TargetSpec) -> list[tuple[str, tuple[int, int]]]:

@@ -101,6 +101,7 @@ designing a new workflow from scratch or waiting for manual operator rescue.
 | Generated video | Queue orchestrator | `GENERATED_VIDEO_ROUTINES.md` | Store route contract, wait via queue/CDP, deliver MP4 before poststage. |
 | Exact video publish | Worker | same-chat artifact ledger, `wechat_autopublish_video.py`, LazyEdit CLI | Match quoted video MD5/size against same-chat generated/sent artifacts first; if not found, use exact WeChat message IDs/cache before failing closed. |
 | GUI send | Sender | `wechat_gui_send.py` | Serialize with lock, OCR/title guard, screenshots, deferred outbox. |
+| Android text fallback | Worker outbox | `send_result_with_retries()` | For verified publish-completion text only, if desktop GUI send fails with a deferable guard/timeout, ADB may send a sanitized ASCII completion after screenshot OCR proves the phone is already open to the exact target chat. |
 | Browser assist | Human + worker | `wechat_browser_assist.py` | Use only for login/CAPTCHA/download confirmation or blocked web UI. |
 
 ## Token And Latency Policy
@@ -264,6 +265,11 @@ If the poststage finds an imported LazyEdit `video_id` but no local publish job,
 the deterministic routine must start the actual LazyEdit publish command from
 the stored correction and metadata prompts, record the reissue count, and then
 continue polling. Existing running or queued jobs are monitored, not duplicated.
+The LazyEdit command must execute as separate shell stages:
+`source ~/miniconda3/etc/profile.d/conda.sh && conda activate lazyedit &&
+python scripts/lazyedit_publish.py ... --json`. A zero-exit command with no
+JSON payload is not a successful publish submission; treat it as repairable
+`no_json_output` evidence and keep the poststage pending.
 Set `WECHAT_WORKER_LAZYEDIT_REMOTE_LOG_COMMAND` in the ignored supervisor env to
 let the verifier inspect bounded AutoPublish logs. Login or QR markers should
 become `waiting_confirmation` with the same poststage stored, so the user can
