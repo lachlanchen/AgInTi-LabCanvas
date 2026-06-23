@@ -1265,7 +1265,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                         "id": "task-generate-video",
                         "status": worker.CLAIMED_STATUS,
                         "worker_id": "pid:999999",
-                        "claimed_at": "2026-06-23T07:00:00",
+                        "claimed_at": "1970-01-01T00:00:00",
                         "artifact_dir": str(artifact_dir),
                         "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
                         "request": "Current coalesced request:\nCould you generate a 30s LALACHAN video?",
@@ -3027,6 +3027,74 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 worker.os.environ.pop("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES", None)
             else:
                 worker.os.environ["WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES"] = original_recovery
+
+    def test_claim_next_deferred_send_recovers_stale_transport_after_recovery_cap(self) -> None:
+        worker = load_worker()
+        original_busy_backoff = worker.os.environ.get("WECHAT_WORKER_BUSY_SEND_BACKOFF_SECONDS")
+        original_failed_max = worker.os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES")
+        original_transient_max = worker.os.environ.get("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES")
+        original_recovery = worker.os.environ.get("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES")
+        original_stale = worker.os.environ.get("WECHAT_WORKER_FAILED_SEND_STALE_RECOVERY_SECONDS")
+        original_lock_busy = worker.gui_send_lock_busy
+        try:
+            worker.os.environ["WECHAT_WORKER_BUSY_SEND_BACKOFF_SECONDS"] = "0"
+            worker.os.environ["WECHAT_WORKER_FAILED_SEND_MAX_RETRIES"] = "0"
+            worker.os.environ["WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES"] = "5"
+            worker.os.environ["WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES"] = "1"
+            worker.os.environ["WECHAT_WORKER_FAILED_SEND_STALE_RECOVERY_SECONDS"] = "60"
+            worker.gui_send_lock_busy = lambda: False
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-busy-send-failed",
+                            "chat": "鏈接",
+                            "status": "send_failed",
+                            "send_deferred_reason": "gui_send_busy",
+                            "send_retry_count": 5,
+                            "send_failed_recovery_count": 1,
+                            "last_send_attempt_at": "2026-01-01T00:00:00",
+                            "send_errors": [
+                                "attempt 1: WECHAT_SEND_BUSY: serialized GUI sender is already sending",
+                                "transient send retry limit reached (5 attempts)",
+                            ],
+                            "result": {"message": "summary", "confirmation": "", "files": []},
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+
+                self.assertIsNotNone(claimed)
+                assert claimed is not None
+                self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+                self.assertEqual(claimed["send_retry_count"], 1)
+                self.assertEqual(claimed["send_failed_recovery_count"], 2)
+                self.assertEqual(claimed["send_deferred_reason"], "gui_send_busy")
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            if original_busy_backoff is None:
+                worker.os.environ.pop("WECHAT_WORKER_BUSY_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_BUSY_SEND_BACKOFF_SECONDS"] = original_busy_backoff
+            if original_failed_max is None:
+                worker.os.environ.pop("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_FAILED_SEND_MAX_RETRIES"] = original_failed_max
+            if original_transient_max is None:
+                worker.os.environ.pop("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES"] = original_transient_max
+            if original_recovery is None:
+                worker.os.environ.pop("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES"] = original_recovery
+            if original_stale is None:
+                worker.os.environ.pop("WECHAT_WORKER_FAILED_SEND_STALE_RECOVERY_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_FAILED_SEND_STALE_RECOVERY_SECONDS"] = original_stale
 
     def test_claim_next_deferred_send_stops_transient_retry_loop(self) -> None:
         worker = load_worker()

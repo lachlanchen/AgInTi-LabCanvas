@@ -547,7 +547,7 @@ def latest_inbound_row(config: dict[str, Any], rows: list[dict[str, Any]]) -> di
 def is_inbound_user_row(config: dict[str, Any], row: dict[str, Any]) -> bool:
     self_wxid = str(config.get("self_wxid") or "")
     if self_wxid and row.get("sender") == self_wxid:
-        return allow_human_self_messages(config) and not self_message_skip_reason(config, {}, row)
+        return False
     return True
 
 
@@ -584,9 +584,7 @@ def latest_force_replay_rows(config: dict[str, Any], rows: list[dict[str, Any]],
     self_wxid = str(config.get("self_wxid") or "")
     candidates = []
     for row in rows:
-        if self_wxid and row.get("sender") == self_wxid and not allow_human_self_messages(config):
-            continue
-        if self_wxid and row.get("sender") == self_wxid and self_message_skip_reason(config, {}, row):
+        if self_wxid and row.get("sender") == self_wxid:
             continue
         if is_dangerous_message(config, visible_message_text(row)):
             continue
@@ -785,17 +783,7 @@ def self_message_skip_reason(config: dict[str, Any], state: dict[str, Any], row:
         return "self_loop_guard"
     if looks_like_bot_self_reply(config, visible_message_text(row)):
         return "self_bot_reply"
-    if allow_human_self_messages(config):
-        if bool(config.get("self_messages_text_only", True)):
-            base_type, _ = split_message_type(row.get("local_type"))
-            if base_type != 1 and not is_quote_reply_message(row):
-                return "self_non_text"
-        return ""
-    if bool(config.get("ignore_self_messages", True)):
-        return "self_ignored"
-    if not bool(config.get("respond_to_self", False)):
-        return "self_disabled"
-    return ""
+    return "self_ignored"
 
 
 def allow_human_self_messages(config: dict[str, Any]) -> bool:
@@ -3339,7 +3327,7 @@ def format_prompt_context(
         elif item.get("local_id") in focus_local_ids:
             role = "FOCUS"
         elif self_wxid and sender == self_wxid:
-            role = "SELF_USER" if allow_human_self_messages(config) and not looks_like_bot_self_reply(config, visible_message_text(item)) else "BOT_SELF"
+            role = "BOT_SELF"
         else:
             role = "CONTEXT"
         lines.append(

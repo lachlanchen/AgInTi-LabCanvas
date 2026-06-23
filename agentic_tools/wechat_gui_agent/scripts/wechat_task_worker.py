@@ -1597,6 +1597,7 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
     errors = [str(item) for item in task.get("send_errors") or []]
     if not send_errors_indicate_deferable(errors) and not verified_publish_send_completion(task):
         return False
+    reason = send_deferred_reason_from_errors(errors)
     if verified_publish_send_completion(task):
         max_retries = int(os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", "12"))
     else:
@@ -1604,16 +1605,38 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
     if max_retries >= 0 and int(task.get("send_retry_count") or 0) >= max_retries:
         max_recoveries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES", "10"))
         recoveries = int(task.get("send_failed_recovery_count") or 0)
-        if max_recoveries < 0 or recoveries < max_recoveries:
+        if max_recoveries < 0 or recoveries < max_recoveries or stale_transport_send_failure_recoverable(task, now, reason):
             task["send_retry_count"] = 0
             task["send_failed_recovery_count"] = recoveries + 1
             task["send_failed_recovered_at"] = now.isoformat(timespec="seconds")
         else:
             return False
-    task["send_deferred_reason"] = send_deferred_reason_from_errors(errors)
+    task["send_deferred_reason"] = reason
     if not task["send_deferred_reason"] and verified_publish_send_completion(task):
         task["send_deferred_reason"] = "gui_send_timeout"
     return deferred_send_backoff_elapsed(task, now)
+
+
+def stale_transport_send_failure_recoverable(task: dict[str, Any], now: datetime, reason: str) -> bool:
+    if reason not in {"gui_send_busy", "gui_send_timeout"}:
+        return False
+    if gui_send_lock_busy():
+        return False
+    stale_seconds = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_STALE_RECOVERY_SECONDS", "300"))
+    if stale_seconds < 0:
+        return True
+    last = parse_iso_datetime(
+        str(
+            task.get("last_send_attempt_at")
+            or task.get("send_failed_recovered_at")
+            or task.get("resent_at")
+            or task.get("completed_at")
+            or ""
+        )
+    )
+    if not last:
+        return True
+    return (now - last).total_seconds() >= stale_seconds
 
 
 def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
