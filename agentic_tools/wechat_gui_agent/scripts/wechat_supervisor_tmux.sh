@@ -27,6 +27,7 @@ CHAT_SYNC_INTERVAL="${WECHAT_CHAT_SYNC_INTERVAL:-45}"
 CHAT_SYNC_PAUSE="${WECHAT_CHAT_SYNC_PAUSE:-0.8}"
 CHAT_SYNC_TIMEOUT="${WECHAT_CHAT_SYNC_TIMEOUT:-60}"
 CHAT_SYNC_PRIORITY="${WECHAT_CHAT_SYNC_PRIORITY:-}"
+WORKER_COUNT="${WECHAT_WORKER_COUNT:-2}"
 export WECHAT_DECRYPT_REFRESH_INTERVAL="${WECHAT_DECRYPT_REFRESH_INTERVAL:-1}"
 export WECHAT_RESTART_DELAY="${WECHAT_RESTART_DELAY:-2}"
 mkdir -p "$LOG_DIR"
@@ -109,6 +110,7 @@ Environment:
   WECHAT_CHAT_SYNC_INTERVAL   chat sync loop interval, default 45 seconds
   WECHAT_CHAT_SYNC_TIMEOUT    per-chat dry-open timeout, default 60 seconds
   WECHAT_CHAT_SYNC_PRIORITY   optional comma-separated chat names to dry-open first
+  WECHAT_WORKER_COUNT         parallel queue workers, default 2
 EOF
 }
 
@@ -173,6 +175,23 @@ chat_sync_command() {
     "$ROOT" "$CONFIGS" "$WECHAT_DISPLAY" "$CHAT_SYNC_INTERVAL" "$CHAT_SYNC_PAUSE" "$CHAT_SYNC_TIMEOUT" "$CHAT_SYNC_PRIORITY" "$LOG_DIR/supervisor-chat-sync.log"
 }
 
+worker_window_name() {
+  local index="$1"
+  if [[ "$index" == "1" ]]; then
+    printf "worker"
+  else
+    printf "worker-%s" "$index"
+  fi
+}
+
+worker_command() {
+  local index="$1"
+  local label
+  label="$(worker_window_name "$index")"
+  printf "cd %q && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh %q agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh --queue %q --loop --send >> %q 2>&1" \
+    "$ROOT" "$label" "$QUEUE" "$LOG_DIR/supervisor-$label.log"
+}
+
 reload_worker_windows() {
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Session not running: $SESSION" >&2
@@ -189,8 +208,10 @@ reload_worker_windows() {
     respawn_or_new_window "direct-$direct_name" \
       "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt --poll-seconds '$DIRECT_POLL_SECONDS' --catchup-poll-seconds '$DIRECT_CATCHUP_POLL_SECONDS' >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
   done
-  respawn_or_new_window "worker" \
-    "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh worker agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh --queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-worker.log' 2>&1"
+  for worker_index in $(seq 1 "$WORKER_COUNT"); do
+    worker_label="$(worker_window_name "$worker_index")"
+    respawn_or_new_window "$worker_label" "$(worker_command "$worker_index")"
+  done
   respawn_or_new_window "media-sync" \
     "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' WECHAT_MEDIA_CHATS='$MEDIA_CHATS' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
   if [[ "$UNLOCK_WATCHDOG" != "0" ]]; then
@@ -224,8 +245,10 @@ case "$action" in
       tmux new-window -t "$SESSION" -n "direct-$direct_name" \
         "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt --poll-seconds '$DIRECT_POLL_SECONDS' --catchup-poll-seconds '$DIRECT_CATCHUP_POLL_SECONDS' >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
     done
-    tmux new-window -t "$SESSION" -n worker \
-      "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh worker agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh --queue '$QUEUE' --loop --send >> '$LOG_DIR/supervisor-worker.log' 2>&1"
+    for worker_index in $(seq 1 "$WORKER_COUNT"); do
+      worker_label="$(worker_window_name "$worker_index")"
+      tmux new-window -t "$SESSION" -n "$worker_label" "$(worker_command "$worker_index")"
+    done
     tmux new-window -t "$SESSION" -n media-sync \
       "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' WECHAT_MEDIA_CHATS='$MEDIA_CHATS' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
     if [[ "$UNLOCK_WATCHDOG" != "0" ]]; then

@@ -144,6 +144,8 @@ that contract rather than designing a new workflow from scratch.
   the request so the worker sees the complete instruction.
 - Generated-video rendering waits through `generation_waiting` and
   `next_poll_at`; do not keep a multi-hour Codex turn open.
+- Fresh `pending` messages must be claimed before old due video polls, and video
+  polls must be short probes so one old generation cannot starve new requests.
 - LazyEdit/public publish poststages wait through
   `generation_poststage_pending`; timeouts requeue instead of completing.
 - Use `gpt-5.5` medium for normal research, PDF, figure, and generated-video
@@ -196,10 +198,13 @@ generated-video route contract with `stage_permissions` and
 
 1. write route contract;
 2. create story/prompt and submit or resume Xiaoyunque;
-3. monitor/download through deterministic CDP routines;
-4. send the verified MP4 to the source chat and record `sent_file_paths`;
-5. only then queue LazyEdit import/process;
-6. publish only if the current request explicitly allows it.
+3. answer Xiaoyunque storyboard/reference continuation prompts in the same
+   `thread_id` with `xyq_continue_thread.py` when the current request already
+   authorizes generation;
+4. monitor/download through deterministic CDP routines;
+5. send the verified MP4 to the source chat and record `sent_file_paths`;
+6. only then queue LazyEdit import/process;
+7. publish only if the current request explicitly allows it.
 
 Generation is not publication. A generation request creates/downloads/verifies
 the video and sends artifacts back to the source chat; it does not authorize

@@ -7,7 +7,9 @@ already has an entrypoint.
 
 The general routine registry is `agentic_tools/wechat_gui_agent/scripts/wechat_routines.py`
 and the operator guide is `docs/ROUTINE_ORCHESTRATOR.md`. This document is the
-specialized stage contract for the `generated_video` routine.
+specialized stage contract for the `generated_video` routine. The short
+operational checklist for autonomous agents is
+`docs/AGENT_ROUTINE_CHEAT_SHEET.md`.
 
 Core boundary: generation is not publication. Generation means story/prompt
 creation, Xiaoyunque submission, monitoring, MP4 download, verification, and
@@ -41,10 +43,25 @@ publication.
 
 3. `xyq_deterministic_monitor`
    - Owner: queue orchestrator.
-   - Entrypoint: `deterministic_generated_video_monitor_result()`.
+   - Entrypoint: `deterministic_generated_video_continue_result()` when the
+     thread asks for storyboard/reference confirmation, then
+     `deterministic_generated_video_monitor_result()`.
    - Output: downloaded MP4, or `generation_waiting` with `next_poll_at`.
    - Long renders wait through queue state and CDP probes, not a multi-hour model
      call.
+   - Continuation: when a Xiaoyunque probe contains `请确认` plus
+     `继续帮您生成视频`, use `xyq_continue_thread.py` to send the approval into the
+     same `thread_id`. The helper uses the browser send button and, when
+     `XYQ_ACCESS_KEY` is available, also submits the same continuation through
+     Xiaoyunque OpenAPI so the underlying run advances. This is not a public
+     action and should not require manual WeChat approval when the current
+     request already asked for video generation.
+   - Duration check: if the current request asks for a duration such as 30s,
+     accept the verified MP4 when `ffprobe` shows it is within 5 seconds of the
+     request, unless the request explicitly says the duration must be exact.
+   - Credit block: if the watcher or API-visible run reports `积分不足` or
+     `余额不足`, stop polling and move the task to `waiting_confirmation` with a
+     clear recharge/shorter-budget request.
 
 4. `wechat_artifact_delivery_gate`
    - Owner: queue orchestrator and GUI sender.

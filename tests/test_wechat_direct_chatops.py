@@ -406,6 +406,14 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             ),
             "self_bot_reply",
         )
+        self.assertEqual(
+            direct_chatops.response_skip_reason(
+                config,
+                {},
+                self.row("优化后的版本，每句尽量清楚、直接：\n\n# Anniversary Story", sender="self"),
+            ),
+            "self_bot_reply",
+        )
         self.assertTrue(
             direct_chatops.should_respond(config, {}, self.row("Show me the story here full story explicit story", sender="self"))
         )
@@ -490,6 +498,40 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(saved["instruction_contract"]["no_keyword_shrink"])
         self.assertEqual(saved["instruction_contract"]["use_agent_reasoning"], "resume_exact_chat_route_and_worker_sessions")
         self.assertEqual(saved["execution_contract"]["instruction_contract"], saved["instruction_contract"])
+
+    def test_enqueue_worker_task_deduplicates_same_source_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            config = {
+                "chat_name": "懒人科研",
+                "message_table": "MSG_demo",
+                "state_path": str(Path(tmp) / "state.json"),
+                "worker_queue": str(queue),
+                "mirror_db": str(Path(tmp) / "mirror.sqlite"),
+                "send_target": {"name": "懒人科研", "expected_title": "懒人科研"},
+            }
+            row = self.row("generate this video", local_id=132, server_id="srv-132")
+
+            first = direct_chatops.enqueue_worker_task(
+                config,
+                row,
+                "Current coalesced request:\ngenerate this video",
+                context_rows=[row],
+                route_decision={"route_kind": "generate_video", "project": "lalachan"},
+            )
+            second = direct_chatops.enqueue_worker_task(
+                config,
+                row,
+                "Current coalesced request:\ngenerate this video",
+                context_rows=[row],
+                route_decision={"route_kind": "generate_video", "project": "lalachan"},
+            )
+            queued = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(first["id"], second["id"])
+        self.assertTrue(second["dedupe_existing"])
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["source"]["local_id"], 132)
 
     def test_enabled_attachment_chats_route_images_voice_and_location(self) -> None:
         config = {

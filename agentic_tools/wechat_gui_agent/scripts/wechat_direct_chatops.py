@@ -832,6 +832,9 @@ def looks_like_bot_self_reply(config: dict[str, Any], text: str) -> bool:
         "准备好了",
         "full story:",
         "saved files:",
+        "优化后的版本",
+        "优化后的故事",
+        "30秒版故事",
         "我已打开人工辅助浏览器",
         "我没有发布这个视频",
         "我已拦截这个结果",
@@ -2011,7 +2014,7 @@ LALACHAN/RaraXia story-video generation contract:
 - Default setup: 沉浸式短片, a relatively cheap suitable Seedance model, 15s, 4:3, mainly Chinese, and include `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。`
 - Model preference for cheap/fast runs: use `Seedance 2.0 Mini 体验版` / `vipnew` when the page shows a cheap rate such as `单秒限时低至4积分`; otherwise choose the relatively cheaper suitable `Seedance 2.0 Fast`, `Fast VIP`, or available Seedance option and continue.
 - Before any submit, verify visible page state as far as the UI allows: mode, selected model row, duration, ratio, prompt text, upload success, and any visible point cost/VIP/vipnew state. Do not block only because the exact preferred model or exact cost text is unavailable. Do not double-click or resubmit if a job is queued/running.
-- Monitor the submitted thread, download the finished MP4, copy/save it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return safe paths to the story, prompt, screenshots/logs, and MP4 so the outer worker can send the MP4 back to the source WeChat chat.
+- Monitor the submitted thread, download the finished MP4, copy/save it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return safe paths to the story, prompt, screenshots/logs, and MP4 so the outer worker can send the MP4 back to the source WeChat chat. A generated MP4 within ±5 seconds of the requested duration is acceptable unless the current request explicitly says the duration must be exact.
 - If the current request asks for LazyEdit import/process, hand the downloaded MP4 to LazyEdit without public publish unless public publishing is also explicitly requested. If the user asks to publish, use the normal LazyEdit publish workflow; otherwise stop after local video generation/download/send-back and report the ready path.
 """
 
@@ -2843,7 +2846,7 @@ def strip_group_sender_prefix(text: str) -> str:
     first, rest = text.split("\n", 1)
     stripped = first.strip()
     label = stripped.rstrip(":：").strip().lower()
-    if label in {"full story", "saved files"}:
+    if label in {"full story", "saved files", "优化后的版本", "优化后的故事", "30秒版故事"}:
         return text
     if stripped.endswith(":") and not stripped.startswith("<") and len(stripped) <= 96:
         return rest.strip()
@@ -3369,8 +3372,9 @@ def enqueue_worker_task(
         ],
     }
     ensure_task_routine_contract(task)
-    with queue.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(task, ensure_ascii=False) + "\n")
+    task, appended = append_worker_task_once(queue, task)
+    if not appended:
+        return task
     record_event(
         chat_name=config["chat_name"],
         action="worker_enqueue",
@@ -3381,6 +3385,58 @@ def enqueue_worker_task(
         metadata=task,
     )
     return task
+
+
+def append_worker_task_once(queue: Path, task: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Append a source-scoped task once, even if two monitors race."""
+    queue.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = queue.with_suffix(queue.suffix + ".lock")
+    with lock_path.open("w", encoding="utf-8") as lock:
+        with exclusive_lock(lock):
+            existing = find_duplicate_worker_task(queue, task)
+            if existing is not None:
+                duplicate = dict(existing)
+                duplicate["dedupe_existing"] = True
+                return duplicate, False
+            with queue.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(task, ensure_ascii=False) + "\n")
+            return task, True
+
+
+def find_duplicate_worker_task(queue: Path, task: dict[str, Any]) -> dict[str, Any] | None:
+    if not queue.exists():
+        return None
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
+    target_key = (
+        str(task.get("chat") or ""),
+        str(source.get("message_table") or ""),
+        str(source.get("server_id") or ""),
+        str(source.get("local_id") or ""),
+        str(routine.get("id") or ""),
+    )
+    if not all(target_key):
+        return None
+    terminal_retryable = {"canceled", "canceled_duplicate"}
+    for line in queue.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            existing = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        existing_source = existing.get("source") if isinstance(existing.get("source"), dict) else {}
+        existing_routine = existing.get("routine") if isinstance(existing.get("routine"), dict) else {}
+        existing_key = (
+            str(existing.get("chat") or ""),
+            str(existing_source.get("message_table") or ""),
+            str(existing_source.get("server_id") or ""),
+            str(existing_source.get("local_id") or ""),
+            str(existing_routine.get("id") or ""),
+        )
+        if existing_key == target_key and str(existing.get("status") or "") not in terminal_retryable:
+            return existing
+    return None
 
 
 def build_execution_contract(config: dict[str, Any], route_decision: dict[str, Any]) -> dict[str, Any]:

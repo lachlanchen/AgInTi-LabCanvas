@@ -44,12 +44,13 @@ SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
 SEND_DEFERRED_ARTIFACT_STATUS = "send_deferred_artifact"
 SEND_RETRYING_STATUS = "send_retrying"
 GENERATED_VIDEO_WAITING_STATUS = "generation_waiting"
+GENERATED_VIDEO_STALE_PAUSED_STATUS = "generation_stale_paused"
 GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS = "generation_poststage_pending"
 EXISTING_VIDEO_PUBLISH_PENDING_STATUS = "publish_poststage_pending"
 DEFAULT_STALE_IN_PROGRESS_SECONDS = 60 * 60
 DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS = 5 * 60
 DEFAULT_GENERATED_VIDEO_POLL_BACKOFF_SECONDS = 5 * 60
-DEFAULT_GENERATED_VIDEO_WATCH_POLLS_PER_CYCLE = 2
+DEFAULT_GENERATED_VIDEO_WATCH_POLLS_PER_CYCLE = 1
 DEFAULT_GENERATED_VIDEO_LAZYEDIT_TIMEOUT_SECONDS = 6 * 60 * 60
 DEFAULT_GENERATED_VIDEO_LAZYEDIT_PROCESS_TIMEOUT_SECONDS = 3 * 60 * 60
 DEFAULT_GENERATED_VIDEO_LAZYEDIT_PUBLISH_TIMEOUT_SECONDS = 3 * 60 * 60
@@ -150,9 +151,11 @@ GENERATED_VIDEO_PENDING_TERMS = (
     "generating",
     "waiting",
     "in progress",
+    "continued",
     "poll",
     "monitor",
     "已提交",
+    "已继续",
     "排队",
     "生成中",
     "等待",
@@ -228,6 +231,10 @@ def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Pa
 
 
 def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
+    adopted = adopt_active_generated_video_tasks(queue)
+    if adopted:
+        log_worker_event("generation-monitor-adopted", adopted)
+        return True
     task = claim_next_pending(queue)
     if not task:
         if send and os.environ.get("WECHAT_WORKER_AUTO_FLUSH_DEFERRED", "1") == "1":
@@ -643,6 +650,9 @@ def clean_url_token(value: str) -> str:
 
 
 def discover_generated_video_monitor_from_browser(task: dict[str, Any]) -> dict[str, str]:
+    probe_monitor = discover_generated_video_monitor_from_probe(task)
+    if probe_monitor:
+        return probe_monitor
     cdp_url = os.environ.get("WECHAT_WORKER_XYQ_CDP_URL") or os.environ.get("XYQ_CDP_URL") or "http://127.0.0.1:9222"
     try:
         with urllib.request.urlopen(f"{cdp_url}/json/list", timeout=5) as response:
@@ -679,6 +689,30 @@ def discover_generated_video_monitor_from_browser(task: dict[str, Any]) -> dict[
         "discovered_from": "chrome_cdp_pages",
         "discovered_at": datetime.now().isoformat(timespec="seconds"),
     }
+
+
+def page_id_for_thread_url(cdp_url: str, thread_url: str) -> str:
+    thread_id = extract_xyq_thread_id(thread_url)
+    if not thread_id:
+        return ""
+    try:
+        with urllib.request.urlopen(f"{cdp_url.rstrip('/')}/json/list", timeout=5) as response:
+            pages = json.loads(response.read().decode("utf-8", errors="replace"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        return ""
+    if not isinstance(pages, list):
+        return ""
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        if extract_xyq_thread_id(str(page.get("url") or "")) == thread_id:
+            return str(page.get("id") or "")
+    return ""
+
+
+def extract_xyq_thread_id(url: str) -> str:
+    match = re.search(r"[?&]thread_id=([^&]+)", str(url or ""))
+    return match.group(1) if match else ""
 
 
 def send_errors_indicate_wechat_locked(errors: list[str]) -> bool:
@@ -892,8 +926,27 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
         tasks = read_tasks(path)
         now = datetime.now()
         now_text = now.isoformat(timespec="seconds")
+        candidates: list[tuple[tuple[int, float, int], int, str]] = []
+        changed = False
         for index, task in enumerate(tasks):
             status = str(task.get("status") or "")
+            if generated_video_stale_pause_due(task, now):
+                task.setdefault("generation_pause_history", []).append(
+                    {
+                        "at": now_text,
+                        "previous_status": status,
+                        "worker_id": task.get("worker_id"),
+                        "generation_wait_count": task.get("generation_wait_count"),
+                        "reason": "stale_generated_video_wait_exceeded",
+                    }
+                )
+                task["status"] = GENERATED_VIDEO_STALE_PAUSED_STATUS
+                task["generation_paused_at"] = now_text
+                task["generation_pause_reason"] = "stale_generated_video_wait_exceeded"
+                task.pop("completed_at", None)
+                tasks[index] = task
+                changed = True
+                continue
             if (
                 status == "pending"
                 or stale_in_progress(task, now)
@@ -901,47 +954,167 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
                 or generated_video_poststage_ready(task, now)
                 or existing_video_publish_poststage_ready(task, now)
             ):
-                if status == CLAIMED_STATUS:
-                    task.setdefault("claim_history", []).append(
-                        {
-                            "worker_id": task.get("worker_id"),
-                            "claimed_at": task.get("claimed_at"),
-                            "reclaimed_at": now_text,
-                        }
-                    )
-                if status == GENERATED_VIDEO_WAITING_STATUS:
-                    task.setdefault("generation_poll_history", []).append(
-                        {
-                            "wait_count": task.get("generation_wait_count"),
-                            "next_poll_at_iso": task.get("next_poll_at_iso"),
-                            "claimed_at": now_text,
-                        }
-                    )
-                if status == GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS:
-                    task.setdefault("poststage_history", []).append(
-                        {
-                            "queued_at": task.get("poststage_queued_at"),
-                            "claimed_at": now_text,
-                            "kind": (task.get("generated_video_poststage") or {}).get("kind"),
-                        }
-                    )
-                if status == EXISTING_VIDEO_PUBLISH_PENDING_STATUS:
-                    task.setdefault("publish_poststage_history", []).append(
-                        {
-                            "queued_at": task.get("publish_poststage_queued_at"),
-                            "claimed_at": now_text,
-                            "stage": (task.get("existing_video_publish_poststage") or {}).get("stage"),
-                            "video_id": (task.get("existing_video_publish_poststage") or {}).get("video_id"),
-                        }
-                    )
-                task["status"] = CLAIMED_STATUS
-                task["worker_id"] = worker_id
-                task["claimed_at"] = now_text
-                task.pop("send_errors", None)
-                tasks[index] = task
+                candidates.append((claim_ready_sort_key(task, status, index), index, status))
+        if not candidates:
+            if changed:
                 write_tasks(path, tasks)
-                return task
-        return None
+            return None
+        _sort_key, index, status = min(candidates, key=lambda item: item[0])
+        task = tasks[index]
+        if status == CLAIMED_STATUS:
+            task.setdefault("claim_history", []).append(
+                {
+                    "worker_id": task.get("worker_id"),
+                    "claimed_at": task.get("claimed_at"),
+                    "reclaimed_at": now_text,
+                }
+            )
+        if status == GENERATED_VIDEO_WAITING_STATUS:
+            task.setdefault("generation_poll_history", []).append(
+                {
+                    "wait_count": task.get("generation_wait_count"),
+                    "next_poll_at_iso": task.get("next_poll_at_iso"),
+                    "claimed_at": now_text,
+                }
+            )
+        if status == GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS:
+            task.setdefault("poststage_history", []).append(
+                {
+                    "queued_at": task.get("poststage_queued_at"),
+                    "claimed_at": now_text,
+                    "kind": (task.get("generated_video_poststage") or {}).get("kind"),
+                }
+            )
+        if status == EXISTING_VIDEO_PUBLISH_PENDING_STATUS:
+            task.setdefault("publish_poststage_history", []).append(
+                {
+                    "queued_at": task.get("publish_poststage_queued_at"),
+                    "claimed_at": now_text,
+                    "stage": (task.get("existing_video_publish_poststage") or {}).get("stage"),
+                    "video_id": (task.get("existing_video_publish_poststage") or {}).get("video_id"),
+                }
+            )
+        task["status"] = CLAIMED_STATUS
+        task["worker_id"] = worker_id
+        task["claimed_at"] = now_text
+        task.pop("send_errors", None)
+        tasks[index] = task
+        write_tasks(path, tasks)
+        return task
+
+
+def claim_ready_sort_key(task: dict[str, Any], status: str, index: int) -> tuple[int, float, int]:
+    if status == "pending":
+        priority = 0
+        timestamp = parse_iso_datetime(str(task.get("created_at") or ""))
+        return priority, timestamp.timestamp() if timestamp else 0.0, index
+    if status in {GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS, EXISTING_VIDEO_PUBLISH_PENDING_STATUS}:
+        priority = 1
+        raw = task.get("next_poststage_at") or task.get("next_publish_poststage_at") or 0
+        return priority, safe_float(raw), index
+    if status == GENERATED_VIDEO_WAITING_STATUS:
+        priority = 2
+        return priority, safe_float(task.get("next_poll_at") or 0), index
+    return 3, 0.0, index
+
+
+def safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def adopt_active_generated_video_tasks(path: Path) -> dict[str, Any] | None:
+    """Persist active Xiaoyunque thread state so long renders do not hold a worker."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        now = datetime.now()
+        for index, task in enumerate(tasks):
+            if not generated_video_adoption_due(task, now):
+                continue
+            monitor = discover_generated_video_monitor_from_probe(task) or discover_generated_video_monitor_from_browser(task)
+            if not (monitor.get("thread_url") and monitor.get("page_id")):
+                continue
+            now_text = now.isoformat(timespec="seconds")
+            adopted_monitor = dict(task.get("generated_video_monitor") or {})
+            adopted_monitor.update(monitor)
+            adopted_monitor.setdefault("output_dir", str(Path(str(task.get("artifact_dir") or worker_artifact_dir(task)))))
+            adopted_monitor.setdefault("filename", f"{safe_slug(str(task.get('id') or 'generated-video'))}.mp4")
+            adopted_monitor["adopted_at"] = now_text
+            task["generated_video_monitor"] = adopted_monitor
+            task["status"] = GENERATED_VIDEO_WAITING_STATUS
+            task["next_poll_at"] = now.timestamp() + generated_video_adoption_poll_seconds()
+            task["next_poll_at_iso"] = datetime.fromtimestamp(float(task["next_poll_at"])).isoformat(timespec="seconds")
+            task["generation_wait_count"] = max(1, int(task.get("generation_wait_count") or 0))
+            task["last_generation_status_at"] = now_text
+            task["last_live_status_at"] = now_text
+            task.setdefault("generation_adoption_history", []).append(
+                {
+                    "at": now_text,
+                    "previous_status": CLAIMED_STATUS,
+                    "previous_worker_id": task.get("worker_id"),
+                    "thread_url": adopted_monitor.get("thread_url"),
+                    "page_id": adopted_monitor.get("page_id"),
+                }
+            )
+            task["result"] = {
+                "message": "Xiaoyunque generation was adopted into durable queue monitoring.",
+                "files": [],
+                "confirmation": "",
+                "data": {"generated_video": adopted_monitor, "generation": adopted_monitor},
+            }
+            task.pop("completed_at", None)
+            task.pop("send_errors", None)
+            task.pop("send_deferred_reason", None)
+            tasks[index] = task
+            write_tasks(path, tasks)
+            return task
+    return None
+
+
+def generated_video_adoption_due(task: dict[str, Any], now: datetime) -> bool:
+    if not is_generate_video_task(task) or str(task.get("status") or "") != CLAIMED_STATUS:
+        return False
+    monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
+    if monitor.get("thread_url") and monitor.get("page_id"):
+        return False
+    if task.get("generation_wait_count"):
+        return False
+    claimed_at = parse_iso_datetime(str(task.get("claimed_at") or ""))
+    if not claimed_at:
+        return False
+    min_age = int(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_ADOPT_IN_PROGRESS_SECONDS", "90"))
+    return (now - claimed_at).total_seconds() >= max(0, min_age)
+
+
+def generated_video_adoption_poll_seconds() -> int:
+    return max(1, int(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_ADOPT_POLL_SECONDS", "60")))
+
+
+def generated_video_stale_pause_due(task: dict[str, Any], now: datetime) -> bool:
+    if not is_generate_video_task(task):
+        return False
+    if str(task.get("status") or "") not in {CLAIMED_STATUS, GENERATED_VIDEO_WAITING_STATUS}:
+        return False
+    min_waits = int(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_STALE_MIN_WAITS", "20"))
+    if int(task.get("generation_wait_count") or 0) < min_waits:
+        return False
+    max_age = int(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_STALE_SECONDS", str(6 * 60 * 60)))
+    if max_age <= 0:
+        return False
+    anchors = [
+        parse_iso_datetime(str(task.get("generation_started_at") or "")),
+        parse_iso_datetime(str(task.get("created_at") or "")),
+        parse_iso_datetime(str(task.get("claimed_at") or "")),
+    ]
+    started = next((item for item in anchors if item is not None), None)
+    if not started:
+        return False
+    return (now - started).total_seconds() >= max_age
 
 
 def generated_video_poll_ready(task: dict[str, Any], now: datetime) -> bool:
@@ -1226,6 +1399,28 @@ def rewrite_task(path: Path, updated: dict[str, Any]) -> None:
         write_tasks(path, tasks)
 
 
+def persist_task_progress(task: dict[str, Any]) -> None:
+    queue_path = str(task.get("queue_path") or "")
+    if not queue_path:
+        return
+    try:
+        path = Path(queue_path)
+    except (TypeError, ValueError):
+        return
+    if not path.exists():
+        return
+    try:
+        rewrite_task(path, task)
+    except Exception as exc:
+        task.setdefault("progress_persist_errors", []).append(
+            {
+                "at": datetime.now().isoformat(timespec="seconds"),
+                "type": type(exc).__name__,
+                "message": str(exc)[:300],
+            }
+        )
+
+
 def write_tasks(path: Path, tasks: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(task, ensure_ascii=False) + "\n" for task in tasks), encoding="utf-8")
@@ -1300,6 +1495,7 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
     preflight = prepare_worker_preflight(task, artifact_dir)
     if preflight:
         task["preflight"] = preflight
+        persist_task_progress(task)
     deterministic = deterministic_preflight_result(task)
     if deterministic is not None:
         task["orchestrator"]["last_action"] = "deterministic_routine_stage"
@@ -1499,7 +1695,8 @@ def worker_artifact_dir(task: dict[str, Any]) -> Path:
 def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     preflight: dict[str, Any] = {}
-    if is_generate_video_task(task):
+    generate_video_task = is_generate_video_task(task)
+    if generate_video_task:
         preflight["generated_video_contract"] = write_generated_video_contract(task, artifact_dir)
         generated_status = inspect_generated_video_status(task)
         if generated_status:
@@ -1513,7 +1710,7 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         "metadata_prompt_file": str(metadata_path),
         "rule": "Pass correction_prompt_file to --correction-prompt-file and metadata_prompt_file to --metadata-prompt-file.",
     }
-    if should_preflight_autopublish(task):
+    if not generate_video_task and should_preflight_autopublish(task):
         artifact_resolution = resolve_exact_video_artifact_preflight(
             task,
             {"ok": False, "status": "wechat-cache-not-run", "reason": "same-chat artifact ledger checked first"},
@@ -1674,7 +1871,7 @@ def should_preflight_autopublish(task: dict[str, Any]) -> bool:
     route = task_route_decision(task)
     if route:
         route_kind = str(route.get("route_kind") or "")
-        if route_kind == "generate_video" and not bool(route.get("public_publish_allowed")):
+        if route_kind == "generate_video":
             return False
         if route_kind == "publish_video":
             return bool(route.get("public_publish_allowed"))
@@ -1695,6 +1892,7 @@ def write_generated_video_contract(task: dict[str, Any], artifact_dir: Path) -> 
         "route_decision": task_route_decision(task),
         "current_request": task_focus_text(task),
         "stage_permissions": stages,
+        "verification_policy": generated_video_verification_policy(task),
         "orchestration_routine": generated_video_orchestration_routine(task),
         "rules": [
             "Re-check route_decision against the current request before acting.",
@@ -1793,6 +1991,35 @@ def latest_generated_video_probe(output_dir: Path) -> dict[str, Any] | None:
         data["_path"] = str(latest)
         return data
     return None
+
+
+def discover_generated_video_monitor_from_probe(task: dict[str, Any]) -> dict[str, str]:
+    artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task)))
+    existing = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
+    output_dir = Path(str(existing.get("output_dir") or artifact_dir))
+    probe = latest_generated_video_probe(output_dir)
+    if not probe:
+        return {}
+    href = str(probe.get("href") or "")
+    if "xyq.jianying.com" not in href or "thread_id=" not in href:
+        return {}
+    cdp_url = str(existing.get("cdp_url") or os.environ.get("WECHAT_WORKER_XYQ_CDP_URL") or os.environ.get("XYQ_CDP_URL") or "http://127.0.0.1:9222")
+    page_id = str(existing.get("page_id") or page_id_for_thread_url(cdp_url, href) or "")
+    if not page_id:
+        return {}
+    status_text = ",".join(str(item) for item in probe.get("status") or []) or str(probe.get("tail") or "")
+    return {
+        "cdp_url": cdp_url,
+        "page_id": page_id,
+        "thread_url": href,
+        "title": str(probe.get("title") or ""),
+        "output_dir": str(output_dir),
+        "filename": str(existing.get("filename") or f"{safe_slug(str(task.get('id') or 'generated-video'))}.mp4"),
+        "probe_file": str(probe.get("_path") or ""),
+        "status_text": collapse_context_text(status_text, max_len=500),
+        "discovered_from": "generated_video_probe",
+        "discovered_at": datetime.now().isoformat(timespec="seconds"),
+    }
 
 
 def format_generated_video_contract_markdown(contract: dict[str, Any]) -> str:
@@ -2481,9 +2708,15 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
     poststage = deterministic_generated_video_poststage_result(task)
     if poststage is not None:
         return poststage
+    generated_continue = deterministic_generated_video_continue_result(task)
+    if generated_continue is not None:
+        return generated_continue
     generated_video = deterministic_generated_video_monitor_result(task)
     if generated_video is not None:
         return generated_video
+    generated_submit = deterministic_generated_video_submit_result(task)
+    if generated_submit is not None:
+        return generated_submit
     preflight_status = ((task.get("preflight") or {}).get("generated_video_status") if isinstance(task.get("preflight"), dict) else None)
     if isinstance(preflight_status, dict) and preflight_status.get("status") in {"submitted", "running", "queued", "generating", "waiting"}:
         return json.dumps(
@@ -2528,6 +2761,274 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
         "请重新发送原视频，或在 WeChat 里点开这条视频让客户端缓存完整 MP4；如果这是我生成过的视频，请确保对应任务 artifact 仍在本机输出目录。"
     )
     return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
+
+
+def deterministic_generated_video_submit_result(task: dict[str, Any]) -> str | None:
+    if not is_generate_video_task(task) or str(task.get("status") or "") != CLAIMED_STATUS:
+        return None
+    if task.get("generated_video_monitor") or task.get("generation_wait_count"):
+        return None
+    script = generated_video_submit_script()
+    if not script:
+        return None
+    artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task)))
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    cdp_url = os.environ.get("WECHAT_WORKER_XYQ_CDP_URL") or os.environ.get("XYQ_CDP_URL") or "http://127.0.0.1:9222"
+    request_text = task_focus_text(task)
+    duration = requested_generated_video_duration_seconds(task)
+    command = [
+        sys.executable,
+        str(script),
+        "--cdp-url",
+        cdp_url,
+        "--artifact-dir",
+        str(artifact_dir),
+        "--task-id",
+        safe_slug(str(task.get("id") or "generated-video")),
+        "--request-text",
+        request_text,
+        "--min-attachments",
+        "8",
+        "--min-prompt-chars",
+        os.environ.get("WECHAT_WORKER_XYQ_MIN_PROMPT_CHARS", "300"),
+        "--submit",
+    ]
+    if duration:
+        command.extend(["--expect-duration", str(duration)])
+    timeout = int(os.environ.get("WECHAT_WORKER_XYQ_SUBMIT_TIMEOUT_SECONDS", "120"))
+    try:
+        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else str(exc.stdout or "")
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr or "")
+        task["generated_video_submit_probe"] = {
+            "ok": False,
+            "status": "timeout",
+            "stdout": collapse_context_text(stdout, max_len=800),
+            "stderr": collapse_context_text(stderr, max_len=800),
+        }
+        return None
+    payload = parse_last_json_object((proc.stdout or "") + "\n" + (proc.stderr or ""))
+    if not payload:
+        task["generated_video_submit_probe"] = {
+            "ok": False,
+            "status": "parse_failed",
+            "returncode": proc.returncode,
+            "stdout": collapse_context_text(proc.stdout, max_len=1000),
+            "stderr": collapse_context_text(proc.stderr, max_len=1000),
+        }
+        return None
+    task["generated_video_submit_probe"] = payload
+    persist_task_progress(task)
+    status = str(payload.get("status") or "")
+    if not bool(payload.get("ok")) or status == "not_ready":
+        return None
+    screenshots = [str(path) for path in payload.get("screenshots") or [] if path]
+    thread_url = str(payload.get("thread_url") or "")
+    page_id = str(payload.get("page_id") or "")
+    message = (
+        "Xiaoyunque 生成任务已提交/恢复，已进入自动监控；"
+        "我会等待 MP4，下载后先发回本群，再按当前请求继续 LazyEdit 和发布。"
+    )
+    monitor = {
+        "status": status or "submitted",
+        "thread_url": thread_url,
+        "page_id": page_id,
+        "cdp_url": cdp_url,
+        "output_dir": str(artifact_dir),
+        "filename": f"{safe_slug(str(task.get('id') or 'generated-video'))}.mp4",
+        "screenshots": screenshots,
+        "stage_permissions": generated_video_stage_permissions(task),
+    }
+    return json.dumps(
+        {
+            "message": message,
+            "files": screenshots,
+            "confirmation": "",
+            "data": {
+                "generated_video": monitor,
+                "generation": monitor,
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
+def deterministic_generated_video_continue_result(task: dict[str, Any]) -> str | None:
+    if not is_generate_video_task(task) or str(task.get("status") or "") != CLAIMED_STATUS:
+        return None
+    monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
+    thread_url = str(monitor.get("thread_url") or "").strip()
+    if not thread_url:
+        return None
+    artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task)))
+    output_dir = Path(str(monitor.get("output_dir") or artifact_dir))
+    probe = latest_generated_video_probe(output_dir)
+    if not generated_video_probe_needs_continuation(probe):
+        return None
+    if generated_video_recently_continued(task):
+        # The latest local probe may still be the pre-continuation snapshot.
+        # Do not return a nonterminal status here; let the monitor run a fresh
+        # CDP probe against the same thread so it can observe generating/done.
+        return None
+    script = generated_video_continue_script()
+    if not script:
+        return json.dumps(
+            {
+                "message": "Xiaoyunque 当前线程正在等待确认，但本机找不到 continuation helper；任务保留在队列等待 worker 恢复。",
+                "files": [],
+                "confirmation": "",
+            },
+            ensure_ascii=False,
+        )
+    cdp_url = str(monitor.get("cdp_url") or os.environ.get("WECHAT_WORKER_XYQ_CDP_URL") or os.environ.get("XYQ_CDP_URL") or "http://127.0.0.1:9222")
+    page_id = str(monitor.get("page_id") or page_id_for_thread_url(cdp_url, thread_url) or "")
+    prompt = generated_video_continuation_prompt(task)
+    command = [
+        sys.executable,
+        str(script),
+        "--cdp-url",
+        cdp_url,
+        "--thread-url",
+        thread_url,
+        "--artifact-dir",
+        str(artifact_dir),
+        "--task-id",
+        safe_slug(str(task.get("id") or "generated-video")),
+        "--message",
+        prompt,
+        "--submit",
+    ]
+    if page_id:
+        command.extend(["--page-id", page_id])
+    try:
+        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=90)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return json.dumps(
+            {
+                "message": f"Xiaoyunque 继续生成确认提交失败：{type(exc).__name__}: {str(exc)[:240]}；任务保留在队列稍后重试。",
+                "files": [],
+                "confirmation": "",
+            },
+            ensure_ascii=False,
+        )
+    payload = parse_last_json_object((proc.stdout or "") + "\n" + (proc.stderr or ""))
+    if not isinstance(payload, dict):
+        payload = {}
+    if proc.returncode == 0 and payload.get("status") in {"continued", "ready"}:
+        continuation = {
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "thread_url": str(payload.get("thread_url") or thread_url),
+            "page_id": str(payload.get("page_id") or page_id),
+            "message": prompt,
+            "status": str(payload.get("status") or ""),
+        }
+        task.setdefault("generated_video_continuations", []).append(continuation)
+        updated_monitor = dict(monitor)
+        updated_monitor.update(
+            {
+                "cdp_url": cdp_url,
+                "page_id": continuation["page_id"],
+                "thread_url": continuation["thread_url"],
+                "last_status": "Xiaoyunque continuation submitted; waiting for final MP4.",
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        )
+        return json.dumps(
+            {
+                "message": "已向 Xiaoyunque 当前线程提交继续生成确认；会继续监控同一个 thread_id，下载 MP4 后先发回本群，再按当前请求处理后续阶段。",
+                "files": [],
+                "confirmation": "",
+                "data": {
+                    "generated_video": updated_monitor,
+                    "generation": updated_monitor,
+                    "generated_video_continuation": continuation,
+                },
+            },
+            ensure_ascii=False,
+        )
+    combined = collapse_context_text((proc.stdout or "") + "\n" + (proc.stderr or ""), max_len=900)
+    return json.dumps(
+        {
+            "message": f"Xiaoyunque 当前线程需要继续确认，但自动提交没有成功；任务保留在队列稍后重试。 last_log={combined}",
+            "files": [],
+            "confirmation": "",
+            "data": {"generated_video": monitor, "generation": monitor},
+        },
+        ensure_ascii=False,
+    )
+
+
+def generated_video_probe_needs_continuation(probe: dict[str, Any] | None) -> bool:
+    if not isinstance(probe, dict):
+        return False
+    tail = str(probe.get("tail") or "")
+    status = "\n".join(str(item) for item in probe.get("status") or [])
+    text = f"{tail}\n{status}"
+    has_confirm = "请确认" in text or "符合预期" in text
+    has_continue = "继续帮您生成视频" in text or ("继续" in text and "生成视频" in text)
+    has_blocker = any(marker in text for marker in ("生成失败", "任务失败", "内部错误", "审核", "合规", "积分不足", "余额不足"))
+    has_final_video = bool(probe.get("videos")) or ("最终视频" in text and "下载" in text)
+    return bool(has_confirm and has_continue and not has_blocker and not has_final_video)
+
+
+def generated_video_recently_continued(task: dict[str, Any]) -> bool:
+    continuations = task.get("generated_video_continuations")
+    if not isinstance(continuations, list) or not continuations:
+        return False
+    latest = continuations[-1] if isinstance(continuations[-1], dict) else {}
+    max_age = float(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_CONTINUE_COOLDOWN_SECONDS", "900"))
+    try:
+        at = datetime.fromisoformat(str(latest.get("at") or ""))
+    except ValueError:
+        return True
+    return (datetime.now() - at).total_seconds() < max_age
+
+
+def generated_video_continuation_prompt(task: dict[str, Any]) -> str:
+    requested = requested_generated_video_duration_seconds(task)
+    tolerance = generated_video_duration_tolerance_seconds(task)
+    duration_note = f"{requested}秒，允许±{tolerance}秒" if requested else "当前故事板时长"
+    return (
+        "确认，当前故事板、参考角色/场景/道具素材、4:3比例、无字幕设置均符合预期；"
+        f"总时长按 {duration_note} 继续即可。"
+        "请优先使用 Seedance 2.0 Mini 体验版 / vipnew / 单秒低至4积分 的便宜模型；"
+        "如果 Fast Vision 积分不足，不要因为模型选择停止，改用当前可用的最低成本 Mini/Fast 方案。"
+        "请不要再等待人工确认，直接继续生成最终视频 MP4。"
+        "不要字幕、不要画面文字、不要说明文字；保持当前故事板和参考素材一致。"
+    )
+
+
+def requested_generated_video_duration_seconds(task: dict[str, Any]) -> int | None:
+    match = re.search(r"(\d+)\s*(?:s|sec|secs|second|seconds|秒)", task_focus_text(task), flags=re.I)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def generated_video_duration_tolerance_seconds(task: dict[str, Any]) -> int:
+    if re.search(r"\bexact(?:ly)?\b|必须\s*正好|严格\s*(?:时长|长度)|精确", task_focus_text(task), flags=re.I):
+        return int(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_EXACT_DURATION_TOLERANCE_SECONDS", "1"))
+    return int(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_DURATION_TOLERANCE_SECONDS", "5"))
+
+
+def generated_video_verification_policy(task: dict[str, Any]) -> dict[str, Any]:
+    requested = requested_generated_video_duration_seconds(task)
+    tolerance = generated_video_duration_tolerance_seconds(task)
+    policy: dict[str, Any] = {
+        "ffprobe_required": True,
+        "duration_tolerance_seconds": tolerance,
+        "duration_rule": "Accept requested duration within tolerance unless the current request explicitly requires exact duration.",
+    }
+    if requested:
+        policy.update(
+            {
+                "requested_duration_seconds": requested,
+                "accepted_min_duration_seconds": max(0, requested - tolerance),
+                "accepted_max_duration_seconds": requested + tolerance,
+            }
+        )
+    return policy
 
 
 def deterministic_generated_video_poststage_result(task: dict[str, Any]) -> str | None:
@@ -2630,11 +3131,14 @@ def run_generated_video_monitor(task: dict[str, Any], monitor: dict[str, Any]) -
             str(generated_video_status_backoff_seconds(str(status.get("status_text") or ""), task_focus_text(task))),
         )
     )
+    max_interval = float(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_WATCH_MAX_INTERVAL_SECONDS", "30"))
+    if max_interval > 0:
+        poll_seconds = min(poll_seconds, max_interval)
     max_polls = max(
         1,
         int(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_WATCH_POLLS_PER_CYCLE", DEFAULT_GENERATED_VIDEO_WATCH_POLLS_PER_CYCLE)),
     )
-    probe_grace = float(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_WATCH_GRACE_SECONDS", "120"))
+    probe_grace = float(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_WATCH_GRACE_SECONDS", "30"))
     timeout = int(max(60.0, poll_seconds * max_polls + probe_grace))
     copy_to = Path(os.environ.get("LALACHAN_VIDEO_DIR", "/home/lachlan/ProjectsLFS/LALACHAN/Videos"))
     command = [
@@ -2678,12 +3182,32 @@ def run_generated_video_monitor(task: dict[str, Any], monitor: dict[str, Any]) -
         return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
     stdout = proc.stdout or ""
     stderr = proc.stderr or ""
+    combined = collapse_context_text(stdout + "\n" + stderr, max_len=900)
+    if proc.returncode == 43 and generated_video_credit_block_seen(combined):
+        message = (
+            "Xiaoyunque 已返回积分不足/余额不足，当前线程无法继续生成最终 MP4。"
+            "我已停止重复轮询和重复提交；需要充值、切换到更低成本/更短视频方案，或明确授权其它生成方式后再继续。"
+        )
+        return json.dumps(
+            {
+                "message": message,
+                "files": [],
+                "confirmation": "Xiaoyunque 生成被积分不足挡住。请充值/补充积分，或回复允许我改用更短/更低成本的替代方案。",
+                "data": {
+                    "generated_video_blocker": {
+                        "kind": "insufficient_credits",
+                        "monitor": monitor,
+                        "last_log": combined,
+                    }
+                },
+            },
+            ensure_ascii=False,
+        )
     output_path = generated_video_output_path(stdout, output_dir / filename)
     if proc.returncode == 0 and output_path and output_path.is_file():
         return generated_video_completion_result(output_path, task, monitor, abnormal=False)
     if output_path and output_path.is_file():
         return generated_video_completion_result(output_path, task, monitor, abnormal=True)
-    combined = collapse_context_text(stdout + "\n" + stderr, max_len=900)
     if proc.returncode == 0:
         status = "Xiaoyunque 监控结束但没有找到 MP4；我会继续低频监控，避免重复提交。"
     else:
@@ -2691,9 +3215,14 @@ def run_generated_video_monitor(task: dict[str, Any], monitor: dict[str, Any]) -
     return json.dumps({"message": f"{status} last_log={combined}", "files": [], "confirmation": ""}, ensure_ascii=False)
 
 
+def generated_video_credit_block_seen(text: str) -> bool:
+    return any(marker in str(text or "") for marker in ("积分不足", "余额不足", "insufficient_credit", "insufficient credits"))
+
+
 def generated_video_completion_result(output_path: Path, task: dict[str, Any], monitor: dict[str, Any], *, abnormal: bool) -> str:
     resolved = output_path.resolve()
     stages = generated_video_stage_permissions(task)
+    verification = generated_video_output_verification(resolved, task)
     message = (
         f"监控命令返回异常，但已经找到生成视频文件：{resolved}"
         if abnormal
@@ -2704,6 +3233,7 @@ def generated_video_completion_result(output_path: Path, task: dict[str, Any], m
         "generated_video": {
             "status": "downloaded",
             "video_path": str(resolved),
+            "verification": verification,
             "stage_permissions": stages,
         },
     }
@@ -2723,12 +3253,71 @@ def generated_video_completion_result(output_path: Path, task: dict[str, Any], m
     return json.dumps({"message": message, "files": [str(resolved)], "confirmation": "", **data}, ensure_ascii=False)
 
 
+def generated_video_output_verification(path: Path, task: dict[str, Any]) -> dict[str, Any]:
+    policy = generated_video_verification_policy(task)
+    verification: dict[str, Any] = {"policy": policy, "path": str(path)}
+    if not shutil.which("ffprobe"):
+        verification.update({"ok": True, "warning": "ffprobe unavailable; duration could not be checked"})
+        return verification
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration,size",
+        "-show_entries",
+        "stream=width,height,codec_name",
+        "-of",
+        "json",
+        str(path),
+    ]
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, check=False, timeout=20)
+    except (OSError, subprocess.SubprocessError) as exc:
+        verification.update({"ok": True, "warning": f"ffprobe failed: {type(exc).__name__}: {str(exc)[:200]}"})
+        return verification
+    verification["ffprobe_returncode"] = proc.returncode
+    if proc.returncode != 0:
+        verification.update({"ok": True, "warning": collapse_context_text(proc.stderr or proc.stdout, max_len=300)})
+        return verification
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        verification.update({"ok": True, "warning": "ffprobe returned non-json output"})
+        return verification
+    duration_raw = ((payload.get("format") or {}) if isinstance(payload, dict) else {}).get("duration")
+    try:
+        duration = float(duration_raw)
+    except (TypeError, ValueError):
+        duration = None
+    verification["ffprobe"] = payload
+    verification["duration_seconds"] = duration
+    requested = policy.get("requested_duration_seconds")
+    if duration is not None and requested:
+        min_duration = float(policy.get("accepted_min_duration_seconds") or 0)
+        max_duration = float(policy.get("accepted_max_duration_seconds") or requested)
+        verification["duration_within_tolerance"] = min_duration <= duration <= max_duration
+        verification["duration_delta_seconds"] = round(duration - float(requested), 3)
+    verification["ok"] = True
+    return verification
+
+
 def generated_video_watcher_script() -> Path | None:
     candidates = [
         Path("/home/lachlan/ProjectsLFS/LALACHAN/scripts/xyq_chrome/watch_thread_dom_download.py"),
         Path("/home/lachlan/.codex/skills/lalachan-xyq-browser-video/scripts/xyq_chrome/watch_thread_dom_download.py"),
     ]
     return next((path for path in candidates if path.is_file()), None)
+
+
+def generated_video_submit_script() -> Path | None:
+    path = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "xyq_submit_current.py"
+    return path if path.is_file() else None
+
+
+def generated_video_continue_script() -> Path | None:
+    path = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "xyq_continue_thread.py"
+    return path if path.is_file() else None
 
 
 def generated_video_output_path(stdout: str, default_path: Path) -> Path | None:
@@ -3579,12 +4168,12 @@ LALACHAN/RaraXia/AyaChan/SasaKun story-video generation:
 - Use `/home/lachlan/ProjectsLFS/LALACHAN` as the default root. If available, read `/home/lachlan/.codex/skills/lalachan-xyq-browser-video/SKILL.md` and `/home/lachlan/ProjectsLFS/LALACHAN/references/lalachan-story-video-handoff-for-wechat.md` for the current runbook.
 - First write a natural, understandable Chinese story with one clear setup -> problem -> action -> twist -> payoff chain. Save it under `/home/lachlan/ProjectsLFS/LALACHAN/references/stories/`.
 - Convert the story into a compact Xiaoyunque prompt and save it under `/home/lachlan/ProjectsLFS/LALACHAN/references/prompts/`.
-- Use the Xiaoyunque browser UI, not the API, unless explicitly requested. Default to 沉浸式短片, a relatively cheap suitable Seedance model, 15s, 4:3, mainly Chinese, with `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。`
+- Use the Xiaoyunque browser UI, not the API, unless explicitly requested. Default to 沉浸式短片, a relatively cheap suitable Seedance model, 4:3, mainly Chinese, with `不要字幕，不要生成任何字幕、说明文字、下三分之一文字或画面文字。` Respect an explicit requested duration such as 30s; use 15s only when the request gives no duration. A generated MP4 within ±5 seconds of the requested duration is acceptable unless the current request explicitly says the duration must be exact.
 - Model selection must not block the task. For "cheap model", prefer `Seedance 2.0 Mini 体验版` / `vipnew` when the page shows a cheap rate such as `单秒限时低至4积分`; otherwise choose the relatively cheaper suitable `Seedance 2.0 Fast`, `Fast VIP`, or available Seedance option and continue.
 - Upload and verify the eight default reference images in this exact order: `words-card.jpg`, `LazyingArtRobot.png`, `display.png`, `patchwork-leather-notebook-luxury-clean-v2.png`, `raraxia.jpeg`, `ayachan.png`, `sasakun.jpeg`, `Trio.png`.
 - In the Xiaoyunque prompt, refer to uploaded images as 图1 through 图8. Do not paste local filesystem paths or file names into the prompt as scene text.
 - Before any submit, verify visible page state as far as the UI allows: mode, selected model row, duration, ratio, prompt, upload success, and any visible point cost/VIP/vipnew state. Do not block only because the exact preferred model or exact cost text is unavailable. Never double-click submit or retry if the job is queued/running.
-- Monitor the thread, download the finished MP4, save/copy it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, and return the story path, prompt path, MP4 path, and relevant screenshots/logs in `files` where safe. The outer worker will send the MP4 back to the source WeChat chat.
+- Monitor the thread, download the finished MP4, save/copy it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, apply the duration tolerance above, and return the story path, prompt path, MP4 path, and relevant screenshots/logs in `files` where safe. The outer worker will send the MP4 back to the source WeChat chat.
 - If the current request asks for LazyEdit import/process, hand the verified MP4 to LazyEdit with no public publish unless public publishing is also explicitly requested. If the user asks to publish in the current request, then hand the verified MP4 to LazyEdit with the publish workflow below. Otherwise stop after generation/download/send-back and report the ready video path.
 
 LazyEdit/AutoPublish video publishing:
@@ -3632,6 +4221,8 @@ def safe_slug(value: str) -> str:
 
 def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
     text = worker_policy_text(task).lower()
+    routine_id = task_routine_id(task)
+    routine_effort = task_routine_default_effort(task)
     xhigh_keywords = [
         "deep research",
         "fully implement",
@@ -3736,7 +4327,9 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "高光谱",
         "高光譜",
     ]
-    if is_generate_video_task(task) and not bool(task_route_decision(task).get("public_publish_allowed")):
+    if routine_id in {"research_summary", "story_script_generation"} and routine_effort:
+        effort = routine_effort
+    elif is_generate_video_task(task) and not bool(task_route_decision(task).get("public_publish_allowed")):
         effort = "medium"
     elif any(keyword in text for keyword in xhigh_keywords) or len(text) > 5000:
         effort = "xhigh"
@@ -3753,6 +4346,20 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "sandbox": worker_sandbox(),
         "timeout_seconds": timeout_for_effort(effort),
     }
+
+
+def task_routine_id(task: dict[str, Any]) -> str:
+    routine = task.get("routine")
+    if isinstance(routine, dict):
+        return str(routine.get("id") or "")
+    return ""
+
+
+def task_routine_default_effort(task: dict[str, Any]) -> str:
+    routine = task.get("routine")
+    if isinstance(routine, dict):
+        return normalize_effort(str(routine.get("default_effort") or ""), fallback="")
+    return ""
 
 
 def worker_policy_text(task: dict[str, Any]) -> str:

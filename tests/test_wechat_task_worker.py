@@ -36,7 +36,10 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertTrue(wrapper.exists())
         self.assertTrue(wrapper.stat().st_mode & 0o111)
-        self.assertIn("wechat_worker_guarded_loop.sh", supervisor.read_text(encoding="utf-8"))
+        supervisor_text = supervisor.read_text(encoding="utf-8")
+        self.assertIn("wechat_worker_guarded_loop.sh", supervisor_text)
+        self.assertIn('WORKER_COUNT="${WECHAT_WORKER_COUNT:-2}"', supervisor_text)
+        self.assertIn("worker_window_name", supervisor_text)
         self.assertIn("wechat selftest --suite all", wrapper.read_text(encoding="utf-8"))
 
     def test_worker_policy_selects_high_for_cad_or_pcb_tasks(self) -> None:
@@ -59,6 +62,28 @@ class WeChatTaskWorkerTests(unittest.TestCase):
     def test_worker_policy_uses_medium_for_literature_summary(self) -> None:
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "summarize this PDF paper"})
+
+        self.assertEqual(policy["reasoning_effort"], "medium")
+
+    def test_worker_policy_uses_routine_default_for_long_research_summary(self) -> None:
+        worker = load_worker()
+        request = (
+            "Handle this WeChat request as backend work. "
+            "Use available local tools and return artifacts. "
+        ) * 160
+        request += (
+            "\n\nCurrent coalesced request:\n"
+            "New WeChat link: EventDrive 把事件相机接进驾驶大模型, summarize the article.\n\n"
+            "Recent history:\n"
+            "A long source-limited WeChat XML card and synced thumbnail context."
+        )
+        policy = worker.choose_worker_policy(
+            {
+                "request": request,
+                "routine": {"id": "research_summary", "default_effort": "medium"},
+                "route_decision": {"route_kind": "research_or_summary"},
+            }
+        )
 
         self.assertEqual(policy["reasoning_effort"], "medium")
 
@@ -706,6 +731,55 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertFalse(worker.should_preflight_autopublish(task))
         self.assertFalse(worker.should_deterministic_video_publish(task))
 
+    def test_generate_video_publish_route_keeps_lazyedit_context_without_old_autopublish(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-generate-and-publish-video",
+            "chat": "懒人科研",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "project": "lalachan",
+                "needs_recent_media": False,
+                "public_publish_allowed": True,
+                "reason": "current request asks to generate a new video and publish the generated result",
+            },
+            "request": (
+                "Handle this WeChat request as backend work.\n\n"
+                "Current coalesced request:\n"
+                "Generate a 30s video with a cheap mini model, send the video back, then use LazyEdit and publish to shipinhao ins y2b.\n\n"
+                "Recent history:\n"
+                "陈苗: <msg><videomsg md5=\"old-video\" length=\"12345\" /></msg>"
+            ),
+            "source": {"local_id": 132, "sender_display": "陈苗"},
+            "context": [
+                {"local_id": 110, "sender_display": "陈苗", "content": '<msg><videomsg md5="old-video" length="12345" /></msg>'},
+                {
+                    "local_id": 132,
+                    "sender_display": "陈苗",
+                    "content": "Generate a 30s video with a cheap mini model, send it back, then LazyEdit and publish it.",
+                },
+            ],
+        }
+
+        def fail_if_autopublish_runs(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError("generated-video preflight must not inspect or copy old AutoPublish media")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with mock.patch.object(worker.subprocess, "run", side_effect=fail_if_autopublish_runs):
+                preflight = worker.prepare_worker_preflight(task, tmp_path)
+            contract_data = json.loads(Path(preflight["generated_video_contract"]["json"]).read_text(encoding="utf-8"))
+            context_text = Path(preflight["lazyedit_context"]["correction_prompt_file"]).read_text(encoding="utf-8")
+
+        self.assertTrue(worker.is_video_publish_task(task))
+        self.assertFalse(worker.should_preflight_autopublish(task))
+        self.assertIn("generated_video_contract", preflight)
+        self.assertIn("lazyedit_context", preflight)
+        self.assertNotIn("autopublish_video", preflight)
+        self.assertTrue(contract_data["stage_permissions"]["lazyedit_import"])
+        self.assertTrue(contract_data["stage_permissions"]["public_publish"])
+        self.assertIn("old-video", context_text)
+
     def test_generate_video_route_rewrites_false_publish_result(self) -> None:
         worker = load_worker()
         task = {
@@ -841,6 +915,70 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertTrue(worker.generated_video_result_is_nonterminal(task, result))
         self.assertFalse(worker.should_send_worker_result(task, result))
 
+    def test_generated_video_probe_confirmation_triggers_thread_continuation(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "watch_001.json").write_text(
+                json.dumps(
+                    {
+                        "href": "https://xyq.jianying.com/home?thread_id=abc",
+                        "status": ["下载", "请确认", "符合预期", "继续帮您生成视频"],
+                        "tail": "故事板以及参考素材已生成成功，请确认故事脚本、参考角色图、视频总时长是否符合预期，如果符合预期我将继续帮您生成视频。",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            helper = tmp_path / "xyq_continue_thread.py"
+            helper.write_text("# helper", encoding="utf-8")
+            task = {
+                "id": "task-video",
+                "status": worker.CLAIMED_STATUS,
+                "artifact_dir": str(tmp_path),
+                "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+                "request": "Current coalesced request:\nGenerate a 30s LALACHAN video.",
+                "generated_video_monitor": {
+                    "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                    "page_id": "PAGE123456",
+                    "output_dir": str(tmp_path),
+                    "filename": "task-video.mp4",
+                },
+            }
+
+            def fake_run(command, **_kwargs):
+                self.assertIn("--submit", command)
+                self.assertIn("--message", command)
+                message = command[command.index("--message") + 1]
+                self.assertIn("30秒", message)
+                self.assertIn("允许±5秒", message)
+                payload = {
+                    "ok": True,
+                    "status": "continued",
+                    "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                    "page_id": "PAGE123456",
+                }
+                return subprocess.CompletedProcess(command, 0, json.dumps(payload, ensure_ascii=False), "")
+
+            with mock.patch.object(worker, "generated_video_continue_script", return_value=helper):
+                with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+                    raw = worker.deterministic_generated_video_continue_result(task)
+
+        self.assertIsNotNone(raw)
+        assert raw is not None
+        result = json.loads(raw)
+        self.assertIn("已向 Xiaoyunque 当前线程提交继续生成确认", result["message"])
+        self.assertTrue(worker.generated_video_result_is_nonterminal(task, result))
+        self.assertEqual(task["generated_video_continuations"][0]["status"], "continued")
+
+    def test_generated_video_probe_without_confirmation_does_not_continue(self) -> None:
+        worker = load_worker()
+        self.assertFalse(
+            worker.generated_video_probe_needs_continuation(
+                {"status": ["生成中"], "tail": "任务正在生成中，大约还需 8 分钟。", "videos": []}
+            )
+        )
+
     def test_generate_video_timeout_discovers_xyq_thread_from_browser(self) -> None:
         worker = load_worker()
 
@@ -873,6 +1011,70 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(task["generated_video_monitor"]["page_id"], "PAGE123456")
         self.assertIn("thread_id=abc", task["generated_video_monitor"]["thread_url"])
 
+    def test_in_progress_generated_video_adopts_probe_monitor(self) -> None:
+        worker = load_worker()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    [
+                        {
+                            "type": "page",
+                            "id": "PAGE-PROBE",
+                            "title": "小云雀网页版",
+                            "url": "https://xyq.jianying.com/home?thread_id=abc&agent_name=pippit_nest_agent",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ).encode("utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            queue = tmp_path / "queue.jsonl"
+            artifact_dir = tmp_path / "artifact"
+            artifact_dir.mkdir()
+            (artifact_dir / "watch_001.json").write_text(
+                json.dumps(
+                    {
+                        "href": "https://xyq.jianying.com/home?thread_id=abc&agent_name=pippit_nest_agent",
+                        "status": ["生成创意", "进行中"],
+                        "tail": "请生成一个 30 秒视频。任务进行中。",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-generate-video",
+                        "status": worker.CLAIMED_STATUS,
+                        "worker_id": "pid:999999",
+                        "claimed_at": "2026-06-23T07:00:00",
+                        "artifact_dir": str(artifact_dir),
+                        "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+                        "request": "Current coalesced request:\nCould you generate a 30s LALACHAN video?",
+                    }
+                ],
+            )
+
+            with mock.patch.object(worker.urllib.request, "urlopen", return_value=FakeResponse()):
+                adopted = worker.adopt_active_generated_video_tasks(queue)
+
+            self.assertIsNotNone(adopted)
+            rows = worker.read_tasks(queue)
+            self.assertEqual(rows[0]["status"], worker.GENERATED_VIDEO_WAITING_STATUS)
+            self.assertEqual(rows[0]["generated_video_monitor"]["page_id"], "PAGE-PROBE")
+            self.assertIn("thread_id=abc", rows[0]["generated_video_monitor"]["thread_url"])
+            self.assertIn("next_poll_at", rows[0])
+
     def test_generate_video_status_backoff_uses_page_status(self) -> None:
         worker = load_worker()
 
@@ -883,6 +1085,30 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(worker.generated_video_status_backoff_seconds("排队等待中"), 300)
         self.assertEqual(worker.generated_video_status_backoff_seconds("生成中"), 120)
         self.assertEqual(worker.generated_video_status_backoff_seconds("", "please generate 30s video"), 180)
+
+    def test_generated_video_verification_policy_allows_five_second_duration_tolerance(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "Current coalesced request:\nGenerate a 30s video with a cheap mini model.",
+        }
+
+        policy = worker.generated_video_verification_policy(task)
+
+        self.assertEqual(policy["requested_duration_seconds"], 30)
+        self.assertEqual(policy["duration_tolerance_seconds"], 5)
+        self.assertEqual(policy["accepted_min_duration_seconds"], 25)
+        self.assertEqual(policy["accepted_max_duration_seconds"], 35)
+
+    def test_generated_video_exact_duration_uses_stricter_tolerance(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "Current coalesced request:\nGenerate exactly 30s video.",
+        }
+
+        policy = worker.generated_video_verification_policy(task)
+
+        self.assertEqual(policy["requested_duration_seconds"], 30)
+        self.assertEqual(policy["duration_tolerance_seconds"], 1)
 
     def test_generated_video_stage_permissions_are_current_request_only(self) -> None:
         worker = load_worker()
@@ -982,6 +1208,58 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(claimed["status"], worker.CLAIMED_STATUS)
         self.assertEqual(claimed["generation_poll_history"][0]["wait_count"], 1)
 
+    def test_claim_next_pending_prefers_fresh_pending_over_due_video_poll(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "old-video-poll",
+                        "status": worker.GENERATED_VIDEO_WAITING_STATUS,
+                        "generation_wait_count": 30,
+                        "next_poll_at": 0,
+                    },
+                    {
+                        "id": "fresh-message",
+                        "status": "pending",
+                        "created_at": "2026-06-23T08:00:00",
+                    },
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], "fresh-message")
+
+    def test_stale_generated_video_wait_is_paused_not_reopened(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "ancient-video",
+                        "status": worker.GENERATED_VIDEO_WAITING_STATUS,
+                        "generation_wait_count": 30,
+                        "next_poll_at": 0,
+                        "created_at": "2026-06-22T00:00:00",
+                        "route_decision": {"route_kind": "generate_video"},
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+
+            rows = worker.read_tasks(queue)
+        self.assertIsNone(claimed)
+        self.assertEqual(rows[0]["status"], worker.GENERATED_VIDEO_STALE_PAUSED_STATUS)
+        self.assertEqual(rows[0]["generation_pause_reason"], "stale_generated_video_wait_exceeded")
+
     def test_generated_video_monitor_download_result_returns_mp4(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1010,6 +1288,74 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         payload = json.loads(raw)
         self.assertIn("下载完成", payload["message"])
         self.assertEqual(payload["files"], [str(video.resolve())])
+
+    def test_generated_video_monitor_uses_short_probe_cycle(self) -> None:
+        worker = load_worker()
+        captured: dict[str, object] = {}
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            captured["timeout"] = kwargs.get("timeout")
+            return subprocess.CompletedProcess(command, 1, "still running", "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            watcher = tmp_path / "watch_thread_dom_download.py"
+            watcher.write_text("# watcher", encoding="utf-8")
+            task = {
+                "id": "task-video",
+                "artifact_dir": str(tmp_path),
+                "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+                "request": "Current coalesced request:\nCould you generate a 30s video?",
+            }
+            monitor = {
+                "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                "page_id": "PAGE123456",
+                "output_dir": str(tmp_path),
+                "filename": "task-video.mp4",
+            }
+
+            with mock.patch.object(worker, "generated_video_watcher_script", return_value=watcher):
+                with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+                    worker.run_generated_video_monitor(task, monitor)
+
+        command = captured["command"]
+        assert isinstance(command, list)
+        self.assertEqual(command[command.index("--interval") + 1], "30")
+        self.assertEqual(command[command.index("--max-polls") + 1], "1")
+        self.assertLessEqual(int(captured["timeout"]), 60)
+
+    def test_generated_video_monitor_credit_block_returns_confirmation(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            watcher = tmp_path / "watch_thread_dom_download.py"
+            watcher.write_text("# watcher", encoding="utf-8")
+            task = {
+                "id": "task-video",
+                "artifact_dir": str(tmp_path),
+                "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+                "request": "Current coalesced request:\nCould you generate a 30s video?",
+            }
+            monitor = {
+                "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                "page_id": "PAGE123456",
+                "output_dir": str(tmp_path),
+                "filename": "task-video.mp4",
+            }
+
+            with mock.patch.object(worker, "generated_video_watcher_script", return_value=watcher):
+                with mock.patch.object(
+                    worker.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess(["watcher"], 43, "blocking status seen; 积分不足", ""),
+                ):
+                    raw = worker.run_generated_video_monitor(task, monitor)
+
+        payload = json.loads(raw)
+        self.assertIn("积分不足", payload["message"])
+        self.assertIn("积分不足", payload["confirmation"])
+        self.assertEqual(payload["data"]["generated_video_blocker"]["kind"], "insufficient_credits")
 
     def test_generation_waiting_resume_downloads_then_queues_requested_lazyedit_after_send(self) -> None:
         worker = load_worker()

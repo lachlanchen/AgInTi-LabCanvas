@@ -255,9 +255,17 @@ in order, choose a relatively cheap suitable Seedance model, generate/download t
 with `ffprobe`, and send the verified MP4 back to the source WeChat chat. `Seedance 2.0 Mini 体验版` / `vipnew`
 at a visible cheap rate such as `单秒限时低至4积分` is preferred; if unavailable, the worker should choose the
 relatively cheaper suitable `Fast`, `Fast VIP`, or available Seedance row and continue. Model selection is not a blocker. A
+generated MP4 within 5 seconds of the requested duration is acceptable unless the current request explicitly requires exact duration. A
 submitted Xiaoyunque job stays as `generation_waiting` and is checked by short
 status-probe cycles; the next poll is based on page state rather than a fixed
-long timeout. If the agent times out before returning monitor state, the worker
+long timeout. If the thread asks to confirm storyboard/reference assets before
+making the final video, the worker uses `xyq_continue_thread.py` to send the
+approval into the same `thread_id`; when `XYQ_ACCESS_KEY` is available the
+helper also submits the same continuation through Xiaoyunque OpenAPI. It must
+not reopen an old history item. If Xiaoyunque reports `积分不足` or `余额不足`,
+the task stops as `waiting_confirmation` instead of looping; the user must
+recharge or approve a shorter/lower-budget fallback before the worker resumes. If
+the agent times out before returning monitor state, the worker
 discovers the active Xiaoyunque `thread_id` through Chrome CDP and resumes from
 the browser state instead of closing the task.
 
