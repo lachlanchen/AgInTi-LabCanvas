@@ -60,6 +60,10 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   `self_messages_text_only=true`, and `ignore_probable_bot_self_replies=true`.
   This lets same-account mobile text commands control the system while blocking
   the bot's own acknowledgements and returned files from looping.
+- Completion/status messages from the bot, including `Published OK: ...`, must
+  never become new backend tasks. If the route agent says a message is bot
+  completion/status with no new backend work, do not let keyword fallback
+  override it into a publish route.
 - Old history can explain context, but cannot authorize LazyEdit, public
   posting, purchases, deletion, or other irreversible actions.
 - Source media must match the same chat and exact source or quoted message. If
@@ -270,6 +274,9 @@ The LazyEdit command must execute as separate shell stages:
 python scripts/lazyedit_publish.py ... --json`. A zero-exit command with no
 JSON payload is not a successful publish submission; treat it as repairable
 `no_json_output` evidence and keep the poststage pending.
+Before issuing any new existing-video public publish, probe LazyEdit/remote
+queues for the same `video_id` and requested platforms. If terminal evidence is
+already present, return `published_verified`; do not enqueue a duplicate job.
 Set `WECHAT_WORKER_LAZYEDIT_REMOTE_LOG_COMMAND` in the ignored supervisor env to
 let the verifier inspect bounded AutoPublish logs. Login or QR markers should
 become `waiting_confirmation` with the same poststage stored, so the user can

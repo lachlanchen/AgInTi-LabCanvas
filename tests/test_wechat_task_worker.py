@@ -2331,6 +2331,42 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertTrue(payload["publish_stage"]["verified"])
         self.assertNotIn("publish_poststage_retry", payload)
 
+    def test_exact_video_publish_skips_duplicate_when_already_verified(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "exact_video_COMPLETED.mp4"
+            target.write_bytes(b"video")
+            task = {
+                "request": "publish this quoted video to sph youtube instagram",
+                "preflight": {"autopublish_video": {"ok": True, "target": str(target)}},
+            }
+
+            with mock.patch.object(worker, "wait_for_lazyedit_import", return_value=404):
+                with mock.patch.object(worker, "run_lazyedit_publish_command") as publish:
+                    with mock.patch.object(
+                        worker,
+                        "lazyedit_api_get",
+                        return_value={
+                            "jobs": [
+                                {
+                                    "video_id": 404,
+                                    "id": 210,
+                                    "status": "done",
+                                    "remote_status": "done",
+                                    "remote_job_id": "job-1",
+                                    "platforms": ["shipinhao", "youtube", "instagram"],
+                                }
+                            ]
+                        },
+                    ):
+                        with mock.patch.object(worker, "remote_publish_jobs_for", return_value=[{}]):
+                            raw = worker.deterministic_preflight_result(task)
+
+        publish.assert_not_called()
+        payload = json.loads(raw or "{}")
+        self.assertEqual(payload["publish_stage"]["stage"], "published_verified")
+        self.assertTrue(payload["publish_stage"]["verified"])
+
     def test_unverified_existing_video_publish_stays_pending(self) -> None:
         worker = load_worker()
         task = {
@@ -2395,6 +2431,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 return {"ok": True, "status": "done", "payload": {}}
 
             queue_responses = [
+                {"jobs": []},
                 {"jobs": []},
                 {"jobs": [{"video_id": 393, "id": 203, "status": "running", "remote_job_id": "job-1", "platforms": ["shipinhao", "youtube"]}]},
             ]

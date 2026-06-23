@@ -102,6 +102,10 @@ publication.
    - LazyEdit execution must use `source ... && conda activate lazyedit &&
      python scripts/lazyedit_publish.py ... --json`; an empty JSON payload after
      zero exit means the publish command did not actually submit a job.
+   - Probe for an already verified LazyEdit/remote job before issuing a new
+     existing-video public publish. If the same `video_id` and requested
+     platforms are already terminal-verified, report that evidence and skip the
+     duplicate publish command.
    - “Queued”, “submitted”, “running”, or “imported” are not “published”.
      Existing-video publish work uses `publish_poststage_pending` until all
      requested platforms have terminal LazyEdit/remote evidence or public URL

@@ -828,6 +828,7 @@ def looks_like_bot_self_reply(config: dict[str, Any], text: str) -> bool:
         "已保存",
         "已生成",
         "已确认发布完成",
+        "published ok",
         "已准备",
         "准备好了",
         "full story:",
@@ -1396,6 +1397,8 @@ def immediate_task_route(
     if agent_first:
         route_decision = agent_route_decision(config, row, context_rows, focus_rows=focus_rows, current_request=combined)
         if not route_decision_requires_worker(route_decision):
+            if route_agent_chat_only_is_completion_status(route_decision) or looks_like_bot_self_reply(config, visible_message_text(row)):
+                return None
             if not heuristic_candidate:
                 return None
             fallback = fallback_route_decision(config, combined, row, context_rows, focus_rows=focus_rows)
@@ -1863,6 +1866,21 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         parsed["public_publish_allowed"] = False
         parsed["reason"] = (parsed["reason"] + " | public publish removed by current-request safety guard").strip()
     return parsed
+
+
+def route_agent_chat_only_is_completion_status(route_decision: dict[str, Any]) -> bool:
+    if str(route_decision.get("route_kind") or "") != "chat_only":
+        return False
+    if route_decision_requires_worker(route_decision):
+        return False
+    reason = collapse_text(str(route_decision.get("reason") or "")).lower()
+    return (
+        ("bot" in reason and ("completion" in reason or "status" in reason or "reply" in reason))
+        or "no new backend work" in reason
+        or "no new user request" in reason
+        or "already done" in reason
+        or "already published" in reason
+    )
 
 
 def recent_context_mentions_lalachan(context_rows: list[dict[str, Any]]) -> bool:

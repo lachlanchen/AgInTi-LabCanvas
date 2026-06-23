@@ -61,6 +61,9 @@ deletion, purchases, or another unsafe/irreversible decision.
 - LazyEdit publish commands must run as `source ... && conda activate lazyedit
   && python scripts/lazyedit_publish.py ... --json`; empty JSON after exit 0 is
   a failed submission, not success.
+- Before starting any existing-video public publish, probe for an already
+  verified LazyEdit/remote job with the same `video_id` and requested platforms.
+  If it exists, report verified and do not enqueue another publish.
 - Follow-up send/save: when the user says the video is already generated or asks
   to send/download/save the video, resolve the newest bounded-age same-chat MP4
   from the worker artifact ledger. Return it through `files` so the guarded

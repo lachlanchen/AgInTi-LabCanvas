@@ -222,6 +222,41 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(route["route_decision"]["route_agent_overridden"], "agent_chat_only_despite_worker_heuristic")
         self.assertIn("LaTeX report", route["task"])
 
+    def test_bot_completion_status_does_not_override_to_publish_route(self) -> None:
+        config = self.backend_chat_config("懒人科研", "research")
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row(
+            "Published OK: video_id 404, Shipinhao YouTube Instagram done. LazyEdit job 210.",
+            sender="self",
+            local_id=82,
+            server_id="srv-82",
+        )
+        original = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+                "ok": True,
+                "message": json.dumps(
+                    {
+                        "route_kind": "chat_only",
+                        "project": "unknown",
+                        "worker_needed": False,
+                        "needs_recent_media": False,
+                        "public_publish_intent": False,
+                        "public_publish_allowed": False,
+                        "external_action_allowed": False,
+                        "source_policy": "current_request_only",
+                        "reason": "Current message is the bot's own completion status; no new backend work is requested.",
+                        "confidence": 0.95,
+                    }
+                ),
+            }
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+        self.assertIsNone(route)
+
     def test_ack_disabled_still_routes_backend_task_without_ack_text(self) -> None:
         config = self.base_config()
         config["agent_route_enabled"] = True
@@ -421,6 +456,17 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 config,
                 {},
                 self.row("未确认发布完成；不会把提交/排队当作已发布。；video_id=405", sender="self"),
+            ),
+            "self_bot_reply",
+        )
+        self.assertEqual(
+            direct_chatops.response_skip_reason(
+                config,
+                {},
+                self.row(
+                    "Published OK: video_id 404, Shipinhao YouTube Instagram done. LazyEdit job 210.",
+                    sender="self",
+                ),
             ),
             "self_bot_reply",
         )

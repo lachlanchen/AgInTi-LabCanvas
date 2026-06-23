@@ -4011,14 +4011,18 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
     lazy_context = ((task.get("preflight") or {}).get("lazyedit_context") if isinstance(task.get("preflight"), dict) else {}) or {}
     correction_prompt = str(lazy_context.get("correction_prompt_file") or "")
     metadata_prompt = str(lazy_context.get("metadata_prompt_file") or "")
-    outcome = run_lazyedit_publish_command(
-        video_id=video_id,
-        platforms=platforms,
-        correction_prompt=correction_prompt,
-        metadata_prompt=metadata_prompt,
-        target=target,
-    )
-    verification = verify_lazyedit_publish_stage(video_id, platforms, target, outcome)
+    verification = verify_lazyedit_publish_stage(video_id, platforms, target, {"status": "preflight"})
+    if bool(verification.get("verified")):
+        outcome = {"ok": True, "status": "already_verified", "duplicate_publish_guard": True}
+    else:
+        outcome = run_lazyedit_publish_command(
+            video_id=video_id,
+            platforms=platforms,
+            correction_prompt=correction_prompt,
+            metadata_prompt=metadata_prompt,
+            target=target,
+        )
+        verification = verify_lazyedit_publish_stage(video_id, platforms, target, outcome)
     message = summarize_lazyedit_publish_outcome(video_id, platforms, target, outcome, verification=verification)
     payload: dict[str, Any] = {
         "message": message,
@@ -4400,12 +4404,16 @@ def run_existing_video_publish_from_poststage(
     lazy_context = poststage.get("lazyedit_context") if isinstance(poststage.get("lazyedit_context"), dict) else {}
     if not lazy_context and isinstance(task.get("preflight"), dict):
         lazy_context = task["preflight"].get("lazyedit_context") if isinstance(task["preflight"].get("lazyedit_context"), dict) else {}
+    target = Path(str(poststage.get("target") or poststage.get("target_name") or ""))
+    verification = verify_lazyedit_publish_stage(video_id, platforms, target, {"status": "preflight"})
+    if bool(verification.get("verified")):
+        return {"ok": True, "status": "already_verified", "duplicate_publish_guard": True}
     return run_lazyedit_publish_command(
         video_id=video_id,
         platforms=platforms,
         correction_prompt=str(lazy_context.get("correction_prompt_file") or ""),
         metadata_prompt=str(lazy_context.get("metadata_prompt_file") or ""),
-        target=Path(str(poststage.get("target") or poststage.get("target_name") or "")),
+        target=target,
     )
 
 
