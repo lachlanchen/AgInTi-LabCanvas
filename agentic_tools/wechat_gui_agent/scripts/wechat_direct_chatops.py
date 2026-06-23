@@ -838,6 +838,14 @@ def looks_like_bot_self_reply(config: dict[str, Any], text: str) -> bool:
         "我已打开人工辅助浏览器",
         "我没有发布这个视频",
         "我已拦截这个结果",
+        "未确认发布完成",
+        "已找到同群已生成视频",
+        "小云雀 已返回",
+        "xiaoyunque 已返回",
+        "duplicate self-status",
+        "no new user request detected",
+        "downloaded the exact xiaoyunque generated mp4",
+        "here is the verified generated video",
         "已继续完成生成视频",
         "已自动完成 exact 视频保存",
         "视频已严格按 exact source 保存",
@@ -1749,12 +1757,12 @@ def fallback_route_decision(
     publish_allowed = has_public_publish_intent(lowered)
     if is_document_artifact_task(text):
         route_kind = "other_worker"
-    elif is_file_download_or_save_task(text):
-        route_kind = "file_download_or_save"
     elif is_cad_pcb_labcanvas_task(text):
         route_kind = "cad_pcb_labcanvas"
     elif is_lalachan_story_video_task(text) or has_video_generation_intent(text):
         route_kind = "generate_video"
+    elif is_file_download_or_save_task(text):
+        route_kind = "file_download_or_save"
     elif is_story_or_script_task(text):
         route_kind = "story_or_script"
     elif is_image_generation_task(text):
@@ -1950,10 +1958,9 @@ def has_video_generation_intent(text: str) -> bool:
     if any(marker in lowered for marker in ("xiaoyunque", "seedance", "xyq", "小云雀")):
         return True
     if any(marker in lowered for marker in ("video", "mp4", "movie", "film", "animation", "animate", "视频", "影片", "短片", "动画", "動畫")):
-        return any(
-            marker in lowered
-            for marker in ("generate", "create", "make", "write", "do", "生成", "做", "创作", "創作", "制作", "製作")
-        )
+        if re.search(r"\b(?:generate|create|make|write|do|produce|animate)\b", lowered):
+            return True
+        return any(marker in lowered for marker in ("生成", "做", "创作", "創作", "制作", "製作"))
     return False
 
 
@@ -2776,7 +2783,7 @@ def combined_focus_request(
     focus_rows: list[dict[str, Any]] | None = None,
 ) -> str:
     prefixes = config.get("trigger_prefixes", [])
-    rows = focus_rows or [row]
+    rows = expanded_focus_rows(config, row, context_rows, focus_rows=focus_rows)
     entries = []
     for item in rows:
         text = strip_trigger_prefixes(visible_message_text(item), prefixes)
@@ -2790,6 +2797,97 @@ def combined_focus_request(
     if entries:
         return "\n".join(entries)
     return effective_request_text(config, row, context_rows)
+
+
+def expanded_focus_rows(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Include a short same-user instruction burst without crossing bot replies."""
+    rows = list(focus_rows or [row])
+    if not bool(config.get("include_recent_instruction_burst", True)):
+        return context_ordered_unique_rows(context_rows, rows)
+    if len(rows) > 1 or not is_inbound_user_row(config, row):
+        return context_ordered_unique_rows(context_rows, rows)
+    sender = str(row.get("sender") or "")
+    if not sender:
+        return context_ordered_unique_rows(context_rows, rows)
+    prefixes = config.get("trigger_prefixes", [])
+    max_rows = max(0, int(config.get("recent_instruction_burst_max_rows", 3)))
+    if max_rows <= 0:
+        return context_ordered_unique_rows(context_rows, rows)
+    additions: list[dict[str, Any]] = []
+    for item in reversed(context_rows):
+        if item.get("local_id") == row.get("local_id"):
+            continue
+        if is_bot_boundary_row(config, item):
+            break
+        if str(item.get("sender") or "") != sender:
+            continue
+        if len(additions) >= max_rows:
+            break
+        if not recent_instruction_burst_neighbor(config, row, item):
+            continue
+        base_type, _ = split_message_type(item.get("local_type"))
+        if base_type != 1 and not is_quote_reply_message(item):
+            continue
+        text = strip_trigger_prefixes(visible_message_text(item), prefixes)
+        if not meaningful_request_text(text, prefixes):
+            continue
+        if is_dangerous_message(config, text):
+            continue
+        additions.append(item)
+    return context_ordered_unique_rows(context_rows, list(reversed(additions)) + rows)
+
+
+def context_ordered_unique_rows(context_rows: list[dict[str, Any]], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    wanted = {row_identity(row) for row in rows}
+    ordered = [item for item in context_rows if row_identity(item) in wanted]
+    extras = [item for item in rows if row_identity(item) not in {row_identity(row) for row in ordered}]
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in ordered + extras:
+        identity = row_identity(item)
+        if identity in seen:
+            continue
+        result.append(item)
+        seen.add(identity)
+    return result
+
+
+def row_identity(row: dict[str, Any]) -> tuple[str, str]:
+    return str(row.get("server_id") or ""), str(row.get("local_id") or "")
+
+
+def is_bot_boundary_row(config: dict[str, Any], row: dict[str, Any]) -> bool:
+    self_wxid = str(config.get("self_wxid") or "")
+    if not (self_wxid and row.get("sender") == self_wxid):
+        return False
+    return looks_like_bot_self_reply(config, visible_message_text(row))
+
+
+def recent_instruction_burst_neighbor(config: dict[str, Any], current: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    current_time = int_or_none(current.get("create_time"))
+    candidate_time = int_or_none(candidate.get("create_time"))
+    if current_time and candidate_time:
+        max_seconds = max(1, int(config.get("recent_instruction_burst_seconds", 120)))
+        return 0 <= current_time - candidate_time <= max_seconds
+    current_local_id = int_or_none(current.get("local_id"))
+    candidate_local_id = int_or_none(candidate.get("local_id"))
+    if current_local_id is None or candidate_local_id is None:
+        return True
+    max_gap = max(1, int(config.get("recent_instruction_burst_local_id_gap", 6)))
+    return 0 < current_local_id - candidate_local_id <= max_gap
+
+
+def int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def strip_trigger_prefixes(text: str, prefixes: list[str]) -> str:
@@ -3201,7 +3299,7 @@ def format_prompt_context(
 ) -> str:
     self_wxid = str(config.get("self_wxid") or "")
     latest_local_id = row.get("local_id")
-    focus_local_ids = {item.get("local_id") for item in focus_rows or []}
+    focus_local_ids = {item.get("local_id") for item in expanded_focus_rows(config, row, context_rows, focus_rows=focus_rows)}
     lines = []
     for item in context_rows[-12:]:
         sender = str(item.get("sender") or "")

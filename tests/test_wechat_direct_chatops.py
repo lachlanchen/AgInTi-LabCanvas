@@ -59,6 +59,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         server_id: str = "1",
         local_id: int = 1,
         local_type: int = 1,
+        create_time: int = 0,
     ) -> dict[str, object]:
         return {
             "local_id": local_id,
@@ -66,6 +67,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             "sender": sender,
             "sender_display": "friend",
             "local_type": local_type,
+            "create_time": create_time,
             "content": content,
         }
 
@@ -411,6 +413,30 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 config,
                 {},
                 self.row("优化后的版本，每句尽量清楚、直接：\n\n# Anniversary Story", sender="self"),
+            ),
+            "self_bot_reply",
+        )
+        self.assertEqual(
+            direct_chatops.response_skip_reason(
+                config,
+                {},
+                self.row("未确认发布完成；不会把提交/排队当作已发布。；video_id=405", sender="self"),
+            ),
+            "self_bot_reply",
+        )
+        self.assertEqual(
+            direct_chatops.response_skip_reason(
+                config,
+                {},
+                self.row("No new user request detected: this is the bot’s own completion status.", sender="self"),
+            ),
+            "self_bot_reply",
+        )
+        self.assertEqual(
+            direct_chatops.response_skip_reason(
+                config,
+                {},
+                self.row("Here is the verified generated video for this group.", sender="self"),
             ),
             "self_bot_reply",
         )
@@ -918,6 +944,38 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("metrics", result)
         self.assertIn("total_ms", result["metrics"])
         self.assertIn("last_loop_at", result["state"])
+
+    def test_recent_same_sender_instruction_burst_is_authoritative_for_worker(self) -> None:
+        config = self.backend_chat_config("懒人科研", "research")
+        config["agent_route_enabled"] = False
+        config["slow_task_keywords"] = ["video", "小云雀", "send"]
+        first = self.row("generate a Xiaoyunque video about RaraXia", server_id="srv-10", local_id=10, create_time=100)
+        latest = self.row("send the mp4 back here, do not publish", server_id="srv-11", local_id=11, create_time=140)
+
+        route = direct_chatops.immediate_task_route(config, latest, [first, latest], focus_rows=[latest])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "generate_video")
+        self.assertIn("generate a Xiaoyunque video", route["task"])
+        self.assertIn("send the mp4 back here, do not publish", route["task"])
+        self.assertIn("Current coalesced request", route["task"])
+
+    def test_recent_instruction_burst_stops_at_bot_answer(self) -> None:
+        config = self.backend_chat_config("懒人科研", "research")
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        old = self.row("generate a Xiaoyunque video about RaraXia", server_id="srv-10", local_id=10, create_time=100)
+        bot = self.row("已生成视频，发送完成。", sender="self", server_id="self-11", local_id=11, create_time=130)
+        latest = self.row("send it again", server_id="srv-12", local_id=12, create_time=150)
+
+        combined = direct_chatops.combined_focus_request(config, latest, [old, bot, latest], focus_rows=[latest])
+        context = direct_chatops.format_prompt_context(config, latest, [old, bot, latest], focus_rows=[latest])
+
+        self.assertIn("send it again", combined)
+        self.assertNotIn("generate a Xiaoyunque video", combined)
+        self.assertIn("BOT_SELF local_id=11", context)
+        self.assertNotIn("FOCUS local_id=10", context)
 
     def test_force_latest_user_burst_rewinds_cursor_and_clears_dedupe(self) -> None:
         config = self.base_config()

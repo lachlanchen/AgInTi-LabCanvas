@@ -64,6 +64,11 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   posting, purchases, deletion, or other irreversible actions.
 - Source media must match the same chat and exact source or quoted message. If
   it is missing, stop source-limited and ask for resend/opening the media.
+- Follow-up requests such as “send the video here”, “download/save the generated
+  video”, or “submit it to LazyEdit” should first resolve the newest bounded-age
+  same-chat generated MP4 from the worker artifact ledger. This resolver must
+  ignore AutoPublish-cache files and other chats, then return the MP4 through
+  the required artifact delivery gate.
 - GUI file delivery is a first-class state, not a best-effort afterthought.
 - Fast chat replies and organizer acknowledgements must also be durable. If the
   GUI is locked, the serialized sender is busy, or the sender times out while a
@@ -144,9 +149,19 @@ designing a new workflow from scratch or waiting for manual operator rescue.
 - Reuse per-chat `fast` and `worker` sessions. Session keys must be scoped by
   exact chat title and role.
 - Coalesce short message bursts into one task, but preserve every focused row in
-  the request so the worker sees the complete instruction.
+  the request so the worker sees the complete instruction. If a burst arrives
+  one row at a time, include the recent same-sender instruction fragments until
+  the bot's previous answer; do not revive older work past a bot reply.
+- Do not spam progress. Nonterminal `generation_waiting`,
+  `generation_poststage_pending`, and `publish_poststage_pending` states are
+  internal queue state by default. WeChat should see one contextual ack, then a
+  required confirmation/blocker, delivered artifacts, or final verified result.
 - Generated-video rendering waits through `generation_waiting` and
   `next_poll_at`; do not keep a multi-hour Codex turn open.
+- Generated-video workers must treat `final_video.mp4`, a video player, or
+  `渲染合成最终视频 ... 已完成` in the same Xiaoyunque thread as `download_ready`.
+  Do not send another continuation/generation prompt for that request, and do
+  not convert later `积分不足` text from accidental retries into a final blocker.
 - Fresh `pending` messages must be claimed before old due video polls, and video
   polls must be short probes so one old generation cannot starve new requests.
 - LazyEdit/public publish poststages wait through
@@ -167,7 +182,7 @@ designing a new workflow from scratch or waiting for manual operator rescue.
 | `generation_poststage_pending` | MP4 was delivered; LazyEdit/public publish is queued or still running. | Worker claims poststage after `next_poststage_at`. |
 | `publish_poststage_pending` | Existing-video LazyEdit/public publish has no terminal platform proof yet. | Worker claims poststage after `next_publish_poststage_at`; deterministic probes run first, then the same chat’s Codex worker session repairs if needed. |
 | `waiting_confirmation` | Human approval required. | Approve/reject through CLI or web panel. |
-| `send_failed` | Non-deferred send failure. | Inspect evidence, fix target/title guard, resend stored result. |
+| `send_failed` | Non-deferred send failure. | Inspect evidence, fix target/title guard, then explicitly resend or set `WECHAT_WORKER_FAILED_SEND_MAX_RETRIES` for a repair run. Default workers do not auto-flush terminal failed rows. |
 | `worker_failed` | Backend failed before a useful result. | Fix source/tool issue; rerun only if safe. |
 | `done` | Requested stages completed. | No action. |
 

@@ -49,6 +49,11 @@ publication.
    - Output: downloaded MP4, or `generation_waiting` with `next_poll_at`.
    - Long renders wait through queue state and CDP probes, not a multi-hour model
      call.
+   - One request owns one active Xiaoyunque `thread_id` until the MP4 is
+     downloaded and delivered, unless the current chat message explicitly asks
+     to start a new/continued generation. If the thread already shows
+     `final_video.mp4` or `渲染合成最终视频 ... 已完成`, the only valid next stage is
+     download and delivery.
    - Continuation: when a Xiaoyunque probe contains `请确认` plus
      `继续帮您生成视频`, use `xyq_continue_thread.py` to send the approval into the
      same `thread_id`. The helper uses the browser send button and, when
@@ -61,7 +66,9 @@ publication.
      request, unless the request explicitly says the duration must be exact.
    - Credit block: if the watcher or API-visible run reports `积分不足` or
      `余额不足`, stop polling and move the task to `waiting_confirmation` with a
-     clear recharge/shorter-budget request.
+     clear recharge/shorter-budget request only when no completed MP4 is visible
+     in the same thread. A completed `final_video.mp4` wins over later stale
+     credit text from accidental retries.
 
 4. `wechat_artifact_delivery_gate`
    - Owner: queue orchestrator and GUI sender.
@@ -73,6 +80,10 @@ publication.
    - The same required-media gate applies when an MP4/audio file is returned by
      a file-save/download route; use `labcanvas wechat worker repair-artifacts`
      to requeue older rows that lack `sent_file_paths`.
+   - Follow-up file-save/download requests for an already generated video first
+     resolve the newest bounded-age same-chat MP4 from worker artifacts and
+     attach that file back to the chat. This avoids repeating Xiaoyunque
+     generation or sending a stale AutoPublish cache video.
 
 5. `lazyedit_poststage`
    - Owner: queue orchestrator.
@@ -96,17 +107,19 @@ publication.
 ## State Rules
 
 - `generation_waiting`: browser job submitted or still rendering; monitor again
-  later.
+  later. This is silent by default; do not send repeated progress messages.
 - `send_deferred_artifact`: backend work is complete but the MP4 has not reached
   WeChat; resend before continuing.
 - `send_deferred_locked`: WeChat GUI is locked, or the serialized send lane was
   busy/timed out while another file/video send was active; retry after normal
   unlock or after the active send finishes.
 - `generation_poststage_pending`: MP4 was delivered and LazyEdit/public publish
-  is queued or still running.
+  is queued or still running. This is silent by default unless a human decision
+  is required.
 - `publish_poststage_pending`: an existing quoted/generated video is in
   LazyEdit/public publish verification; deterministic probes and the resumed
-  chat worker session continue until terminal proof or repairable failure.
+  chat worker session continue until terminal proof or repairable failure. This
+  is silent by default; do not post each poll result into WeChat.
 - `done`: only after the requested current-message stages have completed.
 
 The WeChat group is a command mirror. The durable system is the monitor, queue,

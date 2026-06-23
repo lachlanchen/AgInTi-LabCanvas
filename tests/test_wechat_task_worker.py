@@ -657,6 +657,102 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("Original generation prompt", context_text)
         self.assertIn("OBSOLETE-CACHE-MISS", context_text)
 
+    def test_file_download_preflight_resolves_recent_same_chat_generated_video(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source_dir = tmp_path / "source"
+            source_dir.mkdir()
+            source_video = source_dir / "anniversary_monorail_dinner_xyq.mp4"
+            source_video.write_bytes(b"generated-video")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "source-task",
+                        "chat": "懒人科研",
+                        "created_at": "2026-06-23T09:07:09",
+                        "status": "in_progress",
+                        "artifact_dir": str(source_dir),
+                    }
+                ],
+            )
+            task = {
+                "id": "send-task",
+                "queue_path": str(queue),
+                "chat": "懒人科研",
+                "created_at": "2026-06-23T09:17:23",
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "needs_recent_media": True,
+                    "public_publish_allowed": False,
+                },
+                "request": "Current coalesced request:\nAnd send the video to this group",
+            }
+
+            preflight = worker.prepare_worker_preflight(task, tmp_path / "artifact")
+            task["preflight"] = preflight
+            raw = worker.deterministic_preflight_result(task)
+
+        self.assertIn("resolved_video_artifact", preflight)
+        self.assertNotIn("autopublish_video", preflight)
+        payload = json.loads(raw or "{}")
+        self.assertEqual(payload["files"], [str(source_video.resolve())])
+        self.assertTrue(payload["data"]["require_file_delivery"])
+        self.assertEqual(payload["data"]["resolved_video_artifact"]["status"], "recent-artifact-match")
+
+    def test_file_download_lazyedit_request_copies_recent_video_to_intake_without_publish(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source_dir = tmp_path / "source"
+            source_dir.mkdir()
+            source_video = source_dir / "anniversary_monorail_dinner_xyq.mp4"
+            source_video.write_bytes(b"generated-video")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "source-task",
+                        "chat": "懒人科研",
+                        "created_at": "2026-06-23T09:07:09",
+                        "status": "done",
+                        "artifact_dir": str(source_dir),
+                    }
+                ],
+            )
+            task = {
+                "id": "send-lazyedit-task",
+                "queue_path": str(queue),
+                "chat": "懒人科研",
+                "created_at": "2026-06-23T09:17:23",
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "needs_recent_media": True,
+                    "public_publish_allowed": False,
+                },
+                "request": "Current coalesced request:\nThe video already generated. Send it here and submit to LazyEdit only.",
+            }
+
+            with mock.patch.dict(worker.os.environ, {"LABCANVAS_AUTOPUBLISH_DIR": str(tmp_path / "AutoPublish")}):
+                preflight = worker.prepare_worker_preflight(task, tmp_path / "artifact")
+                task["preflight"] = preflight
+                raw = worker.deterministic_preflight_result(task)
+
+            payload = json.loads(raw or "{}")
+            lazyedit = payload["data"]["lazyedit_import"]
+            lazyedit_target = Path(lazyedit["target"])
+            lazyedit_target_exists = lazyedit_target.is_file()
+            lazyedit_target_bytes = lazyedit_target.read_bytes() if lazyedit_target_exists else b""
+            expected_source = str(source_video.resolve())
+
+        self.assertFalse(lazyedit["public_publish"])
+        self.assertTrue(lazyedit_target_exists)
+        self.assertEqual(lazyedit_target_bytes, b"generated-video")
+        self.assertEqual(payload["files"], [expected_source])
+
     def test_lalachan_story_request_ignores_old_video_publish_context_for_preflight(self) -> None:
         worker = load_worker()
         task = {
@@ -905,6 +1001,69 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         result = {"message": "已提交 Xiaoyunque，生成中。", "files": [], "confirmation": ""}
 
         self.assertFalse(worker.should_send_worker_result(task, result))
+
+    def test_publish_progress_is_not_sent_by_default(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "publish-task",
+            "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+            "request": "Current coalesced request:\npublish this video to YouTube",
+        }
+        result = {
+            "message": "未确认发布完成；video_id=393",
+            "files": [],
+            "confirmation": "",
+            "data": {
+                "publish_poststage_retry": {
+                    "status": "publish_running",
+                    "retry_seconds": 60,
+                    "poststage": {"kind": "existing_video_publish", "video_id": 393, "platforms": ["youtube"]},
+                }
+            },
+        }
+
+        original = worker.os.environ.get("WECHAT_WORKER_SEND_PUBLISH_PROGRESS")
+        try:
+            worker.os.environ.pop("WECHAT_WORKER_SEND_PUBLISH_PROGRESS", None)
+            self.assertFalse(worker.should_send_worker_result(task, result))
+            worker.os.environ["WECHAT_WORKER_SEND_PUBLISH_PROGRESS"] = "1"
+            self.assertTrue(worker.should_send_worker_result(task, result))
+        finally:
+            if original is None:
+                worker.os.environ.pop("WECHAT_WORKER_SEND_PUBLISH_PROGRESS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_SEND_PUBLISH_PROGRESS"] = original
+
+    def test_publish_progress_is_suppressed_for_routine_only_task(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "publish-task",
+            "routine": {"id": "video_publish_existing"},
+            "request": "Current coalesced request:\ncontinue checking publish status",
+        }
+        result = {
+            "message": "未确认发布完成；video_id=393",
+            "files": [],
+            "confirmation": "",
+            "data": {
+                "publish_poststage_retry": {
+                    "status": "publish_running",
+                    "retry_seconds": 60,
+                    "poststage": {"kind": "existing_video_publish", "video_id": 393, "platforms": ["youtube"]},
+                }
+            },
+        }
+
+        original = worker.os.environ.get("WECHAT_WORKER_SEND_PUBLISH_PROGRESS")
+        try:
+            worker.os.environ.pop("WECHAT_WORKER_SEND_PUBLISH_PROGRESS", None)
+            self.assertTrue(worker.is_video_publish_task(task))
+            self.assertFalse(worker.should_send_worker_result(task, result))
+        finally:
+            if original is None:
+                worker.os.environ.pop("WECHAT_WORKER_SEND_PUBLISH_PROGRESS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_SEND_PUBLISH_PROGRESS"] = original
 
     def test_generate_video_timeout_with_monitor_state_keeps_waiting(self) -> None:
         worker = load_worker()
@@ -1362,6 +1521,86 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("积分不足", payload["message"])
         self.assertIn("积分不足", payload["confirmation"])
         self.assertEqual(payload["data"]["generated_video_blocker"]["kind"], "insufficient_credits")
+
+    def test_generated_video_completed_artifact_overrides_later_credit_text(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "watch_001.json").write_text(
+                json.dumps(
+                    {
+                        "href": "https://xyq.jianying.com/home?thread_id=abc",
+                        "status": ["积分不足", "积分不足", "完成"],
+                        "tail": (
+                            "生成分镜视频\n哎呀，积分不足\n"
+                            "任务\n6\n渲染合成最终视频 (render_video)\n已完成\n"
+                            "视频\n共 4 个\n生成结果\n1\nMP4\nfinal_video.mp4\n下载"
+                        ),
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "id": "task-video",
+                "artifact_dir": str(tmp_path),
+                "generated_video_monitor": {
+                    "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                    "page_id": "PAGE123456",
+                    "output_dir": str(tmp_path),
+                    "filename": "task-video.mp4",
+                },
+            }
+
+            status = worker.inspect_generated_video_status(task)
+
+        self.assertIsNotNone(status)
+        self.assertEqual(status["status"], "download_ready")
+        self.assertIn("final_video.mp4", status["status_text"])
+
+    def test_generated_video_monitor_credit_with_completed_artifact_requeues_download(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            watcher = tmp_path / "watch_thread_dom_download.py"
+            watcher.write_text("# watcher", encoding="utf-8")
+            (tmp_path / "watch_001.json").write_text(
+                json.dumps(
+                    {
+                        "href": "https://xyq.jianying.com/home?thread_id=abc",
+                        "status": ["积分不足", "完成"],
+                        "tail": "渲染合成最终视频 (render_video)\n已完成\n视频\n共 4 个\n生成结果\n1\nMP4\nfinal_video.mp4",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "id": "task-video",
+                "artifact_dir": str(tmp_path),
+                "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False},
+                "request": "Current coalesced request:\nGenerate the video and send it back.",
+            }
+            monitor = {
+                "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                "page_id": "PAGE123456",
+                "output_dir": str(tmp_path),
+                "filename": "task-video.mp4",
+            }
+
+            with mock.patch.object(worker, "generated_video_watcher_script", return_value=watcher):
+                with mock.patch.object(
+                    worker.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess(["watcher"], 43, "blocking status seen; 积分不足", ""),
+                ):
+                    raw = worker.run_generated_video_monitor(task, monitor)
+
+        payload = json.loads(raw)
+        self.assertEqual(payload["confirmation"], "")
+        self.assertIn("final_video.mp4", payload["message"])
+        self.assertTrue(payload["data"]["generated_video_download_ready"])
+        self.assertTrue(worker.generated_video_result_is_nonterminal(task, payload))
 
     def test_generation_waiting_resume_downloads_then_queues_requested_lazyedit_after_send(self) -> None:
         worker = load_worker()
@@ -2367,8 +2606,10 @@ class WeChatTaskWorkerTests(unittest.TestCase):
     def test_claim_next_deferred_send_repairs_retryable_send_failed(self) -> None:
         worker = load_worker()
         original_backoff = worker.os.environ.get("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS")
+        original_max_retries = worker.os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES")
         try:
             worker.os.environ["WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS"] = "0"
+            worker.os.environ["WECHAT_WORKER_FAILED_SEND_MAX_RETRIES"] = "5"
             with tempfile.TemporaryDirectory() as tmp:
                 queue = Path(tmp) / "queue.jsonl"
                 worker.write_tasks(
@@ -2397,6 +2638,10 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 worker.os.environ.pop("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS", None)
             else:
                 worker.os.environ["WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS"] = original_backoff
+            if original_max_retries is None:
+                worker.os.environ.pop("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_FAILED_SEND_MAX_RETRIES"] = original_max_retries
 
     def test_claim_next_deferred_send_stops_transient_retry_loop(self) -> None:
         worker = load_worker()

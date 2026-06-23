@@ -419,12 +419,15 @@ def generated_video_result_is_nonterminal(task: dict[str, Any], result: dict[str
         return False
     if result.get("confirmation"):
         return False
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    if data.get("generated_video_download_ready"):
+        return True
     if generated_video_poststage_retry_from_result(result):
         return True
     if generated_video_has_file(result):
         return False
     status_probe = ((task.get("preflight") or {}).get("generated_video_status") if isinstance(task.get("preflight"), dict) else None)
-    if isinstance(status_probe, dict) and status_probe.get("status") in {"submitted", "running", "queued", "generating", "waiting"}:
+    if isinstance(status_probe, dict) and status_probe.get("status") in {"submitted", "running", "queued", "generating", "waiting", "download_ready"}:
         return True
     monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
     text = generated_video_result_text(result)
@@ -583,6 +586,8 @@ def generated_video_next_poll_seconds(task: dict[str, Any], result: dict[str, An
     status_text = generated_video_result_text(result or {})
     status_probe = ((task.get("preflight") or {}).get("generated_video_status") if isinstance(task.get("preflight"), dict) else None)
     if isinstance(status_probe, dict):
+        if status_probe.get("status") == "download_ready":
+            return int(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_DOWNLOAD_READY_POLL_SECONDS", "30"))
         status_text += "\n" + str(status_probe.get("status_text") or "")
     return generated_video_status_backoff_seconds(status_text, task_focus_text(task))
 
@@ -605,6 +610,8 @@ def generated_video_status_backoff_seconds(status_text: str, request_text: str =
         return 300
     if "生成中" in text or "generating" in text or "running" in text:
         return 120
+    if "download_ready" in text or "final_video.mp4" in text or "下载" in text:
+        return 30
     duration_match = re.search(r"(\d+)\s*(?:s|sec|second|seconds|秒)", text)
     if duration_match and int(duration_match.group(1)) >= 30:
         return 180
@@ -774,7 +781,7 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
 
 def should_send_worker_result(task: dict[str, Any], result: dict[str, Any]) -> bool:
     if existing_video_publish_result_is_nonterminal(task, result):
-        return os.environ.get("WECHAT_WORKER_SEND_PUBLISH_PROGRESS", "1") == "1"
+        return os.environ.get("WECHAT_WORKER_SEND_PUBLISH_PROGRESS", "0") == "1"
     if not generated_video_result_is_nonterminal(task, result):
         return True
     return os.environ.get("WECHAT_WORKER_SEND_GENERATION_PROGRESS", "0") == "1"
@@ -1322,7 +1329,7 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
     errors = [str(item) for item in task.get("send_errors") or []]
     if not send_errors_indicate_deferable(errors):
         return False
-    max_retries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", "5"))
+    max_retries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", "0"))
     if max_retries >= 0 and int(task.get("send_retry_count") or 0) >= max_retries:
         return False
     task["send_deferred_reason"] = send_deferred_reason_from_errors(errors)
@@ -1716,18 +1723,23 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         "metadata_prompt_file": str(metadata_path),
         "rule": "Pass correction_prompt_file to --correction-prompt-file and metadata_prompt_file to --metadata-prompt-file.",
     }
-    if not generate_video_task and should_preflight_autopublish(task):
-        artifact_resolution = resolve_exact_video_artifact_preflight(
-            task,
-            {"ok": False, "status": "wechat-cache-not-run", "reason": "same-chat artifact ledger checked first"},
-        )
+    if should_resolve_recent_video_artifact(task):
+        artifact_resolution = resolve_recent_video_artifact_preflight(task)
         if bool(artifact_resolution.get("ok")):
-            preflight["autopublish_video"] = artifact_resolution
-        else:
-            autopub = run_autopublish_video_preflight(task)
-            if not bool(autopub.get("ok")):
-                autopub["artifact_resolution"] = artifact_resolution
-            preflight["autopublish_video"] = autopub
+            preflight["resolved_video_artifact"] = artifact_resolution
+    if not generate_video_task and should_preflight_autopublish(task):
+        if "resolved_video_artifact" not in preflight:
+            artifact_resolution = resolve_exact_video_artifact_preflight(
+                task,
+                {"ok": False, "status": "wechat-cache-not-run", "reason": "same-chat artifact ledger checked first"},
+            )
+            if bool(artifact_resolution.get("ok")):
+                preflight["autopublish_video"] = artifact_resolution
+            else:
+                autopub = run_autopublish_video_preflight(task)
+                if not bool(autopub.get("ok")):
+                    autopub["artifact_resolution"] = artifact_resolution
+                preflight["autopublish_video"] = autopub
     context_path.write_text(build_lazyedit_correction_context(task, preflight=preflight), encoding="utf-8")
     metadata_path.write_text(build_lazyedit_metadata_brief(task, preflight=preflight), encoding="utf-8")
     return preflight
@@ -1763,6 +1775,11 @@ def task_focus_text(task: dict[str, Any]) -> str:
 
 
 def is_video_publish_task(task: dict[str, Any]) -> bool:
+    routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
+    if str(routine.get("id") or "") == "video_publish_existing":
+        return True
+    if str(task.get("status") or "") == EXISTING_VIDEO_PUBLISH_PENDING_STATUS:
+        return True
     route = task_route_decision(task)
     if route:
         route_kind = str(route.get("route_kind") or "")
@@ -1889,6 +1906,36 @@ def should_preflight_autopublish(task: dict[str, Any]) -> bool:
     return has_public_publish_intent(text)
 
 
+def should_resolve_recent_video_artifact(task: dict[str, Any]) -> bool:
+    route = task_route_decision(task)
+    if route:
+        route_kind = str(route.get("route_kind") or "")
+        if route_kind not in {"file_download_or_save", "process_existing_video"}:
+            return False
+        if not bool(route.get("needs_recent_media")):
+            return False
+    text = task_focus_text(task).lower()
+    asks_video = any(marker in text for marker in ("video", "mp4", "视频", "影片"))
+    asks_artifact_action = any(
+        marker in text
+        for marker in (
+            "send",
+            "give me",
+            "download",
+            "save",
+            "submit",
+            "lazyedit",
+            "发",
+            "发送",
+            "回传",
+            "下载",
+            "保存",
+            "提交",
+        )
+    )
+    return bool(asks_video and asks_artifact_action)
+
+
 def write_generated_video_contract(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
     stages = generated_video_stage_permissions(task)
     contract = {
@@ -1938,9 +1985,11 @@ def inspect_generated_video_status(task: dict[str, Any]) -> dict[str, Any] | Non
         if monitor.get("thread_url") and monitor.get("page_id"):
             return {"status": "waiting", "files": [], "monitor": monitor, "reason": "monitor-state-present-no-probe-yet"}
         return None
-    status_text = ",".join(str(item) for item in probe.get("status") or []) or str(probe.get("tail") or "")
+    status_text = generated_video_probe_status_text(probe)
     lowered = status_text.lower()
-    if any(marker in status_text for marker in ("完成", "下载")):
+    if generated_video_probe_has_completed_artifact(probe):
+        status = "done" if generated_video_existing_files(output_dir, monitor) else "download_ready"
+    elif any(marker in status_text for marker in ("完成", "下载")):
         status = "done" if generated_video_existing_files(output_dir, monitor) else "waiting"
     elif any(marker in status_text for marker in ("失败", "内部错误", "审核", "合规", "积分不足", "余额不足")):
         status = "blocked"
@@ -1999,6 +2048,33 @@ def latest_generated_video_probe(output_dir: Path) -> dict[str, Any] | None:
     return None
 
 
+def generated_video_probe_status_text(probe: dict[str, Any] | None) -> str:
+    if not isinstance(probe, dict):
+        return ""
+    parts = [
+        "\n".join(str(item) for item in probe.get("status") or []),
+        str(probe.get("tail") or ""),
+        str(probe.get("bodyTail") or ""),
+    ]
+    return "\n".join(part for part in parts if part)
+
+
+def generated_video_probe_has_completed_artifact(probe: dict[str, Any] | None) -> bool:
+    if not isinstance(probe, dict):
+        return False
+    if probe.get("videos"):
+        return True
+    text = generated_video_probe_status_text(probe)
+    lowered = text.lower()
+    if "final_video.mp4" in lowered and ("mp4" in lowered or "视频" in text or "生成结果" in text):
+        return True
+    return bool(
+        "渲染合成最终视频" in text
+        and "已完成" in text
+        and ("生成结果" in text or "视频\n共" in text or "final_video" in lowered)
+    )
+
+
 def discover_generated_video_monitor_from_probe(task: dict[str, Any]) -> dict[str, str]:
     artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task)))
     existing = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
@@ -2013,7 +2089,7 @@ def discover_generated_video_monitor_from_probe(task: dict[str, Any]) -> dict[st
     page_id = str(existing.get("page_id") or page_id_for_thread_url(cdp_url, href) or "")
     if not page_id:
         return {}
-    status_text = ",".join(str(item) for item in probe.get("status") or []) or str(probe.get("tail") or "")
+    status_text = generated_video_probe_status_text(probe)
     return {
         "cdp_url": cdp_url,
         "page_id": page_id,
@@ -2203,6 +2279,7 @@ def has_public_publish_intent(text: str) -> bool:
 
 def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[str, Any] | None = None) -> str:
     autopub = (preflight or {}).get("autopublish_video") if isinstance(preflight, dict) else None
+    resolved_video = (preflight or {}).get("resolved_video_artifact") if isinstance(preflight, dict) else None
     resolved_by_artifact = isinstance(autopub, dict) and str(autopub.get("status") or "") == "artifact-ledger-match"
     lines = [
         "# LazyEdit Correction Context",
@@ -2261,6 +2338,24 @@ def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[s
                 excerpt = collapse_context_text(item.get("excerpt"), max_len=1200)
                 if excerpt:
                     lines.append(f"- {title}: {excerpt}")
+    if isinstance(resolved_video, dict):
+        lines.extend(
+            [
+                "",
+                "## Resolved Recent Generated Video",
+                json.dumps(
+                    {
+                        "status": resolved_video.get("status"),
+                        "source_path": resolved_video.get("source_path"),
+                        "matched_by": resolved_video.get("matched_by"),
+                        "bytes": resolved_video.get("bytes"),
+                        "source_task": resolved_video.get("source_task"),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            ]
+        )
     lines.extend(
         [
             "",
@@ -2287,8 +2382,12 @@ def build_lazyedit_metadata_brief(task: dict[str, Any], *, preflight: dict[str, 
             context_lines.append(text)
     source_task = {}
     autopub = (preflight or {}).get("autopublish_video") if isinstance(preflight, dict) else None
+    resolved_video = (preflight or {}).get("resolved_video_artifact") if isinstance(preflight, dict) else None
     if isinstance(autopub, dict) and isinstance(autopub.get("source_task"), dict):
         source_task = autopub["source_task"]
+    elif isinstance(resolved_video, dict) and isinstance(resolved_video.get("source_task"), dict):
+        source_task = resolved_video["source_task"]
+    if source_task:
         excerpt = collapse_context_text(source_task.get("request_excerpt"), max_len=360)
         if excerpt:
             context_lines.append(excerpt)
@@ -2414,6 +2513,78 @@ def resolve_exact_video_artifact_preflight(task: dict[str, Any], original_prefli
         "wechat_cache_preflight": original_preflight,
         "rule": "Exact same-chat artifact fallback: WeChat cache miss was recovered by md5/length match against prior generated/sent task output.",
     }
+
+
+def resolve_recent_video_artifact_preflight(task: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the latest same-chat generated MP4 for follow-up send/save requests."""
+    queue_path = task_queue_path(task)
+    if not queue_path.is_file():
+        return {"ok": False, "status": "recent-artifact-miss", "error": f"queue not found: {queue_path}"}
+    try:
+        tasks = read_tasks(queue_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "status": "recent-artifact-miss", "error": f"could not read queue: {type(exc).__name__}: {str(exc)[:300]}"}
+    matches = recent_video_artifact_matches(task, tasks)
+    if not matches:
+        return {
+            "ok": False,
+            "status": "recent-artifact-miss",
+            "error": "no recent same-chat generated/saved MP4 artifact found",
+            "queue": str(queue_path),
+        }
+    match = matches[0]
+    return {
+        "ok": True,
+        "status": "recent-artifact-match",
+        "source_path": str(match["path"]),
+        "source_name": match["path"].name,
+        "bytes": match["bytes"],
+        "md5": match.get("md5"),
+        "matched_by": match["matched_by"],
+        "source_task": match.get("source_task") or {},
+        "queue": str(queue_path),
+        "rule": "Recent same-chat generated-video artifact fallback for follow-up send/download/save requests.",
+    }
+
+
+def recent_video_artifact_matches(task: dict[str, Any], tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    chat = str(task.get("chat") or "")
+    current_id = str(task.get("id") or "")
+    max_age = float(os.environ.get("WECHAT_WORKER_RECENT_VIDEO_ARTIFACT_MAX_AGE_SECONDS", "21600"))
+    created_at = parse_iso_datetime(str(task.get("created_at") or "")) or datetime.now()
+    current_ts = created_at.timestamp()
+    matches: list[dict[str, Any]] = []
+    for source_task in tasks:
+        if not isinstance(source_task, dict):
+            continue
+        if current_id and str(source_task.get("id") or "") == current_id:
+            continue
+        if chat and str(source_task.get("chat") or "") != chat:
+            continue
+        for path in collect_task_video_paths(source_task):
+            path_text = str(path)
+            if "Nutstore Files/AutoPublish" in path_text or "/AutoPublish/" in path_text:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            age = max(0.0, current_ts - stat.st_mtime)
+            if max_age > 0 and age > max_age:
+                continue
+            matches.append(
+                {
+                    "path": path,
+                    "bytes": stat.st_size,
+                    "md5": None,
+                    "mtime": stat.st_mtime,
+                    "age_seconds": age,
+                    "matched_by": ["same-chat-task-ledger", "recent-generated-video-artifact"],
+                    "source_task": summarize_video_source_task(source_task, path),
+                }
+            )
+    matches.sort(key=lambda item: float(item["mtime"]), reverse=True)
+    return matches
 
 
 def task_queue_path(task: dict[str, Any]) -> Path:
@@ -2737,6 +2908,9 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
             },
             ensure_ascii=False,
         )
+    resolved_video = ((task.get("preflight") or {}).get("resolved_video_artifact") if isinstance(task.get("preflight"), dict) else None)
+    if isinstance(resolved_video, dict) and bool(resolved_video.get("ok")):
+        return resolved_video_artifact_result(task, resolved_video)
     autopub = ((task.get("preflight") or {}).get("autopublish_video") if isinstance(task.get("preflight"), dict) else None)
     if not isinstance(autopub, dict):
         return None
@@ -2767,6 +2941,51 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
         "请重新发送原视频，或在 WeChat 里点开这条视频让客户端缓存完整 MP4；如果这是我生成过的视频，请确保对应任务 artifact 仍在本机输出目录。"
     )
     return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
+
+
+def resolved_video_artifact_result(task: dict[str, Any], resolved: dict[str, Any]) -> str | None:
+    source_raw = str(resolved.get("source_path") or "")
+    if not source_raw:
+        return None
+    source = Path(source_raw).expanduser()
+    if not source.is_file():
+        return json.dumps(
+            {
+                "message": f"找到同群视频 artifact 记录，但源文件已经不存在：{source_raw}。请重新发送或重新生成视频。",
+                "files": [],
+                "confirmation": "",
+            },
+            ensure_ascii=False,
+        )
+    text = task_focus_text(task)
+    data: dict[str, Any] = {
+        "require_file_delivery": True,
+        "resolved_video_artifact": resolved,
+    }
+    lazyedit_target = ""
+    if wants_lazyedit_import(text):
+        target = copy_exact_video_artifact_to_autopublish(source.resolve(), task)
+        lazyedit_target = str(target)
+        data["lazyedit_import"] = {
+            "status": "submitted_to_autopublish_intake",
+            "target": str(target),
+            "target_name": target.name,
+            "public_publish": False,
+            "rule": "LazyEdit import/process only; no public platform publish without current-message publish permission.",
+        }
+    if lazyedit_target:
+        message = f"已找到同群已生成视频，先回传 MP4，并已提交到 LazyEdit intake（不公开发布）：{Path(lazyedit_target).name}"
+    else:
+        message = "已找到同群已生成视频，正在回传 MP4。"
+    return json.dumps(
+        {
+            "message": message,
+            "files": [str(source.resolve())],
+            "confirmation": "",
+            "data": data,
+        },
+        ensure_ascii=False,
+    )
 
 
 def deterministic_generated_video_submit_result(task: dict[str, Any]) -> str | None:
@@ -2974,7 +3193,7 @@ def generated_video_probe_needs_continuation(probe: dict[str, Any] | None) -> bo
     has_confirm = "请确认" in text or "符合预期" in text
     has_continue = "继续帮您生成视频" in text or ("继续" in text and "生成视频" in text)
     has_blocker = any(marker in text for marker in ("生成失败", "任务失败", "内部错误", "审核", "合规", "积分不足", "余额不足"))
-    has_final_video = bool(probe.get("videos")) or ("最终视频" in text and "下载" in text)
+    has_final_video = generated_video_probe_has_completed_artifact(probe) or ("最终视频" in text and "下载" in text)
     return bool(has_confirm and has_continue and not has_blocker and not has_final_video)
 
 
@@ -3189,7 +3408,8 @@ def run_generated_video_monitor(task: dict[str, Any], monitor: dict[str, Any]) -
     stdout = proc.stdout or ""
     stderr = proc.stderr or ""
     combined = collapse_context_text(stdout + "\n" + stderr, max_len=900)
-    if proc.returncode == 43 and generated_video_credit_block_seen(combined):
+    latest_probe = latest_generated_video_probe(output_dir)
+    if proc.returncode == 43 and generated_video_credit_block_seen(combined) and not generated_video_probe_has_completed_artifact(latest_probe):
         message = (
             "Xiaoyunque 已返回积分不足/余额不足，当前线程无法继续生成最终 MP4。"
             "我已停止重复轮询和重复提交；需要充值、切换到更低成本/更短视频方案，或明确授权其它生成方式后再继续。"
@@ -3214,6 +3434,8 @@ def run_generated_video_monitor(task: dict[str, Any], monitor: dict[str, Any]) -
         return generated_video_completion_result(output_path, task, monitor, abnormal=False)
     if output_path and output_path.is_file():
         return generated_video_completion_result(output_path, task, monitor, abnormal=True)
+    if generated_video_probe_has_completed_artifact(latest_probe):
+        return generated_video_download_ready_result(task, monitor, latest_probe, combined)
     if proc.returncode == 0:
         status = "Xiaoyunque 监控结束但没有找到 MP4；我会继续低频监控，避免重复提交。"
     else:
@@ -3223,6 +3445,39 @@ def run_generated_video_monitor(task: dict[str, Any], monitor: dict[str, Any]) -
 
 def generated_video_credit_block_seen(text: str) -> bool:
     return any(marker in str(text or "") for marker in ("积分不足", "余额不足", "insufficient_credit", "insufficient credits"))
+
+
+def generated_video_download_ready_result(
+    task: dict[str, Any],
+    monitor: dict[str, Any],
+    probe: dict[str, Any] | None,
+    last_log: str,
+) -> str:
+    retry_seconds = int(os.environ.get("WECHAT_WORKER_GENERATED_VIDEO_DOWNLOAD_READY_POLL_SECONDS", "30"))
+    status_text = collapse_context_text(generated_video_probe_status_text(probe), max_len=500)
+    return json.dumps(
+        {
+            "message": (
+                "Xiaoyunque 已在当前 thread_id 显示 final_video.mp4 / 最终视频完成；"
+                "我会继续同一线程下载并回传 MP4，不会重新生成、不会再发送继续确认，也不会把后续积分不足当作本次视频失败。"
+            ),
+            "files": [],
+            "confirmation": "",
+            "data": {
+                "generated_video_download_ready": {
+                    "status": "download_ready",
+                    "retry_seconds": retry_seconds,
+                    "monitor": monitor,
+                    "probe_file": str((probe or {}).get("_path") or ""),
+                    "status_text": status_text,
+                    "last_log": last_log,
+                },
+                "generated_video": monitor,
+                "generation": monitor,
+            },
+        },
+        ensure_ascii=False,
+    )
 
 
 def generated_video_completion_result(output_path: Path, task: dict[str, Any], monitor: dict[str, Any], *, abnormal: bool) -> str:
@@ -3310,6 +3565,7 @@ def generated_video_output_verification(path: Path, task: dict[str, Any]) -> dic
 
 def generated_video_watcher_script() -> Path | None:
     candidates = [
+        ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "xyq_watch_thread_dom_download.py",
         Path("/home/lachlan/ProjectsLFS/LALACHAN/scripts/xyq_chrome/watch_thread_dom_download.py"),
         Path("/home/lachlan/.codex/skills/lalachan-xyq-browser-video/scripts/xyq_chrome/watch_thread_dom_download.py"),
     ]

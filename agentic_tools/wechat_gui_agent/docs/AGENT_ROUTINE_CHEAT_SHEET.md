@@ -22,7 +22,9 @@ treat this as manual-only documentation.
 3. If a browser job is submitted, immediately persist `generated_video_monitor`
    and return the task to `generation_waiting`.
 4. Long waits stay in queue timestamps. Workers run short deterministic probes,
-   then release the worker for later messages.
+   then release the worker for later messages. Nonterminal poll/poststage
+   results stay internal by default; do not send repeated progress messages to
+   WeChat.
 5. Safe artifacts are sent back to the exact source chat by default. MP4/PDF/
    image delivery is a required gate before follow-up text can close the task.
 6. LazyEdit and public publishing run only when the current request explicitly
@@ -44,6 +46,10 @@ deletion, purchases, or another unsafe/irreversible decision.
   through OpenAPI so the actual run advances.
 - Monitor: `deterministic_generated_video_monitor_result()` calls
   `watch_thread_dom_download.py` in short probe cycles.
+- Completion wins: if the same thread shows `final_video.mp4`, a video player,
+  or `渲染合成最终视频 ... 已完成`, the state is `download_ready`. Do not send
+  another continuation/generation message for that request, and do not treat
+  later `积分不足`/`余额不足` text from accidental retries as the result.
 - Recovery: if an agent/browser turn times out, adopt active `watch_*.json` or
   Chrome CDP `thread_id` into `generated_video_monitor`.
 - Verification: use `ffprobe`; duration within 5 seconds of the requested
@@ -52,6 +58,10 @@ deletion, purchases, or another unsafe/irreversible decision.
   `sent_file_paths`.
 - Poststage: after delivery, run LazyEdit/import and public publish only when
   `stage_permissions` allow them.
+- Follow-up send/save: when the user says the video is already generated or asks
+  to send/download/save the video, resolve the newest bounded-age same-chat MP4
+  from the worker artifact ledger. Return it through `files` so the guarded
+  sender attaches it; do not reopen generation or pick an AutoPublish cache file.
 
 ## Scheduling Rules
 
@@ -75,6 +85,6 @@ deletion, purchases, or another unsafe/irreversible decision.
   with retry state.
 - If a probe sees login/CAPTCHA/payment/credit blockers, keep the task
   resumable and request the specific confirmation.
-- Treat `积分不足`/`余额不足` as a real blocker, not a polling state. Move the task
-  to `waiting_confirmation` until the user recharges or approves a shorter or
-  lower-budget alternative.
+- Treat `积分不足`/`余额不足` as a real blocker only when no completed MP4 is
+  visible in the same thread. Move the task to `waiting_confirmation` until the
+  user recharges or approves a shorter or lower-budget alternative.
