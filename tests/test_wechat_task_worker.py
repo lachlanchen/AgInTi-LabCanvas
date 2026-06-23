@@ -370,8 +370,12 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("Instruction contract", str(calls[0]["prompt"]))
         self.assertIn("current_request_authoritative", str(calls[0]["prompt"]))
         self.assertIn("no_keyword_shrink", str(calls[0]["prompt"]))
+        self.assertIn("Autonomy rule", str(calls[0]["prompt"]))
+        self.assertIn("autonomous_completion_required", str(calls[0]["prompt"]))
+        self.assertIn("worker_must_continue_via_routine_until_terminal_state", str(calls[0]["prompt"]))
         self.assertIn("Follow every safe, explicit instruction", str(calls[0]["prompt"]))
         self.assertIn("do not collapse the request to a smaller hardcoded action", str(calls[0]["prompt"]))
+        self.assertIn("cheat_sheet", task["routine_contract"])
 
     def test_worker_backfills_instruction_contract_for_legacy_task(self) -> None:
         worker = load_worker()
@@ -388,6 +392,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertTrue(task["instruction_contract"]["current_request_authoritative"])
         self.assertTrue(task["instruction_contract"]["preserve_safe_explicit_instructions"])
         self.assertTrue(task["instruction_contract"]["no_keyword_shrink"])
+        self.assertTrue(task["instruction_contract"]["autonomous_completion_required"])
+        self.assertTrue(task["instruction_contract"]["worker_must_continue_via_routine_until_terminal_state"])
         self.assertEqual(task["instruction_contract"]["route_kind"], "cad_pcb_labcanvas")
         self.assertEqual(task["execution_contract"]["instruction_contract"], task["instruction_contract"])
 

@@ -30,12 +30,15 @@ The routine registry is implemented in
 `agentic_tools/wechat_gui_agent/scripts/wechat_routines.py` and documented in
 `agentic_tools/wechat_gui_agent/docs/ROUTINE_ORCHESTRATOR.md`. Every queued
 worker task must carry `task.routine`; when claimed, the worker writes
-`routine_contract.json` and `routine_contract.md` into the task artifact
-directory. `run_task_orchestrator()` is the central worker boundary: it records
-`task.orchestrator`, runs deterministic routine stages only for mature probes
-and gates, then resumes the same per-chat Codex worker session for reasoning,
-repair, browser work, and tool-heavy execution. The Codex worker supervises
-that contract rather than designing a new workflow from scratch.
+`routine_contract.json`, `routine_contract.md`, and
+`agent_routine_cheat_sheet.md` into the task artifact directory. The compact
+autonomy contract is also embedded in the resumed worker prompt, making the
+system itself responsible for ordinary safe execution. `run_task_orchestrator()`
+is the central worker boundary: it records `task.orchestrator`, runs
+deterministic routine stages only for mature probes and gates, then resumes the
+same per-chat Codex worker session for reasoning, repair, browser work, and
+tool-heavy execution. The Codex worker supervises that contract rather than
+designing a new workflow from scratch or waiting for manual operator rescue.
 
 ## Non-Negotiable Invariants
 

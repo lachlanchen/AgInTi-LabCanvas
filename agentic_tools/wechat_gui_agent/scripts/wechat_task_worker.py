@@ -1650,6 +1650,9 @@ def default_worker_execution_contract(task: dict[str, Any], instruction: dict[st
 def worker_instruction_contract(task: dict[str, Any]) -> dict[str, Any]:
     contract = task.get("instruction_contract") if isinstance(task.get("instruction_contract"), dict) else {}
     if instruction_contract_complete(contract):
+        contract.setdefault("autonomous_completion_required", True)
+        contract.setdefault("human_supervision_role", "approval_only_for_login_captcha_payment_public_posting_deletion_or_unsafe_irreversible_actions")
+        contract.setdefault("worker_must_continue_via_routine_until_terminal_state", True)
         return contract
     route = task_route_decision(task)
     return {
@@ -1659,6 +1662,9 @@ def worker_instruction_contract(task: dict[str, Any]) -> dict[str, Any]:
         "no_keyword_shrink": True,
         "use_agent_reasoning": "resume_exact_chat_route_and_worker_sessions",
         "hardcoded_logic_role": "safety_source_isolation_and_deterministic_gates_only",
+        "autonomous_completion_required": True,
+        "human_supervision_role": "approval_only_for_login_captcha_payment_public_posting_deletion_or_unsafe_irreversible_actions",
+        "worker_must_continue_via_routine_until_terminal_state": True,
         "same_chat_source_isolation": True,
         "irreversible_actions_require_current_message_intent": True,
         "route_kind": str(route.get("route_kind") or "other_worker"),

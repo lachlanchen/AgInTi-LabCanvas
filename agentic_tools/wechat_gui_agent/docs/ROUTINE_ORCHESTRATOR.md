@@ -64,9 +64,10 @@ Routing scope:
 ## Contract Rules
 
 Every worker task should contain `task.routine`. When claimed, the worker writes
-`routine_contract.json` and `routine_contract.md` into the task artifact
-directory. The worker prompt includes the routine contract before the tool
-playbook.
+`routine_contract.json`, `routine_contract.md`, and
+`agent_routine_cheat_sheet.md` into the task artifact directory. The worker
+prompt includes the compact routine contract and autonomy contract before the
+tool playbook, so the resumed agent receives the same execution rules as data.
 
 `wechat_task_worker.py` uses `run_task_orchestrator()` as the central execution
 boundary. The orchestrator always writes the routine contract, records
@@ -79,6 +80,9 @@ Required behavior:
 
 - select routines from the current `route_decision` and current request;
 - treat route and routine contracts as source-of-truth intent boundaries;
+- treat the human operator as approval-only for real blockers; normal safe
+  work must continue through queue state, deterministic stages, and the resumed
+  per-chat worker session;
 - route all nontrivial execution through the resumed worker session with
   `role=worker`, `reuse=True`, and the orchestrator handoff in the prompt;
 - preserve per-chat source isolation;

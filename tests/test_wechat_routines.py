@@ -66,6 +66,9 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertTrue(contract["stages"])
         self.assertIn("artifact_delivery_gate", contract["required_gates"])
         self.assertIn("atomic", " ".join(contract["rules"]))
+        self.assertTrue(contract["autonomy_contract"]["autonomous_completion_required"])
+        self.assertEqual(contract["autonomy_contract"]["execution_center"], "wechat_task_worker.run_task_orchestrator")
+        self.assertIn("WeChat is only the message box", " ".join(contract["autonomy_contract"]["cheat_sheet"]))
 
     def test_file_download_routine_requires_verified_artifact_delivery(self) -> None:
         routines = load_routines()
@@ -113,11 +116,30 @@ class WeChatRoutineTests(unittest.TestCase):
             result = routines.write_routine_contract(task, Path(tmp))
             payload = json.loads(Path(result["json"]).read_text(encoding="utf-8"))
             markdown = Path(result["markdown"]).read_text(encoding="utf-8")
+            cheat_sheet = Path(result["cheat_sheet"]).read_text(encoding="utf-8")
 
         self.assertEqual(payload["id"], "research_summary")
+        self.assertIn("autonomy_contract", payload)
         self.assertIn("# WeChat Routine Contract", markdown)
         self.assertIn("research_summary", markdown)
+        self.assertIn("# Agent Routine Cheat Sheet", cheat_sheet)
+        self.assertIn("resume_exact_chat_worker_session", cheat_sheet)
         self.assertEqual(task["routine"]["id"], "research_summary")
+
+    def test_routine_prompt_context_includes_autonomy_contract(self) -> None:
+        routines = load_routines()
+        task = {
+            "id": "task-3",
+            "chat": "懒人科研",
+            "request": "Current coalesced request:\nmake a video and send it back",
+            "route_decision": {"route_kind": "generate_video"},
+        }
+
+        context = routines.routine_prompt_context(task)
+
+        self.assertIn("Autonomy rule", context)
+        self.assertIn("autonomy_contract", context)
+        self.assertIn("resume_exact_chat_worker_session", context)
 
 
 if __name__ == "__main__":

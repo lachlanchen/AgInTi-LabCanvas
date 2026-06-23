@@ -496,6 +496,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(saved["instruction_contract"]["current_request_authoritative"])
         self.assertTrue(saved["instruction_contract"]["preserve_safe_explicit_instructions"])
         self.assertTrue(saved["instruction_contract"]["no_keyword_shrink"])
+        self.assertTrue(saved["instruction_contract"]["autonomous_completion_required"])
+        self.assertTrue(saved["instruction_contract"]["worker_must_continue_via_routine_until_terminal_state"])
         self.assertEqual(saved["instruction_contract"]["use_agent_reasoning"], "resume_exact_chat_route_and_worker_sessions")
         self.assertEqual(saved["execution_contract"]["instruction_contract"], saved["instruction_contract"])
 

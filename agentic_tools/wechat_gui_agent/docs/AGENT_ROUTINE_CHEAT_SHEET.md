@@ -5,13 +5,20 @@ message box. The system agent is the direct monitor, queue, routine registry,
 Codex resume session, deterministic probes, guarded sender, and poststage
 worker.
 
+This file is also an implementation input. `wechat_routines.py` turns the same
+rules into `task.routine.autonomy_contract`, writes
+`agent_routine_cheat_sheet.md` beside every task's `routine_contract.*`, and
+includes the compact autonomy contract in the resumed worker prompt. Do not
+treat this as manual-only documentation.
+
 ## Core Loop
 
 1. Direct monitor reads new rows, coalesces context, routes with the agent, and
    writes one queue task with source chat, local IDs, route decision, and
    routine.
 2. Worker claims a task, writes `routine_contract.*`, and uses mature routine
-   entrypoints before asking Codex to reason.
+   entrypoints before asking the same chat's resumed Codex worker session to
+   reason.
 3. If a browser job is submitted, immediately persist `generated_video_monitor`
    and return the task to `generation_waiting`.
 4. Long waits stay in queue timestamps. Workers run short deterministic probes,
@@ -20,6 +27,10 @@ worker.
    image delivery is a required gate before follow-up text can close the task.
 6. LazyEdit and public publishing run only when the current request explicitly
    asks for them, and only after the MP4 has been sent back to WeChat.
+
+The human operator should not be part of the normal execution loop. The system
+may ask for approval only for login, CAPTCHA, payment/credits, public posting,
+deletion, purchases, or another unsafe/irreversible decision.
 
 ## Generated Video Routine
 

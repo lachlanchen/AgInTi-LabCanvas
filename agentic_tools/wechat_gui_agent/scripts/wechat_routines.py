@@ -11,6 +11,11 @@ import re
 from typing import Any
 
 
+ROOT = Path(__file__).resolve().parents[3]
+DOCS_DIR = ROOT / "agentic_tools" / "wechat_gui_agent" / "docs"
+AGENT_ROUTINE_CHEAT_SHEET = DOCS_DIR / "AGENT_ROUTINE_CHEAT_SHEET.md"
+
+
 @dataclass(frozen=True)
 class RoutineDefinition:
     id: str
@@ -32,6 +37,17 @@ COMMON_RULES = (
     "List every safe generated or fetched artifact in the worker JSON files array so the sender can attach it back to the source chat by default.",
     "Return blockers as stateful status or confirmation instead of silently completing partial work.",
     "Do not treat a file-picker click as artifact delivery; required files need a verified send, deferred state, or explicit blocker evidence.",
+)
+
+
+AUTONOMY_CHEAT_SHEET = (
+    "WeChat is only the message box; the durable agent is the monitor, queue, routine registry, session registry, worker, probes, and guarded sender.",
+    "Every actionable request becomes a source-scoped queue task with route_decision, routine, instruction_contract, and artifact delivery expectations.",
+    "The worker must supervise the named routine first, using mature entrypoints and deterministic probes before asking a resumed per-chat agent to reason.",
+    "Use the same chat's resumed worker session for ambiguous, repair, browser, or tool-heavy work; do not require the human operator to supervise manually.",
+    "Long jobs persist progress in queue state and timestamps, then continue by deterministic probes or resumed worker turns until done, deferred, or blocked.",
+    "Current-message permissions control irreversible stages. Generation, LazyEdit processing, and public publication are separate permissions.",
+    "Required artifacts default back to the source chat; completion requires verified send, explicit deferred send state, or blocker evidence.",
 )
 
 
@@ -417,12 +433,40 @@ def build_routine_contract(
             "blocked": "Return confirmation or blocker status with evidence and keep task resumable.",
             "delivery": "Do not mark required artifacts complete until sent, explicitly deferred, or blocked.",
         },
+        "autonomy_contract": agent_autonomy_contract(routine),
+    }
+
+
+def agent_autonomy_contract(routine: RoutineDefinition) -> dict[str, Any]:
+    return {
+        "system_role": "autonomous_routine_supervisor",
+        "wechat_role": "message_transport_only",
+        "human_operator_role": "approval_only_for_login_captcha_payment_public_posting_deletion_or_unsafe_irreversible_actions",
+        "execution_center": "wechat_task_worker.run_task_orchestrator",
+        "agent_session": "resume_exact_chat_worker_session",
+        "autonomous_completion_required": True,
+        "manual_supervision_required": False,
+        "routine_id": routine.id,
+        "routine_title": routine.title,
+        "cheat_sheet": list(AUTONOMY_CHEAT_SHEET),
+        "loop": [
+            "receive_and_coalesce",
+            "route_and_contract",
+            "claim_queue_task",
+            "run_deterministic_stage_or_resume_worker_agent",
+            "persist_progress_or_blocker",
+            "deliver_required_artifacts_to_source_chat",
+            "continue_poststages_only_when_current_request_permits",
+        ],
     }
 
 
 def ensure_task_routine_contract(task: dict[str, Any]) -> dict[str, Any]:
     existing = task.get("routine")
     if isinstance(existing, dict) and existing.get("id") in ROUTINES:
+        if not isinstance(existing.get("autonomy_contract"), dict):
+            routine = ROUTINES.get(str(existing.get("id")), ROUTINES["general_worker"])
+            existing["autonomy_contract"] = agent_autonomy_contract(routine)
         return existing
     contract = build_routine_contract(
         task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {},
@@ -440,11 +484,14 @@ def write_routine_contract(task: dict[str, Any], artifact_dir: Path) -> dict[str
     artifact_dir.mkdir(parents=True, exist_ok=True)
     json_path = artifact_dir / "routine_contract.json"
     md_path = artifact_dir / "routine_contract.md"
+    cheat_path = artifact_dir / "agent_routine_cheat_sheet.md"
     json_path.write_text(json.dumps(contract, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     md_path.write_text(format_routine_contract_markdown(contract), encoding="utf-8")
+    cheat_path.write_text(format_agent_routine_cheat_sheet(contract), encoding="utf-8")
     return {
         "json": str(json_path),
         "markdown": str(md_path),
+        "cheat_sheet": str(cheat_path),
         "rule": "Worker must supervise this routine instead of inventing a new workflow.",
     }
 
@@ -480,6 +527,44 @@ def format_routine_contract_markdown(contract: dict[str, Any]) -> str:
     for rule in contract.get("rules") or []:
         lines.append(f"- {rule}")
     lines.extend(["", "## Artifact Policy", str(contract.get("artifact_policy") or "").strip()])
+    autonomy = contract.get("autonomy_contract") if isinstance(contract.get("autonomy_contract"), dict) else {}
+    if autonomy:
+        lines.extend(["", "## Autonomy Contract"])
+        for item in autonomy.get("cheat_sheet") or []:
+            lines.append(f"- {item}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def format_agent_routine_cheat_sheet(contract: dict[str, Any]) -> str:
+    autonomy = contract.get("autonomy_contract") if isinstance(contract.get("autonomy_contract"), dict) else {}
+    loop = autonomy.get("loop") if isinstance(autonomy.get("loop"), list) else []
+    sheet = autonomy.get("cheat_sheet") if isinstance(autonomy.get("cheat_sheet"), list) else list(AUTONOMY_CHEAT_SHEET)
+    lines = [
+        "# Agent Routine Cheat Sheet",
+        "",
+        f"- Task: {contract.get('task_id') or '(not set)'}",
+        f"- Chat: {contract.get('chat') or '(not set)'}",
+        f"- Routine: `{contract.get('id')}` - {contract.get('title')}",
+        f"- Execution center: `{autonomy.get('execution_center') or 'wechat_task_worker.run_task_orchestrator'}`",
+        f"- Agent session: `{autonomy.get('agent_session') or 'resume_exact_chat_worker_session'}`",
+        "",
+        "## Autonomy Rules",
+    ]
+    lines.extend(f"- {item}" for item in sheet)
+    lines.extend(["", "## Loop"])
+    lines.extend(f"{index}. `{item}`" for index, item in enumerate(loop, start=1))
+    lines.extend(
+        [
+            "",
+            "## Stop Conditions",
+            "- `done`: requested safe stages completed and required artifacts were delivered or explicitly not needed.",
+            "- `send_deferred_artifact` / `send_deferred_locked`: artifact exists but WeChat delivery must be retried by the outbox.",
+            "- `generation_waiting` / `generation_poststage_pending` / `publish_poststage_pending`: long work is persisted and will resume later.",
+            "- `waiting_confirmation`: login, CAPTCHA, payment, public posting, deletion, or another irreversible/sensitive decision needs approval.",
+        ]
+    )
+    if AGENT_ROUTINE_CHEAT_SHEET.exists():
+        lines.extend(["", "## Source Manual", f"- {AGENT_ROUTINE_CHEAT_SHEET.relative_to(ROOT)}"])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -501,6 +586,7 @@ def routine_prompt_context(task: dict[str, Any]) -> str:
         "purpose": contract.get("purpose"),
         "required_gates": contract.get("required_gates") or [],
         "artifact_policy": contract.get("artifact_policy"),
+        "autonomy_contract": contract.get("autonomy_contract") or {},
         "stages": stages,
         "rules": contract.get("rules") or [],
     }
@@ -508,6 +594,8 @@ def routine_prompt_context(task: dict[str, Any]) -> str:
         "Routine supervisor contract:\n"
         "Follow this routine first. Use Codex reasoning to supervise stages, solve blockers, and verify outputs; "
         "do not design a different workflow unless the current request conflicts with the routine safety checks.\n"
+        "Autonomy rule: the system itself owns execution through the queue, routine stages, and the resumed per-chat worker agent. "
+        "Do not ask the human operator to supervise ordinary safe work; only ask for required approvals or real blockers.\n"
         "```json\n"
         f"{json.dumps(compact, ensure_ascii=False, indent=2)}\n"
         "```"
