@@ -240,7 +240,9 @@ are cached under `.private/voice_transcriptions.json`; raw voice XML secrets are
 not passed to prompts. If the message row arrives before `VoiceInfo` is ready,
 the monitor stores the row in a pending-voice backlog and retries it on a short
 backoff. The normal cursor may continue advancing, but the voice row is routed
-when the audio later appears.
+when the audio later appears. Direct monitors may run under the decrypt venv,
+but `voice_transcription_python` / `WECHAT_MAIN_PYTHON` must resolve to a main
+Python that can import `faster_whisper`.
 When the worker claims the task, it writes `routine_contract.json` and
 `routine_contract.md` in the task artifact directory and includes that contract
 in the worker prompt. The worker supervises routine stages and resolves blockers

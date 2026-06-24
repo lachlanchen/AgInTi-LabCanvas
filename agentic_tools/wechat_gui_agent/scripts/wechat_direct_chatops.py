@@ -1077,14 +1077,47 @@ def voice_transcribe_python(config: dict[str, Any]) -> str:
     configured = str(config.get("voice_transcription_python") or os.environ.get("WECHAT_VOICE_TRANSCRIBE_PYTHON") or "").strip()
     if configured:
         return configured
+    for candidate in voice_transcribe_python_candidates():
+        try:
+            resolved = Path(candidate).resolve()
+            if VENV_PYTHON.exists() and resolved == VENV_PYTHON.resolve():
+                continue
+            if resolved.exists():
+                return str(resolved)
+        except OSError:
+            if candidate:
+                return candidate
+    return sys.executable
+
+
+def voice_transcribe_python_candidates() -> list[str]:
+    candidates = []
+    main_python = str(os.environ.get("WECHAT_MAIN_PYTHON") or "").strip()
+    if main_python:
+        candidates.append(main_python)
+    conda_prefix = str(os.environ.get("CONDA_PREFIX") or "").strip()
+    if conda_prefix:
+        candidates.append(str(Path(conda_prefix) / "bin" / "python3"))
+    home = Path.home()
+    candidates.extend(
+        [
+            str(home / "miniconda3" / "bin" / "python3"),
+            str(home / "anaconda3" / "bin" / "python3"),
+            "/usr/local/bin/python3",
+            "/usr/bin/python3",
+        ]
+    )
     candidate = shutil.which("python3")
     if candidate:
-        try:
-            if Path(candidate).resolve() != VENV_PYTHON.resolve():
-                return candidate
-        except OSError:
-            return candidate
-    return sys.executable
+        candidates.append(candidate)
+    candidates.append(sys.executable)
+    seen = set()
+    unique = []
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            unique.append(candidate)
+            seen.add(candidate)
+    return unique
 
 
 def voice_row_transcript(row: dict[str, Any]) -> str:

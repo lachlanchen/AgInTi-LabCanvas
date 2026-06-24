@@ -152,7 +152,9 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   transcribed voice; only explicit tool/artifact instructions should become
   worker tasks. If `VoiceInfo` is not ready yet, store the row in the
   pending-voice backlog and retry on backoff. Do not lose the row just because
-  the normal message cursor advances.
+  the normal message cursor advances. The monitor can run inside the decrypt
+  venv, but the voice transcription subprocess must use a main Python with
+  `faster_whisper` installed.
 - Do not use the WeChat search box for normal sending. GUI delivery should use
   the currently verified chat, a configured `open_click`, or configured
   `fallback_clicks`; otherwise defer/fail closed. Configured visible-list rows

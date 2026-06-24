@@ -833,6 +833,38 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(result["state"]["pending_voice_backlog"], [])
         self.assertEqual(result["metrics"]["voice_pending_ready"], 1)
 
+    def test_voice_transcribe_python_uses_configured_override(self) -> None:
+        config = self.base_config()
+        config["voice_transcription_python"] = "/opt/labcanvas/python3"
+
+        self.assertEqual(direct_chatops.voice_transcribe_python(config), "/opt/labcanvas/python3")
+
+    def test_voice_transcribe_python_skips_decrypt_venv_for_user_python(self) -> None:
+        config = self.base_config()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            venv_python = tmp_path / "decrypt" / ".venv" / "bin" / "python3"
+            user_python = tmp_path / "home" / "miniconda3" / "bin" / "python3"
+            venv_python.parent.mkdir(parents=True)
+            user_python.parent.mkdir(parents=True)
+            venv_python.write_text("#!/bin/sh\n", encoding="utf-8")
+            user_python.write_text("#!/bin/sh\n", encoding="utf-8")
+            venv_python.chmod(0o755)
+            user_python.chmod(0o755)
+
+            with (
+                mock.patch.object(direct_chatops, "VENV_PYTHON", venv_python),
+                mock.patch.object(direct_chatops.shutil, "which", return_value=str(venv_python)),
+                mock.patch.dict(
+                    direct_chatops.os.environ,
+                    {"HOME": str(tmp_path / "home")},
+                    clear=True,
+                ),
+            ):
+                selected = direct_chatops.voice_transcribe_python(config)
+
+        self.assertEqual(selected, str(user_python.resolve()))
+
     def test_echomind_ignores_attachment_rows(self) -> None:
         self.assertFalse(direct_chatops.should_respond(self.base_config(), {}, self.row("", local_type=49)))
 
