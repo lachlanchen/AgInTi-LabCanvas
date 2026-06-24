@@ -222,6 +222,42 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(route["route_decision"]["route_agent_overridden"], "agent_chat_only_despite_worker_heuristic")
         self.assertIn("LaTeX report", route["task"])
 
+    def test_echomind_voice_chat_only_trusts_route_agent(self) -> None:
+        config = self.base_config()
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row(
+            '<msg><voicemsg voicelength="3800" length="6457" voiceformat="4" /></msg>',
+            local_id=121,
+            server_id="srv-121",
+            local_type=34,
+        )
+        row["_voice_transcript"] = "晚上吃那烤肉"
+        original = direct_chatops.run_codex_session
+        try:
+            direct_chatops.run_codex_session = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+                "ok": True,
+                "message": json.dumps(
+                    {
+                        "route_kind": "chat_only",
+                        "project": "echomind",
+                        "worker_needed": False,
+                        "needs_recent_media": False,
+                        "public_publish_intent": False,
+                        "public_publish_allowed": False,
+                        "external_action_allowed": False,
+                        "source_policy": "current_request_only",
+                        "reason": "ordinary transcribed language practice",
+                        "confidence": 0.9,
+                    }
+                ),
+            }
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+        self.assertIsNone(route)
+
     def test_bot_completion_status_does_not_override_to_publish_route(self) -> None:
         config = self.backend_chat_config("懒人科研", "research")
         config["agent_route_enabled"] = True
@@ -671,6 +707,57 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 assert route is not None
                 self.assertIn(f"WeChat {kind} item", route["task"])
                 self.assertIn("images/screenshots", route["task"])
+
+    def test_transcribed_voice_is_treated_as_text_in_echomind(self) -> None:
+        row = self.row(
+            '<msg><voicemsg voicelength="2500" length="4096" voiceformat="4" '
+            'aeskey="secret" voiceurl="private-cdn" /></msg>',
+            local_type=34,
+        )
+        row["_voice_transcript"] = "今日はいい天気です"
+
+        self.assertTrue(direct_chatops.should_respond(self.base_config(), {}, row))
+        visible = direct_chatops.visible_message_text(row)
+
+        self.assertIn("transcript: 今日はいい天気です", visible)
+        self.assertIn("duration: 2.5s", visible)
+        self.assertNotIn("aeskey", visible)
+        self.assertNotIn("private-cdn", visible)
+
+    def test_untranscribed_voice_is_sanitized_without_raw_xml(self) -> None:
+        row = self.row(
+            '<msg><voicemsg voicelength="7040" length="11991" voiceformat="4" '
+            'aeskey="secret" voiceurl="private-cdn" /></msg>',
+            local_type=34,
+        )
+
+        visible = direct_chatops.visible_message_text(row)
+
+        self.assertIn("[WeChat voice]", visible)
+        self.assertIn("duration: 7.0s", visible)
+        self.assertNotIn("voiceurl", visible)
+        self.assertNotIn("secret", visible)
+
+    def test_enrich_voice_rows_populates_transcript_before_response_decision(self) -> None:
+        config = self.base_config()
+        config["chatroom_id"] = "demo@chatroom"
+        row = self.row(
+            '<msg><voicemsg voicelength="1000" length="2048" voiceformat="4" /></msg>',
+            local_type=34,
+        )
+
+        with mock.patch.object(
+            direct_chatops,
+            "transcribe_voice_row",
+            return_value={"ok": True, "status": "cached", "text": "明日は雨です", "model": "base"},
+        ) as transcribe:
+            metrics: dict[str, object] = {}
+            direct_chatops.enrich_voice_rows(config, [row], metrics)
+
+        transcribe.assert_called_once()
+        self.assertEqual(row["_voice_transcript"], "明日は雨です")
+        self.assertTrue(direct_chatops.should_respond(config, {}, row))
+        self.assertEqual(metrics["voice_cached"], 1)
 
     def test_echomind_ignores_attachment_rows(self) -> None:
         self.assertFalse(direct_chatops.should_respond(self.base_config(), {}, self.row("", local_type=49)))

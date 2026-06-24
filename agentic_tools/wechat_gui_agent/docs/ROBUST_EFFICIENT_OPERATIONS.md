@@ -144,6 +144,13 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   request clearly asks to send/save/download/copy a file, video, image, audio,
   PDF, or generated artifact, route it to the worker even if the route model
   mistakenly returns `chat_only`.
+- Voice-message ingestion is a text normalization step before routing. When
+  `message/media_0.db` is decrypted, the direct monitor reads `VoiceInfo`,
+  decodes SILK to WAV, transcribes with `faster_whisper`, caches by
+  chatroom/local_id, and passes the transcript to the same text router. In
+  EchoMind language mode, trust an agent-first `chat_only` decision for ordinary
+  transcribed voice; only explicit tool/artifact instructions should become
+  worker tasks.
 - Do not use the WeChat search box for normal sending. GUI delivery should use
   the currently verified chat, a configured `open_click`, or configured
   `fallback_clicks`; otherwise defer/fail closed. Configured visible-list rows

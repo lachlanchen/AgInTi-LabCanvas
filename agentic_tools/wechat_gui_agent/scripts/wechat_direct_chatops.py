@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -135,6 +136,10 @@ def load_config(path: Path) -> dict[str, Any]:
         "media_sync_since_minutes": 180,
         "media_sync_context_window_seconds": 300,
         "media_sync_timeout_seconds": 20,
+        "voice_transcription_enabled": True,
+        "voice_transcription_python": os.environ.get("WECHAT_VOICE_TRANSCRIBE_PYTHON", ""),
+        "voice_transcription_model": os.environ.get("WECHAT_VOICE_WHISPER_MODEL", "base"),
+        "voice_transcription_timeout_seconds": 90,
         "organizer": {"enabled": False},
         "chat_purpose": "research",
         "analysis_mode": "",
@@ -271,6 +276,7 @@ def load_config(path: Path) -> dict[str, Any]:
         else:
             raw.setdefault(key, value)
     raw.setdefault("config_id", path.name)
+    raw.setdefault("config_path", str(path))
     merge_default_list_items(raw, defaults, "slow_task_keywords")
     if not raw["message_table"]:
         raise SystemExit(f"Missing message_table in private config: {path}")
@@ -324,6 +330,10 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     started = time.monotonic()
     new_rows = read_new_messages(config, state)
     metrics["read_ms"] = elapsed_ms(started)
+    if new_rows:
+        started = time.monotonic()
+        enrich_voice_rows(config, new_rows, metrics)
+        metrics["voice_enrich_ms"] = elapsed_ms(started)
     for row in new_rows:
         sync_row_to_mirror(config, row)
     organizer_result: dict[str, Any] = {}
@@ -365,6 +375,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     if trigger_row:
         started = time.monotonic()
         context_rows = read_recent_history(config, trigger_row["local_id"], limit=int(config.get("history_limit", 24))) or new_rows
+        enrich_voice_rows(config, context_rows, metrics)
         metrics["context_ms"] = elapsed_ms(started)
         reply_text = previous_result_reuse_reply(config, trigger_row, context_rows, focus_rows=focus_rows)
         if reply_text:
@@ -564,6 +575,7 @@ def mark_responded_rows(state: dict[str, Any], rows: list[dict[str, Any]]) -> No
 
 def prepare_force_latest_user_burst(config: dict[str, Any], state: dict[str, Any], count: int) -> dict[str, Any]:
     rows = read_recent_history(config, 10**12, limit=max(24, count * 6))
+    enrich_voice_rows(config, rows)
     selected = latest_force_replay_rows(config, rows, count)
     if not selected:
         return state
@@ -742,6 +754,118 @@ def sync_row_to_mirror(config: dict[str, Any], row: dict[str, Any]) -> None:
     )
 
 
+def enrich_voice_rows(config: dict[str, Any], rows: list[dict[str, Any]], metrics: dict[str, Any] | None = None) -> None:
+    if not bool(config.get("voice_transcription_enabled", True)):
+        return
+    seen: set[int] = set()
+    transcribed = 0
+    cached_or_existing = 0
+    failed = 0
+    for row in rows:
+        local_type, _ = split_message_type(row.get("local_type"))
+        if local_type != 34:
+            continue
+        try:
+            local_id = int(row.get("local_id") or 0)
+        except (TypeError, ValueError):
+            local_id = 0
+        if not local_id or local_id in seen:
+            continue
+        seen.add(local_id)
+        if voice_row_transcript(row):
+            cached_or_existing += 1
+            continue
+        result = transcribe_voice_row(config, row)
+        if result.get("ok") and str(result.get("text") or "").strip():
+            row["_voice_transcript"] = str(result["text"]).strip()
+            row["_voice_transcription"] = result
+            if str(result.get("status") or "") == "cached":
+                cached_or_existing += 1
+            else:
+                transcribed += 1
+        else:
+            failed += 1
+            row["_voice_transcription_error"] = str(result.get("error") or result.get("status") or "transcription unavailable")[:500]
+    if metrics is not None and seen:
+        metrics["voice_rows"] = len(seen)
+        metrics["voice_transcribed"] = transcribed
+        metrics["voice_cached"] = cached_or_existing
+        metrics["voice_failed"] = failed
+
+
+def transcribe_voice_row(config: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+    chatroom_id = str(config.get("chatroom_id") or "")
+    if not chatroom_id:
+        return {"ok": False, "status": "missing-chatroom-id", "error": "missing chatroom_id in direct config"}
+    try:
+        local_id = int(row.get("local_id") or 0)
+    except (TypeError, ValueError):
+        return {"ok": False, "status": "invalid-local-id", "error": "invalid local_id"}
+    if local_id <= 0:
+        return {"ok": False, "status": "invalid-local-id", "error": "invalid local_id"}
+    command = [
+        voice_transcribe_python(config),
+        str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_voice_transcribe.py"),
+        "--chatroom-id",
+        chatroom_id,
+        "--chat-name",
+        str(config.get("chat_name") or chatroom_id),
+        "--local-id",
+        str(local_id),
+        "--model",
+        str(config.get("voice_transcription_model") or "base"),
+        "--json",
+    ]
+    config_path = str(config.get("config_path") or "")
+    if config_path:
+        command += ["--config", config_path]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=float(config.get("voice_transcription_timeout_seconds", 90)),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "status": "transcribe-spawn-error", "error": str(exc)}
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "status": "transcribe-output-error",
+            "error": (proc.stderr or proc.stdout or "invalid transcription output")[:1000],
+        }
+    if proc.returncode != 0 and payload.get("ok") is not True:
+        payload.setdefault("status", "transcribe-failed")
+        payload.setdefault("error", (proc.stderr or proc.stdout or f"exit {proc.returncode}")[:1000])
+    return payload if isinstance(payload, dict) else {"ok": False, "status": "transcribe-output-error"}
+
+
+def voice_transcribe_python(config: dict[str, Any]) -> str:
+    configured = str(config.get("voice_transcription_python") or os.environ.get("WECHAT_VOICE_TRANSCRIBE_PYTHON") or "").strip()
+    if configured:
+        return configured
+    candidate = shutil.which("python3")
+    if candidate:
+        try:
+            if Path(candidate).resolve() != VENV_PYTHON.resolve():
+                return candidate
+        except OSError:
+            return candidate
+    return sys.executable
+
+
+def voice_row_transcript(row: dict[str, Any]) -> str:
+    return str(row.get("_voice_transcript") or "").strip()
+
+
+def voice_transcript_available(row: dict[str, Any]) -> bool:
+    return bool(voice_row_transcript(row))
+
+
 def should_respond(config: dict[str, Any], state: dict[str, Any], row: dict[str, Any]) -> bool:
     return response_skip_reason(config, state, row) == ""
 
@@ -756,7 +880,8 @@ def response_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dic
     base_type, _ = split_message_type(row.get("local_type"))
     attachment_trigger = is_attachment_trigger(config, row)
     quote_trigger = is_quote_reply_message(row)
-    if allowed_local_types and base_type not in allowed_local_types and not attachment_trigger and not quote_trigger:
+    voice_as_text = base_type == 34 and voice_transcript_available(row)
+    if allowed_local_types and base_type not in allowed_local_types and not attachment_trigger and not quote_trigger and not voice_as_text:
         return "unsupported_type"
     if str(row["server_id"]) in set(state.get("responded_server_ids", [])):
         return "already_responded"
@@ -1385,6 +1510,8 @@ def immediate_task_route(
     if agent_first:
         route_decision = agent_route_decision(config, row, context_rows, focus_rows=focus_rows, current_request=combined)
         if not route_decision_requires_worker(route_decision):
+            if is_language_analysis_mode(config):
+                return None
             if route_agent_chat_only_is_completion_status(route_decision) or looks_like_bot_self_reply(config, visible_message_text(row)):
                 return None
             if not heuristic_candidate:
@@ -2935,6 +3062,11 @@ def effective_request_text(config: dict[str, Any], row: dict[str, Any], context_
 
 
 def attachment_request_text(row: dict[str, Any]) -> str:
+    if split_message_type(row.get("local_type"))[0] == 34:
+        transcript = voice_row_transcript(row)
+        if transcript:
+            return "New WeChat voice item transcribed; handle the transcript as the user's message text."
+        return "New WeChat voice item received; decode/transcribe the voice payload first, then handle it as text."
     return (
         f"New WeChat {message_kind(row)} item received; inspect its message metadata, "
         "card/link fields, and recent synced files/media, then summarize or process it."
@@ -2949,7 +3081,9 @@ def visible_message_text(row: dict[str, Any]) -> str:
     local_type, _ = split_message_type(row.get("local_type"))
     if local_type == 49 and "<appmsg" in text:
         return format_app_message_text(text)
-    if local_type in {3, 34, 42, 43, 47, 48}:
+    if local_type == 34:
+        return format_voice_message_text(row, text)
+    if local_type in {3, 42, 43, 47, 48}:
         return format_media_message_text(row, text)
     return text
 
@@ -3057,6 +3191,42 @@ def format_media_message_text(row: dict[str, Any], text: str, *, max_len: int = 
             if len(fields) > 1:
                 return truncate_text("\n".join(fields), max_len)
     return f"[WeChat {kind}] {truncate_text(collapsed, max_len - len(kind) - 12)}"
+
+
+def format_voice_message_text(row: dict[str, Any], text: str, *, max_len: int = 700) -> str:
+    fields = ["[WeChat voice]"]
+    collapsed = collapse_text(text)
+    if collapsed.startswith("<"):
+        root = parse_wechat_xml(collapsed)
+        voice = root.find(".//voicemsg") if root is not None else None
+        if voice is not None:
+            duration = voice_duration_text(voice.get("voicelength"))
+            if duration:
+                fields.append(f"duration: {duration}")
+            byte_length = collapse_text(voice.get("length") or "")
+            if byte_length:
+                fields.append(f"bytes: {byte_length}")
+            voice_format = collapse_text(voice.get("voiceformat") or "")
+            if voice_format:
+                fields.append(f"format: {voice_format}")
+    transcript = voice_row_transcript(row)
+    if transcript:
+        fields.append(f"transcript: {truncate_text(transcript, max_len - 80)}")
+    elif row.get("_voice_transcription_error"):
+        fields.append(f"transcript_error: {truncate_text(str(row.get('_voice_transcription_error') or ''), 180)}")
+    elif len(fields) == 1 and collapsed:
+        fields.append("transcript: pending")
+    return truncate_text("\n".join(fields), max_len)
+
+
+def voice_duration_text(raw: str | None) -> str:
+    try:
+        milliseconds = int(str(raw or "").strip())
+    except ValueError:
+        return ""
+    if milliseconds <= 0:
+        return ""
+    return f"{milliseconds / 1000:.1f}s"
 
 
 def card_field(appmsg: ET.Element, path: str, *, max_len: int = 220) -> str:

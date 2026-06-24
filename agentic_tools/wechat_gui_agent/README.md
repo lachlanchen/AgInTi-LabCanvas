@@ -196,6 +196,22 @@ partitioned by `chat_name`. These shares can also trigger an ACK plus worker
 task to summarize or extract the content; summary/list/export requests use the
 same fast-router and worker queue.
 
+Voice messages are handled as text when the decrypted media database is
+available. The key refresh must include `message/media_0.db`; the monitor then
+reads `VoiceInfo`, decodes WeChat SILK with the private decrypt venv's `pilk`,
+transcribes the WAV with `faster_whisper`, and caches results in ignored
+`.private/voice_transcriptions.json`. EchoMind treats a transcribed voice row as
+ordinary language-practice text unless the transcript explicitly asks for
+backend tools. Manual check:
+
+```bash
+labcanvas wechat voice-transcribe \
+  --config agentic_tools/wechat_gui_agent/.private/echomind-direct-chatops.local.json \
+  --local-id 121 --json
+```
+
+Raw `aeskey` and `voiceurl` fields are intentionally stripped from prompts.
+
 For 视频号/Shipinhao/Finder shares, the worker also treats comments as optional
 summary evidence when accessible. It should look for viewer prompts such as
 `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`, `转写`,

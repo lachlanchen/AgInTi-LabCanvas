@@ -224,6 +224,7 @@ labcanvas wechat worker enqueue --chat "<CHAT_NAME>" "summarize this PDF"
 labcanvas wechat worker once --send
 labcanvas wechat queue --json
 labcanvas wechat routines --json
+labcanvas wechat voice-transcribe --config "<DIRECT_CONFIG>" --local-id 121 --json
 ```
 
 Before a worker task is queued, the fast monitor converts the route decision
@@ -232,6 +233,11 @@ For hard artifact requests, deterministic guards override a bad `chat_only`
 route: if the current coalesced request asks to send/save/download/copy a file,
 video, image, audio, PDF, or generated artifact, the task is queued for the
 worker even when the route model misclassifies it as chat.
+Voice rows are handled before this routing step: `wechat_voice_transcribe.py`
+uses decrypted `message/media_0.db`/`VoiceInfo`, the private decrypt venv's
+`pilk` SILK decoder, and the main environment's `faster_whisper`. Transcripts
+are cached under `.private/voice_transcriptions.json`; raw voice XML secrets are
+not passed to prompts.
 When the worker claims the task, it writes `routine_contract.json` and
 `routine_contract.md` in the task artifact directory and includes that contract
 in the worker prompt. The worker supervises routine stages and resolves blockers

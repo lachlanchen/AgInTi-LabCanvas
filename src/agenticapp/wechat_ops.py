@@ -166,6 +166,14 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     media.add_argument("--record-empty", action="store_true")
     media.set_defaults(func=cmd_media_sync)
 
+    voice = nested.add_parser("voice-transcribe", help="Transcribe a WeChat voice message from decrypted media_0.db.")
+    voice.add_argument("--config", type=Path, default=DEFAULT_DIRECT_CONFIG)
+    voice.add_argument("--local-id", type=int, required=True)
+    voice.add_argument("--model", default=os.environ.get("WECHAT_VOICE_WHISPER_MODEL", "base"))
+    voice.add_argument("--refresh", action="store_true")
+    voice.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    voice.set_defaults(func=cmd_voice_transcribe)
+
     autopub = nested.add_parser("autopublish-video", help="Copy the latest mirrored WeChat video to Nutstore AutoPublish.")
     autopub.add_argument("--chat", action="append", default=[], help="Chat/group name to search. Repeatable. Defaults to all mirrored chats.")
     autopub.add_argument("--source", type=Path, help="Explicit local video path. Bypasses the mirror query.")
@@ -920,6 +928,24 @@ def cmd_media_sync(args: argparse.Namespace) -> int:
         command.append("--summary-only")
     if args.record_empty:
         command.append("--record-empty")
+    return run_command(command, capture=False).returncode
+
+
+def cmd_voice_transcribe(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_voice_transcribe.py"),
+        "--config",
+        str(args.config),
+        "--local-id",
+        str(args.local_id),
+        "--model",
+        str(args.model),
+    ]
+    if args.refresh:
+        command.append("--refresh")
+    if getattr(args, "json", False):
+        command.append("--json")
     return run_command(command, capture=False).returncode
 
 
