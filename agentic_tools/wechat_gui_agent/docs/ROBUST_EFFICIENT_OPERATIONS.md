@@ -326,8 +326,9 @@ Expected signs:
 - `self_messages_text_only` and `ignore_probable_bot_self_replies` are true to
   prevent self-file and bot-reply loops;
 - send targets have title guards;
-- direct monitors are caught up or intentionally stale because no new DB rows
-  exist;
+- direct monitors report `ready=true`; `caught_up=true` only means state reached
+  the latest decrypted row, while `source_stale=true` means the Linux WeChat
+  source has not materialized recent phone-side messages and can miss audio;
 - `chat-sync` is running when multiple groups must respond even if the Linux
   client has not recently opened those conversations;
 - `chat-sync` dry-open uses a GUI sender alarm derived from
@@ -356,9 +357,11 @@ labcanvas wechat queue --json
 tail -n 80 output/wechat_gui_agent/$(date +%F)/supervisor-worker.log
 ```
 
-If the monitor is caught up and no task exists, the message was not actionable
-or was filtered. If a task exists, follow its state instead of sending a manual
-duplicate.
+If the monitor is `ready=true`, caught up, and no task exists, the message was
+not actionable or was filtered. If `source_stale=true`, first restore desktop
+message materialization; Whisper and route logic cannot process rows that never
+entered the decrypted DB. If a task exists, follow its state instead of sending
+a manual duplicate.
 If the source group has no fresh DB rows even though the user sent a message,
 run or check `wechat_chat_sync_loop.py`: it dry-opens the configured chat with
 the normal title guard and no send action, then the direct monitor can process

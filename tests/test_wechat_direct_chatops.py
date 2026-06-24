@@ -258,6 +258,19 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertIsNone(route)
 
+    def test_transcribed_voice_row_is_triggerable_text(self) -> None:
+        config = self.base_config()
+        row = self.row(
+            '<msg><voicemsg voicelength="3800" length="6457" voiceformat="4" /></msg>',
+            local_id=122,
+            server_id="srv-122",
+            local_type=34,
+        )
+        row["_voice_transcript"] = "谢谢你送我去机场"
+
+        self.assertTrue(direct_chatops.should_respond(config, {}, row))
+        self.assertIn("谢谢你送我去机场", direct_chatops.visible_message_text(row))
+
     def test_bot_completion_status_does_not_override_to_publish_route(self) -> None:
         config = self.backend_chat_config("懒人科研", "research")
         config["agent_route_enabled"] = True

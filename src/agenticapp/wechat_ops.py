@@ -387,7 +387,9 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_health(args: argparse.Namespace) -> int:
     payload = direct_monitor_health()
-    summary = f"wechat health: {payload['caught_up_groups']}/{payload['group_count']} caught up"
+    summary = f"wechat health: {payload['ready_groups']}/{payload['group_count']} ready"
+    if payload.get("stale_source_groups"):
+        summary += f", {payload['stale_source_groups']} stale source"
     if not payload["ok"]:
         summary += " (attention needed)"
     print_payload(payload, args.json, summary)
@@ -1272,18 +1274,23 @@ def direct_monitor_health() -> dict[str, Any]:
     separation = direct_config_separation_summary(configs)
     backend = external_backend_summary()
     caught_up = sum(1 for item in groups if item.get("caught_up"))
+    ready = sum(1 for item in groups if item.get("ready"))
+    stale = sum(1 for item in groups if item.get("source_stale"))
     ok = bool(groups) and all(item.get("ok") for item in groups) and bool(backend.get("ok")) and bool(separation.get("ok"))
     return {
         "ok": ok,
         "checked_at": datetime.now().isoformat(timespec="seconds"),
         "group_count": len(groups),
         "caught_up_groups": caught_up,
+        "ready_groups": ready,
+        "stale_source_groups": stale,
         "separation": separation,
         "external_backend": backend,
         "groups": groups,
         "notes": [
             "private chatroom ids, wxids, message-table names, and DB paths are intentionally omitted",
             "set WECHAT_DIRECT_CONFIGS in .private/wechat_supervisor.local.env to control monitored groups",
+            "caught_up only means state reached the latest decrypted row; ready also requires the decrypted source to be fresh",
         ],
     }
 
@@ -1514,11 +1521,15 @@ def direct_config_health(path: Path) -> dict[str, Any]:
     has_guarded_target = has_send_title_guard(config.get("send_target"))
     codex = config.get("codex") if isinstance(config.get("codex"), dict) else {}
     organizer = config.get("organizer") if isinstance(config.get("organizer"), dict) else {}
+    stale_warning_seconds = int(config.get("stale_warning_seconds", 1800))
+    source_stale = bool((latest.get("age_seconds") or 0) > stale_warning_seconds)
     caught_up = latest.get("ok") and state_last >= int(latest.get("latest_local_id") or 0)
+    ready = bool(caught_up and not source_stale)
     ok = bool(
         state_exists
         and latest.get("ok")
         and caught_up
+        and not source_stale
         and bool(config.get("ignore_self_messages", True))
         and not bool(config.get("respond_to_self", False))
         and has_guarded_target
@@ -1532,7 +1543,9 @@ def direct_config_health(path: Path) -> dict[str, Any]:
         "db_latest_local_id": latest.get("latest_local_id"),
         "db_latest_at": latest.get("latest_at", ""),
         "db_latest_age_seconds": latest.get("age_seconds"),
-        "db_stale": bool((latest.get("age_seconds") or 0) > int(config.get("stale_warning_seconds", 1800))),
+        "db_stale": source_stale,
+        "source_stale": source_stale,
+        "ready": ready,
         "caught_up": bool(caught_up),
         "respond_to_all": bool(config.get("respond_to_all", False)),
         "respond_to_self": bool(config.get("respond_to_self", False)),
@@ -1579,6 +1592,16 @@ def sanitize_loop_metrics(raw: Any) -> dict[str, Any]:
         "coalesced_trigger_rows",
         "skip_reasons",
         "send_error",
+        "voice_rows",
+        "voice_transcribed",
+        "voice_cached",
+        "voice_failed",
+        "voice_enrich_ms",
+        "voice_pending_retried",
+        "voice_pending_ready",
+        "voice_pending_backlog",
+        "voice_pending_added",
+        "voice_pending_local_id",
     }
     return {key: raw[key] for key in allowed if key in raw}
 
