@@ -140,7 +140,8 @@ def load_config(path: Path) -> dict[str, Any]:
         "voice_transcription_python": os.environ.get("WECHAT_VOICE_TRANSCRIBE_PYTHON", ""),
         "voice_transcription_model": os.environ.get("WECHAT_VOICE_WHISPER_MODEL", "base"),
         "voice_transcription_timeout_seconds": 90,
-        "voice_transcription_pending_max_attempts": 120,
+        "voice_transcription_pending_retry_seconds": 3.0,
+        "voice_transcription_pending_max_attempts": 1200,
         "organizer": {"enabled": False},
         "chat_purpose": "research",
         "analysis_mode": "",
@@ -328,9 +329,11 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         refresh_decrypted_store()
         metrics["decrypt_ms"] = elapsed_ms(started)
 
+    pending_voice_rows = retry_pending_voice_backlog(config, state, metrics)
     started = time.monotonic()
-    new_rows = read_new_messages(config, state)
+    fresh_rows = read_new_messages(config, state)
     metrics["read_ms"] = elapsed_ms(started)
+    new_rows = merge_message_rows(pending_voice_rows, fresh_rows)
     if new_rows:
         started = time.monotonic()
         enrich_voice_rows(config, new_rows, metrics)
@@ -505,7 +508,8 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                 processed_local_id = latest_row.get("local_id") if latest_row else processed_local_id
 
     if new_rows:
-        proposed_last_local_id = processed_local_id or max(row["local_id"] for row in new_rows)
+        current_last_local_id = int(state.get("last_local_id") or 0)
+        proposed_last_local_id = max(current_last_local_id, int(processed_local_id or 0), max(row["local_id"] for row in new_rows))
         state["last_local_id"] = retain_pending_voice_cursor(config, state, new_rows, proposed_last_local_id, metrics)
         state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
     state["last_loop_at"] = datetime.now().isoformat(timespec="seconds")
@@ -523,6 +527,20 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     }
 
 
+def merge_message_rows(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for group in groups:
+        for row in group:
+            key = (str(row.get("server_id") or ""), str(row.get("local_id") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+    rows.sort(key=lambda item: int(item.get("local_id") or 0))
+    return rows
+
+
 def retain_pending_voice_cursor(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -534,38 +552,140 @@ def retain_pending_voice_cursor(
     clear_resolved_voice_pending_attempts(config, state, rows)
     if not pending:
         state.pop("pending_voice_local_id", None)
+        metrics["voice_pending_backlog"] = len(voice_pending_backlog(state))
         return int(proposed_last_local_id)
 
-    held_rows = []
-    gave_up_rows = []
+    remember_pending_voice_rows(config, state, pending, metrics)
+    return int(proposed_last_local_id)
+
+
+def retry_pending_voice_backlog(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    metrics: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not bool(config.get("voice_transcription_enabled", True)):
+        return []
+    backlog = voice_pending_backlog(state)
+    if not backlog:
+        return []
+
+    retry_seconds = max(0.5, float(config.get("voice_transcription_pending_retry_seconds") or 3.0))
     max_attempts = int(config.get("voice_transcription_pending_max_attempts") or 0)
+    now = time.time()
+    ready: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    retried = 0
+    gave_up = 0
+    for item in backlog:
+        row = item.get("row") if isinstance(item.get("row"), dict) else None
+        if not row:
+            continue
+        if str(row.get("server_id") or "") in set(state.get("responded_server_ids", [])):
+            continue
+        if float(item.get("next_retry_at") or 0) > now:
+            kept.append(item)
+            continue
+
+        retried += 1
+        attempts = int(item.get("attempts") or 0) + 1
+        result = transcribe_voice_row(config, row)
+        if result.get("ok") and str(result.get("text") or "").strip():
+            row = dict(row)
+            row["_voice_transcript"] = str(result["text"]).strip()
+            row["_voice_transcription"] = result
+            row["_pending_voice_replay"] = True
+            ready.append(row)
+            continue
+
+        item["attempts"] = attempts
+        item["last_error"] = str(result.get("error") or result.get("status") or "transcription unavailable")[:500]
+        item["last_retry_at"] = now
+        item["next_retry_at"] = now + retry_seconds
+        if max_attempts > 0 and attempts >= max_attempts:
+            gave_up += 1
+        else:
+            kept.append(item)
+
+    state["pending_voice_backlog"] = trim_voice_pending_backlog(kept)
+    if kept:
+        state["pending_voice_local_id"] = min(int(item["row"].get("local_id") or 0) for item in kept if int(item["row"].get("local_id") or 0) > 0)
+    else:
+        state.pop("pending_voice_local_id", None)
+    if retried:
+        metrics["voice_pending_retried"] = retried
+    if ready:
+        metrics["voice_pending_ready"] = len(ready)
+    if gave_up:
+        metrics["voice_pending_gave_up"] = gave_up
+    metrics["voice_pending_backlog"] = len(kept)
+    return ready
+
+
+def remember_pending_voice_rows(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    rows: list[dict[str, Any]],
+    metrics: dict[str, Any],
+) -> None:
+    backlog_by_key = {str(item.get("key") or ""): item for item in voice_pending_backlog(state)}
+    now = time.time()
+    retry_seconds = max(0.5, float(config.get("voice_transcription_pending_retry_seconds") or 3.0))
     attempts = voice_pending_attempts(state)
-    for row in pending:
+    added = 0
+    for row in rows:
         key = voice_pending_key(config, row)
+        if key in backlog_by_key:
+            continue
         count = int(attempts.get(key) or 0) + 1
         attempts[key] = count
-        row["_voice_pending_attempts"] = count
-        if max_attempts > 0 and count > max_attempts:
-            gave_up_rows.append(row)
-        else:
-            held_rows.append(row)
+        backlog_by_key[key] = {
+            "key": key,
+            "row": voice_pending_row_snapshot(row),
+            "attempts": count,
+            "first_seen_at": now,
+            "last_error": str(row.get("_voice_transcription_error") or "transcription unavailable")[:500],
+            "next_retry_at": now + retry_seconds,
+        }
+        added += 1
     state["voice_pending_attempts"] = trim_voice_pending_attempts(attempts)
+    backlog = trim_voice_pending_backlog(list(backlog_by_key.values()))
+    state["pending_voice_backlog"] = backlog
+    state["pending_voice_local_id"] = min(int(item["row"].get("local_id") or 0) for item in backlog if int(item["row"].get("local_id") or 0) > 0)
+    metrics["voice_pending_added"] = added
+    metrics["voice_pending_backlog"] = len(backlog)
+    metrics["voice_pending_local_id"] = state.get("pending_voice_local_id")
 
-    if gave_up_rows:
-        metrics["voice_pending_gave_up"] = len(gave_up_rows)
-        metrics["voice_pending_gave_up_local_ids"] = [
-            int(row.get("local_id") or 0) for row in gave_up_rows if int(row.get("local_id") or 0) > 0
-        ][:12]
-    if not held_rows:
-        state.pop("pending_voice_local_id", None)
-        return int(proposed_last_local_id)
 
-    first_pending = min(int(row.get("local_id") or 0) for row in held_rows if int(row.get("local_id") or 0) > 0)
-    state["pending_voice_local_id"] = first_pending
-    metrics["voice_pending_retry"] = len(held_rows)
-    metrics["voice_pending_local_id"] = first_pending
-    metrics["voice_pending_attempts"] = max(int(row.get("_voice_pending_attempts") or 0) for row in held_rows)
-    return min(int(proposed_last_local_id), max(0, first_pending - 1))
+def voice_pending_row_snapshot(row: dict[str, Any]) -> dict[str, Any]:
+    keys = [
+        "local_id",
+        "server_id",
+        "local_type",
+        "real_sender_id",
+        "sender",
+        "sender_display",
+        "create_time",
+        "status",
+        "content",
+    ]
+    return {key: row.get(key) for key in keys if key in row}
+
+
+def voice_pending_backlog(state: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = state.get("pending_voice_backlog")
+    if not isinstance(raw, list):
+        return []
+    backlog = []
+    for item in raw:
+        if isinstance(item, dict) and isinstance(item.get("row"), dict):
+            backlog.append(item)
+    return backlog
+
+
+def trim_voice_pending_backlog(backlog: list[dict[str, Any]], *, limit: int = 50) -> list[dict[str, Any]]:
+    backlog.sort(key=lambda item: int(item.get("row", {}).get("local_id") or 0))
+    return backlog[-limit:]
 
 
 def pending_voice_transcription_rows(config: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

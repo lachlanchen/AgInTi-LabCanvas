@@ -150,8 +150,9 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   chatroom/local_id, and passes the transcript to the same text router. In
   EchoMind language mode, trust an agent-first `chat_only` decision for ordinary
   transcribed voice; only explicit tool/artifact instructions should become
-  worker tasks. If `VoiceInfo` is not ready yet, hold the cursor at the voice
-  row and retry instead of marking it unsupported.
+  worker tasks. If `VoiceInfo` is not ready yet, store the row in the
+  pending-voice backlog and retry on backoff. Do not lose the row just because
+  the normal message cursor advances.
 - Do not use the WeChat search box for normal sending. GUI delivery should use
   the currently verified chat, a configured `open_click`, or configured
   `fallback_clicks`; otherwise defer/fail closed. Configured visible-list rows
