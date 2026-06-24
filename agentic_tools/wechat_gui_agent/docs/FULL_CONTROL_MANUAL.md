@@ -235,14 +235,17 @@ video, image, audio, PDF, or generated artifact, the task is queued for the
 worker even when the route model misclassifies it as chat.
 Voice rows are handled before this routing step: `wechat_voice_transcribe.py`
 uses decrypted `message/media_0.db`/`VoiceInfo`, the private decrypt venv's
-`pilk` SILK decoder, and the main environment's `faster_whisper`. Transcripts
-are cached under `.private/voice_transcriptions.json`; raw voice XML secrets are
-not passed to prompts. If the message row arrives before `VoiceInfo` is ready,
-the monitor stores the row in a pending-voice backlog and retries it on a short
-backoff. The normal cursor may continue advancing, but the voice row is routed
-when the audio later appears. Direct monitors may run under the decrypt venv,
-but `voice_transcription_python` / `WECHAT_MAIN_PYTHON` must resolve to a main
-Python that can import `faster_whisper`.
+`pilk` SILK decoder, and a separate ASR Python that can import OpenAI
+`whisper` or `faster_whisper`. The default selector prefers a dedicated
+multilingual conda environment such as `~/miniconda3/envs/whisper/bin/python`,
+then falls back to `whisperx`, main conda, and system Python. Override with
+`voice_transcription_python` / `WECHAT_VOICE_TRANSCRIBE_PYTHON`; force a backend
+with `voice_transcription_backend` / `WECHAT_VOICE_WHISPER_BACKEND=whisper`.
+Transcripts are cached under `.private/voice_transcriptions.json`; raw voice XML
+secrets are not passed to prompts. If the message row arrives before
+`VoiceInfo` is ready, the monitor stores the row in a pending-voice backlog and
+retries it on a short backoff. The normal cursor may continue advancing, but the
+voice row is routed when the audio later appears.
 When the worker claims the task, it writes `routine_contract.json` and
 `routine_contract.md` in the task artifact directory and includes that contract
 in the worker prompt. The worker supervises routine stages and resolves blockers

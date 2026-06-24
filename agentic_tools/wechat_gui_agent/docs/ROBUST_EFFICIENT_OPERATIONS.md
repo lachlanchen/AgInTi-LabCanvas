@@ -146,15 +146,19 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   mistakenly returns `chat_only`.
 - Voice-message ingestion is a text normalization step before routing. When
   `message/media_0.db` is decrypted, the direct monitor reads `VoiceInfo`,
-  decodes SILK to WAV, transcribes with `faster_whisper`, caches by
-  chatroom/local_id, and passes the transcript to the same text router. In
-  EchoMind language mode, trust an agent-first `chat_only` decision for ordinary
-  transcribed voice; only explicit tool/artifact instructions should become
-  worker tasks. If `VoiceInfo` is not ready yet, store the row in the
+  decodes SILK to WAV, transcribes with OpenAI `whisper` or `faster_whisper`,
+  caches by chatroom/local_id, and passes the transcript to the same text
+  router. Prefer a dedicated multilingual conda ASR environment such as
+  `~/miniconda3/envs/whisper/bin/python`; override with
+  `WECHAT_VOICE_TRANSCRIBE_PYTHON`, and force OpenAI Whisper with
+  `WECHAT_VOICE_WHISPER_BACKEND=whisper` when language auto-detection matters.
+  In EchoMind language mode, trust an agent-first `chat_only` decision for
+  ordinary transcribed voice; only explicit tool/artifact instructions should
+  become worker tasks. If `VoiceInfo` is not ready yet, store the row in the
   pending-voice backlog and retry on backoff. Do not lose the row just because
   the normal message cursor advances. The monitor can run inside the decrypt
-  venv, but the voice transcription subprocess must use a main Python with
-  `faster_whisper` installed.
+  venv, but the voice transcription subprocess must use an ASR Python outside
+  that venv.
 - Do not use the WeChat search box for normal sending. GUI delivery should use
   the currently verified chat, a configured `open_click`, or configured
   `fallback_clicks`; otherwise defer/fail closed. Configured visible-list rows

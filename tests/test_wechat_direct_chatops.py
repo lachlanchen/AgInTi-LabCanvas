@@ -865,6 +865,28 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertEqual(selected, str(user_python.resolve()))
 
+    def test_voice_transcribe_python_prefers_dedicated_whisper_env(self) -> None:
+        config = self.base_config()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            whisper_python = tmp_path / "home" / "miniconda3" / "envs" / "whisper" / "bin" / "python"
+            base_python = tmp_path / "home" / "miniconda3" / "bin" / "python3"
+            whisper_python.parent.mkdir(parents=True)
+            base_python.parent.mkdir(parents=True)
+            whisper_python.write_text("#!/bin/sh\n", encoding="utf-8")
+            base_python.write_text("#!/bin/sh\n", encoding="utf-8")
+            whisper_python.chmod(0o755)
+            base_python.chmod(0o755)
+
+            with (
+                mock.patch.object(direct_chatops, "VENV_PYTHON", tmp_path / "decrypt" / ".venv" / "bin" / "python"),
+                mock.patch.object(direct_chatops, "voice_transcribe_python_has_backend", return_value=True),
+                mock.patch.dict(direct_chatops.os.environ, {"HOME": str(tmp_path / "home")}, clear=True),
+            ):
+                selected = direct_chatops.voice_transcribe_python(config)
+
+        self.assertEqual(selected, str(whisper_python))
+
     def test_echomind_ignores_attachment_rows(self) -> None:
         self.assertFalse(direct_chatops.should_respond(self.base_config(), {}, self.row("", local_type=49)))
 

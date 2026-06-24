@@ -199,15 +199,21 @@ same fast-router and worker queue.
 Voice messages are handled as text when the decrypted media database is
 available. The key refresh must include `message/media_0.db`; the monitor then
 reads `VoiceInfo`, decodes WeChat SILK with the private decrypt venv's `pilk`,
-transcribes the WAV with `faster_whisper`, and caches results in ignored
-`.private/voice_transcriptions.json`. EchoMind treats a transcribed voice row as
-ordinary language-practice text unless the transcript explicitly asks for
-backend tools. Manual check:
+transcribes the WAV with OpenAI `whisper` or `faster_whisper`, and caches
+results in ignored `.private/voice_transcriptions.json`. The default selector
+prefers a dedicated multilingual conda environment such as
+`~/miniconda3/envs/whisper/bin/python`, then falls back to other ASR-capable
+Python installs. EchoMind treats a transcribed voice row as ordinary
+language-practice text unless the transcript explicitly asks for backend tools.
+Manual check:
 
 ```bash
 labcanvas wechat voice-transcribe \
   --config agentic_tools/wechat_gui_agent/.private/echomind-direct-chatops.local.json \
-  --local-id 121 --json
+  --local-id 121 \
+  --backend whisper \
+  --python ~/miniconda3/envs/whisper/bin/python \
+  --json
 ```
 
 Raw `aeskey` and `voiceurl` fields are intentionally stripped from prompts.

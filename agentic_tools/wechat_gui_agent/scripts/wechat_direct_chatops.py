@@ -139,6 +139,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "voice_transcription_enabled": True,
         "voice_transcription_python": os.environ.get("WECHAT_VOICE_TRANSCRIBE_PYTHON", ""),
         "voice_transcription_model": os.environ.get("WECHAT_VOICE_WHISPER_MODEL", "base"),
+        "voice_transcription_backend": os.environ.get("WECHAT_VOICE_WHISPER_BACKEND", "auto"),
         "voice_transcription_timeout_seconds": 90,
         "voice_transcription_pending_retry_seconds": 3.0,
         "voice_transcription_pending_max_attempts": 1200,
@@ -1043,6 +1044,8 @@ def transcribe_voice_row(config: dict[str, Any], row: dict[str, Any]) -> dict[st
         str(local_id),
         "--model",
         str(config.get("voice_transcription_model") or "base"),
+        "--backend",
+        str(config.get("voice_transcription_backend") or "auto"),
         "--json",
     ]
     config_path = str(config.get("config_path") or "")
@@ -1078,27 +1081,40 @@ def voice_transcribe_python(config: dict[str, Any]) -> str:
     if configured:
         return configured
     for candidate in voice_transcribe_python_candidates():
-        try:
-            resolved = Path(candidate).resolve()
-            if VENV_PYTHON.exists() and resolved == VENV_PYTHON.resolve():
-                continue
-            if resolved.exists():
-                return str(resolved)
-        except OSError:
-            if candidate:
-                return candidate
+        path = Path(candidate)
+        if not path.exists():
+            continue
+        if path == VENV_PYTHON:
+            continue
+        if voice_transcribe_python_has_backend(str(path)):
+            return str(path)
+    for candidate in voice_transcribe_python_candidates():
+        path = Path(candidate)
+        if path.exists() and path != VENV_PYTHON:
+            return str(path)
     return sys.executable
 
 
 def voice_transcribe_python_candidates() -> list[str]:
     candidates = []
+    home = Path.home()
+    # Prefer dedicated ASR environments before the monitor's own conda/base
+    # Python. The decrypt monitor often runs in a small venv that can decode
+    # SILK but should not own multilingual Whisper inference.
+    candidates.extend(
+        [
+            str(home / "miniconda3" / "envs" / "whisper" / "bin" / "python"),
+            str(home / "miniconda3" / "envs" / "whisperx" / "bin" / "python"),
+            str(home / "anaconda3" / "envs" / "whisper" / "bin" / "python"),
+            str(home / "anaconda3" / "envs" / "whisperx" / "bin" / "python"),
+        ]
+    )
     main_python = str(os.environ.get("WECHAT_MAIN_PYTHON") or "").strip()
     if main_python:
         candidates.append(main_python)
     conda_prefix = str(os.environ.get("CONDA_PREFIX") or "").strip()
     if conda_prefix:
         candidates.append(str(Path(conda_prefix) / "bin" / "python3"))
-    home = Path.home()
     candidates.extend(
         [
             str(home / "miniconda3" / "bin" / "python3"),
@@ -1118,6 +1134,33 @@ def voice_transcribe_python_candidates() -> list[str]:
             unique.append(candidate)
             seen.add(candidate)
     return unique
+
+
+def voice_transcribe_python_has_backend(candidate: str) -> bool:
+    probe = (
+        "import sys\n"
+        "ok = False\n"
+        "for name in ('whisper', 'faster_whisper'):\n"
+        "    try:\n"
+        "        __import__(name)\n"
+        "        ok = True\n"
+        "        break\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "sys.exit(0 if ok else 1)\n"
+    )
+    try:
+        proc = subprocess.run(
+            [candidate, "-c", probe],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
 
 
 def voice_row_transcript(row: dict[str, Any]) -> str:

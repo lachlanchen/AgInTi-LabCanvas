@@ -170,6 +170,17 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     voice.add_argument("--config", type=Path, default=DEFAULT_DIRECT_CONFIG)
     voice.add_argument("--local-id", type=int, required=True)
     voice.add_argument("--model", default=os.environ.get("WECHAT_VOICE_WHISPER_MODEL", "base"))
+    voice.add_argument(
+        "--backend",
+        choices=["auto", "faster-whisper", "whisper"],
+        default=os.environ.get("WECHAT_VOICE_WHISPER_BACKEND", "auto"),
+        help="ASR backend. auto tries faster-whisper then OpenAI whisper.",
+    )
+    voice.add_argument(
+        "--python",
+        default=os.environ.get("WECHAT_VOICE_TRANSCRIBE_PYTHON", sys.executable),
+        help="Python interpreter that can import faster_whisper or whisper.",
+    )
     voice.add_argument("--refresh", action="store_true")
     voice.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     voice.set_defaults(func=cmd_voice_transcribe)
@@ -933,7 +944,7 @@ def cmd_media_sync(args: argparse.Namespace) -> int:
 
 def cmd_voice_transcribe(args: argparse.Namespace) -> int:
     command = [
-        sys.executable,
+        str(args.python),
         str(SCRIPTS / "wechat_voice_transcribe.py"),
         "--config",
         str(args.config),
@@ -941,6 +952,8 @@ def cmd_voice_transcribe(args: argparse.Namespace) -> int:
         str(args.local_id),
         "--model",
         str(args.model),
+        "--backend",
+        str(args.backend),
     ]
     if args.refresh:
         command.append("--refresh")

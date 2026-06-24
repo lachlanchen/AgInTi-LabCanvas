@@ -32,6 +32,12 @@ def main() -> int:
     parser.add_argument("--chat-name", default="", help="Display name used only for output folder names.")
     parser.add_argument("--local-id", type=int, required=True)
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument(
+        "--backend",
+        choices=["auto", "faster-whisper", "whisper"],
+        default=os.environ.get("WECHAT_VOICE_WHISPER_BACKEND", "auto"),
+        help="ASR backend. auto prefers faster-whisper when installed, then OpenAI whisper.",
+    )
     parser.add_argument("--device", default=os.environ.get("WECHAT_VOICE_WHISPER_DEVICE", "cpu"))
     parser.add_argument("--compute-type", default=os.environ.get("WECHAT_VOICE_WHISPER_COMPUTE_TYPE", "int8"))
     parser.add_argument("--language", default=os.environ.get("WECHAT_VOICE_LANGUAGE", ""))
@@ -83,6 +89,7 @@ def main() -> int:
             compute_type=args.compute_type,
             language=args.language,
             vad_filter=bool(args.vad_filter),
+            backend=args.backend,
         )
     except Exception as exc:
         return emit({"ok": False, "status": "error", "error": str(exc)[:1000]}, args.json, 1)
@@ -90,6 +97,7 @@ def main() -> int:
     entry = {
         "text": transcript["text"],
         "model": args.model,
+        "backend": transcript.get("backend") or args.backend,
         "language": transcript.get("language") or "",
         "language_probability": transcript.get("language_probability"),
         "duration": transcript.get("duration"),
@@ -146,6 +154,7 @@ def public_cache_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "local_id": entry.get("local_id"),
         "create_time": entry.get("create_time"),
         "model": entry.get("model") or "",
+        "backend": entry.get("backend") or "",
     }
 
 
@@ -236,11 +245,48 @@ def transcribe_wav(
     compute_type: str,
     language: str = "",
     vad_filter: bool = False,
+    backend: str = "auto",
+) -> dict[str, Any]:
+    backend = (backend or "auto").strip().lower()
+    if backend in {"auto", "faster-whisper", "faster_whisper"}:
+        try:
+            return transcribe_wav_faster_whisper(
+                wav_path,
+                model=model,
+                device=device,
+                compute_type=compute_type,
+                language=language,
+                vad_filter=vad_filter,
+            )
+        except Exception as exc:
+            if backend in {"faster-whisper", "faster_whisper"}:
+                raise RuntimeError(f"faster_whisper failed in the selected Python environment: {exc}") from exc
+    if backend in {"auto", "whisper", "openai-whisper", "openai_whisper"}:
+        try:
+            return transcribe_wav_openai_whisper(wav_path, model=model, device=device, language=language)
+        except Exception as exc:
+            if backend == "auto":
+                raise RuntimeError(
+                    "missing usable Whisper backend in the selected Python environment "
+                    "(tried faster_whisper and whisper)"
+                ) from exc
+            raise
+    raise RuntimeError(f"unsupported Whisper backend: {backend}")
+
+
+def transcribe_wav_faster_whisper(
+    wav_path: Path,
+    *,
+    model: str,
+    device: str,
+    compute_type: str,
+    language: str = "",
+    vad_filter: bool = False,
 ) -> dict[str, Any]:
     try:
         from faster_whisper import WhisperModel
     except ModuleNotFoundError as exc:
-        raise RuntimeError("missing faster_whisper in the main Python environment") from exc
+        raise exc
 
     whisper = WhisperModel(model, device=device, compute_type=compute_type)
     kwargs: dict[str, Any] = {"beam_size": 5}
@@ -264,10 +310,54 @@ def transcribe_wav(
         parts.append(text)
         segments.append({"start": round(float(segment.start), 2), "end": round(float(segment.end), 2), "text": text})
     return {
+        "backend": "faster-whisper",
         "text": " ".join(parts).strip(),
         "language": getattr(info, "language", ""),
         "language_probability": getattr(info, "language_probability", None),
         "duration": getattr(info, "duration", None),
+        "segments": segments,
+    }
+
+
+def transcribe_wav_openai_whisper(
+    wav_path: Path,
+    *,
+    model: str,
+    device: str,
+    language: str = "",
+) -> dict[str, Any]:
+    try:
+        import whisper
+    except Exception as exc:
+        raise RuntimeError(f"missing usable whisper package in the selected Python environment: {exc}") from exc
+
+    whisper_model = whisper.load_model(model, device=device)
+    kwargs: dict[str, Any] = {"fp16": device not in {"cpu", ""}}
+    if language:
+        kwargs["language"] = language
+    result = whisper_model.transcribe(str(wav_path), **kwargs)
+    raw_segments = result.get("segments") or []
+    segments = []
+    parts = []
+    for segment in raw_segments:
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        parts.append(text)
+        segments.append(
+            {
+                "start": round(float(segment.get("start") or 0), 2),
+                "end": round(float(segment.get("end") or 0), 2),
+                "text": text,
+            }
+        )
+    duration = max((float(segment.get("end") or 0) for segment in raw_segments), default=None)
+    return {
+        "backend": "whisper",
+        "text": " ".join(parts).strip(),
+        "language": result.get("language") or "",
+        "language_probability": None,
+        "duration": duration,
         "segments": segments,
     }
 
