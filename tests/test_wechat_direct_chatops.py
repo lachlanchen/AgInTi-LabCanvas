@@ -759,6 +759,37 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(direct_chatops.should_respond(config, {}, row))
         self.assertEqual(metrics["voice_cached"], 1)
 
+    def test_failed_voice_transcription_keeps_cursor_pending_for_retry(self) -> None:
+        config = self.base_config()
+        config["chatroom_id"] = "demo@chatroom"
+        state: dict[str, object] = {"last_local_id": 123}
+        row = self.row(
+            '<msg><voicemsg voicelength="9000" length="17169" voiceformat="4" /></msg>',
+            local_type=34,
+            local_id=124,
+            server_id="voice-124",
+        )
+
+        with (
+            mock.patch.object(direct_chatops, "read_new_messages", return_value=[row]),
+            mock.patch.object(
+                direct_chatops,
+                "transcribe_voice_row",
+                return_value={"ok": False, "status": "voice-not-found", "error": "media db not ready"},
+            ),
+            mock.patch.object(direct_chatops, "run_codex", side_effect=AssertionError("voice row should wait")),
+        ):
+            result = direct_chatops.run_once(config, state, send=False, no_decrypt=True)
+
+        self.assertEqual(result["responses_sent"], 0)
+        self.assertEqual(result["tasks_enqueued"], 0)
+        self.assertEqual(result["state"]["last_local_id"], 123)
+        self.assertEqual(result["state"]["pending_voice_local_id"], 124)
+        self.assertEqual(result["state"]["voice_pending_attempts"]["EchoMind|voice-124|124"], 1)
+        self.assertEqual(result["metrics"]["voice_failed"], 1)
+        self.assertEqual(result["metrics"]["voice_pending_retry"], 1)
+        self.assertEqual(result["metrics"]["skip_reasons"]["unsupported_type"], 1)
+
     def test_echomind_ignores_attachment_rows(self) -> None:
         self.assertFalse(direct_chatops.should_respond(self.base_config(), {}, self.row("", local_type=49)))
 

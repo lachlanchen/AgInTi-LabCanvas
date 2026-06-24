@@ -140,6 +140,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "voice_transcription_python": os.environ.get("WECHAT_VOICE_TRANSCRIBE_PYTHON", ""),
         "voice_transcription_model": os.environ.get("WECHAT_VOICE_WHISPER_MODEL", "base"),
         "voice_transcription_timeout_seconds": 90,
+        "voice_transcription_pending_max_attempts": 120,
         "organizer": {"enabled": False},
         "chat_purpose": "research",
         "analysis_mode": "",
@@ -504,7 +505,8 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                 processed_local_id = latest_row.get("local_id") if latest_row else processed_local_id
 
     if new_rows:
-        state["last_local_id"] = processed_local_id or max(row["local_id"] for row in new_rows)
+        proposed_last_local_id = processed_local_id or max(row["local_id"] for row in new_rows)
+        state["last_local_id"] = retain_pending_voice_cursor(config, state, new_rows, proposed_last_local_id, metrics)
         state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
     state["last_loop_at"] = datetime.now().isoformat(timespec="seconds")
     metrics["total_ms"] = elapsed_ms(loop_started)
@@ -519,6 +521,113 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         "metrics": metrics,
         "state": state,
     }
+
+
+def retain_pending_voice_cursor(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    rows: list[dict[str, Any]],
+    proposed_last_local_id: int,
+    metrics: dict[str, Any],
+) -> int:
+    pending = pending_voice_transcription_rows(config, rows)
+    clear_resolved_voice_pending_attempts(config, state, rows)
+    if not pending:
+        state.pop("pending_voice_local_id", None)
+        return int(proposed_last_local_id)
+
+    held_rows = []
+    gave_up_rows = []
+    max_attempts = int(config.get("voice_transcription_pending_max_attempts") or 0)
+    attempts = voice_pending_attempts(state)
+    for row in pending:
+        key = voice_pending_key(config, row)
+        count = int(attempts.get(key) or 0) + 1
+        attempts[key] = count
+        row["_voice_pending_attempts"] = count
+        if max_attempts > 0 and count > max_attempts:
+            gave_up_rows.append(row)
+        else:
+            held_rows.append(row)
+    state["voice_pending_attempts"] = trim_voice_pending_attempts(attempts)
+
+    if gave_up_rows:
+        metrics["voice_pending_gave_up"] = len(gave_up_rows)
+        metrics["voice_pending_gave_up_local_ids"] = [
+            int(row.get("local_id") or 0) for row in gave_up_rows if int(row.get("local_id") or 0) > 0
+        ][:12]
+    if not held_rows:
+        state.pop("pending_voice_local_id", None)
+        return int(proposed_last_local_id)
+
+    first_pending = min(int(row.get("local_id") or 0) for row in held_rows if int(row.get("local_id") or 0) > 0)
+    state["pending_voice_local_id"] = first_pending
+    metrics["voice_pending_retry"] = len(held_rows)
+    metrics["voice_pending_local_id"] = first_pending
+    metrics["voice_pending_attempts"] = max(int(row.get("_voice_pending_attempts") or 0) for row in held_rows)
+    return min(int(proposed_last_local_id), max(0, first_pending - 1))
+
+
+def pending_voice_transcription_rows(config: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not bool(config.get("voice_transcription_enabled", True)):
+        return []
+    pending = []
+    for row in rows:
+        base_type, _ = split_message_type(row.get("local_type"))
+        if base_type != 34:
+            continue
+        if not is_inbound_user_row(config, row):
+            continue
+        if voice_transcript_available(row):
+            continue
+        if row.get("_voice_transcription_error"):
+            pending.append(row)
+    return pending
+
+
+def voice_pending_key(config: dict[str, Any], row: dict[str, Any]) -> str:
+    return "|".join(
+        [
+            str(config.get("chat_name") or config.get("chatroom_id") or ""),
+            str(row.get("server_id") or ""),
+            str(row.get("local_id") or ""),
+        ]
+    )
+
+
+def voice_pending_attempts(state: dict[str, Any]) -> dict[str, int]:
+    raw = state.get("voice_pending_attempts")
+    if not isinstance(raw, dict):
+        return {}
+    attempts: dict[str, int] = {}
+    for key, value in raw.items():
+        try:
+            attempts[str(key)] = max(0, int(value))
+        except (TypeError, ValueError):
+            continue
+    return attempts
+
+
+def trim_voice_pending_attempts(attempts: dict[str, int], *, limit: int = 100) -> dict[str, int]:
+    if len(attempts) <= limit:
+        return attempts
+    return dict(list(attempts.items())[-limit:])
+
+
+def clear_resolved_voice_pending_attempts(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> None:
+    raw = state.get("voice_pending_attempts")
+    if not isinstance(raw, dict):
+        return
+    attempts = dict(raw)
+    for row in rows:
+        base_type, _ = split_message_type(row.get("local_type"))
+        if base_type == 34 and voice_transcript_available(row):
+            attempts.pop(voice_pending_key(config, row), None)
+    state["voice_pending_attempts"] = attempts
 
 
 def organizer_ack_candidate(
