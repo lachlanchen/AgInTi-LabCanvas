@@ -2227,14 +2227,21 @@ def enqueue_third_party_publish_wait_task(
             "message_table": config.get("message_table") or "",
             "server_id": row["server_id"],
             "local_id": row["local_id"],
+            "local_type": row.get("local_type"),
+            "create_time": row.get("create_time"),
+            "kind": message_kind(row),
             "sender": row["sender"],
             "sender_display": row["sender_display"],
         },
         "context": [
             {
                 "local_id": item["local_id"],
+                "server_id": item.get("server_id"),
                 "sender": item["sender"],
                 "sender_display": item["sender_display"],
+                "local_type": item.get("local_type"),
+                "create_time": item.get("create_time"),
+                "kind": message_kind(item),
                 "content": item["content"],
             }
             for item in context_rows[-8:]
@@ -4668,14 +4675,21 @@ def enqueue_worker_task(
             "message_table": config.get("message_table") or "",
             "server_id": row["server_id"],
             "local_id": row["local_id"],
+            "local_type": row.get("local_type"),
+            "create_time": row.get("create_time"),
+            "kind": message_kind(row),
             "sender": row["sender"],
             "sender_display": row["sender_display"],
         },
         "context": [
             {
                 "local_id": item["local_id"],
+                "server_id": item.get("server_id"),
                 "sender": item["sender"],
                 "sender_display": item["sender_display"],
+                "local_type": item.get("local_type"),
+                "create_time": item.get("create_time"),
+                "kind": message_kind(item),
                 "content": item["content"],
             }
             for item in context_rows[-8:]
@@ -4826,14 +4840,21 @@ def enqueue_deferred_reply(
             "message_table": config.get("message_table") or "",
             "server_id": row["server_id"],
             "local_id": row["local_id"],
+            "local_type": row.get("local_type"),
+            "create_time": row.get("create_time"),
+            "kind": message_kind(row),
             "sender": row["sender"],
             "sender_display": row["sender_display"],
         },
         "context": [
             {
                 "local_id": item["local_id"],
+                "server_id": item.get("server_id"),
                 "sender": item["sender"],
                 "sender_display": item["sender_display"],
+                "local_type": item.get("local_type"),
+                "create_time": item.get("create_time"),
+                "kind": message_kind(item),
                 "content": item["content"],
             }
             for item in context_rows[-8:]

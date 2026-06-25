@@ -68,6 +68,14 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   posting, purchases, deletion, or other irreversible actions.
 - Source media must match the same chat and exact source or quoted message. If
   it is missing, stop source-limited and ask for resend/opening the media.
+- The worker runs a source-scoped media-resolution preflight for explicit
+  image/file/video routes. It refreshes same-chat media sync, resolves mirror
+  candidates by exact token and source time window, copies matches into
+  `output/wechat_worker/<task-id>/source_media/`, and writes
+  `media_resolution_manifest.json` plus `.md`. Worker agents must use
+  `task_copy_path` inputs from that manifest before saying an image/file is
+  unavailable. Decoded JPG/PNG/MP4/PDF files outrank raw WeChat `.dat`
+  containers; `.dat` is kept only as low-priority evidence.
 - Bare file uploads with no explicit instruction are still work: route them to
   `file_intake`, sync/copy the exact file into
   `output/wechat_worker/<task-id>/intake/`, record metadata and checksum, and
@@ -454,6 +462,8 @@ Wrong or mixed chat:
 Missing image/video/file:
 
 - run media sync for the exact chat;
+- inspect `media_resolution_manifest.md` in the task artifact directory and use
+  any listed `task_copy_path` before reporting missing media;
 - ensure the user opened/downloaded the source in WeChat if the client has not
   cached it;
 - fail source-limited instead of borrowing nearby files.

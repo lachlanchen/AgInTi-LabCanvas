@@ -334,6 +334,22 @@ directly; newer V1/V2 image containers need a private image key. If exact source
 media is unavailable, the worker asks the user to resend or open the source in
 WeChat. It must not borrow files from another group or an older task.
 
+For explicit image/file/video routes, `wechat_task_worker.py` performs a
+media-resolution preflight before calling the worker agent. It refreshes
+same-chat sync, resolves candidates by current source row, quoted row, MD5/token,
+and `create_time` window, then copies usable files into:
+
+```text
+output/wechat_worker/<task-id>/source_media/
+```
+
+The same preflight writes `media_resolution_manifest.json` and
+`media_resolution_manifest.md`. Use the manifest `task_copy_path` files as the
+agent's first-choice inputs. Decoded images/videos/PDFs rank above raw WeChat
+`.dat` cache files; raw `.dat` is retained only as last-resort evidence. If the
+manifest is empty, stop with a source-limited missing-media response instead of
+choosing a nearby old download.
+
 For exact WeChat video tasks:
 
 ```bash

@@ -1051,6 +1051,109 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertEqual([item["filename"] for item in copied], ["Chaos_Making_New_Science_2015.pdf"])
 
+    def test_media_resolution_preflight_prefers_decoded_image_and_exposes_task_copy(self) -> None:
+        worker = load_worker()
+        import wechat_mirror  # type: ignore
+
+        token = "abc123abc123abc123abc123abc123ab"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            mirror = tmp_path / "mirror"
+            mirror.mkdir()
+            raw_dat = mirror / f"{token}.dat"
+            decoded_jpg = mirror / f"{token}.jpg"
+            raw_dat.write_bytes(b"raw-wechat-image-container")
+            decoded_jpg.write_bytes(b"\xff\xd8\xff\xe0decoded-jpeg")
+            create_time = datetime.now().timestamp()
+            db = tmp_path / "wechat_mirror.sqlite"
+            event_id = wechat_mirror.record_event(
+                chat_name="懒人科研",
+                action="media-sync",
+                status="copied",
+                db_path=db,
+                message="test image media sync",
+            )
+            wechat_mirror.record_media_files(
+                chat_name="懒人科研",
+                event_id=event_id,
+                db_path=db,
+                files=[
+                    {
+                        "source": str(tmp_path / "cache" / raw_dat.name),
+                        "target": str(raw_dat),
+                        "suffix": ".dat",
+                        "bytes": raw_dat.stat().st_size,
+                        "mtime": create_time,
+                        "status": "copied",
+                        "matched_by": f"token:{token}",
+                    },
+                    {
+                        "source": str(tmp_path / "cache" / decoded_jpg.name),
+                        "target": str(decoded_jpg),
+                        "suffix": ".jpg",
+                        "bytes": decoded_jpg.stat().st_size,
+                        "mtime": create_time,
+                        "status": "decoded",
+                        "matched_by": f"token:{token}",
+                        "decode_status": "decoded-xor",
+                    },
+                ],
+            )
+            task = {
+                "id": "edit-image-task",
+                "chat": "懒人科研",
+                "source": {"local_id": 42, "server_id": "srv-42", "create_time": create_time},
+                "route_decision": {"route_kind": "edit_existing_media", "needs_recent_media": True},
+                "request": (
+                    "Current coalesced request:\n"
+                    f"Please edit this image. <msg><img md5=\"{token}\" /></msg>"
+                ),
+                "context": [
+                    {
+                        "local_id": 41,
+                        "server_id": "img-41",
+                        "local_type": 3,
+                        "create_time": create_time,
+                        "sender_display": "陈苗",
+                        "content": f"<msg><img md5=\"{token}\" /></msg>",
+                    },
+                    {
+                        "local_id": 42,
+                        "server_id": "srv-42",
+                        "local_type": 1,
+                        "create_time": create_time,
+                        "sender_display": "陈苗",
+                        "content": "Please edit this image.",
+                    },
+                ],
+            }
+
+            with mock.patch.dict(
+                worker.os.environ,
+                {"WECHAT_MIRROR_DB": str(db), "WECHAT_WORKER_DISABLE_MEDIA_SYNC_PREFLIGHT": "1"},
+            ):
+                candidates = worker.resolve_synced_media_from_mirror(task, limit=4)
+                preflight = worker.prepare_worker_preflight(task, tmp_path / "artifact")
+                task["preflight"] = preflight
+                extracted = worker.extract_recent_synced_files_from_task(task)
+                tool_context = worker.build_worker_tool_context(task)
+
+            copied = preflight["media_resolution"]["copied"]
+            first_copy = Path(copied[0]["task_copy_path"])
+            first_copy_exists = first_copy.is_file()
+
+        self.assertGreaterEqual(len(candidates), 2)
+        self.assertEqual(Path(candidates[0]["mirror_path"]).suffix, ".jpg")
+        self.assertIn("readable_image", candidates[0]["match_reasons"])
+        self.assertEqual(Path(candidates[1]["mirror_path"]).suffix, ".dat")
+        self.assertIn("raw_dat_penalty", candidates[1]["match_reasons"])
+        self.assertEqual(first_copy.suffix, ".jpg")
+        self.assertTrue(first_copy_exists)
+        self.assertEqual(extracted[0], first_copy.resolve())
+        self.assertIn("Media resolution preflight found source-scoped local files", tool_context)
+        self.assertIn(str(first_copy), tool_context)
+        self.assertIn("Do not say the image/file is missing", tool_context)
+
     def test_file_intake_result_does_not_auto_attach_saved_copy(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

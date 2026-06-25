@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import signal
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -143,6 +144,15 @@ DEFAULT_AUTO_SEND_SUFFIXES = set(OUTBOUND_SUFFIXES)
 DEFAULT_MAX_OUTBOUND_BYTES = 100 * 1024 * 1024
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 AUDIO_SUFFIXES = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".amr", ".opus"}
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".svg"}
+RAW_WECHAT_MEDIA_SUFFIXES = {".dat"}
+PREFERRED_MEDIA_SUFFIXES = (
+    IMAGE_SUFFIXES
+    | VIDEO_SUFFIXES
+    | AUDIO_SUFFIXES
+    | RAW_WECHAT_MEDIA_SUFFIXES
+    | {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".zip", ".7z", ".rar"}
+)
 DEFAULT_REQUIRED_DELIVERY_SUFFIXES = set(DEFAULT_AUTO_SEND_SUFFIXES)
 GENERATED_VIDEO_PENDING_TERMS = (
     "submitted",
@@ -2100,6 +2110,9 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         generated_status = inspect_generated_video_status(task)
         if generated_status:
             preflight["generated_video_status"] = generated_status
+    if should_prepare_media_resolution(task):
+        preflight["media_resolution"] = prepare_media_resolution_preflight(task, artifact_dir)
+        task["preflight"] = preflight
     if is_file_intake_task(task):
         preflight["file_intake"] = prepare_file_intake_preflight(task, artifact_dir)
     if not is_video_publish_task(task):
@@ -2135,6 +2148,76 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
 def is_file_intake_task(task: dict[str, Any]) -> bool:
     route = task_route_decision(task)
     return str(route.get("route_kind") or "") == "file_intake"
+
+
+def should_prepare_media_resolution(task: dict[str, Any]) -> bool:
+    route = task_route_decision(task)
+    route_kind = str(route.get("route_kind") or "")
+    if route_kind in {"edit_existing_media", "file_intake", "file_download_or_save", "process_existing_video", "publish_video"}:
+        return True
+    text = task_focus_text(task).lower()
+    explicit_media_text = any(
+        marker in text
+        for marker in ("this image", "this photo", "this file", "这个图片", "這個圖片", "这张图", "這張圖", "这份文件", "这个文件")
+    )
+    if explicit_media_text:
+        return True
+    if not bool(route.get("needs_recent_media")):
+        return False
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    source_kind = str(source.get("kind") or "").lower()
+    source_type = int_or_none(source.get("local_type"))
+    return source_kind in {"image", "video", "file", "voice"} or source_type in {3, 34, 43, 49}
+
+
+def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+    refresh = refresh_media_sync_for_task(task)
+    candidates = resolve_synced_media_from_mirror(task, limit=12)
+    source_dir = artifact_dir / "source_media"
+    copied: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    for index, item in enumerate(candidates[:8], start=1):
+        source = Path(str(item.get("mirror_path") or "")).expanduser()
+        if not source.is_file():
+            skipped.append({"path": str(source), "reason": "missing"})
+            continue
+        target = unique_intake_target(source_dir, source.name, index=index)
+        try:
+            source_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            stat = target.stat()
+        except OSError as exc:
+            skipped.append({"path": str(source), "reason": f"copy-failed: {exc}"[:160]})
+            continue
+        copied.append(
+            {
+                **item,
+                "task_copy_path": str(target),
+                "filename": source.name,
+                "suffix": source.suffix.lower(),
+                "size_bytes": stat.st_size,
+                "sha256": sha256_file(target),
+            }
+        )
+    manifest = {
+        "task_id": task.get("id"),
+        "chat": task.get("chat"),
+        "status": "ok" if copied else "missing",
+        "refresh": refresh,
+        "tokens": extract_media_tokens_from_task(task),
+        "source_windows": task_media_source_windows(task),
+        "copied": copied,
+        "skipped": skipped,
+        "policy": "source-scoped media resolution; use task_copy_path files for this task only",
+        "resolver": "media_files mirror + prompt paths + exact tokens/time windows",
+    }
+    manifest_json = artifact_dir / "media_resolution_manifest.json"
+    manifest_md = artifact_dir / "media_resolution_manifest.md"
+    manifest_json.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    manifest_md.write_text(media_resolution_markdown(manifest), encoding="utf-8")
+    manifest["manifest_json"] = str(manifest_json)
+    manifest["manifest_md"] = str(manifest_md)
+    return manifest
 
 
 def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
@@ -2213,7 +2296,301 @@ def extract_recent_synced_files_from_task(task: dict[str, Any]) -> list[Path]:
     ]
     if local_id_matches:
         return local_id_matches
-    return files[:1]
+    if files:
+        return ranked_media_paths(files)[:8]
+    media_resolution = (task.get("preflight") or {}).get("media_resolution") if isinstance(task.get("preflight"), dict) else {}
+    if isinstance(media_resolution, dict):
+        resolved = [
+            Path(str(item.get("task_copy_path") or "")).expanduser().resolve()
+            for item in media_resolution.get("copied") or []
+            if isinstance(item, dict) and item.get("task_copy_path")
+        ]
+        if resolved:
+            return resolved
+    mirror_matches = [Path(str(item.get("mirror_path") or "")).expanduser().resolve() for item in resolve_synced_media_from_mirror(task, limit=8)]
+    for path in mirror_matches:
+        if path.is_file() and path not in files:
+            files.append(path)
+    return ranked_media_paths(files)[:8]
+
+
+def ranked_media_paths(paths: list[Path]) -> list[Path]:
+    unique: list[Path] = []
+    for path in paths:
+        try:
+            resolved = path.expanduser().resolve()
+        except OSError:
+            continue
+        if resolved not in unique:
+            unique.append(resolved)
+    return sorted(unique, key=media_path_sort_key)
+
+
+def media_path_sort_key(path: Path) -> tuple[int, float, int, str]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return (-1000, 0.0, 0, path.name)
+    suffix = path.suffix.lower()
+    score = 0
+    if suffix in IMAGE_SUFFIXES:
+        score += 80
+    elif suffix in VIDEO_SUFFIXES:
+        score += 70
+    elif suffix == ".pdf":
+        score += 65
+    elif suffix == ".dat":
+        score -= 30
+    elif suffix in PREFERRED_MEDIA_SUFFIXES:
+        score += 50
+    return (score, stat.st_mtime, stat.st_size, path.name)
+
+
+def resolve_synced_media_from_mirror(
+    task: dict[str, Any],
+    *,
+    limit: int = 8,
+    suffixes: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    chat = str(task.get("chat") or "").strip()
+    if not chat:
+        return []
+    db = Path(os.environ.get("WECHAT_MIRROR_DB") or DEFAULT_DB)
+    if not db.is_file():
+        return []
+    accepted_suffixes = {item.lower() for item in (suffixes or PREFERRED_MEDIA_SUFFIXES)}
+    tokens = extract_media_tokens_from_task(task)
+    windows = task_media_source_windows(task)
+    try:
+        with sqlite3.connect(db) as conn:
+            rows = conn.execute(
+                """
+                SELECT media_files.source_path, media_files.mirror_path, media_files.suffix,
+                       media_files.size_bytes, media_files.source_mtime, media_files.status,
+                       media_files.matched_by, media_files.metadata_json, media_files.updated_at
+                FROM media_files
+                JOIN chats ON chats.id = media_files.chat_id
+                WHERE chats.name = ?
+                ORDER BY media_files.updated_at DESC, media_files.source_mtime DESC
+                LIMIT 240
+                """,
+                (chat,),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    candidates: list[dict[str, Any]] = []
+    for row in rows:
+        item = media_db_row_to_candidate(row)
+        path = Path(str(item.get("mirror_path") or "")).expanduser()
+        suffix = str(item.get("suffix") or path.suffix).lower()
+        if accepted_suffixes and suffix not in accepted_suffixes and path.suffix.lower() not in accepted_suffixes:
+            continue
+        if not path.is_file():
+            continue
+        score, reasons = score_media_candidate(item, tokens=tokens, windows=windows)
+        if score <= 0 and tokens:
+            continue
+        if score <= 0 and windows:
+            continue
+        if score <= 0 and not fallback_recent_media_candidate(item):
+            continue
+        item["score"] = score
+        item["match_reasons"] = reasons
+        item["suffix"] = suffix or path.suffix.lower()
+        candidates.append(item)
+    candidates.sort(key=lambda item: (float(item.get("score") or 0), float(item.get("source_mtime") or 0), int(item.get("size_bytes") or 0)), reverse=True)
+    return candidates[:limit]
+
+
+def media_db_row_to_candidate(row: Any) -> dict[str, Any]:
+    source_path, mirror_path, suffix, size_bytes, source_mtime, status, matched_by, metadata_json, updated_at = row
+    metadata: dict[str, Any] = {}
+    try:
+        parsed = json.loads(metadata_json or "{}")
+        if isinstance(parsed, dict):
+            metadata = parsed
+    except json.JSONDecodeError:
+        metadata = {}
+    return {
+        "source_path": source_path,
+        "mirror_path": mirror_path,
+        "suffix": str(suffix or Path(str(mirror_path or "")).suffix).lower(),
+        "size_bytes": int(size_bytes or 0),
+        "source_mtime": float(source_mtime or 0.0),
+        "status": status,
+        "matched_by": matched_by,
+        "updated_at": updated_at,
+        "metadata": metadata,
+    }
+
+
+def score_media_candidate(item: dict[str, Any], *, tokens: list[str], windows: list[tuple[float, float]]) -> tuple[float, list[str]]:
+    score = 0.0
+    reasons: list[str] = []
+    text = json.dumps(item, ensure_ascii=False).lower()
+    for token in tokens:
+        if token and token.lower() in text:
+            score += 120
+            reasons.append(f"token:{token[:16]}")
+            break
+    source_mtime = float(item.get("source_mtime") or 0.0)
+    for start, end in windows:
+        if start <= source_mtime <= end:
+            score += 70
+            reasons.append("source_mtime_window")
+            break
+    suffix = str(item.get("suffix") or "").lower()
+    status = str(item.get("status") or "")
+    decode_status = str((item.get("metadata") or {}).get("decode_status") or "")
+    if suffix in IMAGE_SUFFIXES:
+        score += 35
+        reasons.append("readable_image")
+    elif suffix in VIDEO_SUFFIXES:
+        score += 30
+        reasons.append("video")
+    elif suffix == ".pdf":
+        score += 25
+        reasons.append("pdf")
+    elif suffix == ".dat":
+        score -= 20
+        reasons.append("raw_dat_penalty")
+    if status in {"decoded", "copied", "exists"}:
+        score += 10
+    if "decoded" in decode_status:
+        score += 10
+        reasons.append(decode_status)
+    if str(item.get("matched_by") or "").startswith("associated:"):
+        score += 8
+        reasons.append(str(item.get("matched_by")))
+    return score, reasons
+
+
+def fallback_recent_media_candidate(item: dict[str, Any]) -> bool:
+    suffix = str(item.get("suffix") or "").lower()
+    if suffix in RAW_WECHAT_MEDIA_SUFFIXES:
+        return False
+    if suffix not in PREFERRED_MEDIA_SUFFIXES:
+        return False
+    try:
+        source_mtime = float(item.get("source_mtime") or 0.0)
+    except (TypeError, ValueError):
+        source_mtime = 0.0
+    if source_mtime <= 0:
+        return False
+    max_age = float(os.environ.get("WECHAT_WORKER_RECENT_MEDIA_FALLBACK_SECONDS", "1800"))
+    return time.time() - source_mtime <= max_age
+
+
+def task_media_source_windows(task: dict[str, Any]) -> list[tuple[float, float]]:
+    window = float(os.environ.get("WECHAT_WORKER_MEDIA_SOURCE_WINDOW_SECONDS", "360"))
+    times: list[float] = []
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    for raw in (source.get("create_time"),):
+        value = float_or_none(raw)
+        if value:
+            times.append(value)
+    for row in task.get("context") or []:
+        if not isinstance(row, dict):
+            continue
+        value = float_or_none(row.get("create_time"))
+        if value:
+            times.append(value)
+    windows: list[tuple[float, float]] = []
+    for value in times:
+        start = max(0.0, value - window)
+        end = min(time.time() + 120.0, value + window)
+        if (start, end) not in windows:
+            windows.append((start, end))
+    return windows
+
+
+def float_or_none(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result > 0 else None
+
+
+def refresh_media_sync_for_task(task: dict[str, Any]) -> dict[str, Any]:
+    if os.environ.get("WECHAT_WORKER_DISABLE_MEDIA_SYNC_PREFLIGHT"):
+        return {"status": "disabled"}
+    chat = str(task.get("chat") or "").strip()
+    if not chat:
+        return {"status": "skipped", "error": "missing chat"}
+    tokens = extract_media_tokens_from_task(task, limit=8)
+    command = [
+        sys.executable,
+        str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_media_sync.py"),
+        "--chat",
+        chat,
+        "--auto-source",
+        "--summary-only",
+        "--record-empty",
+        "--db",
+        str(Path(os.environ.get("WECHAT_MIRROR_DB") or DEFAULT_DB)),
+    ]
+    windows = task_media_source_windows(task)
+    if windows:
+        start = min(item[0] for item in windows)
+        end = max(item[1] for item in windows)
+        command += ["--since-epoch", str(start), "--until-epoch", str(end)]
+    else:
+        command += ["--since-minutes", os.environ.get("WECHAT_WORKER_MEDIA_SYNC_SINCE_MINUTES", "30")]
+    for token in tokens:
+        command += ["--match-token", token]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=float(os.environ.get("WECHAT_WORKER_MEDIA_SYNC_TIMEOUT", "30")),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"status": "error", "error": str(exc)[:500], "command": redact_command(command)}
+    payload: dict[str, Any]
+    try:
+        parsed = json.loads(proc.stdout) if proc.stdout.strip() else {}
+        payload = parsed if isinstance(parsed, dict) else {"stdout": proc.stdout.strip()[:1000]}
+    except json.JSONDecodeError:
+        payload = {"stdout": proc.stdout.strip()[:1000]}
+    payload["returncode"] = proc.returncode
+    payload["command"] = redact_command(command)
+    if proc.stderr.strip():
+        payload["stderr"] = proc.stderr.strip()[:1000]
+    return payload
+
+
+def media_resolution_markdown(manifest: dict[str, Any]) -> str:
+    lines = [
+        "# WeChat Media Resolution",
+        "",
+        f"- Task: `{manifest.get('task_id') or ''}`",
+        f"- Chat: `{manifest.get('chat') or ''}`",
+        f"- Status: `{manifest.get('status') or ''}`",
+        f"- Resolver: `{manifest.get('resolver') or ''}`",
+        "",
+        "## Resolved Files",
+    ]
+    copied = manifest.get("copied") if isinstance(manifest.get("copied"), list) else []
+    if copied:
+        for item in copied:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- `{item.get('task_copy_path')}` from `{item.get('mirror_path')}` "
+                f"score={item.get('score')} reasons={', '.join(str(reason) for reason in item.get('match_reasons') or [])}"
+            )
+    else:
+        lines.append("- none")
+    skipped = manifest.get("skipped") if isinstance(manifest.get("skipped"), list) else []
+    if skipped:
+        lines.extend(["", "## Skipped"])
+        for item in skipped:
+            lines.append(f"- `{item.get('path')}`: {item.get('reason')}")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def current_request_file_title(request: str) -> str:
@@ -5291,10 +5668,12 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
     prompt_text = str(task.get("request") or "").strip()
     quoted_prompt = json.dumps(prompt_text or "prepare CAD/PCB/Blender artifacts", ensure_ascii=False)
     generated_video_note = build_generated_video_tool_context(task)
+    media_resolution_note = build_media_resolution_tool_context(task)
     return f"""LabCanvas tool playbook:
 - Use `{artifact_dir}` as the preferred working/output folder for new artifacts.
 - Match every input file/media path to this task's exact `chat`, `source.local_id`, `source.server_id`, explicit source/reference rows in `request`, or source-scoped context text. Do not borrow files from another group/direct chat or from unrelated previous worker tasks.
 - If the exact requested media is missing, stop with a source-limited message asking the user to resend/provide it instead of using a nearby file.
+{media_resolution_note}
 - For editable paper-figure grids plus AgInTi image-generation payloads/live images, run:
   `PYTHONPATH=src python -m agenticapp studio figure-grid {quoted_prompt} --storage-dir output/webapp --json`
 - For PCB/CAD planning and reusable artifacts, run:
@@ -5376,6 +5755,35 @@ Artifact return contract:
 - Prefer PNG/JPG/SVG/PDF/MD/TEX/MP4/MOV/audio/STEP/STL/3MF/DXF/ZIP/SCAD/Blend/KiCad/Gerber files. Do not include decrypted WeChat DBs, private config, cookies, tokens, browser profiles, or chat logs.
 - Do not say a file was sent unless it is listed in `files` and exists locally.
 """
+
+
+def build_media_resolution_tool_context(task: dict[str, Any]) -> str:
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    media = preflight.get("media_resolution") if isinstance(preflight.get("media_resolution"), dict) else {}
+    if not media:
+        return ""
+    copied = media.get("copied") if isinstance(media.get("copied"), list) else []
+    if not copied:
+        return (
+            "- Media resolution preflight ran but did not find a source-scoped local file. "
+            f"Manifest: `{media.get('manifest_md') or media.get('manifest_json') or ''}`. "
+            "Do not claim the image/file is unavailable until you have checked this manifest and the source rows.\n"
+        )
+    lines = [
+        "- Media resolution preflight found source-scoped local files. Use these paths as the first-choice inputs for this task:",
+    ]
+    for item in copied[:8]:
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            f"  - `{item.get('task_copy_path')}` "
+            f"suffix={item.get('suffix')} bytes={item.get('size_bytes')} "
+            f"score={item.get('score')} reasons={','.join(str(reason) for reason in item.get('match_reasons') or [])}"
+        )
+    if media.get("manifest_md") or media.get("manifest_json"):
+        lines.append(f"  - Manifest: `{media.get('manifest_md') or media.get('manifest_json')}`")
+    lines.append("  - Do not say the image/file is missing if one of these files exists and matches the requested source.")
+    return "\n".join(lines) + "\n"
 
 
 def safe_slug(value: str) -> str:

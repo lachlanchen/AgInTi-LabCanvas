@@ -639,7 +639,13 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 "mirror_db": str(Path(tmp) / "mirror.sqlite"),
                 "send_target": {"name": "懒人科研", "expected_title": "懒人科研"},
             }
-            row = self.row("render a PCB in Blender", local_id=9, server_id="srv-9")
+            row = self.row(
+                "render a PCB in Blender",
+                local_id=9,
+                server_id="srv-9",
+                local_type=1,
+                create_time=1880000000,
+            )
 
             task = direct_chatops.enqueue_worker_task(
                 config,
@@ -654,6 +660,14 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(saved["routine"]["id"], "labcanvas_cad_pcb")
         self.assertTrue(saved["routine"]["stages"])
         self.assertEqual(saved["route"]["chat"], "懒人科研")
+        self.assertEqual(saved["source"]["server_id"], "srv-9")
+        self.assertEqual(saved["source"]["local_type"], 1)
+        self.assertEqual(saved["source"]["create_time"], 1880000000)
+        self.assertEqual(saved["source"]["kind"], "text")
+        self.assertEqual(saved["context"][0]["server_id"], "srv-9")
+        self.assertEqual(saved["context"][0]["local_type"], 1)
+        self.assertEqual(saved["context"][0]["create_time"], 1880000000)
+        self.assertEqual(saved["context"][0]["kind"], "text")
         self.assertEqual(saved["execution_contract"]["wechat_role"], "message_transport_only")
         self.assertEqual(saved["execution_contract"]["worker_entrypoint"], "wechat_task_worker.run_task_orchestrator")
         self.assertEqual(saved["execution_contract"]["codex_entrypoint"], "wechat_codex_sessions.run_codex_session")
