@@ -27,6 +27,7 @@ CHAT_SYNC_INTERVAL="${WECHAT_CHAT_SYNC_INTERVAL:-45}"
 CHAT_SYNC_PAUSE="${WECHAT_CHAT_SYNC_PAUSE:-0.8}"
 CHAT_SYNC_TIMEOUT="${WECHAT_CHAT_SYNC_TIMEOUT:-60}"
 CHAT_SYNC_PRIORITY="${WECHAT_CHAT_SYNC_PRIORITY:-}"
+CHAT_SYNC_MAX_TARGETS_PER_CYCLE="${WECHAT_CHAT_SYNC_MAX_TARGETS_PER_CYCLE:-0}"
 WORKER_COUNT="${WECHAT_WORKER_COUNT:-2}"
 export WECHAT_DECRYPT_REFRESH_INTERVAL="${WECHAT_DECRYPT_REFRESH_INTERVAL:-1}"
 export WECHAT_RESTART_DELAY="${WECHAT_RESTART_DELAY:-2}"
@@ -110,6 +111,7 @@ Environment:
   WECHAT_CHAT_SYNC_INTERVAL   chat sync loop interval, default 45 seconds
   WECHAT_CHAT_SYNC_TIMEOUT    per-chat dry-open timeout, default 60 seconds
   WECHAT_CHAT_SYNC_PRIORITY   optional comma-separated chat names to dry-open first
+  WECHAT_CHAT_SYNC_MAX_TARGETS_PER_CYCLE  max chats to dry-open per pass, 0 for all
   WECHAT_WORKER_COUNT         parallel queue workers, default 2
 EOF
 }
@@ -171,8 +173,8 @@ unlock_watchdog_command() {
 }
 
 chat_sync_command() {
-  printf "cd %q && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh chat-sync python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_chat_sync_loop.py --configs %q --display %q --interval %q --pause %q --timeout %q --priority %q --loop >> %q 2>&1" \
-    "$ROOT" "$CONFIGS" "$WECHAT_DISPLAY" "$CHAT_SYNC_INTERVAL" "$CHAT_SYNC_PAUSE" "$CHAT_SYNC_TIMEOUT" "$CHAT_SYNC_PRIORITY" "$LOG_DIR/supervisor-chat-sync.log"
+  printf "cd %q && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh chat-sync python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_chat_sync_loop.py --configs %q --display %q --interval %q --pause %q --timeout %q --priority %q --max-targets-per-cycle %q --loop >> %q 2>&1" \
+    "$ROOT" "$CONFIGS" "$WECHAT_DISPLAY" "$CHAT_SYNC_INTERVAL" "$CHAT_SYNC_PAUSE" "$CHAT_SYNC_TIMEOUT" "$CHAT_SYNC_PRIORITY" "$CHAT_SYNC_MAX_TARGETS_PER_CYCLE" "$LOG_DIR/supervisor-chat-sync.log"
 }
 
 worker_window_name() {

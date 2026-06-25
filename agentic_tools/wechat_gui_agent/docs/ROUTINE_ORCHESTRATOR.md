@@ -35,6 +35,9 @@ Current routines:
 
 - `research_summary`: papers, PDFs, links, summaries, and source-grounded
   answers.
+- `career_strategy`: writing direction, career positioning, monetization,
+  talent/strength synthesis, market/opportunity research, and daily strategy
+  notes for `写作 外语 挣钱` and `lachlanchan`.
 - `editable_figure_image`: AgInTi/image/BioRender-style figure work with
   editable parts, manifests, SVG/TeX, and previews.
 - `story_script_generation`: story, script, plot, dialogue, and prompt writing
@@ -62,6 +65,12 @@ Routing scope:
   and `lachlanchan` can route CAD/PCB, LabCanvas, figure/image, file/media,
   story/script, video, publish, writing, LaTeX, PDF, and research tasks to these
   routines when the current message asks for them.
+- In `写作 外语 挣钱` and `lachlanchan`, questions about what to write, career
+  direction, making money, talents/strengths, opportunities, GitHub/lazying.art
+  positioning, or "what should I do" route to `career_strategy`. The worker
+  should use chat memory, local project evidence, GitHub/lazying.art context,
+  and current research when useful, then return practical next actions without
+  exposing private logs.
 - EchoMind is intentionally language-learning by default. Ordinary
   Japanese/Chinese/English practice stays in the language reply path; explicit
   backend instructions use the shared route/worker agents.
@@ -95,6 +104,9 @@ Required behavior:
 - send or defer required artifacts through the artifact delivery gate;
 - keep LazyEdit/public publish work in `publish_poststage_pending` until
   requested platforms have terminal LazyEdit/remote evidence;
+- for career strategy work, keep private evidence reports under `.private/` and
+  only send sanitized Markdown from `output/wechat_strategy/` when attaching a
+  report to WeChat;
 - treat LazyEdit as the mature video-processing/publishing boundary. Workers
   prepare exact source video evidence plus `lazyedit_correction_context.md` and
   `lazyedit_metadata_brief.md`, then call LazyEdit CLI/API and monitor queues

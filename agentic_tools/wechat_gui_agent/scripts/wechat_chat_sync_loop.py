@@ -55,6 +55,12 @@ def main() -> int:
     parser.add_argument("--pause", type=float, default=float(os.environ.get("WECHAT_CHAT_SYNC_PAUSE", "0.8")))
     parser.add_argument("--timeout", type=float, default=float(os.environ.get("WECHAT_CHAT_SYNC_TIMEOUT", "60")))
     parser.add_argument(
+        "--max-targets-per-cycle",
+        type=int,
+        default=int(os.environ.get("WECHAT_CHAT_SYNC_MAX_TARGETS_PER_CYCLE", "0") or "0"),
+        help="Maximum chats to dry-open per sync pass. 0 means no limit.",
+    )
+    parser.add_argument(
         "--failure-backoff",
         type=float,
         default=env_float("WECHAT_CHAT_SYNC_FAILURE_BACKOFF_SECONDS", 300.0),
@@ -97,6 +103,8 @@ def sync_once(args: argparse.Namespace, failure_backoff_until: dict[str, float] 
             return [result]
 
     configs = prioritize_configs(discover_configs(args.configs), args.priority)
+    max_targets = max(0, int(getattr(args, "max_targets_per_cycle", 0) or 0))
+    opened_or_attempted = 0
     only = {item.strip() for item in args.only if item.strip()}
     results: list[dict[str, Any]] = []
     for config_path in configs:
@@ -118,11 +126,16 @@ def sync_once(args: argparse.Namespace, failure_backoff_until: dict[str, float] 
                 results.append({"config": str(config_path), "chat": chat_name, "ok": True, "skipped": "not_selected"})
                 emit_target_event(results[-1])
                 continue
+            if max_targets and opened_or_attempted >= max_targets:
+                results.append({"config": str(config_path), "chat": chat_name, "ok": True, "skipped": "max_targets_per_cycle"})
+                emit_target_event(results[-1])
+                continue
             backoff_result = chat_sync_backoff_result(chat_name, failure_backoff_until)
             if backoff_result:
                 results.append(backoff_result)
                 emit_target_event(results[-1])
                 continue
+            opened_or_attempted += 1
             result = open_chat_dry_run(args, chat_name, target)
             apply_chat_sync_backoff(args, chat_name, result, failure_backoff_until)
             results.append(result)

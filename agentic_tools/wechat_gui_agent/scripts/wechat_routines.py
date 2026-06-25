@@ -91,6 +91,50 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "For inaccessible sources, state exactly what was accessible and avoid pretending the source was fully read.",
         ),
     ),
+    "career_strategy": RoutineDefinition(
+        id="career_strategy",
+        title="Career, Writing, And Money Strategy",
+        route_kinds=("career_strategy",),
+        purpose=(
+            "Help the user think through writing topics, career direction, monetization, "
+            "opportunities, strengths, and long-range fit using chat memory, local repo evidence, "
+            "GitHub/lazying.art context, and current market research when useful."
+        ),
+        default_effort="medium",
+        stages=(
+            {
+                "id": "personal_context_resolution",
+                "owner": "queue_orchestrator",
+                "entrypoint": "wechat memory summary + same-chat recent messages + local project/repo surface",
+                "success": "current question, recurring interests, and available evidence sources are identified",
+            },
+            {
+                "id": "opportunity_research",
+                "owner": "worker_agent",
+                "entrypoint": "Codex worker with local repo reading plus web/GitHub/lazying.art research when the question benefits from current context",
+                "success": "evidence-backed opportunities, risks, writing directions, and next actions are drafted",
+            },
+            {
+                "id": "deliver_strategy",
+                "owner": "queue_orchestrator",
+                "entrypoint": "send_result_with_retries",
+                "success": "concise WeChat answer and any safe Markdown/PDF profile report are returned to the source chat",
+            },
+        ),
+        artifact_policy=(
+            "Return a concise strategic answer in chat. For deeper asks or the daily agent, also save and attach "
+            "a dated Markdown/PDF-style report with opportunities, evidence, experiments, and next actions."
+        ),
+        rules=COMMON_RULES
+        + (
+            "Treat this as practical strategic coaching, not therapy or prophecy. Do not diagnose personality or claim the user's future is fixed.",
+            "Use evidence from the user's messages, local repositories, GitHub profile, lazying.art, and current public research when useful.",
+            "Separate writing ideas, career positioning, product/business experiments, and immediate money-making actions.",
+            "Be direct and concrete: propose small testable experiments, target users, offer wording, distribution channels, and validation signals.",
+            "Prefer compounding strengths already visible in the user's work: agent tools, scientific visualization, CAD/PCB/lab automation, multilingual content, LazyEdit/video publishing, and research workflows.",
+            "Do not expose private chat logs or file paths in the WeChat reply unless the user asks for paths.",
+        ),
+    ),
     "editable_figure_image": RoutineDefinition(
         id="editable_figure_image",
         title="Editable Figure Or Image Artifact",

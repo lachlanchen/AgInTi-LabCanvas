@@ -189,6 +189,62 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         finally:
             direct_chatops.run_codex_session = original  # type: ignore[assignment]
 
+    def test_writing_money_chat_routes_career_strategy_with_agent(self) -> None:
+        config = self.backend_chat_config("写作 外语 挣钱", "writing_language_money")
+        config["analysis_mode"] = "writing_language_money"
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row("what should I write and how can I make money from lazying.art and my GitHub?", local_id=88)
+        original = direct_chatops.run_codex_session
+        try:
+            def fake_route_agent(prompt: str, **kwargs: object) -> dict[str, object]:
+                self.assertEqual(kwargs["role"], "route")
+                self.assertIn("career_strategy", prompt)
+                self.assertIn("Chat purpose: writing_language_money", prompt)
+                return {
+                    "ok": True,
+                    "message": json.dumps(
+                        {
+                            "route_kind": "career_strategy",
+                            "project": "career",
+                            "worker_needed": True,
+                            "needs_recent_media": False,
+                            "public_publish_intent": False,
+                            "public_publish_allowed": False,
+                            "external_action_allowed": True,
+                            "source_policy": "current_request_only",
+                            "reason": "career and monetization strategy request",
+                            "ack": "我会结合你的项目、写作方向和变现机会做一个清晰判断。",
+                            "confidence": 0.91,
+                        }
+                    ),
+                }
+
+            direct_chatops.run_codex_session = fake_route_agent  # type: ignore[assignment]
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "career_strategy")
+        self.assertEqual(route["route_decision"]["project"], "career")
+        self.assertIn("Career/writing/money strategy context", route["task"])
+
+    def test_lachlanchan_fallback_routes_career_strategy(self) -> None:
+        config = self.backend_chat_config("lachlanchan", "research")
+        config["analysis_mode"] = "lazyresearch_friend"
+        route = direct_chatops.fallback_route_decision(
+            config,
+            "who am I, what is my talent, and what should I do to make money?",
+            self.row("who am I, what is my talent, and what should I do to make money?"),
+            [],
+        )
+
+        self.assertEqual(route["route_kind"], "career_strategy")
+        self.assertEqual(route["project"], "career")
+        self.assertTrue(route["worker_needed"])
+
     def test_obvious_document_artifact_overrides_route_agent_chat_only(self) -> None:
         config = self.backend_chat_config("懒人科研", "research")
         config["agent_route_enabled"] = True

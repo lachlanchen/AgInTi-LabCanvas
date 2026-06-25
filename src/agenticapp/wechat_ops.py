@@ -161,6 +161,19 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     memory.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     memory.set_defaults(func=cmd_memory)
 
+    career = nested.add_parser("career-agent", help="Run or supervise the daily writing/career/money strategy agent.")
+    career.add_argument("action", choices=["once", "start", "stop", "restart", "status"], nargs="?", default="once")
+    career.add_argument("--chat", action="append", default=[], help="Memory chat to include. Repeatable.")
+    career.add_argument("--send-chat", default="lachlanchan")
+    career.add_argument("--send", action="store_true")
+    career.add_argument("--attach-report", action="store_true")
+    career.add_argument("--morning-time", default="08:30")
+    career.add_argument("--session", default="labcanvas-career-daily")
+    career.add_argument("--model", default=os.environ.get("WECHAT_CAREER_AGENT_MODEL", "gpt-5.5"))
+    career.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_CAREER_AGENT_EFFORT", "high"))
+    career.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    career.set_defaults(func=cmd_career_agent)
+
     approve = nested.add_parser("approve", help="Approve a worker task that is waiting for confirmation.")
     approve.add_argument("task_id", nargs="?", help="Task id. Defaults to the newest waiting_confirmation task.")
     approve.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
@@ -990,6 +1003,64 @@ def cmd_memory(args: argparse.Namespace) -> int:
     return proc.returncode
 
 
+def cmd_career_agent(args: argparse.Namespace) -> int:
+    session = str(args.session)
+    if args.action == "status":
+        payload = tmux_status(session)
+        print_payload(payload, getattr(args, "json", False), f"{session}: {payload['status']}")
+        return 0 if payload.get("running") else 1
+    if args.action == "stop":
+        stopped = kill_tmux(session)
+        payload = {"ok": True, "session": session, "stopped": stopped, "status": tmux_status(session)}
+        print_payload(payload, getattr(args, "json", False), f"stopped {session}" if stopped else f"{session} was not running")
+        return 0
+    start_action = args.action
+    if args.action == "restart":
+        kill_tmux(session)
+        start_action = "start"
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_career_daily_agent.py"),
+        "loop" if start_action == "start" else "run",
+        "--send-chat",
+        args.send_chat,
+        "--morning-time",
+        args.morning_time,
+        "--model",
+        args.model,
+        "--reasoning-effort",
+        args.reasoning_effort,
+    ]
+    for chat in args.chat:
+        command += ["--chat", chat]
+    if args.send:
+        command.append("--send")
+    if args.attach_report:
+        command.append("--attach-report")
+    if start_action == "once":
+        if getattr(args, "json", False):
+            command.append("--json")
+        return run_command(command, capture=False).returncode
+    if tmux_status(session)["running"]:
+        payload = tmux_status(session)
+        print_payload(payload, getattr(args, "json", False), f"{session} already running")
+        return 0
+    log_dir = PRIVATE / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    quoted = " ".join(shlex.quote(part) for part in command)
+    tmux_command = f"cd {shlex.quote(str(PACKAGE_ROOT))} && {quoted} >> {shlex.quote(str(log_dir / 'career-daily.log'))} 2>&1"
+    proc = run_command(["tmux", "new-session", "-d", "-s", session, tmux_command], capture=True)
+    payload = {
+        "ok": proc.returncode == 0,
+        "session": session,
+        "log": str(log_dir / "career-daily.log"),
+        "status": tmux_status(session),
+        "stderr": proc.stderr,
+    }
+    print_payload(payload, getattr(args, "json", False), f"started {session}" if proc.returncode == 0 else f"failed to start {session}")
+    return proc.returncode
+
+
 def cmd_approve(args: argparse.Namespace) -> int:
     task = update_waiting_task(args.queue, args.task_id, decision="approve", note=args.note)
     print_payload({"ok": True, "task": task}, args.json, f"approved task: {task['id']}")
@@ -1224,10 +1295,20 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     stack_wrapper.chmod(0o755)
+    career_wrapper = scripts_dir / "create-labcanvas-career-daily-tmux.sh"
+    career_wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "cd " + shlex.quote(str(PACKAGE_ROOT)) + "\n"
+        "export PYTHONPATH=" + shlex.quote(str(PACKAGE_ROOT / "src")) + ":${PYTHONPATH:-}\n"
+        "exec python3 -m agenticapp wechat career-agent start --send --attach-report --morning-time \"${WECHAT_CAREER_MORNING_TIME:-08:30}\"\n",
+        encoding="utf-8",
+    )
+    career_wrapper.chmod(0o755)
     print_payload(
-        {"ok": True, "installed": [str(wrapper), str(create_wrapper), str(stack_wrapper)]},
+        {"ok": True, "installed": [str(wrapper), str(create_wrapper), str(stack_wrapper), str(career_wrapper)]},
         args.json,
-        f"installed {wrapper}, {create_wrapper}, and {stack_wrapper}",
+        f"installed {wrapper}, {create_wrapper}, {stack_wrapper}, and {career_wrapper}",
     )
     return 0
 

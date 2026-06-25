@@ -101,6 +101,7 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
                 output_dir=Path("/tmp"),
                 queue=queue,
                 yield_to_queue=True,
+                max_targets_per_cycle=0,
             )
 
             results = module.sync_once(args)
@@ -157,6 +158,7 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
                 output_dir=Path("/tmp"),
                 queue=queue,
                 yield_to_queue=True,
+                max_targets_per_cycle=0,
             )
 
             results = module.sync_once(args)
@@ -210,6 +212,7 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
                 queue=Path("/tmp/missing-wechat-queue.jsonl"),
                 yield_to_queue=False,
                 failure_backoff=300,
+                max_targets_per_cycle=0,
             )
 
             results = module.sync_once(args, failure_backoff_until=backoff)
@@ -228,6 +231,53 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
         self.assertEqual(second_results[0]["chat"], "first")
         self.assertEqual(second_results[1], {"chat": "second", "ok": True})
         self.assertEqual(opened, ["second"])
+
+    def test_sync_once_limits_opened_targets_per_cycle(self):
+        module = load_wechat_chat_sync_loop()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        root = Path(temp_dir.name)
+        paths = []
+        for name in ("first", "second", "third"):
+            path = root / f"{name}.json"
+            path.write_text(json.dumps({"chat_name": name, "send_target": {"name": name}}), encoding="utf-8")
+            paths.append(path)
+        opened = []
+        original_open = module.open_chat_dry_run
+        original_emit = module.emit_target_event
+        try:
+            def fake_open(_args, chat_name, _target):
+                opened.append(chat_name)
+                return {"chat": chat_name, "ok": True}
+
+            module.open_chat_dry_run = fake_open
+            module.emit_target_event = lambda _result: None
+            args = argparse.Namespace(
+                configs=",".join(str(path) for path in paths),
+                display=":97",
+                interval=45,
+                pause=0.8,
+                timeout=60,
+                priority="",
+                loop=False,
+                once=True,
+                only=[],
+                output_dir=Path("/tmp"),
+                queue=Path("/tmp/missing-wechat-queue.jsonl"),
+                yield_to_queue=False,
+                failure_backoff=300,
+                max_targets_per_cycle=1,
+            )
+
+            results = module.sync_once(args, failure_backoff_until={})
+        finally:
+            module.open_chat_dry_run = original_open
+            module.emit_target_event = original_emit
+
+        self.assertEqual(opened, ["first"])
+        self.assertEqual(results[0], {"chat": "first", "ok": True})
+        self.assertEqual(results[1]["skipped"], "max_targets_per_cycle")
+        self.assertEqual(results[2]["skipped"], "max_targets_per_cycle")
 
     def test_chat_sync_failure_retryable_covers_timeout_and_noisy_title_guard(self):
         module = load_wechat_chat_sync_loop()

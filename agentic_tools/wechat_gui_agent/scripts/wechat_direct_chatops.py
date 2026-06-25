@@ -55,8 +55,8 @@ INTERRUPTIBLE_TASK_STATUSES = {
     "waiting_confirmation",
 }
 REQUEUE_ON_INTERRUPT_STATUSES = INTERRUPTIBLE_TASK_STATUSES - {"in_progress"}
-INTERRUPTIBLE_ROUTE_KINDS = {"story_or_script", "generate_video"}
-INTERRUPTIBLE_ROUTINE_IDS = {"story_script_generation", "generated_video"}
+INTERRUPTIBLE_ROUTE_KINDS = {"story_or_script", "generate_video", "career_strategy"}
+INTERRUPTIBLE_ROUTINE_IDS = {"story_script_generation", "generated_video", "career_strategy"}
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 
 
@@ -2092,6 +2092,7 @@ def immediate_task_route(
     )
     story_context = lalachan_story_text_context_bundle() if route_kind == "story_or_script" and route_project == "lalachan" else ""
     lalachan_context = lalachan_story_video_context_bundle() if lalachan_task or route_kind == "generate_video" else ""
+    career_context = career_strategy_context_bundle(config) if route_kind == "career_strategy" else ""
     route_json = json.dumps(route_decision, ensure_ascii=False, indent=2, sort_keys=True)
     request_text = current_request or attachment_request_text(row)
     if link_inbox_summary_task:
@@ -2136,6 +2137,7 @@ def immediate_task_route(
         f"{publish_context}"
         f"{story_context}"
         f"{lalachan_context}"
+        f"{career_context}"
     )
     ack = task_ack_text(config, route_decision)
     return {"ack": ack, "task": task, "route_decision": route_decision}
@@ -2714,6 +2716,7 @@ Return only JSON. No markdown.
 Allowed route_kind values:
 - chat_only
 - research_or_summary
+- career_strategy
 - story_or_script
 - generate_image
 - edit_existing_media
@@ -2727,6 +2730,7 @@ Allowed route_kind values:
 
 Important distinction:
 - The current coalesced request is authoritative. Preserve every safe explicit instruction and classify toward the closest backend routine instead of dropping stages.
+- In writing_language_money, personal_organizer, and lachlanchan-style DM chats, requests about what to write, career direction, making money, monetization, opportunities, talent/strengths, personal positioning, products to build, GitHub/lazying.art direction, or "what should I do" should route to career_strategy with worker_needed=true.
 - If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
 - Every monitored chat, including EchoMind, can ask for backend work such as CAD/PCB, image or figure generation, video generation, video publication, file/media handling, writing, Markdown, LaTeX, PDFs, and other artifact tasks. EchoMind is language-learning by default only when the message is ordinary language practice.
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
@@ -2750,8 +2754,8 @@ Important distinction:
 
 JSON schema:
 {{
-  "route_kind": "generate_video",
-  "project": "lalachan|labcanvas|lazyedit|generic|unknown",
+  "route_kind": "career_strategy",
+  "project": "lalachan|labcanvas|lazyedit|career|generic|unknown",
   "worker_needed": true,
   "needs_recent_media": false,
   "public_publish_intent": false,
@@ -2762,6 +2766,10 @@ JSON schema:
   "ack": "short natural acknowledgement for WeChat, or empty string",
   "confidence": 0.0
 }}
+
+Chat name: {config.get('chat_name') or ''}
+Chat purpose: {config.get('chat_purpose') or ''}
+Analysis mode: {config.get('analysis_mode') or ''}
 
 Current coalesced request:
 {request}
@@ -2846,6 +2854,8 @@ def fallback_route_decision(
         route_kind = "generate_video"
     elif is_bare_file_intake_request(row, text) or is_bare_image_intake_request(row, text):
         route_kind = "file_intake"
+    elif is_career_strategy_task(config, text):
+        route_kind = "career_strategy"
     elif is_document_artifact_task(text):
         route_kind = "other_worker"
     elif is_cad_pcb_labcanvas_task(text):
@@ -2872,6 +2882,8 @@ def fallback_route_decision(
         mentions_lalachan_project(text) or recent_context_mentions_lalachan(context_rows)
     ):
         project = "lalachan"
+    elif route_kind == "career_strategy":
+        project = "career"
     elif route_kind in {"cad_pcb_labcanvas", "generate_image", "edit_existing_media"}:
         project = "labcanvas"
     else:
@@ -2890,6 +2902,7 @@ def fallback_route_decision(
                 route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary"}
                 and not permission_question
             )
+            or route_kind == "career_strategy"
         ),
         "source_policy": "current_plus_explicit_refs" if link_inbox_summary_task else ("recent_media" if needs_recent_media else "current_request_only"),
         "reason": "fallback heuristic route",
@@ -2932,6 +2945,7 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     allowed_kinds = {
         "chat_only",
         "research_or_summary",
+        "career_strategy",
         "story_or_script",
         "generate_image",
         "edit_existing_media",
@@ -3058,6 +3072,82 @@ def route_agent_chat_only_is_completion_status(route_decision: dict[str, Any]) -
 def recent_context_mentions_lalachan(context_rows: list[dict[str, Any]]) -> bool:
     text = "\n".join(visible_message_text(row) for row in context_rows[-8:])
     return mentions_lalachan_project(text)
+
+
+def is_career_strategy_task(config: dict[str, Any], text: str) -> bool:
+    lowered = str(text or "").lower()
+    if not lowered.strip():
+        return False
+    purpose = str(config.get("chat_purpose") or "").strip().lower()
+    mode = str(config.get("analysis_mode") or "").strip().lower()
+    strategy_chat = purpose in {"personal_organizer", "writing_language_money", "research"} or mode in {
+        "writing_language_money",
+        "lazyresearch_friend",
+    }
+    markers = [
+        "career",
+        "job",
+        "direction",
+        "talent",
+        "strength",
+        "portfolio",
+        "github",
+        "lazying.art",
+        "write",
+        "writing",
+        "monetize",
+        "make money",
+        "making money",
+        "income",
+        "business",
+        "client",
+        "opportunity",
+        "opportunities",
+        "product",
+        "startup",
+        "offer",
+        "定位",
+        "方向",
+        "职业",
+        "職業",
+        "事业",
+        "事業",
+        "天赋",
+        "天賦",
+        "才能",
+        "优势",
+        "優勢",
+        "特长",
+        "特長",
+        "写什么",
+        "写作",
+        "挣钱",
+        "赚钱",
+        "賺錢",
+        "变现",
+        "變現",
+        "收入",
+        "商业",
+        "商業",
+        "客户",
+        "客戶",
+        "机会",
+        "機會",
+        "赛道",
+        "賽道",
+        "产品",
+        "產品",
+        "创业",
+        "創業",
+        "我该做什么",
+        "我應該做什麼",
+        "我应该做什么",
+        "what should i do",
+        "what i should do",
+        "what should i write",
+        "what i should write",
+    ]
+    return strategy_chat and any(marker in lowered for marker in markers)
 
 
 def is_lalachan_story_video_task(text: str) -> bool:
@@ -3227,6 +3317,113 @@ LALACHAN/RaraXia story-only writing context:
 - Save useful drafts under `/home/lachlan/ProjectsLFS/LALACHAN/references/stories/` when working in the LALACHAN project.
 - If the current request only asks for a story/script/prompt, return the story text and saved path. Do not start image generation, Xiaoyunque, LazyEdit, AutoPublish, or public posting unless the current request explicitly asks for those stages.
 """
+
+
+def career_strategy_context_bundle(config: dict[str, Any]) -> str:
+    chats = ["写作 外语 挣钱", "lachlanchan"]
+    if str(config.get("chat_name") or "") not in chats:
+        chats.insert(0, str(config.get("chat_name") or ""))
+    lines = [
+        "",
+        "",
+        "Career/writing/money strategy context:",
+        "- Use this for practical direction-setting: what to write, what career/product lane to choose, what to monetize, and what small experiments to run.",
+        "- Treat the user's future as open. Describe recurring patterns and strengths from evidence; do not diagnose personality or claim anything is fixed.",
+        "- Prefer concrete opportunities around agentic tooling, scientific visualization, CAD/PCB/lab automation, multilingual learning/content, LazyEdit/video publishing, and research workflows when evidence supports them.",
+        "- If current market or website facts matter, the worker should use web/GitHub research before recommending time- or money-intensive action.",
+    ]
+    memory = career_memory_snapshot(chats)
+    if memory:
+        lines.extend(["", "Recent private memory snapshot:", memory])
+    repos = local_project_surface()
+    if repos:
+        lines.extend(["", "Local project surface:", repos])
+    return "\n".join(lines)
+
+
+def career_memory_snapshot(chats: list[str], *, limit: int = 18) -> str:
+    db = PRIVATE / "wechat_memory.sqlite"
+    if not db.exists():
+        return ""
+    try:
+        with sqlite3.connect(db) as conn:
+            conn.row_factory = sqlite3.Row
+            placeholders = ",".join("?" for _ in chats)
+            rows = conn.execute(
+                f"""
+                SELECT chat_name, category, title, body, created_at
+                FROM memory_items
+                WHERE chat_name IN ({placeholders})
+                  AND category IN ('writing', 'language', 'money', 'idea', 'todo', 'request', 'web_clip', 'inbox')
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                [*chats, limit],
+            ).fetchall()
+    except sqlite3.Error:
+        return ""
+    out = []
+    for row in rows:
+        body = collapse_text(str(row["body"] or ""))[:180]
+        out.append(f"- {row['chat_name']} / {row['category']} / {row['created_at']}: {body}")
+    return "\n".join(out)
+
+
+def local_project_surface(*, limit: int = 18) -> str:
+    roots = [Path("/home/lachlan/ProjectsLFS"), Path("/home/lachlan/DiskMech/Projects")]
+    repos: list[Path] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        try:
+            for git_dir in root.glob("*/*/.git"):
+                if len(repos) >= limit:
+                    break
+                repos.append(git_dir.parent)
+            for git_dir in root.glob("*/.git"):
+                if len(repos) >= limit:
+                    break
+                repos.append(git_dir.parent)
+        except OSError:
+            continue
+    seen: set[str] = set()
+    lines = []
+    for repo in repos:
+        key = str(repo)
+        if key in seen:
+            continue
+        seen.add(key)
+        remote = ""
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "config", "--get", "remote.origin.url"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=1.5,
+            )
+            remote = collapse_text(proc.stdout)[:120]
+        except (OSError, subprocess.TimeoutExpired):
+            remote = ""
+        readme_hint = ""
+        for readme in (repo / "README.md", repo / "readme.md"):
+            if readme.exists():
+                try:
+                    for line in readme.read_text(encoding="utf-8", errors="replace").splitlines():
+                        clean = line.strip(" #\t")
+                        if clean:
+                            readme_hint = clean[:120]
+                            break
+                except OSError:
+                    pass
+                break
+        detail = f"; {remote}" if remote else ""
+        if readme_hint:
+            detail += f"; README: {readme_hint}"
+        lines.append(f"- {repo.name}{detail}")
+        if len(lines) >= limit:
+            break
+    return "\n".join(lines)
 
 
 def is_contextual_media_task(
@@ -4776,6 +4973,17 @@ For personal organizer chat purpose:
 For research chat purpose, reply to research questions, paper discussion, literature search requests, experiment/design discussion, summaries, and relevant scientific planning. Return NO_REPLY for casual language-learning chatter or unrelated personal chat.
 If the latest research message is a short topic fragment rather than a full question, still answer with a concise interpretation or useful next step instead of returning NO_REPLY.
 """
+    strategy_rules = ""
+    mode = str(config.get("analysis_mode") or "").strip().lower()
+    purpose = str(config.get("chat_purpose") or "").strip().lower()
+    if mode in {"writing_language_money", "lazyresearch_friend"} or purpose in {"writing_language_money"}:
+        strategy_rules = """
+For writing/career/money strategy purpose:
+- Be more responsive than a passive inbox. Reply to questions or reflections about what to write, career direction, talent/strengths, monetization, products, offers, audiences, GitHub/lazying.art direction, and concrete money-making experiments.
+- Use CHAT for quick practical feedback. Use ACK+TASK when the answer should inspect chat memory, local repositories, lachlanchen GitHub, lazying.art, market context, or produce a dated strategy note.
+- The useful shape is: one clear interpretation, 1-3 next actions, and what evidence would change the recommendation. Avoid vague motivational language.
+- Do not claim a fixed destiny. Frame "doomed to be part of me" as recurring patterns and compounding strengths visible in evidence.
+"""
     return f"""You are the fast chat agent for WeChat group {config['chat_name']} as {bot_identity}.
 Chat purpose: {config.get('chat_purpose') or 'research'}.
 Triggered direct database message:
@@ -4799,6 +5007,7 @@ Use ACK+TASK for slower work such as searching/downloading papers, rendering, CA
 When returning ACK+TASK, include every FOCUS and LATEST instruction in TASK so the worker continues the whole current request and avoids duplicating an already completed answer.
 {research_rules}
 {organizer_rules}
+{strategy_rules}
 If several messages arrived together, answer once based on the combined intent and keep the feedback simple.
 Do not mention database, OCR, decrypted messages, or automation internals.
 """

@@ -98,6 +98,30 @@ Each queued backend task stores a named routine contract from
 `routine_contract.md` before invoking Codex, then supervises that routine's
 stages and artifact gates.
 
+### Career / Writing / Money Agent
+
+`写作 外语 挣钱` and the `lachlanchan` DM have a dedicated
+`career_strategy` route. Messages about what to write, career direction,
+talent, monetization, opportunities, GitHub/lazying.art positioning, or
+practical money-making experiments are routed to a worker that can inspect
+private memory, local repos, and current web/GitHub context before replying.
+
+Run a one-shot report:
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat career-agent once --json
+```
+
+Run it every morning in tmux and send the sanitized report to `lachlanchan`:
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat career-agent start \
+  --send --attach-report --morning-time 08:30
+```
+
+The full evidence report is written under ignored `.private/output/`; the
+shareable attachment is written under ignored `output/wechat_strategy/`.
+
 Use `labcanvas wechat hold restart` or `labcanvas wechat hold reload-workers`
 after code changes; these commands do not restart the WeChat desktop. Use
 `restart-all` only if you intentionally want the official client to close and

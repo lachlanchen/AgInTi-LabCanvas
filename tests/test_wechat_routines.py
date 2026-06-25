@@ -86,6 +86,23 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertIn("file-picker click", " ".join(contract["rules"]))
         self.assertIn("verified", contract["artifact_policy"])
 
+    def test_career_strategy_routine_covers_writing_money_direction(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "career_strategy", "project": "career"},
+            "what should I write and how should I make money from my GitHub/lazying.art work?",
+            task_id="task-career",
+            chat="写作 外语 挣钱",
+        )
+        stage_ids = [stage["id"] for stage in contract["stages"]]
+
+        self.assertEqual(contract["id"], "career_strategy")
+        self.assertEqual(contract["default_effort"], "medium")
+        self.assertIn("personal_context_resolution", stage_ids)
+        self.assertIn("opportunity_research", stage_ids)
+        self.assertIn("writing topics", contract["purpose"])
+        self.assertIn("Do not expose private chat logs", " ".join(contract["rules"]))
+
     def test_file_intake_routine_is_lightweight_receipt(self) -> None:
         routines = load_routines()
         contract = routines.build_routine_contract(
