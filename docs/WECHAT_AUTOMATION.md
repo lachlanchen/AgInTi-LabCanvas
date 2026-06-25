@@ -511,22 +511,14 @@ approve a download, or save a file manually; the worker should then wait for
 confirmation before continuing.
 
 For `mp.weixin.qq.com` or WeChat official-account articles, a direct fetch that
-returns `环境异常` or `完成验证后继续访问` is not a completed read. Use the visible
-persistent browser and poll until readable text is captured:
-
-```bash
-labcanvas wechat browser-assist \
-  --url "https://mp.weixin.qq.com/..." \
-  --reuse-window \
-  --wait-seconds 8 \
-  --capture \
-  --wait-readable-seconds 60 \
-  --json
-```
-
-If the page still shows verification, leave the browser open in noVNC, ask the
-account owner to complete the visible check, then rerun the same capture. Use
-`--close-after` only after readable content is captured or the user says to stop.
+returns `环境异常` or `完成验证后继续访问` is not a completed read. Do not open an
+external Chrome/browser by default for these links; it can steal focus from the
+official WeChat client and make the desktop look locked. Prefer the native
+WeChat article/webview session or an already verified readable capture. If
+verification is needed, return `waiting_confirmation`, ask the account owner to
+verify/open the page in WeChat, then resume capture after confirmation. Use
+external `browser-assist` for mp.weixin only when the user explicitly asks for
+it or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1` is set.
 
 Approve or cancel confirmation tasks from the CLI:
 

@@ -1621,8 +1621,9 @@ def link_inbox_summary_instruction(row: dict[str, Any]) -> str:
         "Link/read-later inbox source received. Try to read the accessible source and return a grounded summary, highlights, and main points. "
         "Handle normal webpages, GitHub repositories, papers/PDF/DOI/arXiv links, WeChat official-account/mp.weixin articles, "
         "Shipinhao/视频号/Finder shares, YouTube/Bilibili links, images, videos, files, and forwarded cards. "
-        "For mp.weixin/Gongzhonghao links, direct HTTP verification pages are not final: use the visible noVNC browser-assist flow with "
-        "`--reuse-window --capture --wait-readable-seconds`, or a WeChat/native browser capture when needed, and close tabs only after readable capture or a real blocker. "
+        "For mp.weixin/Gongzhonghao links, direct HTTP verification pages are not final, but do not open an external browser by default because it can steal focus from WeChat. "
+        "Prefer the native WeChat article/webview session or an already verified captured page; if a human verification is needed, return a waiting-confirmation blocker and ask the user to verify in WeChat. "
+        "Use external browser-assist only when the current request explicitly allows it or config enables it. "
         "For Shipinhao/Finder, inspect available metadata, cached media, browser-visible comments, and Yuanbao/transcript/summary comments when accessible; do not post comments unless explicitly requested. "
         "For papers, GitHub, technical articles, and useful video/article summaries, create Markdown and a PDF report when possible and include safe artifact paths in `files`. "
         f"Structured source text:\n{visible}"
@@ -2184,7 +2185,7 @@ Important distinction:
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
 - Old context can explain a follow-up, but old context cannot authorize a new public publish.
 - In web_clip_inbox/link_inbox/internet_inbox/reading_inbox chats, shared URLs, forwarded webpage cards, mp.weixin/Gongzhonghao articles, Shipinhao/视频号/Finder cards, GitHub links, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, images, videos, and files should normally route to research_or_summary with worker_needed=true so the worker reads/summarizes and returns useful artifacts.
-- For mp.weixin links, verification text such as 环境异常 or 完成验证后继续访问 means browser-assisted reading is required; do not classify it as chat_only just because direct HTTP is blocked.
+- For mp.weixin links, verification text such as 环境异常 or 完成验证后继续访问 means direct HTTP is blocked; do not classify it as chat_only. Prefer native WeChat article/webview capture or an already verified capture. Do not open external browser-assist unless explicitly allowed.
 - A video-generation request should use local/default reference assets unless the current request says this/that/same/attached/quoted video/image.
 - Plain story/script/plot writing or revision should use story_or_script. Do not choose generate_image unless the current request explicitly asks for an image/figure/diagram/illustration. Do not choose generate_video unless the current request explicitly asks for video/animation/小云雀/Seedance/XYQ.
 - Return chat_only with worker_needed=false when the user is only chatting or when no backend/tool/file/artifact work is useful.

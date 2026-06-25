@@ -406,21 +406,12 @@ Do not try to bypass account protections. The worker should return
 `waiting_confirmation` for risky actions.
 
 For WeChat official-account articles, direct HTTP may return `环境异常` or
-`完成验证后继续访问`. Use the noVNC browser profile and reuse the visible browser
-window so the user or agent can complete the visible check:
-
-```bash
-labcanvas wechat browser-assist \
-  --url "https://mp.weixin.qq.com/..." \
-  --reuse-window \
-  --wait-seconds 8 \
-  --capture \
-  --wait-readable-seconds 60 \
-  --json
-```
-
-Rerun capture after the page becomes readable. Add `--close-after` only when the
-article text has been captured or the task is cancelled.
+`完成验证后继续访问`. Prefer the native WeChat article/webview path and avoid opening
+an external Chrome/browser by default; it can steal focus from the official
+WeChat client and make the desktop appear locked. If verification is needed,
+return `waiting_confirmation`, ask the account owner to verify/open the page in
+WeChat, then resume capture. External browser-assist for mp.weixin requires an
+explicit user request or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1`.
 
 ## Group And Alias Operations
 

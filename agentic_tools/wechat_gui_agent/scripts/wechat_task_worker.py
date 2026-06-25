@@ -5145,12 +5145,13 @@ Shipinhao/Finder and short-video shares:
 
 WeChat article / `mp.weixin.qq.com` link cards:
 - Direct HTTP fetches commonly return `环境异常`, `完成验证后继续访问`, or another verification gate. Treat that as a browser-required state, not as a finished article read.
-- When a WeChat article URL is available and direct fetch is blocked, first use the visible persistent browser in the same noVNC desktop, not a headless fetch:
-  `PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<mp.weixin.qq.com URL>" --reuse-window --wait-seconds 8 --capture --wait-readable-seconds 60 --json`
-- Inspect `readability` plus the captured private text/screenshot artifacts. If the article becomes readable, summarize that text and mention that browser capture was used. If it still shows only a verification page, leave the visible browser open and return `waiting_confirmation` with the noVNC URL so the account owner can complete the check; after confirmation, rerun the same command and capture again.
-- If the browser window is already open under the noVNC WeChat desktop, reuse it. Do not open many article tabs. Close the browser only after readable content is captured or the user says to stop:
-  `PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<mp.weixin.qq.com URL>" --reuse-window --capture --wait-readable-seconds 30 --close-after --json`
-- If the normal browser remains blocked, try a WeChat-native/manual-assisted path by opening the original card/link from the official client or asking the user to open/verify it in the visible noVNC session, then capture the readable page. Do not claim the card title/description is the full article.
+- Do not open an external Chrome/browser for mp.weixin by default. It can steal focus from the official WeChat client and make the desktop appear locked. Treat external browser-assist as opt-in only: use it only if the current user message explicitly asks for browser/noVNC, or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1` is set.
+- Preferred order:
+  1. Use already captured readable article text if present.
+  2. Use the native WeChat article/webview path from the official client when the card is visible or the user has opened it there.
+  3. If verification is required, return `waiting_confirmation` and ask the user to verify/open it in WeChat, then resume capture after confirmation.
+  4. Only with explicit permission/config, use `PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<mp.weixin.qq.com URL>" --reuse-window --wait-seconds 8 --capture --wait-readable-seconds 60 --json`.
+- If the source remains blocked, say exactly what was accessible. Do not claim the card title/description is the full article.
 
 Link/read-later summary reports:
 - For web_clip_inbox/link_inbox sources, return a concise chat summary plus a Markdown report under the task artifact directory when the source has substantive content.

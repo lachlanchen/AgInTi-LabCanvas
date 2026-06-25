@@ -156,22 +156,13 @@ labcanvas wechat browser-assist --url "https://example.com/download" --json
 Use the printed noVNC URL to complete the manual step. The worker should wait
 for approval before continuing the task.
 
-For `mp.weixin.qq.com` article links that show `环境异常` or `完成验证后继续访问`, use
-the persistent visible browser instead of another direct/headless fetch:
-
-```bash
-labcanvas wechat browser-assist \
-  --url "https://mp.weixin.qq.com/..." \
-  --reuse-window \
-  --wait-seconds 8 \
-  --capture \
-  --wait-readable-seconds 60 \
-  --json
-```
-
-If verification remains, keep the browser open in noVNC, complete the visible
-check, rerun the same capture, then close the window only after readable article
-text is captured.
+For `mp.weixin.qq.com` article links that show `环境异常` or `完成验证后继续访问`,
+prefer the native WeChat article/webview path. Do not open an external
+Chrome/browser by default; it can steal focus from the official WeChat client
+and make the desktop appear locked. If verification remains, return
+`waiting_confirmation`, ask the account owner to verify/open the page in WeChat,
+then resume capture. External browser-assist for mp.weixin is opt-in only:
+require an explicit user request or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1`.
 
 ## 3. Verify Before Sending
 
