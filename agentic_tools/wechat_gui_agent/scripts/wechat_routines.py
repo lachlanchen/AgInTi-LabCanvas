@@ -56,7 +56,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
         id="research_summary",
         title="Research, PDF, Link, Or Summary",
         route_kinds=("research_or_summary",),
-        purpose="Fetch, read, summarize, compare, or explain source material from a chat request.",
+        purpose="Fetch, read, summarize, compare, or explain source material from a chat request, including link-inbox webpages, papers, GitHub repos, WeChat articles, and short-video shares.",
         default_effort="medium",
         stages=(
             {
@@ -68,8 +68,8 @@ ROUTINES: dict[str, RoutineDefinition] = {
             {
                 "id": "research_or_read",
                 "owner": "worker_agent",
-                "entrypoint": "Codex worker with source-limited browsing/files",
-                "success": "answer is grounded in accessible same-chat sources",
+                "entrypoint": "Codex worker with source-limited browsing/files and visible browser-assist for blocked WeChat articles",
+                "success": "answer is grounded in accessible same-chat sources, with blockers stated explicitly",
             },
             {
                 "id": "deliver_summary",
@@ -78,7 +78,18 @@ ROUTINES: dict[str, RoutineDefinition] = {
                 "success": "concise answer and any safe report/PDF are returned to the source chat",
             },
         ),
-        rules=COMMON_RULES,
+        artifact_policy=(
+            "Return a concise chat summary plus safe Markdown/PDF reports when useful. "
+            "Generate Markdown and, when practical, a PDF for papers, GitHub repos, technical articles, "
+            "mp.weixin/Gongzhonghao articles, and useful Shipinhao/Finder summaries; list those files in the worker JSON files array."
+        ),
+        rules=COMMON_RULES
+        + (
+            "For link/read-later inbox tasks, treat shared URLs/cards/media as source material to read and summarize by default.",
+            "For mp.weixin/Gongzhonghao links, direct verification pages are not final; use visible browser-assist with reuse-window/readable polling or a WeChat-native/manual-assisted capture before declaring a blocker.",
+            "For Shipinhao/Finder shares, inspect accessible metadata, cached media, comments, Yuanbao/transcript/summary comments, and public mirrors, but do not post comments unless explicitly requested.",
+            "For inaccessible sources, state exactly what was accessible and avoid pretending the source was fully read.",
+        ),
     ),
     "editable_figure_image": RoutineDefinition(
         id="editable_figure_image",

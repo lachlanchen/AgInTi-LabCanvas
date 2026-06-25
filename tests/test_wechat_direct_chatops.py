@@ -2150,6 +2150,49 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("summarize this link https://example.com/article")))
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("这个链接讲什么？")))
 
+    def test_web_clip_inbox_routes_mp_weixin_card_to_summary_report(self) -> None:
+        config = self.backend_chat_config("鏈接", "web_clip_inbox")
+        row = self.row(
+            "<msg><appmsg><type>5</type><title>Interesting paper note</title>"
+            "<des>official account article</des><url>https://mp.weixin.qq.com/s/demo</url>"
+            "<sourcedisplayname>公众号</sourcedisplayname></appmsg></msg>",
+            local_type=49,
+            local_id=77,
+            server_id="srv-77",
+        )
+
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "research_or_summary")
+        self.assertEqual(route["route_decision"]["source_policy"], "current_plus_explicit_refs")
+        self.assertIn("mp.weixin/Gongzhonghao", route["task"])
+        self.assertIn("--reuse-window --capture --wait-readable-seconds", route["task"])
+        self.assertIn("Markdown and a PDF report", route["task"])
+        self.assertIn("local_id=77", route["task"])
+
+    def test_web_clip_inbox_routes_shipinhao_card_to_comment_aware_summary(self) -> None:
+        config = self.backend_chat_config("鏈接", "web_clip_inbox")
+        row = self.row(
+            "<msg><appmsg><type>51</type><title>视频号分享</title>"
+            "<des>short clip</des><url>https://channels.weixin.qq.com/demo</url>"
+            "<finderFeed><nickname>Demo Channel</nickname><desc>AI demo clip</desc></finderFeed>"
+            "</appmsg></msg>",
+            local_type=49,
+            local_id=78,
+            server_id="srv-78",
+        )
+
+        route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "research_or_summary")
+        self.assertIn("Shipinhao/视频号/Finder", route["task"])
+        self.assertIn("Yuanbao/transcript/summary comments", route["task"])
+        self.assertIn("Markdown and a PDF report", route["task"])
+
     def test_personal_organizer_routes_publish_platform_shorthand(self) -> None:
         config = self.base_config()
         config["analysis_mode"] = "device_inbox"

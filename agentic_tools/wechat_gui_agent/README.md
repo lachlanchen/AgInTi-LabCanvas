@@ -638,6 +638,22 @@ or produces text that mentions internals.
 For login/CAPTCHA/download blocks, open a browser in the same isolated noVNC
 desktop with `labcanvas wechat browser-assist --url "<url>" --json`; the user
 handles the manual step and the worker continues after approval.
+For WeChat official-account links, `mp.weixin.qq.com` often returns `环境异常` or
+`完成验证后继续访问` to direct fetches. Treat that as a visible-browser state, not a
+failed read:
+
+```bash
+labcanvas wechat browser-assist \
+  --url "https://mp.weixin.qq.com/..." \
+  --reuse-window \
+  --wait-seconds 8 \
+  --capture \
+  --wait-readable-seconds 60 \
+  --json
+```
+
+Keep the window open in noVNC for verification, rerun capture after it is
+readable, and use `--close-after` only after the article text has been captured.
 Private send targets should include `expected_title`; before composing, the GUI
 sender OCR-checks the opened chat header and fails closed if the wrong group is
 visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel

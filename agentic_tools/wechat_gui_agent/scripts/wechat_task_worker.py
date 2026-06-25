@@ -5145,10 +5145,19 @@ Shipinhao/Finder and short-video shares:
 
 WeChat article / `mp.weixin.qq.com` link cards:
 - Direct HTTP fetches commonly return `环境异常`, `完成验证后继续访问`, or another verification gate. Treat that as a browser-required state, not as a finished article read.
-- When a WeChat article URL is available and direct fetch is blocked, run:
-  `PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<mp.weixin.qq.com URL>" --wait-seconds 8 --capture --close-after --json`
-- Inspect the captured private text/screenshot artifacts if present. If the browser-readable article text is captured, summarize that text and mention that browser capture was used. If the capture still shows only a verification page, say the full article remains blocked and ask the user to open/verify it in WeChat native browser or noVNC; do not pretend the card metadata is the full article.
-- Close browser tabs/windows after capture. Do not leave many article tabs open.
+- When a WeChat article URL is available and direct fetch is blocked, first use the visible persistent browser in the same noVNC desktop, not a headless fetch:
+  `PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<mp.weixin.qq.com URL>" --reuse-window --wait-seconds 8 --capture --wait-readable-seconds 60 --json`
+- Inspect `readability` plus the captured private text/screenshot artifacts. If the article becomes readable, summarize that text and mention that browser capture was used. If it still shows only a verification page, leave the visible browser open and return `waiting_confirmation` with the noVNC URL so the account owner can complete the check; after confirmation, rerun the same command and capture again.
+- If the browser window is already open under the noVNC WeChat desktop, reuse it. Do not open many article tabs. Close the browser only after readable content is captured or the user says to stop:
+  `PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<mp.weixin.qq.com URL>" --reuse-window --capture --wait-readable-seconds 30 --close-after --json`
+- If the normal browser remains blocked, try a WeChat-native/manual-assisted path by opening the original card/link from the official client or asking the user to open/verify it in the visible noVNC session, then capture the readable page. Do not claim the card title/description is the full article.
+
+Link/read-later summary reports:
+- For web_clip_inbox/link_inbox sources, return a concise chat summary plus a Markdown report under the task artifact directory when the source has substantive content.
+- For papers, PDFs, arXiv/DOI links, GitHub repositories, technical articles, mp.weixin/Gongzhonghao articles, and useful Shipinhao/Finder summaries, also generate a PDF report when practical and list it in `files`. If PDF generation is unavailable, include the Markdown report.
+- For GitHub links, summarize purpose, install/use path, key files, license/stars if accessible, risks, and likely relevance.
+- For papers, include title/authors/venue/DOI when accessible, problem, method, results, limitations, and links/PDF evidence.
+- For Shipinhao/Finder videos, use accessible metadata, video media, comments, transcript/summary comments, or public mirrors; clearly mark limitations if the video/comments/transcript are not available.
 
 Artifact return contract:
 - If you generate or find safe artifacts, include their existing absolute or repo-relative paths in the JSON `files` array. The outer worker sends those files to WeChat by default.

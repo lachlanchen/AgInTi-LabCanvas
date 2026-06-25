@@ -122,6 +122,8 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertIn("autonomy_contract", payload)
         self.assertIn("# WeChat Routine Contract", markdown)
         self.assertIn("research_summary", markdown)
+        self.assertIn("mp.weixin", markdown)
+        self.assertIn("Markdown/PDF", markdown)
         self.assertIn("# Agent Routine Cheat Sheet", cheat_sheet)
         self.assertIn("resume_exact_chat_worker_session", cheat_sheet)
         self.assertEqual(task["routine"]["id"], "research_summary")

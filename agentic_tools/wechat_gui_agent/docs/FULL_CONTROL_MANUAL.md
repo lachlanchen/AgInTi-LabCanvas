@@ -405,6 +405,23 @@ labcanvas wechat reject <task-id> --note "do not continue"
 Do not try to bypass account protections. The worker should return
 `waiting_confirmation` for risky actions.
 
+For WeChat official-account articles, direct HTTP may return `环境异常` or
+`完成验证后继续访问`. Use the noVNC browser profile and reuse the visible browser
+window so the user or agent can complete the visible check:
+
+```bash
+labcanvas wechat browser-assist \
+  --url "https://mp.weixin.qq.com/..." \
+  --reuse-window \
+  --wait-seconds 8 \
+  --capture \
+  --wait-readable-seconds 60 \
+  --json
+```
+
+Rerun capture after the page becomes readable. Add `--close-after` only when the
+article text has been captured or the task is cancelled.
+
 ## Group And Alias Operations
 
 These are real WeChat actions and can notify people. Use dry-runs and visual

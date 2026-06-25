@@ -261,7 +261,12 @@ class CliTests(unittest.TestCase):
                 "/bin/echo",
                 "--wait-seconds",
                 "2",
+                "--reuse-window",
                 "--capture",
+                "--wait-readable-seconds",
+                "15",
+                "--poll-seconds",
+                "1",
                 "--close-after",
                 "--dry-run",
                 "--json",
@@ -272,8 +277,11 @@ class CliTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["status"], "dry-run")
         self.assertTrue(payload["capture"])
+        self.assertTrue(payload["reuse_window"])
         self.assertTrue(payload["close_after"])
         self.assertEqual(payload["wait_seconds"], 2.0)
+        self.assertEqual(payload["wait_readable_seconds"], 15.0)
+        self.assertEqual(payload["poll_seconds"], 1.0)
         self.assertIn("novnc_url", payload)
 
     def test_wechat_approve_promotes_newest_waiting_task(self):

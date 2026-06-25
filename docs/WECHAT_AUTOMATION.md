@@ -114,10 +114,14 @@ For a link/read-later group such as `鏈接`, set `chat_purpose` to
 `web_clip_inbox`. Plain URLs, PDFs, images/screenshots, voice/audio, videos,
 forwarded webpage cards, mini programs, archives, CAD/PCB files, YouTube links,
 视频号/Shipinhao shares, Bilibili links, contact/location cards, and other
-shared objects are stored as inbox items and can trigger an ACK plus worker task
-for summary or extraction. Questions such as "summarize this link", "what is
-this", or `这个链接讲什么？` also go through the fast router; slow page/PDF/media
-inspection or export requests are acknowledged and sent to the worker queue.
+shared objects are stored as inbox items and normally trigger an ACK plus a
+`research_summary` worker task when they are source material worth reading. The
+worker should return a concise chat summary plus Markdown/PDF reports when useful
+for papers, GitHub repositories, technical articles, mp.weixin/Gongzhonghao
+articles, or short-video summaries. Questions such as "summarize this link",
+"what is this", or `这个链接讲什么？` also go through the fast router; slow
+page/PDF/media inspection or export requests are acknowledged and sent to the
+worker queue.
 
 For 视频号/Shipinhao/Finder shares, the worker should treat comments as optional
 auxiliary evidence when they are accessible. Search visible or retrieved comments
@@ -505,6 +509,24 @@ The helper opens a persistent browser profile under `.private/browser_assist/`
 on display `:97` and prints the noVNC URL. The user can log in, click CAPTCHA,
 approve a download, or save a file manually; the worker should then wait for
 confirmation before continuing.
+
+For `mp.weixin.qq.com` or WeChat official-account articles, a direct fetch that
+returns `环境异常` or `完成验证后继续访问` is not a completed read. Use the visible
+persistent browser and poll until readable text is captured:
+
+```bash
+labcanvas wechat browser-assist \
+  --url "https://mp.weixin.qq.com/..." \
+  --reuse-window \
+  --wait-seconds 8 \
+  --capture \
+  --wait-readable-seconds 60 \
+  --json
+```
+
+If the page still shows verification, leave the browser open in noVNC, ask the
+account owner to complete the visible check, then rerun the same capture. Use
+`--close-after` only after readable content is captured or the user says to stop.
 
 Approve or cancel confirmation tasks from the CLI:
 

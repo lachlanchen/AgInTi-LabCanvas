@@ -1544,6 +1544,91 @@ def is_personal_organizer_chat(config: dict[str, Any]) -> bool:
     }
 
 
+def is_link_inbox_chat(config: dict[str, Any]) -> bool:
+    return str(config.get("chat_purpose") or "").strip().lower() in {
+        "web_clip_inbox",
+        "link_inbox",
+        "internet_inbox",
+        "reading_inbox",
+    }
+
+
+def is_link_inbox_default_summary_task(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    text: str = "",
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+) -> bool:
+    if not is_link_inbox_chat(config):
+        return False
+    rows = focus_rows or [row]
+    if any(row_is_shared_source(item) for item in rows):
+        return True
+    return text_contains_web_source(text or visible_message_text(row))
+
+
+def row_is_shared_source(row: dict[str, Any]) -> bool:
+    if is_quote_reply_message(row):
+        return False
+    local_type, _ = split_message_type(row.get("local_type"))
+    if local_type in {3, 34, 42, 43, 47, 48}:
+        return True
+    if local_type == 49:
+        app_type = app_message_type(row)
+        return app_type in {"", "5", "6", "19", "33", "36", "51", "76"} or text_contains_web_source(visible_message_text(row))
+    return text_contains_web_source(visible_message_text(row))
+
+
+def app_message_type(row: dict[str, Any]) -> str:
+    if split_message_type(row.get("local_type"))[0] != 49:
+        return ""
+    text = strip_group_sender_prefix(str(row.get("content") or ""))
+    root = parse_wechat_xml(text)
+    appmsg = root.find(".//appmsg") if root is not None else None
+    return collapse_text(appmsg.findtext("type") or "") if appmsg is not None else ""
+
+
+def text_contains_web_source(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = [
+        "http://",
+        "https://",
+        "www.",
+        "mp.weixin.qq.com",
+        "channels.weixin.qq.com",
+        "shipinhao",
+        "finder",
+        "视频号",
+        "公众号",
+        "gongzhonghao",
+        "wechat article",
+        "wechat link",
+        "youtube.com",
+        "youtu.be",
+        "bilibili",
+        "github.com",
+        "arxiv.org",
+        "doi.org",
+        ".pdf",
+    ]
+    return any(marker in lowered for marker in markers)
+
+
+def link_inbox_summary_instruction(row: dict[str, Any]) -> str:
+    visible = visible_message_text(row)
+    return (
+        "Link/read-later inbox source received. Try to read the accessible source and return a grounded summary, highlights, and main points. "
+        "Handle normal webpages, GitHub repositories, papers/PDF/DOI/arXiv links, WeChat official-account/mp.weixin articles, "
+        "Shipinhao/视频号/Finder shares, YouTube/Bilibili links, images, videos, files, and forwarded cards. "
+        "For mp.weixin/Gongzhonghao links, direct HTTP verification pages are not final: use the visible noVNC browser-assist flow with "
+        "`--reuse-window --capture --wait-readable-seconds`, or a WeChat/native browser capture when needed, and close tabs only after readable capture or a real blocker. "
+        "For Shipinhao/Finder, inspect available metadata, cached media, browser-visible comments, and Yuanbao/transcript/summary comments when accessible; do not post comments unless explicitly requested. "
+        "For papers, GitHub, technical articles, and useful video/article summaries, create Markdown and a PDF report when possible and include safe artifact paths in `files`. "
+        f"Structured source text:\n{visible}"
+    )
+
+
 def organizer_enabled(config: dict[str, Any]) -> bool:
     organizer = config.get("organizer")
     return isinstance(organizer, dict) and bool(organizer.get("enabled", False))
@@ -1800,6 +1885,7 @@ def immediate_task_route(
     quoted_media_task = is_quote_reply_message(row) and references_recent_media(combined)
     file_download_task = is_file_download_or_save_task(combined)
     story_or_script_task = is_story_or_script_task(combined)
+    link_inbox_summary_task = is_link_inbox_default_summary_task(config, row, combined, focus_rows=focus_rows)
     heuristic_candidate = heuristic_worker_route_candidate(
         config,
         combined,
@@ -1810,6 +1896,7 @@ def immediate_task_route(
         quoted_media_task=quoted_media_task,
         file_download_task=file_download_task,
         story_or_script_task=story_or_script_task,
+        link_inbox_summary_task=link_inbox_summary_task,
     )
     agent_first = agent_route_prefilter_mode(config) == "agent_first" and bool(config.get("agent_route_enabled", False))
     if agent_first:
@@ -1844,7 +1931,13 @@ def immediate_task_route(
         if visible_message_text(item).strip()
     )
     chat_name = str(config.get("chat_name") or "")
-    include_reference_media = attachment_trigger or contextual_media_task or quoted_media_task or bool(route_decision.get("needs_recent_media"))
+    include_reference_media = (
+        attachment_trigger
+        or contextual_media_task
+        or quoted_media_task
+        or link_inbox_summary_task
+        or bool(route_decision.get("needs_recent_media"))
+    )
     source_rows = source_reference_rows(
         config,
         row,
@@ -1874,9 +1967,12 @@ def immediate_task_route(
     story_context = lalachan_story_text_context_bundle() if route_kind == "story_or_script" and route_project == "lalachan" else ""
     lalachan_context = lalachan_story_video_context_bundle() if lalachan_task or route_kind == "generate_video" else ""
     route_json = json.dumps(route_decision, ensure_ascii=False, indent=2, sort_keys=True)
+    request_text = current_request or attachment_request_text(row)
+    if link_inbox_summary_task:
+        request_text = f"{request_text}\n\n{link_inbox_summary_instruction(row)}"
     routine_contract = build_routine_contract(
         route_decision,
-        current_request or attachment_request_text(row),
+        request_text,
         chat=chat_name,
         source={"local_id": row.get("local_id"), "server_id": row.get("server_id")},
     )
@@ -1892,6 +1988,8 @@ def immediate_task_route(
         "images/screenshots, PDFs, documents, archives, audio/voice, video, webpage cards, mini programs, "
         "YouTube, Shipinhao/视频号, Bilibili, links, contact/location cards, CAD/PCB files, and other formats. "
         "Extract useful metadata such as title, URL, filename, extension, media path, size, timestamp, checksum/token, and visible content before summarizing. "
+        "For link/read-later inbox groups, default to source-grounded summaries and highlights for shared links/cards/media; "
+        "for papers, GitHub repos, technical articles, mp.weixin/Gongzhonghao articles, and Shipinhao/Finder summaries, return Markdown and PDF reports when useful and safe. "
         "If the task asks to save media/files, keep the source-scoped copy path or generated output path in the result `files` array when it is safe to send. "
         "Strict source isolation: use only media/files from this exact chat and the current source/reference local_id rows below. "
         "Do not borrow media, files, or generated artifacts from another group, direct message, old request, or unrelated download folder. "
@@ -1905,7 +2003,7 @@ def immediate_task_route(
         f"Agent route decision:\n{route_json}\n\n"
         f"Routine supervisor contract:\n{routine_json}\n\n"
         f"Chat: {chat_name}\nSource/reference rows: {source_ids}\n\n"
-        f"Current coalesced request:\n{current_request or attachment_request_text(row)}\n\nRecent history:\n{task_context}"
+        f"Current coalesced request:\n{request_text}\n\nRecent history:\n{task_context}"
         f"\n\nSame-chat reference media/context rows:\n{reference_context or '(none found)'}"
         f"\n\nAutomatic media sync:\n{media_sync_status or '(not run)'}"
         f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
@@ -1978,6 +2076,7 @@ def heuristic_worker_route_candidate(
     quoted_media_task: bool,
     file_download_task: bool,
     story_or_script_task: bool,
+    link_inbox_summary_task: bool = False,
 ) -> bool:
     lowered = str(text or "").lower()
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
@@ -1989,6 +2088,7 @@ def heuristic_worker_route_candidate(
         or quoted_media_task
         or file_download_task
         or story_or_script_task
+        or link_inbox_summary_task
         or is_document_artifact_task(text)
         or is_unified_backend_request(config, text)
         or any(keyword and keyword in lowered for keyword in keywords)
@@ -2083,6 +2183,8 @@ Important distinction:
 - "upload all images" can mean upload reference images into a generation UI. That is NOT public publishing.
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
 - Old context can explain a follow-up, but old context cannot authorize a new public publish.
+- In web_clip_inbox/link_inbox/internet_inbox/reading_inbox chats, shared URLs, forwarded webpage cards, mp.weixin/Gongzhonghao articles, Shipinhao/视频号/Finder cards, GitHub links, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, images, videos, and files should normally route to research_or_summary with worker_needed=true so the worker reads/summarizes and returns useful artifacts.
+- For mp.weixin links, verification text such as 环境异常 or 完成验证后继续访问 means browser-assisted reading is required; do not classify it as chat_only just because direct HTTP is blocked.
 - A video-generation request should use local/default reference assets unless the current request says this/that/same/attached/quoted video/image.
 - Plain story/script/plot writing or revision should use story_or_script. Do not choose generate_image unless the current request explicitly asks for an image/figure/diagram/illustration. Do not choose generate_video unless the current request explicitly asks for video/animation/小云雀/Seedance/XYQ.
 - Return chat_only with worker_needed=false when the user is only chatting or when no backend/tool/file/artifact work is useful.
@@ -2178,6 +2280,7 @@ def fallback_route_decision(
 ) -> dict[str, Any]:
     lowered = str(text or "").lower()
     publish_allowed = has_public_publish_intent(lowered)
+    link_inbox_summary_task = is_link_inbox_default_summary_task(config, row, text, focus_rows=focus_rows)
     if is_document_artifact_task(text):
         route_kind = "other_worker"
     elif is_cad_pcb_labcanvas_task(text):
@@ -2190,6 +2293,8 @@ def fallback_route_decision(
         route_kind = "story_or_script"
     elif is_image_generation_task(text):
         route_kind = "generate_image"
+    elif link_inbox_summary_task:
+        route_kind = "research_or_summary"
     elif is_research_or_summary_task(text) or is_complex_research_task(config, text, focus_rows=focus_rows):
         route_kind = "research_or_summary"
     elif publish_allowed:
@@ -2208,7 +2313,7 @@ def fallback_route_decision(
         project = "labcanvas"
     else:
         project = "unknown"
-    needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save"}
+    needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save"} or link_inbox_summary_task
     return {
         "route_kind": route_kind,
         "project": project,
@@ -2216,8 +2321,11 @@ def fallback_route_decision(
         "needs_recent_media": needs_recent_media,
         "public_publish_intent": publish_allowed,
         "public_publish_allowed": publish_allowed,
-        "external_action_allowed": bool(publish_allowed or route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save"}),
-        "source_policy": "recent_media" if needs_recent_media else "current_request_only",
+        "external_action_allowed": bool(
+            publish_allowed
+            or route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save", "research_or_summary"}
+        ),
+        "source_policy": "current_plus_explicit_refs" if link_inbox_summary_task else ("recent_media" if needs_recent_media else "current_request_only"),
         "reason": "fallback heuristic route",
         "confidence": 0.45,
         "route_agent_model": "fallback",
@@ -3857,8 +3965,9 @@ For personal organizer chat purpose:
 """
         if str(config.get("chat_purpose") or "").strip().lower() in {"web_clip_inbox", "link_inbox", "internet_inbox", "reading_inbox"}:
             organizer_rules += """
-- For a web-clip/link inbox, assume plain links and forwarded webpage cards are saved silently. Reply only when the user asks a question, requests a summary/list/export, or asks you to organize/process saved material.
-- Use ACK+TASK when a link needs fetching, page/PDF inspection, long summarization, extraction, translation, tagging, or file handling.
+- For a web-clip/link inbox, shared links/cards/media are saved and should usually become ACK+TASK when they are source material worth reading: mp.weixin/Gongzhonghao articles, Shipinhao/视频号/Finder shares, GitHub repos, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, screenshots, files, videos, and ordinary webpages.
+- A silent save is acceptable only for obvious duplicates, trivial side chat, or clearly non-actionable noise. When in doubt for a shared source, queue a research_or_summary worker task.
+- For summaries of papers, GitHub repos, technical articles, WeChat articles, and useful video/channel shares, ask the worker to return concise chat highlights plus Markdown/PDF artifacts when possible.
 """
     research_rules = ""
     if is_research_chat(config):

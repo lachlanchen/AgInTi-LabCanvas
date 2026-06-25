@@ -20,6 +20,15 @@ ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 DEFAULT_DISPLAY = ":97"
 DEFAULT_NOVNC_PORT = 6107
+VERIFICATION_TEXT_MARKERS = (
+    "环境异常",
+    "完成验证后继续访问",
+    "请完成验证",
+    "安全验证",
+    "访问环境异常",
+    "verify you are human",
+    "captcha",
+)
 
 
 def main() -> int:
@@ -28,7 +37,10 @@ def main() -> int:
     parser.add_argument("--display", default=DEFAULT_DISPLAY, help="X display for the isolated virtual desktop.")
     parser.add_argument("--browser", help="Browser command. Defaults to WECHAT_BROWSER_COMMAND or an installed browser.")
     parser.add_argument("--wait-seconds", type=float, default=0.0, help="Seconds to wait after launch before capture/close.")
+    parser.add_argument("--reuse-window", action="store_true", help="Reuse the largest visible browser window and navigate it to the URL instead of opening another window.")
     parser.add_argument("--capture", action="store_true", help="Capture visible browser text and screenshot into the private assist folder.")
+    parser.add_argument("--wait-readable-seconds", type=float, default=0.0, help="Keep the visible browser open and retry capture until the page text looks readable or this timeout expires.")
+    parser.add_argument("--poll-seconds", type=float, default=3.0, help="Polling interval for --wait-readable-seconds.")
     parser.add_argument("--close-after", action="store_true", help="Close the browser window after the optional wait/capture.")
     parser.add_argument("--output-dir", type=Path, help="Private output directory for captures. Defaults under .private/browser_assist/captures.")
     parser.add_argument("--dry-run", action="store_true", help="Print the launch plan without opening a browser.")
@@ -59,11 +71,14 @@ def main() -> int:
         "profile_dir": redacted_path(profile_dir),
         "command": " ".join(shlex.quote(part) for part in command),
         "wait_seconds": args.wait_seconds,
+        "reuse_window": bool(args.reuse_window),
         "capture": bool(args.capture),
+        "wait_readable_seconds": args.wait_readable_seconds,
+        "poll_seconds": args.poll_seconds,
         "close_after": bool(args.close_after),
         "novnc_url": novnc_url(),
         "manual_required": True,
-        "message": "Open the noVNC URL and complete login, CAPTCHA, download confirmation, or file save manually.",
+        "message": "Open the noVNC URL and complete login, CAPTCHA, article verification, download confirmation, or file save manually.",
     }
     if args.dry_run:
         print_payload(payload, args.json)
@@ -73,23 +88,46 @@ def main() -> int:
     env = os.environ.copy()
     env["DISPLAY"] = args.display
     env["XAUTHORITY"] = env.get("XAUTHORITY", "")
-    proc = subprocess.Popen(command, cwd=ROOT, env=env, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    payload["pid"] = proc.pid
-    payload["launched_at"] = datetime.now().isoformat(timespec="seconds")
-    if args.wait_seconds > 0 or args.capture or args.close_after:
+    proc: subprocess.Popen | None = None
+    window: dict[str, int | str] | None = None
+    if args.reuse_window:
+        window = find_browser_window(browser, env)
+        if window:
+            payload["status"] = "reused"
+            payload["window"] = {"id": window["id"], "x": window["x"], "y": window["y"], "width": window["width"], "height": window["height"]}
+            payload["navigation"] = navigate_browser_window(window, env, args.url)
+    if not window:
+        proc = subprocess.Popen(command, cwd=ROOT, env=env, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        payload["pid"] = proc.pid
+        payload["launched_at"] = datetime.now().isoformat(timespec="seconds")
+    if args.wait_seconds > 0 or args.capture or args.wait_readable_seconds > 0 or args.close_after:
         time.sleep(max(0.0, args.wait_seconds))
         env_window = dict(env)
-        window = find_browser_window(browser, env_window)
+        window = window or find_browser_window(browser, env_window)
         if window:
             payload["window"] = {"id": window["id"], "x": window["x"], "y": window["y"], "width": window["width"], "height": window["height"]}
-            if args.url and args.url != "about:blank":
+            if args.url and args.url != "about:blank" and payload.get("status") != "reused":
                 payload["load_probe"] = ensure_browser_url_loaded(window, env_window)
         else:
             payload["window"] = None
             payload["window_warning"] = "No visible browser window found for capture/close."
-        if args.capture and window:
+        if (args.capture or args.wait_readable_seconds > 0) and window:
             capture_dir = args.output_dir or (PRIVATE / "browser_assist" / "captures")
             payload["artifacts"] = capture_browser_window(window, env_window, capture_dir, url=args.url)
+            payload["readability"] = payload["artifacts"].get("readability")
+        if args.wait_readable_seconds > 0 and window and not page_text_is_readable(payload.get("artifacts", {}).get("readability")):
+            payload["readability_attempts"] = wait_for_readable_capture(
+                window,
+                env_window,
+                args.output_dir or (PRIVATE / "browser_assist" / "captures"),
+                url=args.url,
+                timeout_seconds=args.wait_readable_seconds,
+                poll_seconds=args.poll_seconds,
+            )
+            if payload["readability_attempts"]:
+                latest = payload["readability_attempts"][-1]
+                payload["artifacts"] = latest.get("artifacts", payload.get("artifacts"))
+                payload["readability"] = latest.get("readability", payload.get("readability"))
         if args.close_after:
             payload["close"] = close_browser_window(window, proc, env_window)
     print_payload(payload, args.json)
@@ -125,6 +163,27 @@ def browser_command(browser: str, url: str, profile_dir: Path) -> list[str]:
     if "chrome" in name or "chromium" in name or "brave" in name:
         return parts + [f"--user-data-dir={profile_dir}", "--new-window", url]
     return parts + [url]
+
+
+def navigate_browser_window(window: dict[str, int | str], env: dict[str, str], url: str) -> dict[str, Any]:
+    wid = str(window["id"])
+    payload: dict[str, Any] = {"attempted": True, "url": url}
+    try:
+        run(["xdotool", "windowactivate", "--sync", wid], env=env, check=False)
+        time.sleep(0.1)
+        run(["xdotool", "key", "--clearmodifiers", "ctrl+l"], env=env, check=False)
+        time.sleep(0.1)
+        if shutil.which("xclip"):
+            set_clipboard(url, env)
+            run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], env=env, check=False)
+        else:
+            run(["xdotool", "type", "--clearmodifiers", "--delay", "1", url], env=env, check=False)
+        run(["xdotool", "key", "--clearmodifiers", "Return"], env=env, check=False)
+        payload["ok"] = True
+    except Exception as exc:
+        payload["ok"] = False
+        payload["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+    return payload
 
 
 def browser_window_classes(browser: str) -> list[str]:
@@ -216,8 +275,10 @@ def capture_browser_window(window: dict[str, int | str], env: dict[str, str], ou
             text_path.write_text(text[:200000], encoding="utf-8", errors="replace")
             artifacts["text"] = str(text_path)
             artifacts["text_chars"] = len(text)
+            artifacts["readability"] = browser_text_readability(text)
         else:
             artifacts["text_warning"] = "No selectable browser text was captured."
+            artifacts["readability"] = browser_text_readability("")
     except Exception as exc:
         artifacts["error"] = f"{type(exc).__name__}: {str(exc)[:500]}"
     metadata = {
@@ -229,6 +290,51 @@ def capture_browser_window(window: dict[str, int | str], env: dict[str, str], ou
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     artifacts["metadata"] = str(metadata_path)
     return artifacts
+
+
+def wait_for_readable_capture(
+    window: dict[str, int | str],
+    env: dict[str, str],
+    output_dir: Path,
+    *,
+    url: str,
+    timeout_seconds: float,
+    poll_seconds: float,
+) -> list[dict[str, Any]]:
+    attempts: list[dict[str, Any]] = []
+    deadline = time.time() + max(0.0, timeout_seconds)
+    interval = max(0.5, poll_seconds)
+    while time.time() < deadline:
+        time.sleep(interval)
+        artifacts = capture_browser_window(window, env, output_dir, url=url)
+        readability = artifacts.get("readability", {})
+        attempt = {
+            "captured_at": datetime.now().isoformat(timespec="seconds"),
+            "readability": readability,
+            "artifacts": artifacts,
+        }
+        attempts.append(attempt)
+        if page_text_is_readable(readability):
+            break
+    return attempts
+
+
+def browser_text_readability(text: str) -> dict[str, Any]:
+    collapsed = " ".join(str(text or "").split())
+    lowered = collapsed.lower()
+    matched = [marker for marker in VERIFICATION_TEXT_MARKERS if marker.lower() in lowered]
+    chars = len(collapsed)
+    return {
+        "text_chars": chars,
+        "verification_blocked": bool(matched),
+        "verification_markers": matched[:5],
+        "readable": chars >= 500 and not matched,
+        "summary": "readable" if chars >= 500 and not matched else ("verification-blocked" if matched else "no-readable-text"),
+    }
+
+
+def page_text_is_readable(readability: Any) -> bool:
+    return isinstance(readability, dict) and bool(readability.get("readable"))
 
 
 def ensure_browser_url_loaded(window: dict[str, int | str], env: dict[str, str]) -> dict[str, Any]:
@@ -246,7 +352,7 @@ def ensure_browser_url_loaded(window: dict[str, int | str], env: dict[str, str])
     return payload
 
 
-def close_browser_window(window: dict[str, int | str] | None, proc: subprocess.Popen, env: dict[str, str]) -> dict[str, Any]:
+def close_browser_window(window: dict[str, int | str] | None, proc: subprocess.Popen | None, env: dict[str, str]) -> dict[str, Any]:
     payload: dict[str, Any] = {"requested": True}
     if window:
         wid = str(window["id"])
@@ -254,12 +360,24 @@ def close_browser_window(window: dict[str, int | str] | None, proc: subprocess.P
         payload["window_id"] = wid
         payload["windowclose_returncode"] = result.returncode
     time.sleep(0.5)
-    if proc.poll() is None:
+    if proc is not None and proc.poll() is None:
         proc.terminate()
         payload["process_terminated"] = True
-    else:
+    elif proc is not None:
         payload["process_returncode"] = proc.returncode
     return payload
+
+
+def set_clipboard(text: str, env: dict[str, str]) -> None:
+    subprocess.run(
+        ["xclip", "-selection", "clipboard"],
+        env=env,
+        input=text,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=float(os.environ.get("WECHAT_BROWSER_ASSIST_COMMAND_TIMEOUT", "10")),
+    )
 
 
 def run(command: list[str], *, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:

@@ -103,7 +103,10 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     browser.add_argument("--display", default=DEFAULT_DISPLAY)
     browser.add_argument("--browser")
     browser.add_argument("--wait-seconds", type=float, default=0.0)
+    browser.add_argument("--reuse-window", action="store_true")
     browser.add_argument("--capture", action="store_true")
+    browser.add_argument("--wait-readable-seconds", type=float, default=0.0)
+    browser.add_argument("--poll-seconds", type=float, default=3.0)
     browser.add_argument("--close-after", action="store_true")
     browser.add_argument("--output-dir", type=Path)
     browser.add_argument("--dry-run", action="store_true")
@@ -775,8 +778,14 @@ def cmd_browser_assist(args: argparse.Namespace) -> int:
         command += ["--browser", args.browser]
     if getattr(args, "wait_seconds", 0.0):
         command += ["--wait-seconds", str(args.wait_seconds)]
+    if getattr(args, "reuse_window", False):
+        command.append("--reuse-window")
     if getattr(args, "capture", False):
         command.append("--capture")
+    if getattr(args, "wait_readable_seconds", 0.0):
+        command += ["--wait-readable-seconds", str(args.wait_readable_seconds)]
+    if getattr(args, "poll_seconds", 3.0) != 3.0:
+        command += ["--poll-seconds", str(args.poll_seconds)]
     if getattr(args, "close_after", False):
         command.append("--close-after")
     if getattr(args, "output_dir", None):
