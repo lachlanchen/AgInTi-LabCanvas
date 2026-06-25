@@ -106,7 +106,9 @@ Required behavior:
   requested platforms have terminal LazyEdit/remote evidence;
 - for career strategy work, keep private evidence reports under `.private/` and
   only send sanitized Markdown from `output/wechat_strategy/` when attaching a
-  report to WeChat;
+  report to WeChat. Daily self-analysis runs must also save a trace bundle with
+  prompt, evidence snapshots, result metadata, reports, and manifest so the
+  user's direction can be audited over time;
 - treat LazyEdit as the mature video-processing/publishing boundary. Workers
   prepare exact source video evidence plus `lazyedit_correction_context.md` and
   `lazyedit_metadata_brief.md`, then call LazyEdit CLI/API and monitor queues

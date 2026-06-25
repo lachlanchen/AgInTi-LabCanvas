@@ -83,8 +83,15 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     private_dir = PRIVATE / "output" / "career_daily"
     private_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y-%m-%d")
-    prompt = build_prompt(chats, args.memory_db)
+    now = datetime.now()
+    stamp = now.strftime("%Y-%m-%d")
+    run_id = now.strftime("%Y-%m-%d-%H%M%S")
+    trace_dir = private_dir / "runs" / run_id
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    evidence = collect_evidence(chats, args.memory_db)
+    prompt = build_prompt(evidence)
+    (trace_dir / "agent_prompt.md").write_text(prompt, encoding="utf-8")
+    write_evidence_artifacts(trace_dir, evidence)
     result = run_agent_session(
         prompt,
         backend=select_agent_backend({}),
@@ -108,13 +115,42 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
     private_report = private_dir / f"{stamp}-career-strategy-private.md"
     share_report = OUTPUT / f"{stamp}-career-strategy.md"
     private_report.write_text(body + "\n", encoding="utf-8")
-    share_report.write_text(sanitize_shareable_report(body) + "\n", encoding="utf-8")
+    shareable = sanitize_shareable_report(body)
+    share_report.write_text(shareable + "\n", encoding="utf-8")
+    trace_private_report = trace_dir / "private_report.md"
+    trace_share_report = trace_dir / "share_report.md"
+    trace_private_report.write_text(body + "\n", encoding="utf-8")
+    trace_share_report.write_text(shareable + "\n", encoding="utf-8")
+    agent_result = sanitize_agent_result(result)
+    (trace_dir / "agent_result.json").write_text(
+        json.dumps(agent_result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     send_status: dict[str, Any] = {"attempted": False}
     if args.send:
         send_status = send_daily_result(args, share_report, body)
+    manifest = build_trace_manifest(
+        args=args,
+        chats=chats,
+        trace_dir=trace_dir,
+        private_report=private_report,
+        share_report=share_report,
+        trace_private_report=trace_private_report,
+        trace_share_report=trace_share_report,
+        result=result,
+        send_status=send_status,
+        run_id=run_id,
+    )
+    (trace_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return {
         "ok": bool(result.get("ok")) and bool(body),
         "status": "done",
+        "run_id": run_id,
+        "trace_dir": str(trace_dir),
+        "manifest": str(trace_dir / "manifest.json"),
         "private_report": str(private_report),
         "share_report": str(share_report),
         "send": send_status,
@@ -129,7 +165,17 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def build_prompt(chats: list[str], memory_db: Path) -> str:
+def collect_evidence(chats: list[str], memory_db: Path) -> dict[str, str]:
+    return {
+        "memory_snapshot": memory_snapshot(memory_db, chats),
+        "project_surface": project_surface(),
+        "lazyinvestment_snapshot": repo_readme_snapshot(Path("/home/lachlan/ProjectsLFS/LazyInvestment")),
+        "voidabyss_snapshot": voidabyss_snapshot(),
+        "identity_surface": identity_surface(),
+    }
+
+
+def build_prompt(evidence: dict[str, str]) -> str:
     return f"""You are the daily career, writing, and opportunity strategy agent for Lachlan.
 
 Goal: give one useful morning note for wealth, freedom, and happiness.
@@ -157,20 +203,103 @@ Answer in Markdown with these sections:
 8. Today’s 3 actions
 
 WeChat memory snapshot:
-{memory_snapshot(memory_db, chats)}
+{evidence.get('memory_snapshot', '')}
 
 Local project surface:
-{project_surface()}
+{evidence.get('project_surface', '')}
 
 LazyInvestment snapshot:
-{repo_readme_snapshot(Path('/home/lachlan/ProjectsLFS/LazyInvestment'))}
+{evidence.get('lazyinvestment_snapshot', '')}
 
 voidabyss snapshot:
-{voidabyss_snapshot()}
+{evidence.get('voidabyss_snapshot', '')}
 
 lazying.art/local web identity hints:
-{identity_surface()}
+{evidence.get('identity_surface', '')}
 """
+
+
+def write_evidence_artifacts(trace_dir: Path, evidence: dict[str, str]) -> None:
+    filenames = {
+        "memory_snapshot": "memory_snapshot.md",
+        "project_surface": "project_surface.md",
+        "lazyinvestment_snapshot": "lazyinvestment_snapshot.md",
+        "voidabyss_snapshot": "voidabyss_snapshot.md",
+        "identity_surface": "identity_surface.md",
+    }
+    for key, filename in filenames.items():
+        (trace_dir / filename).write_text(str(evidence.get(key) or "").rstrip() + "\n", encoding="utf-8")
+
+
+def sanitize_agent_result(result: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in result.items():
+        if key == "message":
+            safe[key] = sanitize_shareable_report(str(value or ""))
+        elif isinstance(value, (str, int, float, bool)) or value is None:
+            safe[key] = sanitize_shareable_report(value) if isinstance(value, str) else value
+        elif key in {"thread_id", "backend", "returncode", "resumed", "model", "reasoning_effort", "stderr_tail"}:
+            safe[key] = value
+    return safe
+
+
+def build_trace_manifest(
+    *,
+    args: argparse.Namespace,
+    chats: list[str],
+    trace_dir: Path,
+    private_report: Path,
+    share_report: Path,
+    trace_private_report: Path,
+    trace_share_report: Path,
+    result: dict[str, Any],
+    send_status: dict[str, Any],
+    run_id: str,
+) -> dict[str, Any]:
+    return {
+        "schema": "labcanvas.wechat.career_daily.trace.v1",
+        "run_id": run_id,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "purpose": "Traceable daily self-analysis for writing, career, money, opportunities, and personal direction.",
+        "chats": chats,
+        "agent": {
+            "backend": result.get("backend", "codex"),
+            "thread_id": result.get("thread_id"),
+            "resumed": result.get("resumed"),
+            "model": args.model,
+            "reasoning_effort": args.reasoning_effort,
+            "timeout_seconds": args.timeout_seconds,
+            "sandbox": "read-only",
+        },
+        "inputs": {
+            "memory_db": str(args.memory_db),
+            "evidence_files": {
+                "prompt": str(trace_dir / "agent_prompt.md"),
+                "memory_snapshot": str(trace_dir / "memory_snapshot.md"),
+                "project_surface": str(trace_dir / "project_surface.md"),
+                "lazyinvestment_snapshot": str(trace_dir / "lazyinvestment_snapshot.md"),
+                "voidabyss_snapshot": str(trace_dir / "voidabyss_snapshot.md"),
+                "identity_surface": str(trace_dir / "identity_surface.md"),
+            },
+        },
+        "outputs": {
+            "private_report_latest": str(private_report),
+            "share_report_latest": str(share_report),
+            "private_report_trace": str(trace_private_report),
+            "share_report_trace": str(trace_share_report),
+            "agent_result": str(trace_dir / "agent_result.json"),
+        },
+        "send": send_status,
+        "git": {
+            "agenticapp_head": run_short(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], timeout=1.5),
+            "agenticapp_status_short": run_short(["git", "-C", str(ROOT), "status", "--short"], timeout=1.5),
+        },
+        "privacy": {
+            "trace_dir_private": True,
+            "private_evidence_may_include_chat_memory_summaries": True,
+            "wechat_attachment_uses_sanitized_share_report": True,
+        },
+    }
 
 
 def memory_snapshot(db: Path, chats: list[str], *, limit: int = 80) -> str:
@@ -325,6 +454,10 @@ def send_daily_result(args: argparse.Namespace, report: Path, body: str) -> dict
 def one_line_summary(text: str) -> str:
     for line in str(text or "").splitlines():
         clean = line.strip(" #\t-*")
+        if clean.lower() in {"today's thesis", "today’s thesis"}:
+            continue
+        if len(clean) > 2 and clean[0].isdigit() and clean[1] in {".", "、"}:
+            continue
         if len(clean) >= 12:
             return compact(clean, 240)
     return "已生成今日方向、写作、职业和机会分析。"

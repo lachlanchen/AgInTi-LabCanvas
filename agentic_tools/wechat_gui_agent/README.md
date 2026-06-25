@@ -120,7 +120,12 @@ PYTHONPATH=src python -m agenticapp wechat career-agent start \
 ```
 
 The full evidence report is written under ignored `.private/output/`; the
-shareable attachment is written under ignored `output/wechat_strategy/`.
+shareable attachment is written under ignored `output/wechat_strategy/`. Every
+run also creates a private trace bundle under
+`.private/output/career_daily/runs/YYYY-MM-DD-HHMMSS/` with the exact agent
+prompt, memory snapshot, project surface, identity/repo evidence, raw agent
+result metadata, private report, sanitized share report, and `manifest.json`.
+See `docs/CAREER_SELF_ANALYSIS_AGENT.md` for the full method.
 
 Use `labcanvas wechat hold restart` or `labcanvas wechat hold reload-workers`
 after code changes; these commands do not restart the WeChat desktop. Use
