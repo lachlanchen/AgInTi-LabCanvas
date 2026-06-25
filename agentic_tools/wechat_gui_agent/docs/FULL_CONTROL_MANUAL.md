@@ -346,9 +346,28 @@ output/wechat_worker/<task-id>/source_media/
 The same preflight writes `media_resolution_manifest.json` and
 `media_resolution_manifest.md`. Use the manifest `task_copy_path` files as the
 agent's first-choice inputs. Decoded images/videos/PDFs rank above raw WeChat
-`.dat` cache files; raw `.dat` is retained only as last-resort evidence. If the
-manifest is empty, stop with a source-limited missing-media response instead of
-choosing a nearby old download.
+`.dat` cache files; raw `.dat` is retained only as last-resort evidence.
+
+If the first mirror lookup is empty, the preflight can dry-open the exact source
+chat and click likely visible image bubbles once. This forces the official
+WeChat client to preview/cache the image before the second media sync. The probe
+does not send text and is serialized behind the normal GUI send lock. If the
+client still exposes only a tiny/broken cached file, the probe saves screenshot
+crops around likely image bubbles and registers them as
+`visible_wechat_image_fallback` media candidates.
+
+For raster images, the copied file is also probed with Pillow and OCRed with
+local Tesseract when available. OCR output goes to:
+
+```text
+output/wechat_worker/<task-id>/image_text/
+```
+
+The manifest and worker prompt include the OCR transcript path and preview. Use
+that transcript first for "read/transcribe this image" requests, then inspect
+the copied image itself or visible fallback crop if the OCR is empty. If the
+manifest remains empty after sync plus GUI cache probe, stop with a
+source-limited missing-media response instead of choosing a nearby old download.
 
 For exact WeChat video tasks:
 

@@ -228,6 +228,12 @@ python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py \
 Queued tasks should include recent chat history and recent synced file paths
 from `.private/downloads`. This lets the worker resolve follow-up phrases such
 as "this PDF", "the image above", or a bare group mention after a request.
+For explicit image-reading/editing requests, the worker also runs a
+source-scoped media preflight: same-chat sync, optional official-client
+open/click cache probe, copy into `output/wechat_worker/<task-id>/source_media/`,
+and local OCR into `output/wechat_worker/<task-id>/image_text/`. The resulting
+manifest paths are injected into the worker prompt so agents use the exact image
+instead of guessing from old downloads.
 
 Process one queued task and send the result:
 

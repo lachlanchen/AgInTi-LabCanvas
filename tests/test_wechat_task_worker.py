@@ -1233,6 +1233,110 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertTrue(copied_exists)
         self.assertIn("GUI Cache Probe", manifest_text)
 
+    def test_media_resolution_records_image_ocr_and_exposes_transcript(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "mirror" / "legal-standard.png"
+            source.parent.mkdir()
+            source.write_bytes(b"png-bytes" * 5000)
+            ocr_text = tmp_path / "artifact" / "image_text" / "legal-standard.ocr.txt"
+            task = {
+                "id": "read-image-task",
+                "chat": "懒人科研",
+                "route_decision": {"route_kind": "edit_existing_media", "needs_recent_media": True},
+                "request": "Current coalesced request:\nPlease read and transcribe this image.",
+            }
+
+            with mock.patch.object(worker, "refresh_media_sync_for_task", return_value={"status": "refreshed"}):
+                with mock.patch.object(worker, "resolve_synced_media_from_mirror", return_value=[{"mirror_path": str(source), "score": 99}]):
+                    with mock.patch.object(
+                        worker,
+                        "image_file_metadata",
+                        return_value={"status": "ok", "width": 1200, "height": 800, "format": "PNG", "mode": "RGB"},
+                    ):
+                        with mock.patch.object(
+                            worker,
+                            "ocr_image_file",
+                            return_value={
+                                "status": "ok",
+                                "text_path": str(ocr_text),
+                                "text_preview": "Legal standard image OCR text",
+                                "languages": "eng+chi_sim+chi_tra+jpn",
+                            },
+                        ):
+                            preflight = worker.prepare_media_resolution_preflight(task, tmp_path / "artifact")
+                            task["preflight"] = {"media_resolution": preflight}
+                            tool_context = worker.build_media_resolution_tool_context(task)
+
+            copied = preflight["copied"]
+            manifest_text = Path(preflight["manifest_md"]).read_text(encoding="utf-8")
+
+        self.assertEqual(copied[0]["ocr"]["status"], "ok")
+        self.assertEqual(copied[0]["image_metadata"]["width"], 1200)
+        self.assertIn("OCR text:", tool_context)
+        self.assertIn("Legal standard image OCR text", tool_context)
+        self.assertIn("OCR preview", manifest_text)
+
+    def test_gui_cache_probe_clicks_visible_image_when_image_source_is_missing(self) -> None:
+        worker = load_worker()
+        completed = subprocess.CompletedProcess(args=["wechat_chat_sync_loop.py"], returncode=0, stdout="opened", stderr="")
+        with tempfile.TemporaryDirectory() as tmp:
+            task = {
+                "id": "image-cache-click",
+                "chat": "懒人科研",
+                "source": {"local_type": 3},
+                "route_decision": {"route_kind": "edit_existing_media", "needs_recent_media": True},
+                "request": "Current coalesced request:\nRead the image I sent.",
+            }
+            with mock.patch.object(worker.subprocess, "run", return_value=completed):
+                with mock.patch.object(worker, "click_visible_media_for_cache", return_value={"status": "ok", "clicks": [{"x": 510, "y": 430}]}):
+                    payload = worker.materialize_chat_for_media_cache(task, Path(tmp) / "artifact")
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["image_click_probe"]["status"], "ok")
+        self.assertEqual(payload["image_click_probe"]["clicks"][0]["x"], 510)
+
+    def test_media_resolution_clicks_gui_when_only_thumbnail_image_is_cached(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            thumb = tmp_path / "mirror" / "thumb.jpg"
+            original = tmp_path / "mirror" / "original.jpg"
+            thumb.parent.mkdir()
+            thumb.write_bytes(b"thumb")
+            original.write_bytes(b"original" * 10000)
+            task = {
+                "id": "thumbnail-needs-cache-probe",
+                "chat": "鏈接",
+                "source": {"local_type": 3},
+                "route_decision": {"route_kind": "edit_existing_media", "needs_recent_media": True},
+                "request": "Current coalesced request:\nRead this image.",
+            }
+
+            def fake_metadata(path: Path) -> dict:
+                if "thumb" in path.name:
+                    return {"status": "ok", "width": 160, "height": 120, "format": "JPEG", "mode": "RGB"}
+                return {"status": "ok", "width": 900, "height": 700, "format": "JPEG", "mode": "RGB"}
+
+            with mock.patch.object(worker, "refresh_media_sync_for_task", side_effect=[{"status": "first"}, {"status": "second"}]):
+                with mock.patch.object(
+                    worker,
+                    "resolve_synced_media_from_mirror",
+                    side_effect=[
+                        [{"mirror_path": str(thumb), "suffix": ".jpg", "score": 80}],
+                        [{"mirror_path": str(original), "suffix": ".jpg", "score": 140}],
+                    ],
+                ):
+                    with mock.patch.object(worker, "image_file_metadata", side_effect=fake_metadata):
+                        with mock.patch.object(worker, "ocr_image_file", return_value={"status": "empty", "text_path": "", "text_preview": ""}):
+                            with mock.patch.object(worker, "materialize_chat_for_media_cache", return_value={"status": "ok", "output_dir": str(tmp_path / "gui")}):
+                                preflight = worker.prepare_media_resolution_preflight(task, tmp_path / "artifact")
+
+        self.assertEqual(preflight["gui_cache_probe"]["status"], "ok")
+        self.assertIn("cached_image_too_small", preflight["gui_cache_probe"]["reason"])
+        self.assertEqual(Path(preflight["copied"][0]["task_copy_path"]).name, "original.jpg")
+
     def test_file_intake_result_does_not_auto_attach_saved_copy(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

@@ -82,8 +82,15 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   containers; `.dat` is kept only as low-priority evidence. If the first mirror
   lookup has no candidates, the preflight may dry-open the exact source chat
   through `wechat_chat_sync_loop.py` so the official WeChat client materializes
-  the media cache, then run media sync a second time before declaring the source
-  missing.
+  the media cache, click likely visible image bubbles to force preview/download
+  caching when the source is an image, then run media sync a second time before
+  declaring the source missing. Raster images copied to `source_media/` are
+  probed with Pillow and OCRed with local Tesseract (`eng+chi_sim+chi_tra+jpn`
+  when available). The OCR transcript is written under
+  `output/wechat_worker/<task-id>/image_text/`, added to the manifest, and
+  injected into the worker prompt as evidence for image-reading tasks. If WeChat
+  exposes only a broken or tiny cached image, the GUI probe also saves visible
+  screenshot crops as `visible_wechat_image_fallback` candidates.
 - Bare file or image uploads with no explicit instruction are still work: route
   them to `file_intake`, sync/copy the exact source into
   `output/wechat_worker/<task-id>/intake/`, record metadata and checksum, and
@@ -506,8 +513,13 @@ Missing image/video/file:
 - run media sync for the exact chat;
 - inspect `media_resolution_manifest.md` in the task artifact directory and use
   any listed `task_copy_path` before reporting missing media;
-- ensure the user opened/downloaded the source in WeChat if the client has not
-  cached it;
+- if the media row exists but no file is cached, let the preflight dry-open the
+  exact chat and, for images, click the visible bubble once so WeChat caches the
+  preview/original before rerunning sync;
+- for image transcription, use the manifest `OCR text` path and preview first;
+  if OCR is empty, inspect the copied image itself before saying no readable
+  text was found; visible GUI crops are valid fallback source media when the
+  original WeChat cache file is broken;
 - fail source-limited instead of borrowing nearby files.
 
 WeChat locked:

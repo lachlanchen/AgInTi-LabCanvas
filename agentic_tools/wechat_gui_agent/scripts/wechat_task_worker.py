@@ -160,6 +160,7 @@ DEFAULT_MAX_OUTBOUND_BYTES = 100 * 1024 * 1024
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 AUDIO_SUFFIXES = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".amr", ".opus"}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".svg"}
+OCR_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 RAW_WECHAT_MEDIA_SUFFIXES = {".dat"}
 PREFERRED_MEDIA_SUFFIXES = (
     IMAGE_SUFFIXES
@@ -2842,10 +2843,19 @@ def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path)
     candidates = resolve_synced_media_from_mirror(task, limit=12)
     gui_cache_probe: dict[str, Any] = {}
     second_refresh: dict[str, Any] = {}
-    if not candidates and should_probe_gui_media_cache(task):
+    gui_probe_reason = media_gui_cache_probe_reason(task, candidates)
+    if gui_probe_reason and should_probe_gui_media_cache(task):
         gui_cache_probe = materialize_chat_for_media_cache(task, artifact_dir)
+        gui_cache_probe["reason"] = gui_probe_reason
         second_refresh = refresh_media_sync_for_task(task)
         candidates = resolve_synced_media_from_mirror(task, limit=12)
+        crop_candidates = gui_probe_image_crop_candidates(task, candidates, gui_cache_probe)
+        if crop_candidates:
+            candidates = sorted(
+                candidates + crop_candidates,
+                key=lambda item: (float(item.get("score") or 0), float(item.get("source_mtime") or 0), int(item.get("size_bytes") or 0)),
+                reverse=True,
+            )
     source_dir = artifact_dir / "source_media"
     copied: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
@@ -2872,6 +2882,7 @@ def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path)
                 "sha256": sha256_file(target),
             }
         )
+    enrich_media_resolution_copies_with_image_read(copied, artifact_dir)
     manifest = {
         "task_id": task.get("id"),
         "chat": task.get("chat"),
@@ -2907,6 +2918,44 @@ def should_probe_gui_media_cache(task: dict[str, Any]) -> bool:
     if str(route.get("route_kind") or "") in {"file_intake"}:
         return False
     return should_prepare_media_resolution(task)
+
+
+def media_gui_cache_probe_reason(task: dict[str, Any], candidates: list[dict[str, Any]]) -> str:
+    if not candidates:
+        return "no_candidates"
+    if not should_click_probe_gui_media_cache(task):
+        return ""
+    if os.environ.get("WECHAT_WORKER_DISABLE_LOW_QUALITY_IMAGE_CACHE_PROBE"):
+        return ""
+    image_candidates = [
+        item for item in candidates
+        if str(item.get("suffix") or Path(str(item.get("mirror_path") or "")).suffix).lower() in OCR_IMAGE_SUFFIXES
+    ]
+    if not image_candidates:
+        return "image_source_without_image_candidate"
+    try:
+        min_width = int(os.environ.get("WECHAT_WORKER_MIN_CACHED_IMAGE_WIDTH", "320"))
+        min_height = int(os.environ.get("WECHAT_WORKER_MIN_CACHED_IMAGE_HEIGHT", "320"))
+        min_bytes = int(os.environ.get("WECHAT_WORKER_MIN_CACHED_IMAGE_BYTES", "30000"))
+    except ValueError:
+        min_width, min_height, min_bytes = 320, 320, 30000
+    best_reason = "only_thumbnail_or_tiny_image_candidates"
+    for item in image_candidates[:8]:
+        path = Path(str(item.get("mirror_path") or "")).expanduser()
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        metadata = image_file_metadata(path)
+        if metadata.get("status") == "ok":
+            width = int(metadata.get("width") or 0)
+            height = int(metadata.get("height") or 0)
+            if width >= min_width and height >= min_height and size >= min_bytes:
+                return ""
+            best_reason = f"cached_image_too_small:{width}x{height}:{size}"
+        elif size >= min_bytes:
+            return ""
+    return best_reason
 
 
 def materialize_chat_for_media_cache(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
@@ -2949,7 +2998,7 @@ def materialize_chat_for_media_cache(task: dict[str, Any], artifact_dir: Path) -
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return {"status": "error", "error": str(exc)[:500], "command": redact_command(command)}
-    return {
+    payload = {
         "status": "ok" if proc.returncode == 0 else "failed",
         "returncode": proc.returncode,
         "command": redact_command(command),
@@ -2957,6 +3006,432 @@ def materialize_chat_for_media_cache(task: dict[str, Any], artifact_dir: Path) -
         "stdout": collapse_context_text(proc.stdout, max_len=1000),
         "stderr": collapse_context_text(proc.stderr, max_len=1000) if proc.stderr.strip() else "",
     }
+    if proc.returncode == 0 and should_click_probe_gui_media_cache(task):
+        payload["image_click_probe"] = click_visible_media_for_cache(task, output_dir)
+    return payload
+
+
+def should_click_probe_gui_media_cache(task: dict[str, Any]) -> bool:
+    if os.environ.get("WECHAT_WORKER_DISABLE_GUI_MEDIA_CLICK_PROBE"):
+        return False
+    text = task_focus_text(task).lower()
+    image_markers = (
+        "this image",
+        "this photo",
+        "this picture",
+        "screenshot",
+        "image i sent",
+        "photo i sent",
+        "read the image",
+        "transcribe the image",
+        "这个图片",
+        "這個圖片",
+        "这张图",
+        "這張圖",
+        "这张图片",
+        "图片",
+        "照片",
+        "截图",
+        "截圖",
+        "读图",
+        "识图",
+    )
+    if any(marker in text for marker in image_markers):
+        return True
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    if str(source.get("kind") or "").lower() == "image" or int_or_none(source.get("local_type")) == 3:
+        return True
+    for row in task.get("context") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("kind") or "").lower() == "image" or int_or_none(row.get("local_type")) == 3:
+            return True
+        if "<img" in str(row.get("content") or "").lower():
+            return True
+    return False
+
+
+def click_visible_media_for_cache(task: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+    """Click recent visible image bubbles so the official client downloads/caches them.
+
+    This is deliberately narrow: it runs only after the exact chat was opened by
+    the guarded chat-sync path and only when the first source-scoped mirror pass
+    found no local media. It never sends text and it closes preview overlays with
+    Escape after each click.
+    """
+    if shutil.which("xdotool") is None:
+        return {"status": "skipped", "reason": "xdotool_missing"}
+    display = os.environ.get("WECHAT_WORKER_DISPLAY") or os.environ.get("WECHAT_DISPLAY") or ":97"
+    env = os.environ.copy()
+    env["DISPLAY"] = display
+    env.setdefault("XAUTHORITY", "")
+    try:
+        lock = acquire_gui_send_lock_or_raise()
+    except RuntimeError as exc:
+        return {"status": "skipped", "reason": str(exc)[:300]}
+    try:
+        window = find_probe_wechat_window(env)
+        if not window:
+            return {"status": "skipped", "reason": f"no_visible_wechat_window:{display}"}
+        wid, wx, wy, width, height = window
+        focus_probe_window(env, wid)
+        screenshots: list[str] = []
+        before = screenshot_probe_window(env, wid, output_dir / "before-click-probe.png")
+        if before:
+            screenshots.append(before)
+        clicked: list[dict[str, int]] = []
+        candidate_crops: list[str] = []
+        max_clicks = int(os.environ.get("WECHAT_IMAGE_CACHE_CLICK_MAX", "5"))
+        click_repeat = max(1, int(os.environ.get("WECHAT_IMAGE_CACHE_CLICK_REPEAT", "2")))
+        wait_seconds = float(os.environ.get("WECHAT_IMAGE_CACHE_CLICK_WAIT_SECONDS", "1.2"))
+        for index, (x, y) in enumerate(default_image_cache_clicks()[:max_clicks], start=1):
+            if x < 0 or y < 0 or x > width or y > height:
+                continue
+            crop_source = before or (screenshots[-1] if screenshots else "")
+            if crop_source:
+                crop = crop_probe_region(Path(crop_source), x, y, output_dir / f"candidate-crop-{index}.png")
+                if crop:
+                    candidate_crops.append(crop)
+            run_probe_command(
+                [
+                    "xdotool",
+                    "mousemove",
+                    str(wx + x),
+                    str(wy + y),
+                    "click",
+                    "--repeat",
+                    str(click_repeat),
+                    "--delay",
+                    "80",
+                    "1",
+                ],
+                env=env,
+            )
+            clicked.append({"x": x, "y": y})
+            time.sleep(wait_seconds)
+            shot = screenshot_probe_window(env, wid, output_dir / f"after-click-{index}.png")
+            if shot:
+                screenshots.append(shot)
+            run_probe_command(["xdotool", "key", "--clearmodifiers", "Escape"], env=env, check=False)
+            time.sleep(0.35)
+        return {
+            "status": "ok" if clicked else "skipped",
+            "display": display,
+            "window": {"id": wid, "x": wx, "y": wy, "width": width, "height": height},
+            "clicks": clicked,
+            "screenshots": screenshots,
+            "candidate_crops": candidate_crops,
+            "reason": "" if clicked else "no_valid_click_points",
+        }
+    except Exception as exc:  # GUI probing is best-effort; source sync remains authoritative.
+        return {"status": "error", "display": display, "error": str(exc)[:500]}
+    finally:
+        release_gui_send_lock(lock)
+
+
+def default_image_cache_clicks() -> list[tuple[int, int]]:
+    parsed = parse_probe_clicks(os.environ.get("WECHAT_IMAGE_CACHE_CLICK_POINTS", ""))
+    if parsed:
+        return parsed
+    return [
+        (820, 430),  # common center of right-side image bubble
+        (820, 360),
+        (820, 520),
+        (510, 430),  # common center of newest visible received image bubble
+        (610, 430),
+        (760, 430),
+        (510, 360),
+        (610, 360),
+        (760, 360),
+        (510, 520),
+        (610, 520),
+        (760, 520),
+    ]
+
+
+def parse_probe_clicks(raw: str) -> list[tuple[int, int]]:
+    clicks: list[tuple[int, int]] = []
+    for item in str(raw or "").split(";"):
+        parts = [part.strip() for part in item.split(",")]
+        if len(parts) != 2:
+            continue
+        try:
+            click = (int(parts[0]), int(parts[1]))
+        except ValueError:
+            continue
+        if click not in clicks:
+            clicks.append(click)
+    return clicks
+
+
+def find_probe_wechat_window(env: dict[str, str]) -> tuple[str, int, int, int, int] | None:
+    proc = run_probe_command(["xdotool", "search", "--onlyvisible", "--class", "wechat"], env=env, check=False)
+    best: tuple[str, int, int, int, int] | None = None
+    best_area = 0
+    for wid in proc.stdout.split():
+        geom = run_probe_command(["xdotool", "getwindowgeometry", "--shell", wid], env=env, check=False).stdout
+        values = dict(line.split("=", 1) for line in geom.splitlines() if "=" in line)
+        try:
+            x, y, width, height = (int(values.get(key, "0")) for key in ("X", "Y", "WIDTH", "HEIGHT"))
+        except ValueError:
+            continue
+        area = width * height
+        if area > best_area:
+            best = (wid, x, y, width, height)
+            best_area = area
+    return best
+
+
+def focus_probe_window(env: dict[str, str], wid: str) -> None:
+    proc = run_probe_command(["xdotool", "windowactivate", "--sync", wid], env=env, check=False)
+    if proc.returncode != 0:
+        proc = run_probe_command(["xdotool", "windowfocus", wid], env=env, check=False)
+        if proc.returncode != 0:
+            stderr = proc.stderr if isinstance(proc.stderr, str) else str(proc.stderr or "")
+            raise RuntimeError(f"Could not focus WeChat window {wid}: {stderr.strip()[:300]}")
+    time.sleep(0.2)
+
+
+def screenshot_probe_window(env: dict[str, str], wid: str, target: Path) -> str:
+    if shutil.which("import") is None:
+        return ""
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        proc = run_probe_command(["import", "-window", wid, str(target)], env=env, check=False)
+    except RuntimeError:
+        return ""
+    return str(target) if proc.returncode == 0 and target.is_file() else ""
+
+
+def crop_probe_region(source: Path, x: int, y: int, target: Path) -> str:
+    try:
+        from PIL import Image
+    except Exception:
+        return ""
+    try:
+        with Image.open(source) as image:
+            width, height = image.size
+            crop_size = int(os.environ.get("WECHAT_IMAGE_CACHE_CROP_SIZE", "360"))
+            half = max(80, crop_size // 2)
+            left = max(0, x - half)
+            top = max(0, y - half)
+            right = min(width, x + half)
+            bottom = min(height, y + half)
+            if right - left < 80 or bottom - top < 80:
+                return ""
+            target.parent.mkdir(parents=True, exist_ok=True)
+            image.crop((left, top, right, bottom)).save(target, format="PNG")
+            return str(target) if target.is_file() else ""
+    except Exception:
+        return ""
+
+
+def gui_probe_image_crop_candidates(
+    task: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    gui_cache_probe: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not gui_cache_probe or not should_click_probe_gui_media_cache(task):
+        return []
+    if not media_gui_cache_probe_reason(task, candidates):
+        return []
+    click_probe = gui_cache_probe.get("image_click_probe") if isinstance(gui_cache_probe.get("image_click_probe"), dict) else {}
+    crop_paths = [Path(str(path)).expanduser() for path in click_probe.get("candidate_crops") or []]
+    crop_candidates: list[dict[str, Any]] = []
+    now = time.time()
+    for index, path in enumerate(crop_paths, start=1):
+        if not path.is_file():
+            continue
+        metadata = image_file_metadata(path)
+        if metadata.get("status") != "ok":
+            continue
+        width = int(metadata.get("width") or 0)
+        height = int(metadata.get("height") or 0)
+        if width < 120 or height < 120:
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        crop_candidates.append(
+            {
+                "source_path": str(path),
+                "mirror_path": str(path),
+                "suffix": ".png",
+                "size_bytes": size,
+                "source_mtime": now - index,
+                "status": "gui-crop",
+                "matched_by": "gui-cache-probe-crop",
+                "metadata": {"image_metadata": metadata, "generated_at": now},
+                "score": 220.0 - index,
+                "match_reasons": ["gui_cache_probe_crop", f"visible_wechat_image_fallback:{index}"],
+            }
+        )
+    return crop_candidates
+
+
+def run_probe_command(
+    command: list[str],
+    *,
+    env: dict[str, str],
+    check: bool = True,
+) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            command,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=check,
+            timeout=float(os.environ.get("WECHAT_GUI_COMMAND_TIMEOUT", "8")),
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise RuntimeError(f"{' '.join(command)} failed: {detail[:500]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"{' '.join(command)} timed out after {exc.timeout}s") from exc
+
+
+def enrich_media_resolution_copies_with_image_read(copied: list[dict[str, Any]], artifact_dir: Path) -> None:
+    for item in copied:
+        if not isinstance(item, dict):
+            continue
+        path = Path(str(item.get("task_copy_path") or "")).expanduser()
+        suffix = str(item.get("suffix") or path.suffix).lower()
+        if suffix not in OCR_IMAGE_SUFFIXES:
+            continue
+        metadata = image_file_metadata(path)
+        if metadata:
+            item["image_metadata"] = metadata
+        if metadata.get("status") not in {"ok", "metadata_unavailable"}:
+            item["ocr"] = {"status": "skipped", "reason": metadata.get("status") or "image_unreadable"}
+            continue
+        item["ocr"] = ocr_image_file(path, artifact_dir / "image_text")
+
+
+def image_file_metadata(path: Path) -> dict[str, Any]:
+    try:
+        from PIL import Image
+    except Exception:
+        return {"status": "metadata_unavailable", "reason": "pillow_missing"}
+    try:
+        with Image.open(path) as image:
+            return {
+                "status": "ok",
+                "width": int(image.width),
+                "height": int(image.height),
+                "mode": str(image.mode),
+                "format": str(image.format or ""),
+            }
+    except Exception as exc:
+        return {"status": "unreadable_image", "error": str(exc)[:240]}
+
+
+def ocr_image_file(path: Path, output_dir: Path) -> dict[str, Any]:
+    if os.environ.get("WECHAT_WORKER_DISABLE_IMAGE_OCR"):
+        return {"status": "skipped", "reason": "disabled"}
+    if shutil.which("tesseract") is None:
+        return {"status": "skipped", "reason": "tesseract_missing"}
+    languages = tesseract_language_string()
+    if not languages:
+        return {"status": "skipped", "reason": "no_tesseract_languages"}
+    output_dir.mkdir(parents=True, exist_ok=True)
+    text_path = unique_intake_target(output_dir, f"{path.stem}.ocr.txt", index=1)
+    ocr_input = prepare_ocr_input_image(path, output_dir)
+    psms = [os.environ.get("WECHAT_IMAGE_OCR_PSM", "6"), "11"]
+    seen: set[str] = set()
+    attempts: list[dict[str, Any]] = []
+    timeout = float(os.environ.get("WECHAT_IMAGE_OCR_TIMEOUT", "30"))
+    for psm in psms:
+        if not psm or psm in seen:
+            continue
+        seen.add(psm)
+        command = ["tesseract", str(ocr_input), "stdout", "-l", languages, "--psm", psm]
+        try:
+            proc = subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout)
+        except (OSError, subprocess.SubprocessError) as exc:
+            attempts.append({"psm": psm, "status": "error", "error": str(exc)[:300]})
+            continue
+        text = normalize_ocr_text(proc.stdout)
+        attempts.append(
+            {
+                "psm": psm,
+                "returncode": proc.returncode,
+                "text_chars": len(text),
+                "stderr": collapse_context_text(proc.stderr, max_len=300) if proc.stderr.strip() else "",
+            }
+        )
+        if text:
+            text_path.write_text(text + "\n", encoding="utf-8")
+            return {
+                "status": "ok",
+                "text_path": str(text_path),
+                "text_preview": collapse_context_text(text, max_len=500),
+                "languages": languages,
+                "psm": psm,
+                "ocr_input_path": str(ocr_input),
+                "attempts": attempts,
+            }
+    text_path.write_text("", encoding="utf-8")
+    return {
+        "status": "empty",
+        "text_path": str(text_path),
+        "text_preview": "",
+        "languages": languages,
+        "ocr_input_path": str(ocr_input),
+        "attempts": attempts,
+    }
+
+
+def prepare_ocr_input_image(path: Path, output_dir: Path) -> Path:
+    """Return a Tesseract-friendly image, repairing partial WeChat JPEGs when possible."""
+    try:
+        from PIL import Image, ImageFile, ImageOps
+    except Exception:
+        return path
+    try:
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        with Image.open(path) as image:
+            image = ImageOps.exif_transpose(image)
+            if image.mode not in {"RGB", "L"}:
+                image = image.convert("RGB")
+            target = unique_intake_target(output_dir, f"{path.stem}.ocr-source.png", index=1)
+            image.save(target, format="PNG")
+            return target if target.is_file() else path
+    except Exception:
+        return path
+
+
+def normalize_ocr_text(value: str) -> str:
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in str(value or "").splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
+def tesseract_language_string() -> str:
+    env_value = os.environ.get("WECHAT_IMAGE_OCR_LANGS")
+    if env_value:
+        return env_value
+    available = tesseract_available_languages()
+    priority = ["eng", "chi_sim", "chi_tra", "jpn"]
+    selected = [lang for lang in priority if lang in available]
+    if selected:
+        return "+".join(selected)
+    fallback = [lang for lang in available if lang != "osd"]
+    return fallback[0] if fallback else ""
+
+
+def tesseract_available_languages() -> set[str]:
+    try:
+        proc = subprocess.run(["tesseract", "--list-langs"], capture_output=True, text=True, check=False, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    languages: set[str] = set()
+    for line in proc.stdout.splitlines():
+        item = line.strip()
+        if not item or item.startswith("List of available"):
+            continue
+        languages.add(item)
+    return languages
 
 
 def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
@@ -3322,6 +3797,17 @@ def media_resolution_markdown(manifest: dict[str, Any]) -> str:
                 f"- `{item.get('task_copy_path')}` from `{item.get('mirror_path')}` "
                 f"score={item.get('score')} reasons={', '.join(str(reason) for reason in item.get('match_reasons') or [])}"
             )
+            metadata = item.get("image_metadata") if isinstance(item.get("image_metadata"), dict) else {}
+            if metadata:
+                dims = ""
+                if metadata.get("width") and metadata.get("height"):
+                    dims = f" {metadata.get('width')}x{metadata.get('height')}"
+                lines.append(f"  - Image metadata: `{metadata.get('status')}`{dims} {metadata.get('format') or ''}".rstrip())
+            ocr = item.get("ocr") if isinstance(item.get("ocr"), dict) else {}
+            if ocr:
+                lines.append(f"  - OCR: `{ocr.get('status')}` `{ocr.get('text_path') or ''}`")
+                if ocr.get("text_preview"):
+                    lines.append(f"  - OCR preview: {collapse_context_text(ocr.get('text_preview'), max_len=240)}")
     else:
         lines.append("- none")
     skipped = manifest.get("skipped") if isinstance(manifest.get("skipped"), list) else []
@@ -3341,6 +3827,9 @@ def media_resolution_markdown(manifest: dict[str, Any]) -> str:
         )
         if gui_probe.get("stderr"):
             lines.append(f"- Stderr: `{collapse_context_text(gui_probe.get('stderr'), max_len=240)}`")
+        click_probe = gui_probe.get("image_click_probe") if isinstance(gui_probe.get("image_click_probe"), dict) else {}
+        if click_probe:
+            lines.append(f"- Image click probe: `{click_probe.get('status') or ''}` clicks={len(click_probe.get('clicks') or [])}")
     second_refresh = manifest.get("second_refresh") if isinstance(manifest.get("second_refresh"), dict) else {}
     if second_refresh:
         lines.extend(
@@ -6873,8 +7362,21 @@ def build_media_resolution_tool_context(task: dict[str, Any]) -> str:
             f"suffix={item.get('suffix')} bytes={item.get('size_bytes')} "
             f"score={item.get('score')} reasons={','.join(str(reason) for reason in item.get('match_reasons') or [])}"
         )
+        metadata = item.get("image_metadata") if isinstance(item.get("image_metadata"), dict) else {}
+        if metadata.get("status") == "ok":
+            lines.append(
+                f"    image={metadata.get('width')}x{metadata.get('height')} "
+                f"format={metadata.get('format') or ''}"
+            )
+        ocr = item.get("ocr") if isinstance(item.get("ocr"), dict) else {}
+        if ocr:
+            if ocr.get("text_path"):
+                lines.append(f"    OCR text: `{ocr.get('text_path')}` status={ocr.get('status')}")
+            if ocr.get("text_preview"):
+                lines.append(f"    OCR preview: {collapse_context_text(ocr.get('text_preview'), max_len=360)}")
     if media.get("manifest_md") or media.get("manifest_json"):
         lines.append(f"  - Manifest: `{media.get('manifest_md') or media.get('manifest_json')}`")
+    lines.append("  - For image-reading tasks, use the OCR text path/preview above first, then inspect the image file itself if more visual context is needed.")
     lines.append("  - Do not say the image/file is missing if one of these files exists and matches the requested source.")
     return "\n".join(lines) + "\n"
 
