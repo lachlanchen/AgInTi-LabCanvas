@@ -25,6 +25,20 @@ DEFAULT_DISPLAY = ":97"
 DEFAULT_VNC_PORT = 5917
 DEFAULT_NOVNC_PORT = 6107
 CODEX_SESSION_KEY_RE = re.compile(r"^v2:[0-9a-z_.-]+-[0-9a-f]{12}:[0-9a-z_.-]+$")
+QUEUE_ACTIVE_STATUSES = {
+    "pending",
+    "in_progress",
+    "generation_waiting",
+    "generation_poststage_pending",
+    "publish_poststage_pending",
+    "send_retrying",
+}
+QUEUE_DELIVERY_BLOCKED_STATUSES = {
+    "send_deferred_artifact",
+    "send_deferred_locked",
+}
+QUEUE_HUMAN_BLOCKED_STATUSES = {"waiting_confirmation"}
+QUEUE_FAILED_STATUSES = {"worker_failed", "send_failed", "generation_stale_paused"}
 
 
 def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -394,6 +408,13 @@ def cmd_health(args: argparse.Namespace) -> int:
     summary = f"wechat health: {payload['ready_groups']}/{payload['group_count']} ready"
     if payload.get("stale_source_groups"):
         summary += f", {payload['stale_source_groups']} stale source"
+    queue_attention = (payload.get("queue") or {}).get("attention") if isinstance(payload.get("queue"), dict) else None
+    if isinstance(queue_attention, dict) and queue_attention.get("needs_attention"):
+        counts = queue_attention.get("counts") or {}
+        summary += (
+            f", queue attention blocked={counts.get('delivery_blocked', 0)}"
+            f" waiting={counts.get('human_blocked', 0)} failed={counts.get('failed', 0)}"
+        )
     if not payload["ok"]:
         summary += " (attention needed)"
     print_payload(payload, args.json, summary)
@@ -503,6 +524,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "nontrivial worker tasks resume the exact chat's Codex worker session",
             "dead worker PID claims are reclaimed immediately after restart",
             "GUI sender alarm is aligned with the worker send timeout",
+            "send_retrying rows are not reclaimed before the active GUI sender timeout plus grace",
             "chat-sync dry-open alarm is long enough to refresh inactive groups",
             "chat-sync retryable failures back off per chat without blocking other groups",
             "plain story/script requests route to the same worker capability set in research and device chats",
@@ -565,6 +587,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "gui_send_alarm_aligned",
             "test": worker_prefix + "test_wechat_send_env_extends_gui_alarm_to_worker_timeout",
+        },
+        {
+            "id": "send_retry_stale_after_sender_timeout",
+            "test": worker_prefix + "test_send_retrying_waits_longer_than_sender_timeout",
         },
         {
             "id": "chat_sync_gui_alarm_aligned",
@@ -912,7 +938,19 @@ def cmd_worker(args: argparse.Namespace) -> int:
 
 def cmd_queue(args: argparse.Namespace) -> int:
     payload = queue_summary(args.queue, limit=args.limit)
-    print_payload(payload, args.json, f"queue: pending={payload['counts'].get('pending', 0)} total={payload['total']}")
+    attention = payload.get("attention") or {}
+    attention_counts = attention.get("counts") or {}
+    summary = (
+        f"queue: pending={payload['counts'].get('pending', 0)}"
+        f" active={attention_counts.get('active', 0)}"
+        f" blocked={attention_counts.get('delivery_blocked', 0)}"
+        f" waiting={attention_counts.get('human_blocked', 0)}"
+        f" failed={attention_counts.get('failed', 0)}"
+        f" total={payload['total']}"
+    )
+    if attention.get("needs_attention"):
+        summary += " (attention needed)"
+    print_payload(payload, args.json, summary)
     return 0
 
 
@@ -1208,26 +1246,261 @@ def update_waiting_task(path: Path, task_id: str | None, *, decision: str, note:
     return task
 
 
+def parse_queue_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value))
+        except (OSError, OverflowError, ValueError):
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        try:
+            return datetime.fromtimestamp(float(text))
+        except (OSError, OverflowError, ValueError):
+            return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
+
+
+def queue_task_time(task: dict[str, Any]) -> datetime | None:
+    for key in (
+        "updated_at",
+        "send_retry_claimed_at",
+        "last_attempt_at",
+        "last_checked_at",
+        "claimed_at",
+        "created_at",
+    ):
+        parsed = parse_queue_datetime(task.get(key))
+        if parsed:
+            return parsed
+    return None
+
+
+def queue_task_age_seconds(task: dict[str, Any], now: datetime) -> int | None:
+    parsed = queue_task_time(task)
+    if not parsed:
+        return None
+    return max(0, int((now - parsed).total_seconds()))
+
+
+def queue_send_retry_timeout_seconds() -> int:
+    raw_timeout = os.environ.get("WECHAT_WORKER_STALE_SEND_RETRY_SECONDS")
+    if raw_timeout is not None:
+        try:
+            return max(0, int(raw_timeout))
+        except ValueError:
+            return 0
+    try:
+        send_timeout = int(os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"))
+    except ValueError:
+        send_timeout = 120
+    return max(send_timeout + 30, 150)
+
+
+def queue_status_category(status: str) -> str:
+    if status in QUEUE_DELIVERY_BLOCKED_STATUSES:
+        return "delivery_blocked"
+    if status in QUEUE_HUMAN_BLOCKED_STATUSES:
+        return "human_blocked"
+    if status in QUEUE_FAILED_STATUSES:
+        return "failed"
+    if status in QUEUE_ACTIVE_STATUSES:
+        return "active"
+    if status in {"done", "canceled", "canceled_duplicate", "canceled_superseded"}:
+        return "terminal"
+    return "unknown"
+
+
+def queue_stale_reason(task: dict[str, Any], now: datetime) -> str:
+    status = str(task.get("status") or "unknown")
+    age = queue_task_age_seconds(task, now)
+    if status == "send_retrying":
+        timeout = queue_send_retry_timeout_seconds()
+        claimed = parse_queue_datetime(task.get("send_retry_claimed_at"))
+        if timeout > 0 and (not claimed or (now - claimed).total_seconds() > timeout):
+            return f"send_retrying older than {timeout}s sender grace"
+    if status == "pending" and age is not None and age > 1800:
+        return "pending older than 30m"
+    if status == "in_progress" and age is not None and age > 7200:
+        return "in_progress older than 2h"
+    if status == "generation_waiting":
+        next_poll = parse_queue_datetime(task.get("next_poll_at"))
+        if next_poll and (now - next_poll).total_seconds() > 900:
+            return "generation poll overdue by more than 15m"
+        if not next_poll and age is not None and age > 21600:
+            return "generation_waiting has no next_poll_at and is older than 6h"
+    if status == "generation_poststage_pending":
+        next_poststage = parse_queue_datetime(task.get("next_poststage_at"))
+        if next_poststage and (now - next_poststage).total_seconds() > 900:
+            return "generation poststage overdue by more than 15m"
+    if status == "publish_poststage_pending":
+        next_poststage = parse_queue_datetime(task.get("next_publish_poststage_at"))
+        if next_poststage and (now - next_poststage).total_seconds() > 900:
+            return "publish poststage overdue by more than 15m"
+    return ""
+
+
+def queue_task_brief(task: dict[str, Any], now: datetime) -> dict[str, Any]:
+    status = str(task.get("status") or "unknown")
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    brief: dict[str, Any] = {
+        "id": task.get("id", ""),
+        "chat": task.get("chat", ""),
+        "status": status,
+        "category": queue_status_category(status),
+        "routine": (task.get("routine") or {}).get("id", "") if isinstance(task.get("routine"), dict) else "",
+        "created_at": task.get("created_at", ""),
+        "updated_at": task.get("updated_at", ""),
+        "age_seconds": queue_task_age_seconds(task, now),
+        "request": str(task.get("request") or "")[:240],
+    }
+    reason = str(task.get("send_deferred_reason") or "")
+    if reason:
+        brief["send_deferred_reason"] = reason
+    retry_count = task.get("send_retry_count")
+    if retry_count not in (None, ""):
+        brief["send_retry_count"] = retry_count
+    for key in ("next_poll_at", "next_poststage_at", "next_publish_poststage_at", "waiting_reason"):
+        if task.get(key):
+            brief[key] = task.get(key)
+    files = result.get("files") if isinstance(result, dict) else None
+    if isinstance(files, list):
+        brief["result_file_count"] = len(files)
+    sent_files = task.get("sent_file_paths")
+    if isinstance(sent_files, list):
+        brief["sent_file_count"] = len(sent_files)
+    stale_reason = queue_stale_reason(task, now)
+    if stale_reason:
+        brief["stale_reason"] = stale_reason
+    return brief
+
+
+def queue_attention(tasks: list[dict[str, Any]], *, limit: int = 8, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now()
+    counts = {
+        "active": 0,
+        "delivery_blocked": 0,
+        "human_blocked": 0,
+        "failed": 0,
+        "stale": 0,
+        "unknown": 0,
+    }
+    active: list[dict[str, Any]] = []
+    delivery_blocked: list[dict[str, Any]] = []
+    human_blocked: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    stale: list[dict[str, Any]] = []
+    by_chat: dict[str, dict[str, int]] = {}
+
+    for task in tasks:
+        status = str(task.get("status") or "unknown")
+        category = queue_status_category(status)
+        chat = str(task.get("chat") or "(unknown)")
+        by_chat.setdefault(chat, {"total": 0, "active": 0, "delivery_blocked": 0, "human_blocked": 0, "failed": 0})
+        by_chat[chat]["total"] += 1
+        if category in by_chat[chat]:
+            by_chat[chat][category] += 1
+
+        brief = queue_task_brief(task, now)
+        if category == "active":
+            counts["active"] += 1
+            active.append(brief)
+        elif category == "delivery_blocked":
+            counts["delivery_blocked"] += 1
+            delivery_blocked.append(brief)
+        elif category == "human_blocked":
+            counts["human_blocked"] += 1
+            human_blocked.append(brief)
+        elif category == "failed":
+            counts["failed"] += 1
+            failed.append(brief)
+        elif category == "unknown":
+            counts["unknown"] += 1
+
+        if brief.get("stale_reason"):
+            counts["stale"] += 1
+            stale.append(brief)
+
+    summary = []
+    if counts["delivery_blocked"]:
+        summary.append(f"{counts['delivery_blocked']} task(s) blocked on WeChat/artifact delivery")
+    if counts["human_blocked"]:
+        summary.append(f"{counts['human_blocked']} task(s) waiting for human confirmation")
+    if counts["failed"]:
+        summary.append(f"{counts['failed']} task(s) failed and need repair/reprocess")
+    if counts["stale"]:
+        summary.append(f"{counts['stale']} task(s) stale or overdue")
+    if counts["unknown"]:
+        summary.append(f"{counts['unknown']} task(s) have an unknown status")
+
+    recommended_commands = []
+    if counts["delivery_blocked"]:
+        recommended_commands.extend(
+            [
+                "labcanvas wechat hold status --json",
+                "labcanvas wechat worker once --send",
+                "labcanvas wechat unlock-watchdog once --flush-deferred",
+            ]
+        )
+    if counts["human_blocked"]:
+        recommended_commands.append("labcanvas wechat approve <task_id> --note '<reason>'")
+    if counts["failed"] or counts["stale"]:
+        recommended_commands.extend(
+            [
+                "labcanvas wechat worker reprocess <task_id> '<reason>' --send",
+                "labcanvas wechat selftest --suite all --json",
+            ]
+        )
+
+    needs_attention = bool(counts["delivery_blocked"] or counts["human_blocked"] or counts["failed"] or counts["stale"] or counts["unknown"])
+    return {
+        "ok": not needs_attention,
+        "needs_attention": needs_attention,
+        "counts": counts,
+        "summary": summary,
+        "active": active[-limit:],
+        "delivery_blocked": delivery_blocked[-limit:],
+        "human_blocked": human_blocked[-limit:],
+        "failed": failed[-limit:],
+        "stale": stale[-limit:],
+        "by_chat": by_chat,
+        "recommended_commands": list(dict.fromkeys(recommended_commands)),
+    }
+
+
 def queue_summary(path: Path, *, limit: int = 8) -> dict[str, Any]:
     tasks = read_jsonl(path)
     counts: dict[str, int] = {}
+    now = datetime.now()
     for task in tasks:
         status = str(task.get("status") or "unknown")
         counts[status] = counts.get(status, 0) + 1
     recent = []
     for task in tasks[-limit:]:
-        recent.append(
-            {
-                "id": task.get("id", ""),
-                "chat": task.get("chat", ""),
-                "status": task.get("status", ""),
-                "routine": (task.get("routine") or {}).get("id", "") if isinstance(task.get("routine"), dict) else "",
-                "created_at": task.get("created_at", ""),
-                "completed_at": task.get("completed_at", ""),
-                "request": str(task.get("request") or "")[:240],
-            }
-        )
-    return {"ok": True, "path": str(path), "exists": path.exists(), "total": len(tasks), "counts": counts, "recent": recent}
+        brief = queue_task_brief(task, now)
+        brief["completed_at"] = task.get("completed_at", "")
+        recent.append(brief)
+    return {
+        "ok": True,
+        "path": str(path),
+        "exists": path.exists(),
+        "total": len(tasks),
+        "counts": counts,
+        "recent": recent,
+        "attention": queue_attention(tasks, limit=limit, now=now),
+    }
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -1292,6 +1565,7 @@ def direct_monitor_health() -> dict[str, Any]:
     groups = [direct_config_health(path) for path in configs]
     separation = direct_config_separation_summary(configs)
     backend = external_backend_summary()
+    queue = queue_summary(configured_runtime_paths()["queue"], limit=5)
     caught_up = sum(1 for item in groups if item.get("caught_up"))
     ready = sum(1 for item in groups if item.get("ready"))
     stale = sum(1 for item in groups if item.get("source_stale"))
@@ -1305,6 +1579,7 @@ def direct_monitor_health() -> dict[str, Any]:
         "stale_source_groups": stale,
         "separation": separation,
         "external_backend": backend,
+        "queue": queue,
         "groups": groups,
         "notes": [
             "private chatroom ids, wxids, message-table names, and DB paths are intentionally omitted",

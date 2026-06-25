@@ -365,7 +365,11 @@ Expected signs:
   so the first click lands on the intended row and fallback clicks remain only
   backups;
 - worker loop is alive;
-- no unexpected `pending`, stale `in_progress`, or wrong-chat send errors.
+- `labcanvas wechat queue --json` includes `attention.counts`,
+  `attention.summary`, `attention.by_chat`, and
+  `attention.recommended_commands`;
+- no unexpected `pending`, stale `in_progress`, stale `send_retrying`, or
+  wrong-chat send errors.
 
 ## Recovery Playbooks
 
@@ -382,6 +386,12 @@ not actionable or was filtered. If `source_stale=true`, first restore desktop
 message materialization; Whisper and route logic cannot process rows that never
 entered the decrypted DB. If a task exists, follow its state instead of sending
 a manual duplicate.
+Use the queue attention section first: `delivery_blocked` means the artifact or
+completion exists but WeChat delivery is blocked, `human_blocked` means an
+approval step is required, `failed` means repair/reprocess is needed, and
+`stale` means a queue clock such as `next_poll_at`, `next_poststage_at`, or
+`send_retry_claimed_at` is overdue. Follow `recommended_commands` before
+running ad hoc scripts.
 If the source group has no fresh DB rows even though the user sent a message,
 run or check `wechat_chat_sync_loop.py`: it dry-opens the configured chat with
 the normal title guard and no send action, then the direct monitor can process
@@ -394,6 +404,10 @@ periodically without blocking refresh of the other groups.
 If old send failures contain title-guard OCR noise such as `OCR='3 - oO\n|'`,
 the worker treats it as a retryable `title_guard_blank` blank-pane failure,
 while real wrong-chat titles remain non-retryable.
+`send_retrying` rows must not be reclaimed before the active GUI sender timeout
+plus grace. If a row is stuck, inspect `send_retry_claimed_at` and
+`send_deferred_reason`; do not start a second manual sender while one may still
+own the serialized GUI send lane.
 For live smoke tests, simple messages such as `ping`, `test`, `best`, `在吗`, or
 `测试` are actionable in organizer/link-inbox chats and should return a short
 health acknowledgement or become a deferred outbox task if WeChat is locked.

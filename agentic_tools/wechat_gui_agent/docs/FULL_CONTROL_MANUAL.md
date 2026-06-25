@@ -53,6 +53,9 @@ labcanvas wechat media-sync --chat "<CHAT_NAME>" --auto-source
 The web studio exposes the same backend through `/api/wechat/status` and
 `/api/wechat/action`. The UI can start the stack, open noVNC, process one worker
 task, approve/reject the newest waiting task, and send a short explicit message.
+Use `labcanvas wechat queue --json` as the first task debugger. Its `attention`
+section separates active work from delivery blockers, human confirmations,
+stale waits, and failed tasks, then suggests the next safe CLI command.
 Do not add browser-only behavior that bypasses the CLI scripts.
 
 ## Runtime Sessions

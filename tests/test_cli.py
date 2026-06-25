@@ -1,6 +1,7 @@
 import io
 import json
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta
 import tempfile
 from pathlib import Path
 import unittest
@@ -169,6 +170,83 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["counts"]["pending"], 1)
         self.assertEqual(payload["recent"][0]["request"], "render a device")
+        self.assertEqual(payload["attention"]["counts"]["active"], 1)
+        self.assertFalse(payload["attention"]["needs_attention"])
+
+    def test_wechat_queue_json_reports_attention_categories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            stale_claim = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
+            overdue_poll = (datetime.now() - timedelta(minutes=20)).timestamp()
+            queue.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "id": "deliver-1",
+                                "chat": "device",
+                                "request": "send the rendered video",
+                                "status": "send_deferred_artifact",
+                                "send_deferred_reason": "required_artifact_delivery",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "confirm-1",
+                                "chat": "research",
+                                "request": "publish to public platforms",
+                                "status": "waiting_confirmation",
+                                "waiting_reason": "public_publish",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "retry-1",
+                                "chat": "device",
+                                "request": "final confirmation",
+                                "status": "send_retrying",
+                                "send_retry_claimed_at": stale_claim,
+                                "send_retry_count": 2,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "wait-1",
+                                "chat": "device",
+                                "request": "continue generated video",
+                                "status": "generation_waiting",
+                                "next_poll_at": overdue_poll,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "old-duplicate",
+                                "chat": "device",
+                                "request": "superseded duplicate",
+                                "status": "canceled_duplicate",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(["wechat", "queue", "--queue", str(queue), "--json"])
+
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(code, 0)
+        attention = payload["attention"]
+        self.assertTrue(attention["needs_attention"])
+        self.assertEqual(attention["counts"]["delivery_blocked"], 1)
+        self.assertEqual(attention["counts"]["human_blocked"], 1)
+        self.assertEqual(attention["counts"]["stale"], 2)
+        self.assertEqual(attention["counts"]["unknown"], 0)
+        self.assertEqual(attention["by_chat"]["device"]["total"], 4)
+        self.assertTrue(any("worker once --send" in command for command in attention["recommended_commands"]))
 
     def test_wechat_browser_assist_dry_run_json(self):
         stdout = io.StringIO()
