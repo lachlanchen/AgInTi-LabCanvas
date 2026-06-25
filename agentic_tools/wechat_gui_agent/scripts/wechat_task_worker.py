@@ -257,6 +257,8 @@ def reprocess_task(queue: Path, task_id: str, *, reason: str = "") -> dict[str, 
         "execution_contract",
         "skipped_files",
         "send_errors",
+        "file_send_errors",
+        "unsent_saved_files",
         "last_send_attempt_at",
         "send_deferred_reason",
         "sent_file_paths",
@@ -569,6 +571,8 @@ def generated_video_has_file(result: dict[str, Any]) -> bool:
 
 def result_requires_file_delivery(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
     if not result.get("files"):
+        return False
+    if result_is_file_intake_receipt(result):
         return False
     if os.environ.get("WECHAT_WORKER_REQUIRE_FILE_SEND", "0") == "1":
         return True
@@ -2197,7 +2201,34 @@ def extract_recent_synced_files_from_task(task: dict[str, Any]) -> list[Path]:
         resolved = path.resolve()
         if resolved not in files:
             files.append(resolved)
-    return files
+    title = current_request_file_title(request)
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    local_id = str(source.get("local_id") or "")
+    title_matches = [path for path in files if title and path.name == title]
+    if title_matches:
+        return title_matches
+    local_id_matches = [
+        path for path in files
+        if local_id and (path.name.startswith(f"{local_id}_") or f"/{local_id}_" in path.as_posix())
+    ]
+    if local_id_matches:
+        return local_id_matches
+    return files[:1]
+
+
+def current_request_file_title(request: str) -> str:
+    in_current = False
+    for line in str(request or "").splitlines():
+        stripped = line.strip()
+        if stripped == "Current coalesced request:":
+            in_current = True
+            continue
+        if in_current and not stripped:
+            break
+        if in_current and stripped.lower().startswith("title:"):
+            return stripped.split(":", 1)[1].strip()
+    match = re.search(r"(?im)^title:\s*(.+?)\s*$", str(request or ""))
+    return match.group(1).strip() if match else ""
 
 
 def unique_intake_target(intake_dir: Path, filename: str, *, index: int) -> Path:
@@ -5704,7 +5735,7 @@ def parse_worker_result(text: str) -> dict[str, Any]:
         if isinstance(data, dict):
             message = str(data.get("message") or "").strip()
             confirmation = str(data.get("confirmation") or data.get("confirm") or "").strip()
-            files = file_entries_from_json(data)
+            files = [] if json_payload_is_file_intake_receipt(data) else file_entries_from_json(data)
             return {"message": message, "confirmation": confirmation, "files": files, "raw": text, "data": data}
     except Exception:
         pass
@@ -5716,6 +5747,11 @@ def parse_worker_result(text: str) -> dict[str, Any]:
         else:
             message_lines.append(line)
     return {"message": "\n".join(message_lines).strip(), "confirmation": "", "files": files, "raw": text}
+
+
+def json_payload_is_file_intake_receipt(data: dict[str, Any]) -> bool:
+    nested = data.get("data") if isinstance(data.get("data"), dict) else {}
+    return isinstance(nested.get("file_intake"), dict) and nested.get("require_file_delivery") is False
 
 
 def file_entries_from_json(data: Any) -> list[str]:
@@ -5763,7 +5799,8 @@ def prepare_result_files(result: dict[str, Any], raw_text: str) -> dict[str, Any
     raw_files = result.get("files") or []
     if not isinstance(raw_files, list):
         raw_files = [raw_files]
-    candidates = unique_strings([*raw_files, *extract_artifact_paths(raw_text)])
+    auto_files = [] if suppress_auto_artifact_extraction(result) else extract_artifact_paths(raw_text)
+    candidates = unique_strings([*raw_files, *auto_files])
     files: list[str] = []
     skipped: list[dict[str, str]] = []
     for candidate in candidates:
@@ -5782,6 +5819,26 @@ def prepare_result_files(result: dict[str, Any], raw_text: str) -> dict[str, Any
     if result["files"] and not result.get("message"):
         result["message"] = f"Generated {len(result['files'])} artifact(s); sending them now."
     return result
+
+
+def suppress_auto_artifact_extraction(result: dict[str, Any]) -> bool:
+    data = result_delivery_data(result)
+    if not isinstance(data.get("file_intake"), dict):
+        return False
+    return data.get("require_file_delivery") is False
+
+
+def result_is_file_intake_receipt(result: dict[str, Any]) -> bool:
+    data = result_delivery_data(result)
+    return isinstance(data.get("file_intake"), dict) and data.get("require_file_delivery") is False
+
+
+def result_delivery_data(result: dict[str, Any]) -> dict[str, Any]:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    nested = data.get("data") if isinstance(data.get("data"), dict) else {}
+    if "file_intake" in nested or "require_file_delivery" in nested:
+        return nested
+    return data
 
 
 def extract_artifact_paths(text: str) -> list[str]:

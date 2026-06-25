@@ -1016,6 +1016,93 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(payload["data"]["status"], "saved")
         self.assertFalse(payload["data"]["require_file_delivery"])
 
+    def test_file_intake_preflight_uses_current_file_not_old_recent_files(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            downloads = tmp_path / "downloads"
+            downloads.mkdir(parents=True)
+            current = downloads / "Chaos_Making_New_Science_2015.pdf"
+            old = downloads / "Game_Theory_101_Complete_Textbook_2011.pdf"
+            image = downloads / "old-thumb.jpg"
+            current.write_bytes(b"%PDF-1.4\nchaos")
+            old.write_bytes(b"%PDF-1.4\nold")
+            image.write_bytes(b"jpg")
+            artifact_dir = tmp_path / "artifact"
+            task = {
+                "id": "20260625130234-61",
+                "chat": "🍓我的设备",
+                "source": {"local_id": 61},
+                "route_decision": {"route_kind": "file_intake", "needs_recent_media": True},
+                "request": (
+                    "Current coalesced request:\n"
+                    "陈苗: [WeChat file]\n"
+                    "title: Chaos_Making_New_Science_2015.pdf\n"
+                    "extension: pdf\n\n"
+                    "Recent synced WeChat files:\n"
+                    f"- {old} ({old.stat().st_size} bytes)\n"
+                    f"- {image} ({image.stat().st_size} bytes)\n"
+                    f"- {current} ({current.stat().st_size} bytes)"
+                ),
+            }
+
+            preflight = worker.prepare_worker_preflight(task, artifact_dir)
+            copied = preflight["file_intake"]["copied"]
+
+        self.assertEqual([item["filename"] for item in copied], ["Chaos_Making_New_Science_2015.pdf"])
+
+    def test_file_intake_result_does_not_auto_attach_saved_copy(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = Path(tmp) / "chaos_making_new_science_2015.pdf"
+            saved.write_bytes(b"%PDF-1.4\nchaos")
+            result = {
+                "message": "已做文件预检并保存。",
+                "files": [],
+                "data": {
+                    "require_file_delivery": False,
+                    "file_intake": {
+                        "copied": [{"saved_path": str(saved)}],
+                        "manifest_md": str(Path(tmp) / "file_intake_manifest.md"),
+                    },
+                },
+            }
+            raw = json.dumps(result, ensure_ascii=False)
+
+            prepared = worker.prepare_result_files(result, raw)
+
+        self.assertEqual(prepared["files"], [])
+
+    def test_file_intake_nested_result_does_not_require_or_auto_attach_file(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = Path(tmp) / "chaos_making_new_science_2015.pdf"
+            saved.write_bytes(b"%PDF-1.4\nchaos")
+            result = {
+                "message": "已做文件预检并保存。",
+                "files": [],
+                "data": {
+                    "message": "已做文件预检并保存。",
+                    "files": [],
+                    "data": {
+                        "require_file_delivery": False,
+                        "file_intake": {"copied": [{"saved_path": str(saved)}]},
+                    },
+                },
+            }
+            raw = json.dumps(result["data"], ensure_ascii=False)
+
+            parsed = worker.parse_worker_result(raw)
+            prepared = worker.prepare_result_files(parsed, raw)
+            requires_delivery = worker.result_requires_file_delivery(
+                {"route_decision": {"route_kind": "file_intake"}},
+                {**prepared, "files": [str(saved)]},
+            )
+
+        self.assertEqual(parsed["files"], [])
+        self.assertEqual(prepared["files"], [])
+        self.assertFalse(requires_delivery)
+
     def test_lalachan_story_request_ignores_old_video_publish_context_for_preflight(self) -> None:
         worker = load_worker()
         task = {
