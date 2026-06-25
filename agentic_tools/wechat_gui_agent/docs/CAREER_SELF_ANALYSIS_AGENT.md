@@ -109,7 +109,7 @@ ignored by git.
 
 ## Agent Method
 
-The prompt asks for eight sections:
+The prompt asks for nine sections:
 
 1. Today's thesis
 2. What to write
@@ -119,12 +119,22 @@ The prompt asks for eight sections:
 6. The single primary bet
 7. 90-day execution plan
 8. Today's 3 actions
+9. Today's 3 self-discovery questions
+
+The self-discovery section must contain exactly three questions, formatted as
+`Q1`, `Q2`, and `Q3`. They should be specific to the day's evidence, answerable
+in 10-15 minutes, gently uncomfortable, and useful enough that an honest answer
+could change tomorrow's plan. The sender extracts these questions into the
+WeChat text message before attaching the share report, so they remain visible
+even if file delivery is delayed.
 
 The agent should:
 
 - use evidence, not vague motivation;
 - separate writing, career, product, money, and investment themes;
 - recommend small experiments with validation signals;
+- ask questions that discover desire, avoidance, identity, and leverage rather
+  than generic journaling prompts;
 - treat investment ideas as watchlists/risk frameworks, not orders;
 - verify current company/market facts before time- or money-intensive advice;
 - avoid exposing private chat logs, credentials, wxids, or DB paths in WeChat.

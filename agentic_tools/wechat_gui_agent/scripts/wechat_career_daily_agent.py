@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import subprocess
 import sys
@@ -201,6 +202,14 @@ Answer in Markdown with these sections:
 6. The single primary bet
 7. 90-day execution plan
 8. Today’s 3 actions
+9. Today’s 3 self-discovery questions
+
+For section 9, write exactly three questions. They must be specific to the
+evidence from today's run, not generic journaling prompts. Each question should
+be answerable in 10-15 minutes, a little uncomfortable but kind, and capable of
+changing tomorrow's plan if answered honestly. Format them as `Q1: ...?`,
+`Q2: ...?`, and `Q3: ...?`, each followed by one short `Why it matters: ...`
+sentence.
 
 WeChat memory snapshot:
 {evidence.get('memory_snapshot', '')}
@@ -436,6 +445,10 @@ def sanitize_shareable_report(text: str) -> str:
 def send_daily_result(args: argparse.Namespace, report: Path, body: str) -> dict[str, Any]:
     summary = one_line_summary(body)
     message = "今日方向简报已完成。\n" + summary
+    questions = extract_self_discovery_questions(body)
+    if questions:
+        question_lines = [f"{index}. {question}" for index, question in enumerate(questions, start=1)]
+        message += "\n\n今日3个自我发现问题:\n" + "\n".join(question_lines)
     status: dict[str, Any] = {"attempted": True, "message_sent": False, "file_sent": False, "errors": []}
     try:
         send_message(message, args.send_chat, args.send_targets)
@@ -449,6 +462,47 @@ def send_daily_result(args: argparse.Namespace, report: Path, body: str) -> dict
         except Exception as exc:  # noqa: BLE001
             status["errors"].append(f"file: {exc}")
     return status
+
+
+def extract_self_discovery_questions(text: str, *, limit: int = 3) -> list[str]:
+    lines = str(text or "").splitlines()
+    start = -1
+    for index, line in enumerate(lines):
+        lower = line.lower()
+        if "self-discovery" in lower or "self discovery" in lower:
+            start = index + 1
+            break
+        if "3 self" in lower and "question" in lower:
+            start = index + 1
+            break
+        if "自我" in line and ("问题" in line or "提问" in line or "发现" in line):
+            start = index + 1
+            break
+    if start < 0:
+        return []
+    questions: list[str] = []
+    for raw_line in lines[start:]:
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#") and questions:
+            break
+        if stripped.startswith("#"):
+            continue
+        clean = re.sub(r"^[-*]\s+", "", stripped)
+        clean = re.sub(r"^\d+[.)、]\s+", "", clean)
+        clean = clean.replace("**", "").strip()
+        clean = re.sub(r"^(?:Q|Question|问题)\s*\d*\s*[:：]\s*", "", clean, flags=re.I).strip()
+        if not clean:
+            continue
+        if "why it matters" in clean.lower() or clean.startswith("Why:") or clean.startswith("Why it matters:"):
+            continue
+        if "?" not in clean and "？" not in clean:
+            continue
+        questions.append(sanitize_shareable_report(compact(clean, 220)))
+        if len(questions) >= limit:
+            break
+    return questions
 
 
 def one_line_summary(text: str) -> str:

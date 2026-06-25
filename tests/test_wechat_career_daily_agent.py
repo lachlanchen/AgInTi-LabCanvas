@@ -24,6 +24,80 @@ def load_wechat_career_daily_agent():
 
 
 class WeChatCareerDailyAgentTests(unittest.TestCase):
+    def test_prompt_requires_three_self_discovery_questions(self):
+        module = load_wechat_career_daily_agent()
+        prompt = module.build_prompt(
+            {
+                "memory_snapshot": "- writing/money pattern",
+                "project_surface": "- LabCanvas",
+                "lazyinvestment_snapshot": "",
+                "voidabyss_snapshot": "",
+                "identity_surface": "",
+            }
+        )
+
+        self.assertIn("Today’s 3 self-discovery questions", prompt)
+        self.assertIn("exactly three questions", prompt)
+        self.assertIn("specific to the", prompt)
+        self.assertIn("Q1:", prompt)
+
+    def test_extract_self_discovery_questions_for_chat_message(self):
+        module = load_wechat_career_daily_agent()
+        report = """
+## 9. Today’s 3 self-discovery questions
+
+Q1: Which public problem would I still want to explain if nobody praised me for it?
+Why it matters: It reveals durable motivation.
+Q2: What am I avoiding by building one more tool instead of publishing one clear offer?
+Why it matters: It exposes avoidance disguised as productivity.
+Q3: Which project would hurt most to abandon, and what does that say about my real identity?
+Why it matters: It shows attachment and leverage.
+
+## Appendix
+Other text?
+"""
+
+        questions = module.extract_self_discovery_questions(report)
+
+        self.assertEqual(len(questions), 3)
+        self.assertEqual(questions[0], "Which public problem would I still want to explain if nobody praised me for it?")
+        self.assertIn("one more tool", questions[1])
+        self.assertIn("real identity", questions[2])
+
+    def test_send_daily_result_includes_self_discovery_questions(self):
+        module = load_wechat_career_daily_agent()
+        sent_messages = []
+        sent_files = []
+        module.send_message = lambda message, chat, send_targets: sent_messages.append((message, chat, send_targets))
+        module.send_file = lambda report, chat, send_targets: sent_files.append((report, chat, send_targets))
+        args = argparse.Namespace(
+            send_chat="lachlanchan",
+            send_targets=Path("/tmp/send-targets.json"),
+            attach_report=True,
+        )
+        body = """
+## 1. Today’s thesis
+A precise thesis for the day.
+
+## 9. Today’s 3 self-discovery questions
+Q1: What desire am I protecting by not choosing one public offer?
+Why it matters: It names avoidance.
+Q2: Which audience would I be willing to disappoint in order to serve the right one?
+Why it matters: It clarifies tradeoffs.
+Q3: What small proof today would make this identity feel real?
+Why it matters: It turns reflection into evidence.
+"""
+
+        status = module.send_daily_result(args, Path("/tmp/report.md"), body)
+
+        self.assertTrue(status["message_sent"])
+        self.assertTrue(status["file_sent"])
+        self.assertIn("今日3个自我发现问题", sent_messages[0][0])
+        self.assertIn("not choosing one public offer", sent_messages[0][0])
+        self.assertIn("small proof today", sent_messages[0][0])
+        self.assertEqual(sent_messages[0][1], "lachlanchan")
+        self.assertEqual(sent_files[0][0], Path("/tmp/report.md"))
+
     def test_run_daily_writes_trace_bundle_and_sanitized_share_report(self):
         module = load_wechat_career_daily_agent()
         temp_dir = tempfile.TemporaryDirectory()
