@@ -137,6 +137,15 @@ publication.
      submission. The worker must call LazyEdit and monitor it instead of
      hand-editing subtitles, manually building publish ZIPs, or driving platform
      browsers directly.
+   - Browser-platform packages must be codec-verified before a publish is called
+     done. The MP4 inside the LazyEdit ZIP must be H.264/AVC `avc1`, `yuv420p`,
+     AAC audio when audio exists, and faststart. HEVC/H.265 `hvc1`, AV1, or
+     unknown codecs are repairable packaging failures; rebuild through LazyEdit
+     before posting. See
+     `docs/LAZYEDIT_INSTAGRAM_CODEC_INCIDENT_2026_06_25.md`.
+   - Queue `done` is not enough when the user reports a platform popup. For
+     Instagram, inspect live browser evidence: `Your reel has been shared.` is
+     success; visible error text overrides LazyEdit or AutoPublish queue state.
    - The resumed Codex worker owns context selection and command invocation. The
      queue orchestrator may probe, requeue, de-duplicate, and verify terminal
      evidence, but it should not replace the agent with a new hardcoded publish

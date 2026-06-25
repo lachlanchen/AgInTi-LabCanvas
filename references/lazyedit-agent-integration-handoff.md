@@ -243,8 +243,12 @@ Before saying "published", verify:
 - metadata is concise and not a script dump;
 - configured LazyEdit logo is used unless disabled by the user;
 - final MP4 or package is browser-safe H.264/AVC, `yuv420p`, AAC, and faststart;
+- for Instagram and other browser-upload platforms, the MP4 inside the ZIP is
+  not HEVC/H.265 `hvc1`, AV1, or an unknown codec;
 - local LazyEdit publish job is terminal;
 - remote AutoPublish job is terminal for every requested platform;
+- live browser evidence is inspected when the user reports a popup or queue
+  state conflicts with the visible platform state;
 - platform set matches the current request.
 
 Queued, submitted, imported, processing, or running is not published.
@@ -260,8 +264,27 @@ Queued, submitted, imported, processing, or running is not published.
   video content.
 - If the selected MP4 is HEVC/H.265, AV1, or otherwise browser-risky, let
   LazyEdit transcode the publish bundle before AutoPublish receives it.
+- If AutoPublish already extracted a stale HEVC/H.265 ZIP, rebuild the LazyEdit
+  ZIP, verify the local and remote extracted MP4 are H.264/AVC `avc1`, then
+  rerun only the failed platform. Do not republish unrelated successful
+  platforms.
 - If terminal evidence already exists for the same LazyEdit `video_id` and
   requested platforms, report verified status and do not publish again.
+
+## Known Incident: Instagram HEVC False Success
+
+On 2026-06-25, the video
+`c05ffae4cac15cfb5f8abe6a8922c486_COMPLETED` first showed a remote queue
+`done` state while Instagram displayed a publish error. The failed remote ZIP
+contained an HEVC/H.265 `hvc1` `_highlighted.mp4`. Rebuilding through LazyEdit
+produced a H.264/AVC `avc1` browser-safe MP4, and an Instagram-only retry
+completed with live browser evidence: `Your reel has been shared.`
+
+The detailed WeChat automation runbook is:
+
+```text
+agentic_tools/wechat_gui_agent/docs/LAZYEDIT_INSTAGRAM_CODEC_INCIDENT_2026_06_25.md
+```
 
 ## Copy-Paste Agent Prompt
 
