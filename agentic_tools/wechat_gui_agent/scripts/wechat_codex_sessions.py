@@ -108,11 +108,19 @@ def run_codex_once(
         str(output_path),
     ]
     if thread_id:
-        command += ["resume", thread_id, prompt]
+        command += ["resume", thread_id, "-"]
     else:
-        command.append(prompt)
+        command.append("-")
     try:
-        proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True, check=False, timeout=timeout_seconds)
+        proc = subprocess.run(
+            command,
+            input=prompt,
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
         message = output_path.read_text(encoding="utf-8", errors="replace").strip() if output_path.exists() else ""
         parsed_thread_id = parse_thread_id(proc.stdout) or thread_id
         return {

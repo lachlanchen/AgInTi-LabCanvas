@@ -1851,7 +1851,7 @@ Follow the routine supervisor contract. The contract is saved in `task.routine_c
 Exception for WeChat video-to-AutoPublish requests: if the task asks to copy/download a WeChat video to Nutstore AutoPublish and the recent context contains a same-chat video row, first run:
 `PYTHONPATH=src python -m agenticapp wechat autopublish-video --chat "<chat>" --sync --fetch-gui --since-minutes 720 --json`
 This opens the chat in the isolated WeChat desktop, clicks the latest visible video so the official client caches the MP4, media-syncs it, and atomically copies it to `/home/lachlan/Nutstore Files/AutoPublish/AutoPublish`. Only report missing source after that command fails or returns no matching video.
-If `task.preflight.autopublish_video` has `status: "artifact-ledger-match"`, treat its `target` as the exact source video: it was matched by same-chat task history plus WeChat video MD5/size and copied into AutoPublish for LazyEdit. Use the resolved source material in the LazyEdit context.
+If `task.preflight.autopublish_video` has `status: "artifact-ledger-match"` or `status: "copied"`, treat its `target` as the exact source video: it was matched by same-chat task history or WeChat video local_id/stem/size. Non-publish tasks save this source under the task artifact directory; LazyEdit/public publish tasks may copy into the AutoPublish intake when explicitly permitted.
 If `task.preflight.autopublish_video` exists and has `ok: false` for a task with `message_local_ids`, fail closed only after its `artifact_resolution.ok` is also false or missing: do not publish, transcode, or reuse any nearby/older video. Report that neither the exact WeChat cache nor the same-chat artifact ledger contained the referenced source, and include the safe next action.
 
 {routine_context}
@@ -1883,7 +1883,7 @@ Return either plain text or this JSON shape:
 Use confirmation when an important choice, purchase, external send, deletion, privacy-sensitive action, or irreversible action needs approval.
 If a download is blocked by login, CAPTCHA, bot check, consent page, or a site that needs human action, do not try to bypass it.
 Open a human-assist browser in the isolated virtual desktop with:
-PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --json
+PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --wait-seconds 8 --capture --close-after --json
 Then return a confirmation telling the user to complete the manual step in noVNC and approve continuation.
 If other external tools or files are not available, say exactly what is needed next.
 
@@ -2740,6 +2740,10 @@ def run_autopublish_video_preflight(task: dict[str, Any]) -> dict[str, Any]:
         "20",
         "--json",
     ]
+    private_dest = nonpublish_video_preflight_dest(task)
+    if private_dest:
+        private_dest.mkdir(parents=True, exist_ok=True)
+        command += ["--dest", str(private_dest), "--title", f"{safe_slug(str(task.get('id') or 'wechat-video'))}_source_video", "--replace"]
     video_local_ids = extract_video_local_ids_from_task(task)
     for local_id in video_local_ids:
         command += ["--message-local-id", str(local_id)]
@@ -2761,7 +2765,17 @@ def run_autopublish_video_preflight(task: dict[str, Any]) -> dict[str, Any]:
         payload["stderr"] = proc.stderr.strip()[:2000]
     if video_local_ids:
         payload["message_local_ids"] = video_local_ids
+    if private_dest:
+        payload["private_save_dest"] = str(private_dest)
     return payload
+
+
+def nonpublish_video_preflight_dest(task: dict[str, Any]) -> Path | None:
+    route = task_route_decision(task)
+    text = task_focus_text(task)
+    if bool(route.get("public_publish_allowed")) or has_public_publish_intent(text) or wants_lazyedit_import(text):
+        return None
+    return worker_artifact_dir(task) / "source_media"
 
 
 def resolve_exact_video_artifact_preflight(task: dict[str, Any], original_preflight: dict[str, Any]) -> dict[str, Any]:
@@ -4926,6 +4940,13 @@ Shipinhao/Finder and short-video shares:
 - Also skim other highly visible comments for quoted lines, timestamps, topic summaries, corrections, names, links, or context that helps infer the video content.
 - Do not post a comment or ask Yuanbao yourself unless the user explicitly requests that action. Reading comments is allowed; writing comments needs confirmation.
 - If the actual video, comments, transcript, or reliable public mirror are not available, do not produce a "deep analysis" or imply you watched/read the source. Return a source-limited note, state what was accessible, and ask the user to provide the video/comments/transcript or approve a manual/browser path if deeper analysis is needed.
+
+WeChat article / `mp.weixin.qq.com` link cards:
+- Direct HTTP fetches commonly return `环境异常`, `完成验证后继续访问`, or another verification gate. Treat that as a browser-required state, not as a finished article read.
+- When a WeChat article URL is available and direct fetch is blocked, run:
+  `PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<mp.weixin.qq.com URL>" --wait-seconds 8 --capture --close-after --json`
+- Inspect the captured private text/screenshot artifacts if present. If the browser-readable article text is captured, summarize that text and mention that browser capture was used. If the capture still shows only a verification page, say the full article remains blocked and ask the user to open/verify it in WeChat native browser or noVNC; do not pretend the card metadata is the full article.
+- Close browser tabs/windows after capture. Do not leave many article tabs open.
 
 Artifact return contract:
 - If you generate or find safe artifacts, include their existing absolute or repo-relative paths in the JSON `files` array. The outer worker sends those files to WeChat by default.

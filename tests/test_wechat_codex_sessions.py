@@ -17,6 +17,9 @@ def load_sessions():
     spec = importlib.util.spec_from_file_location("wechat_codex_sessions_for_tests", SCRIPT)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    scripts_dir = str(SCRIPT.parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -74,8 +77,10 @@ class WeChatCodexSessionTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 registry = Path(tmp) / "sessions.local.json"
 
-                def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
                     calls.append(command)
+                    self.assertIn("input", kwargs)
+                    self.assertIn(kwargs["input"], {"hello", "again"})
                     output = Path(command[command.index("-o") + 1])
                     output.write_text("CHAT: ok", encoding="utf-8")
                     return subprocess.CompletedProcess(command, 0, '{"type":"thread.started","thread_id":"thread-1"}\n', "")
@@ -110,6 +115,10 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertNotIn("resume", calls[0])
         self.assertIn("resume", calls[1])
         self.assertIn("thread-1", calls[1])
+        self.assertIn("-", calls[0])
+        self.assertIn("-", calls[1])
+        self.assertNotIn("hello", calls[0])
+        self.assertNotIn("again", calls[1])
         self.assertEqual(next(iter(data.values()))["thread_id"], "thread-1")
 
     def test_run_codex_session_does_not_fallback_after_timeout(self) -> None:

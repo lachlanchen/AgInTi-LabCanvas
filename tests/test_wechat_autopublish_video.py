@@ -135,6 +135,13 @@ class WeChatAutoPublishVideoTests(unittest.TestCase):
         recent.assert_called_once()
         matching.assert_called_once()
 
+    def test_parse_clicks_accepts_fallback_points(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        self.assertEqual(wechat_autopublish_video.parse_clicks("510,430;510,280;510,430"), [(510, 430), (510, 280)])
+        self.assertIn((510, 430), wechat_autopublish_video.default_video_clicks())
+
 
 def create_media_db(path: Path, source: Path, *, chat: str) -> None:
     now = datetime.now().isoformat(timespec="seconds")

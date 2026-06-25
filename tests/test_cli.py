@@ -174,12 +174,28 @@ class CliTests(unittest.TestCase):
         stdout = io.StringIO()
 
         with redirect_stdout(stdout):
-            code = main(["wechat", "browser-assist", "--url", "https://example.com", "--browser", "/bin/echo", "--dry-run", "--json"])
+            code = main([
+                "wechat",
+                "browser-assist",
+                "--url",
+                "https://example.com",
+                "--browser",
+                "/bin/echo",
+                "--wait-seconds",
+                "2",
+                "--capture",
+                "--close-after",
+                "--dry-run",
+                "--json",
+            ])
 
         payload = json.loads(stdout.getvalue())
         self.assertEqual(code, 0)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["status"], "dry-run")
+        self.assertTrue(payload["capture"])
+        self.assertTrue(payload["close_after"])
+        self.assertEqual(payload["wait_seconds"], 2.0)
         self.assertIn("novnc_url", payload)
 
     def test_wechat_approve_promotes_newest_waiting_task(self):

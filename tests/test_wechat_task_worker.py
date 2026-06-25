@@ -616,6 +616,45 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("14", calls[0])
         self.assertIn("--fetch-gui", calls[0])
 
+    def test_nonpublish_direct_video_preflight_saves_under_task_artifacts(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "save-video-task",
+            "chat": "🍓我的设备",
+            "route_decision": {
+                "route_kind": "process_existing_video",
+                "needs_recent_media": True,
+                "public_publish_allowed": False,
+            },
+            "request": "Current coalesced request:\nSave this WeChat video so I can ask follow-up questions.",
+            "context": [
+                {
+                    "local_id": 57,
+                    "sender_display": "陈苗",
+                    "content": '<msg><videomsg md5="60699342dde76c611fdc48418a0648d0" length="841449" /></msg>',
+                }
+            ],
+        }
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, '{"ok": true, "status": "copied", "target": "/tmp/private/source.mp4"}', "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp) / "artifact"
+            with mock.patch.object(worker, "worker_artifact_dir", return_value=artifact_dir):
+                with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+                    payload = worker.run_autopublish_video_preflight(task)
+
+        self.assertTrue(payload["ok"])
+        self.assertIn("--dest", calls[0])
+        self.assertIn(str(artifact_dir / "source_media"), calls[0])
+        self.assertIn("--title", calls[0])
+        self.assertIn("--replace", calls[0])
+        self.assertEqual(payload["message_local_ids"], [57])
+        self.assertEqual(payload["private_save_dest"], str(artifact_dir / "source_media"))
+
     def test_video_publish_preflight_uses_same_chat_artifact_ledger_when_wechat_cache_misses(self) -> None:
         worker = load_worker()
         video_bytes = b"generated-video-bytes"

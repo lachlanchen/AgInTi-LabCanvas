@@ -88,6 +88,10 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     browser.add_argument("--url", default="about:blank")
     browser.add_argument("--display", default=DEFAULT_DISPLAY)
     browser.add_argument("--browser")
+    browser.add_argument("--wait-seconds", type=float, default=0.0)
+    browser.add_argument("--capture", action="store_true")
+    browser.add_argument("--close-after", action="store_true")
+    browser.add_argument("--output-dir", type=Path)
     browser.add_argument("--dry-run", action="store_true")
     browser.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     browser.set_defaults(func=cmd_browser_assist)
@@ -203,7 +207,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     autopub.add_argument("--fetch-gui", action="store_true", help="Open WeChat and click the latest video to force the client to cache it.")
     autopub.add_argument("--fetch-timeout", type=float, default=90)
     autopub.add_argument("--display", default=DEFAULT_DISPLAY)
-    autopub.add_argument("--video-click", default="", help="Relative x,y click inside the WeChat window for the latest visible video.")
+    autopub.add_argument("--video-click", default="", help="Relative x,y click inside the WeChat window for the latest visible video. Use x,y;x,y for fallback clicks.")
     autopub.add_argument("--no-auto-source", action="store_true")
     autopub.add_argument("--replace", action="store_true")
     autopub.add_argument("--list", action="store_true")
@@ -733,6 +737,14 @@ def cmd_browser_assist(args: argparse.Namespace) -> int:
     ]
     if args.browser:
         command += ["--browser", args.browser]
+    if getattr(args, "wait_seconds", 0.0):
+        command += ["--wait-seconds", str(args.wait_seconds)]
+    if getattr(args, "capture", False):
+        command.append("--capture")
+    if getattr(args, "close_after", False):
+        command.append("--close-after")
+    if getattr(args, "output_dir", None):
+        command += ["--output-dir", str(args.output_dir)]
     if args.dry_run:
         command.append("--dry-run")
     if args.json:

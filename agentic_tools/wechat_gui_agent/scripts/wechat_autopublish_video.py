@@ -62,7 +62,7 @@ def main() -> int:
     parser.add_argument("--fetch-gui", action="store_true", help="Open the chat in WeChat and click the latest video to make the client download it.")
     parser.add_argument("--fetch-timeout", type=float, default=90, help="Seconds to wait for GUI-triggered video cache. Default: 90.")
     parser.add_argument("--display", default=":97", help="X display running WeChat for --fetch-gui. Default: :97.")
-    parser.add_argument("--video-click", default="", help="Relative x,y click inside the WeChat window for the latest visible video. Default: 510,280.")
+    parser.add_argument("--video-click", default="", help="Relative x,y click inside the WeChat window for the latest visible video. Repeatable through semicolon form x,y;x,y. Default tries common recent-video positions.")
     parser.add_argument("--no-auto-source", action="store_true", help="Disable --auto-source when --sync is used.")
     parser.add_argument("--replace", action="store_true", help="Replace an existing AutoPublish file with the same name.")
     parser.add_argument("--list", action="store_true", help="List matching candidates instead of copying.")
@@ -91,7 +91,7 @@ def main() -> int:
                 since_minutes=args.since_minutes,
                 display=args.display,
                 timeout=args.fetch_timeout,
-                video_click=parse_click(args.video_click) or (510, 280),
+                video_clicks=parse_clicks(args.video_click) or default_video_clicks(),
                 message_local_ids=args.message_local_id,
             )
             if fetch_payload.get("ok") and fetch_payload.get("path"):
@@ -120,7 +120,7 @@ def main() -> int:
                 since_minutes=args.since_minutes,
                 display=args.display,
                 timeout=args.fetch_timeout,
-                video_click=parse_click(args.video_click) or (510, 280),
+                video_clicks=parse_clicks(args.video_click) or default_video_clicks(),
             )
             if fetch_payload.get("ok"):
                 for chat in args.chat or [str(fetch_payload.get("chat") or "")]:
@@ -315,7 +315,7 @@ def fetch_latest_video_via_gui(
     since_minutes: float,
     display: str,
     timeout: float,
-    video_click: tuple[int, int],
+    video_clicks: list[tuple[int, int]],
     message_local_ids: list[int] | None = None,
 ) -> dict:
     messages = recent_video_messages(chats, since_minutes, message_local_ids=message_local_ids)
@@ -326,17 +326,34 @@ def fetch_latest_video_via_gui(
     if existing:
         return {"ok": True, "chat": message.chat_name, "status": "already-cached", "name": existing[0].name, "path": str(existing[0])}
     start = time.time()
-    try:
-        open_chat_and_click_video(message.chat_name, display=display, video_click=video_click)
-    except RuntimeError as exc:
-        return {"ok": False, "chat": message.chat_name, "error": str(exc)}
     deadline = time.monotonic() + max(1.0, timeout)
+    attempts: list[dict[str, object]] = []
+    click_points = video_clicks or default_video_clicks()
+    per_click_wait = max(2.0, float(os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_CLICK_WAIT_SECONDS", "12")))
     while time.monotonic() < deadline:
-        matches = matching_video_files(message, since_minutes=since_minutes, started_at=start)
-        if matches:
-            return {"ok": True, "chat": message.chat_name, "status": "fetched", "name": matches[0].name, "bytes": matches[0].stat().st_size, "path": str(matches[0])}
-        time.sleep(1.0)
-    return {"ok": False, "chat": message.chat_name, "error": "video cache did not appear before timeout"}
+        for click_point in click_points:
+            try:
+                open_chat_and_click_video(message.chat_name, display=display, video_click=click_point)
+            except RuntimeError as exc:
+                return {"ok": False, "chat": message.chat_name, "error": str(exc), "attempts": attempts}
+            attempts.append({"click": click_point, "at": datetime.now().isoformat(timespec="seconds")})
+            click_deadline = min(deadline, time.monotonic() + per_click_wait)
+            while time.monotonic() < click_deadline:
+                matches = matching_video_files(message, since_minutes=since_minutes, started_at=start)
+                if matches:
+                    return {
+                        "ok": True,
+                        "chat": message.chat_name,
+                        "status": "fetched",
+                        "name": matches[0].name,
+                        "bytes": matches[0].stat().st_size,
+                        "path": str(matches[0]),
+                        "attempts": attempts,
+                    }
+                time.sleep(1.0)
+            if time.monotonic() >= deadline:
+                break
+    return {"ok": False, "chat": message.chat_name, "error": "video cache did not appear before timeout", "attempts": attempts}
 
 
 def recent_video_messages(chats: list[str], since_minutes: float, *, message_local_ids: list[int] | None = None) -> list[VideoMessage]:
@@ -585,6 +602,34 @@ def parse_click(raw: Any) -> tuple[int, int] | None:
     if isinstance(raw, (list, tuple)) and len(raw) == 2:
         return int(raw[0]), int(raw[1])
     return None
+
+
+def parse_clicks(raw: Any) -> list[tuple[int, int]]:
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, str):
+        clicks: list[tuple[int, int]] = []
+        for item in raw.split(";"):
+            parsed = parse_click(item.strip())
+            if parsed and parsed not in clicks:
+                clicks.append(parsed)
+        return clicks
+    parsed = parse_click(raw)
+    return [parsed] if parsed else []
+
+
+def default_video_clicks() -> list[tuple[int, int]]:
+    raw = os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_CLICKS", "")
+    parsed = parse_clicks(raw)
+    if parsed:
+        return parsed
+    return [
+        (510, 430),  # common center of the newest visible video bubble
+        (510, 360),
+        (510, 520),
+        (510, 280),  # legacy default retained as fallback
+        (610, 430),
+    ]
 
 
 def add_unique(items: list[Any], value: Any) -> None:
