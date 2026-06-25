@@ -1655,7 +1655,12 @@ def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
 def stale_send_retrying(task: dict[str, Any], now: datetime) -> bool:
     if task.get("status") != SEND_RETRYING_STATUS:
         return False
-    timeout = int(os.environ.get("WECHAT_WORKER_STALE_SEND_RETRY_SECONDS", "45"))
+    raw_timeout = os.environ.get("WECHAT_WORKER_STALE_SEND_RETRY_SECONDS")
+    if raw_timeout is None:
+        send_timeout = int(os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"))
+        timeout = max(send_timeout + 30, 150)
+    else:
+        timeout = int(raw_timeout)
     if timeout <= 0:
         return False
     claimed_at = parse_iso_datetime(str(task.get("send_retry_claimed_at") or ""))

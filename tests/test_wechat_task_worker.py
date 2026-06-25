@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import contextlib
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import io
 import importlib.util
@@ -3726,6 +3726,43 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         assert claimed is not None
         self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
         self.assertEqual(claimed["send_retry_count"], 1)
+
+    def test_send_retrying_waits_longer_than_sender_timeout(self) -> None:
+        worker = load_worker()
+        original_stale = worker.os.environ.get("WECHAT_WORKER_STALE_SEND_RETRY_SECONDS")
+        original_timeout = worker.os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS")
+        try:
+            worker.os.environ.pop("WECHAT_WORKER_STALE_SEND_RETRY_SECONDS", None)
+            worker.os.environ["WECHAT_WORKER_SEND_TIMEOUT_SECONDS"] = "120"
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                claimed_at = (datetime.now() - timedelta(seconds=60)).isoformat(timespec="seconds")
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "task-active-send",
+                            "chat": "🍓我的设备",
+                            "status": worker.SEND_RETRYING_STATUS,
+                            "send_retry_claimed_at": claimed_at,
+                            "send_retry_count": 1,
+                            "result": {"message": "ok", "confirmation": "", "files": []},
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+        finally:
+            if original_stale is None:
+                worker.os.environ.pop("WECHAT_WORKER_STALE_SEND_RETRY_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_STALE_SEND_RETRY_SECONDS"] = original_stale
+            if original_timeout is None:
+                worker.os.environ.pop("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_SEND_TIMEOUT_SECONDS"] = original_timeout
+
+        self.assertIsNone(claimed)
 
     def test_claim_next_deferred_send_waits_for_timeout_when_gui_lane_busy(self) -> None:
         worker = load_worker()
