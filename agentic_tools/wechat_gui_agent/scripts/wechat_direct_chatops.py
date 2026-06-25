@@ -43,6 +43,21 @@ DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_POLL_SECONDS = 0.8
 DEFAULT_CATCHUP_POLL_SECONDS = 0.1
 GUI_SEND_LOCK = PRIVATE / "wechat_gui_send.lock"
+INTERRUPTIBLE_TASK_STATUSES = {
+    "pending",
+    "in_progress",
+    "generation_waiting",
+    "generation_poststage_pending",
+    "publish_poststage_pending",
+    "send_deferred_artifact",
+    "send_deferred_locked",
+    "send_retrying",
+    "waiting_confirmation",
+}
+REQUEUE_ON_INTERRUPT_STATUSES = INTERRUPTIBLE_TASK_STATUSES - {"in_progress"}
+INTERRUPTIBLE_ROUTE_KINDS = {"story_or_script", "generate_video"}
+INTERRUPTIBLE_ROUTINE_IDS = {"story_script_generation", "generated_video"}
+DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 
 
 def main() -> int:
@@ -4722,9 +4737,356 @@ def append_worker_task_once(queue: Path, task: dict[str, Any]) -> tuple[dict[str
                 duplicate = dict(existing)
                 duplicate["dedupe_existing"] = True
                 return duplicate, False
+            tasks = read_worker_queue_tasks(queue)
+            interrupted = append_same_chat_task_interruption(tasks, task)
+            if interrupted is not None:
+                write_worker_queue_tasks(queue, tasks)
+                merged = dict(interrupted)
+                merged["interruption_appended"] = True
+                merged["dedupe_existing"] = True
+                return merged, False
             with queue.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(task, ensure_ascii=False) + "\n")
             return task, True
+
+
+def append_same_chat_task_interruption(tasks: list[dict[str, Any]], incoming: dict[str, Any]) -> dict[str, Any] | None:
+    """Attach a follow-up message to an active same-chat story/video task.
+
+    The monitor should stay transport-only.  It does not decide whether to
+    generate, revise, wait, or publish; it only gives the resumed worker agent
+    the newer same-chat instruction packet at the next routine boundary.
+    """
+    if not is_interruptible_task(incoming):
+        return None
+    incoming_source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
+    incoming_local_id = int_or_none(incoming_source.get("local_id"))
+    if incoming_local_id is None:
+        return None
+    for index in range(len(tasks) - 1, -1, -1):
+        candidate = tasks[index]
+        if not same_chat_interruption_target(candidate, incoming):
+            continue
+        if interruption_already_recorded(candidate, incoming_source):
+            return candidate
+        interruption = build_task_interruption(candidate, incoming)
+        candidate.setdefault("interruptions", []).append(interruption)
+        candidate["interruptions"] = candidate["interruptions"][-20:]
+        candidate["interruption_pending"] = True
+        candidate["interruption_count"] = len(candidate["interruptions"])
+        candidate["last_interruption_at"] = interruption["at"]
+        candidate["last_interruption_source"] = interruption["source"]
+        candidate["interruption_policy"] = {
+            "mode": "agent_adjusts_existing_routine",
+            "monitor_role": "append_only_transport",
+            "agent_role": "decide_next_stage_from_original_task_plus_interruptions",
+            "default_story_video_flow": [
+                "revise_story_if_requested",
+                "send_story_to_group_for_confirmation",
+                "generate_video_only_after_current_confirmation_or_explicit_instruction",
+                "send_verified_video_back",
+                "ask_or_wait_before_public_publish_unless_current_request_already_authorized_publish",
+            ],
+        }
+        promote_story_target_for_generation_interruption(candidate, interruption)
+        status = str(candidate.get("status") or "")
+        if status in REQUEUE_ON_INTERRUPT_STATUSES:
+            candidate["status"] = "pending"
+            candidate["reprocess_requested_at"] = interruption["at"]
+            candidate["reprocess_reason"] = "same_chat_interruption"
+            candidate.pop("completed_at", None)
+            candidate.pop("claimed_at", None)
+            candidate.pop("worker_id", None)
+            candidate.pop("result", None)
+            candidate.pop("send_suppressed_reason", None)
+            candidate.pop("next_poll_at", None)
+            candidate.pop("next_poststage_at", None)
+            candidate.pop("next_publish_poststage_at", None)
+        elif status == "in_progress":
+            candidate["interrupt_requested_at"] = interruption["at"]
+            candidate["interrupt_delivery"] = "recorded_for_next_agent_turn_or_stale_reclaim"
+        candidate["request"] = append_interruption_notice_to_request(candidate.get("request"), interruption)
+        tasks[index] = candidate
+        return candidate
+    return None
+
+
+def same_chat_interruption_target(candidate: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    if not is_interruptible_task(candidate):
+        return False
+    if str(candidate.get("status") or "") not in INTERRUPTIBLE_TASK_STATUSES:
+        return False
+    if str(candidate.get("chat") or "") != str(incoming.get("chat") or ""):
+        return False
+    candidate_source = candidate.get("source") if isinstance(candidate.get("source"), dict) else {}
+    incoming_source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
+    if not same_nonempty_field(candidate_source, incoming_source, "message_table"):
+        return False
+    if not same_nonempty_field(candidate_source, incoming_source, "config_id"):
+        return False
+    if not interruption_target_recent_enough(candidate, incoming):
+        return False
+    candidate_local_id = int_or_none(candidate_source.get("local_id"))
+    incoming_local_id = int_or_none(incoming_source.get("local_id"))
+    if candidate_local_id is None or incoming_local_id is None or incoming_local_id <= candidate_local_id:
+        return False
+    if same_nonempty_field(candidate_source, incoming_source, "server_id") and str(candidate_source.get("server_id") or "") == str(
+        incoming_source.get("server_id") or ""
+    ):
+        return False
+    return True
+
+
+def same_nonempty_field(left: dict[str, Any], right: dict[str, Any], key: str) -> bool:
+    left_value = str(left.get(key) or "")
+    right_value = str(right.get(key) or "")
+    return not (left_value and right_value and left_value != right_value)
+
+
+def interruption_target_recent_enough(candidate: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    max_age = int(os.environ.get("WECHAT_DIRECT_INTERRUPT_TARGET_MAX_AGE_SECONDS", str(DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS)))
+    if max_age <= 0:
+        return True
+    candidate_ts = task_event_timestamp(candidate)
+    incoming_ts = task_event_timestamp(incoming)
+    if candidate_ts is None or incoming_ts is None:
+        return True
+    return 0 <= incoming_ts - candidate_ts <= max_age
+
+
+def task_event_timestamp(task: dict[str, Any]) -> float | None:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    for raw in (
+        source.get("create_time"),
+        task.get("created_at"),
+        task.get("last_interruption_at"),
+        task.get("claimed_at"),
+    ):
+        if isinstance(raw, (int, float)) and raw > 0:
+            return float(raw)
+        if isinstance(raw, str):
+            try:
+                as_float = float(raw)
+            except ValueError:
+                as_float = 0.0
+            if as_float > 0:
+                return as_float
+            try:
+                return datetime.fromisoformat(raw).timestamp()
+            except ValueError:
+                continue
+    return None
+
+
+def is_interruptible_task(task: dict[str, Any]) -> bool:
+    route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
+    route_kind = str(route.get("route_kind") or "")
+    routine_id = str(routine.get("id") or "")
+    project = str(route.get("project") or "").lower()
+    if route_kind in INTERRUPTIBLE_ROUTE_KINDS or routine_id in INTERRUPTIBLE_ROUTINE_IDS:
+        return True
+    if project == "lalachan":
+        return True
+    text = str(task.get("request") or "").lower()
+    return any(marker in text for marker in ("lalachan", "raraxia", "ayachan", "sasakun", "小云雀", "啦啦侠", "阿芽酱", "飒飒君"))
+
+
+def promote_story_target_for_generation_interruption(task: dict[str, Any], interruption: dict[str, Any]) -> bool:
+    incoming_route = interruption.get("route_decision") if isinstance(interruption.get("route_decision"), dict) else {}
+    incoming_text = "\n".join(
+        [
+            str(interruption.get("request") or ""),
+            str(interruption.get("request_excerpt") or ""),
+            json.dumps(incoming_route, ensure_ascii=False),
+        ]
+    ).lower()
+    if str(incoming_route.get("route_kind") or "") != "generate_video" and not text_confirms_story_video_generation(incoming_text):
+        return False
+    current_route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    current_kind = str(current_route.get("route_kind") or "")
+    if current_kind not in {"story_or_script", "generate_video"}:
+        return False
+    route = dict(current_route)
+    route.update(incoming_route)
+    route.update(
+        {
+            "route_kind": "generate_video",
+            "project": "lalachan",
+            "worker_needed": True,
+            "needs_recent_media": False,
+            "public_publish_allowed": bool(incoming_route.get("public_publish_allowed")),
+            "public_publish_intent": bool(incoming_route.get("public_publish_intent")),
+            "source_policy": incoming_route.get("source_policy") or route.get("source_policy") or "current_plus_explicit_refs",
+            "approval_promoted_from": current_kind or "story_interruption",
+            "approval_interruption": {
+                "at": interruption.get("at"),
+                "incoming_task_id": interruption.get("incoming_task_id"),
+                "source": interruption.get("source") if isinstance(interruption.get("source"), dict) else {},
+            },
+        }
+    )
+    task["route_decision"] = route
+    task["routine"] = {
+        "id": "generated_video",
+        "title": "Generated Video Routine",
+        "task_id": task.get("id"),
+        "chat": task.get("chat"),
+        "source": task.get("source") if isinstance(task.get("source"), dict) else {},
+        "route_kind": "generate_video",
+        "project": "lalachan",
+        "purpose": "Create a new video from the approved story, monitor long generation, send MP4 back, then run optional poststages.",
+        "selected_at": datetime.now().isoformat(timespec="seconds"),
+        "selected_by": "wechat_direct_chatops.promote_story_target_for_generation_interruption",
+        "public_publish_allowed": bool(route.get("public_publish_allowed")),
+    }
+    task["story_confirmation_required"] = False
+    task["generation_blocked_until_story_confirmed"] = False
+    task["confirmed_story_for_generation_at"] = interruption.get("at") or datetime.now().isoformat(timespec="seconds")
+    task["confirmed_story_for_generation_note"] = collapse_context_text(interruption.get("request_excerpt") or interruption.get("request"), max_len=1000)
+    preserve_story_confirmation_material(task)
+    task["stage_transition"] = {
+        "from": "story_script_generation",
+        "to": "generated_video",
+        "at": task["confirmed_story_for_generation_at"],
+        "reason": "same_chat_generation_confirmation",
+        "interruption_task_id": interruption.get("incoming_task_id"),
+    }
+    for field in ("preflight", "routine_contract", "orchestrator", "worker_policy_attempts", "story_confirmation_gate"):
+        task.pop(field, None)
+    return True
+
+
+def text_confirms_story_video_generation(text: str) -> bool:
+    lowered = str(text or "").lower()
+    negative = (
+        "do not generate",
+        "don't generate",
+        "dont generate",
+        "not generate",
+        "wait",
+        "不要生成",
+        "别生成",
+        "不用生成",
+        "先别",
+        "等一下",
+    )
+    if any(marker in lowered for marker in negative):
+        return False
+    positive = (
+        "story ok",
+        "ok generate",
+        "generate video",
+        "continue generation",
+        "continue to generate",
+        "开始生成",
+        "继续生成",
+        "可以生成",
+        "故事可以",
+        "生成视频",
+    )
+    return any(marker in lowered for marker in positive)
+
+
+def preserve_story_confirmation_material(task: dict[str, Any]) -> None:
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    if result:
+        task.setdefault("story_confirmation_result", result)
+        message = str(result.get("message") or "").strip()
+        if message:
+            task.setdefault("approved_story_message", message)
+        files = [str(path) for path in result.get("files") or [] if str(path)]
+        if files:
+            task.setdefault("approved_story_files", files)
+    existing_files = [str(path) for path in task.get("sent_file_paths") or [] if str(path)]
+    story_files = [path for path in existing_files if Path(path).suffix.lower() in {".md", ".markdown", ".txt"}]
+    if story_files:
+        merged_files = list(task.get("approved_story_files") or [])
+        for path in story_files:
+            if path not in merged_files:
+                merged_files.append(path)
+        task["approved_story_files"] = merged_files
+    if not str(task.get("approved_story_message") or "").strip():
+        for path_text in task.get("approved_story_files") or []:
+            path = Path(str(path_text))
+            try:
+                if path.is_file() and path.suffix.lower() in {".md", ".markdown", ".txt"}:
+                    text = path.read_text(encoding="utf-8", errors="replace").strip()
+                else:
+                    text = ""
+            except OSError:
+                text = ""
+            if text:
+                task["approved_story_message"] = collapse_context_text(text, max_len=8000)
+                break
+
+
+def interruption_already_recorded(task: dict[str, Any], incoming_source: dict[str, Any]) -> bool:
+    incoming_key = (
+        str(incoming_source.get("message_table") or ""),
+        str(incoming_source.get("server_id") or ""),
+        str(incoming_source.get("local_id") or ""),
+    )
+    for item in task.get("interruptions") or []:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source") if isinstance(item.get("source"), dict) else {}
+        existing_key = (
+            str(source.get("message_table") or ""),
+            str(source.get("server_id") or ""),
+            str(source.get("local_id") or ""),
+        )
+        if existing_key == incoming_key:
+            return True
+    return False
+
+
+def build_task_interruption(candidate: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
+    route = incoming.get("route_decision") if isinstance(incoming.get("route_decision"), dict) else {}
+    return {
+        "at": datetime.now().isoformat(timespec="seconds"),
+        "mode": "same_chat_interruption",
+        "target_task_id": candidate.get("id"),
+        "incoming_task_id": incoming.get("id"),
+        "source": source,
+        "route_decision": route,
+        "request": str(incoming.get("request") or ""),
+        "request_excerpt": collapse_context_text(incoming.get("request"), max_len=1200),
+        "context": incoming.get("context")[-8:] if isinstance(incoming.get("context"), list) else [],
+        "instruction": (
+            "Treat this newer same-chat message as authoritative for adjusting the active routine. "
+            "Use the resumed agent to decide whether to revise the story, ask confirmation, continue generation, "
+            "send the video, or wait before publishing."
+        ),
+    }
+
+
+def append_interruption_notice_to_request(request: Any, interruption: dict[str, Any]) -> str:
+    base = str(request or "").rstrip()
+    source = interruption.get("source") if isinstance(interruption.get("source"), dict) else {}
+    notice = (
+        "\n\nSame-chat interruption/update received after the original task:\n"
+        f"- local_id={source.get('local_id')} server_id={source.get('server_id')} "
+        f"sender={source.get('sender_display') or source.get('sender')}\n"
+        f"{interruption.get('request_excerpt') or ''}\n"
+        "The resumed worker agent must use this update to adjust the next routine stage."
+    )
+    if notice in base:
+        return base
+    return base + notice
+
+
+def collapse_context_text(value: Any, *, max_len: int = 2000) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text if len(text) <= max_len else text[:max_len] + "..."
+
+
+def int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def find_duplicate_worker_task(queue: Path, task: dict[str, Any]) -> dict[str, Any] | None:
@@ -4788,6 +5150,7 @@ def build_execution_contract(config: dict[str, Any], route_decision: dict[str, A
             "The worker supervises routine stages, then resumes the exact chat's Codex worker session.",
             "Artifacts and replies must go back through the guarded sender for the same source chat.",
             "The current coalesced request is authoritative for all safe explicit instructions.",
+            "New same-chat messages may be appended to an active story/video task as interruptions; the worker agent must read them before the next action.",
             "Do not shrink a broad request to a smaller hardcoded action because one keyword matched first.",
         ],
     }
@@ -4796,6 +5159,8 @@ def build_execution_contract(config: dict[str, Any], route_decision: dict[str, A
 def build_instruction_contract(config: dict[str, Any], route_decision: dict[str, Any]) -> dict[str, Any]:
     return {
         "current_request_authoritative": True,
+        "same_chat_interruptions_authoritative": True,
+        "interruption_policy": "append_new_same_chat_messages_to_active_story_video_task_and_resume_agent",
         "preserve_safe_explicit_instructions": True,
         "multi_stage_policy": "complete_in_order_or_persist_resumable_state",
         "no_keyword_shrink": True,

@@ -104,6 +104,33 @@ Required behavior:
   `references/lalachan-story-video-handoff-for-wechat.md` for story/prompt
   files, image order, model/duration/ratio checks, download verification,
   repo/Nutstore copies, and current-message publish permission gates;
+- paid Xiaoyunque/Seedance submit/continue actions are idempotent per logical
+  WeChat request. Once a task has a thread URL, submit probe, credit guard, or
+  monitor-only flag, agents may only monitor/download/send that existing result
+  unless the current user message explicitly authorizes a new paid rerun;
+- if the monitored generated-video MP4 already exists in the task output
+  directory, the deterministic preflight returns that exact file through the
+  artifact delivery gate before calling any continuation helper, watcher,
+  submitter, or resumed worker agent. This is an artifact-completion gate, not a
+  replacement for the worker agent;
+- same-chat follow-up messages for an active story/video task are interruptions,
+  not competing tasks. The monitor appends them to `task.interruptions`; the
+  resumed worker agent reads the packet, adjusts the routine, and may re-enter
+  story/prompt revision before any further Xiaoyunque submit or polling. The
+  interruption target must also be recent, currently within 12 hours by
+  default, so a new story request cannot attach to a days-old generated-video
+  task only because it is in the same chat;
+- story/video interruptions are confirmation-gated: after a user asks to revise
+  or show a story, the worker must send the updated story to the group and wait
+  for clear same-chat generation approval before submitting or continuing
+  Xiaoyunque. A later explicit approval can continue the same routine and its
+  continuation prompt carries the latest same-chat story requirements forward;
+- story approval is a state transition, not a new one-off command. Approving a
+  `waiting_confirmation` LALACHAN story task with generation intent changes the
+  same queue row from `story_script_generation` to `generated_video`, preserves
+  the approved story text/file paths under `story_confirmation_result` and
+  `approved_story_*`, and lets the worker create the Xiaoyunque prompt from
+  that exact approved story;
 - treat bare file uploads as cheap `file_intake` unless the current message
   explicitly asks to summarize, read, translate, convert, publish, or otherwise
   process the content;

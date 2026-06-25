@@ -47,6 +47,23 @@ publication.
      context.
    - Output: story markdown, prompt markdown, upload evidence, and either
      submitted monitor state or a verified MP4.
+   - Interruption rule: newer same-chat story/video messages are appended to
+     `task.interruptions` and requeue the same task. The resumed worker agent
+     must read the full interruption packet, revise the story/prompt, send the
+     updated story to the group, and confirm before video generation unless the
+     latest messages clearly authorize generation.
+   - Approval transition: when the updated story is sent as
+     `waiting_confirmation`, `labcanvas wechat approve TASK_ID --note "story ok
+     generate video now"` promotes the same queue row from
+     `story_script_generation` to `generated_video`. The approved story message,
+     story file paths, and confirmation text are preserved on
+     `story_confirmation_result` / `approved_story_*` and must be used as the
+     Xiaoyunque prompt source.
+   - Recency rule: an interruption can only attach to a recent active
+     story/video task. The default maximum target age is 12 hours
+     (`WECHAT_WORKER_INTERRUPT_TARGET_MAX_AGE_SECONDS` and
+     `WECHAT_DIRECT_INTERRUPT_TARGET_MAX_AGE_SECONDS`). Older generation jobs
+     stay paused/stale and new story requests become their own tasks.
    - Model policy: model selection must not block the task. Choose a relatively
      cheaper suitable Seedance option from the page and proceed. Prefer
      `Seedance 2.0 Mini 体验版` / `vipnew` with a visible cheap rate such as
@@ -63,11 +80,29 @@ publication.
    - Output: downloaded MP4, or `generation_waiting` with `next_poll_at`.
    - Long renders wait through queue state and CDP probes, not a multi-hour model
      call.
+   - Paid action idempotence: one logical WeChat request owns at most one paid
+     Xiaoyunque/Seedance thread. If the task already has
+     `generated_video_monitor.thread_url`, `generated_video_submit_probe`,
+     `credit_guard`, `route_decision.no_new_xyq_submit`, or
+     `monitor_only_no_resubmit`, the worker must not submit, continue, retry, or
+     create another paid generation. It may only monitor, download, verify, and
+     send back the existing thread result. A new paid rerun requires a fresh
+     current-message instruction that explicitly says to start a new paid rerun.
+   - Existing-MP4 shortcut: before any continuation, browser monitor, submit
+     helper, or resumed Codex worker runs, the queue checks
+     `generated_video_monitor.output_dir` plus the configured `filename`. If the
+     MP4 already exists, `deterministic_existing_generated_video_file_result()`
+     returns that file through the artifact delivery gate and records
+     `existing_generated_video_artifact`; no model or paid action is invoked.
    - One request owns one active Xiaoyunque `thread_id` until the MP4 is
      downloaded and delivered, unless the current chat message explicitly asks
      to start a new/continued generation. If the thread already shows
      `final_video.mp4` or `渲染合成最终视频 ... 已完成`, the only valid next stage is
      download and delivery.
+   - If a newer same-chat interruption says the story is wrong, asks for a
+     revision, or says the website generation was stopped/cancelled, do not
+     treat the stale submitted run as success. Re-enter `story_and_prompt` and
+     continue from the latest confirmed stage.
    - Continuation: when a Xiaoyunque probe contains `请确认` plus
      `继续帮您生成视频`, use `xyq_continue_thread.py` to send the approval into the
      same `thread_id`. The helper uses the browser send button and, when
@@ -75,6 +110,10 @@ publication.
      Xiaoyunque OpenAPI so the underlying run advances. This is not a public
      action and should not require manual WeChat approval when the current
      request already asked for video generation.
+   - Continuation prompt source: if the active task has same-chat interruptions,
+     the continuation prompt must include the latest group instructions. Do not
+     send a generic “current storyboard is OK” message when the user has revised
+     the story, stopped a run, or corrected the desired direction.
    - Duration check: if the current request asks for a duration such as 30s,
      accept the verified MP4 when `ffprobe` shows it is within 5 seconds of the
      request, unless the request explicitly says the duration must be exact.
@@ -116,6 +155,12 @@ publication.
      `lazyedit_metadata_brief.md` separately with only hook, characters,
      tone, keywords, and platform notes. The correction context can be rich;
      the metadata brief must stay concise.
+   - Generated-video LazyEdit commands must always pass context files when
+     `--correct-subtitles` is used. If preflight did not create
+     `lazyedit_context`, `run_generated_video_lazyedit_command()` creates
+     fallback `lazyedit_correction_context.md` and `lazyedit_metadata_brief.md`
+     in the task artifact directory from the current request, approved story,
+     and same-chat interruption packet.
 
 6. `public_publish`
    - Owner: queue orchestrator via LazyEdit.

@@ -1154,6 +1154,36 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn(str(first_copy), tool_context)
         self.assertIn("Do not say the image/file is missing", tool_context)
 
+    def test_media_resolution_retries_after_gui_cache_probe(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "mirror" / "fresh-image.jpg"
+            source.parent.mkdir()
+            source.write_bytes(b"\xff\xd8fresh-jpeg")
+            task = {
+                "id": "edit-image-gui-probe",
+                "chat": "懒人科研",
+                "route_decision": {"route_kind": "edit_existing_media", "needs_recent_media": True},
+                "request": "Current coalesced request:\nPlease edit this image.",
+            }
+
+            with mock.patch.object(worker, "refresh_media_sync_for_task", side_effect=[{"status": "first"}, {"status": "second"}]):
+                with mock.patch.object(worker, "resolve_synced_media_from_mirror", side_effect=[[], [{"mirror_path": str(source), "score": 90}]]):
+                    with mock.patch.object(worker, "materialize_chat_for_media_cache", return_value={"status": "ok", "output_dir": str(tmp_path / "gui")}):
+                        preflight = worker.prepare_media_resolution_preflight(task, tmp_path / "artifact")
+
+            copied = preflight["copied"]
+            copied_path = Path(copied[0]["task_copy_path"])
+            copied_exists = copied_path.is_file()
+            manifest_text = Path(preflight["manifest_md"]).read_text(encoding="utf-8")
+
+        self.assertEqual(preflight["status"], "ok")
+        self.assertEqual(preflight["gui_cache_probe"]["status"], "ok")
+        self.assertEqual(preflight["second_refresh"]["status"], "second")
+        self.assertTrue(copied_exists)
+        self.assertIn("GUI Cache Probe", manifest_text)
+
     def test_file_intake_result_does_not_auto_attach_saved_copy(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1402,6 +1432,31 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(guarded["files"], ["/tmp/prompt.md"])
         self.assertEqual(guarded["contract_guard"], "missing_generated_video_completion_evidence")
 
+    def test_generate_video_route_allows_poststage_result_after_video_delivery(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-generate-video",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "public_publish_allowed": False,
+            },
+            "request": "Current coalesced request:\nGenerate the video, send it back, and upload it to LazyEdit only.",
+            "sent_file_paths": ["/tmp/generated.mp4"],
+            "generated_video_poststage": {"kind": "lazyedit_import", "video_path": "/tmp/generated.mp4"},
+        }
+        result = {
+            "message": "已继续完成生成视频的 LazyEdit import/process 后续阶段：status=done; no public publish.",
+            "files": [],
+            "confirmation": "",
+            "poststage": {"status": "done", "publish": False},
+        }
+
+        guarded = worker.enforce_worker_result_contract(task, result, json.dumps(result, ensure_ascii=False))
+
+        self.assertNotIn("contract_guard", guarded)
+        self.assertNotIn("还没有验证到新的 MP4", guarded["message"])
+        self.assertEqual(guarded["files"], [])
+
     def test_generate_video_route_uses_medium_policy_and_no_progress_escalation(self) -> None:
         worker = load_worker()
         task = {
@@ -1590,6 +1645,133 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("已向 Xiaoyunque 当前线程提交继续生成确认", result["message"])
         self.assertTrue(worker.generated_video_result_is_nonterminal(task, result))
         self.assertEqual(task["generated_video_continuations"][0]["status"], "continued")
+
+    def test_monitor_only_generated_video_does_not_continue_thread(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "watch_001.json").write_text(
+                json.dumps(
+                    {
+                        "href": "https://xyq.jianying.com/home?thread_id=abc",
+                        "status": ["请确认", "符合预期", "继续帮您生成视频"],
+                        "tail": "故事板已生成，请确认。如果符合预期我将继续帮您生成视频。",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "id": "task-video",
+                "status": worker.CLAIMED_STATUS,
+                "artifact_dir": str(tmp_path),
+                "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False, "no_new_xyq_submit": True},
+                "request": "Current coalesced request:\nMonitor the existing generated video.",
+                "generated_video_monitor": {
+                    "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                    "page_id": "PAGE123456",
+                    "output_dir": str(tmp_path),
+                    "filename": "task-video.mp4",
+                    "monitor_only_no_resubmit": True,
+                },
+                "credit_guard": {"enabled": True},
+            }
+
+            with mock.patch.object(worker.subprocess, "run") as run_mock:
+                raw = worker.deterministic_generated_video_continue_result(task)
+
+        self.assertIsNone(raw)
+        run_mock.assert_not_called()
+        self.assertTrue(worker.generated_video_monitor_only(task))
+
+    def test_monitor_only_generated_video_does_not_submit_new_job(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-video",
+            "status": worker.CLAIMED_STATUS,
+            "route_decision": {"route_kind": "generate_video", "public_publish_allowed": False, "no_new_xyq_submit": True},
+            "request": "Current coalesced request:\nGenerate a video.",
+            "generated_video_monitor": {
+                "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                "page_id": "PAGE123456",
+                "monitor_only_no_resubmit": True,
+            },
+        }
+
+        with mock.patch.object(worker.subprocess, "run") as run_mock:
+            raw = worker.deterministic_generated_video_submit_result(task)
+
+        self.assertIsNone(raw)
+        run_mock.assert_not_called()
+
+    def test_story_confirmation_gate_blocks_deterministic_video_continue(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "watch_001.json").write_text(
+                json.dumps(
+                    {
+                        "href": "https://xyq.jianying.com/home?thread_id=abc",
+                        "status": ["请确认", "继续帮您生成视频"],
+                        "tail": "故事板已生成，请确认。如果符合预期，我将继续帮您生成视频。",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "id": "task-video",
+                "status": worker.CLAIMED_STATUS,
+                "artifact_dir": str(tmp_path),
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan", "public_publish_allowed": False},
+                "request": "Current coalesced request:\nGenerate the LALACHAN video.",
+                "generated_video_monitor": {
+                    "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                    "page_id": "PAGE123456",
+                    "output_dir": str(tmp_path),
+                    "filename": "task-video.mp4",
+                },
+                "interruptions": [
+                    {
+                        "source": {"local_id": 202, "server_id": "srv-202", "sender_display": "陈苗"},
+                        "request": "The story is not what I want. Update the story and show it here first.",
+                        "request_excerpt": "The story is not what I want. Update the story and show it here first.",
+                    }
+                ],
+            }
+
+            raw = worker.deterministic_generated_video_continue_result(task)
+
+        self.assertIsNone(raw)
+        self.assertEqual(task["story_confirmation_gate"]["status"], "blocked_deterministic_continue")
+        self.assertIn("Update the story", task["story_confirmation_gate"]["latest_update"])
+
+    def test_generated_video_continuation_prompt_includes_latest_confirmed_context(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {"route_kind": "generate_video", "project": "lalachan", "public_publish_allowed": False},
+            "request": "Current coalesced request:\nGenerate a 30s LALACHAN video.",
+            "interruptions": [
+                {
+                    "source": {"local_id": 202, "sender_display": "陈苗"},
+                    "request": "Change the story ending: AyaChan finds a gold spoon under the restaurant floor.",
+                    "request_excerpt": "Change the story ending: AyaChan finds a gold spoon under the restaurant floor.",
+                },
+                {
+                    "source": {"local_id": 203, "sender_display": "陈苗"},
+                    "request": "story ok generate video now",
+                    "request_excerpt": "story ok generate video now",
+                },
+            ],
+        }
+
+        prompt = worker.generated_video_continuation_prompt(task)
+
+        self.assertIn("30秒", prompt)
+        self.assertIn("微信群最新确认/补充要求", prompt)
+        self.assertIn("gold spoon", prompt)
+        self.assertIn("story ok generate video now", prompt)
+        self.assertTrue(worker.latest_same_chat_confirms_video_generation(task))
 
     def test_generated_video_probe_without_confirmation_does_not_continue(self) -> None:
         worker = load_worker()
@@ -1781,6 +1963,257 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("wechat_artifact_delivery_gate", context)
         self.assertIn("lazyedit_poststage", context)
         self.assertIn("public_publish", context)
+
+    def test_generated_video_preflight_records_same_chat_interruptions(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-201",
+            "chat": "懒人科研",
+            "route_decision": {"route_kind": "generate_video", "project": "lalachan", "public_publish_allowed": False},
+            "request": "Current coalesced request:\nGenerate the video first.",
+            "source": {"local_id": 201, "server_id": "srv-201"},
+            "interruptions": [
+                {
+                    "at": "2026-06-25T21:10:00",
+                    "source": {"local_id": 202, "server_id": "srv-202", "sender_display": "陈苗"},
+                    "request": "Current coalesced request:\nThe story is not what I want. Update it and show it here first.",
+                    "request_excerpt": "The story is not what I want. Update it and show it here first.",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            preflight = worker.prepare_worker_preflight(task, Path(tmp))
+            interruption_manifest = preflight["interruptions"]
+            manifest_text = Path(interruption_manifest["markdown"]).read_text(encoding="utf-8")
+            contract_text = Path(preflight["generated_video_contract"]["markdown"]).read_text(encoding="utf-8")
+            focus = worker.task_focus_text(task)
+            context = worker.build_generated_video_tool_context(task)
+
+        self.assertEqual(interruption_manifest["count"], 1)
+        self.assertIn("Update it and show it here first", manifest_text)
+        self.assertIn("update it and show it here first", focus.lower())
+        self.assertIn("same-chat messages", contract_text)
+        self.assertIn("stale Xiaoyunque run", context)
+
+    def test_generated_video_focus_includes_approved_story_after_confirmation(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-206",
+            "chat": "懒人科研",
+            "route_decision": {"route_kind": "generate_video", "project": "lalachan", "public_publish_allowed": False},
+            "request": "Current coalesced request:\nstory ok generate video now",
+            "story_confirmation_result": {
+                "message": "Approved story: AyaChan compares Uma Gumi and konnyaku before Kindle translation practice.",
+                "files": ["/tmp/approved-story.md"],
+                "confirmation": "这个故事可以用来生成 30s 视频吗？",
+            },
+            "approved_story_message": "Approved story: AyaChan compares Uma Gumi and konnyaku before Kindle translation practice.",
+            "approved_story_files": ["/tmp/approved-story.md"],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            preflight = worker.prepare_worker_preflight(task, Path(tmp))
+            contract_text = Path(preflight["generated_video_contract"]["markdown"]).read_text(encoding="utf-8")
+            focus = worker.task_focus_text(task)
+
+        self.assertIn("Approved story for video generation", focus)
+        self.assertIn("Uma Gumi and konnyaku", focus)
+        self.assertIn("/tmp/approved-story.md", focus)
+        self.assertIn("Uma Gumi and konnyaku", contract_text)
+
+    def test_worker_merges_pending_story_followup_into_active_video_task(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-201",
+                        "chat": "懒人科研",
+                        "status": worker.GENERATED_VIDEO_WAITING_STATUS,
+                        "request": "Current coalesced request:\nGenerate a RaraXia video.",
+                        "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+                        "source": {"message_table": "MSG", "server_id": "srv-201", "local_id": 201},
+                        "routine": {"id": "generated_video"},
+                    },
+                    {
+                        "id": "task-202",
+                        "chat": "懒人科研",
+                        "status": "pending",
+                        "request": "Current coalesced request:\nUpdate the story and show it here before generation.",
+                        "route_decision": {"route_kind": "story_or_script", "project": "lalachan"},
+                        "source": {"message_table": "MSG", "server_id": "srv-202", "local_id": 202},
+                        "routine": {"id": "story_script_generation"},
+                    },
+                ],
+            )
+
+            merged = worker.merge_existing_pending_interruptions(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(merged, 1)
+        self.assertEqual(tasks[0]["status"], "pending")
+        self.assertTrue(tasks[0]["interruption_pending"])
+        self.assertEqual(tasks[0]["interruptions"][0]["source"]["local_id"], 202)
+        self.assertEqual(tasks[1]["status"], "canceled_superseded")
+
+    def test_worker_promotes_story_row_when_followup_confirms_video_generation(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            story_file = tmp_path / "approved-story.md"
+            story_file.write_text("# Story\n\nAyaChan compares Uma Gumi and konnyaku.", encoding="utf-8")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-201",
+                        "chat": "懒人科研",
+                        "status": "waiting_confirmation",
+                        "created_at": "2026-06-25T21:10:00",
+                        "request": "Current coalesced request:\nWrite the story first.",
+                        "route_decision": {"route_kind": "story_or_script", "project": "lalachan", "public_publish_allowed": False},
+                        "source": {"message_table": "MSG", "server_id": "srv-201", "local_id": 201},
+                        "routine": {"id": "story_script_generation"},
+                        "story_confirmation_required": True,
+                        "generation_blocked_until_story_confirmed": True,
+                        "sent_file_paths": [str(story_file)],
+                    },
+                    {
+                        "id": "task-202",
+                        "chat": "懒人科研",
+                        "status": "pending",
+                        "created_at": "2026-06-25T21:12:00",
+                        "request": "Current coalesced request:\nstory ok generate video now",
+                        "route_decision": {"route_kind": "generate_video", "project": "lalachan", "public_publish_allowed": False},
+                        "source": {"message_table": "MSG", "server_id": "srv-202", "local_id": 202},
+                        "routine": {"id": "generated_video"},
+                    },
+                ],
+            )
+
+            merged = worker.merge_existing_pending_interruptions(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(merged, 1)
+        self.assertEqual(tasks[0]["status"], "pending")
+        self.assertEqual(tasks[0]["route_decision"]["route_kind"], "generate_video")
+        self.assertEqual(tasks[0]["routine"]["id"], "generated_video")
+        self.assertFalse(tasks[0]["story_confirmation_required"])
+        self.assertFalse(tasks[0]["generation_blocked_until_story_confirmed"])
+        self.assertEqual(tasks[0]["approved_story_files"], [str(story_file)])
+        self.assertIn("Uma Gumi and konnyaku", tasks[0]["approved_story_message"])
+        self.assertEqual(tasks[0]["stage_transition"]["reason"], "same_chat_generation_confirmation")
+        self.assertEqual(tasks[1]["status"], "canceled_superseded")
+
+    def test_worker_does_not_merge_story_followup_into_days_old_video_task(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "old-video-task",
+                        "chat": "懒人科研",
+                        "status": worker.GENERATED_VIDEO_WAITING_STATUS,
+                        "created_at": "2026-06-23T00:10:12",
+                        "request": "Current coalesced request:\nGenerate an old RaraXia video.",
+                        "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+                        "source": {"message_table": "MSG", "server_id": "srv-93", "local_id": 93},
+                        "routine": {"id": "generated_video"},
+                    },
+                    {
+                        "id": "new-story-task",
+                        "chat": "懒人科研",
+                        "status": "pending",
+                        "created_at": "2026-06-25T21:16:21",
+                        "request": "Current coalesced request:\nWrite the new story from today's group messages.",
+                        "route_decision": {"route_kind": "story_or_script", "project": "lalachan"},
+                        "source": {"message_table": "MSG", "server_id": "srv-206", "local_id": 206},
+                        "routine": {"id": "story_script_generation"},
+                    },
+                ],
+            )
+
+            merged = worker.merge_existing_pending_interruptions(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(merged, 0)
+        self.assertEqual(tasks[0]["status"], worker.GENERATED_VIDEO_WAITING_STATUS)
+        self.assertEqual(tasks[1]["status"], "pending")
+        self.assertNotIn("interruptions", tasks[0])
+
+    def test_worker_suppresses_stale_result_when_interruption_arrived(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-201",
+                        "chat": "懒人科研",
+                        "status": worker.CLAIMED_STATUS,
+                        "worker_id": "pid:999999",
+                        "claimed_at": "2026-06-25T21:00:00",
+                        "interruption_pending": True,
+                        "last_interruption_at": "2026-06-25T21:01:00",
+                        "request": "Current coalesced request:\nGenerate a RaraXia video.",
+                        "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+                    }
+                ],
+            )
+
+            suppressed = worker.requeue_if_task_interrupted_during_run(
+                queue,
+                {"id": "task-201", "claimed_at": "2026-06-25T21:00:00", "worker_id": "pid:999999"},
+            )
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertTrue(suppressed)
+        self.assertEqual(stored["status"], "pending")
+        self.assertEqual(stored["reprocess_reason"], "interruption_arrived_during_worker_turn")
+        self.assertIn("stale_result_suppressed_at", stored)
+
+    def test_worker_allows_result_when_pending_interruption_was_already_claimed(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-201",
+                        "chat": "懒人科研",
+                        "status": worker.CLAIMED_STATUS,
+                        "worker_id": "pid:999999",
+                        "claimed_at": "2026-06-25T21:02:00",
+                        "interruption_pending": True,
+                        "interruption_count": 1,
+                        "last_interruption_at": "2026-06-25T21:01:00",
+                        "request": "Current coalesced request:\nGenerate a RaraXia video.",
+                        "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+                    }
+                ],
+            )
+            claimed_task = {
+                "id": "task-201",
+                "claimed_at": "2026-06-25T21:02:00",
+                "worker_id": "pid:999999",
+                "interruption_pending": True,
+            }
+
+            suppressed = worker.requeue_if_task_interrupted_during_run(queue, claimed_task)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertFalse(suppressed)
+        self.assertEqual(stored["status"], worker.CLAIMED_STATUS)
+        self.assertFalse(claimed_task["interruption_pending"])
+        self.assertEqual(claimed_task["interruption_handled_count"], 1)
 
     def test_generated_video_stage_permissions_allow_requested_publish_platforms_only(self) -> None:
         worker = load_worker()
@@ -2056,6 +2489,76 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("final_video.mp4", payload["message"])
         self.assertTrue(payload["data"]["generated_video_download_ready"])
         self.assertTrue(worker.generated_video_result_is_nonterminal(task, payload))
+
+    def test_existing_generated_video_file_returns_artifact_without_new_paid_action(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            video = tmp_path / "generated.mp4"
+            video.write_bytes(b"generated-video")
+            task = {
+                "id": "task-video-existing",
+                "status": worker.CLAIMED_STATUS,
+                "artifact_dir": str(tmp_path),
+                "route_decision": {
+                    "route_kind": "generate_video",
+                    "public_publish_allowed": False,
+                    "no_new_xyq_submit": True,
+                },
+                "request": "Current coalesced request:\nGive me the generated video.",
+                "generated_video_monitor": {
+                    "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                    "page_id": "PAGE123456",
+                    "output_dir": str(tmp_path),
+                    "filename": "generated.mp4",
+                    "monitor_only_no_resubmit": True,
+                },
+                "credit_guard": {"enabled": True},
+            }
+
+            with mock.patch.object(worker, "generated_video_output_verification", return_value={"ok": True}):
+                raw = worker.deterministic_existing_generated_video_file_result(task)
+
+        payload = json.loads(raw or "{}")
+        self.assertEqual(payload["files"], [str(video.resolve())])
+        self.assertTrue(payload["data"]["require_file_delivery"])
+        self.assertEqual(payload["data"]["existing_generated_video_artifact"]["status"], "found")
+        self.assertIn("不会重新提交", payload["message"])
+
+    def test_preflight_prefers_existing_generated_video_before_continue_monitor_or_submit(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            video = tmp_path / "generated.mp4"
+            video.write_bytes(b"generated-video")
+            task = {
+                "id": "task-video-existing-preflight",
+                "status": worker.CLAIMED_STATUS,
+                "artifact_dir": str(tmp_path),
+                "route_decision": {
+                    "route_kind": "generate_video",
+                    "public_publish_allowed": False,
+                    "monitor_only_no_resubmit": True,
+                },
+                "request": "Current coalesced request:\nThe video generated already; send it here.",
+                "generated_video_monitor": {
+                    "thread_url": "https://xyq.jianying.com/home?thread_id=abc",
+                    "page_id": "PAGE123456",
+                    "output_dir": str(tmp_path),
+                    "filename": "generated.mp4",
+                },
+                "generation_wait_count": 1,
+            }
+
+            with mock.patch.object(worker, "generated_video_output_verification", return_value={"ok": True}):
+                with mock.patch.object(worker, "deterministic_generated_video_continue_result", side_effect=AssertionError("continue should not run")):
+                    with mock.patch.object(worker, "deterministic_generated_video_monitor_result", side_effect=AssertionError("monitor should not run")):
+                        with mock.patch.object(worker, "deterministic_generated_video_submit_result", side_effect=AssertionError("submit should not run")):
+                            raw = worker.deterministic_preflight_result(task)
+
+        payload = json.loads(raw or "{}")
+        self.assertEqual(payload["files"], [str(video.resolve())])
+        self.assertIn("不会重新提交", payload["message"])
 
     def test_generation_waiting_resume_downloads_then_queues_requested_lazyedit_after_send(self) -> None:
         worker = load_worker()
@@ -2591,6 +3094,45 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("--process-timeout 10800", shell_command)
         self.assertIn("--publish-timeout 10800", shell_command)
         self.assertEqual(calls[0]["kwargs"]["timeout"], 21600)
+
+    def test_generated_video_lazyedit_command_creates_context_prompts_when_missing(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+
+        def fake_run(command, **kwargs):
+            calls.append({"command": command, "kwargs": kwargs})
+            return subprocess.CompletedProcess(command, 0, '{"ok": true}', "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            artifact_dir = tmp_path / "artifact"
+            video = tmp_path / "generated.mp4"
+            video.write_bytes(b"video")
+            with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+                outcome = worker.run_generated_video_lazyedit_command(
+                    video,
+                    {
+                        "id": "task-video",
+                        "artifact_dir": str(artifact_dir),
+                        "request": "Current coalesced request:\nGenerate this LALACHAN story video and upload it to LazyEdit.",
+                    },
+                    {},
+                    publish=False,
+                )
+            correction = artifact_dir / "lazyedit_correction_context.md"
+            metadata = artifact_dir / "lazyedit_metadata_brief.md"
+            correction_text = correction.read_text(encoding="utf-8")
+            metadata_text = metadata.read_text(encoding="utf-8")
+
+        self.assertTrue(outcome["ok"])
+        shell_command = calls[0]["command"][2]
+        self.assertIn("--correction-prompt-file", shell_command)
+        self.assertIn("--metadata-prompt-file", shell_command)
+        self.assertIn("lazyedit_correction_context.md", shell_command)
+        self.assertIn("lazyedit_metadata_brief.md", shell_command)
+        self.assertIn("WeChat Generated Video Context", correction_text)
+        self.assertIn("LALACHAN story video", correction_text)
+        self.assertIn("WeChat Generated Video Metadata Brief", metadata_text)
 
     def test_generated_video_lazyedit_command_publishes_requested_platforms(self) -> None:
         worker = load_worker()

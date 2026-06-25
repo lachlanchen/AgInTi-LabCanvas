@@ -468,6 +468,128 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(decision["route_kind"], "file_download_or_save")
         self.assertEqual(decision["route_agent_overridden"], "agent_chat_only_despite_worker_heuristic")
 
+    def test_story_video_followup_appends_as_same_chat_interruption(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            original_task = {
+                "id": "task-201",
+                "chat": "懒人科研",
+                "status": "generation_waiting",
+                "request": "Current coalesced request:\nGenerate a RaraXia video.",
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+                "source": {"chat": "懒人科研", "message_table": "MSG", "server_id": "srv-201", "local_id": 201},
+                "routine": {"id": "generated_video"},
+            }
+            queue.write_text(json.dumps(original_task, ensure_ascii=False) + "\n", encoding="utf-8")
+            incoming = {
+                "id": "task-202",
+                "chat": "懒人科研",
+                "status": "pending",
+                "request": "Current coalesced request:\nFirst update the story and show it here for confirmation.",
+                "route_decision": {"route_kind": "story_or_script", "project": "lalachan"},
+                "source": {"chat": "懒人科研", "message_table": "MSG", "server_id": "srv-202", "local_id": 202},
+                "context": [
+                    {
+                        "local_id": 202,
+                        "server_id": "srv-202",
+                        "sender": "friend",
+                        "sender_display": "陈苗",
+                        "local_type": 1,
+                        "content": "First update the story and show it here for confirmation.",
+                    }
+                ],
+                "routine": {"id": "story_script_generation"},
+            }
+
+            merged, appended = direct_chatops.append_worker_task_once(queue, incoming)
+            tasks = direct_chatops.read_worker_queue_tasks(queue)
+
+        self.assertFalse(appended)
+        self.assertTrue(merged["interruption_appended"])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["id"], "task-201")
+        self.assertEqual(tasks[0]["status"], "pending")
+        self.assertTrue(tasks[0]["interruption_pending"])
+        self.assertEqual(tasks[0]["interruptions"][0]["source"]["local_id"], 202)
+        self.assertIn("First update the story", tasks[0]["request"])
+
+    def test_story_video_followup_promotes_story_task_to_generated_video(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            story_file = tmp_path / "approved-story.md"
+            story_file.write_text("# Story\n\nAyaChan compares Uma Gumi and konnyaku.", encoding="utf-8")
+            queue = tmp_path / "queue.jsonl"
+            original_task = {
+                "id": "task-201",
+                "chat": "懒人科研",
+                "status": "waiting_confirmation",
+                "request": "Current coalesced request:\nWrite the story first.",
+                "route_decision": {"route_kind": "story_or_script", "project": "lalachan", "public_publish_allowed": False},
+                "source": {"chat": "懒人科研", "message_table": "MSG", "server_id": "srv-201", "local_id": 201},
+                "routine": {"id": "story_script_generation"},
+                "story_confirmation_required": True,
+                "generation_blocked_until_story_confirmed": True,
+                "sent_file_paths": [str(story_file)],
+            }
+            queue.write_text(json.dumps(original_task, ensure_ascii=False) + "\n", encoding="utf-8")
+            incoming = {
+                "id": "task-202",
+                "chat": "懒人科研",
+                "status": "pending",
+                "request": "Current coalesced request:\nstory ok generate video now",
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan", "public_publish_allowed": False},
+                "source": {"chat": "懒人科研", "message_table": "MSG", "server_id": "srv-202", "local_id": 202},
+                "routine": {"id": "generated_video"},
+            }
+
+            merged, appended = direct_chatops.append_worker_task_once(queue, incoming)
+            tasks = direct_chatops.read_worker_queue_tasks(queue)
+
+        self.assertFalse(appended)
+        self.assertTrue(merged["interruption_appended"])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["route_decision"]["route_kind"], "generate_video")
+        self.assertEqual(tasks[0]["routine"]["id"], "generated_video")
+        self.assertFalse(tasks[0]["story_confirmation_required"])
+        self.assertFalse(tasks[0]["generation_blocked_until_story_confirmed"])
+        self.assertEqual(tasks[0]["approved_story_files"], [str(story_file)])
+        self.assertIn("Uma Gumi and konnyaku", tasks[0]["approved_story_message"])
+        self.assertEqual(tasks[0]["stage_transition"]["reason"], "same_chat_generation_confirmation")
+
+    def test_story_video_followup_does_not_attach_to_days_old_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            old_task = {
+                "id": "task-old",
+                "chat": "懒人科研",
+                "status": "generation_waiting",
+                "created_at": "2026-06-23T00:10:12",
+                "request": "Current coalesced request:\nGenerate an old RaraXia video.",
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+                "source": {"chat": "懒人科研", "message_table": "MSG", "server_id": "srv-93", "local_id": 93},
+                "routine": {"id": "generated_video"},
+            }
+            queue.write_text(json.dumps(old_task, ensure_ascii=False) + "\n", encoding="utf-8")
+            incoming = {
+                "id": "task-new",
+                "chat": "懒人科研",
+                "status": "pending",
+                "created_at": "2026-06-25T21:16:21",
+                "request": "Current coalesced request:\nWrite the new story from today's group messages.",
+                "route_decision": {"route_kind": "story_or_script", "project": "lalachan"},
+                "source": {"chat": "懒人科研", "message_table": "MSG", "server_id": "srv-206", "local_id": 206},
+                "routine": {"id": "story_script_generation"},
+            }
+
+            merged, appended = direct_chatops.append_worker_task_once(queue, incoming)
+            tasks = direct_chatops.read_worker_queue_tasks(queue)
+
+        self.assertTrue(appended)
+        self.assertFalse(merged.get("interruption_appended"))
+        self.assertEqual([task["id"] for task in tasks], ["task-old", "task-new"])
+        self.assertEqual(tasks[0]["status"], "generation_waiting")
+        self.assertEqual(tasks[1]["status"], "pending")
+
     def test_wechat_locked_send_error_is_classified(self) -> None:
         self.assertTrue(direct_chatops.is_wechat_locked_error(RuntimeError("WECHAT_LOCKED: Weixin for Linux is locked")))
         self.assertTrue(direct_chatops.is_deferable_send_error(RuntimeError("WECHAT_SEND_BUSY: serialized GUI sender is already sending")))

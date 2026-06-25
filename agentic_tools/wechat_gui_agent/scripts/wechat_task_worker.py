@@ -56,6 +56,21 @@ DEFAULT_GENERATED_VIDEO_LAZYEDIT_TIMEOUT_SECONDS = 6 * 60 * 60
 DEFAULT_GENERATED_VIDEO_LAZYEDIT_PROCESS_TIMEOUT_SECONDS = 3 * 60 * 60
 DEFAULT_GENERATED_VIDEO_LAZYEDIT_PUBLISH_TIMEOUT_SECONDS = 3 * 60 * 60
 DEFAULT_WORKER_MODEL = "gpt-5.5"
+INTERRUPTIBLE_TASK_STATUSES = {
+    "pending",
+    CLAIMED_STATUS,
+    GENERATED_VIDEO_WAITING_STATUS,
+    GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS,
+    EXISTING_VIDEO_PUBLISH_PENDING_STATUS,
+    SEND_DEFERRED_ARTIFACT_STATUS,
+    SEND_DEFERRED_LOCKED_STATUS,
+    SEND_RETRYING_STATUS,
+    "waiting_confirmation",
+}
+REQUEUE_ON_INTERRUPT_STATUSES = INTERRUPTIBLE_TASK_STATUSES - {CLAIMED_STATUS}
+INTERRUPTIBLE_ROUTE_KINDS = {"story_or_script", "generate_video"}
+INTERRUPTIBLE_ROUTINE_IDS = {"story_script_generation", "generated_video"}
+DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 EFFORT_TIMEOUT_SECONDS = {
     "low": 120,
     "medium": 300,
@@ -314,6 +329,10 @@ def reprocess_task(queue: Path, task_id: str, *, reason: str = "") -> dict[str, 
 
 
 def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
+    merged = merge_existing_pending_interruptions(queue)
+    if merged:
+        log_worker_event("interruption-merged", {"count": merged, "queue": str(queue)})
+        return True
     adopted = adopt_active_generated_video_tasks(queue)
     if adopted:
         log_worker_event("generation-monitor-adopted", adopted)
@@ -337,6 +356,9 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         result_text = f"Worker failed before completion: {type(exc).__name__}: {str(exc)[:800]}"
         result = {"message": result_text, "confirmation": "", "files": [], "raw": result_text}
         task["worker_error"] = {"type": type(exc).__name__, "message": str(exc)[:1000]}
+    if requeue_if_task_interrupted_during_run(queue, task):
+        log_worker_event("stale-result-suppressed-for-interruption", task)
+        return True
     target_chat = str(task.get("chat") or chat)
     send_now = send and should_send_worker_result(task, result)
     if send and not send_now:
@@ -1237,6 +1259,399 @@ def next_pending(path: Path) -> dict[str, Any] | None:
     return next((task for task in read_tasks(path) if task.get("status") == "pending"), None)
 
 
+def merge_existing_pending_interruptions(path: Path) -> int:
+    """Fold queued same-chat follow-ups into the active story/video task.
+
+    This handles follow-ups that were queued before the latest monitor code was
+    loaded, and keeps one per-chat worker session responsible for the evolving
+    story/video workflow.
+    """
+    if not path.exists():
+        return 0
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    now_text = datetime.now().isoformat(timespec="seconds")
+    merged = 0
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        for incoming_index, incoming in enumerate(list(tasks)):
+            if str(incoming.get("status") or "") != "pending" or not is_interruptible_story_video_task(incoming):
+                continue
+            target_index = find_interruption_target_index(tasks, incoming_index)
+            if target_index is None:
+                continue
+            target = tasks[target_index]
+            incoming_source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
+            if interruption_already_recorded(target, incoming_source):
+                incoming["status"] = "canceled_superseded"
+                incoming["completed_at"] = now_text
+                incoming["superseded_by"] = target.get("id")
+                incoming["superseded_reason"] = "same_chat_interruption_already_recorded"
+                tasks[incoming_index] = incoming
+                merged += 1
+                continue
+            interruption = build_task_interruption(target, incoming)
+            target.setdefault("interruptions", []).append(interruption)
+            target["interruptions"] = target["interruptions"][-20:]
+            target["interruption_pending"] = True
+            target["interruption_count"] = len(target["interruptions"])
+            target["last_interruption_at"] = interruption["at"]
+            target["last_interruption_source"] = interruption["source"]
+            target["interruption_policy"] = story_video_interruption_policy()
+            target["request"] = append_interruption_notice_to_request(target.get("request"), interruption)
+            promote_story_target_for_generation_interruption(target, interruption)
+            status = str(target.get("status") or "")
+            if status in REQUEUE_ON_INTERRUPT_STATUSES:
+                target["status"] = "pending"
+                target["reprocess_requested_at"] = interruption["at"]
+                target["reprocess_reason"] = "same_chat_interruption"
+                for field in (
+                    "completed_at",
+                    "claimed_at",
+                    "worker_id",
+                    "result",
+                    "send_suppressed_reason",
+                    "next_poll_at",
+                    "next_poststage_at",
+                    "next_publish_poststage_at",
+                ):
+                    target.pop(field, None)
+            elif status == CLAIMED_STATUS:
+                target["interrupt_requested_at"] = interruption["at"]
+                target["interrupt_delivery"] = "suppress_current_result_and_requeue_when_worker_turn_returns"
+            incoming["status"] = "canceled_superseded"
+            incoming["completed_at"] = now_text
+            incoming["superseded_at"] = now_text
+            incoming["superseded_by"] = target.get("id")
+            incoming["superseded_reason"] = "merged_as_same_chat_interruption"
+            tasks[target_index] = target
+            tasks[incoming_index] = incoming
+            merged += 1
+        if merged:
+            write_tasks(path, tasks)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    return merged
+
+
+def find_interruption_target_index(tasks: list[dict[str, Any]], incoming_index: int) -> int | None:
+    incoming = tasks[incoming_index]
+    for target_index in range(incoming_index - 1, -1, -1):
+        target = tasks[target_index]
+        if same_chat_interruption_target(target, incoming):
+            return target_index
+    return None
+
+
+def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    if not is_interruptible_story_video_task(target):
+        return False
+    if str(target.get("status") or "") not in INTERRUPTIBLE_TASK_STATUSES:
+        return False
+    if str(target.get("chat") or "") != str(incoming.get("chat") or ""):
+        return False
+    target_source = target.get("source") if isinstance(target.get("source"), dict) else {}
+    incoming_source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
+    if not same_optional_field(target_source, incoming_source, "message_table"):
+        return False
+    if not same_optional_field(target_source, incoming_source, "config_id"):
+        return False
+    if not interruption_target_recent_enough(target, incoming):
+        return False
+    target_local_id = int_or_none(target_source.get("local_id"))
+    incoming_local_id = int_or_none(incoming_source.get("local_id"))
+    if target_local_id is None or incoming_local_id is None or incoming_local_id <= target_local_id:
+        return False
+    return True
+
+
+def same_optional_field(left: dict[str, Any], right: dict[str, Any], key: str) -> bool:
+    left_value = str(left.get(key) or "")
+    right_value = str(right.get(key) or "")
+    return not (left_value and right_value and left_value != right_value)
+
+
+def interruption_target_recent_enough(target: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    max_age = int(os.environ.get("WECHAT_WORKER_INTERRUPT_TARGET_MAX_AGE_SECONDS", str(DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS)))
+    if max_age <= 0:
+        return True
+    target_ts = task_event_timestamp(target)
+    incoming_ts = task_event_timestamp(incoming)
+    if target_ts is None or incoming_ts is None:
+        return True
+    return 0 <= incoming_ts - target_ts <= max_age
+
+
+def task_event_timestamp(task: dict[str, Any]) -> float | None:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    for raw in (
+        source.get("create_time"),
+        task.get("created_at"),
+        task.get("last_interruption_at"),
+        task.get("claimed_at"),
+    ):
+        if isinstance(raw, (int, float)) and raw > 0:
+            return float(raw)
+        if isinstance(raw, str):
+            as_float = float_or_none(raw)
+            if as_float:
+                return as_float
+            parsed = parse_iso_datetime(raw)
+            if parsed:
+                return parsed.timestamp()
+    return None
+
+
+def is_interruptible_story_video_task(task: dict[str, Any]) -> bool:
+    route = task_route_decision(task)
+    routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
+    route_kind = str(route.get("route_kind") or "")
+    routine_id = str(routine.get("id") or "")
+    project = str(route.get("project") or "").lower()
+    if route_kind in INTERRUPTIBLE_ROUTE_KINDS or routine_id in INTERRUPTIBLE_ROUTINE_IDS or project == "lalachan":
+        return True
+    text = str(task.get("request") or "").lower()
+    return any(marker in text for marker in ("lalachan", "raraxia", "ayachan", "sasakun", "小云雀", "啦啦侠", "阿芽酱", "飒飒君"))
+
+
+def promote_story_target_for_generation_interruption(task: dict[str, Any], interruption: dict[str, Any]) -> bool:
+    """Turn an approved story row into the generated-video routine.
+
+    The monitor may first create a story task, then receive a same-chat
+    "story ok, generate video" message. That update must move the same queue row
+    forward instead of asking the worker to rediscover the stage from prose.
+    """
+    incoming_route = interruption.get("route_decision") if isinstance(interruption.get("route_decision"), dict) else {}
+    incoming_text = "\n".join(
+        [
+            str(interruption.get("request") or ""),
+            str(interruption.get("request_excerpt") or ""),
+            json.dumps(incoming_route, ensure_ascii=False),
+        ]
+    ).lower()
+    if str(incoming_route.get("route_kind") or "") != "generate_video" and not text_confirms_story_video_generation(incoming_text):
+        return False
+    current_route = task_route_decision(task)
+    current_kind = str(current_route.get("route_kind") or "")
+    if current_kind not in {"story_or_script", "generate_video"}:
+        return False
+    route = dict(current_route)
+    route.update(incoming_route)
+    route.update(
+        {
+            "route_kind": "generate_video",
+            "project": "lalachan",
+            "worker_needed": True,
+            "needs_recent_media": False,
+            "public_publish_allowed": bool(incoming_route.get("public_publish_allowed")),
+            "public_publish_intent": bool(incoming_route.get("public_publish_intent")),
+            "source_policy": incoming_route.get("source_policy") or route.get("source_policy") or "current_plus_explicit_refs",
+            "approval_promoted_from": current_kind or "story_interruption",
+            "approval_interruption": {
+                "at": interruption.get("at"),
+                "incoming_task_id": interruption.get("incoming_task_id"),
+                "source": interruption.get("source") if isinstance(interruption.get("source"), dict) else {},
+            },
+        }
+    )
+    task["route_decision"] = route
+    task["routine"] = generated_video_routine_snapshot(task, selected_by="wechat_task_worker.promote_story_target_for_generation_interruption")
+    task["story_confirmation_required"] = False
+    task["generation_blocked_until_story_confirmed"] = False
+    task["confirmed_story_for_generation_at"] = interruption.get("at") or datetime.now().isoformat(timespec="seconds")
+    task["confirmed_story_for_generation_note"] = collapse_context_text(interruption.get("request_excerpt") or interruption.get("request"), max_len=1000)
+    preserve_story_confirmation_material(task)
+    task["stage_transition"] = {
+        "from": "story_script_generation",
+        "to": "generated_video",
+        "at": task["confirmed_story_for_generation_at"],
+        "reason": "same_chat_generation_confirmation",
+        "interruption_task_id": interruption.get("incoming_task_id"),
+    }
+    for field in ("preflight", "routine_contract", "orchestrator", "worker_policy_attempts", "story_confirmation_gate"):
+        task.pop(field, None)
+    return True
+
+
+def text_confirms_story_video_generation(text: str) -> bool:
+    lowered = str(text or "").lower()
+    negative = (
+        "do not generate",
+        "don't generate",
+        "dont generate",
+        "not generate",
+        "wait",
+        "不要生成",
+        "别生成",
+        "不用生成",
+        "先别",
+        "等一下",
+    )
+    if any(marker in lowered for marker in negative):
+        return False
+    positive = (
+        "story ok",
+        "ok generate",
+        "generate video",
+        "continue generation",
+        "continue to generate",
+        "开始生成",
+        "继续生成",
+        "可以生成",
+        "故事可以",
+        "生成视频",
+    )
+    return any(marker in lowered for marker in positive)
+
+
+def generated_video_routine_snapshot(task: dict[str, Any], *, selected_by: str) -> dict[str, Any]:
+    route = task_route_decision(task)
+    return {
+        "id": "generated_video",
+        "title": "Generated Video Routine",
+        "task_id": task.get("id"),
+        "chat": task.get("chat"),
+        "source": task.get("source") if isinstance(task.get("source"), dict) else {},
+        "route_kind": "generate_video",
+        "project": "lalachan",
+        "purpose": "Create a new video from the approved story, monitor long generation, send MP4 back, then run optional poststages.",
+        "selected_at": datetime.now().isoformat(timespec="seconds"),
+        "selected_by": selected_by,
+        "public_publish_allowed": bool(route.get("public_publish_allowed")),
+    }
+
+
+def preserve_story_confirmation_material(task: dict[str, Any]) -> None:
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    if result:
+        task.setdefault("story_confirmation_result", result)
+        message = str(result.get("message") or "").strip()
+        if message:
+            task.setdefault("approved_story_message", message)
+        files = [str(path) for path in result.get("files") or [] if str(path)]
+        if files:
+            task.setdefault("approved_story_files", files)
+    existing_files = [str(path) for path in task.get("sent_file_paths") or [] if str(path)]
+    story_files = [path for path in existing_files if Path(path).suffix.lower() in {".md", ".markdown", ".txt"}]
+    if story_files:
+        merged_files = list(task.get("approved_story_files") or [])
+        for path in story_files:
+            if path not in merged_files:
+                merged_files.append(path)
+        task["approved_story_files"] = merged_files
+    if not str(task.get("approved_story_message") or "").strip():
+        for path_text in task.get("approved_story_files") or []:
+            path = Path(str(path_text))
+            try:
+                if path.is_file() and path.suffix.lower() in {".md", ".markdown", ".txt"}:
+                    text = path.read_text(encoding="utf-8", errors="replace").strip()
+                else:
+                    text = ""
+            except OSError:
+                text = ""
+            if text:
+                task["approved_story_message"] = collapse_context_text(text, max_len=8000)
+                break
+
+
+def interruption_already_recorded(task: dict[str, Any], incoming_source: dict[str, Any]) -> bool:
+    incoming_key = (
+        str(incoming_source.get("message_table") or ""),
+        str(incoming_source.get("server_id") or ""),
+        str(incoming_source.get("local_id") or ""),
+    )
+    for item in task_interruptions(task):
+        source = item.get("source") if isinstance(item.get("source"), dict) else {}
+        existing_key = (
+            str(source.get("message_table") or ""),
+            str(source.get("server_id") or ""),
+            str(source.get("local_id") or ""),
+        )
+        if existing_key == incoming_key:
+            return True
+    return False
+
+
+def build_task_interruption(target: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
+    return {
+        "at": datetime.now().isoformat(timespec="seconds"),
+        "mode": "same_chat_interruption",
+        "target_task_id": target.get("id"),
+        "incoming_task_id": incoming.get("id"),
+        "source": source,
+        "route_decision": task_route_decision(incoming),
+        "request": str(incoming.get("request") or ""),
+        "request_excerpt": collapse_context_text(incoming.get("request"), max_len=1200),
+        "context": incoming.get("context")[-8:] if isinstance(incoming.get("context"), list) else [],
+        "instruction": "Newer same-chat user messages override stale story/video plan details.",
+    }
+
+
+def append_interruption_notice_to_request(request: Any, interruption: dict[str, Any]) -> str:
+    source = interruption.get("source") if isinstance(interruption.get("source"), dict) else {}
+    notice = (
+        "\n\nSame-chat interruption/update received after the original task:\n"
+        f"- local_id={source.get('local_id')} server_id={source.get('server_id')} "
+        f"sender={source.get('sender_display') or source.get('sender')}\n"
+        f"{interruption.get('request_excerpt') or ''}\n"
+        "The resumed worker agent must use this update to dynamically adjust the next routine stage."
+    )
+    base = str(request or "").rstrip()
+    if notice in base:
+        return base
+    return base + notice
+
+
+def story_video_interruption_policy() -> dict[str, Any]:
+    return {
+        "mode": "agent_adjusts_existing_routine",
+        "monitor_role": "append_only_transport",
+        "agent_role": "draft_or_revise_from_full_context_then_choose_next_stage",
+        "confirmation_gate": "story_must_be_sent_to_group_and_confirmed_before_xiaoyunque_submit_or_continue",
+    }
+
+
+def requeue_if_task_interrupted_during_run(queue: Path, task: dict[str, Any]) -> bool:
+    task_id = str(task.get("id") or "")
+    if not task_id:
+        return False
+    lock_path = queue.with_suffix(queue.suffix + ".lock")
+    now_text = datetime.now().isoformat(timespec="seconds")
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(queue)
+        for index, current in enumerate(tasks):
+            if str(current.get("id") or "") != task_id:
+                continue
+            if not current.get("interruption_pending"):
+                return False
+            if not interruption_is_newer_than_claim(current, task):
+                task["interruption_pending"] = False
+                task["interruption_handled_at"] = now_text
+                task["interruption_handled_by"] = str(task.get("worker_id") or worker_identity())
+                task["interruption_handled_count"] = int(current.get("interruption_count") or len(task_interruptions(current)))
+                return False
+            current["status"] = "pending"
+            current["reprocess_requested_at"] = now_text
+            current["reprocess_reason"] = "interruption_arrived_during_worker_turn"
+            current["stale_result_suppressed_at"] = now_text
+            current.pop("claimed_at", None)
+            current.pop("worker_id", None)
+            current.pop("result", None)
+            tasks[index] = current
+            write_tasks(queue, tasks)
+            return True
+    return False
+
+
+def interruption_is_newer_than_claim(current: dict[str, Any], claimed_task: dict[str, Any]) -> bool:
+    last_interrupt = parse_iso_datetime(str(current.get("last_interruption_at") or ""))
+    claimed_at = parse_iso_datetime(str(claimed_task.get("claimed_at") or current.get("claimed_at") or ""))
+    if not last_interrupt or not claimed_at:
+        return False
+    return last_interrupt > claimed_at
+
+
 def claim_next_pending(path: Path) -> dict[str, Any] | None:
     """Atomically claim one pending task so multiple workers cannot duplicate it."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1924,6 +2339,7 @@ def task_orchestrator_stage(task: dict[str, Any]) -> str:
 def run_worker_agent_session(task: dict[str, Any], policy: dict[str, Any]) -> str:
     routine_context = routine_prompt_context(task)
     tool_context = build_worker_tool_context(task)
+    interruption_context = build_interruption_prompt_context(task)
     orchestrator_context = json.dumps(task.get("orchestrator") or {}, ensure_ascii=False, indent=2)
     execution_context = json.dumps(worker_execution_contract(task), ensure_ascii=False, indent=2)
     instruction_context = json.dumps(worker_instruction_contract(task), ensure_ascii=False, indent=2)
@@ -1932,8 +2348,11 @@ Handle the task using available local files/tools. Save downloaded or generated 
 WeChat is only the message transport: it receives user messages and returns safe files/messages. Backend execution belongs to the routine orchestrator and the selected per-chat worker agent session.
 You are being resumed by the central routine orchestrator. Treat the routine contract and orchestrator handoff as the execution center: inspect current stage, use mature routine entrypoints first, repair blockers, and only invent a new approach if no routine stage applies.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
+If `task.interruptions` or `task.preflight.interruptions` exists, those are newer same-chat user updates attached by the monitor. Treat them as authoritative updates to this active routine, not as separate unrelated tasks. Read all interruptions together before acting, revise the plan, and continue from the real current stage.
+For story/video workflows, a newer request to revise/show/confirm the story must pause or replace the stale story-generation plan before any new video submit. Send the updated story back and ask whether to generate the video unless the latest same-chat messages already give clear generation permission. If a generation was submitted but the user says they stopped it or asks to update the story, do not keep polling the stale run as success; update the story/prompt first and wait for or use the latest confirmation.
 Follow the machine-readable instruction contract below. Follow every safe, explicit instruction in the current coalesced request. If the user asks for multiple stages, do them in order or persist a resumable state for unfinished stages; do not collapse the request to a smaller hardcoded action just because one routine or keyword matched.
 Before executing, inspect `task.route_decision` against the Current coalesced request and recent context. If they conflict, choose the safer interpretation and state the conflict instead of acting. If `task.route_decision` exists, treat it as the intent contract. If it says `route_kind=generate_video`, generate/import the requested new video and do not process an old WeChat MP4 as the output. Treat stages separately: story writing, video generation/download/send-back, LazyEdit import/process, and public publishing are independent permissions. If `public_publish_allowed` is false, do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish public queues, or any public platform even if old context mentions publishing. Public posting requires an explicit publish/post/platform instruction in the current user request, not merely old history. LazyEdit import/process is allowed only when the current request explicitly asks for LazyEdit/import/process.
+For paid Xiaoyunque/Seedance work, use request-level idempotence: one logical WeChat request owns at most one paid generation thread unless the current user message explicitly asks for a new paid rerun. If `task.generated_video_monitor.thread_url`, `task.generated_video_submit_probe`, `task.credit_guard`, `route_decision.no_new_xyq_submit`, or `monitor_only_no_resubmit` exists, do not submit, retry, continue, or create another Xiaoyunque job. Only monitor/download the existing thread and send the resulting MP4 back.
 Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
 Strict source isolation: the task's `chat`, `source.local_id`, `source.server_id`, `context`, and any explicit source/reference rows embedded in `request` define the only WeChat source. Never use media, files, or generated artifacts from another chat, another direct message, a nearby queue item, or an unrelated old task.
 If no exact matching source media is available for "this image", "this PDF", "this video", "last one", or a quoted command, return a source-limited message asking for the exact file/source. Do not synthesize or continue from unrelated media.
@@ -1960,6 +2379,8 @@ Instruction contract:
 ```json
 {instruction_context}
 ```
+
+{interruption_context}
 
 {tool_context}
 
@@ -2056,10 +2477,16 @@ def worker_instruction_contract(task: dict[str, Any]) -> dict[str, Any]:
         contract.setdefault("autonomous_completion_required", True)
         contract.setdefault("human_supervision_role", "approval_only_for_login_captcha_payment_public_posting_deletion_or_unsafe_irreversible_actions")
         contract.setdefault("worker_must_continue_via_routine_until_terminal_state", True)
+        contract.setdefault("same_chat_interruptions_authoritative", True)
+        contract.setdefault("interruption_policy", "newer_same_chat_messages_update_the_active_routine_and_must_be_read_before_next_action")
+        contract.setdefault("story_video_confirmation_policy", "after story revision, send story to group and confirm before video generation unless latest user text explicitly authorizes generation")
         return contract
     route = task_route_decision(task)
     return {
         "current_request_authoritative": True,
+        "same_chat_interruptions_authoritative": True,
+        "interruption_policy": "newer_same_chat_messages_update_the_active_routine_and_must_be_read_before_next_action",
+        "story_video_confirmation_policy": "after story revision, send story to group and confirm before video generation unless latest user text explicitly authorizes generation",
         "preserve_safe_explicit_instructions": True,
         "multi_stage_policy": "complete_in_order_or_persist_resumable_state",
         "no_keyword_shrink": True,
@@ -2096,6 +2523,112 @@ def ensure_runtime_instruction_contract(task: dict[str, Any]) -> None:
         task["execution_contract"] = default_worker_execution_contract(task, instruction)
 
 
+def task_interruptions(task: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = task.get("interruptions") if isinstance(task.get("interruptions"), list) else []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def task_interruptions_manifest(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any] | None:
+    interruptions = task_interruptions(task)
+    if not interruptions:
+        return None
+    latest = interruptions[-1]
+    manifest = {
+        "task_id": task.get("id"),
+        "chat": task.get("chat"),
+        "status": "pending-agent-review",
+        "count": len(interruptions),
+        "latest_at": latest.get("at"),
+        "latest_source": latest.get("source") if isinstance(latest.get("source"), dict) else {},
+        "policy": {
+            "monitor_role": "append-only transport; do not decide the creative or workflow outcome",
+            "agent_role": "read all interruptions and dynamically adjust the active routine before the next action",
+            "story_video_default": [
+                "update/rewrite story from the full same-chat context",
+                "send the revised story to the group",
+                "ask whether to generate video unless latest text explicitly authorizes generation",
+                "send the verified MP4 back before asking whether to publish",
+            ],
+        },
+        "items": interruptions,
+    }
+    json_path = artifact_dir / "same_chat_interruptions.json"
+    md_path = artifact_dir / "same_chat_interruptions.md"
+    json_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    md_path.write_text(format_task_interruptions_markdown(manifest), encoding="utf-8")
+    manifest["json"] = str(json_path)
+    manifest["markdown"] = str(md_path)
+    return manifest
+
+
+def format_task_interruptions_markdown(manifest: dict[str, Any]) -> str:
+    lines = [
+        "# Same-Chat Interruptions",
+        "",
+        f"- Task: `{manifest.get('task_id') or ''}`",
+        f"- Chat: `{manifest.get('chat') or ''}`",
+        f"- Count: `{manifest.get('count') or 0}`",
+        f"- Latest: `{manifest.get('latest_at') or ''}`",
+        "",
+        "## Policy",
+        "",
+        "- Newer same-chat messages are authoritative updates to the active routine.",
+        "- The monitor only appends the messages; the resumed worker agent decides the next stage.",
+        "- For story/video work, revise and show the story before generating unless the latest messages clearly authorize generation.",
+        "",
+        "## Items",
+    ]
+    for index, item in enumerate(manifest.get("items") or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source") if isinstance(item.get("source"), dict) else {}
+        lines.extend(
+            [
+                "",
+                f"### {index}. local_id={source.get('local_id') or ''}",
+                "",
+                f"- At: `{item.get('at') or ''}`",
+                f"- Sender: `{source.get('sender_display') or source.get('sender') or ''}`",
+                f"- Server ID: `{source.get('server_id') or ''}`",
+                "",
+                "```text",
+                collapse_context_text(item.get("request"), max_len=3000),
+                "```",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_interruption_prompt_context(task: dict[str, Any]) -> str:
+    interruptions = task_interruptions(task)
+    if not interruptions:
+        return ""
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    manifest = preflight.get("interruptions") if isinstance(preflight.get("interruptions"), dict) else {}
+    manifest_path = manifest.get("markdown") if isinstance(manifest, dict) else ""
+    summary = []
+    for item in interruptions[-6:]:
+        source = item.get("source") if isinstance(item.get("source"), dict) else {}
+        summary.append(
+            {
+                "at": item.get("at"),
+                "local_id": source.get("local_id"),
+                "sender": source.get("sender_display") or source.get("sender"),
+                "request_excerpt": item.get("request_excerpt") or collapse_context_text(item.get("request"), max_len=600),
+            }
+        )
+    return f"""
+Same-chat interruption packet:
+- The monitor appended {len(interruptions)} newer same-chat message(s) to this active task.
+- Manifest: `{manifest_path or '(not written yet)'}`
+- These messages are authoritative updates for the next action. Do not answer from stale story/prompt context.
+- If the user stopped a submitted Xiaoyunque run or says the story is wrong, update the story/prompt first and do not treat the stale run as success.
+```json
+{json.dumps(summary, ensure_ascii=False, indent=2)}
+```
+"""
+
+
 def worker_artifact_dir(task: dict[str, Any]) -> Path:
     task_id = safe_slug(str(task.get("id") or "manual-task"))
     return ROOT / "output" / "wechat_worker" / task_id
@@ -2104,6 +2637,9 @@ def worker_artifact_dir(task: dict[str, Any]) -> Path:
 def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     preflight: dict[str, Any] = {}
+    interruptions = task_interruptions_manifest(task, artifact_dir)
+    if interruptions:
+        preflight["interruptions"] = interruptions
     generate_video_task = is_generate_video_task(task)
     if generate_video_task:
         preflight["generated_video_contract"] = write_generated_video_contract(task, artifact_dir)
@@ -2173,6 +2709,12 @@ def should_prepare_media_resolution(task: dict[str, Any]) -> bool:
 def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
     refresh = refresh_media_sync_for_task(task)
     candidates = resolve_synced_media_from_mirror(task, limit=12)
+    gui_cache_probe: dict[str, Any] = {}
+    second_refresh: dict[str, Any] = {}
+    if not candidates and should_probe_gui_media_cache(task):
+        gui_cache_probe = materialize_chat_for_media_cache(task, artifact_dir)
+        second_refresh = refresh_media_sync_for_task(task)
+        candidates = resolve_synced_media_from_mirror(task, limit=12)
     source_dir = artifact_dir / "source_media"
     copied: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
@@ -2204,12 +2746,14 @@ def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path)
         "chat": task.get("chat"),
         "status": "ok" if copied else "missing",
         "refresh": refresh,
+        "gui_cache_probe": gui_cache_probe,
+        "second_refresh": second_refresh,
         "tokens": extract_media_tokens_from_task(task),
         "source_windows": task_media_source_windows(task),
         "copied": copied,
         "skipped": skipped,
-        "policy": "source-scoped media resolution; use task_copy_path files for this task only",
-        "resolver": "media_files mirror + prompt paths + exact tokens/time windows",
+        "policy": "source-scoped media resolution; use task_copy_path files for this task only; retry after official-client chat materialization before declaring missing",
+        "resolver": "media_files mirror + prompt paths + exact tokens/time windows + optional WeChat GUI cache probe",
     }
     manifest_json = artifact_dir / "media_resolution_manifest.json"
     manifest_md = artifact_dir / "media_resolution_manifest.md"
@@ -2218,6 +2762,70 @@ def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path)
     manifest["manifest_json"] = str(manifest_json)
     manifest["manifest_md"] = str(manifest_md)
     return manifest
+
+
+def should_probe_gui_media_cache(task: dict[str, Any]) -> bool:
+    if os.environ.get("WECHAT_WORKER_DISABLE_GUI_MEDIA_CACHE_PROBE"):
+        return False
+    if os.environ.get("WECHAT_WORKER_DISABLE_MEDIA_SYNC_PREFLIGHT"):
+        return False
+    chat = str(task.get("chat") or "").strip()
+    if not chat:
+        return False
+    route = task_route_decision(task)
+    if str(route.get("route_kind") or "") in {"file_intake"}:
+        return False
+    return should_prepare_media_resolution(task)
+
+
+def materialize_chat_for_media_cache(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+    """Dry-open the source chat so the official WeChat client can cache media.
+
+    The direct DB/media mirror is fast, but Linux WeChat often does not expose a
+    newly sent image/file until the chat is opened in the official client. This
+    probe never sends text; it only reuses the guarded GUI opener once, then the
+    normal media sync is run again.
+    """
+    chat = str(task.get("chat") or "").strip()
+    if not chat:
+        return {"status": "skipped", "reason": "missing_chat"}
+    script = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_chat_sync_loop.py"
+    if not script.is_file():
+        return {"status": "skipped", "reason": "missing_wechat_chat_sync_loop"}
+    output_dir = artifact_dir / "gui_media_cache_probe"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable,
+        str(script),
+        "--once",
+        "--only",
+        chat,
+        "--output-dir",
+        str(output_dir),
+        "--no-yield-to-queue",
+    ]
+    queue_path = str(task.get("queue_path") or "")
+    if queue_path:
+        command += ["--queue", queue_path]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=float(os.environ.get("WECHAT_WORKER_GUI_MEDIA_CACHE_PROBE_TIMEOUT", "60")),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"status": "error", "error": str(exc)[:500], "command": redact_command(command)}
+    return {
+        "status": "ok" if proc.returncode == 0 else "failed",
+        "returncode": proc.returncode,
+        "command": redact_command(command),
+        "output_dir": str(output_dir),
+        "stdout": collapse_context_text(proc.stdout, max_len=1000),
+        "stderr": collapse_context_text(proc.stderr, max_len=1000) if proc.stderr.strip() else "",
+    }
 
 
 def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
@@ -2590,6 +3198,27 @@ def media_resolution_markdown(manifest: dict[str, Any]) -> str:
         lines.extend(["", "## Skipped"])
         for item in skipped:
             lines.append(f"- `{item.get('path')}`: {item.get('reason')}")
+    gui_probe = manifest.get("gui_cache_probe") if isinstance(manifest.get("gui_cache_probe"), dict) else {}
+    if gui_probe:
+        lines.extend(
+            [
+                "",
+                "## GUI Cache Probe",
+                f"- Status: `{gui_probe.get('status') or ''}`",
+                f"- Output: `{gui_probe.get('output_dir') or ''}`",
+            ]
+        )
+        if gui_probe.get("stderr"):
+            lines.append(f"- Stderr: `{collapse_context_text(gui_probe.get('stderr'), max_len=240)}`")
+    second_refresh = manifest.get("second_refresh") if isinstance(manifest.get("second_refresh"), dict) else {}
+    if second_refresh:
+        lines.extend(
+            [
+                "",
+                "## Second Sync",
+                f"- Status: `{second_refresh.get('status') or second_refresh.get('returncode')}`",
+            ]
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -2690,6 +3319,24 @@ def task_focus_text(task: dict[str, Any]) -> str:
         text = collapse_context_text(value, max_len=3000)
         if text and text not in parts:
             parts.append(text)
+    story_result = task.get("story_confirmation_result") if isinstance(task.get("story_confirmation_result"), dict) else {}
+    approved_story_message = str(task.get("approved_story_message") or story_result.get("message") or "").strip()
+    if approved_story_message:
+        text = collapse_context_text(approved_story_message, max_len=6000)
+        if text and text not in parts:
+            parts.append("Approved story for video generation:\n" + text)
+    story_files = task.get("approved_story_files")
+    if not isinstance(story_files, list):
+        story_files = story_result.get("files") if isinstance(story_result.get("files"), list) else []
+    file_lines = [str(path) for path in story_files if str(path).strip()]
+    if file_lines:
+        text = "Approved story file(s):\n" + "\n".join(f"- {path}" for path in file_lines)
+        if text not in parts:
+            parts.append(text)
+    for item in task_interruptions(task):
+        text = collapse_context_text(item.get("request") or item.get("request_excerpt"), max_len=3000)
+        if text and text not in parts:
+            parts.append(text)
     return "\n".join(parts)
 
 
@@ -2722,6 +3369,31 @@ def is_generate_video_task(task: dict[str, Any]) -> bool:
     text = task_focus_text(task).lower()
     generation_markers = ("generate", "create", "make", "生成", "创作", "做")
     return "video" in text and any(marker in text for marker in generation_markers)
+
+
+def generated_video_monitor_only(task: dict[str, Any]) -> bool:
+    """Return true when a paid XYQ thread already exists for this request.
+
+    This is an idempotence guard, not a story-specific rule: once the queue has
+    evidence that a Xiaoyunque request was submitted or credits were consumed,
+    the worker may monitor/download that thread but must not submit/continue a
+    second paid action for the same logical request.
+    """
+    route = task_route_decision(task)
+    monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
+    credit_guard = task.get("credit_guard") if isinstance(task.get("credit_guard"), dict) else {}
+    submit_probe = task.get("generated_video_submit_probe") if isinstance(task.get("generated_video_submit_probe"), dict) else {}
+    if bool(route.get("no_new_xyq_submit")) or bool(route.get("monitor_only_no_resubmit")):
+        return True
+    if bool(monitor.get("monitor_only_no_resubmit")) or bool(monitor.get("no_new_xyq_submit")):
+        return True
+    if bool(credit_guard.get("enabled")):
+        return True
+    if submit_probe.get("ok") and str(submit_probe.get("thread_url") or submit_probe.get("page_id") or ""):
+        return True
+    if task.get("generation_wait_count") and monitor.get("thread_url"):
+        return True
+    return False
 
 
 def generated_video_stage_permissions(task: dict[str, Any]) -> dict[str, Any]:
@@ -2874,6 +3546,9 @@ def write_generated_video_contract(task: dict[str, Any], artifact_dir: Path) -> 
             "For route_kind=generate_video, create or import a new video; do not process old WeChat MP4 files.",
             "Always send the verified generated MP4 back to the source WeChat chat when GUI sending is available.",
             "Treat story generation, video generation/download/send-back, LazyEdit import/process, and public publishing as separate stages.",
+            "If task.interruptions contains newer same-chat messages, read them all before the next action and revise the routine plan dynamically.",
+            "For story/video work, a newer story revision/show/confirmation request pauses stale video submit/polling; send the updated story to the group and confirm before generating unless the latest message explicitly authorizes generation.",
+            "If the user says a submitted website generation was stopped or cancelled, do not treat that stale run as success; update the story/prompt and continue from the latest confirmed stage.",
             "Generation is not publication: generating/downloading/sending a video never authorizes LazyEdit import or public posting.",
             "Do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish, or public queues unless stage_permissions.public_publish is true.",
             "Do not import/process in LazyEdit unless stage_permissions.lazyedit_import is true.",
@@ -2881,6 +3556,8 @@ def write_generated_video_contract(task: dict[str, Any], artifact_dir: Path) -> 
             "LazyEdit correction context must include the WeChat message sent with the video; AI-generated video publication must also append the generated story/script and Xiaoyunque/Seedance prompt.",
             "If the browser cannot submit or download a new video, return an explicit blocked/in-progress status instead of claiming success.",
             "Long Xiaoyunque rendering must stay in the queue with deterministic status probes; do not spend model tokens just to poll.",
+            "Paid Xiaoyunque/Seedance idempotence: one logical WeChat request owns at most one paid generation thread unless the current user explicitly asks for a new paid rerun.",
+            "If generated_video_monitor.thread_url, generated_video_submit_probe, credit_guard, no_new_xyq_submit, or monitor_only_no_resubmit exists, do not submit, retry, continue, or create another Xiaoyunque job; only monitor/download/send the existing thread result.",
         ],
         "expected_artifacts": [
             "story markdown",
@@ -3108,6 +3785,13 @@ def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any],
         return guarded
     files = filter_generated_video_result_files(result.get("files") or [])
     has_video = any(Path(str(path)).suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"} for path in files)
+    sent_video_files = filter_generated_video_result_files(task.get("sent_file_paths") or [])
+    has_sent_video = any(Path(str(path)).suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"} for path in sent_video_files)
+    poststage_result = result.get("poststage") if isinstance(result.get("poststage"), dict) else {}
+    if poststage_result and (has_sent_video or isinstance(task.get("generated_video_poststage"), dict)):
+        guarded = dict(result)
+        guarded["files"] = files
+        return guarded
     status_terms = (
         "queued",
         "running",
@@ -3828,6 +4512,117 @@ def add_once(items: list[Any], value: Any) -> None:
         items.append(value)
 
 
+def story_video_confirmation_gate_active(task: dict[str, Any]) -> bool:
+    """Return true when story revision must be confirmed before video work."""
+    if not is_interruptible_story_video_task(task):
+        return False
+    if bool(task.get("generation_blocked_until_story_confirmed")) or bool(task.get("story_confirmation_required")):
+        return not latest_same_chat_confirms_video_generation(task)
+    text = task_focus_text(task)
+    lowered = text.lower()
+    asks_story_first = any(
+        marker in lowered
+        for marker in (
+            "first show the story",
+            "show the story",
+            "story is not",
+            "update the story",
+            "rewrite the story",
+            "confirm the story",
+            "story first",
+            "先发故事",
+            "先给故事",
+            "先看故事",
+            "故事不",
+            "改故事",
+            "更新故事",
+            "重写故事",
+            "确认故事",
+            "先确认",
+        )
+    )
+    stopped_generation = any(marker in lowered for marker in ("i stopped", "stopped it", "cancelled", "canceled", "我停", "我取消", "停止生成"))
+    return bool((asks_story_first or stopped_generation or task_interruptions(task)) and not latest_same_chat_confirms_video_generation(task))
+
+
+def latest_same_chat_confirms_video_generation(task: dict[str, Any]) -> bool:
+    """Look only at the latest same-chat user update for clear generation approval."""
+    latest = latest_task_update_text(task).lower()
+    if not latest:
+        return False
+    negative = (
+        "do not generate",
+        "don't generate",
+        "dont generate",
+        "not generate",
+        "wait",
+        "先别",
+        "不要生成",
+        "不用生成",
+        "别生成",
+        "等一下",
+        "先看",
+        "先确认",
+    )
+    if any(marker in latest for marker in negative):
+        return False
+    positive = (
+        "ok generate",
+        "okay generate",
+        "story ok",
+        "looks good generate",
+        "continue generation",
+        "continue to generate",
+        "go generate",
+        "generate video now",
+        "可以生成",
+        "开始生成",
+        "继续生成",
+        "故事可以",
+        "故事 ok",
+        "没问题生成",
+        "就这样生成",
+        "生成视频",
+    )
+    return any(marker in latest for marker in positive)
+
+
+def latest_task_update_text(task: dict[str, Any]) -> str:
+    interruptions = task_interruptions(task)
+    if interruptions:
+        latest = interruptions[-1]
+        return str(latest.get("request") or latest.get("request_excerpt") or "")
+    source_local_id = int_or_none((task.get("source") or {}).get("local_id")) if isinstance(task.get("source"), dict) else None
+    if source_local_id is not None:
+        for row in reversed(task.get("context") or []):
+            if not isinstance(row, dict):
+                continue
+            if int_or_none(row.get("local_id")) == source_local_id:
+                return str(row.get("content") or "")
+    return task_focus_text(task)
+
+
+def story_confirmation_gate_result(task: dict[str, Any]) -> str:
+    return json.dumps(
+        {
+            "message": (
+                "我先停在故事确认阶段，不会直接提交或继续 Xiaoyunque 视频生成。"
+                "我会用最新群消息重写故事并发到群里，请确认故事 OK 后再生成视频。"
+            ),
+            "files": [],
+            "confirmation": "",
+            "data": {
+                "story_confirmation_gate": {
+                    "status": "blocked_until_story_confirmed",
+                    "latest_update": collapse_context_text(latest_task_update_text(task), max_len=800),
+                    "rule": "story must be sent to group and confirmed before video generation",
+                }
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
 def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
     existing_publish = deterministic_existing_video_publish_poststage_result(task)
     if existing_publish is not None:
@@ -3835,6 +4630,9 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
     poststage = deterministic_generated_video_poststage_result(task)
     if poststage is not None:
         return poststage
+    existing_generated_video = deterministic_existing_generated_video_file_result(task)
+    if existing_generated_video is not None:
+        return existing_generated_video
     generated_continue = deterministic_generated_video_continue_result(task)
     if generated_continue is not None:
         return generated_continue
@@ -3987,8 +4785,57 @@ def resolved_video_artifact_result(task: dict[str, Any], resolved: dict[str, Any
     )
 
 
+def deterministic_existing_generated_video_file_result(task: dict[str, Any]) -> str | None:
+    """Return an already downloaded generated MP4 before invoking any agent/model.
+
+    This is the core paid-generation idempotence path: if a Xiaoyunque monitor
+    has already produced an MP4 for the logical request, the worker should send
+    that artifact back and optionally queue the allowed poststage. It must not
+    ask a model to re-plan, continue, or submit another paid generation.
+    """
+    if not is_generate_video_task(task) or str(task.get("status") or "") != CLAIMED_STATUS:
+        return None
+    monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
+    if not monitor:
+        return None
+    artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task)))
+    output_dir = Path(str(monitor.get("output_dir") or artifact_dir))
+    files = generated_video_existing_files(output_dir, monitor)
+    if not files:
+        return None
+    raw = generated_video_completion_result(files[0], task, monitor, abnormal=False)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    message = str(payload.get("message") or "")
+    payload["message"] = (
+        f"{message}\n"
+        "已按现有 artifact 完成：不会重新提交、继续确认、或创建新的 Xiaoyunque/Seedance 付费任务。"
+    )
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    data["require_file_delivery"] = bool(payload.get("require_file_delivery", True))
+    data["existing_generated_video_artifact"] = {
+        "status": "found",
+        "video_path": str(files[0].resolve()),
+        "output_dir": str(output_dir),
+        "monitor_only_no_resubmit": generated_video_monitor_only(task),
+    }
+    payload["data"] = data
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def deterministic_generated_video_submit_result(task: dict[str, Any]) -> str | None:
     if not is_generate_video_task(task) or str(task.get("status") or "") != CLAIMED_STATUS:
+        return None
+    if generated_video_monitor_only(task):
+        return None
+    if story_video_confirmation_gate_active(task):
+        task["story_confirmation_gate"] = {
+            "status": "blocked_deterministic_submit",
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "latest_update": collapse_context_text(latest_task_update_text(task), max_len=800),
+        }
         return None
     if task.get("generated_video_monitor") or task.get("generation_wait_count"):
         return None
@@ -4080,6 +4927,15 @@ def deterministic_generated_video_submit_result(task: dict[str, Any]) -> str | N
 
 def deterministic_generated_video_continue_result(task: dict[str, Any]) -> str | None:
     if not is_generate_video_task(task) or str(task.get("status") or "") != CLAIMED_STATUS:
+        return None
+    if generated_video_monitor_only(task):
+        return None
+    if story_video_confirmation_gate_active(task):
+        task["story_confirmation_gate"] = {
+            "status": "blocked_deterministic_continue",
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "latest_update": collapse_context_text(latest_task_update_text(task), max_len=800),
+        }
         return None
     monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
     thread_url = str(monitor.get("thread_url") or "").strip()
@@ -4213,6 +5069,15 @@ def generated_video_continuation_prompt(task: dict[str, Any]) -> str:
     requested = requested_generated_video_duration_seconds(task)
     tolerance = generated_video_duration_tolerance_seconds(task)
     duration_note = f"{requested}秒，允许±{tolerance}秒" if requested else "当前故事板时长"
+    latest_context = generated_video_latest_instruction_summary(task)
+    latest_instruction = ""
+    if latest_context:
+        latest_instruction = (
+            "\n\n微信群最新确认/补充要求如下，必须优先遵守：\n"
+            f"{latest_context}\n"
+            "如果这些要求与旧故事板、旧提示词或页面当前故事冲突，以最新群消息为准；"
+            "不要继续旧故事，不要保留用户已经否定的剧情。"
+        )
     return (
         "确认，当前故事板、参考角色/场景/道具素材、4:3比例、无字幕设置均符合预期；"
         f"总时长按 {duration_note} 继续即可。"
@@ -4220,7 +5085,23 @@ def generated_video_continuation_prompt(task: dict[str, Any]) -> str:
         "如果 Fast Vision 积分不足，不要因为模型选择停止，改用当前可用的最低成本 Mini/Fast 方案。"
         "请不要再等待人工确认，直接继续生成最终视频 MP4。"
         "不要字幕、不要画面文字、不要说明文字；保持当前故事板和参考素材一致。"
+        f"{latest_instruction}"
     )
+
+
+def generated_video_latest_instruction_summary(task: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for item in task_interruptions(task)[-6:]:
+        source = item.get("source") if isinstance(item.get("source"), dict) else {}
+        sender = source.get("sender_display") or source.get("sender") or "user"
+        local_id = source.get("local_id") or ""
+        text = collapse_context_text(item.get("request") or item.get("request_excerpt"), max_len=1000)
+        if text:
+            lines.append(f"- local_id={local_id} {sender}: {text}")
+    latest = latest_task_update_text(task)
+    if latest and not any(latest in line for line in lines):
+        lines.append(f"- latest: {collapse_context_text(latest, max_len=1000)}")
+    return "\n".join(lines)
 
 
 def requested_generated_video_duration_seconds(task: dict[str, Any]) -> int | None:
@@ -4316,6 +5197,13 @@ def deterministic_generated_video_poststage_result(task: dict[str, Any]) -> str 
 
 def deterministic_generated_video_monitor_result(task: dict[str, Any]) -> str | None:
     if not is_generate_video_task(task) or str(task.get("status") or "") != CLAIMED_STATUS:
+        return None
+    if story_video_confirmation_gate_active(task):
+        task["story_confirmation_gate"] = {
+            "status": "blocked_deterministic_monitor",
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "latest_update": collapse_context_text(latest_task_update_text(task), max_len=800),
+        }
         return None
     previous_statuses = {
         str(item.get("status") or "")
@@ -4653,9 +5541,7 @@ def run_generated_video_lazyedit_command(video_path: Path, task: dict[str, Any],
         command_parts.append(f"--platforms {','.join(detect_publish_platforms(task, current_only=True))}")
     else:
         command_parts.append("--no-publish")
-    lazy_context = ((task.get("preflight") or {}).get("lazyedit_context") if isinstance(task.get("preflight"), dict) else {}) or {}
-    correction_prompt = str(lazy_context.get("correction_prompt_file") or monitor.get("story_file") or "")
-    metadata_prompt = str(lazy_context.get("metadata_prompt_file") or monitor.get("prompt_file") or "")
+    correction_prompt, metadata_prompt = generated_video_lazyedit_context_paths(video_path, task, monitor)
     augment_generated_video_lazyedit_context(correction_prompt, metadata_prompt, monitor)
     if correction_prompt:
         command_parts.append(f"--correction-prompt-file {shell_quote(correction_prompt)}")
@@ -4669,6 +5555,56 @@ def run_generated_video_lazyedit_command(video_path: Path, task: dict[str, Any],
         platforms=detect_publish_platforms(task, current_only=True) if publish else [],
         target=video_path,
     )
+
+
+def generated_video_lazyedit_context_paths(video_path: Path, task: dict[str, Any], monitor: dict[str, Any]) -> tuple[str, str]:
+    lazy_context = ((task.get("preflight") or {}).get("lazyedit_context") if isinstance(task.get("preflight"), dict) else {}) or {}
+    correction_prompt = str(lazy_context.get("correction_prompt_file") or monitor.get("story_file") or "")
+    metadata_prompt = str(lazy_context.get("metadata_prompt_file") or monitor.get("prompt_file") or "")
+    artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task)))
+    if not correction_prompt:
+        correction_prompt = str(artifact_dir / "lazyedit_correction_context.md")
+    if not metadata_prompt:
+        metadata_prompt = str(artifact_dir / "lazyedit_metadata_brief.md")
+    ensure_generated_video_lazyedit_context_files(video_path, task, correction_prompt, metadata_prompt)
+    return correction_prompt, metadata_prompt
+
+
+def ensure_generated_video_lazyedit_context_files(
+    video_path: Path,
+    task: dict[str, Any],
+    correction_prompt: str,
+    metadata_prompt: str,
+) -> None:
+    request = collapse_context_text(task_focus_text(task), max_len=3000)
+    approved_story = collapse_context_text(str(task.get("approved_story_message") or ""), max_len=3000)
+    interruption_summary = collapse_context_text(
+        "\n".join(str(item.get("request_excerpt") or item.get("request") or "") for item in task_interruptions(task)[-4:] if isinstance(item, dict)),
+        max_len=2000,
+    )
+    correction_body = "\n\n".join(
+        part
+        for part in [
+            f"Video path: {video_path}",
+            "Correct ASR subtitles using the current WeChat request, approved story, and same-chat interruptions as context. Preserve timing and avoid inventing unsupported dialogue.",
+            f"Current request:\n{request}" if request else "",
+            f"Approved story message:\n{approved_story}" if approved_story else "",
+            f"Recent same-chat interruptions:\n{interruption_summary}" if interruption_summary else "",
+        ]
+        if part
+    )
+    metadata_body = "\n".join(
+        part
+        for part in [
+            f"- Video path: {video_path}",
+            "- Create concise viewer-facing metadata. Do not dump the full script.",
+            f"- Current request: {collapse_context_text(request, max_len=800)}" if request else "",
+            f"- Approved story: {collapse_context_text(approved_story, max_len=600)}" if approved_story else "",
+        ]
+        if part
+    )
+    append_lazyedit_context_once(Path(correction_prompt), "## WeChat Generated Video Context", correction_body)
+    append_lazyedit_context_once(Path(metadata_prompt), "## WeChat Generated Video Metadata Brief", metadata_body)
 
 
 def augment_generated_video_lazyedit_context(correction_prompt: str, metadata_prompt: str, monitor: dict[str, Any]) -> None:
@@ -5653,6 +6589,9 @@ Generated-video route contract:
 - Generation is not publication: creating/downloading/sending the MP4 does not authorize LazyEdit import, AutoPublish, or public posting.
 - If `task.route_decision.public_publish_allowed` is false, public posting and AutoPublish public queue submission are forbidden even if older chat history mentions them.
 - LazyEdit import/process is a separate stage: do it only when the current request explicitly says LazyEdit/import/process, and use no-public-publish mode unless public publishing is also explicitly allowed.
+- Same-chat interruptions are part of this route contract. If newer messages ask to update/rewrite/show/confirm the story, or say the current website generation was stopped/cancelled, revise the story and prompt from the full interruption context before any further video submit. Send the updated story to the group and ask whether to generate unless the latest messages clearly authorize generation.
+- Do not keep polling, download, publish, or report success for a stale Xiaoyunque run after a same-chat interruption says the story is wrong or the browser run was stopped.
+- Paid Xiaoyunque/Seedance actions are idempotent per logical WeChat request. If this task already has `generated_video_monitor.thread_url`, `generated_video_submit_probe`, `credit_guard`, `route_decision.no_new_xyq_submit`, or `monitor_only_no_resubmit`, do not submit/continue/retry a paid generation; monitor/download/send only.
 - For LALACHAN/Xiaoyunque, model selection must not block the task. Choose a relatively cheaper suitable model from the available page options and proceed. Prefer `Seedance 2.0 Mini 体验版` / `vipnew` when it shows `单秒限时低至4积分`; otherwise use the cheapest suitable `Seedance 2.0 Fast`, `Fast VIP`, or available Seedance row. Pause only for real non-model blockers such as no credits, recharge/payment approval, disabled submit, login, CAPTCHA, or an explicit user budget limit.
 - Prefer these existing Xiaoyunque helpers from `/home/lachlan/.codex/skills/lalachan-xyq-browser-video`:
   `scripts/xyq_cdp_browser.py list-pages`
@@ -5699,6 +6638,8 @@ LALACHAN/RaraXia/AyaChan/SasaKun story-video generation:
 - Upload and verify the eight default reference images in this exact order: `words-card.jpg`, `LazyingArtRobot.png`, `display.png`, `patchwork-leather-notebook-luxury-clean-v2.png`, `raraxia.jpeg`, `ayachan.png`, `sasakun.jpeg`, `Trio.png`.
 - In the Xiaoyunque prompt, refer to uploaded images as 图1 through 图8. Do not paste local filesystem paths or file names into the prompt as scene text.
 - Before any submit, verify visible page state as far as the UI allows: mode, selected model row, duration, ratio, prompt, upload success, and any visible point cost/VIP/vipnew state. Do not block only because the exact preferred model or exact cost text is unavailable. Never double-click submit or retry if the job is queued/running.
+- Before any submit or continuation, inspect the task for existing XYQ thread/credit evidence. If a thread already exists or the task is monitor-only, do not spend more credits. Ask for explicit "new paid rerun" permission if the user truly wants another generation.
+- If the active task has same-chat interruptions, read them all before writing or submitting. When interruptions revise the story, save a new story/prompt revision, send the story text back for confirmation, and wait unless the latest user message explicitly says to continue generating.
 - Monitor the thread, download the finished MP4, save/copy it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, apply the duration tolerance above, and return the story path, prompt path, MP4 path, and relevant screenshots/logs in `files` where safe. The outer worker will send the MP4 back to the source WeChat chat.
 - If the current request asks for LazyEdit import/process, hand the verified MP4 to LazyEdit with no public publish unless public publishing is also explicitly requested. If the user asks to publish in the current request, then hand the verified MP4 to LazyEdit with the publish workflow below. Otherwise stop after generation/download/send-back and report the ready video path.
 

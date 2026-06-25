@@ -75,7 +75,11 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   `media_resolution_manifest.json` plus `.md`. Worker agents must use
   `task_copy_path` inputs from that manifest before saying an image/file is
   unavailable. Decoded JPG/PNG/MP4/PDF files outrank raw WeChat `.dat`
-  containers; `.dat` is kept only as low-priority evidence.
+  containers; `.dat` is kept only as low-priority evidence. If the first mirror
+  lookup has no candidates, the preflight may dry-open the exact source chat
+  through `wechat_chat_sync_loop.py` so the official WeChat client materializes
+  the media cache, then run media sync a second time before declaring the source
+  missing.
 - Bare file uploads with no explicit instruction are still work: route them to
   `file_intake`, sync/copy the exact file into
   `output/wechat_worker/<task-id>/intake/`, record metadata and checksum, and
@@ -185,12 +189,26 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   the request so the worker sees the complete instruction. If a burst arrives
   one row at a time, include the recent same-sender instruction fragments until
   the bot's previous answer; do not revive older work past a bot reply.
+- For story/video tasks, same-chat follow-ups may interrupt an active routine,
+  but only when the target task is recent enough. The default 12-hour window
+  prevents today’s LALACHAN story request from being merged into an old stale
+  Xiaoyunque task. When an interruption is accepted, stale worker output is
+  suppressed and the task is requeued for the same per-chat worker session.
 - Do not spam progress. Nonterminal `generation_waiting`,
   `generation_poststage_pending`, and `publish_poststage_pending` states are
   internal queue state by default. WeChat should see one contextual ack, then a
   required confirmation/blocker, delivered artifacts, or final verified result.
 - Generated-video rendering waits through `generation_waiting` and
   `next_poll_at`; do not keep a multi-hour Codex turn open.
+- Paid Xiaoyunque/Seedance work is idempotent per logical WeChat request. After
+  a task has a thread URL, submit probe, `credit_guard`,
+  `no_new_xyq_submit`, or `monitor_only_no_resubmit`, the automation must not
+  submit/continue/retry another paid run for that request. It may only
+  monitor/download/send the existing result unless a later current message
+  explicitly asks for a new paid rerun.
+- If that monitored task already has its configured MP4 on disk, preflight
+  returns the MP4 immediately through the required artifact delivery gate before
+  any continuation helper, watcher, submitter, or Codex worker agent is called.
 - Generated-video workers must treat `final_video.mp4`, a video player, or
   `渲染合成最终视频 ... 已完成` in the same Xiaoyunque thread as `download_ready`.
   Do not send another continuation/generation prompt for that request, and do
@@ -248,14 +266,27 @@ generated-video route contract with `stage_permissions` and
 `orchestration_routine`. Follow this order:
 
 1. write route contract;
-2. create story/prompt and submit or resume Xiaoyunque;
-3. answer Xiaoyunque storyboard/reference continuation prompts in the same
+2. create story/prompt, read same-chat interruptions, and send the revised story
+   for confirmation when the latest messages ask for story changes;
+3. when the story is approved, promote the same `waiting_confirmation` row into
+   `generated_video` and preserve `story_confirmation_result` plus
+   `approved_story_*` so the worker uses the exact story already shown to the
+   group;
+4. submit or resume Xiaoyunque only after the current request/interruptions
+   authorize generation;
+5. answer Xiaoyunque storyboard/reference continuation prompts in the same
    `thread_id` with `xyq_continue_thread.py` when the current request already
    authorizes generation;
-4. monitor/download through deterministic CDP routines;
-5. send the verified MP4 to the source chat and record `sent_file_paths`;
-6. only then queue LazyEdit import/process;
-7. publish only if the current request explicitly allows it.
+6. monitor/download through deterministic CDP routines;
+7. send the verified MP4 to the source chat and record `sent_file_paths`;
+8. only then queue LazyEdit import/process;
+9. publish only if the current request explicitly allows it.
+
+If the user changes direction while a story/video worker is running, the
+monitor does not solve the task itself. It appends an interruption packet to
+the active queue row. When the worker turn returns, the queue suppresses stale
+output, requeues the task, and the resumed worker agent reads the full
+interruption history before choosing the next routine stage.
 
 Generation is not publication. A generation request creates/downloads/verifies
 the video and sends artifacts back to the source chat; it does not authorize

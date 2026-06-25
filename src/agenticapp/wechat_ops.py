@@ -1256,6 +1256,8 @@ def update_waiting_task(path: Path, task_id: str | None, *, decision: str, note:
         task["approval_note"] = note
         if note:
             task["request"] = f"{task.get('request', '')}\n\nUser approval note: {note}".strip()
+        if approval_promotes_story_to_generated_video(task, note):
+            promote_story_confirmation_to_generated_video(task, note)
     elif decision == "reject":
         task["status"] = "canceled"
         task["canceled_at"] = datetime.now().isoformat(timespec="seconds")
@@ -1266,6 +1268,94 @@ def update_waiting_task(path: Path, task_id: str | None, *, decision: str, note:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in tasks), encoding="utf-8")
     return task
+
+
+def approval_promotes_story_to_generated_video(task: dict[str, Any], note: str = "") -> bool:
+    route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
+    project = str(route.get("project") or "").lower()
+    if project != "lalachan":
+        return False
+    if str(route.get("route_kind") or "") not in {"story_or_script", "generate_video"}:
+        return False
+    if str(routine.get("id") or "") not in {"story_script_generation", "generated_video"}:
+        return False
+    text = "\n".join(
+        [
+            note,
+            str((task.get("result") or {}).get("confirmation") or "") if isinstance(task.get("result"), dict) else "",
+            str(task.get("request") or ""),
+        ]
+    ).lower()
+    if any(marker in text for marker in ("do not generate", "don't generate", "dont generate", "不要生成", "别生成", "先别", "等一下")):
+        return False
+    confirms_story = any(marker in text for marker in ("story ok", "故事可以", "故事 ok", "可以生成", "开始生成", "generate video"))
+    asks_video = any(marker in text for marker in ("generate", "video", "小云雀", "xyq", "视频", "影片"))
+    return bool((confirms_story or task.get("story_confirmation_required")) and asks_video)
+
+
+def promote_story_confirmation_to_generated_video(task: dict[str, Any], note: str = "") -> None:
+    route = dict(task.get("route_decision") or {})
+    text = f"{task.get('request') or ''}\n{note}".lower()
+    publish_allowed = bool(route.get("public_publish_allowed")) and any(
+        marker in text
+        for marker in ("publish", "post", "shipinhao", "youtube", "instagram", "视频号", "发布", "投稿")
+    )
+    route.update(
+        {
+            "route_kind": "generate_video",
+            "project": "lalachan",
+            "worker_needed": True,
+            "needs_recent_media": False,
+            "public_publish_allowed": publish_allowed,
+            "public_publish_intent": publish_allowed,
+            "source_policy": route.get("source_policy") or "current_plus_explicit_refs",
+            "approval_promoted_from": "story_confirmation",
+        }
+    )
+    task["route_decision"] = route
+    task["story_confirmation_required"] = False
+    task["generation_blocked_until_story_confirmed"] = False
+    task["confirmed_story_for_generation_at"] = datetime.now().isoformat(timespec="seconds")
+    if note:
+        task["confirmed_story_for_generation_note"] = note
+    story_result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    if story_result:
+        task["story_confirmation_result"] = story_result
+        task["approved_story_message"] = str(story_result.get("message") or "").strip()
+        task["approved_story_files"] = [str(path) for path in story_result.get("files") or [] if str(path)]
+        task["approved_story_confirmation"] = str(story_result.get("confirmation") or "").strip()
+    task["stage_transition"] = {
+        "from": "story_script_generation",
+        "to": "generated_video",
+        "at": task["confirmed_story_for_generation_at"],
+        "reason": "story_confirmation_approved",
+        "note": note,
+    }
+    task["routine"] = {
+        "id": "generated_video",
+        "title": "Generated Video Routine",
+        "task_id": task.get("id"),
+        "chat": task.get("chat"),
+        "source": task.get("source") if isinstance(task.get("source"), dict) else {},
+        "route_kind": "generate_video",
+        "project": "lalachan",
+        "purpose": "Create a new video from the approved story, monitor long generation, send MP4 back, then run optional poststages.",
+        "selected_at": datetime.now().isoformat(timespec="seconds"),
+        "selected_by": "wechat_ops.promote_story_confirmation_to_generated_video",
+    }
+    for key in (
+        "completed_at",
+        "result",
+        "send_errors",
+        "sent_file_paths",
+        "preflight",
+        "routine_contract",
+        "orchestrator",
+        "worker_policy_attempts",
+        "story_confirmation_gate",
+    ):
+        task.pop(key, None)
 
 
 def parse_queue_datetime(value: Any) -> datetime | None:
