@@ -412,6 +412,14 @@ repeated. If the worker needs an important decision before continuing, it return
 `confirmation`, sends that question to chat, and marks the task
 `waiting_confirmation`.
 
+Public publish consent can also come from the chat itself. If the requester sends
+a video and asks another participant whether it may be posted, for example
+`@A can I publish this video?` or `@A 可以发到视频号吗？`, the monitor stores a
+source-scoped `waiting_confirmation` task and explicitly keeps
+`public_publish_allowed=false`. A later clear affirmative reply from a different
+same-chat participant reactivates that same task for LazyEdit/public publishing;
+a denial cancels it. A permission question alone is never enough to publish.
+
 Each monitored group reuses two private Codex sessions: a `fast` session for
 immediate routing/chat replies and a `worker` session for slower backend tasks.
 The session registry lives under `.private/codex_sessions/`; public status

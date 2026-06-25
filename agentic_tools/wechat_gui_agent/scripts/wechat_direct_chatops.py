@@ -386,26 +386,32 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         if reply_text:
             metrics["reused_previous_result"] = True
         else:
-            immediate = immediate_task_route(config, trigger_row, context_rows, focus_rows=focus_rows)
-            if immediate:
-                task = enqueue_worker_task(
-                    config,
-                    trigger_row,
-                    immediate["task"],
-                    context_rows=context_rows,
-                    route_decision=immediate.get("route_decision") if isinstance(immediate.get("route_decision"), dict) else None,
-                )
-                task_enqueued = task["id"]
-                reply_text = immediate["ack"]
+            consent_route = maybe_handle_third_party_publish_consent(config, trigger_row, context_rows, focus_rows=focus_rows)
+            if consent_route:
+                task_enqueued = str(consent_route.get("task_id") or "")
+                reply_text = str(consent_route.get("ack") or "")
+                metrics["third_party_publish_consent"] = str(consent_route.get("status") or "")
             else:
-                started = time.monotonic()
-                response = run_codex(config, trigger_row, context_rows, focus_rows=focus_rows)
-                metrics["codex_ms"] = elapsed_ms(started)
-                routed = parse_fast_response(response)
-                if routed["task"]:
-                    task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=context_rows)
+                immediate = immediate_task_route(config, trigger_row, context_rows, focus_rows=focus_rows)
+                if immediate:
+                    task = enqueue_worker_task(
+                        config,
+                        trigger_row,
+                        immediate["task"],
+                        context_rows=context_rows,
+                        route_decision=immediate.get("route_decision") if isinstance(immediate.get("route_decision"), dict) else None,
+                    )
                     task_enqueued = task["id"]
-                reply_text = routed["chat"] or routed["ack"]
+                    reply_text = immediate["ack"]
+                else:
+                    started = time.monotonic()
+                    response = run_codex(config, trigger_row, context_rows, focus_rows=focus_rows)
+                    metrics["codex_ms"] = elapsed_ms(started)
+                    routed = parse_fast_response(response)
+                    if routed["task"]:
+                        task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=context_rows)
+                        task_enqueued = task["id"]
+                    reply_text = routed["chat"] or routed["ack"]
         if reply_text and reply_text != "NO_REPLY":
             status = "dry-run-response"
             screenshot = None
@@ -2088,6 +2094,424 @@ def immediate_task_route(
     return {"ack": ack, "task": task, "route_decision": route_decision}
 
 
+def maybe_handle_third_party_publish_consent(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Suspend publish requests that are framed as asking another person for permission."""
+    current_request = combined_focus_request(config, row, context_rows, focus_rows=focus_rows)
+    pending = find_pending_third_party_publish_task(config, row)
+    confirmation_text = visible_message_text(row)
+    if pending and is_inbound_user_row(config, row):
+        if is_publish_consent_denial(confirmation_text):
+            canceled = cancel_third_party_publish_task(config, pending, row, confirmation_text)
+            return {
+                "status": "third_party_denied",
+                "task_id": canceled.get("id"),
+                "ack": "收到，对方没有同意发布；我不会公开发布这个视频。",
+            }
+        if is_publish_consent_confirmation(confirmation_text) and third_party_confirmation_sender_valid(config, pending, row):
+            activated = activate_third_party_publish_task(config, pending, row, confirmation_text)
+            return {
+                "status": "third_party_confirmed",
+                "task_id": activated.get("id"),
+                "ack": "收到对方确认，我现在按原视频和原请求开始发布。",
+            }
+    latest_text = visible_message_text(row)
+    permission_candidate = latest_text if pending else current_request
+    if is_third_party_publish_permission_request(permission_candidate):
+        task = enqueue_third_party_publish_wait_task(
+            config,
+            row,
+            current_request,
+            context_rows=context_rows,
+            focus_rows=focus_rows,
+        )
+        ack = "我会先等对方在这个群里明确同意；确认之前不会公开发布这个视频。"
+        if task.get("dedupe_existing"):
+            ack = "我还在等对方确认；确认之前不会公开发布。"
+        return {"status": "waiting_for_third_party", "task_id": task.get("id"), "ack": ack}
+    return None
+
+
+def enqueue_third_party_publish_wait_task(
+    config: dict[str, Any],
+    row: dict[str, Any],
+    current_request: str,
+    *,
+    context_rows: list[dict[str, Any]],
+    focus_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    queue = Path(config.get("worker_queue") or DEFAULT_QUEUE)
+    queue.parent.mkdir(parents=True, exist_ok=True)
+    chat_name = str(config.get("chat_name") or "")
+    source_rows = source_reference_rows(config, row, context_rows, focus_rows=focus_rows, include_recent_media=True)
+    source_ids = ", ".join(
+        f"{item.get('sender_display') or item.get('sender')}:local_id={item.get('local_id')}:server_id={item.get('server_id')}"
+        for item in source_rows
+    )
+    reference_context = reference_row_context(source_rows)
+    reference_tokens = media_reference_tokens(source_rows)
+    reference_epoch_window = media_sync_epoch_window(config, source_rows)
+    media_sync_status = auto_sync_recent_media(config, source_rows)
+    recent_files = recent_download_context(
+        chat_name,
+        match_tokens=reference_tokens,
+        since_epoch=reference_epoch_window[0] if reference_epoch_window else None,
+        until_epoch=reference_epoch_window[1] if reference_epoch_window else None,
+    )
+    publish_context = video_publish_context_bundle(config, row, context_rows, focus_rows=focus_rows, source_rows=source_rows)
+    route_decision = {
+        "route_kind": "publish_video",
+        "project": "lazyedit",
+        "worker_needed": True,
+        "needs_recent_media": True,
+        "public_publish_intent": True,
+        "public_publish_allowed": False,
+        "external_action_allowed": False,
+        "source_policy": "current_plus_explicit_refs",
+        "confirmation_kind": "third_party_publish",
+        "requires_third_party_publish_confirmation": True,
+        "reason": "current message asks another participant whether publication is allowed; wait for a separate same-chat confirmation",
+        "ack": "wait for third-party confirmation before publishing",
+        "confidence": 0.95,
+        "route_agent_model": "deterministic-third-party-consent",
+    }
+    backend = select_agent_backend(config)
+    task_text = (
+        "This is a suspended WeChat public-publish task. Do not execute while `status=waiting_confirmation`. "
+        "The source user asked another participant whether this exact video may be publicly published. "
+        "After the monitor records a later affirmative confirmation from a different same-chat participant, it will set "
+        "`task.route_decision.public_publish_allowed=true` and reactivate this same task as `pending`.\n\n"
+        "When reactivated, process and publish only the exact same-chat source video/reference rows below. "
+        "Use LazyEdit for subtitle correction, metadata, packaging, and platform publication. "
+        "Build subtitle correction context from the WeChat messages around the video, the permission request, and any source task/story/prompt evidence. "
+        "Build metadata as a concise separate brief; do not dump the full chat or script as public metadata. "
+        "Do not publish if `public_publish_allowed` remains false.\n\n"
+        f"Original permission request:\n{current_request}\n\n"
+        f"Chat: {chat_name}\nSource/reference rows: {source_ids}\n\n"
+        f"Same-chat reference media/context rows:\n{reference_context or '(none found)'}"
+        f"\n\nAutomatic media sync:\n{media_sync_status or '(not run)'}"
+        f"\n\nRecent synced WeChat files:\n{recent_files or '(none found)'}"
+        f"{publish_context}"
+    )
+    task = {
+        "id": datetime.now().strftime("%Y%m%d%H%M%S") + f"-consent-{row['local_id']}",
+        "chat": chat_name,
+        "request": task_text,
+        "status": "waiting_confirmation",
+        "waiting_reason": "third_party_publish_consent",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "completed_at": datetime.now().isoformat(timespec="seconds"),
+        "agent_backend": backend,
+        "agent_backend_config": agent_backend_config(config, backend),
+        "route": build_route_contract(config),
+        "route_decision": route_decision,
+        "instruction_contract": build_instruction_contract(config, route_decision),
+        "execution_contract": build_execution_contract(config, route_decision),
+        "third_party_publish_consent": {
+            "status": "waiting",
+            "requested_at": datetime.now().isoformat(timespec="seconds"),
+            "requested_by_sender": row["sender"],
+            "requested_by_sender_display": row["sender_display"],
+            "request_local_id": row["local_id"],
+            "request_server_id": row["server_id"],
+            "requested_mentions": publish_consent_mentions(current_request),
+        },
+        "source": {
+            "chat": chat_name,
+            "config_id": config.get("config_id") or "",
+            "message_table": config.get("message_table") or "",
+            "server_id": row["server_id"],
+            "local_id": row["local_id"],
+            "sender": row["sender"],
+            "sender_display": row["sender_display"],
+        },
+        "context": [
+            {
+                "local_id": item["local_id"],
+                "sender": item["sender"],
+                "sender_display": item["sender_display"],
+                "content": item["content"],
+            }
+            for item in context_rows[-8:]
+        ],
+        "result": {
+            "message": "Waiting for a separate same-chat participant to confirm publication.",
+            "confirmation": "请等对方明确同意后再发布；确认前不会公开发布。",
+            "files": [],
+            "raw": "waiting_for_third_party_publish_consent",
+        },
+    }
+    ensure_task_routine_contract(task)
+    task, appended = append_worker_task_once(queue, task)
+    if appended:
+        record_event(
+            chat_name=chat_name,
+            action="third_party_publish_wait",
+            direction="internal",
+            message=current_request,
+            status="waiting_confirmation",
+            db_path=Path(config.get("mirror_db", DEFAULT_DB)),
+            metadata=task,
+        )
+    return task
+
+
+def find_pending_third_party_publish_task(config: dict[str, Any], row: dict[str, Any]) -> dict[str, Any] | None:
+    queue = Path(config.get("worker_queue") or DEFAULT_QUEUE)
+    if not queue.exists():
+        return None
+    chat_name = str(config.get("chat_name") or "")
+    current_local_id = int_or_none(row.get("local_id")) or 0
+    candidates: list[dict[str, Any]] = []
+    for task in read_worker_queue_tasks(queue):
+        if str(task.get("chat") or "") != chat_name:
+            continue
+        if str(task.get("status") or "") != "waiting_confirmation":
+            continue
+        route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+        consent = task.get("third_party_publish_consent") if isinstance(task.get("third_party_publish_consent"), dict) else {}
+        if route.get("confirmation_kind") != "third_party_publish" and task.get("waiting_reason") != "third_party_publish_consent":
+            continue
+        if str(consent.get("status") or "waiting") != "waiting":
+            continue
+        source = task.get("source") if isinstance(task.get("source"), dict) else {}
+        source_local_id = int_or_none(source.get("local_id")) or 0
+        if current_local_id and source_local_id and current_local_id <= source_local_id:
+            continue
+        candidates.append(task)
+    candidates.sort(
+        key=lambda task: (
+            int_or_none((task.get("source") if isinstance(task.get("source"), dict) else {}).get("local_id")) or 0,
+            str(task.get("created_at") or ""),
+        ),
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def read_worker_queue_tasks(queue: Path) -> list[dict[str, Any]]:
+    if not queue.exists():
+        return []
+    tasks: list[dict[str, Any]] = []
+    for line in queue.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            tasks.append(parsed)
+    return tasks
+
+
+def write_worker_queue_tasks(queue: Path, tasks: list[dict[str, Any]]) -> None:
+    queue.parent.mkdir(parents=True, exist_ok=True)
+    queue.write_text("".join(json.dumps(task, ensure_ascii=False) + "\n" for task in tasks), encoding="utf-8")
+
+
+def update_third_party_publish_task(
+    config: dict[str, Any],
+    pending: dict[str, Any],
+    row: dict[str, Any],
+    text: str,
+    *,
+    approved: bool,
+) -> dict[str, Any]:
+    queue = Path(config.get("worker_queue") or DEFAULT_QUEUE)
+    lock_path = queue.with_suffix(queue.suffix + ".lock")
+    now_text = datetime.now().isoformat(timespec="seconds")
+    with lock_path.open("w", encoding="utf-8") as lock:
+        with exclusive_lock(lock):
+            tasks = read_worker_queue_tasks(queue)
+            for index, task in enumerate(tasks):
+                if str(task.get("id") or "") != str(pending.get("id") or ""):
+                    continue
+                route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+                route = dict(route)
+                route.update(
+                    {
+                        "public_publish_intent": True,
+                        "public_publish_allowed": bool(approved),
+                        "external_action_allowed": bool(approved),
+                        "third_party_publish_confirmed": bool(approved),
+                        "requires_third_party_publish_confirmation": not bool(approved),
+                    }
+                )
+                if approved:
+                    route["reason"] = (str(route.get("reason") or "") + " | third-party confirmation received").strip()
+                    task["status"] = "pending"
+                    task["activated_at"] = now_text
+                    task.pop("completed_at", None)
+                    task.pop("claimed_at", None)
+                    task.pop("worker_id", None)
+                    task.pop("result", None)
+                    task["request"] = (
+                        str(task.get("request") or "").rstrip()
+                        + "\n\nThird-party confirmation received in the same chat. "
+                        "The route decision has been updated to allow public publishing. "
+                        "Proceed only with the exact source video/reference rows already embedded above.\n"
+                        f"Confirmation row: local_id={row.get('local_id')} server_id={row.get('server_id')} "
+                        f"sender={row.get('sender_display') or row.get('sender')}: {text}"
+                    )
+                else:
+                    route["reason"] = (str(route.get("reason") or "") + " | third-party confirmation denied").strip()
+                    task["status"] = "canceled"
+                    task["completed_at"] = now_text
+                    task["result"] = {
+                        "message": "Third-party publication consent was denied; no public publish was started.",
+                        "confirmation": "",
+                        "files": [],
+                        "raw": text,
+                    }
+                task["waiting_reason"] = "third_party_publish_consent"
+                task["route_decision"] = route
+                task["third_party_publish_consent"] = {
+                    **(task.get("third_party_publish_consent") if isinstance(task.get("third_party_publish_consent"), dict) else {}),
+                    "status": "confirmed" if approved else "denied",
+                    "resolved_at": now_text,
+                    "resolved_by_sender": row["sender"],
+                    "resolved_by_sender_display": row["sender_display"],
+                    "resolved_local_id": row["local_id"],
+                    "resolved_server_id": row["server_id"],
+                    "resolved_text": text,
+                }
+                task["instruction_contract"] = build_instruction_contract(config, route)
+                task["execution_contract"] = build_execution_contract(config, route)
+                task.pop("routine", None)
+                ensure_task_routine_contract(task)
+                tasks[index] = task
+                write_worker_queue_tasks(queue, tasks)
+                record_event(
+                    chat_name=str(config.get("chat_name") or ""),
+                    action="third_party_publish_confirm" if approved else "third_party_publish_deny",
+                    direction="internal",
+                    message=text,
+                    status=str(task.get("status") or ""),
+                    db_path=Path(config.get("mirror_db", DEFAULT_DB)),
+                    metadata=task,
+                )
+                return task
+    return pending
+
+
+def activate_third_party_publish_task(
+    config: dict[str, Any],
+    pending: dict[str, Any],
+    row: dict[str, Any],
+    text: str,
+) -> dict[str, Any]:
+    return update_third_party_publish_task(config, pending, row, text, approved=True)
+
+
+def cancel_third_party_publish_task(
+    config: dict[str, Any],
+    pending: dict[str, Any],
+    row: dict[str, Any],
+    text: str,
+) -> dict[str, Any]:
+    return update_third_party_publish_task(config, pending, row, text, approved=False)
+
+
+def third_party_confirmation_sender_valid(config: dict[str, Any], pending: dict[str, Any], row: dict[str, Any]) -> bool:
+    if not is_inbound_user_row(config, row):
+        return False
+    source = pending.get("source") if isinstance(pending.get("source"), dict) else {}
+    requester = str(source.get("sender") or "")
+    if requester and str(row.get("sender") or "") == requester:
+        return False
+    return True
+
+
+def publish_consent_mentions(text: str) -> list[str]:
+    mentions: list[str] = []
+    for match in re.finditer(r"@([^\s:@：,，;；]+)", str(text or "")):
+        name = match.group(1).strip()
+        if name and name not in mentions:
+            mentions.append(name)
+    return mentions[:8]
+
+
+def is_publish_consent_confirmation(text: str) -> bool:
+    lowered = collapse_text(str(text or "")).lower()
+    if not lowered or is_publish_consent_denial(lowered):
+        return False
+    if len(lowered) > 160 and not public_publish_marker_present(lowered):
+        return False
+    markers = [
+        "yes",
+        "ok",
+        "okay",
+        "sure",
+        "go ahead",
+        "approved",
+        "confirmed",
+        "you can publish",
+        "can publish",
+        "可以",
+        "能发",
+        "能發",
+        "同意",
+        "确认",
+        "確認",
+        "批准",
+        "没问题",
+        "沒問題",
+        "发吧",
+        "發吧",
+        "可以发",
+        "可以發",
+        "可以发布",
+        "可以發布",
+        "いいよ",
+        "大丈夫",
+        "はい",
+        "投稿していい",
+    ]
+    return any(marker in lowered for marker in markers)
+
+
+def is_publish_consent_denial(text: str) -> bool:
+    lowered = collapse_text(str(text or "")).lower()
+    if not lowered:
+        return False
+    if any(marker in lowered for marker in ("no problem", "not a problem")):
+        return False
+    denial_markers = [
+        "no",
+        "not ok",
+        "don't",
+        "do not",
+        "cannot",
+        "can't",
+        "not allowed",
+        "不要",
+        "别",
+        "別",
+        "不可以",
+        "不能",
+        "不同意",
+        "不行",
+        "别发",
+        "別發",
+        "别发布",
+        "別發布",
+        "不要发",
+        "不要發",
+        "不要发布",
+        "不要發布",
+        "ダメ",
+        "だめ",
+        "やめて",
+    ]
+    return any(marker in lowered for marker in denial_markers)
+
+
 def task_ack_text(config: dict[str, Any], route_decision: dict[str, Any]) -> str:
     if not bool(config.get("immediate_ack_enabled", True)):
         return ""
@@ -2253,6 +2677,8 @@ Important distinction:
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
 - Generation is not publication. A request to generate/create/make a video means create/download/send back the artifact unless the current request also explicitly says publish/post to a public platform.
 - Uploading reference images/assets into a generation UI is not public publishing. Do not set public_publish_allowed=true for "upload all images" unless the destination is a public platform such as Shipinhao, YouTube, Instagram, or 视频号.
+- If the current user asks another person/group member for permission, such as "@A can I publish this video?" or "可以发到视频号吗？", this is not authorization yet. Route it as a publish_video task with public_publish_intent=true, public_publish_allowed=false, needs_recent_media=true, and explain that a separate same-chat participant confirmation is required.
+- If a later different participant gives a clear affirmative confirmation for a waiting publish-consent task, the monitor may reactivate that same task with public_publish_allowed=true. Do not start a brand-new publish task from a bare "yes/可以" confirmation without a matching waiting task.
 - Keyword heuristics are safety fallbacks only; the route agent should reason over the full current request and recent same-chat context.
 - "upload all images" can mean upload reference images into a generation UI. That is NOT public publishing.
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
@@ -2354,6 +2780,7 @@ def fallback_route_decision(
     focus_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     lowered = str(text or "").lower()
+    permission_question = is_publish_permission_question(lowered)
     publish_allowed = has_public_publish_intent(lowered)
     link_inbox_summary_task = is_link_inbox_default_summary_task(config, row, text, focus_rows=focus_rows)
     if is_bare_file_intake_request(row, text):
@@ -2374,7 +2801,7 @@ def fallback_route_decision(
         route_kind = "research_or_summary"
     elif is_research_or_summary_task(text) or is_complex_research_task(config, text, focus_rows=focus_rows):
         route_kind = "research_or_summary"
-    elif publish_allowed:
+    elif publish_allowed or permission_question:
         route_kind = "publish_video"
     elif is_contextual_media_task(config, text, row, context_rows, focus_rows=focus_rows) or (
         is_quote_reply_message(row) and references_recent_media(text)
@@ -2391,22 +2818,37 @@ def fallback_route_decision(
     else:
         project = "unknown"
     needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save", "file_intake"} or link_inbox_summary_task
-    return {
+    route = {
         "route_kind": route_kind,
         "project": project,
         "worker_needed": route_kind != "chat_only",
         "needs_recent_media": needs_recent_media,
-        "public_publish_intent": publish_allowed,
+        "public_publish_intent": publish_allowed or permission_question,
         "public_publish_allowed": publish_allowed,
         "external_action_allowed": bool(
             publish_allowed
-            or route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary"}
+            or (
+                route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary"}
+                and not permission_question
+            )
         ),
         "source_policy": "current_plus_explicit_refs" if link_inbox_summary_task else ("recent_media" if needs_recent_media else "current_request_only"),
         "reason": "fallback heuristic route",
         "confidence": 0.45,
         "route_agent_model": "fallback",
     }
+    if permission_question:
+        route.update(
+            {
+                "project": "lazyedit",
+                "needs_recent_media": True,
+                "source_policy": "current_plus_explicit_refs",
+                "confirmation_kind": "third_party_publish",
+                "requires_third_party_publish_confirmation": True,
+                "reason": "fallback detected publish permission question; wait for third-party confirmation",
+            }
+        )
+    return route
 
 
 def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback: dict[str, Any]) -> dict[str, Any]:
@@ -2445,8 +2887,12 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
             route_kind = "story_or_script"
         if route_kind == "generate_video" and not has_video_generation_intent(current_request):
             route_kind = "story_or_script"
+    permission_question = is_publish_permission_question(current_request)
     publish_allowed = has_public_publish_intent(current_request)
     needs_recent_media = bool(parsed.get("needs_recent_media"))
+    if permission_question:
+        route_kind = "publish_video"
+        needs_recent_media = True
     if route_kind in {"generate_video", "generate_image"} and not references_recent_media(current_request):
         needs_recent_media = False
     if route_kind == "file_intake":
@@ -2457,13 +2903,24 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
             "project": str(parsed.get("project") or fallback.get("project") or "unknown"),
             "worker_needed": bool(parsed.get("worker_needed", route_kind != "chat_only")),
             "needs_recent_media": needs_recent_media,
-            "public_publish_intent": bool(parsed.get("public_publish_intent")) and publish_allowed,
+            "public_publish_intent": (bool(parsed.get("public_publish_intent")) and publish_allowed) or permission_question,
             "public_publish_allowed": bool(parsed.get("public_publish_allowed")) and publish_allowed,
             "external_action_allowed": bool(parsed.get("external_action_allowed", fallback.get("external_action_allowed", False))),
             "source_policy": str(parsed.get("source_policy") or ("recent_media" if needs_recent_media else "current_request_only")),
             "reason": str(parsed.get("reason") or fallback.get("reason") or ""),
         }
     )
+    if permission_question:
+        parsed["project"] = str(parsed.get("project") or "lazyedit")
+        parsed["public_publish_allowed"] = False
+        parsed["external_action_allowed"] = False
+        parsed["source_policy"] = "current_plus_explicit_refs"
+        parsed["confirmation_kind"] = "third_party_publish"
+        parsed["requires_third_party_publish_confirmation"] = True
+        parsed["reason"] = (
+            parsed["reason"] + " | publish permission question requires separate same-chat confirmation"
+        ).strip()
+        return parsed
     try:
         parsed["confidence"] = float(parsed.get("confidence", fallback.get("confidence", 0.0)))
     except (TypeError, ValueError):
@@ -3056,6 +3513,87 @@ def is_video_publish_context_task(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+PUBLIC_PUBLISH_MARKERS = [
+    "publish",
+    "re-publish",
+    "republish",
+    "post",
+    "shipinhao",
+    "wechat channel",
+    "视频号",
+    "視頻號",
+    "youtube",
+    "instagram",
+    "发布",
+    "發布",
+    "投稿",
+]
+
+
+def public_publish_marker_present(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if any(marker in lowered for marker in PUBLIC_PUBLISH_MARKERS):
+        return True
+    if re.search(r"\b(?:sph|y2b|ytb|ins)\b", lowered):
+        return True
+    if re.search(r"\b(?:upload|send)\s+to\s+(?:youtube|instagram|shipinhao|sph|y2b|ytb|ins)\b", lowered):
+        return True
+    if re.search(r"上传.*(?:视频号|youtube|instagram|平台)", lowered):
+        return True
+    return False
+
+
+def is_publish_permission_question(text: str) -> bool:
+    lowered = collapse_text(str(text or "")).lower()
+    if not lowered or not public_publish_marker_present(lowered):
+        return False
+    ask_patterns = [
+        r"\b(?:ask|asking)\b.{0,80}\b(?:if|whether)\b.{0,80}\b(?:i|we)\b.{0,30}\b(?:publish|post|upload)\b",
+        r"(?:问|問|问一下|問一下|问问|問問).{0,80}(?:可以|可不可以|能不能|能否|能).{0,30}(?:发布|發布|发|發|投稿|视频号|視頻號)",
+    ]
+    if any(re.search(pattern, lowered) for pattern in ask_patterns):
+        return True
+    direct_bot_request_markers = [
+        "can you publish",
+        "could you publish",
+        "please publish",
+        "help me publish",
+        "帮我发布",
+        "幫我發布",
+        "帮我发",
+        "幫我發",
+        "帮忙发布",
+        "幫忙發布",
+        "请发布",
+        "請發布",
+        "麻烦发布",
+        "麻煩發布",
+    ]
+    if any(marker in lowered for marker in direct_bot_request_markers):
+        return False
+    english_permission = [
+        r"\b(?:can|may|could|should)\s+(?:i|we)\b.{0,40}\b(?:publish|post|upload)\b",
+        r"\bis\s+it\s+(?:ok|okay|fine|allowed)\b.{0,50}\b(?:for\s+(?:me|us)\s+to\s+)?(?:publish|post|upload)\b",
+    ]
+    chinese_permission = [
+        r"(?:我|我们|我們).{0,10}(?:可以|可不可以|能不能|能否|能).{0,30}(?:发布|發布|发|發|投稿|视频号|視頻號).{0,8}(?:吗|嘛|么|不|\?|？)",
+        r"(?:可以|可不可以|能不能|能否|能).{0,20}(?:发布|發布|发|發|投稿|视频号|視頻號).{0,8}(?:吗|嘛|么|不|\?|？)",
+    ]
+    japanese_permission = [
+        r"(?:投稿|公開|アップ).{0,20}(?:して)?(?:いい|大丈夫).{0,8}(?:か|\?|？)",
+        r"(?:投稿|公開|アップ).{0,20}(?:しても)?(?:よい|良い|いい)ですか",
+    ]
+    return any(
+        re.search(pattern, lowered)
+        for pattern in [*english_permission, *chinese_permission, *japanese_permission]
+    )
+
+
+def is_third_party_publish_permission_request(text: str) -> bool:
+    """Detect permission-seeking messages that should wait for another participant."""
+    return is_publish_permission_question(text)
+
+
 def has_public_publish_intent(text: str) -> bool:
     lowered = str(text or "").lower()
     negative_markers = [
@@ -3076,30 +3614,9 @@ def has_public_publish_intent(text: str) -> bool:
     ]
     if any(marker in lowered for marker in negative_markers):
         return False
-    explicit_markers = [
-        "publish",
-        "re-publish",
-        "republish",
-        "post",
-        "shipinhao",
-        "wechat channel",
-        "视频号",
-        "視頻號",
-        "youtube",
-        "instagram",
-        "发布",
-        "發布",
-        "投稿",
-    ]
-    if any(marker in lowered for marker in explicit_markers):
-        return True
-    if re.search(r"\b(?:sph|y2b|ytb|ins)\b", lowered):
-        return True
-    if re.search(r"\b(?:upload|send)\s+to\s+(?:youtube|instagram|shipinhao|sph|y2b|ytb|ins)\b", lowered):
-        return True
-    if re.search(r"上传.*(?:视频号|youtube|instagram|平台)", lowered):
-        return True
-    return False
+    if is_publish_permission_question(lowered):
+        return False
+    return public_publish_marker_present(lowered)
 
 
 def video_publish_context_bundle(

@@ -56,6 +56,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         content: str,
         *,
         sender: str = "friend",
+        sender_display: str = "friend",
         server_id: str = "1",
         local_id: int = 1,
         local_type: int = 1,
@@ -65,7 +66,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             "local_id": local_id,
             "server_id": server_id,
             "sender": sender,
-            "sender_display": "friend",
+            "sender_display": sender_display,
             "local_type": local_type,
             "create_time": create_time,
             "content": content,
@@ -1633,6 +1634,155 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertFalse(decision["needs_recent_media"])
         self.assertEqual(decision["source_policy"], "current_request_only")
         self.assertIn("generation route restored", decision["reason"])
+
+    def test_publish_permission_question_is_not_public_publish_authorization(self) -> None:
+        text = "@ChenMiao can I publish this video to YouTube?"
+
+        self.assertTrue(direct_chatops.is_third_party_publish_permission_request(text))
+        self.assertFalse(direct_chatops.has_public_publish_intent(text))
+
+        config = self.backend_chat_config("懒人科研")
+        route = direct_chatops.fallback_route_decision(config, text, self.row(text), [self.row(text)])
+        self.assertEqual(route["route_kind"], "publish_video")
+        self.assertTrue(route["public_publish_intent"])
+        self.assertFalse(route["public_publish_allowed"])
+        self.assertTrue(route["requires_third_party_publish_confirmation"])
+
+    def test_third_party_publish_consent_waits_then_activates_same_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            config = {
+                "chat_name": "懒人科研",
+                "self_wxid": "self",
+                "trigger_prefixes": ["@LazyingArt"],
+                "respond_to_all": True,
+                "trigger_local_types": [1],
+                "attachment_trigger_local_types": [43],
+                "message_table": "MSG_demo",
+                "state_path": str(Path(tmp) / "state.json"),
+                "worker_queue": str(queue),
+                "mirror_db": str(Path(tmp) / "mirror.sqlite"),
+                "send_target": {"name": "懒人科研", "expected_title": "懒人科研"},
+            }
+            video = self.row(
+                "<msg><videomsg md5=\"abcd1234abcd1234\" length=\"1024\" /></msg>",
+                sender="owner",
+                sender_display="owner",
+                local_id=20,
+                server_id="vid-20",
+                local_type=43,
+            )
+            request = self.row(
+                "@ChenMiao can I publish this video to Shipinhao and YouTube?",
+                sender="owner",
+                sender_display="owner",
+                local_id=21,
+                server_id="req-21",
+            )
+
+            waiting = direct_chatops.maybe_handle_third_party_publish_consent(
+                config,
+                request,
+                [video, request],
+                focus_rows=[request],
+            )
+            queued = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
+
+            self.assertIsNotNone(waiting)
+            assert waiting is not None
+            self.assertEqual(waiting["status"], "waiting_for_third_party")
+            self.assertEqual(len(queued), 1)
+            self.assertEqual(queued[0]["status"], "waiting_confirmation")
+            self.assertFalse(queued[0]["route_decision"]["public_publish_allowed"])
+            self.assertEqual(queued[0]["waiting_reason"], "third_party_publish_consent")
+            self.assertIn("local_id=20", queued[0]["request"])
+
+            approval = self.row("可以发布，没问题", sender="chen", sender_display="ChenMiao", local_id=22, server_id="ok-22")
+            activated = direct_chatops.maybe_handle_third_party_publish_consent(
+                config,
+                approval,
+                [video, request, approval],
+                focus_rows=[approval],
+            )
+            updated = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
+
+            self.assertIsNotNone(activated)
+            assert activated is not None
+            self.assertEqual(activated["status"], "third_party_confirmed")
+            self.assertEqual(updated[0]["status"], "pending")
+            self.assertTrue(updated[0]["route_decision"]["public_publish_allowed"])
+            self.assertTrue(updated[0]["route_decision"]["third_party_publish_confirmed"])
+            self.assertEqual(updated[0]["third_party_publish_consent"]["resolved_by_sender"], "chen")
+            self.assertIn("Confirmation row", updated[0]["request"])
+
+    def test_third_party_publish_consent_denial_cancels_waiting_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            config = {
+                "chat_name": "懒人科研",
+                "self_wxid": "self",
+                "trigger_prefixes": ["@LazyingArt"],
+                "respond_to_all": True,
+                "trigger_local_types": [1],
+                "attachment_trigger_local_types": [43],
+                "message_table": "MSG_demo",
+                "state_path": str(Path(tmp) / "state.json"),
+                "worker_queue": str(queue),
+                "mirror_db": str(Path(tmp) / "mirror.sqlite"),
+                "send_target": {"name": "懒人科研", "expected_title": "懒人科研"},
+            }
+            video = self.row("<msg><videomsg md5=\"abcd\" /></msg>", local_id=40, server_id="vid-40", local_type=43)
+            request = self.row("@friend 可以发到视频号吗？", sender="owner", sender_display="owner", local_id=41, server_id="req-41")
+            direct_chatops.maybe_handle_third_party_publish_consent(config, request, [video, request], focus_rows=[request])
+
+            denial = self.row("不可以，不要发布", sender="friend2", sender_display="friend2", local_id=42, server_id="no-42")
+            canceled = direct_chatops.maybe_handle_third_party_publish_consent(
+                config,
+                denial,
+                [video, request, denial],
+                focus_rows=[denial],
+            )
+            updated = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
+
+            self.assertIsNotNone(canceled)
+            assert canceled is not None
+            self.assertEqual(canceled["status"], "third_party_denied")
+            self.assertEqual(updated[0]["status"], "canceled")
+            self.assertFalse(updated[0]["route_decision"]["public_publish_allowed"])
+            self.assertEqual(updated[0]["third_party_publish_consent"]["status"], "denied")
+
+    def test_original_requester_yes_does_not_activate_third_party_consent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            config = {
+                "chat_name": "懒人科研",
+                "self_wxid": "self",
+                "trigger_prefixes": ["@LazyingArt"],
+                "respond_to_all": True,
+                "trigger_local_types": [1],
+                "attachment_trigger_local_types": [43],
+                "message_table": "MSG_demo",
+                "state_path": str(Path(tmp) / "state.json"),
+                "worker_queue": str(queue),
+                "mirror_db": str(Path(tmp) / "mirror.sqlite"),
+                "send_target": {"name": "懒人科研", "expected_title": "懒人科研"},
+            }
+            video = self.row("<msg><videomsg md5=\"abcd\" /></msg>", sender="owner", local_id=50, server_id="vid-50", local_type=43)
+            request = self.row("@friend can I publish this video?", sender="owner", sender_display="owner", local_id=51, server_id="req-51")
+            direct_chatops.maybe_handle_third_party_publish_consent(config, request, [video, request], focus_rows=[request])
+
+            own_yes = self.row("yes", sender="owner", sender_display="owner", local_id=52, server_id="own-52")
+            result = direct_chatops.maybe_handle_third_party_publish_consent(
+                config,
+                own_yes,
+                [video, request, own_yes],
+                focus_rows=[own_yes],
+            )
+            queued = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
+
+            self.assertIsNone(result)
+            self.assertEqual(queued[0]["status"], "waiting_confirmation")
+            self.assertFalse(queued[0]["route_decision"]["public_publish_allowed"])
 
     def test_route_policy_uses_stronger_model_for_ambiguous_video_upload(self) -> None:
         config = {

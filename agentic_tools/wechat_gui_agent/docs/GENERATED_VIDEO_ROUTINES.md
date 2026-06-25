@@ -122,6 +122,13 @@ publication.
    - Entrypoint: `run_generated_video_lazyedit_command(..., publish=True)`.
    - Requirement: current request explicitly permits public publish and names or
      implies platforms. Old chat history cannot authorize posting.
+   - Third-party consent: if the source user asks another participant whether the
+     video may be posted, such as `@A 可以发到视频号吗？` or `@A can I publish this?`,
+     the monitor creates a `waiting_confirmation` publish task with
+     `public_publish_allowed=false`. A later clear affirmative reply from a
+     different same-chat participant reactivates that exact task as `pending`
+     with `public_publish_allowed=true`; a denial cancels it. The system must not
+     publish from the permission question alone.
    - Existing generated videos quoted later are resolved by exact WeChat video
      MD5/length against same-chat task artifacts, then copied to AutoPublish
      with the original source task summary passed into LazyEdit prompt files.
