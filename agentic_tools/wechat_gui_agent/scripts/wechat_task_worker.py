@@ -174,6 +174,8 @@ def main() -> int:
     parser.add_argument("--send", action="store_true", help="Send worker result back to WeChat.")
     parser.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS, help="Ignored JSON mapping chat names to GUI target specs.")
     parser.add_argument("--resend", help="Send an existing task result by task id without rerunning the worker.")
+    parser.add_argument("--reprocess", help="Reset an existing task to pending so the worker reruns it with current code.")
+    parser.add_argument("--reason", default="", help="Reason recorded when reprocessing a task.")
     parser.add_argument("--flush-deferred", action="store_true", help="Try one deferred locked send without running new worker tasks.")
     parser.add_argument("--repair-missing-artifacts", action="store_true", help="Requeue completed tasks whose required media files were not sent.")
     args = parser.parse_args()
@@ -193,6 +195,11 @@ def main() -> int:
     if args.resend:
         return resend_task_result(args.queue, args.resend, args.chat, send_targets=args.send_targets)
 
+    if args.reprocess:
+        task = reprocess_task(args.queue, args.reprocess, reason=args.reason)
+        print(json.dumps(task, ensure_ascii=False, indent=2))
+        return 0
+
     if args.flush_deferred:
         return 0 if flush_one_deferred_send(args.queue, args.chat, send_targets=args.send_targets, log_idle=True) else 1
 
@@ -211,7 +218,7 @@ def main() -> int:
 
                 time.sleep(args.poll_seconds)
         return 0
-    raise SystemExit("Use --enqueue, --once, --loop, --resend, --flush-deferred, or --repair-missing-artifacts")
+    raise SystemExit("Use --enqueue, --once, --loop, --resend, --reprocess, --flush-deferred, or --repair-missing-artifacts")
 
 
 def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Path = DEFAULT_SEND_TARGETS) -> int:
@@ -228,6 +235,70 @@ def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Pa
     rewrite_task(queue, task)
     print(json.dumps(task, ensure_ascii=False, indent=2))
     return 1 if errors else 0
+
+
+def reprocess_task(queue: Path, task_id: str, *, reason: str = "") -> dict[str, Any]:
+    queue.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = queue.with_suffix(queue.suffix + ".lock")
+    now_text = datetime.now().isoformat(timespec="seconds")
+    stale_fields = [
+        "status",
+        "worker_id",
+        "claimed_at",
+        "completed_at",
+        "result",
+        "worker_error",
+        "preflight",
+        "routine",
+        "routine_contract",
+        "orchestrator",
+        "worker_policy_attempts",
+        "artifact_dir",
+        "execution_contract",
+        "skipped_files",
+        "send_errors",
+        "last_send_attempt_at",
+        "send_deferred_reason",
+        "sent_file_paths",
+        "post_artifact_send_errors",
+        "send_retry_claimed_at",
+        "send_retry_count",
+        "resent_at",
+        "existing_video_publish_poststage",
+        "next_publish_poststage_at",
+        "publish_poststage_queued_at",
+        "publish_poststage_last_status",
+        "publish_poststage_last_outcome",
+        "send_suppressed_reason",
+        "send_suppressed_at",
+    ]
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(queue)
+        for index, task in enumerate(tasks):
+            if str(task.get("id") or "") != str(task_id):
+                continue
+            previous = {
+                "at": now_text,
+                "reason": reason or "manual_reprocess",
+                "previous_status": task.get("status"),
+                "previous_worker_id": task.get("worker_id"),
+                "previous_completed_at": task.get("completed_at"),
+            }
+            result = task.get("result") if isinstance(task.get("result"), dict) else {}
+            if result:
+                previous["previous_result_message_excerpt"] = collapse_context_text(result.get("message"), max_len=500)
+            task.setdefault("reprocess_history", []).append(previous)
+            for field in stale_fields:
+                task.pop(field, None)
+            task["status"] = "pending"
+            task["reprocess_requested_at"] = now_text
+            task["reprocess_reason"] = reason or "manual_reprocess"
+            task["queue_path"] = str(queue)
+            tasks[index] = task
+            write_tasks(queue, tasks)
+            return task
+    raise SystemExit(f"No task found with id {task_id}")
 
 
 def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
@@ -2035,17 +2106,16 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
             preflight["resolved_video_artifact"] = artifact_resolution
     if not generate_video_task and should_preflight_autopublish(task):
         if "resolved_video_artifact" not in preflight:
-            artifact_resolution = resolve_exact_video_artifact_preflight(
-                task,
-                {"ok": False, "status": "wechat-cache-not-run", "reason": "same-chat artifact ledger checked first"},
-            )
-            if bool(artifact_resolution.get("ok")):
-                preflight["autopublish_video"] = artifact_resolution
-            else:
-                autopub = run_autopublish_video_preflight(task)
-                if not bool(autopub.get("ok")):
-                    autopub["artifact_resolution"] = artifact_resolution
+            autopub = run_autopublish_video_preflight(task)
+            if bool(autopub.get("ok")):
                 preflight["autopublish_video"] = autopub
+            else:
+                artifact_resolution = resolve_exact_video_artifact_preflight(task, autopub)
+                if bool(artifact_resolution.get("ok")):
+                    preflight["autopublish_video"] = artifact_resolution
+                else:
+                    autopub["artifact_resolution"] = artifact_resolution
+                    preflight["autopublish_video"] = autopub
     context_path.write_text(build_lazyedit_correction_context(task, preflight=preflight), encoding="utf-8")
     metadata_path.write_text(build_lazyedit_metadata_brief(task, preflight=preflight), encoding="utf-8")
     return preflight
@@ -2681,6 +2751,7 @@ def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[s
 
 def build_lazyedit_metadata_brief(task: dict[str, Any], *, preflight: dict[str, Any] | None = None) -> str:
     request = collapse_context_text(task.get("request")) or "WeChat video publish request"
+    focused_request = collapse_context_text(task_focus_text(task), max_len=800)
     context_lines = []
     for row in task.get("context") or []:
         if not isinstance(row, dict):
@@ -2714,6 +2785,7 @@ def build_lazyedit_metadata_brief(task: dict[str, Any], *, preflight: dict[str, 
         "# LazyEdit Metadata Brief\n\n"
         "Use this only for public-facing title, description, keywords, and platform notes.\n"
         "Do not expose private chat logs, internal agent workflow, or every subtitle-correction detail.\n\n"
+        f"Current user request: {focused_request or request[:800]}\n\n"
         f"Request summary: {request[:800]}\n\n"
         "Relevant public context candidates:\n"
         + "\n".join(f"- {line[:360]}" for line in context_lines[-6:])
@@ -2915,7 +2987,17 @@ def task_queue_path(task: dict[str, Any]) -> Path:
 
 
 def extract_video_reference_metadata(task: dict[str, Any]) -> dict[str, Any]:
-    raw = json.dumps(task, ensure_ascii=False)
+    source_local_ids = extract_video_local_ids_from_task(task)
+    scoped_chunks: list[str] = []
+    if source_local_ids:
+        wanted = set(source_local_ids)
+        for row in task.get("context") or []:
+            if not isinstance(row, dict):
+                continue
+            local_id = int_or_none(row.get("local_id"))
+            if local_id in wanted:
+                scoped_chunks.append(json.dumps(row, ensure_ascii=False))
+    raw = "\n".join(scoped_chunks) if scoped_chunks else json.dumps(task, ensure_ascii=False)
     text = html.unescape(raw).replace('\\"', '"')
     md5s: list[str] = []
     sizes: list[int] = []
@@ -2937,7 +3019,8 @@ def extract_video_reference_metadata(task: dict[str, Any]) -> dict[str, Any]:
         "md5s": md5s[:8],
         "sizes": sizes[:8],
         "server_ids": server_ids[:8],
-        "local_ids": extract_video_local_ids_from_task(task),
+        "local_ids": source_local_ids,
+        "scope": "source_video_local_ids" if scoped_chunks else "task_context",
     }
 
 
@@ -4332,6 +4415,8 @@ def lazyedit_shell_command(command_parts: list[str]) -> str:
 
 def lazyedit_publish_proc_result(proc: subprocess.CompletedProcess[str], *, command: list[str]) -> dict[str, Any]:
     payload = parse_last_json_object(proc.stdout)
+    if not payload:
+        payload = parse_last_json_object(proc.stderr)
     ok = proc.returncode == 0 and bool(payload)
     if ok:
         status = "done"
@@ -4787,6 +4872,19 @@ def int_or_none(value: Any) -> int | None:
 
 
 def extract_video_local_ids_from_task(task: dict[str, Any]) -> list[int]:
+    source_local_id = int_or_none((task.get("source") or {}).get("local_id")) if isinstance(task.get("source"), dict) else None
+    if source_local_id is not None:
+        for row in task.get("context") or []:
+            if not isinstance(row, dict):
+                continue
+            if int_or_none(row.get("local_id")) != source_local_id:
+                continue
+            content = str(row.get("content") or "")
+            referenced = referenced_video_local_ids_from_source(task, content)
+            if referenced:
+                return referenced
+            if "<videomsg" in content or "[WeChat video]" in content:
+                return [source_local_id]
     requested: set[int] = set()
     for groups in re.findall(r"local_id\s*[=:]?\s*(\d+)|local_id(\d+)", str(task.get("request") or "")):
         for value in groups:
@@ -4810,6 +4908,40 @@ def extract_video_local_ids_from_task(task: dict[str, Any]) -> list[int]:
         if exact:
             return exact
     return video_ids[-1:] if video_ids else []
+
+
+def referenced_video_local_ids_from_source(task: dict[str, Any], source_content: str) -> list[int]:
+    if "<refermsg>" not in source_content and "&lt;refermsg&gt;" not in source_content:
+        return []
+    text = html.unescape(str(source_content or ""))
+    server_ids: list[str] = []
+    for value in re.findall(r"<svrid>\s*([0-9]{8,})\s*</svrid>", text):
+        add_once(server_ids, value)
+    if not server_ids:
+        return []
+    server_to_local = video_server_id_to_local_id_map(task)
+    local_ids: list[int] = []
+    for server_id in server_ids:
+        local_id = server_to_local.get(server_id)
+        if local_id is not None:
+            add_once(local_ids, local_id)
+    return local_ids
+
+
+def video_server_id_to_local_id_map(task: dict[str, Any]) -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    request = str(task.get("request") or "")
+    pattern = re.compile(r"local_id\s*[=:]\s*(\d+)\s+server_id\s*[=:]\s*([0-9]{8,})")
+    for match in pattern.finditer(request):
+        local_id = int_or_none(match.group(1))
+        server_id = match.group(2)
+        if local_id is None:
+            continue
+        row = next((item for item in task.get("context") or [] if isinstance(item, dict) and int_or_none(item.get("local_id")) == local_id), None)
+        content = str((row or {}).get("content") or "")
+        if "<videomsg" in content or "[WeChat video]" in content:
+            mapping.setdefault(server_id, local_id)
+    return mapping
 
 
 def extract_media_tokens_from_task(task: dict[str, Any], *, limit: int = 16) -> list[str]:

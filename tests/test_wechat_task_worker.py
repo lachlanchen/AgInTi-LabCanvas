@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from datetime import datetime
+import hashlib
 import io
 import importlib.util
 import json
@@ -604,10 +605,13 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             context_path = Path(preflight["lazyedit_context"]["correction_prompt_file"])
             metadata_path = Path(preflight["lazyedit_context"]["metadata_prompt_file"])
             context_text = context_path.read_text(encoding="utf-8")
+            metadata_text = metadata_path.read_text(encoding="utf-8")
 
         self.assertTrue(context_path.name.endswith("correction_context.md"))
         self.assertTrue(metadata_path.name.endswith("metadata_brief.md"))
         self.assertIn("haircut and curly", context_text)
+        self.assertIn("Current user request:", metadata_text)
+        self.assertIn("publish the video at local_id14", metadata_text)
         self.assertIn("bea815fa6ed81bbd5da77ac6895c5fd9", context_text)
         self.assertEqual(preflight["autopublish_video"]["ok"], True)
         self.assertEqual(preflight["autopublish_video"]["message_local_ids"], [14])
@@ -655,16 +659,66 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(payload["message_local_ids"], [57])
         self.assertEqual(payload["private_save_dest"], str(artifact_dir / "source_media"))
 
+    def test_reprocess_task_clears_stale_result_and_preserves_source_context(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-1",
+                        "chat": "🍓我的设备",
+                        "request": "Current coalesced request:\nPlease publish this source video.",
+                        "source": {"local_id": 58},
+                        "context": [{"local_id": 58, "content": "[quoted video]"}],
+                        "status": "send_retrying",
+                        "result": {"message": "stale wrong result", "files": []},
+                        "preflight": {"autopublish_video": {"status": "artifact-ledger-match"}},
+                        "routine": {"id": "video_publish_existing", "rules": ["old rule"]},
+                        "routine_contract": {"json": "/tmp/old.json"},
+                        "orchestrator": {"stage": "old"},
+                        "worker_policy_attempts": [{"attempt": 1}],
+                        "artifact_dir": "/tmp/old-artifacts",
+                        "execution_contract": {"old": True},
+                        "send_errors": ["timeout"],
+                        "existing_video_publish_poststage": {"video_id": 395},
+                        "completed_at": "2026-06-25T10:39:57",
+                    }
+                ],
+            )
+
+            updated = worker.reprocess_task(queue, "task-1", reason="source resolver fixed")
+            stored = worker.find_task(queue, "task-1")
+
+        self.assertEqual(updated["status"], "pending")
+        self.assertEqual(stored["status"], "pending")
+        self.assertEqual(stored["source"], {"local_id": 58})
+        self.assertEqual(stored["context"], [{"local_id": 58, "content": "[quoted video]"}])
+        self.assertNotIn("result", stored)
+        self.assertNotIn("preflight", stored)
+        self.assertNotIn("routine", stored)
+        self.assertNotIn("routine_contract", stored)
+        self.assertNotIn("orchestrator", stored)
+        self.assertNotIn("worker_policy_attempts", stored)
+        self.assertNotIn("artifact_dir", stored)
+        self.assertNotIn("execution_contract", stored)
+        self.assertNotIn("send_errors", stored)
+        self.assertNotIn("existing_video_publish_poststage", stored)
+        self.assertEqual(stored["reprocess_reason"], "source resolver fixed")
+        self.assertEqual(stored["reprocess_history"][0]["previous_status"], "send_retrying")
+        self.assertIn("stale wrong result", stored["reprocess_history"][0]["previous_result_message_excerpt"])
+
     def test_video_publish_preflight_uses_same_chat_artifact_ledger_when_wechat_cache_misses(self) -> None:
         worker = load_worker()
         video_bytes = b"generated-video-bytes"
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            source_video = tmp_path / "restaurant_gold_box_30s_2026-06-22_wechat.mp4"
+            source_video = tmp_path / "legacy_generated_video.mp4"
             source_video.write_bytes(video_bytes)
-            source_prompt = tmp_path / "restaurant_gold_box_prompt.md"
+            source_prompt = tmp_path / "legacy_generated_video_prompt.md"
             source_prompt.write_text(
-                "Original generation prompt: RaraXia, AyaChan, and SasaKun find a glowing gold box in a restaurant.",
+                "Original generation prompt: a previous generated story-video scene.",
                 encoding="utf-8",
             )
             md5 = worker.file_md5(source_video)
@@ -675,7 +729,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                     {
                         "id": "source-task",
                         "chat": "🍓我的设备",
-                        "request": "Generate the restaurant gold box video from the original prompt and script.",
+                        "request": "Generate the older source video from the original prompt and script.",
                         "status": "done",
                         "result": {"message": "Generated and sent the compressed MP4.", "files": [str(source_video)]},
                         "sent_file_paths": [str(source_video)],
@@ -738,6 +792,86 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("original prompt and script", context_text)
         self.assertIn("Original generation prompt", context_text)
         self.assertIn("OBSOLETE-CACHE-MISS", context_text)
+
+    def test_video_publish_preflight_uses_current_quoted_video_not_old_history(self) -> None:
+        worker = load_worker()
+        old_video_bytes = b"old-generated-video"
+        current_video_bytes = b"current-quoted-video" * 600
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_video = tmp_path / "older_same_chat_video.mp4"
+            old_video.write_bytes(old_video_bytes)
+            old_md5 = worker.file_md5(old_video)
+            current_md5 = hashlib.md5(current_video_bytes).hexdigest()
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "old-source-task",
+                        "chat": "🍓我的设备",
+                        "request": "Generate and publish an older same-chat video.",
+                        "status": "done",
+                        "result": {"message": "Generated old video.", "files": [str(old_video)]},
+                        "sent_file_paths": [str(old_video)],
+                    }
+                ],
+            )
+            task = {
+                "id": "publish-current-task",
+                "queue_path": str(queue),
+                "chat": "🍓我的设备",
+                "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+                "request": (
+                    "Current coalesced request:\n"
+                    "Please publish this newly quoted source video.\n[quoted 陈苗: [video]]\n\n"
+                    "Same-chat reference media/context rows:\n"
+                    "- local_id=47 old video context\n"
+                    "- local_id=57 server_id=3774698196281921919 current video\n"
+                    "- local_id=58 server_id=7695504197176236957 current quote"
+                ),
+                "source": {"local_id": 58, "sender_display": "陈苗"},
+                "context": [
+                    {
+                        "local_id": 47,
+                        "sender_display": "陈喵瞄秒妙",
+                        "content": f'<msg><videomsg md5="{old_md5}" length="{len(old_video_bytes)}" /></msg>',
+                    },
+                    {
+                        "local_id": 57,
+                        "sender_display": "陈苗",
+                        "content": f'<msg><videomsg md5="{current_md5}" length="{len(current_video_bytes)}" /></msg>',
+                    },
+                    {
+                        "local_id": 58,
+                        "sender_display": "陈苗",
+                        "content": (
+                            "Please publish this newly quoted source video.\n"
+                            '<refermsg><svrid>3774698196281921919</svrid>'
+                            f'<content><msg><videomsg md5="{current_md5}" '
+                            f'length="{len(current_video_bytes)}" /></msg></content></refermsg>'
+                        ),
+                    },
+                ],
+            }
+
+            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                payload = {"ok": False, "error": "no matching mirrored video found"}
+                return subprocess.CompletedProcess(command, 1, json.dumps(payload), "")
+
+            with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+                preflight = worker.prepare_worker_preflight(task, tmp_path / "artifact")
+
+            autopub = preflight["autopublish_video"]
+            artifact_resolution = autopub["artifact_resolution"]
+
+        self.assertFalse(autopub["ok"])
+        self.assertEqual(artifact_resolution["status"], "artifact-ledger-miss")
+        self.assertEqual(artifact_resolution["refs"]["md5s"], [current_md5])
+        self.assertEqual(artifact_resolution["refs"]["sizes"], [len(current_video_bytes)])
+        self.assertEqual(artifact_resolution["refs"]["local_ids"], [57])
+        self.assertEqual(artifact_resolution["refs"]["scope"], "source_video_local_ids")
+        self.assertNotIn(old_md5, artifact_resolution["refs"]["md5s"])
 
     def test_file_download_preflight_resolves_recent_same_chat_generated_video(self) -> None:
         worker = load_worker()
@@ -2552,6 +2686,22 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["status"], "no_json_output")
         self.assertEqual(result["payload"], {})
+
+    def test_lazyedit_publish_failure_preserves_stderr_json_payload(self) -> None:
+        worker = load_worker()
+        proc = subprocess.CompletedProcess(
+            ["bash", "-lc", "false"],
+            1,
+            stdout="",
+            stderr='progress line\n{"error":"process failed","partial":{"video_id":409}}\n',
+        )
+
+        result = worker.lazyedit_publish_proc_result(proc, command=["bash", "-lc", "false"])
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["payload"]["error"], "process failed")
+        self.assertEqual(result["payload"]["partial"]["video_id"], 409)
 
     def test_lazyedit_publish_watchdog_returns_login_blocker(self) -> None:
         worker = load_worker()

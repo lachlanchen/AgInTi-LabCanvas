@@ -230,8 +230,8 @@ ROUTINES: dict[str, RoutineDefinition] = {
             {
                 "id": "exact_video_resolution",
                 "owner": "queue_orchestrator",
-                "entrypoint": "wechat_autopublish_video.py --message-local-id / media_sync",
-                "success": "exact same-chat video is cached and copied, or fail closed",
+                "entrypoint": "wechat_autopublish_video.py --message-local-id first, then verified same-chat artifact ledger fallback",
+                "success": "current/source video row is cached/copied, or a ledger artifact matches that row md5/length, or fail closed",
             },
             {
                 "id": "lazyedit_process",
@@ -262,6 +262,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
         rules=COMMON_RULES
         + (
             "Old chat history may explain subtitles but cannot authorize public publish.",
+            "Old chat history must not broaden source-video selection beyond the current quoted/source local-id rows.",
             "If exact source video is missing, fail closed; do not publish old or nearby videos.",
             "Never call queued/submitted/running jobs published; only terminal platform evidence is published.",
         ),

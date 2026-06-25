@@ -93,6 +93,8 @@ Required behavior:
 - when an existing-video publish poststage has a LazyEdit `video_id` but no
   local publish job, reissue the real LazyEdit publish command from the stored
   prompt files once before handing repair to a Codex worker session;
+- accept `burn=skipped` for silent videos and continue metadata, cover, publish
+  queue submission, and terminal platform verification;
 - monitor existing local/remote publish jobs instead of starting duplicates;
 - if a configured remote AutoPublish log scan detects platform login or QR
   requirements, return `waiting_confirmation` with the poststage preserved so

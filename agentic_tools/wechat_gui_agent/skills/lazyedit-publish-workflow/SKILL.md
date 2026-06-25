@@ -53,6 +53,16 @@ curl -fsS http://127.0.0.1:18787/api/ui-settings/logo_settings | jq .
 - Use `--correction-prompt-file` for full transcript/story context and
   `--metadata-prompt-file` for a short public-facing brief. Do not pass a full
   script as metadata context.
+- Silent or nearly silent videos may produce empty transcripts and
+  `burn=skipped`. This is acceptable when transcribe/translate/caption/keyframes
+  are complete; continue metadata generation, cover extraction, publish queue
+  submission, and terminal platform verification instead of waiting forever or
+  swapping in an older video.
+- AutoPublish browser uploads require a web-safe MP4 inside the ZIP. LazyEdit
+  must package `_highlighted.mp4` as H.264/AVC (`avc1`), `yuv420p`, AAC audio,
+  and `+faststart`. If the selected source/burn output is HEVC/H.265, AV1, or
+  another browser-risk codec, transcode it during publish-bundle preparation
+  before sending the ZIP.
 - Do not commit generated ZIPs, runtime media, temporary prompts, cookies, or
   queue snapshots.
 

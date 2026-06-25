@@ -340,14 +340,29 @@ labcanvas wechat autopublish-video --chat "<CHAT_NAME>" --message-local-id 14 --
 `--fetch-gui` opens the official client and clicks the visible video so WeChat
 caches the MP4 before the tool copies it to Nutstore AutoPublish.
 
-For bot-sent/generated videos, `wechat_task_worker.py` checks the same-chat
-artifact ledger before spending time on a GUI cache fetch. It extracts quoted
-video `md5`/`length` tokens from the task, searches only prior tasks from the
-same chat, verifies the matching MP4, copies it into Nutstore AutoPublish with
-a `_COMPLETED` name, and includes the source task request/result summary in
-the LazyEdit correction and metadata prompt files. If the ledger cannot prove
-an exact match, the worker falls back to the command above. No MD5/length match
-and no exact WeChat cache means no publish.
+For bot-sent/generated videos, `wechat_task_worker.py` runs the exact
+message-local-id cache path first. If that fails, it checks the same-chat
+artifact ledger using only the current/source video row `md5`/`length` tokens,
+not every old video token in recent history. A verified match is copied into
+Nutstore AutoPublish with a `_COMPLETED` name, and the source task
+request/result summary is included only as LazyEdit correction and metadata
+context. No current/source-row MD5 or length match and no exact WeChat cache
+means no publish.
+
+Silent or nearly silent videos are allowed. If LazyEdit records an empty
+transcript and `burn=skipped`, continue to metadata, cover extraction, publish
+queue submission, and terminal platform verification. Do not block forever on
+subtitle burn, and do not replace the exact current video with an older one.
+
+If a code or routine fix makes a stored worker result stale, requeue the same
+source-scoped task through the reusable reprocess path:
+
+```bash
+labcanvas wechat worker reprocess "<TASK_ID>" "source resolver fixed" --send
+```
+
+This preserves the original request, source, route decision, and context, while
+clearing stale preflight/result/send state so the normal worker owns the retry.
 
 ## GUI Send Path
 

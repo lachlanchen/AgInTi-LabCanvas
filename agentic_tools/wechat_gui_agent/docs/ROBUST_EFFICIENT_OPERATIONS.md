@@ -103,7 +103,7 @@ designing a new workflow from scratch or waiting for manual operator rescue.
 | Slow task enqueue | Fast monitor | `enqueue_worker_task()` | Put full source context and `task.routine` into queue once; avoid duplicate work. |
 | Worker execution | Worker | `wechat_task_worker.py --loop --send` | Write routine contract, supervise stages, dynamic model effort, retry only weak/failing outputs. |
 | Generated video | Queue orchestrator | `GENERATED_VIDEO_ROUTINES.md` | Store route contract, wait via queue/CDP, deliver MP4 before poststage. |
-| Exact video publish | Worker | same-chat artifact ledger, `wechat_autopublish_video.py`, LazyEdit CLI | Match quoted video MD5/size against same-chat generated/sent artifacts first; if not found, use exact WeChat message IDs/cache before failing closed. |
+| Exact video publish | Worker | `wechat_autopublish_video.py`, same-chat artifact ledger, LazyEdit CLI | Resolve exact WeChat message IDs/cache first; use the same-chat artifact ledger only when it matches the current/source video row MD5 or byte length. |
 | GUI send | Sender | `wechat_gui_send.py` | Serialize with lock, OCR/title guard, screenshots, deferred outbox. |
 | Android text fallback | Worker outbox | `send_result_with_retries()` | For verified publish-completion text only, if desktop GUI send fails with a deferable guard/timeout, ADB may send a sanitized ASCII completion after screenshot OCR proves the phone is already open to the exact target chat. |
 | Browser assist | Human + worker | `wechat_browser_assist.py` | Use only for login/CAPTCHA/download confirmation or blocked web UI. |
@@ -258,23 +258,32 @@ in `send_deferred_artifact` or `send_deferred_locked`.
 For `route_kind=publish_video` or an explicit current-message publish request,
 the worker resolves the source in this order:
 
-1. extract quoted video `md5`/`length` metadata from the task context;
-2. search only same-chat queued task history for prior `sent_file_paths`,
-   result files, generated-video outputs, and task artifact MP4s;
-3. accept a file only when MD5 matches, or when no MD5 exists and byte length
-   matches a same-chat sent/generated artifact;
-4. copy the exact match into Nutstore AutoPublish with a `_COMPLETED` name;
-5. pass the original generation/source task summary, supporting prompt/story
+1. extract the current/source quoted video `md5`/`length` metadata from the
+   exact local-id rows selected by routing;
+2. run `wechat_autopublish_video.py` with exact `message_local_ids` and
+   optionally `--fetch-gui` so the official client/cache path has priority;
+3. if the cache path fails, search only same-chat queued task history for prior
+   `sent_file_paths`, result files, generated-video outputs, and task artifact
+   MP4s;
+4. accept a ledger file only when it matches the current/source video row MD5,
+   or when no MD5 exists and byte length matches that row;
+5. copy the exact match into Nutstore AutoPublish with a `_COMPLETED` name;
+6. pass the original generation/source task summary, supporting prompt/story
    snippets, and safe source material into the LazyEdit correction and metadata
    prompt files;
-6. mark old cache-miss refusals or old unverified “submitted publish” bot
+7. mark old cache-miss refusals or old unverified “submitted publish” bot
    messages as obsolete context, not evidence;
-7. run LazyEdit and verify local plus remote publish queues;
-8. if no ledger match exists, run `wechat_autopublish_video.py` with exact
-   `message_local_ids` and optionally `--fetch-gui`.
+8. run LazyEdit and verify local plus remote publish queues.
 
 If both the WeChat cache and artifact ledger fail, stop source-limited. Do not
 reuse a nearby video, another group’s artifact, or an older unrelated task.
+Old history and source-task summaries may improve subtitle correction and
+metadata, but they must not broaden source-video selection beyond the current
+quoted/source local-id rows.
+When a bug fix invalidates an already stored worker result, re-run the original
+task with `labcanvas wechat worker reprocess <task_id> <reason>` instead of
+editing the private queue or manually doing the chat task. Reprocess preserves
+the source rows and clears stale result/preflight/send state.
 If LazyEdit reports only queued, submitted, running, missing, or unverified
 status, do not say published. Return the current stage to WeChat and keep the
 task in `publish_poststage_pending` until all requested platforms have terminal
@@ -289,6 +298,17 @@ The LazyEdit command must execute as separate shell stages:
 python scripts/lazyedit_publish.py ... --json`. A zero-exit command with no
 JSON payload is not a successful publish submission; treat it as repairable
 `no_json_output` evidence and keep the poststage pending.
+Silent or nearly silent videos may produce empty transcripts and a skipped
+subtitle-burn step. Treat `burn=skipped` as a valid terminal media state when
+transcribe/translate/caption/keyframes are complete; the routine must still
+generate metadata, extract a cover, queue the real publish job, and verify the
+remote platforms. Do not wait for subtitle burn forever and do not use an old
+video to satisfy the request.
+Publish-bundle verification includes the ZIP payload codec, not only the source
+file. The bundled `_highlighted.mp4` must be browser-safe H.264/AVC (`avc1`),
+`yuv420p`, AAC audio, and `+faststart`; if the selected source or skipped-burn
+fallback is HEVC/H.265, LazyEdit must transcode it before AutoPublish receives
+the ZIP.
 Before issuing any new existing-video public publish, probe LazyEdit/remote
 queues for the same `video_id` and requested platforms. If terminal evidence is
 already present, return `published_verified`; do not enqueue a duplicate job.
