@@ -89,6 +89,7 @@ Other text?
         sent_files = []
         module.send_message = lambda message, chat, send_targets: sent_messages.append((message, chat, send_targets))
         module.send_file = lambda report, chat, send_targets: sent_files.append((report, chat, send_targets))
+        module.ensure_markdown_pdf_companion = lambda report: report.with_suffix(".pdf")
         args = argparse.Namespace(
             send_chat="lachlanchan",
             send_targets=Path("/tmp/send-targets.json"),
@@ -116,6 +117,9 @@ Why it matters: It turns reflection into evidence.
         self.assertIn("small proof today", sent_messages[0][0])
         self.assertEqual(sent_messages[0][1], "lachlanchan")
         self.assertEqual(sent_files[0][0], Path("/tmp/report.md"))
+        self.assertEqual(sent_files[1][0], Path("/tmp/report.pdf"))
+        self.assertEqual(status["files_sent"], ["/tmp/report.md", "/tmp/report.pdf"])
+        self.assertEqual(status["pdf_companion"], "/tmp/report.pdf")
 
     def test_run_daily_writes_trace_bundle_and_sanitized_share_report(self):
         module = load_wechat_career_daily_agent()

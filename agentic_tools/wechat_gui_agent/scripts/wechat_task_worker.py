@@ -157,6 +157,7 @@ OUTBOUND_SUFFIXES = {
 }
 DEFAULT_AUTO_SEND_SUFFIXES = set(OUTBOUND_SUFFIXES)
 DEFAULT_MAX_OUTBOUND_BYTES = 100 * 1024 * 1024
+MARKDOWN_PDF_COMPANION_SUFFIXES = {".md", ".markdown"}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 AUDIO_SUFFIXES = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".amr", ".opus"}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".svg"}
@@ -1216,13 +1217,81 @@ def partition_result_files_for_wechat(files: list[str]) -> tuple[list[Path], lis
         suffixes = {item.strip().lower() for item in raw_suffixes.split(",") if item.strip()}
     send: list[Path] = []
     note: list[Path] = []
-    for raw in files:
+    for raw in add_markdown_pdf_companions(files):
         path = Path(raw)
         if path.suffix.lower() in suffixes:
             send.append(path)
         else:
             note.append(path)
     return send, note
+
+
+def add_markdown_pdf_companions(files: list[str]) -> list[str]:
+    if os.environ.get("WECHAT_MARKDOWN_PDF_COMPANIONS", "1") == "0":
+        return [str(path) for path in files]
+    expanded: list[str] = []
+    for raw in files:
+        path_text = str(raw or "").strip()
+        if not path_text:
+            continue
+        expanded.append(path_text)
+        companion = ensure_markdown_pdf_companion(Path(path_text))
+        if companion:
+            expanded.append(str(companion))
+    return unique_strings(expanded)
+
+
+def ensure_markdown_pdf_companion(path: Path) -> Path | None:
+    source = path.expanduser()
+    if source.suffix.lower() not in MARKDOWN_PDF_COMPANION_SUFFIXES:
+        return None
+    if not source.is_absolute():
+        source = (ROOT / source).resolve()
+    if not source.is_file():
+        return None
+    output = source.with_suffix(".pdf")
+    try:
+        if output.is_file() and output.stat().st_size > 0 and output.stat().st_mtime >= source.stat().st_mtime:
+            return output
+    except OSError:
+        pass
+    try:
+        return render_markdown_pdf(source, output)
+    except Exception:
+        return None
+
+
+def render_markdown_pdf(source: Path, output: Path) -> Path | None:
+    pandoc = shutil.which(os.environ.get("WECHAT_MARKDOWN_PDF_PANDOC", "pandoc"))
+    if not pandoc:
+        return None
+    output.parent.mkdir(parents=True, exist_ok=True)
+    tmp_output = output.with_name(f"{output.stem}.tmp.pdf")
+    tmp_output.unlink(missing_ok=True)
+    command = [
+        pandoc,
+        str(source),
+        "-o",
+        str(tmp_output),
+        "--standalone",
+        "--pdf-engine",
+        os.environ.get("WECHAT_MARKDOWN_PDF_ENGINE", "xelatex"),
+        "-V",
+        f"mainfont={os.environ.get('WECHAT_MARKDOWN_PDF_MAINFONT', 'Noto Sans CJK SC')}",
+        "-V",
+        f"CJKmainfont={os.environ.get('WECHAT_MARKDOWN_PDF_CJKFONT', 'Noto Sans CJK SC')}",
+        "-V",
+        f"monofont={os.environ.get('WECHAT_MARKDOWN_PDF_MONOFONT', 'DejaVu Sans Mono')}",
+        "-V",
+        os.environ.get("WECHAT_MARKDOWN_PDF_GEOMETRY", "geometry:margin=18mm"),
+    ]
+    timeout = int(os.environ.get("WECHAT_MARKDOWN_PDF_TIMEOUT_SECONDS", "120"))
+    proc = subprocess.run(command, cwd=str(source.parent), capture_output=True, text=True, timeout=timeout, check=False)
+    if proc.returncode != 0 or not tmp_output.is_file() or tmp_output.stat().st_size <= 0:
+        tmp_output.unlink(missing_ok=True)
+        return None
+    tmp_output.replace(output)
+    return output
 
 
 def message_with_saved_file_note(message: str, files: list[Path]) -> str:

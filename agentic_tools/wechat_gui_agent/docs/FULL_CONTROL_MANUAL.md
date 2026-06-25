@@ -129,6 +129,14 @@ target, so a worker send that appears mid-cycle stops further dry-open actions.
 | `wechat_supervisor_tmux.sh` | Main WeChat tmux supervisor. |
 | `wechat_stack_tmux.sh` | WeChat supervisor plus LabCanvas web panel and daily scheduler. |
 
+## Artifact Delivery Defaults
+
+Workers send safe Markdown artifacts directly, but mobile WeChat is poor at
+opening `.md` files. By default, `wechat_task_worker.py` generates a same-name
+PDF companion for every existing `.md` or `.markdown` attachment before sending
+files, for example `story.md` plus `story.pdf`. Disable only for debugging with
+`WECHAT_MARKDOWN_PDF_COMPANIONS=0`.
+
 ## Private State Files
 
 All real account data stays ignored under `agentic_tools/wechat_gui_agent/.private/`.

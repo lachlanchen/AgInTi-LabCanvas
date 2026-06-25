@@ -56,6 +56,12 @@ Reusable user script:
 ~/scripts/create-labcanvas-career-daily-tmux.sh
 ```
 
+When `--attach-report` is enabled, the sender attaches the sanitized Markdown
+report and a same-name PDF companion, for example
+`2026-06-26-career-strategy.md` and `2026-06-26-career-strategy.pdf`. The PDF is
+generated with pandoc/XeLaTeX when available so the report is easier to read on
+mobile WeChat.
+
 ## Code Surfaces
 
 - `src/agenticapp/wechat_ops.py`: exposes `labcanvas wechat career-agent`.
@@ -120,6 +126,7 @@ Latest convenience paths:
 ```text
 agentic_tools/wechat_gui_agent/.private/output/career_daily/YYYY-MM-DD-career-strategy-private.md
 output/wechat_strategy/YYYY-MM-DD-career-strategy.md
+output/wechat_strategy/YYYY-MM-DD-career-strategy.pdf
 ```
 
 `output/wechat_strategy/` is the only report path intended for WeChat

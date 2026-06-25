@@ -4973,32 +4973,45 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(payload["repaired_count"], 0)
         self.assertEqual(tasks[0]["status"], "done")
 
-    def test_send_result_attaches_markdown_files_by_default(self) -> None:
+    def test_send_result_attaches_markdown_and_pdf_companion_by_default(self) -> None:
         worker = load_worker()
         messages: list[str] = []
         files: list[Path] = []
         original_message = worker.send_message
         original_file = worker.send_file
+        original_render = worker.render_markdown_pdf
         try:
             worker.send_message = lambda message, *_args, **_kwargs: messages.append(message)
             worker.send_file = lambda file_path, *_args, **_kwargs: files.append(Path(file_path))
-            task: dict[str, object] = {}
-            worker.send_result_once(
-                {
-                    "message": "done",
-                    "confirmation": "",
-                    "files": ["/tmp/story.md", "/tmp/preview.png"],
-                },
-                "🍓我的设备",
-                Path("/tmp/no-targets.json"),
-                target={"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备"},
-                task=task,
-            )
+            def fake_render_markdown_pdf(source: Path, output: Path) -> Path:
+                output.write_bytes(b"%PDF-1.4\n")
+                return output
+
+            worker.render_markdown_pdf = fake_render_markdown_pdf
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                story = root / "story.md"
+                preview = root / "preview.png"
+                story.write_text("# Story\n", encoding="utf-8")
+                preview.write_bytes(b"png")
+                task: dict[str, object] = {}
+                worker.send_result_once(
+                    {
+                        "message": "done",
+                        "confirmation": "",
+                        "files": [str(story), str(preview)],
+                    },
+                    "🍓我的设备",
+                    Path("/tmp/no-targets.json"),
+                    target={"name": "🍓我的设备", "query": "我的设备", "expected_title": "🍓我的设备"},
+                    task=task,
+                )
         finally:
             worker.send_message = original_message
             worker.send_file = original_file
+            worker.render_markdown_pdf = original_render
 
-        self.assertEqual(files, [Path("/tmp/story.md"), Path("/tmp/preview.png")])
+        self.assertEqual(files, [story, story.with_suffix(".pdf"), preview])
         self.assertNotIn("unsent_saved_files", task)
         self.assertEqual(messages, ["done"])
 

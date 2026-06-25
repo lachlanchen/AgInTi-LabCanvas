@@ -16,7 +16,7 @@ import time
 from typing import Any
 
 from wechat_agent_backend import run_agent_session, select_agent_backend
-from wechat_task_worker import send_file, send_message
+from wechat_task_worker import ensure_markdown_pdf_companion, send_file, send_message
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -449,18 +449,25 @@ def send_daily_result(args: argparse.Namespace, report: Path, body: str) -> dict
     if questions:
         question_lines = [f"{index}. {question}" for index, question in enumerate(questions, start=1)]
         message += "\n\n今日3个自我发现问题:\n" + "\n".join(question_lines)
-    status: dict[str, Any] = {"attempted": True, "message_sent": False, "file_sent": False, "errors": []}
+    status: dict[str, Any] = {"attempted": True, "message_sent": False, "file_sent": False, "files_sent": [], "errors": []}
     try:
         send_message(message, args.send_chat, args.send_targets)
         status["message_sent"] = True
     except Exception as exc:  # noqa: BLE001 - preserve send blocker for operator.
         status["errors"].append(f"message: {exc}")
     if args.attach_report:
-        try:
-            send_file(report, args.send_chat, args.send_targets)
-            status["file_sent"] = True
-        except Exception as exc:  # noqa: BLE001
-            status["errors"].append(f"file: {exc}")
+        report_files = [report]
+        companion = ensure_markdown_pdf_companion(report)
+        if companion:
+            status["pdf_companion"] = str(companion)
+            report_files.append(companion)
+        for report_file in report_files:
+            try:
+                send_file(report_file, args.send_chat, args.send_targets)
+                status["files_sent"].append(str(report_file))
+            except Exception as exc:  # noqa: BLE001
+                status["errors"].append(f"file {report_file}: {exc}")
+        status["file_sent"] = len(status["files_sent"]) == len(report_files)
     return status
 
 
