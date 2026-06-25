@@ -50,7 +50,9 @@ Current routines:
   LazyEdit/public publishing only when explicitly requested; `public_publish_verified`
   is a required gate before any response may say “published”.
 - `generated_video`: LALACHAN/Xiaoyunque generation, long monitoring, MP4
-  send-back, optional LazyEdit, and optional public publish.
+  send-back, optional LazyEdit, and optional public publish. The full
+  operator handoff is `references/lalachan-story-video-handoff-for-wechat.md`;
+  LazyEdit internals stay in `references/lazyedit-agent-integration-handoff.md`.
 - `general_worker`: safe fallback for other backend work.
 
 Routing scope:
@@ -98,6 +100,10 @@ Required behavior:
   `lazyedit_metadata_brief.md`, then call LazyEdit CLI/API and monitor queues
   instead of rebuilding subtitle correction, metadata, packaging, or platform
   browser automation;
+- for LALACHAN/Xiaoyunque generated videos, follow
+  `references/lalachan-story-video-handoff-for-wechat.md` for story/prompt
+  files, image order, model/duration/ratio checks, download verification,
+  repo/Nutstore copies, and current-message publish permission gates;
 - treat bare file uploads as cheap `file_intake` unless the current message
   explicitly asks to summarize, read, translate, convert, publish, or otherwise
   process the content;

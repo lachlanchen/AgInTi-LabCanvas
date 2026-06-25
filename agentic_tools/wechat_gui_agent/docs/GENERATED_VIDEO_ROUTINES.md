@@ -10,6 +10,11 @@ and the operator guide is `docs/ROUTINE_ORCHESTRATOR.md`. This document is the
 specialized stage contract for the `generated_video` routine. The short
 operational checklist for autonomous agents is
 `docs/AGENT_ROUTINE_CHEAT_SHEET.md`.
+The end-to-end LALACHAN operator handoff is documented in
+`references/lalachan-story-video-handoff-for-wechat.md`. It is the canonical
+guide for story quality, Xiaoyunque browser operation, reference-image upload
+order, monitoring, MP4 download, repo/Nutstore copy, and when to enter
+LazyEdit.
 The LazyEdit boundary and agent handoff are documented in
 `references/lazyedit-agent-integration-handoff.md`. LazyEdit is the mature tool
 for subtitle correction, metadata, logo/subtitle burn, browser-safe packaging,
@@ -98,6 +103,10 @@ publication.
    - Owner: queue orchestrator.
    - Entrypoint: `deterministic_generated_video_poststage_result()`.
    - Requirement: current request explicitly permits LazyEdit import/process.
+   - Handoff: follow `references/lalachan-story-video-handoff-for-wechat.md`
+     for generated-video artifact provenance and
+     `references/lazyedit-agent-integration-handoff.md` for LazyEdit command
+     details.
    - Timeout/running state: `generation_poststage_pending` with `next_poststage_at`.
    - Context files: write `lazyedit_correction_context.md` from same-chat
      source rows, the WeChat message sent with the video, the current request,
