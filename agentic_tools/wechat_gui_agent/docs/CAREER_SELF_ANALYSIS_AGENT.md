@@ -34,6 +34,16 @@ PYTHONPATH=src python -m agenticapp wechat career-agent start \
   --model gpt-5.5 --reasoning-effort xhigh
 ```
 
+Full WeChat stack after reboot:
+
+```bash
+~/scripts/create-labcanvas-wechat-after-reboot.sh
+```
+
+The after-reboot wrapper starts the normal WeChat supervisor, LabCanvas web
+panel, and this daily scheduler together. Prefer it when recovering the whole
+system after a machine reboot.
+
 Status:
 
 ```bash
@@ -59,6 +69,8 @@ Reusable user script:
   `--max-targets-per-cycle` so it does not block real replies.
 - `scripts/wechat_supervisor_tmux.sh`: keeps the WeChat desktop, direct monitors,
   workers, media sync, unlock watchdog, and chat sync alive.
+- `scripts/wechat_stack_tmux.sh`: starts the supervisor, web panel, and career
+  scheduler as one tmux-managed stack.
 
 ## Evidence Sources
 

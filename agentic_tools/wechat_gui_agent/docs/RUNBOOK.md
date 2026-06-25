@@ -24,7 +24,23 @@ labcanvas wechat stack start --web-port 19474
 ```
 
 This starts the isolated WeChat desktop, the direct monitor, the worker, media
-sync, and the LabCanvas web panel in tmux-managed sessions.
+sync, the LabCanvas web panel, and the daily career/self-analysis scheduler in
+tmux-managed sessions.
+After reboot, use the installed wrapper so all standard session names and daily
+agent settings are recreated consistently:
+
+```bash
+~/scripts/create-labcanvas-wechat-after-reboot.sh
+```
+
+The wrapper starts or reuses:
+
+| Session | Role |
+| --- | --- |
+| `labcanvas-wechat` | WeChat GUI, decrypt refresh, per-chat monitors, worker loops, media sync, unlock watchdog, and chat sync. |
+| `labcanvas-web-wechat` | Local LabCanvas control panel, default `http://127.0.0.1:19474`. |
+| `labcanvas-career-daily` | Daily `gpt-5.5`/`xhigh` self-analysis report to `lachlanchan`. |
+
 The desktop launcher disables X11 blanking and disables DPMS when available. If
 noVNC looks idle or blank but WeChat should stay logged in, refresh the
 keep-awake daemon without restarting WeChat:

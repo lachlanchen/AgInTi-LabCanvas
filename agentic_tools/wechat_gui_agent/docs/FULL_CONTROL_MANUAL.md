@@ -43,6 +43,7 @@ labcanvas wechat desktop start
 labcanvas wechat hold start
 labcanvas wechat hold reload-workers
 labcanvas wechat stack start --web-port 19474
+~/scripts/create-labcanvas-wechat-after-reboot.sh
 labcanvas wechat queue --json
 labcanvas wechat worker once --send
 labcanvas wechat approve <task-id> --note "approved"
@@ -60,13 +61,23 @@ Do not add browser-only behavior that bypasses the CLI scripts.
 
 ## Runtime Sessions
 
-`agentic_tools/wechat_gui_agent/scripts/wechat_stack_tmux.sh start` starts two
-tmux sessions:
+`agentic_tools/wechat_gui_agent/scripts/wechat_stack_tmux.sh start` starts the
+full reboot-safe tmux stack:
 
 | Session | Purpose |
 | --- | --- |
 | `labcanvas-wechat` | WeChat desktop, decrypt refresh, one direct monitor per chat, worker, media sync, and chat materialization sync. |
 | `labcanvas-web-wechat` | LabCanvas web control panel for status and manual actions. |
+| `labcanvas-career-daily` | Daily writing/career/money/self-analysis agent, defaulting to `gpt-5.5` with `xhigh` reasoning and sending to `lachlanchan`. |
+
+After reboot, run:
+
+```bash
+~/scripts/create-labcanvas-wechat-after-reboot.sh
+```
+
+This wrapper recreates or reuses the same three sessions, then prints JSON
+status for the WeChat stack and daily scheduler.
 
 Within `labcanvas-wechat`, `wechat_supervisor_tmux.sh` creates:
 
@@ -81,7 +92,8 @@ Within `labcanvas-wechat`, `wechat_supervisor_tmux.sh` creates:
 
 Use `hold reload-workers` or `stack restart` after code/config changes. These
 keep the WeChat GUI alive and respawn only monitors, worker, media sync, and web
-processes. Use `restart-all` only when it is acceptable to close and reopen
+processes. `stack restart` also restarts the daily scheduler so it picks up new
+agent settings. Use `restart-all` only when it is acceptable to close and reopen
 WeChat, which may require phone confirmation.
 
 `chat-sync` is intentionally lower priority than outbound replies. By default
@@ -115,7 +127,7 @@ target, so a worker send that appears mid-cycle stops further dry-open actions.
 | `wechat_group_admin.py` | Best-effort group rename and in-group alias changes. |
 | `wechat_restart_loop.sh` | Restart wrapper used by tmux supervisor panes. |
 | `wechat_supervisor_tmux.sh` | Main WeChat tmux supervisor. |
-| `wechat_stack_tmux.sh` | WeChat supervisor plus LabCanvas web panel. |
+| `wechat_stack_tmux.sh` | WeChat supervisor plus LabCanvas web panel and daily scheduler. |
 
 ## Private State Files
 

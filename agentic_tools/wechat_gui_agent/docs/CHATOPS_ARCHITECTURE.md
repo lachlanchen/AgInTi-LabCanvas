@@ -150,14 +150,17 @@ Set `respond_to_self: true` only if phone-sent messages from the logged-in
 account should trigger replies; exact sent replies are remembered and skipped to
 avoid loops.
 
-Run the complete operator stack, including the LabCanvas web control panel:
+Run the complete operator stack, including the LabCanvas web control panel and
+daily career/self-analysis scheduler:
 
 ```bash
 agentic_tools/wechat_gui_agent/scripts/wechat_stack_tmux.sh start
 labcanvas wechat stack start --web-port 19474
+~/scripts/create-labcanvas-wechat-after-reboot.sh
 ```
 
-The supervisor creates panes for:
+The stack creates or reuses `labcanvas-wechat`, `labcanvas-web-wechat`, and
+`labcanvas-career-daily`. The WeChat supervisor creates panes for:
 
 - virtual desktop / Linux WeChat relaunch
 - decrypt refresh loop

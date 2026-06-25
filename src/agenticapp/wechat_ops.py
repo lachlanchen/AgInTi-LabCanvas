@@ -131,6 +131,10 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     stack.add_argument("action", choices=["start", "stop", "restart", "restart-all", "status"], nargs="?", default="start")
     stack.add_argument("--web-port", type=int, default=19474)
     stack.add_argument("--web-session", default="labcanvas-web-wechat")
+    stack.add_argument("--career-session", default="labcanvas-career-daily")
+    stack.add_argument("--career-send-chat", default="lachlanchan")
+    stack.add_argument("--career-morning-time", default="08:30")
+    stack.add_argument("--no-career", action="store_true", help="Do not manage the daily career/self-analysis scheduler.")
     stack.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     stack.set_defaults(func=cmd_stack)
 
@@ -312,6 +316,7 @@ def status_payload() -> dict[str, Any]:
             "supervisor": tmux_status("labcanvas-wechat"),
             "direct_monitor": tmux_status("labcanvas-wechat-direct-chatops"),
             "gui_monitor": tmux_status("labcanvas-wechat-chatops"),
+            "career_daily": tmux_status(os.environ.get("WECHAT_CAREER_SESSION", "labcanvas-career-daily")),
         },
         "queue": queue_summary(runtime_paths["queue"]),
         "mirror": mirror_summary(runtime_paths["mirror_db"]),
@@ -918,14 +923,20 @@ def cmd_stack(args: argparse.Namespace) -> int:
     env = os.environ.copy()
     env["WECHAT_WEB_PORT"] = str(args.web_port)
     env["WECHAT_WEB_SESSION"] = args.web_session
+    env["WECHAT_CAREER_SESSION"] = args.career_session
+    env["WECHAT_CAREER_SEND_CHAT"] = args.career_send_chat
+    env["WECHAT_CAREER_MORNING_TIME"] = args.career_morning_time
+    env["WECHAT_STACK_START_CAREER"] = "0" if args.no_career else "1"
     proc = run_command([str(SCRIPTS / "wechat_stack_tmux.sh"), args.action], capture=True, env=env)
     web_status = labcanvas_web_status(args.web_session)
+    career_status = tmux_status(args.career_session)
     payload = {
         "ok": proc.returncode == 0,
         "stdout": proc.stdout,
         "stderr": proc.stderr,
         "wechat": status_payload(),
         "webapp": web_status,
+        "career": career_status,
     }
     if getattr(args, "json", False):
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
@@ -935,6 +946,7 @@ def cmd_stack(args: argparse.Namespace) -> int:
             print(proc.stderr, file=sys.stderr, end="")
         if web_status.get("url"):
             print(f"webapp: {web_status['url']}")
+        print(f"career: {career_status['status']} ({args.career_session})")
     return proc.returncode
 
 
@@ -1290,11 +1302,47 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         "export WECHAT_SUPERVISOR_SESSION=${WECHAT_SUPERVISOR_SESSION:-labcanvas-wechat}\n"
         "export WECHAT_WEB_SESSION=${WECHAT_WEB_SESSION:-labcanvas-web-wechat}\n"
         "export WECHAT_WEB_PORT=${WECHAT_WEB_PORT:-19474}\n"
+        "export WECHAT_CAREER_SESSION=${WECHAT_CAREER_SESSION:-labcanvas-career-daily}\n"
+        "export WECHAT_CAREER_SEND_CHAT=${WECHAT_CAREER_SEND_CHAT:-lachlanchan}\n"
+        "export WECHAT_CAREER_MORNING_TIME=${WECHAT_CAREER_MORNING_TIME:-08:30}\n"
+        "export WECHAT_CAREER_AGENT_MODEL=${WECHAT_CAREER_AGENT_MODEL:-gpt-5.5}\n"
+        "export WECHAT_CAREER_AGENT_EFFORT=${WECHAT_CAREER_AGENT_EFFORT:-xhigh}\n"
         "export PYTHONPATH=" + shlex.quote(str(PACKAGE_ROOT / "src")) + ":${PYTHONPATH:-}\n"
-        "exec python3 -m agenticapp wechat stack \"${1:-start}\"\n",
+        "exec python3 -m agenticapp wechat stack \"${1:-start}\" "
+        "--web-port \"$WECHAT_WEB_PORT\" "
+        "--web-session \"$WECHAT_WEB_SESSION\" "
+        "--career-session \"$WECHAT_CAREER_SESSION\" "
+        "--career-send-chat \"$WECHAT_CAREER_SEND_CHAT\" "
+        "--career-morning-time \"$WECHAT_CAREER_MORNING_TIME\"\n",
         encoding="utf-8",
     )
     stack_wrapper.chmod(0o755)
+    reboot_wrapper = scripts_dir / "create-labcanvas-wechat-after-reboot.sh"
+    reboot_wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "cd " + shlex.quote(str(PACKAGE_ROOT)) + "\n"
+        "export WECHAT_SUPERVISOR_SESSION=${WECHAT_SUPERVISOR_SESSION:-labcanvas-wechat}\n"
+        "export WECHAT_WEB_SESSION=${WECHAT_WEB_SESSION:-labcanvas-web-wechat}\n"
+        "export WECHAT_WEB_PORT=${WECHAT_WEB_PORT:-19474}\n"
+        "export WECHAT_CAREER_SESSION=${WECHAT_CAREER_SESSION:-labcanvas-career-daily}\n"
+        "export WECHAT_CAREER_SEND_CHAT=${WECHAT_CAREER_SEND_CHAT:-lachlanchan}\n"
+        "export WECHAT_CAREER_MORNING_TIME=${WECHAT_CAREER_MORNING_TIME:-08:30}\n"
+        "export WECHAT_CAREER_AGENT_MODEL=${WECHAT_CAREER_AGENT_MODEL:-gpt-5.5}\n"
+        "export WECHAT_CAREER_AGENT_EFFORT=${WECHAT_CAREER_AGENT_EFFORT:-xhigh}\n"
+        "export PYTHONPATH=" + shlex.quote(str(PACKAGE_ROOT / "src")) + ":${PYTHONPATH:-}\n"
+        "ACTION=${1:-start}\n"
+        "python3 -m agenticapp wechat stack \"$ACTION\" "
+        "--web-port \"$WECHAT_WEB_PORT\" "
+        "--web-session \"$WECHAT_WEB_SESSION\" "
+        "--career-session \"$WECHAT_CAREER_SESSION\" "
+        "--career-send-chat \"$WECHAT_CAREER_SEND_CHAT\" "
+        "--career-morning-time \"$WECHAT_CAREER_MORNING_TIME\"\n"
+        "python3 -m agenticapp wechat status --json\n"
+        "python3 -m agenticapp wechat career-agent status --session \"$WECHAT_CAREER_SESSION\" --json || true\n",
+        encoding="utf-8",
+    )
+    reboot_wrapper.chmod(0o755)
     career_wrapper = scripts_dir / "create-labcanvas-career-daily-tmux.sh"
     career_wrapper.write_text(
         "#!/usr/bin/env bash\n"
@@ -1309,9 +1357,9 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
     )
     career_wrapper.chmod(0o755)
     print_payload(
-        {"ok": True, "installed": [str(wrapper), str(create_wrapper), str(stack_wrapper), str(career_wrapper)]},
+        {"ok": True, "installed": [str(wrapper), str(create_wrapper), str(stack_wrapper), str(reboot_wrapper), str(career_wrapper)]},
         args.json,
-        f"installed {wrapper}, {create_wrapper}, {stack_wrapper}, and {career_wrapper}",
+        f"installed {wrapper}, {create_wrapper}, {stack_wrapper}, {reboot_wrapper}, and {career_wrapper}",
     )
     return 0
 

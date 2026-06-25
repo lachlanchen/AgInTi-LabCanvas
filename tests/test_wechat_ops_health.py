@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import argparse
+from contextlib import redirect_stdout
+import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -116,6 +120,38 @@ class WeChatOpsApprovalTests(unittest.TestCase):
         self.assertEqual(updated["route_decision"]["route_kind"], "story_or_script")
         self.assertEqual(updated["routine"]["id"], "story_script_generation")
         self.assertIn("result", updated)
+
+
+class WeChatOpsUserScriptTests(unittest.TestCase):
+    def test_install_user_scripts_writes_after_reboot_stack_launcher(self) -> None:
+        original_home = os.environ.get("HOME")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["HOME"] = tmp
+            try:
+                args = argparse.Namespace(json=True)
+                with redirect_stdout(io.StringIO()) as stdout:
+                    rc = wechat_ops.cmd_install_user_scripts(args)
+            finally:
+                if original_home is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = original_home
+
+            self.assertEqual(rc, 0)
+            payload = json.loads(stdout.getvalue())
+            installed = payload["installed"]
+            reboot_wrapper = Path(tmp) / "scripts" / "create-labcanvas-wechat-after-reboot.sh"
+            stack_wrapper = Path(tmp) / "scripts" / "create-labcanvas-wechat-stack.sh"
+            self.assertIn(str(reboot_wrapper), installed)
+            self.assertTrue(reboot_wrapper.exists())
+            self.assertTrue(stack_wrapper.exists())
+
+            reboot_text = reboot_wrapper.read_text(encoding="utf-8")
+            stack_text = stack_wrapper.read_text(encoding="utf-8")
+            self.assertIn("wechat stack \"$ACTION\"", reboot_text)
+            self.assertIn("WECHAT_CAREER_AGENT_EFFORT=${WECHAT_CAREER_AGENT_EFFORT:-xhigh}", reboot_text)
+            self.assertIn("wechat career-agent status", reboot_text)
+            self.assertIn("--career-session \"$WECHAT_CAREER_SESSION\"", stack_text)
 
 
 if __name__ == "__main__":
