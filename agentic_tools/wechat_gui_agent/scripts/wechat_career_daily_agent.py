@@ -39,7 +39,7 @@ def main() -> int:
     parser.add_argument("--morning-time", default="08:30", help="Loop run time in HH:MM local time.")
     parser.add_argument("--loop-sleep", type=float, default=60.0)
     parser.add_argument("--model", default=os.environ.get("WECHAT_CAREER_AGENT_MODEL", "gpt-5.5"))
-    parser.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_CAREER_AGENT_EFFORT", "high"))
+    parser.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_CAREER_AGENT_EFFORT", "xhigh"))
     parser.add_argument("--timeout-seconds", type=int, default=int(os.environ.get("WECHAT_CAREER_AGENT_TIMEOUT", "900")))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()

@@ -170,7 +170,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     career.add_argument("--morning-time", default="08:30")
     career.add_argument("--session", default="labcanvas-career-daily")
     career.add_argument("--model", default=os.environ.get("WECHAT_CAREER_AGENT_MODEL", "gpt-5.5"))
-    career.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_CAREER_AGENT_EFFORT", "high"))
+    career.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_CAREER_AGENT_EFFORT", "xhigh"))
     career.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     career.set_defaults(func=cmd_career_agent)
 
@@ -1301,7 +1301,10 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         "set -euo pipefail\n"
         "cd " + shlex.quote(str(PACKAGE_ROOT)) + "\n"
         "export PYTHONPATH=" + shlex.quote(str(PACKAGE_ROOT / "src")) + ":${PYTHONPATH:-}\n"
-        "exec python3 -m agenticapp wechat career-agent start --send --attach-report --morning-time \"${WECHAT_CAREER_MORNING_TIME:-08:30}\"\n",
+        "exec python3 -m agenticapp wechat career-agent start --send --attach-report "
+        "--morning-time \"${WECHAT_CAREER_MORNING_TIME:-08:30}\" "
+        "--model \"${WECHAT_CAREER_AGENT_MODEL:-gpt-5.5}\" "
+        "--reasoning-effort \"${WECHAT_CAREER_AGENT_EFFORT:-xhigh}\"\n",
         encoding="utf-8",
     )
     career_wrapper.chmod(0o755)

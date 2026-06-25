@@ -22,14 +22,16 @@ It is strategic coaching, not therapy, prophecy, or financial advice.
 One-shot report:
 
 ```bash
-PYTHONPATH=src python -m agenticapp wechat career-agent once --json
+PYTHONPATH=src python -m agenticapp wechat career-agent once \
+  --model gpt-5.5 --reasoning-effort xhigh --json
 ```
 
 Daily tmux loop:
 
 ```bash
 PYTHONPATH=src python -m agenticapp wechat career-agent start \
-  --send --attach-report --morning-time 08:30
+  --send --attach-report --morning-time 08:30 \
+  --model gpt-5.5 --reasoning-effort xhigh
 ```
 
 Status:
@@ -73,6 +75,11 @@ The daily agent uses read-only evidence:
 
 Raw private chats are not posted back to WeChat. The worker summarizes patterns
 and keeps detailed evidence in private trace artifacts.
+
+Default model policy: use `gpt-5.5` with `xhigh` reasoning for daily self
+analysis. This report is meant to be high-quality reflection, not a cheap fast
+ack. Only override `WECHAT_CAREER_AGENT_EFFORT` for explicit debugging or
+emergency latency reasons.
 
 ## Trace Bundle
 
