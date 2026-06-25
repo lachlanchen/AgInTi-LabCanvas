@@ -5606,9 +5606,10 @@ def prepare_result_files(result: dict[str, Any], raw_text: str) -> dict[str, Any
 
 def extract_artifact_paths(text: str) -> list[str]:
     candidates: list[str] = []
-    absolute = r"/[A-Za-z0-9_./:@%+=,\-]+"
+    scan_text = re.sub(r"https?://\S+", " ", str(text or ""))
+    absolute = r"(?<![:/])/[A-Za-z0-9_./:@%+=,\-]+"
     relative = r"(?:output|cad|pcb|publications|references|examples)/[A-Za-z0-9_./:@%+=,\-]+"
-    for match in re.finditer(f"(?:{absolute}|{relative})", text):
+    for match in re.finditer(f"(?:{absolute}|{relative})", scan_text):
         token = clean_path_token(match.group(0))
         if looks_like_artifact_path(token):
             candidates.append(token)

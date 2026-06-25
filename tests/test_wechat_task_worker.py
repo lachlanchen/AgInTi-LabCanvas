@@ -3029,6 +3029,15 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertEqual(prepared["files"], [])
 
+    def test_worker_result_does_not_extract_http_urls_as_files(self) -> None:
+        worker = load_worker()
+        raw = "请打开 http://127.0.0.1:6107/vnc_lite.html?host=127.0.0.1&port=6107 继续验证。"
+
+        prepared = worker.prepare_result_files({"message": "ok", "confirmation": raw, "files": []}, raw)
+
+        self.assertEqual(prepared["files"], [])
+        self.assertNotIn("skipped_files", prepared)
+
     def test_send_result_retries_transient_failure(self) -> None:
         worker = load_worker()
         calls = []
