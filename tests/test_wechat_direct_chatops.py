@@ -721,6 +721,58 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 self.assertIn(f"WeChat {kind} item", route["task"])
                 self.assertIn("images/screenshots", route["task"])
 
+    def test_bare_file_upload_routes_to_lightweight_intake(self) -> None:
+        config = self.backend_chat_config("🍓我的设备", "personal_organizer")
+        config.update(
+            {
+                "respond_to_attachments": True,
+                "agent_route_enabled": True,
+                "agent_route_prefilter": "agent_first",
+                "auto_media_sync_on_task": False,
+            }
+        )
+        row = self.row(
+            "<msg><appmsg><type>6</type><title>Game_Theory_101_Complete_Textbook_2011.pdf</title>"
+            "<appattach><totallen>3540423</totallen><fileext>pdf</fileext></appattach>"
+            "<md5>f009733815f616342bb20a92ef1dff07</md5></appmsg></msg>",
+            local_type=49,
+            local_id=60,
+            server_id="srv-60",
+        )
+        original_session = direct_chatops.run_codex_session
+        try:
+            def fake_route_session(_prompt: str, **_kwargs: object) -> dict[str, object]:
+                return {
+                    "ok": True,
+                    "message": json.dumps(
+                        {
+                            "route_kind": "research_or_summary",
+                            "project": "generic",
+                            "worker_needed": True,
+                            "needs_recent_media": True,
+                            "public_publish_intent": False,
+                            "public_publish_allowed": False,
+                            "external_action_allowed": True,
+                            "source_policy": "recent_media",
+                            "reason": "agent tried deeper summary",
+                            "ack": "我先看看这份 PDF。",
+                            "confidence": 0.9,
+                        }
+                    ),
+                }
+
+            direct_chatops.run_codex_session = fake_route_session  # type: ignore[assignment]
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original_session  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "file_intake")
+        self.assertTrue(route["route_decision"]["needs_recent_media"])
+        self.assertIn("lightweight file intake", route["task"])
+        self.assertIn("Do not do a deep read/summary", route["task"])
+
     def test_transcribed_voice_is_treated_as_text_in_echomind(self) -> None:
         row = self.row(
             '<msg><voicemsg voicelength="2500" length="4096" voiceformat="4" '

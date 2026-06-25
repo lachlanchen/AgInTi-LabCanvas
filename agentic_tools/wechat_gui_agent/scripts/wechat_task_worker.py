@@ -2096,6 +2096,8 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         generated_status = inspect_generated_video_status(task)
         if generated_status:
             preflight["generated_video_status"] = generated_status
+    if is_file_intake_task(task):
+        preflight["file_intake"] = prepare_file_intake_preflight(task, artifact_dir)
     if not is_video_publish_task(task):
         return preflight
     context_path = artifact_dir / "lazyedit_correction_context.md"
@@ -2124,6 +2126,134 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     context_path.write_text(build_lazyedit_correction_context(task, preflight=preflight), encoding="utf-8")
     metadata_path.write_text(build_lazyedit_metadata_brief(task, preflight=preflight), encoding="utf-8")
     return preflight
+
+
+def is_file_intake_task(task: dict[str, Any]) -> bool:
+    route = task_route_decision(task)
+    return str(route.get("route_kind") or "") == "file_intake"
+
+
+def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+    intake_dir = artifact_dir / "intake"
+    intake_dir.mkdir(parents=True, exist_ok=True)
+    source_paths = extract_recent_synced_files_from_task(task)
+    copied: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    for index, source in enumerate(source_paths[:8], start=1):
+        if not source.is_file():
+            skipped.append({"path": str(source), "reason": "missing"})
+            continue
+        try:
+            stat = source.stat()
+        except OSError as exc:
+            skipped.append({"path": str(source), "reason": f"stat-failed: {exc}"[:160]})
+            continue
+        target = unique_intake_target(intake_dir, source.name, index=index)
+        try:
+            shutil.copy2(source, target)
+        except OSError as exc:
+            skipped.append({"path": str(source), "reason": f"copy-failed: {exc}"[:160]})
+            continue
+        copied.append(
+            {
+                "source_path": str(source),
+                "saved_path": str(target),
+                "filename": source.name,
+                "suffix": source.suffix.lower(),
+                "size_bytes": stat.st_size,
+                "sha256": sha256_file(target),
+            }
+        )
+    manifest = {
+        "task_id": task.get("id"),
+        "chat": task.get("chat"),
+        "source": task.get("source") if isinstance(task.get("source"), dict) else {},
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "copied": copied,
+        "skipped": skipped,
+        "status": "ok" if copied else "missing",
+        "policy": "bare file upload intake only; no deep read/summary unless explicitly requested",
+    }
+    manifest_json = artifact_dir / "file_intake_manifest.json"
+    manifest_md = artifact_dir / "file_intake_manifest.md"
+    manifest_json.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    manifest_md.write_text(file_intake_markdown(manifest), encoding="utf-8")
+    manifest["manifest_json"] = str(manifest_json)
+    manifest["manifest_md"] = str(manifest_md)
+    return manifest
+
+
+def extract_recent_synced_files_from_task(task: dict[str, Any]) -> list[Path]:
+    request = str(task.get("request") or "")
+    files: list[Path] = []
+    for line in request.splitlines():
+        match = re.match(r"^-\s+(?P<path>.+?)\s+\((?P<size>\d+)\s+bytes\)\s*$", line.strip())
+        if not match:
+            continue
+        raw_path = match.group("path")
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = ROOT / path
+        resolved = path.resolve()
+        if resolved not in files:
+            files.append(resolved)
+    return files
+
+
+def unique_intake_target(intake_dir: Path, filename: str, *, index: int) -> Path:
+    original = Path(filename)
+    stem = safe_slug(original.stem) or f"file-{index}"
+    suffix = original.suffix.lower()
+    target = intake_dir / f"{stem}{suffix}"
+    counter = 2
+    while target.exists():
+        target = intake_dir / f"{stem}-{counter}{suffix}"
+        counter += 1
+    return target
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def file_intake_markdown(manifest: dict[str, Any]) -> str:
+    lines = [
+        "# WeChat File Intake",
+        "",
+        f"- Task: `{manifest.get('task_id') or ''}`",
+        f"- Chat: `{manifest.get('chat') or ''}`",
+        f"- Status: `{manifest.get('status') or ''}`",
+        "",
+        "## Files",
+    ]
+    copied = manifest.get("copied") if isinstance(manifest.get("copied"), list) else []
+    if copied:
+        for item in copied:
+            if not isinstance(item, dict):
+                continue
+            lines.extend(
+                [
+                    f"- Filename: `{item.get('filename') or ''}`",
+                    f"  - Size: `{item.get('size_bytes') or 0}` bytes",
+                    f"  - Type: `{item.get('suffix') or ''}`",
+                    f"  - SHA-256: `{item.get('sha256') or ''}`",
+                    f"  - Saved copy: `{item.get('saved_path') or ''}`",
+                ]
+            )
+    else:
+        lines.append("- No exact local file copy was available yet.")
+    skipped = manifest.get("skipped") if isinstance(manifest.get("skipped"), list) else []
+    if skipped:
+        lines.extend(["", "## Skipped"])
+        for item in skipped:
+            if isinstance(item, dict):
+                lines.append(f"- `{item.get('path') or ''}`: {item.get('reason') or ''}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def task_focus_text(task: dict[str, Any]) -> str:
@@ -3306,6 +3436,9 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
     generated_submit = deterministic_generated_video_submit_result(task)
     if generated_submit is not None:
         return generated_submit
+    file_intake = deterministic_file_intake_result(task)
+    if file_intake is not None:
+        return file_intake
     preflight_status = ((task.get("preflight") or {}).get("generated_video_status") if isinstance(task.get("preflight"), dict) else None)
     if isinstance(preflight_status, dict) and preflight_status.get("status") in {"submitted", "running", "queued", "generating", "waiting"}:
         return json.dumps(
@@ -3353,6 +3486,52 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
         "请重新发送原视频，或在 WeChat 里点开这条视频让客户端缓存完整 MP4；如果这是我生成过的视频，请确保对应任务 artifact 仍在本机输出目录。"
     )
     return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
+
+
+def deterministic_file_intake_result(task: dict[str, Any]) -> str | None:
+    if not is_file_intake_task(task):
+        return None
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    intake = preflight.get("file_intake") if isinstance(preflight.get("file_intake"), dict) else {}
+    if not intake:
+        return None
+    copied = intake.get("copied") if isinstance(intake.get("copied"), list) else []
+    if copied:
+        file_count = len(copied)
+        first = copied[0] if isinstance(copied[0], dict) else {}
+        filename = str(first.get("filename") or "file")
+        size = int(first.get("size_bytes") or 0)
+        suffix = str(first.get("suffix") or "file")
+        checksum = str(first.get("sha256") or "")
+        saved = str(first.get("saved_path") or "")
+        more = f"；另有 {file_count - 1} 个文件也已入库" if file_count > 1 else ""
+        message = (
+            f"已做文件预检并保存：{filename}（{suffix or 'unknown'}, {size} bytes）{more}。\n"
+            f"SHA-256: {checksum[:16]}…\n"
+            "我没有深度阅读或总结，因为这次只是裸文件上传；你接下来可以直接说“总结这份 PDF / 提取目录 / 翻译重点 / 生成读书笔记”。"
+        )
+        status = "saved"
+    else:
+        message = (
+            "我看到一条文件上传消息，但本地还没有拿到可复制的原文件。"
+            "我已记录这次预检；如果需要处理，请在 WeChat 里点开文件让客户端缓存，或重新发送一次原文件。"
+        )
+        status = "missing"
+        saved = ""
+    return json.dumps(
+        {
+            "message": message,
+            "files": [],
+            "confirmation": "",
+            "data": {
+                "file_intake": intake,
+                "status": status,
+                "saved_path": saved,
+                "require_file_delivery": False,
+            },
+        },
+        ensure_ascii=False,
+    )
 
 
 def resolved_video_artifact_result(task: dict[str, Any], resolved: dict[str, Any]) -> str | None:

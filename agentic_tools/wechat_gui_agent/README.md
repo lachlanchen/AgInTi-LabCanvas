@@ -608,6 +608,12 @@ Research configs can enable attachment triggers for image/video/file rows, and
 long or obviously multi-step research messages route directly to the worker
 even without a known keyword. EchoMind keeps attachment triggers disabled so it
 only responds to language-learning text.
+Bare file uploads with no explicit instruction route to the lightweight
+`file_intake` routine first: the worker syncs/saves the exact attachment,
+copies it into `output/wechat_worker/<task-id>/intake/`, records filename,
+type, size, checksum, and manifest files, then sends a short receipt. It does
+not deep-read, summarize, translate, publish, or resend the uploaded file unless
+the current message asks for that deeper work.
 Each group can keep two private Codex sessions, `fast` and `worker`, in
 `.private/codex_sessions/`. Session keys include a short hash of the exact chat
 title, so non-ASCII groups such as `懒人科研` and `鏈接` cannot collapse into the

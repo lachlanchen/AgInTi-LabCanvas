@@ -231,6 +231,42 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "Use browser assist for login/CAPTCHA/download consent instead of bypassing the site.",
         ),
     ),
+    "file_intake": RoutineDefinition(
+        id="file_intake",
+        title="Bare File Intake",
+        route_kinds=("file_intake",),
+        purpose="Perform a cheap default intake for a WeChat file upload that has no explicit instruction.",
+        default_effort="low",
+        stages=(
+            {
+                "id": "exact_file_sync",
+                "owner": "queue_orchestrator",
+                "entrypoint": "media_sync + source local_id/token matching",
+                "success": "the exact uploaded file is visible in the source-scoped downloads folder",
+            },
+            {
+                "id": "metadata_receipt",
+                "owner": "queue_orchestrator",
+                "entrypoint": "prepare_worker_preflight -> deterministic_file_intake_result",
+                "success": "file type, size, checksum, and task-scoped saved copy are recorded",
+            },
+            {
+                "id": "receipt_delivery",
+                "owner": "queue_orchestrator",
+                "entrypoint": "send_result_with_retries",
+                "success": "a short receipt is returned to the source chat",
+            },
+        ),
+        artifact_policy=(
+            "Save a task-scoped copy plus manifest under ignored output/wechat_worker. "
+            "Send a concise text receipt by default; do not resend the uploaded file unless asked."
+        ),
+        rules=COMMON_RULES
+        + (
+            "Do not deep-read, summarize, translate, convert, or publish a bare upload unless the current message explicitly asks.",
+            "The copied file and manifest are for follow-up tasks from the same source chat.",
+        ),
+    ),
     "video_publish_existing": RoutineDefinition(
         id="video_publish_existing",
         title="Existing Video LazyEdit/Publish",

@@ -1589,6 +1589,78 @@ def app_message_type(row: dict[str, Any]) -> str:
     return collapse_text(appmsg.findtext("type") or "") if appmsg is not None else ""
 
 
+def is_file_app_message(row: dict[str, Any]) -> bool:
+    return app_message_type(row) == "6"
+
+
+def is_bare_file_intake_request(row: dict[str, Any], text: str) -> bool:
+    if not is_file_app_message(row):
+        return False
+    visible = visible_message_text(row)
+    visible_normalized = collapse_text(visible).lower()
+    request_normalized = collapse_text(text).lower()
+    if not request_normalized or request_normalized == visible_normalized or request_normalized.startswith("[wechat file]"):
+        return True
+    explicit_terms = [
+        "summarize",
+        "summary",
+        "read",
+        "analyze",
+        "analyse",
+        "explain",
+        "compare",
+        "extract",
+        "translate",
+        "convert",
+        "publish",
+        "post",
+        "upload",
+        "generate",
+        "edit",
+        "polish",
+        "rewrite",
+        "review",
+        "deep",
+        "全文",
+        "总结",
+        "總結",
+        "摘要",
+        "阅读",
+        "閱讀",
+        "分析",
+        "解释",
+        "解釋",
+        "比较",
+        "比較",
+        "提取",
+        "翻译",
+        "翻譯",
+        "转换",
+        "轉換",
+        "发布",
+        "發布",
+        "上传",
+        "上傳",
+        "生成",
+        "编辑",
+        "編輯",
+        "润色",
+        "潤色",
+        "改写",
+        "审阅",
+        "審閱",
+        "深度",
+    ]
+    internal_intake_terms = [
+        "new wechat file upload received",
+        "lightweight file intake",
+        "sync/save the exact source attachment",
+    ]
+    if any(term in request_normalized for term in internal_intake_terms):
+        return True
+    return not any(term in request_normalized for term in explicit_terms)
+
+
 def text_contains_web_source(text: str) -> bool:
     lowered = str(text or "").lower()
     markers = [
@@ -2170,6 +2242,7 @@ Allowed route_kind values:
 - process_existing_video
 - publish_video
 - cad_pcb_labcanvas
+- file_intake
 - file_download_or_save
 - other_worker
 
@@ -2185,6 +2258,7 @@ Important distinction:
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
 - Old context can explain a follow-up, but old context cannot authorize a new public publish.
 - In web_clip_inbox/link_inbox/internet_inbox/reading_inbox chats, shared URLs, forwarded webpage cards, mp.weixin/Gongzhonghao articles, Shipinhao/视频号/Finder cards, GitHub links, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, images, videos, and files should normally route to research_or_summary with worker_needed=true so the worker reads/summarizes and returns useful artifacts.
+- For a bare WeChat file upload with no explicit user instruction, route to file_intake with worker_needed=true. The worker should only sync/save the exact file, record metadata/checksum, and send a short receipt. If the current message asks to summarize/read/analyze/translate/convert/publish/edit the file, use the appropriate deeper route instead.
 - For mp.weixin links, verification text such as 环境异常 or 完成验证后继续访问 means direct HTTP is blocked; do not classify it as chat_only. Prefer native WeChat article/webview capture or an already verified capture. Do not open external browser-assist unless explicitly allowed.
 - A video-generation request should use local/default reference assets unless the current request says this/that/same/attached/quoted video/image.
 - Plain story/script/plot writing or revision should use story_or_script. Do not choose generate_image unless the current request explicitly asks for an image/figure/diagram/illustration. Do not choose generate_video unless the current request explicitly asks for video/animation/小云雀/Seedance/XYQ.
@@ -2282,7 +2356,9 @@ def fallback_route_decision(
     lowered = str(text or "").lower()
     publish_allowed = has_public_publish_intent(lowered)
     link_inbox_summary_task = is_link_inbox_default_summary_task(config, row, text, focus_rows=focus_rows)
-    if is_document_artifact_task(text):
+    if is_bare_file_intake_request(row, text):
+        route_kind = "file_intake"
+    elif is_document_artifact_task(text):
         route_kind = "other_worker"
     elif is_cad_pcb_labcanvas_task(text):
         route_kind = "cad_pcb_labcanvas"
@@ -2314,7 +2390,7 @@ def fallback_route_decision(
         project = "labcanvas"
     else:
         project = "unknown"
-    needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save"} or link_inbox_summary_task
+    needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save", "file_intake"} or link_inbox_summary_task
     return {
         "route_kind": route_kind,
         "project": project,
@@ -2324,7 +2400,7 @@ def fallback_route_decision(
         "public_publish_allowed": publish_allowed,
         "external_action_allowed": bool(
             publish_allowed
-            or route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save", "research_or_summary"}
+            or route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary"}
         ),
         "source_policy": "current_plus_explicit_refs" if link_inbox_summary_task else ("recent_media" if needs_recent_media else "current_request_only"),
         "reason": "fallback heuristic route",
@@ -2344,6 +2420,7 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         "process_existing_video",
         "publish_video",
         "cad_pcb_labcanvas",
+        "file_intake",
         "file_download_or_save",
         "other_worker",
     }
@@ -2357,6 +2434,12 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
             str(parsed.get("reason") or fallback.get("reason") or "")
             + " | specialized fallback route restored"
         ).strip()
+    if fallback_kind == "file_intake" and route_kind in {"research_or_summary", "other_worker", "file_download_or_save"}:
+        route_kind = "file_intake"
+        parsed["reason"] = (
+            str(parsed.get("reason") or fallback.get("reason") or "")
+            + " | bare file upload kept as lightweight intake"
+        ).strip()
     if route_kind in {"generate_image", "generate_video"} and is_story_or_script_task(current_request):
         if route_kind == "generate_image" and not has_visual_generation_intent(current_request):
             route_kind = "story_or_script"
@@ -2366,6 +2449,8 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     needs_recent_media = bool(parsed.get("needs_recent_media"))
     if route_kind in {"generate_video", "generate_image"} and not references_recent_media(current_request):
         needs_recent_media = False
+    if route_kind == "file_intake":
+        needs_recent_media = True
     parsed.update(
         {
             "route_kind": route_kind,
@@ -3481,6 +3566,12 @@ def attachment_request_text(row: dict[str, Any]) -> str:
         if transcript:
             return "New WeChat voice item transcribed; handle the transcript as the user's message text."
         return "New WeChat voice item received; decode/transcribe the voice payload first, then handle it as text."
+    if is_file_app_message(row):
+        return (
+            "New WeChat file upload received with no explicit instruction; run lightweight file intake first. "
+            "Sync/save the exact source attachment, record filename/type/size/checksum and a task-scoped copy path, "
+            "then send a short receipt. Do not do a deep read/summary unless the user explicitly asks."
+        )
     return (
         f"New WeChat {message_kind(row)} item received; inspect its message metadata, "
         "card/link fields, and recent synced files/media, then summarize or process it."

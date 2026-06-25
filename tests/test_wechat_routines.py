@@ -86,6 +86,22 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertIn("file-picker click", " ".join(contract["rules"]))
         self.assertIn("verified", contract["artifact_policy"])
 
+    def test_file_intake_routine_is_lightweight_receipt(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "file_intake"},
+            "bare PDF upload",
+            task_id="task-file",
+            chat="🍓我的设备",
+        )
+        stage_ids = [stage["id"] for stage in contract["stages"]]
+
+        self.assertEqual(contract["id"], "file_intake")
+        self.assertEqual(contract["default_effort"], "low")
+        self.assertIn("metadata_receipt", stage_ids)
+        self.assertIn("do not resend the uploaded file", contract["artifact_policy"])
+        self.assertIn("Do not deep-read", " ".join(contract["rules"]))
+
     def test_video_publish_routine_requires_terminal_publish_verification(self) -> None:
         routines = load_routines()
         contract = routines.build_routine_contract(

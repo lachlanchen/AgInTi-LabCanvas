@@ -976,6 +976,46 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(lazyedit_target_bytes, b"generated-video")
         self.assertEqual(payload["files"], [expected_source])
 
+    def test_file_intake_preflight_copies_upload_and_returns_receipt(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "downloads" / "Game_Theory_101_Complete_Textbook_2011.pdf"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"%PDF-1.4\nminimal")
+            artifact_dir = tmp_path / "artifact"
+            task = {
+                "id": "20260625123512-60",
+                "chat": "🍓我的设备",
+                "source": {"local_id": 60},
+                "route_decision": {"route_kind": "file_intake", "needs_recent_media": True},
+                "request": (
+                    "Current coalesced request:\n"
+                    "New WeChat file upload received with no explicit instruction; run lightweight file intake first.\n\n"
+                    "Recent synced WeChat files:\n"
+                    f"- {source} ({source.stat().st_size} bytes)"
+                ),
+            }
+
+            preflight = worker.prepare_worker_preflight(task, artifact_dir)
+            task["preflight"] = preflight
+            raw = worker.deterministic_preflight_result(task)
+
+            copied = preflight["file_intake"]["copied"][0]
+            saved = Path(copied["saved_path"])
+            saved_exists = saved.is_file()
+            saved_bytes = saved.read_bytes() if saved_exists else b""
+            payload = json.loads(raw or "{}")
+
+        self.assertTrue(saved_exists)
+        self.assertEqual(saved_bytes, b"%PDF-1.4\nminimal")
+        self.assertEqual(copied["filename"], "Game_Theory_101_Complete_Textbook_2011.pdf")
+        self.assertEqual(copied["size_bytes"], len(b"%PDF-1.4\nminimal"))
+        self.assertIn("已做文件预检并保存", payload["message"])
+        self.assertEqual(payload["files"], [])
+        self.assertEqual(payload["data"]["status"], "saved")
+        self.assertFalse(payload["data"]["require_file_delivery"])
+
     def test_lalachan_story_request_ignores_old_video_publish_context_for_preflight(self) -> None:
         worker = load_worker()
         task = {

@@ -68,6 +68,11 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   posting, purchases, deletion, or other irreversible actions.
 - Source media must match the same chat and exact source or quoted message. If
   it is missing, stop source-limited and ask for resend/opening the media.
+- Bare file uploads with no explicit instruction are still work: route them to
+  `file_intake`, sync/copy the exact file into
+  `output/wechat_worker/<task-id>/intake/`, record metadata and checksum, and
+  send a short receipt. Do not deep-read or summarize unless the current
+  message asks for it.
 - Follow-up requests such as “send the video here”, “download/save the generated
   video”, or “submit it to LazyEdit” should first resolve the newest bounded-age
   same-chat generated MP4 from the worker artifact ledger. This resolver must

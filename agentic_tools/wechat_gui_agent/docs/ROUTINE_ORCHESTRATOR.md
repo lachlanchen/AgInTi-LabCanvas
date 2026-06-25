@@ -42,6 +42,9 @@ Current routines:
   the requested text before any explicitly requested image/video stage.
 - `labcanvas_cad_pcb`: CAD, PCB, OpenSCAD, KiCad, Blender, renders, Gerbers,
   STEP/STL, and device design.
+- `file_intake`: bare WeChat file upload with no explicit instruction. It
+  syncs/saves the exact file, copies it into the task artifact directory,
+  records metadata/checksum, and sends a short receipt without deep reading.
 - `file_download_save`: exact-source file, media, link, and download handling.
 - `video_publish_existing`: source-scoped existing video processing and
   LazyEdit/public publishing only when explicitly requested; `public_publish_verified`
@@ -95,6 +98,9 @@ Required behavior:
   `lazyedit_metadata_brief.md`, then call LazyEdit CLI/API and monitor queues
   instead of rebuilding subtitle correction, metadata, packaging, or platform
   browser automation;
+- treat bare file uploads as cheap `file_intake` unless the current message
+  explicitly asks to summarize, read, translate, convert, publish, or otherwise
+  process the content;
 - when an existing-video publish poststage has a LazyEdit `video_id` but no
   local publish job, reissue the real LazyEdit publish command from the stored
   prompt files once before handing repair to a Codex worker session;
