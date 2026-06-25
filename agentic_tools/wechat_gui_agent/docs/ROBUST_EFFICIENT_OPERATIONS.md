@@ -429,6 +429,9 @@ letting dry-open attempts fail at the short standalone GUI sender timeout.
 If one configured chat repeatedly times out or returns noisy blank title OCR,
 leave `WECHAT_CHAT_SYNC_FAILURE_BACKOFF_SECONDS` enabled so the loop retries it
 periodically without blocking refresh of the other groups.
+Chat-sync dry-open is only a materialization helper; it must yield whenever the
+queue has `send_retrying`, `send_deferred_locked`, or required artifact delivery
+work so actual replies and files get the GUI lane first.
 If old send failures contain title-guard OCR noise such as `OCR='3 - oO\n|'`,
 the worker treats it as a retryable `title_guard_blank` blank-pane failure,
 while real wrong-chat titles remain non-retryable.

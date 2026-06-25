@@ -374,7 +374,11 @@ def open_target(
 ) -> dict[str, Any]:
     def verify(label: str) -> dict[str, Any]:
         time.sleep(max(pause, float(os.environ.get("WECHAT_INITIAL_TITLE_WAIT", "1.2"))))
-        deadline = time.monotonic() + max(max(pause, 1.8), float(os.environ.get("WECHAT_TITLE_RETRY_SECONDS", "3.5")))
+        if label.startswith("visible_chat_list_ocr"):
+            retry_seconds = float(os.environ.get("WECHAT_VISIBLE_ROW_TITLE_RETRY_SECONDS", "1.8"))
+        else:
+            retry_seconds = float(os.environ.get("WECHAT_TITLE_RETRY_SECONDS", "3.5"))
+        deadline = time.monotonic() + max(max(pause, 1.8), retry_seconds)
         last_guard: dict[str, Any] = {"ok": False, "method": label, "ocr_text": ""}
         while True:
             opened = out_dir / f"{shot_prefix}-opened.png"
@@ -417,6 +421,9 @@ def open_target(
             attempts.append({**guard, "visible_chat_list_match": match})
             if guard["ok"]:
                 return {**guard, "visible_chat_list_match": match}
+            fallback_guard = visible_chat_list_fallback_guard(guard, target, match)
+            if fallback_guard:
+                return fallback_guard
             if not (allow_search and target.allow_search):
                 return {
                     **guard,
@@ -483,6 +490,41 @@ def open_target(
     if attempts:
         guard = {**guard, "attempts": attempts}
     return guard
+
+
+def visible_chat_list_fallback_guard(
+    guard: dict[str, Any],
+    target: TargetSpec,
+    match: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Accept a configured visible row when header OCR is too noisy.
+
+    Emoji-heavy or compact Chinese chat titles can OCR as Latin noise even when
+    the correct row is selected. This fallback is deliberately narrower than
+    the generic relaxed title guard: it requires an exact source row match from
+    the visible chat list, no rejected chat/search surface, and an operator
+    target that explicitly enables title fallback.
+    """
+    if not target.allow_title_guard_fallback:
+        return None
+    if guard.get("surface_reject_reason"):
+        return None
+    normalized_match = normalize_title(str(match.get("normalized") or match.get("text") or ""))
+    expected = [
+        normalize_title(item)
+        for item in (target.expected_title, *target.expected_title_aliases, target.name, target.query)
+        if normalize_title(item)
+    ]
+    if not normalized_match or not any(item in normalized_match for item in expected):
+        return None
+    return {
+        **guard,
+        "ok": True,
+        "relaxed_title_guard": True,
+        "visible_chat_list_title_guard": True,
+        "visible_chat_list_match": match,
+        "title_guard_source": "visible_chat_list_match",
+    }
 
 
 def click_visible_chat_list_match(
@@ -1151,10 +1193,11 @@ def hotkey(env: dict[str, str], name: str) -> None:
 
 
 def paste_text(env: dict[str, str], text: str) -> None:
+    timeout = float(os.environ.get("WECHAT_CLIPBOARD_TIMEOUT", "6"))
     proc = subprocess.Popen(
-        ["xclip", "-selection", "clipboard"],
+        ["xclip", "-selection", "clipboard", "-loops", "1"],
         stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         env=env,
@@ -1163,18 +1206,22 @@ def paste_text(env: dict[str, str], text: str) -> None:
     proc.stdin.write(text)
     proc.stdin.close()
     time.sleep(0.2)
-    run(["xdotool", "key", "ctrl+v"], env=env)
+    run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], env=env)
     time.sleep(0.2)
-    if proc.poll() is None:
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
         proc.terminate()
         try:
-            proc.wait(timeout=2)
+            proc.wait(timeout=1)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait(timeout=2)
+            proc.wait(timeout=1)
+        return
     if proc.returncode not in (0, -15, None):
+        stdout = proc.stdout.read() if proc.stdout else ""
         stderr = proc.stderr.read() if proc.stderr else ""
-        raise RuntimeError(f"xclip failed to set clipboard: {stderr.strip()}")
+        raise RuntimeError(f"xclip failed to set clipboard: {(stderr or stdout).strip()}")
 
 
 def screenshot(env: dict[str, str], path: Path) -> None:
