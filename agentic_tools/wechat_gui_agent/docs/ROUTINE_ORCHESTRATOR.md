@@ -42,8 +42,8 @@ Current routines:
   the requested text before any explicitly requested image/video stage.
 - `labcanvas_cad_pcb`: CAD, PCB, OpenSCAD, KiCad, Blender, renders, Gerbers,
   STEP/STL, and device design.
-- `file_intake`: bare WeChat file upload with no explicit instruction. It
-  syncs/saves the exact file, copies it into the task artifact directory,
+- `file_intake`: bare WeChat file or image upload with no explicit instruction.
+  It syncs/saves the exact source, copies it into the task artifact directory,
   records metadata/checksum, and sends a short receipt without deep reading.
 - `file_download_save`: exact-source file, media, link, and download handling.
 - `video_publish_existing`: source-scoped existing video processing and
@@ -131,9 +131,13 @@ Required behavior:
   the approved story text/file paths under `story_confirmation_result` and
   `approved_story_*`, and lets the worker create the Xiaoyunque prompt from
   that exact approved story;
-- treat bare file uploads as cheap `file_intake` unless the current message
-  explicitly asks to summarize, read, translate, convert, publish, or otherwise
-  process the content;
+- treat bare file/image uploads as cheap `file_intake` unless the current
+  message explicitly asks to summarize, read, translate, convert, publish, or
+  otherwise process the content;
+- preserve source media for image edit/generation tasks. If the current request
+  refers to a just-sent, quoted, or attached image, the route must carry
+  `needs_recent_media=true`, source row IDs, and media tokens even when the
+  agent-facing route kind remains `generate_image`;
 - when an existing-video publish poststage has a LazyEdit `video_id` but no
   local publish job, reissue the real LazyEdit publish command from the stored
   prompt files once before handing repair to a Codex worker session;

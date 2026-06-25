@@ -1682,6 +1682,27 @@ def is_bare_file_intake_request(row: dict[str, Any], text: str) -> bool:
     return not any(term in request_normalized for term in explicit_terms)
 
 
+def is_bare_image_intake_request(row: dict[str, Any], text: str) -> bool:
+    local_type, _ = split_message_type(row.get("local_type"))
+    if local_type != 3:
+        return False
+    visible = visible_message_text(row)
+    visible_normalized = collapse_text(visible).lower()
+    request_normalized = collapse_text(text).lower()
+    internal_intake_terms = [
+        "new wechat image item received",
+        "wechat image item received",
+        "metadata: [wechat image]",
+    ]
+    if any(term in request_normalized for term in internal_intake_terms):
+        return True
+    return (
+        not request_normalized
+        or request_normalized == visible_normalized
+        or request_normalized.startswith("[wechat image]")
+    )
+
+
 def text_contains_web_source(text: str) -> bool:
     lowered = str(text or "").lower()
     markers = [
@@ -2016,7 +2037,18 @@ def immediate_task_route(
     public_publish_allowed = bool(route_decision.get("public_publish_allowed"))
     route_kind = str(route_decision.get("route_kind") or "")
     route_project = str(route_decision.get("project") or "")
-    if route_kind in {"generate_video", "generate_image"} and not bool(route_decision.get("needs_recent_media")):
+    media_evidence_for_image_generation = attachment_trigger or contextual_media_task or quoted_media_task
+    media_evidence_for_video_generation = attachment_trigger or quoted_media_task or (
+        contextual_media_task and explicitly_references_visual_source_media(combined)
+    )
+    if (
+        (route_kind == "generate_image" and media_evidence_for_image_generation)
+        or (route_kind == "generate_video" and media_evidence_for_video_generation)
+    ):
+        route_decision["needs_recent_media"] = True
+        route_decision["source_policy"] = "recent_media"
+        route_decision["media_reference_preserved"] = True
+    elif route_kind in {"generate_video", "generate_image"} and not bool(route_decision.get("needs_recent_media")):
         contextual_media_task = False
         quoted_media_task = False
     task_context = "\n".join(
@@ -2805,7 +2837,10 @@ def fallback_route_decision(
     permission_question = is_publish_permission_question(lowered)
     publish_allowed = has_public_publish_intent(lowered)
     link_inbox_summary_task = is_link_inbox_default_summary_task(config, row, text, focus_rows=focus_rows)
-    if is_bare_file_intake_request(row, text):
+    contextual_media_task = is_contextual_media_task(config, text, row, context_rows, focus_rows=focus_rows) or (
+        is_quote_reply_message(row) and references_recent_media(text)
+    )
+    if is_bare_file_intake_request(row, text) or is_bare_image_intake_request(row, text):
         route_kind = "file_intake"
     elif is_document_artifact_task(text):
         route_kind = "other_worker"
@@ -2818,16 +2853,14 @@ def fallback_route_decision(
     elif is_story_or_script_task(text):
         route_kind = "story_or_script"
     elif is_image_generation_task(text):
-        route_kind = "generate_image"
+        route_kind = "edit_existing_media" if contextual_media_task else "generate_image"
     elif link_inbox_summary_task:
         route_kind = "research_or_summary"
     elif is_research_or_summary_task(text) or is_complex_research_task(config, text, focus_rows=focus_rows):
         route_kind = "research_or_summary"
     elif publish_allowed or permission_question:
         route_kind = "publish_video"
-    elif is_contextual_media_task(config, text, row, context_rows, focus_rows=focus_rows) or (
-        is_quote_reply_message(row) and references_recent_media(text)
-    ):
+    elif contextual_media_task:
         route_kind = "edit_existing_media"
     else:
         route_kind = "other_worker"
@@ -2898,11 +2931,18 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
             str(parsed.get("reason") or fallback.get("reason") or "")
             + " | specialized fallback route restored"
         ).strip()
-    if fallback_kind == "file_intake" and route_kind in {"research_or_summary", "other_worker", "file_download_or_save"}:
+    if fallback_kind == "file_intake" and route_kind in {
+        "research_or_summary",
+        "other_worker",
+        "file_download_or_save",
+        "generate_image",
+        "edit_existing_media",
+        "generate_video",
+    }:
         route_kind = "file_intake"
         parsed["reason"] = (
             str(parsed.get("reason") or fallback.get("reason") or "")
-            + " | bare file upload kept as lightweight intake"
+            + " | bare attachment upload kept as lightweight intake"
         ).strip()
     if route_kind in {"generate_image", "generate_video"} and is_story_or_script_task(current_request):
         if route_kind == "generate_image" and not has_visual_generation_intent(current_request):
@@ -2915,7 +2955,11 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     if permission_question:
         route_kind = "publish_video"
         needs_recent_media = True
-    if route_kind in {"generate_video", "generate_image"} and not references_recent_media(current_request):
+    fallback_needs_media = bool(fallback.get("needs_recent_media"))
+    fallback_media_kind = fallback_kind in {"edit_existing_media", "file_intake", "file_download_or_save", "process_existing_video", "publish_video"}
+    if route_kind in {"generate_video", "generate_image"} and (fallback_needs_media or fallback_media_kind):
+        needs_recent_media = True
+    elif route_kind in {"generate_video", "generate_image"} and not references_recent_media(current_request):
         needs_recent_media = False
     if route_kind == "file_intake":
         needs_recent_media = True
@@ -3310,6 +3354,49 @@ def references_recent_media(text: str) -> bool:
         "风格",
     ]
     return any(marker in lowered for marker in action_terms)
+
+
+def explicitly_references_visual_source_media(text: str) -> bool:
+    lowered = str(text or "").lower()
+    phrases = [
+        "this image",
+        "this photo",
+        "this picture",
+        "this screenshot",
+        "that image",
+        "that photo",
+        "that picture",
+        "attached image",
+        "attached photo",
+        "quoted image",
+        "quoted photo",
+        "image i sent",
+        "photo i sent",
+        "picture i sent",
+        "screenshot i sent",
+        "the image above",
+        "the photo above",
+        "the picture above",
+        "刚发的图",
+        "剛發的圖",
+        "刚才的图",
+        "剛才的圖",
+        "上面的图",
+        "上面的圖",
+        "引用的图",
+        "引用的圖",
+        "这张图",
+        "這張圖",
+        "这张图片",
+        "這張圖片",
+        "这张照片",
+        "這張照片",
+        "这张截图",
+        "這張截圖",
+        "这幅图",
+        "這幅圖",
+    ]
+    return any(phrase in lowered for phrase in phrases)
 
 
 def is_file_download_or_save_task(text: str) -> bool:

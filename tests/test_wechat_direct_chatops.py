@@ -910,6 +910,56 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("lightweight file intake", route["task"])
         self.assertIn("Do not do a deep read/summary", route["task"])
 
+    def test_bare_image_upload_routes_to_lightweight_intake(self) -> None:
+        config = self.backend_chat_config("🍓我的设备", "personal_organizer")
+        config.update(
+            {
+                "respond_to_attachments": True,
+                "agent_route_enabled": True,
+                "agent_route_prefilter": "agent_first",
+                "auto_media_sync_on_task": False,
+            }
+        )
+        row = self.row(
+            "<msg><img md5=\"cafed00d1234567890abcdef12345678\" length=\"123456\" /></msg>",
+            local_type=3,
+            local_id=61,
+            server_id="srv-61",
+        )
+        original_session = direct_chatops.run_codex_session
+        try:
+            def fake_route_session(_prompt: str, **_kwargs: object) -> dict[str, object]:
+                return {
+                    "ok": True,
+                    "message": json.dumps(
+                        {
+                            "route_kind": "generate_image",
+                            "project": "labcanvas",
+                            "worker_needed": True,
+                            "needs_recent_media": False,
+                            "public_publish_intent": False,
+                            "public_publish_allowed": False,
+                            "external_action_allowed": True,
+                            "source_policy": "current_request_only",
+                            "reason": "agent misread bare image upload as image generation",
+                            "confidence": 0.85,
+                        }
+                    ),
+                }
+
+            direct_chatops.run_codex_session = fake_route_session  # type: ignore[assignment]
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+        finally:
+            direct_chatops.run_codex_session = original_session  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "file_intake")
+        self.assertTrue(route["route_decision"]["needs_recent_media"])
+        self.assertIn("Bare File Intake", route["task"])
+        self.assertIn("Do not deep-read", route["task"])
+        self.assertIn("local_id=61", route["task"])
+
     def test_transcribed_voice_is_treated_as_text_in_echomind(self) -> None:
         row = self.row(
             '<msg><voicemsg voicelength="2500" length="4096" voiceformat="4" '
@@ -2090,6 +2140,56 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("local_id=10", route["task"])
         self.assertIn("type=image", route["task"])
         self.assertIn("For multi-message tasks", route["task"])
+
+    def test_agent_generate_image_route_preserves_recent_image_media(self) -> None:
+        config = {
+            "chat_name": "懒人科研",
+            "self_wxid": "self",
+            "trigger_prefixes": ["@LazyingArt"],
+            "respond_to_all": True,
+            "trigger_local_types": [1],
+            "attachment_trigger_local_types": [3, 49],
+            "chat_purpose": "research",
+            "immediate_ack_enabled": True,
+            "agent_route_enabled": True,
+            "agent_route_prefilter": "agent_first",
+            "slow_task_keywords": [],
+        }
+        image = self.row("<msg><img md5=\"abc\" /></msg>", local_id=10, server_id="img-10", local_type=3)
+        command = self.row("make this image into a clean academic illustration", local_id=11, server_id="txt-11")
+        original_session = direct_chatops.run_codex_session
+        try:
+            def fake_route_session(_prompt: str, **_kwargs: object) -> dict[str, object]:
+                return {
+                    "ok": True,
+                    "message": json.dumps(
+                        {
+                            "route_kind": "generate_image",
+                            "project": "labcanvas",
+                            "worker_needed": True,
+                            "needs_recent_media": False,
+                            "public_publish_intent": False,
+                            "public_publish_allowed": False,
+                            "external_action_allowed": True,
+                            "source_policy": "current_request_only",
+                            "reason": "agent chose image generation but omitted source media",
+                            "confidence": 0.9,
+                        }
+                    ),
+                }
+
+            direct_chatops.run_codex_session = fake_route_session  # type: ignore[assignment]
+            route = direct_chatops.immediate_task_route(config, command, [image, command], focus_rows=[command])
+        finally:
+            direct_chatops.run_codex_session = original_session  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "generate_image")
+        self.assertTrue(route["route_decision"]["needs_recent_media"])
+        self.assertTrue(route["route_decision"]["media_reference_preserved"])
+        self.assertIn("local_id=10", route["task"])
+        self.assertIn("type=image", route["task"])
 
     def test_short_edit_text_without_recent_media_does_not_route_as_media_task(self) -> None:
         config = {

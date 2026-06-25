@@ -68,6 +68,10 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   posting, purchases, deletion, or other irreversible actions.
 - Source media must match the same chat and exact source or quoted message. If
   it is missing, stop source-limited and ask for resend/opening the media.
+- Image edit/generation routes that refer to a just-sent, quoted, or attached
+  image must keep `needs_recent_media=true` even if the route agent names the
+  task `generate_image`; the worker must receive the source row IDs and media
+  tokens for exact sync.
 - The worker runs a source-scoped media-resolution preflight for explicit
   image/file/video routes. It refreshes same-chat media sync, resolves mirror
   candidates by exact token and source time window, copies matches into
@@ -80,8 +84,8 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   through `wechat_chat_sync_loop.py` so the official WeChat client materializes
   the media cache, then run media sync a second time before declaring the source
   missing.
-- Bare file uploads with no explicit instruction are still work: route them to
-  `file_intake`, sync/copy the exact file into
+- Bare file or image uploads with no explicit instruction are still work: route
+  them to `file_intake`, sync/copy the exact source into
   `output/wechat_worker/<task-id>/intake/`, record metadata and checksum, and
   send a short receipt. Do not deep-read or summarize unless the current
   message asks for it.
