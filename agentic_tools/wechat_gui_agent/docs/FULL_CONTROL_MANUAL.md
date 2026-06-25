@@ -412,6 +412,8 @@ WeChat client and make the desktop appear locked. If verification is needed,
 return `waiting_confirmation`, ask the account owner to verify/open the page in
 WeChat, then resume capture. External browser-assist for mp.weixin requires an
 explicit user request or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1`.
+The helper refuses `mp.weixin.qq.com` URLs before launch unless
+`--allow-mp-weixin` or that environment override is present.
 
 ## Group And Alias Operations
 

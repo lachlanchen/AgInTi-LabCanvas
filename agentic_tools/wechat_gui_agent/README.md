@@ -645,6 +645,8 @@ mp.weixin because it can steal focus from the official WeChat client and make
 the desktop appear locked. Prefer the native WeChat article/webview session or
 an already verified capture; use external browser-assist only if the user
 explicitly asks for it or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1` is set.
+The helper refuses `mp.weixin.qq.com` URLs before launch unless
+`--allow-mp-weixin` or that environment override is present.
 Private send targets should include `expected_title`; before composing, the GUI
 sender OCR-checks the opened chat header and fails closed if the wrong group is
 visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel

@@ -284,6 +284,27 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["poll_seconds"], 1.0)
         self.assertIn("novnc_url", payload)
 
+    def test_wechat_browser_assist_blocks_mp_weixin_by_default(self):
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            code = main([
+                "wechat",
+                "browser-assist",
+                "--url",
+                "https://mp.weixin.qq.com/s/demo",
+                "--browser",
+                "/bin/echo",
+                "--dry-run",
+                "--json",
+            ])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "blocked-mp-weixin-external-browser")
+        self.assertIn("Refusing to open mp.weixin.qq.com", payload["message"])
+
     def test_wechat_approve_promotes_newest_waiting_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "queue.jsonl"

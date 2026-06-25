@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -43,9 +44,27 @@ def main() -> int:
     parser.add_argument("--poll-seconds", type=float, default=3.0, help="Polling interval for --wait-readable-seconds.")
     parser.add_argument("--close-after", action="store_true", help="Close the browser window after the optional wait/capture.")
     parser.add_argument("--output-dir", type=Path, help="Private output directory for captures. Defaults under .private/browser_assist/captures.")
+    parser.add_argument("--allow-mp-weixin", action="store_true", help="Explicitly allow external browser use for mp.weixin.qq.com. Disabled by default to avoid locking/focus issues with WeChat.")
     parser.add_argument("--dry-run", action="store_true", help="Print the launch plan without opening a browser.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+
+    if is_mp_weixin_url(args.url) and not mp_weixin_external_browser_allowed(args.allow_mp_weixin):
+        payload = {
+            "ok": False,
+            "status": "blocked-mp-weixin-external-browser",
+            "display": args.display,
+            "url": args.url,
+            "novnc_url": novnc_url(),
+            "manual_required": True,
+            "message": (
+                "Refusing to open mp.weixin.qq.com in an external browser by default. "
+                "Use the native WeChat article/webview path or an already verified capture. "
+                "External browser use for mp.weixin requires --allow-mp-weixin or WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1."
+            ),
+        }
+        print_payload(payload, args.json)
+        return 2
 
     browser = resolve_browser(args.browser)
     if not browser:
@@ -144,6 +163,18 @@ def resolve_browser(raw: str | None) -> str:
         if path:
             return path
     return ""
+
+
+def is_mp_weixin_url(url: str) -> bool:
+    try:
+        host = (urlparse(str(url or "")).hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "mp.weixin.qq.com" or host.endswith(".mp.weixin.qq.com")
+
+
+def mp_weixin_external_browser_allowed(flag: bool) -> bool:
+    return bool(flag) or os.environ.get("WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def browser_profile_name(browser: str) -> str:

@@ -109,6 +109,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     browser.add_argument("--poll-seconds", type=float, default=3.0)
     browser.add_argument("--close-after", action="store_true")
     browser.add_argument("--output-dir", type=Path)
+    browser.add_argument("--allow-mp-weixin", action="store_true")
     browser.add_argument("--dry-run", action="store_true")
     browser.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     browser.set_defaults(func=cmd_browser_assist)
@@ -790,6 +791,8 @@ def cmd_browser_assist(args: argparse.Namespace) -> int:
         command.append("--close-after")
     if getattr(args, "output_dir", None):
         command += ["--output-dir", str(args.output_dir)]
+    if getattr(args, "allow_mp_weixin", False):
+        command.append("--allow-mp-weixin")
     if args.dry_run:
         command.append("--dry-run")
     if args.json:

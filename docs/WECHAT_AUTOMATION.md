@@ -518,7 +518,9 @@ WeChat article/webview session or an already verified readable capture. If
 verification is needed, return `waiting_confirmation`, ask the account owner to
 verify/open the page in WeChat, then resume capture after confirmation. Use
 external `browser-assist` for mp.weixin only when the user explicitly asks for
-it or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1` is set.
+it or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1` is set. The
+`browser-assist` tool enforces this: `mp.weixin.qq.com` URLs are refused before
+launch unless `--allow-mp-weixin` or the environment override is present.
 
 Approve or cancel confirmation tasks from the CLI:
 
