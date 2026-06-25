@@ -1096,6 +1096,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertNotIn("autopublish_video", preflight)
         self.assertTrue(contract_data["stage_permissions"]["lazyedit_import"])
         self.assertTrue(contract_data["stage_permissions"]["public_publish"])
+        self.assertIn("resumed Codex worker agent", " ".join(contract_data["rules"]))
+        self.assertIn("WeChat message sent with the video", " ".join(contract_data["rules"]))
         self.assertIn("old-video", context_text)
 
     def test_generate_video_route_rewrites_false_publish_result(self) -> None:
@@ -2376,6 +2378,89 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         shell_command = calls[0]["command"][2]
         self.assertIn("--platforms shipinhao,youtube,instagram", shell_command)
         self.assertNotIn("--no-publish", shell_command)
+
+    def test_generated_video_lazyedit_command_prefers_preflight_context_prompts(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+
+        def fake_run(command, **kwargs):
+            calls.append({"command": command, "kwargs": kwargs})
+            return subprocess.CompletedProcess(command, 0, '{"ok": true}', "")
+
+        with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+            outcome = worker.run_generated_video_lazyedit_command(
+                Path("/tmp/generated.mp4"),
+                {
+                    "route_decision": {"route_kind": "generate_video", "public_publish_allowed": True},
+                    "request": "Current coalesced request:\npublish this generated video with context-corrected subtitles and metadata",
+                    "preflight": {
+                        "lazyedit_context": {
+                            "correction_prompt_file": "/tmp/worker-rich-correction-context.md",
+                            "metadata_prompt_file": "/tmp/worker-short-metadata-brief.md",
+                        }
+                    },
+                },
+                {
+                    "story_file": "/tmp/monitor-story-only.md",
+                    "prompt_file": "/tmp/monitor-prompt-only.md",
+                },
+                publish=True,
+            )
+
+        self.assertTrue(outcome["ok"])
+        shell_command = calls[0]["command"][2]
+        self.assertIn("--correction-prompt-file '/tmp/worker-rich-correction-context.md'", shell_command)
+        self.assertIn("--metadata-prompt-file '/tmp/worker-short-metadata-brief.md'", shell_command)
+        self.assertNotIn("/tmp/monitor-story-only.md", shell_command)
+        self.assertNotIn("/tmp/monitor-prompt-only.md", shell_command)
+
+    def test_generated_video_lazyedit_context_appends_generated_story_and_prompt(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            correction = tmp_path / "lazyedit_correction_context.md"
+            metadata = tmp_path / "lazyedit_metadata_brief.md"
+            story = tmp_path / "generated_story.md"
+            prompt = tmp_path / "xyq_prompt.md"
+            correction.write_text("wechat message context: publish the generated video\n", encoding="utf-8")
+            metadata.write_text("metadata brief from WeChat message\n", encoding="utf-8")
+            story.write_text("RaraXia and AyaChan find a luminous library under the city.", encoding="utf-8")
+            prompt.write_text("Cinematic warm light, gentle narration, library adventure.", encoding="utf-8")
+
+            def fake_run(command, **kwargs):
+                calls.append({"command": command, "kwargs": kwargs})
+                return subprocess.CompletedProcess(command, 0, '{"ok": true}', "")
+
+            with mock.patch.object(worker.subprocess, "run", side_effect=fake_run):
+                outcome = worker.run_generated_video_lazyedit_command(
+                    tmp_path / "generated.mp4",
+                    {
+                        "route_decision": {"route_kind": "generate_video", "public_publish_allowed": True},
+                        "request": "Current coalesced request:\npublish this generated story video",
+                        "preflight": {
+                            "lazyedit_context": {
+                                "correction_prompt_file": str(correction),
+                                "metadata_prompt_file": str(metadata),
+                            }
+                        },
+                    },
+                    {"story_file": str(story), "prompt_file": str(prompt)},
+                    publish=True,
+                )
+
+            correction_text = correction.read_text(encoding="utf-8")
+            metadata_text = metadata.read_text(encoding="utf-8")
+
+        self.assertTrue(outcome["ok"])
+        self.assertTrue(calls)
+        self.assertIn("Generated Video Script Context", correction_text)
+        self.assertIn("RaraXia and AyaChan", correction_text)
+        self.assertIn("Cinematic warm light", correction_text)
+        self.assertIn("Generated Video Metadata Context", metadata_text)
+        self.assertIn("Story/script excerpt", metadata_text)
+        self.assertIn("Generation prompt excerpt", metadata_text)
 
     def test_exact_video_preflight_failure_returns_deterministic_fail_closed_result(self) -> None:
         worker = load_worker()

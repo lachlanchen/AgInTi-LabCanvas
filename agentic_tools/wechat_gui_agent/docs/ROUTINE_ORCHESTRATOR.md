@@ -90,6 +90,11 @@ Required behavior:
 - send or defer required artifacts through the artifact delivery gate;
 - keep LazyEdit/public publish work in `publish_poststage_pending` until
   requested platforms have terminal LazyEdit/remote evidence;
+- treat LazyEdit as the mature video-processing/publishing boundary. Workers
+  prepare exact source video evidence plus `lazyedit_correction_context.md` and
+  `lazyedit_metadata_brief.md`, then call LazyEdit CLI/API and monitor queues
+  instead of rebuilding subtitle correction, metadata, packaging, or platform
+  browser automation;
 - when an existing-video publish poststage has a LazyEdit `video_id` but no
   local publish job, reissue the real LazyEdit publish command from the stored
   prompt files once before handing repair to a Codex worker session;

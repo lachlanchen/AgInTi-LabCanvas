@@ -9,6 +9,10 @@ This repo-local skill mirrors the LazyEdit publish skill from
 `/home/lachlan/DiskMech/Projects/lazyedit/references/skills/lazyedit-publish-workflow/SKILL.md`
 and the active Codex skill. Use it when a WeChat/LabCanvas task asks to publish,
 re-publish, import, process, subtitle, or monitor a video.
+For LabCanvas-specific agent boundaries, also read
+`references/lazyedit-agent-integration-handoff.md`. The full LazyEdit-side
+handoff is
+`/home/lachlan/DiskMech/Projects/lazyedit/references/AGENT_HANDOFF_LAZYEDIT_PUBLISH_2026_06_25.md`.
 
 ## Runtime Map
 
@@ -26,6 +30,11 @@ re-publish, import, process, subtitle, or monitor a video.
 
 Prefer the LazyEdit CLI over manual browser work. It creates normal LazyEdit
 jobs, keeps the web queue in sync, and provides stable monitoring output.
+LazyEdit is the mature downstream video tool: do not rebuild subtitle
+correction, translation, metadata, logo/subtitle burn, browser-safe packaging,
+or platform posting in LabCanvas. LabCanvas agents prepare exact source video
+evidence plus context files, call LazyEdit, monitor terminal evidence, and send
+artifacts/status back to WeChat.
 
 ```bash
 cd /home/lachlan/DiskMech/Projects/lazyedit
@@ -53,6 +62,17 @@ curl -fsS http://127.0.0.1:18787/api/ui-settings/logo_settings | jq .
 - Use `--correction-prompt-file` for full transcript/story context and
   `--metadata-prompt-file` for a short public-facing brief. Do not pass a full
   script as metadata context.
+- Generated-video LazyEdit runs must prefer the worker-created
+  `lazyedit_correction_context.md` and `lazyedit_metadata_brief.md` from
+  `task.preflight.lazyedit_context`; story/prompt files from the browser monitor
+  are fallback only.
+- The correction context must include the WeChat message sent with the video.
+  For AI-generated video publication, append the generated story/script and
+  Xiaoyunque/Seedance prompt before calling LazyEdit.
+- Use the resumed Codex/AgInTi worker agent to call routines, scripts, and CLI
+  commands. Deterministic code may isolate sources, guard duplicates, probe
+  status, verify terminal evidence, and enforce artifact delivery, but it must
+  not become a separate hardcoded publishing workflow.
 - Silent or nearly silent videos may produce empty transcripts and
   `burn=skipped`. This is acceptable when transcribe/translate/caption/keyframes
   are complete; continue metadata generation, cover extraction, publish queue

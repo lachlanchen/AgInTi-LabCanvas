@@ -31,6 +31,17 @@ delivery gates; nontrivial execution resumes the same per-chat Codex worker
 session with the routine contract and orchestrator handoff. This keeps the
 automation agentic without re-solving known workflows from scratch.
 
+For video correction and publishing, the mature downstream tool is LazyEdit, not
+ad hoc browser work in LabCanvas. The worker resolves the exact source video,
+writes a rich subtitle-correction context and a separate concise metadata brief,
+then calls LazyEdit CLI/API and monitors local plus remote AutoPublish evidence.
+That correction context must include the WeChat message sent with the video; for
+AI-generated videos it must also include the generated story/script and
+Xiaoyunque/Seedance prompt. The resumed Codex worker agent should invoke the
+routines and commands, while deterministic code only gates source isolation,
+retries, probes, and verification.
+See [LazyEdit agent integration handoff](../references/lazyedit-agent-integration-handoff.md).
+
 ## Installable CLI
 
 The reusable command surface is available from source or the npm package:

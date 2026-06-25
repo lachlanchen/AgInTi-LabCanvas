@@ -58,6 +58,20 @@ deletion, purchases, or another unsafe/irreversible decision.
   `sent_file_paths`.
 - Poststage: after delivery, run LazyEdit/import and public publish only when
   `stage_permissions` allow them.
+- LazyEdit is the mature downstream video tool. Do not rebuild subtitle
+  correction, metadata, subtitle/logo burn, packaging, or platform posting in
+  the worker. Prepare exact source evidence, then call LazyEdit and monitor its
+  queues.
+- Write two prompt files before LazyEdit work:
+  `lazyedit_correction_context.md` with rich same-chat/source context for
+  subtitle correction, and `lazyedit_metadata_brief.md` with short
+  public-facing metadata guidance. Include the WeChat message sent with the
+  video. For AI-generated videos, also include the generated story/script and
+  Xiaoyunque/Seedance prompt. Full scripts belong in correction context, not
+  metadata.
+- Codex worker supervision owns LazyEdit context selection and command/script
+  invocation. Deterministic code should only isolate sources, probe/requeue,
+  guard duplicates, verify terminal evidence, and enforce artifact delivery.
 - LazyEdit publish commands must run as `source ... && conda activate lazyedit
   && python scripts/lazyedit_publish.py ... --json`; empty JSON after exit 0 is
   a failed submission, not success.

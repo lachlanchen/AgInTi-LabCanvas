@@ -536,6 +536,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "legacy queued worker tasks backfill the instruction contract before execution",
             "generated-video contracts choose relatively cheaper Seedance models without blocking tasks on model selection",
             "generated-video generation is not public publication; reference-image upload does not authorize publish",
+            "generated-video LazyEdit commands prefer worker-created correction context and metadata brief files",
+            "generated-video LazyEdit context appends generated story/script and prompt material before publish",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -623,6 +625,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "generated_video_stage_boundary",
             "test": worker_prefix + "test_generated_video_stage_permissions_are_current_request_only",
+        },
+        {
+            "id": "generated_video_lazyedit_uses_context_prompts",
+            "test": worker_prefix + "test_generated_video_lazyedit_command_prefers_preflight_context_prompts",
+        },
+        {
+            "id": "generated_video_lazyedit_appends_story_prompt",
+            "test": worker_prefix + "test_generated_video_lazyedit_context_appends_generated_story_and_prompt",
         },
         {
             "id": "legacy_task_instruction_contract_backfill",

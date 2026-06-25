@@ -10,6 +10,15 @@ and the operator guide is `docs/ROUTINE_ORCHESTRATOR.md`. This document is the
 specialized stage contract for the `generated_video` routine. The short
 operational checklist for autonomous agents is
 `docs/AGENT_ROUTINE_CHEAT_SHEET.md`.
+The LazyEdit boundary and agent handoff are documented in
+`references/lazyedit-agent-integration-handoff.md`. LazyEdit is the mature tool
+for subtitle correction, metadata, logo/subtitle burn, browser-safe packaging,
+and AutoPublish submission; LabCanvas agents should provide exact inputs and
+supervise the routine, not rebuild those functions.
+For generation and publication, use the resumed Codex worker agent to call the
+routine scripts/commands. Deterministic code is limited to source isolation,
+duplicate guards, queue timestamps, short probes, terminal verification, and
+artifact delivery gates.
 
 Core boundary: generation is not publication. Generation means story/prompt
 creation, Xiaoyunque submission, monitoring, MP4 download, verification, and
@@ -90,6 +99,14 @@ publication.
    - Entrypoint: `deterministic_generated_video_poststage_result()`.
    - Requirement: current request explicitly permits LazyEdit import/process.
    - Timeout/running state: `generation_poststage_pending` with `next_poststage_at`.
+   - Context files: write `lazyedit_correction_context.md` from same-chat
+     source rows, the WeChat message sent with the video, the current request,
+     exact media metadata, and safe source-task summaries. For AI-generated
+     video publication, append the generated story/script and Xiaoyunque/Seedance
+     prompt before calling LazyEdit. Write
+     `lazyedit_metadata_brief.md` separately with only hook, characters,
+     tone, keywords, and platform notes. The correction context can be rich;
+     the metadata brief must stay concise.
 
 6. `public_publish`
    - Owner: queue orchestrator via LazyEdit.
@@ -99,6 +116,15 @@ publication.
    - Existing generated videos quoted later are resolved by exact WeChat video
      MD5/length against same-chat task artifacts, then copied to AutoPublish
      with the original source task summary passed into LazyEdit prompt files.
+   - LazyEdit owns subtitle correction, translation, logo/subtitle burn,
+     metadata, cover extraction, ZIP/MP4 packaging, and local publish queue
+     submission. The worker must call LazyEdit and monitor it instead of
+     hand-editing subtitles, manually building publish ZIPs, or driving platform
+     browsers directly.
+   - The resumed Codex worker owns context selection and command invocation. The
+     queue orchestrator may probe, requeue, de-duplicate, and verify terminal
+     evidence, but it should not replace the agent with a new hardcoded publish
+     workflow.
    - LazyEdit execution must use `source ... && conda activate lazyedit &&
      python scripts/lazyedit_publish.py ... --json`; an empty JSON payload after
      zero exit means the publish command did not actually submit a job.

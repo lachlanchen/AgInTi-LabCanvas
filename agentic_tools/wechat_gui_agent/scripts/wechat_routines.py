@@ -300,14 +300,14 @@ ROUTINES: dict[str, RoutineDefinition] = {
             },
             {
                 "id": "lazyedit_poststage",
-                "owner": "queue_orchestrator",
-                "entrypoint": "deterministic_generated_video_poststage_result",
-                "success": "LazyEdit import/process completes or requeues generation_poststage_pending",
+                "owner": "worker_agent_supervised_by_queue",
+                "entrypoint": "Codex worker calls LazyEdit CLI/API through stored routine scripts; deterministic probes only monitor/requeue",
+                "success": "LazyEdit import/process completes with context prompts or requeues generation_poststage_pending",
             },
             {
                 "id": "public_publish",
-                "owner": "queue_orchestrator",
-                "entrypoint": "run_generated_video_lazyedit_command(..., publish=True)",
+                "owner": "worker_agent_supervised_by_queue",
+                "entrypoint": "Codex worker invokes run_generated_video_lazyedit_command(..., publish=True) or the equivalent LazyEdit CLI",
                 "success": "requested current-message platforms finish or requeue for verification",
             },
         ),
@@ -318,6 +318,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "Do not process old WeChat MP4, LazyEdit, or AutoPublish files as the new generated-video output.",
             "Long generation waits must live in queue state and CDP probes, not one multi-hour model call.",
             "LazyEdit import and public publishing require explicit current-message permission.",
+            "For LazyEdit stages, Codex worker supervision owns context selection and command execution; deterministic code is limited to source isolation, duplicate guards, probes, and terminal verification.",
         ),
     ),
     "general_worker": RoutineDefinition(

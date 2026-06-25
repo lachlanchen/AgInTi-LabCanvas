@@ -275,6 +275,29 @@ the worker resolves the source in this order:
    messages as obsolete context, not evidence;
 8. run LazyEdit and verify local plus remote publish queues.
 
+LazyEdit is a mature downstream tool, not a block of logic to reimplement in
+the worker. The worker should prepare exact source evidence and two prompt
+files, then call LazyEdit:
+
+- `lazyedit_correction_context.md`: rich same-chat/source context for subtitle
+  correction, including the WeChat message sent with the video, quoted/source
+  rows, media metadata, known names, terms, and visible context. For
+  AI-generated videos, append the generated story/script and Xiaoyunque/Seedance
+  prompt before the LazyEdit command. Use this as reference, not a verbatim
+  transcript.
+- `lazyedit_metadata_brief.md`: short public-facing title/description/keyword
+  guidance. Do not pass full scripts or chat history as metadata.
+
+LazyEdit owns subtitle correction, translation, subtitle/logo burn, metadata,
+cover extraction, browser-safe MP4/ZIP packaging, and local publish job
+creation. AutoPublish owns platform browser/API posting. LabCanvas owns source
+isolation, current-message permissions, queue state, terminal verification, and
+WeChat artifact delivery.
+The resumed Codex worker agent owns LazyEdit context selection and command
+invocation. Deterministic code is allowed for source isolation, duplicate
+guards, short probes, queue state, and terminal verification, but it must not
+become a parallel hardcoded publish workflow.
+
 If both the WeChat cache and artifact ledger fail, stop source-limited. Do not
 reuse a nearby video, another group’s artifact, or an older unrelated task.
 Old history and source-task summaries may improve subtitle correction and

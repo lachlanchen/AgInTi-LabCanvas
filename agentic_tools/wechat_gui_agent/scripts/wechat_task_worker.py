@@ -2339,6 +2339,8 @@ def write_generated_video_contract(task: dict[str, Any], artifact_dir: Path) -> 
             "Generation is not publication: generating/downloading/sending a video never authorizes LazyEdit import or public posting.",
             "Do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish, or public queues unless stage_permissions.public_publish is true.",
             "Do not import/process in LazyEdit unless stage_permissions.lazyedit_import is true.",
+            "For LazyEdit stages, use the resumed Codex worker agent to call mature routines/scripts/commands; deterministic code is only for source isolation, queue probes, duplicate guards, terminal verification, and artifact delivery.",
+            "LazyEdit correction context must include the WeChat message sent with the video; AI-generated video publication must also append the generated story/script and Xiaoyunque/Seedance prompt.",
             "If the browser cannot submit or download a new video, return an explicit blocked/in-progress status instead of claiming success.",
             "Long Xiaoyunque rendering must stay in the queue with deterministic status probes; do not spend model tokens just to poll.",
         ],
@@ -4064,12 +4066,14 @@ def run_generated_video_lazyedit_command(video_path: Path, task: dict[str, Any],
         command_parts.append(f"--platforms {','.join(detect_publish_platforms(task, current_only=True))}")
     else:
         command_parts.append("--no-publish")
-    story_file = str(monitor.get("story_file") or "")
-    prompt_file = str(monitor.get("prompt_file") or "")
-    if story_file:
-        command_parts.append(f"--correction-prompt-file {shell_quote(story_file)}")
-    if prompt_file:
-        command_parts.append(f"--metadata-prompt-file {shell_quote(prompt_file)}")
+    lazy_context = ((task.get("preflight") or {}).get("lazyedit_context") if isinstance(task.get("preflight"), dict) else {}) or {}
+    correction_prompt = str(lazy_context.get("correction_prompt_file") or monitor.get("story_file") or "")
+    metadata_prompt = str(lazy_context.get("metadata_prompt_file") or monitor.get("prompt_file") or "")
+    augment_generated_video_lazyedit_context(correction_prompt, metadata_prompt, monitor)
+    if correction_prompt:
+        command_parts.append(f"--correction-prompt-file {shell_quote(correction_prompt)}")
+    if metadata_prompt:
+        command_parts.append(f"--metadata-prompt-file {shell_quote(metadata_prompt)}")
     command = ["bash", "-lc", lazyedit_shell_command(command_parts)]
     return run_lazyedit_publish_subprocess(
         command,
@@ -4078,6 +4082,67 @@ def run_generated_video_lazyedit_command(video_path: Path, task: dict[str, Any],
         platforms=detect_publish_platforms(task, current_only=True) if publish else [],
         target=video_path,
     )
+
+
+def augment_generated_video_lazyedit_context(correction_prompt: str, metadata_prompt: str, monitor: dict[str, Any]) -> None:
+    """Append generated story/prompt material to LazyEdit context files once."""
+    story_text = read_lazyedit_context_source(monitor.get("story_file"), max_len=12000)
+    prompt_text = read_lazyedit_context_source(monitor.get("prompt_file"), max_len=12000)
+    if correction_prompt:
+        sections = []
+        if story_text:
+            sections.append("### Generated Story / Script\n\n" + story_text)
+        if prompt_text:
+            sections.append("### Xiaoyunque Prompt / Generation Prompt\n\n" + prompt_text)
+        append_lazyedit_context_once(
+            Path(correction_prompt),
+            "## Generated Video Script Context",
+            "\n\n".join(sections),
+        )
+    if metadata_prompt:
+        brief_sections = []
+        if story_text:
+            brief_sections.append("Story/script excerpt: " + collapse_context_text(story_text, max_len=900))
+        if prompt_text:
+            brief_sections.append("Generation prompt excerpt: " + collapse_context_text(prompt_text, max_len=900))
+        append_lazyedit_context_once(
+            Path(metadata_prompt),
+            "## Generated Video Metadata Context",
+            "\n".join(f"- {item}" for item in brief_sections),
+        )
+
+
+def read_lazyedit_context_source(path_value: Any, *, max_len: int) -> str:
+    path_text = str(path_value or "").strip()
+    if not path_text:
+        return ""
+    path = Path(path_text)
+    try:
+        if not path.is_file():
+            return ""
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+    if len(text) > max_len:
+        return text[:max_len].rstrip() + "\n\n[truncated]"
+    return text
+
+
+def append_lazyedit_context_once(path: Path, marker: str, body: str) -> None:
+    body = body.strip()
+    if not body:
+        return
+    try:
+        current = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    except OSError:
+        return
+    if marker in current:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(current.rstrip() + "\n\n" + marker + "\n\n" + body + "\n", encoding="utf-8")
+    except OSError:
+        return
 
 
 def should_deterministic_video_publish(task: dict[str, Any]) -> bool:
