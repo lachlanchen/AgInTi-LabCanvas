@@ -280,7 +280,8 @@ generated-video route contract with `stage_permissions` and
    authorize generation;
 5. answer Xiaoyunque storyboard/reference continuation prompts in the same
    `thread_id` with `xyq_continue_thread.py` when the current request already
-   authorizes generation;
+   authorizes generation, using the approved story and the latest same-chat
+   constraints rather than a generic continue message;
 6. monitor/download through deterministic CDP routines;
 7. send the verified MP4 to the source chat and record `sent_file_paths`;
 8. only then queue LazyEdit import/process;
@@ -291,6 +292,12 @@ monitor does not solve the task itself. It appends an interruption packet to
 the active queue row. When the worker turn returns, the queue suppresses stale
 output, requeues the task, and the resumed worker agent reads the full
 interruption history before choosing the next routine stage.
+
+If the user or operator says the XYQ output was already manually downloaded to
+`Downloads` and handed to LazyEdit/publication, including a session with two
+video outputs, record `manual_generated_video_handoff`, close the automation
+task, and take no further XYQ/LazyEdit action. That note is state, not a new
+download, generation, import, or publish request.
 
 Generation is not publication. A generation request creates/downloads/verifies
 the video and sends artifacts back to the source chat; it does not authorize

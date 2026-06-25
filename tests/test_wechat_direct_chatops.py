@@ -590,6 +590,51 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(tasks[0]["status"], "generation_waiting")
         self.assertEqual(tasks[1]["status"], "pending")
 
+    def test_manual_xyq_lazyedit_handoff_closes_active_generated_video_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            original_task = {
+                "id": "task-xyq",
+                "chat": "懒人科研",
+                "status": "generation_poststage_pending",
+                "request": "Current coalesced request:\nGenerate the approved LALACHAN story video.",
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan", "public_publish_allowed": False},
+                "source": {"chat": "懒人科研", "config_id": "lazy.json", "message_table": "MSG", "server_id": "srv-201", "local_id": 201},
+                "routine": {"id": "generated_video"},
+                "next_poststage_at": 999999,
+            }
+            queue.write_text(json.dumps(original_task, ensure_ascii=False) + "\n", encoding="utf-8")
+            text = (
+                "actually there are two videos in the xyq session. "
+                "I already downloaded the two to Downloads and give LazyEdit to publish. "
+                "you need to do nothing just let you know the situation"
+            )
+            config = self.backend_chat_config("懒人科研", "research")
+            row = self.row(text, local_id=202, server_id="srv-202")
+            decision = direct_chatops.fallback_route_decision(config, text, row, [row], focus_rows=[row])
+            incoming = {
+                "id": "task-202",
+                "chat": "懒人科研",
+                "status": "pending",
+                "request": "Current coalesced request:\n" + text,
+                "route_decision": decision,
+                "source": {"chat": "懒人科研", "config_id": "lazy.json", "message_table": "MSG", "server_id": "srv-202", "local_id": 202},
+                "routine": {"id": "generated_video"},
+            }
+
+            merged, appended = direct_chatops.append_worker_task_once(queue, incoming)
+            tasks = direct_chatops.read_worker_queue_tasks(queue)
+
+        self.assertFalse(appended)
+        self.assertTrue(merged["dedupe_existing"])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["status"], "done")
+        self.assertEqual(tasks[0]["manual_generated_video_handoff"]["reported_video_count"], 2)
+        self.assertTrue(tasks[0]["route_decision"]["manual_handoff_update"])
+        self.assertTrue(tasks[0]["route_decision"]["no_new_xyq_submit"])
+        self.assertFalse(tasks[0]["route_decision"]["public_publish_allowed"])
+        self.assertNotIn("next_poststage_at", tasks[0])
+
     def test_wechat_locked_send_error_is_classified(self) -> None:
         self.assertTrue(direct_chatops.is_wechat_locked_error(RuntimeError("WECHAT_LOCKED: Weixin for Linux is locked")))
         self.assertTrue(direct_chatops.is_deferable_send_error(RuntimeError("WECHAT_SEND_BUSY: serialized GUI sender is already sending")))

@@ -2632,7 +2632,8 @@ def heuristic_worker_route_candidate(
     lowered = str(text or "").lower()
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
     return (
-        attachment_trigger
+        is_manual_generated_video_handoff_update(text)
+        or attachment_trigger
         or lalachan_task
         or complex_task
         or contextual_media_task
@@ -2840,7 +2841,10 @@ def fallback_route_decision(
     contextual_media_task = is_contextual_media_task(config, text, row, context_rows, focus_rows=focus_rows) or (
         is_quote_reply_message(row) and references_recent_media(text)
     )
-    if is_bare_file_intake_request(row, text) or is_bare_image_intake_request(row, text):
+    manual_handoff = is_manual_generated_video_handoff_update(text)
+    if manual_handoff:
+        route_kind = "generate_video"
+    elif is_bare_file_intake_request(row, text) or is_bare_image_intake_request(row, text):
         route_kind = "file_intake"
     elif is_document_artifact_task(text):
         route_kind = "other_worker"
@@ -2901,6 +2905,24 @@ def fallback_route_decision(
                 "confirmation_kind": "third_party_publish",
                 "requires_third_party_publish_confirmation": True,
                 "reason": "fallback detected publish permission question; wait for third-party confirmation",
+            }
+        )
+    if manual_handoff:
+        route.update(
+            {
+                "project": "lalachan",
+                "worker_needed": True,
+                "needs_recent_media": False,
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+                "external_action_allowed": False,
+                "source_policy": "current_request_only",
+                "reason": "manual XYQ/LazyEdit handoff update; record state and do not run automation",
+                "manual_handoff_update": True,
+                "manual_handoff": manual_generated_video_handoff_payload(text),
+                "no_new_xyq_submit": True,
+                "monitor_only_no_resubmit": True,
+                "ack": "收到，我记录为手动下载/交给 LazyEdit 的状态，不再重复下载或生成。",
             }
         )
     return route
@@ -3221,6 +3243,67 @@ def is_contextual_media_task(
         return False
     lowered = str(text or "").lower()
     return references_recent_media(text)
+
+
+def is_manual_generated_video_handoff_update(text: str) -> bool:
+    lowered = str(text or "").lower()
+    video_context = any(marker in lowered for marker in ("xyq", "xiaoyunque", "小云雀", "video", "mp4", "视频", "影片"))
+    manual_download = any(
+        marker in lowered
+        for marker in (
+            "already downloaded",
+            "downloaded the two",
+            "downloaded both",
+            "i downloaded",
+            "i have downloaded",
+            "saved to downloads",
+            "to downloads",
+            "在 downloads",
+            "已下载",
+            "已经下载",
+            "下載好了",
+            "下载好了",
+        )
+    )
+    handoff_or_no_action = any(
+        marker in lowered
+        for marker in (
+            "lazyedit",
+            "give lazyedit",
+            "gave lazyedit",
+            "handed",
+            "handoff",
+            "publish",
+            "publishing",
+            "do nothing",
+            "need to do nothing",
+            "no need",
+            "just let you know",
+            "不用",
+            "不需要",
+            "交给",
+            "交給",
+            "发布",
+            "發布",
+        )
+    )
+    return bool(video_context and manual_download and handoff_or_no_action)
+
+
+def manual_generated_video_handoff_payload(text: str) -> dict[str, Any]:
+    lowered = str(text or "").lower()
+    count = 0
+    if any(marker in lowered for marker in ("two", "both", "2 videos", "2个", "两个", "兩個", "两条", "兩條")):
+        count = 2
+    return {
+        "kind": "manual_generated_video_handoff",
+        "reported_at": datetime.now().isoformat(timespec="seconds"),
+        "reported_video_count": count or None,
+        "downloads_dir_reported": "downloads" in lowered,
+        "lazyedit_handoff_reported": "lazyedit" in lowered,
+        "automation_action": "none",
+        "note": collapse_context_text(text, max_len=1000),
+    }
 
 
 def references_recent_media(text: str) -> bool:
@@ -4857,6 +4940,10 @@ def append_same_chat_task_interruption(tasks: list[dict[str, Any]], incoming: di
         if interruption_already_recorded(candidate, incoming_source):
             return candidate
         interruption = build_task_interruption(candidate, incoming)
+        if is_manual_generated_video_handoff_update(interruption.get("request") or interruption.get("request_excerpt") or ""):
+            apply_manual_generated_video_handoff(candidate, incoming, interruption)
+            tasks[index] = candidate
+            return candidate
         candidate.setdefault("interruptions", []).append(interruption)
         candidate["interruptions"] = candidate["interruptions"][-20:]
         candidate["interruption_pending"] = True
@@ -4896,6 +4983,62 @@ def append_same_chat_task_interruption(tasks: list[dict[str, Any]], incoming: di
         tasks[index] = candidate
         return candidate
     return None
+
+
+def apply_manual_generated_video_handoff(candidate: dict[str, Any], incoming: dict[str, Any], interruption: dict[str, Any]) -> None:
+    payload = manual_generated_video_handoff_payload(interruption.get("request") or interruption.get("request_excerpt") or "")
+    payload.update(
+        {
+            "incoming_task_id": incoming.get("id"),
+            "source": interruption.get("source") if isinstance(interruption.get("source"), dict) else {},
+            "target_task_id": candidate.get("id"),
+        }
+    )
+    candidate.setdefault("manual_handoffs", []).append(payload)
+    candidate["manual_handoffs"] = candidate["manual_handoffs"][-10:]
+    candidate["manual_generated_video_handoff"] = payload
+    candidate["manual_handoff_pending"] = False
+    candidate["interruption_pending"] = False
+    candidate["last_interruption_at"] = payload["reported_at"]
+    candidate["last_interruption_source"] = payload["source"]
+    route = candidate.get("route_decision") if isinstance(candidate.get("route_decision"), dict) else {}
+    route = dict(route)
+    route.update(
+        {
+            "manual_handoff_update": True,
+            "manual_handoff": payload,
+            "no_new_xyq_submit": True,
+            "monitor_only_no_resubmit": True,
+            "public_publish_allowed": False,
+            "public_publish_intent": False,
+            "external_action_allowed": False,
+            "reason": "manual XYQ/LazyEdit handoff recorded; automation should not repeat generation/download/publish",
+        }
+    )
+    candidate["route_decision"] = route
+    candidate["status"] = "done"
+    candidate["completed_at"] = payload["reported_at"]
+    candidate["result"] = {
+        "message": (
+            "Manual handoff noted: the owner reported the Xiaoyunque video output(s) were already downloaded "
+            "and handed to LazyEdit. No automatic generation, download, or publish action was run."
+        ),
+        "files": [],
+        "confirmation": "",
+        "manual_handoff": payload,
+    }
+    for field in (
+        "claimed_at",
+        "worker_id",
+        "next_poll_at",
+        "next_poststage_at",
+        "next_publish_poststage_at",
+        "reprocess_requested_at",
+        "reprocess_reason",
+        "generation_blocked_until_story_confirmed",
+        "story_confirmation_required",
+    ):
+        candidate.pop(field, None)
 
 
 def same_chat_interruption_target(candidate: dict[str, Any], incoming: dict[str, Any]) -> bool:

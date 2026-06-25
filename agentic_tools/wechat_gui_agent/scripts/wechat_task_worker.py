@@ -1291,6 +1291,17 @@ def merge_existing_pending_interruptions(path: Path) -> int:
                 merged += 1
                 continue
             interruption = build_task_interruption(target, incoming)
+            if is_manual_generated_video_handoff_update(interruption.get("request") or interruption.get("request_excerpt") or ""):
+                apply_manual_generated_video_handoff(target, incoming, interruption)
+                incoming["status"] = "canceled_superseded"
+                incoming["completed_at"] = now_text
+                incoming["superseded_at"] = now_text
+                incoming["superseded_by"] = target.get("id")
+                incoming["superseded_reason"] = "manual_generated_video_handoff_recorded"
+                tasks[target_index] = target
+                tasks[incoming_index] = incoming
+                merged += 1
+                continue
             target.setdefault("interruptions", []).append(interruption)
             target["interruptions"] = target["interruptions"][-20:]
             target["interruption_pending"] = True
@@ -1411,6 +1422,126 @@ def is_interruptible_story_video_task(task: dict[str, Any]) -> bool:
         return True
     text = str(task.get("request") or "").lower()
     return any(marker in text for marker in ("lalachan", "raraxia", "ayachan", "sasakun", "小云雀", "啦啦侠", "阿芽酱", "飒飒君"))
+
+
+def is_manual_generated_video_handoff_update(text: str) -> bool:
+    lowered = str(text or "").lower()
+    video_context = any(marker in lowered for marker in ("xyq", "xiaoyunque", "小云雀", "video", "mp4", "视频", "影片"))
+    manual_download = any(
+        marker in lowered
+        for marker in (
+            "already downloaded",
+            "downloaded the two",
+            "downloaded both",
+            "i downloaded",
+            "i have downloaded",
+            "saved to downloads",
+            "to downloads",
+            "在 downloads",
+            "已下载",
+            "已经下载",
+            "下載好了",
+            "下载好了",
+        )
+    )
+    handoff_or_no_action = any(
+        marker in lowered
+        for marker in (
+            "lazyedit",
+            "give lazyedit",
+            "gave lazyedit",
+            "handed",
+            "handoff",
+            "publish",
+            "publishing",
+            "do nothing",
+            "need to do nothing",
+            "no need",
+            "just let you know",
+            "不用",
+            "不需要",
+            "交给",
+            "交給",
+            "发布",
+            "發布",
+        )
+    )
+    return bool(video_context and manual_download and handoff_or_no_action)
+
+
+def manual_generated_video_handoff_payload(text: str) -> dict[str, Any]:
+    lowered = str(text or "").lower()
+    count = 0
+    if any(marker in lowered for marker in ("two", "both", "2 videos", "2个", "两个", "兩個", "两条", "兩條")):
+        count = 2
+    return {
+        "kind": "manual_generated_video_handoff",
+        "reported_at": datetime.now().isoformat(timespec="seconds"),
+        "reported_video_count": count or None,
+        "downloads_dir_reported": "downloads" in lowered,
+        "lazyedit_handoff_reported": "lazyedit" in lowered,
+        "automation_action": "none",
+        "note": collapse_context_text(text, max_len=1000),
+    }
+
+
+def apply_manual_generated_video_handoff(candidate: dict[str, Any], incoming: dict[str, Any], interruption: dict[str, Any]) -> None:
+    payload = manual_generated_video_handoff_payload(interruption.get("request") or interruption.get("request_excerpt") or "")
+    payload.update(
+        {
+            "incoming_task_id": incoming.get("id"),
+            "source": interruption.get("source") if isinstance(interruption.get("source"), dict) else {},
+            "target_task_id": candidate.get("id"),
+        }
+    )
+    candidate.setdefault("manual_handoffs", []).append(payload)
+    candidate["manual_handoffs"] = candidate["manual_handoffs"][-10:]
+    candidate["manual_generated_video_handoff"] = payload
+    candidate["manual_handoff_pending"] = False
+    candidate["interruption_pending"] = False
+    candidate["last_interruption_at"] = payload["reported_at"]
+    candidate["last_interruption_source"] = payload["source"]
+    route = dict(task_route_decision(candidate))
+    route.update(
+        {
+            "manual_handoff_update": True,
+            "manual_handoff": payload,
+            "no_new_xyq_submit": True,
+            "monitor_only_no_resubmit": True,
+            "public_publish_allowed": False,
+            "public_publish_intent": False,
+            "external_action_allowed": False,
+            "reason": "manual XYQ/LazyEdit handoff recorded; automation should not repeat generation/download/publish",
+        }
+    )
+    candidate["route_decision"] = route
+    candidate["status"] = "done"
+    candidate["completed_at"] = payload["reported_at"]
+    candidate["result"] = manual_generated_video_handoff_result_payload(payload)
+    for field in (
+        "claimed_at",
+        "worker_id",
+        "next_poll_at",
+        "next_poststage_at",
+        "next_publish_poststage_at",
+        "reprocess_requested_at",
+        "reprocess_reason",
+        "generation_blocked_until_story_confirmed",
+        "story_confirmation_required",
+    ):
+        candidate.pop(field, None)
+
+
+def manual_generated_video_handoff_result_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "message": (
+            "Manual handoff noted: the owner reported the Xiaoyunque video output(s) were already downloaded "
+            "and handed to LazyEdit. No automatic generation, download, or publish action was run."
+        ),
+        "files": [],
+        "confirmation": "",
+        "manual_handoff": payload,
+    }
 
 
 def promote_story_target_for_generation_interruption(task: dict[str, Any], interruption: dict[str, Any]) -> bool:
@@ -4623,7 +4754,24 @@ def story_confirmation_gate_result(task: dict[str, Any]) -> str:
     )
 
 
+def deterministic_manual_generated_video_handoff_result(task: dict[str, Any]) -> str | None:
+    route = task_route_decision(task)
+    manual = route.get("manual_handoff") if isinstance(route.get("manual_handoff"), dict) else None
+    if not manual and isinstance(task.get("manual_generated_video_handoff"), dict):
+        manual = task["manual_generated_video_handoff"]
+    if not manual and bool(route.get("manual_handoff_update")):
+        manual = manual_generated_video_handoff_payload(task_focus_text(task))
+    if not manual:
+        return None
+    task["manual_generated_video_handoff"] = manual
+    task["status"] = "done"
+    return json.dumps(manual_generated_video_handoff_result_payload(manual), ensure_ascii=False)
+
+
 def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
+    manual_handoff = deterministic_manual_generated_video_handoff_result(task)
+    if manual_handoff is not None:
+        return manual_handoff
     existing_publish = deterministic_existing_video_publish_poststage_result(task)
     if existing_publish is not None:
         return existing_publish
@@ -6590,6 +6738,8 @@ Generated-video route contract:
 - If `task.route_decision.public_publish_allowed` is false, public posting and AutoPublish public queue submission are forbidden even if older chat history mentions them.
 - LazyEdit import/process is a separate stage: do it only when the current request explicitly says LazyEdit/import/process, and use no-public-publish mode unless public publishing is also explicitly allowed.
 - Same-chat interruptions are part of this route contract. If newer messages ask to update/rewrite/show/confirm the story, or say the current website generation was stopped/cancelled, revise the story and prompt from the full interruption context before any further video submit. Send the updated story to the group and ask whether to generate unless the latest messages clearly authorize generation.
+- If the user confirms the revised story after seeing it, update the Xiaoyunque prompt/continuation from that approved story and the latest same-chat context. Prefer continuing the same usable XYQ thread/session; only start a new paid run when the current request explicitly authorizes a new run and the existing thread cannot be used.
+- If a newer same-chat or operator note says the owner already downloaded one or more XYQ videos to Downloads and handed them to LazyEdit/publication, record that manual handoff as terminal state for this automation path. Do not reopen the XYQ page, redownload, resubmit, continue, import, or publish unless a later explicit request asks the automation to take over again.
 - Do not keep polling, download, publish, or report success for a stale Xiaoyunque run after a same-chat interruption says the story is wrong or the browser run was stopped.
 - Paid Xiaoyunque/Seedance actions are idempotent per logical WeChat request. If this task already has `generated_video_monitor.thread_url`, `generated_video_submit_probe`, `credit_guard`, `route_decision.no_new_xyq_submit`, or `monitor_only_no_resubmit`, do not submit/continue/retry a paid generation; monitor/download/send only.
 - For LALACHAN/Xiaoyunque, model selection must not block the task. Choose a relatively cheaper suitable model from the available page options and proceed. Prefer `Seedance 2.0 Mini 体验版` / `vipnew` when it shows `单秒限时低至4积分`; otherwise use the cheapest suitable `Seedance 2.0 Fast`, `Fast VIP`, or available Seedance row. Pause only for real non-model blockers such as no credits, recharge/payment approval, disabled submit, login, CAPTCHA, or an explicit user budget limit.
@@ -6640,6 +6790,8 @@ LALACHAN/RaraXia/AyaChan/SasaKun story-video generation:
 - Before any submit, verify visible page state as far as the UI allows: mode, selected model row, duration, ratio, prompt, upload success, and any visible point cost/VIP/vipnew state. Do not block only because the exact preferred model or exact cost text is unavailable. Never double-click submit or retry if the job is queued/running.
 - Before any submit or continuation, inspect the task for existing XYQ thread/credit evidence. If a thread already exists or the task is monitor-only, do not spend more credits. Ask for explicit "new paid rerun" permission if the user truly wants another generation.
 - If the active task has same-chat interruptions, read them all before writing or submitting. When interruptions revise the story, save a new story/prompt revision, send the story text back for confirmation, and wait unless the latest user message explicitly says to continue generating.
+- If the user confirms the shown story, turn that exact approved story plus all later same-chat constraints into the Xiaoyunque prompt or continuation message. Avoid generic "continue" prompts when the chat has supplied new story details.
+- If the user reports that they manually downloaded multiple XYQ outputs and gave them to LazyEdit, record the handoff and stop automation for that session. Do not duplicate downloads or LazyEdit publishing.
 - Monitor the thread, download the finished MP4, save/copy it under `/home/lachlan/ProjectsLFS/LALACHAN/Videos`, verify with `ffprobe`, apply the duration tolerance above, and return the story path, prompt path, MP4 path, and relevant screenshots/logs in `files` where safe. The outer worker will send the MP4 back to the source WeChat chat.
 - If the current request asks for LazyEdit import/process, hand the verified MP4 to LazyEdit with no public publish unless public publishing is also explicitly requested. If the user asks to publish in the current request, then hand the verified MP4 to LazyEdit with the publish workflow below. Otherwise stop after generation/download/send-back and report the ready video path.
 

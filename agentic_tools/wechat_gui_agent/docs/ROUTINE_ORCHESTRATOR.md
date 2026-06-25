@@ -123,8 +123,14 @@ Required behavior:
 - story/video interruptions are confirmation-gated: after a user asks to revise
   or show a story, the worker must send the updated story to the group and wait
   for clear same-chat generation approval before submitting or continuing
-  Xiaoyunque. A later explicit approval can continue the same routine and its
-  continuation prompt carries the latest same-chat story requirements forward;
+  Xiaoyunque. A later explicit approval can continue the same routine, and its
+  Xiaoyunque prompt or continuation message must carry the approved story plus
+  the latest same-chat story requirements forward;
+- manual Xiaoyunque/LazyEdit handoff notes are terminal state updates. If the
+  owner says one or more XYQ videos were already downloaded to `Downloads` and
+  handed to LazyEdit/publication, record the handoff, prevent new XYQ submit or
+  LazyEdit publish actions, and close the automation task unless a later
+  explicit request asks the system to take over again;
 - story approval is a state transition, not a new one-off command. Approving a
   `waiting_confirmation` LALACHAN story task with generation intent changes the
   same queue row from `story_script_generation` to `generated_video`, preserves

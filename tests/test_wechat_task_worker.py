@@ -69,6 +69,55 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertEqual(policy["reasoning_effort"], "medium")
 
+    def test_pending_manual_xyq_lazyedit_handoff_merges_and_closes_target(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            target = {
+                "id": "task-xyq",
+                "chat": "懒人科研",
+                "status": "generation_waiting",
+                "request": "Current coalesced request:\nGenerate the approved LALACHAN story video.",
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan", "public_publish_allowed": False},
+                "source": {"chat": "懒人科研", "config_id": "lazy.json", "message_table": "MSG", "server_id": "srv-201", "local_id": 201},
+                "routine": {"id": "generated_video"},
+                "next_poll_at": 999999,
+            }
+            incoming = {
+                "id": "task-202",
+                "chat": "懒人科研",
+                "status": "pending",
+                "request": (
+                    "Current coalesced request:\n"
+                    "There are two videos in the XYQ session. I already downloaded both to Downloads "
+                    "and handed them to LazyEdit for publishing, so do nothing."
+                ),
+                "route_decision": {
+                    "route_kind": "generate_video",
+                    "project": "lalachan",
+                    "manual_handoff_update": True,
+                    "public_publish_allowed": False,
+                },
+                "source": {"chat": "懒人科研", "config_id": "lazy.json", "message_table": "MSG", "server_id": "srv-202", "local_id": 202},
+                "routine": {"id": "generated_video"},
+            }
+            queue.write_text(
+                json.dumps(target, ensure_ascii=False) + "\n" + json.dumps(incoming, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+            merged = worker.merge_existing_pending_interruptions(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(merged, 1)
+        self.assertEqual(tasks[0]["status"], "done")
+        self.assertEqual(tasks[0]["manual_generated_video_handoff"]["reported_video_count"], 2)
+        self.assertTrue(tasks[0]["route_decision"]["manual_handoff_update"])
+        self.assertTrue(tasks[0]["route_decision"]["no_new_xyq_submit"])
+        self.assertNotIn("next_poll_at", tasks[0])
+        self.assertEqual(tasks[1]["status"], "canceled_superseded")
+        self.assertEqual(tasks[1]["superseded_reason"], "manual_generated_video_handoff_recorded")
+
     def test_research_route_blocks_video_publish_preflight_fallback(self) -> None:
         worker = load_worker()
         task = {

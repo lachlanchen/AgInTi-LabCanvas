@@ -103,6 +103,12 @@ publication.
      revision, or says the website generation was stopped/cancelled, do not
      treat the stale submitted run as success. Re-enter `story_and_prompt` and
      continue from the latest confirmed stage.
+   - If a newer same-chat/operator note says the owner already downloaded one
+     or more XYQ outputs, for example two videos in the same Xiaoyunque session,
+     to `Downloads` and handed them to LazyEdit/publication, record a
+     `manual_generated_video_handoff` and stop automation for that session. Do
+     not reopen XYQ, redownload, resubmit, continue, import, or publish unless a
+     later explicit request asks the automation to take over again.
    - Continuation: when a Xiaoyunque probe contains `请确认` plus
      `继续帮您生成视频`, use `xyq_continue_thread.py` to send the approval into the
      same `thread_id`. The helper uses the browser send button and, when
@@ -113,6 +119,9 @@ publication.
    - Continuation prompt source: if the active task has same-chat interruptions,
      the continuation prompt must include the latest group instructions. Do not
      send a generic “current storyboard is OK” message when the user has revised
+     the story. If the story was shown in the group and the latest user message
+     confirms it, the continuation/prompt must use that approved story plus any
+     later constraints.
      the story, stopped a run, or corrected the desired direction.
    - Duration check: if the current request asks for a duration such as 30s,
      accept the verified MP4 when `ffprobe` shows it is within 5 seconds of the
