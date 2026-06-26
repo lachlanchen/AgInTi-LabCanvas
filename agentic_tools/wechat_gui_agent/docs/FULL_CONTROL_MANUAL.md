@@ -137,6 +137,14 @@ PDF companion for every existing `.md` or `.markdown` attachment before sending
 files, for example `story.md` plus `story.pdf`. Disable only for debugging with
 `WECHAT_MARKDOWN_PDF_COMPANIONS=0`.
 
+File attachments use the official Linux file chooser with clipboard path paste
+(`Ctrl+L`, paste absolute path, `Enter`) so the chosen file remains reviewable.
+If WeChat locks during file selection, the worker releases the GUI send lock,
+runs `labcanvas wechat unlock-watchdog once --flush-deferred --json` through the
+connected Android phone, then retries the same file send. Tune this with
+`WECHAT_WORKER_FILE_SEND_UNLOCK_RETRIES`; disable only for debugging with
+`WECHAT_WORKER_FILE_SEND_AUTO_UNLOCK=0`.
+
 ## Private State Files
 
 All real account data stays ignored under `agentic_tools/wechat_gui_agent/.private/`.

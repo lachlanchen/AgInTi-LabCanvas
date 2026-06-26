@@ -3121,6 +3121,43 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertNotIn("sent_file_paths", task)
         self.assertIn("file_send_errors", task)
 
+    def test_file_bridge_unlocks_and_retries_when_wechat_locks(self) -> None:
+        worker = load_worker()
+        calls: list[list[str]] = []
+        unlocks: list[str] = []
+        original_run = worker.run_subprocess_group
+        original_unlock = worker.unlock_wechat_for_file_send
+        original_acquire = worker.acquire_gui_send_lock_or_raise
+        original_release = worker.release_gui_send_lock
+        original_delay = worker.os.environ.get("WECHAT_WORKER_FILE_SEND_UNLOCK_RETRY_DELAY")
+        try:
+            worker.os.environ["WECHAT_WORKER_FILE_SEND_UNLOCK_RETRY_DELAY"] = "0"
+
+            def fake_run(command: list[str], *, timeout: int, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                if len(calls) == 1:
+                    return subprocess.CompletedProcess(command, 1, "", "WECHAT_LOCKED: Weixin for Linux is locked")
+                return subprocess.CompletedProcess(command, 0, '{"status":"sent-file-submitted"}', "")
+
+            worker.run_subprocess_group = fake_run
+            worker.unlock_wechat_for_file_send = lambda: unlocks.append("unlock") or ""
+            worker.acquire_gui_send_lock_or_raise = lambda: object()
+            worker.release_gui_send_lock = lambda _lock: None
+
+            worker.run_file_bridge_subprocess(["python", "bridge.py"], timeout=3)
+        finally:
+            worker.run_subprocess_group = original_run
+            worker.unlock_wechat_for_file_send = original_unlock
+            worker.acquire_gui_send_lock_or_raise = original_acquire
+            worker.release_gui_send_lock = original_release
+            if original_delay is None:
+                worker.os.environ.pop("WECHAT_WORKER_FILE_SEND_UNLOCK_RETRY_DELAY", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_FILE_SEND_UNLOCK_RETRY_DELAY"] = original_delay
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(unlocks, ["unlock"])
+
     def test_mp4_sent_then_text_lock_stays_deferred(self) -> None:
         worker = load_worker()
         original_message = worker.send_message

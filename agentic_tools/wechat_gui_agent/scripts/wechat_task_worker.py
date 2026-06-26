@@ -8119,18 +8119,38 @@ def run_file_bridge_subprocess(command: list[str], timeout: int | None = None) -
                 os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"),
             )
         )
+    attempts = max(1, int(os.environ.get("WECHAT_WORKER_FILE_SEND_UNLOCK_RETRIES", "2")) + 1)
+    errors: list[str] = []
+    for attempt in range(1, attempts + 1):
+        proc = run_file_bridge_attempt(command, timeout=timeout)
+        if proc.returncode == 0:
+            return
+        message = file_bridge_failure_message(proc)
+        errors.append(f"attempt {attempt}: {message}")
+        if attempt < attempts and file_bridge_indicates_wechat_locked(proc) and os.environ.get("WECHAT_WORKER_FILE_SEND_AUTO_UNLOCK", "1") != "0":
+            unlock_error = unlock_wechat_for_file_send()
+            if unlock_error:
+                errors.append(f"unlock attempt {attempt}: {unlock_error}")
+            time.sleep(float(os.environ.get("WECHAT_WORKER_FILE_SEND_UNLOCK_RETRY_DELAY", "1.0")))
+            continue
+        break
+    raise RuntimeError("; ".join(errors[-4:]))
+
+
+def run_file_bridge_attempt(command: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
     lock = acquire_gui_send_lock_or_raise()
     try:
         try:
-            proc = run_subprocess_group(command, timeout=timeout, env=wechat_send_env())
+            return run_subprocess_group(command, timeout=timeout, env=wechat_send_env())
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
                 f"WECHAT_SEND_TIMEOUT: file bridge timed out after {exc.timeout} seconds; defer this worker reply."
             ) from exc
     finally:
         release_gui_send_lock(lock)
-    if proc.returncode == 0:
-        return
+
+
+def file_bridge_failure_message(proc: subprocess.CompletedProcess[str]) -> str:
     stdout = (proc.stdout or "").strip()
     stderr = (proc.stderr or "").strip()
     parts = [f"file bridge failed with exit {proc.returncode}"]
@@ -8138,7 +8158,36 @@ def run_file_bridge_subprocess(command: list[str], timeout: int | None = None) -
         parts.append(f"stdout={stdout[-1200:]}")
     if stderr:
         parts.append(f"stderr={stderr[-1200:]}")
-    raise RuntimeError("; ".join(parts))
+    return "; ".join(parts)
+
+
+def file_bridge_indicates_wechat_locked(proc: subprocess.CompletedProcess[str]) -> bool:
+    text = f"{proc.stdout or ''}\n{proc.stderr or ''}".lower()
+    return "wechat_locked" in text or "weixin for linux is locked" in text or "状态栏解锁" in text
+
+
+def unlock_wechat_for_file_send() -> str:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{ROOT / 'src'}:{env.get('PYTHONPATH', '')}"
+    timeout = int(os.environ.get("WECHAT_WORKER_FILE_SEND_UNLOCK_TIMEOUT_SECONDS", "60"))
+    command = [
+        sys.executable,
+        "-m",
+        "agenticapp",
+        "wechat",
+        "unlock-watchdog",
+        "once",
+        "--flush-deferred",
+        "--json",
+    ]
+    try:
+        proc = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired as exc:
+        return f"unlock watchdog timed out after {exc.timeout}s"
+    if proc.returncode == 0:
+        return ""
+    detail = (proc.stderr or proc.stdout or "").strip()
+    return detail[-1200:] or f"unlock watchdog failed with exit {proc.returncode}"
 
 
 def gui_send_lock_busy(lock_path: Path = GUI_SEND_LOCK) -> bool:

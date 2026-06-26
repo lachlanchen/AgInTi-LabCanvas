@@ -102,6 +102,11 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   ignore AutoPublish-cache files and other chats, then return the MP4 through
   the required artifact delivery gate.
 - GUI file delivery is a first-class state, not a best-effort afterthought.
+- File attachments should use the official Linux file chooser with clipboard
+  path paste (`Ctrl+L`, paste absolute path, `Enter`). If WeChat locks during
+  that file-picker flow, the worker releases the serialized send lock, runs the
+  Android-backed unlock watchdog, and retries the same file send within the
+  bounded `WECHAT_WORKER_FILE_SEND_UNLOCK_RETRIES` budget.
 - Fast chat replies and organizer acknowledgements must also be durable. If the
   GUI is locked, the serialized sender is busy, or the sender times out while a
   file/video is being delivered, enqueue them as `send_deferred_locked`
