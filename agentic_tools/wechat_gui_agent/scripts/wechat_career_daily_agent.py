@@ -179,7 +179,8 @@ def collect_evidence(chats: list[str], memory_db: Path) -> dict[str, str]:
 def build_prompt(evidence: dict[str, str]) -> str:
     return f"""You are the daily career, writing, and opportunity strategy agent for Lachlan.
 
-Goal: give one useful morning note for wealth, freedom, and happiness.
+Goal: give one deep, useful morning note for wealth, freedom, and happiness.
+The user prefers substance over format. Do not write a shallow checklist.
 
 Use the evidence below:
 - WeChat memory summary, especially writing/language/money and lachlanchan.
@@ -188,27 +189,29 @@ Use the evidence below:
 - Current public web/GitHub/company research only when needed. Verify current facts before recommending companies or stocks.
 
 Important:
+- Write the main report in Chinese. English terms are fine when they are the natural name of a concept/company/product.
+- Use the strongest evidence. If a point is not supported by the evidence, do not include it.
+- Do not pad. Do not produce generic self-help, generic startup advice, or generic investment themes.
+- Avoid a rigid mechanical template. Use natural memo-style headings only where they help the argument.
+- Give fewer, sharper ideas. Each recommendation should say why it fits this user specifically and what proof would validate it.
 - This is educational analysis, not financial advice. For investments, provide a watchlist/rationale/risk framework, not certainty.
 - Do not expose raw private chat logs. Summarize patterns and evidence.
 - Do not claim the user's fate is fixed. Discuss recurring strengths and likely compounding lanes.
 - Prefer concrete experiments and repeatable actions over broad life advice.
 
-Answer in Markdown with these sections:
-1. Today’s thesis
-2. What to write
-3. Talent/profile evidence
-4. Money and career opportunities
-5. Investment/watchlist notes, with risks
-6. The single primary bet
-7. 90-day execution plan
-8. Today’s 3 actions
-9. Today’s 3 self-discovery questions
+The report should answer, in a natural order:
+- What Lachlan seems to be trying to write or become.
+- What his visible talents are, based on concrete evidence.
+- Which opportunity or money-making lane is most realistic now.
+- What to ignore or stop doing because it dilutes the signal.
+- What one primary bet deserves today's energy.
+- What to do today.
 
-For section 9, write exactly three questions. They must be specific to the
-evidence from today's run, not generic journaling prompts. Each question should
-be answerable in 10-15 minutes, a little uncomfortable but kind, and capable of
+End with exactly three self-discovery questions. They must be specific to
+today's evidence, not generic journaling prompts. Each question should be
+answerable in 10-15 minutes, a little uncomfortable but kind, and capable of
 changing tomorrow's plan if answered honestly. Format them as `Q1: ...?`,
-`Q2: ...?`, and `Q3: ...?`, each followed by one short `Why it matters: ...`
+`Q2: ...?`, and `Q3: ...?`, each followed by one short `为什么重要：...`
 sentence.
 
 WeChat memory snapshot:

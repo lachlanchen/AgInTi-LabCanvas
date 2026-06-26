@@ -34,7 +34,7 @@ COMMON_RULES = (
     "Re-check the current request, route_decision, source chat, and source local_id before every external action.",
     "Use only same-chat source rows, explicit references, and source-scoped synced media.",
     "Save evidence and generated artifacts under the task artifact directory or other ignored output/private folders.",
-    "List every safe generated or fetched artifact in the worker JSON files array so the sender can attach it back to the source chat by default.",
+    "List files in the worker JSON files array only when the user asked for them, the routine requires delivery, or the file is a genuinely useful artifact to send back.",
     "Return blockers as stateful status or confirmation instead of silently completing partial work.",
     "Do not treat a file-picker click as artifact delivery; required files need a verified send, deferred state, or explicit blocker evidence.",
 )
@@ -79,13 +79,13 @@ ROUTINES: dict[str, RoutineDefinition] = {
             },
         ),
         artifact_policy=(
-            "Return a concise chat summary plus safe Markdown/PDF reports when useful. "
-            "Generate Markdown and, when practical, a PDF for papers, GitHub repos, technical articles, "
-            "mp.weixin/Gongzhonghao articles, and useful Shipinhao/Finder summaries; list those files in the worker JSON files array."
+            "Return a concise chat summary by default. Save Markdown/evidence locally under the task artifact directory, "
+            "but do not attach Markdown/PDF/images to WeChat unless the user asks for a file/report or the source was substantially read and the PDF is genuinely useful."
         ),
         rules=COMMON_RULES
         + (
             "For link/read-later inbox tasks, treat shared URLs/cards/media as source material to read and summarize by default.",
+            "Quality over quantity: if you only saw a card title, metadata, a verification page, or a blocked preview, say that briefly and do not produce a report artifact.",
             "For mp.weixin/Gongzhonghao links, direct verification pages are not final; use visible browser-assist with reuse-window/readable polling or a WeChat-native/manual-assisted capture before declaring a blocker.",
             "For Shipinhao/Finder shares, inspect accessible metadata, cached media, comments, Yuanbao/transcript/summary comments, and public mirrors, but do not post comments unless explicitly requested.",
             "For inaccessible sources, state exactly what was accessible and avoid pretending the source was fully read.",
@@ -122,8 +122,8 @@ ROUTINES: dict[str, RoutineDefinition] = {
             },
         ),
         artifact_policy=(
-            "Return a concise strategic answer in chat. For deeper asks or the daily agent, also save and attach "
-            "a dated Markdown/PDF-style report with opportunities, evidence, experiments, and next actions."
+            "Return a concise, substantial strategic answer in chat. The daily self-analysis agent is the normal path for attached zh/en PDFs; "
+            "ordinary career replies should avoid report attachments unless explicitly requested."
         ),
         rules=COMMON_RULES
         + (
@@ -195,7 +195,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
                 "success": "story text and safe saved Markdown/source files are returned to the source chat",
             },
         ),
-        artifact_policy="Return the story/script text in the message and attach saved Markdown/source files by default when safe.",
+        artifact_policy="Return the story/script text in the message. Save Markdown/source files locally; attach them only when requested or useful for a follow-up workflow.",
         rules=COMMON_RULES
         + (
             "Do not substitute image generation for a story/script request.",

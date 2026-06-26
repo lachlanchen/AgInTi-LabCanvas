@@ -55,9 +55,10 @@ class WeChatCareerDailyAgentTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("Today’s 3 self-discovery questions", prompt)
-        self.assertIn("exactly three questions", prompt)
-        self.assertIn("specific to the", prompt)
+        self.assertIn("deep, useful morning note", prompt)
+        self.assertIn("Do not write a shallow checklist", prompt)
+        self.assertIn("exactly three self-discovery questions", prompt)
+        self.assertIn("specific to", prompt)
         self.assertIn("Q1:", prompt)
 
     def test_extract_self_discovery_questions_for_chat_message(self):

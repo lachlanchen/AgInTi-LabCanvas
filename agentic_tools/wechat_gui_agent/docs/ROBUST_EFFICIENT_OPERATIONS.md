@@ -102,11 +102,19 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   ignore AutoPublish-cache files and other chats, then return the MP4 through
   the required artifact delivery gate.
 - GUI file delivery is a first-class state, not a best-effort afterthought.
-- Markdown artifacts should be sent with bilingual PDF companions by default:
-  `*.zh.pdf` and `*.en.pdf`. Reuse sibling translated Markdown when available;
-  otherwise the worker may call the agent backend to translate the missing
-  language before pandoc/XeLaTeX rendering. This is controlled by
-  `WECHAT_MARKDOWN_PDF_LANGUAGES`.
+- Ordinary link/read-later research should send a concise chat answer by
+  default, not Markdown/PDF/image attachments. Save local notes under the task
+  artifact directory. Attach reports or images only when the current request
+  asks for them, or when the worker truly read substantial content and marks the
+  report as worth sending. The daily self-analysis agent is the normal
+  bilingual zh/en PDF path.
+- Chat behavior by purpose:
+  `鏈接` reads shared links/cards/videos/files and replies with a short useful
+  summary or a clear limitation; `🍓我的设备`, `懒人科研`, and `lachlanchan` can run
+  the full tool surface when asked, including media reading, CAD/PCB, video
+  generation, LazyEdit, and publishing; `写作 外语 挣钱` should give high-quality
+  writing/career/money thoughts from the shared material; `EchoMind` stays
+  focused on language teaching unless an explicit backend task is requested.
 - File attachments should use the official Linux file chooser with clipboard
   path paste (`Ctrl+L`, paste absolute path, `Enter`). If WeChat locks during
   that file-picker flow, the worker releases the serialized send lock, runs the

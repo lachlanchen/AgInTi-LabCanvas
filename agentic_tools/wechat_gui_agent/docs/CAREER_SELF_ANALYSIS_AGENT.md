@@ -96,9 +96,11 @@ Raw private chats are not posted back to WeChat. The worker summarizes patterns
 and keeps detailed evidence in private trace artifacts.
 
 Default model policy: use `gpt-5.5` with `xhigh` reasoning for daily self
-analysis. This report is meant to be high-quality reflection, not a cheap fast
-ack. Only override `WECHAT_CAREER_AGENT_EFFORT` for explicit debugging or
-emergency latency reasons.
+analysis. This report is meant to be a deep Chinese memo with enough evidence
+to matter, not a cheap fast ack or a rigid template. It should avoid generic
+self-help, generic startup advice, and unsupported investment themes. Only
+override `WECHAT_CAREER_AGENT_EFFORT` for explicit debugging or emergency
+latency reasons.
 
 ## Trace Bundle
 
@@ -137,24 +139,23 @@ ignored by git.
 
 ## Agent Method
 
-The prompt asks for nine sections:
+The prompt asks for a natural, substantial memo rather than a fixed section
+template. It should still answer:
 
-1. Today's thesis
-2. What to write
-3. Talent/profile evidence
-4. Money and career opportunities
-5. Investment/watchlist notes, with risks
-6. The single primary bet
-7. 90-day execution plan
-8. Today's 3 actions
-9. Today's 3 self-discovery questions
+- what Lachlan seems to be trying to write or become;
+- what his visible talents are, grounded in concrete evidence;
+- which opportunity or money-making lane is most realistic now;
+- what to ignore because it dilutes the signal;
+- what one primary bet deserves today's energy;
+- what to do today.
 
 The self-discovery section must contain exactly three questions, formatted as
-`Q1`, `Q2`, and `Q3`. They should be specific to the day's evidence, answerable
-in 10-15 minutes, gently uncomfortable, and useful enough that an honest answer
-could change tomorrow's plan. The sender extracts these questions into the
-WeChat text message before attaching the share report, so they remain visible
-even if file delivery is delayed.
+`Q1`, `Q2`, and `Q3`, each with a short `为什么重要：...` sentence. They should be
+specific to the day's evidence, answerable in 10-15 minutes, gently
+uncomfortable, and useful enough that an honest answer could change tomorrow's
+plan. The sender extracts these questions into the WeChat text message before
+attaching the share report, so they remain visible even if file delivery is
+delayed.
 
 The agent should:
 

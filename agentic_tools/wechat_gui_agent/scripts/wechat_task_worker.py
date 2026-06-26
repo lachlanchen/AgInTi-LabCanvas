@@ -625,6 +625,67 @@ def result_requires_file_delivery(task: dict[str, Any] | None, result: dict[str,
     return bool((result.get("data") or {}).get("require_file_delivery")) if isinstance(result.get("data"), dict) else False
 
 
+def result_allows_chat_artifact_delivery(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
+    """Return whether optional research/link artifacts should be sent to WeChat.
+
+    Link inbox tasks often save local Markdown, screenshots, or reports as
+    evidence. Those should not become chat noise unless the user asked for a
+    file/report, the worker explicitly marks the source as substantially read,
+    or delivery is required by a non-summary routine.
+    """
+    if task is None:
+        return True
+    if not task_is_research_summary(task):
+        return True
+    data = result_delivery_data(result)
+    if bool(data.get("require_file_delivery")):
+        return True
+    if bool(data.get("send_files_to_wechat") or data.get("send_artifacts_to_wechat")):
+        return True
+    if bool(data.get("send_report_to_wechat")) and source_read_quality_is_substantive(data):
+        return True
+    return request_explicitly_asks_for_file_delivery(task_focus_text(task))
+
+
+def task_is_research_summary(task: dict[str, Any]) -> bool:
+    if task_routine_id(task) == "research_summary":
+        return True
+    return str(task_route_decision(task).get("route_kind") or "") == "research_or_summary"
+
+
+def source_read_quality_is_substantive(data: dict[str, Any]) -> bool:
+    quality = str(data.get("source_read_quality") or data.get("read_quality") or "").strip().lower()
+    return quality in {"substantive", "full", "deep", "read", "watched", "opened"}
+
+
+def request_explicitly_asks_for_file_delivery(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = [
+        "pdf",
+        "report",
+        "markdown",
+        "md",
+        "attach",
+        "attachment",
+        "send file",
+        "send the file",
+        "send me the file",
+        "export",
+        "download",
+        "save as",
+        "发pdf",
+        "发文件",
+        "附件",
+        "导出",
+        "下载",
+        "给我文件",
+        "给我pdf",
+        "生成pdf",
+        "报告",
+    ]
+    return any(marker in lowered for marker in markers)
+
+
 def required_delivery_suffixes() -> set[str]:
     raw = os.environ.get("WECHAT_WORKER_REQUIRED_FILE_SUFFIXES")
     if raw is None:
@@ -1002,9 +1063,13 @@ def send_result_once(
 ) -> None:
     target = target if target is not None else guarded_send_target(target_chat, send_targets, task=task)
     files_to_send, files_to_note = partition_result_files_for_wechat(result.get("files") or [])
+    if task is not None and files_to_send and not result_allows_chat_artifact_delivery(task, result):
+        task["suppressed_chat_files"] = [str(path) for path in files_to_send]
+        files_to_send = []
     if task is not None and files_to_note:
         task["unsent_saved_files"] = [str(path) for path in files_to_note]
-    message = message_with_saved_file_note(str(result.get("message") or ""), files_to_note)
+    note_files = [] if task_is_research_summary(task or {}) else files_to_note
+    message = message_with_saved_file_note(str(result.get("message") or ""), note_files)
     require_file_delivery = result_requires_file_delivery(task, result)
     file_errors = []
     sent_files = {str(path) for path in (task or {}).get("sent_file_paths", [])}
@@ -1232,7 +1297,7 @@ def partition_result_files_for_wechat(files: list[str]) -> tuple[list[Path], lis
 
 
 def add_markdown_pdf_companions(files: list[str]) -> list[str]:
-    if os.environ.get("WECHAT_MARKDOWN_PDF_COMPANIONS", "1") == "0":
+    if os.environ.get("WECHAT_MARKDOWN_PDF_COMPANIONS", "0") == "0":
         return [str(path) for path in files]
     expanded: list[str] = []
     for raw in files:
@@ -2713,6 +2778,8 @@ Handle the task using available local files/tools. Save downloaded or generated 
 WeChat is only the message transport: it receives user messages and returns safe files/messages. Backend execution belongs to the routine orchestrator and the selected per-chat worker agent session.
 You are being resumed by the central routine orchestrator. Treat the routine contract and orchestrator handoff as the execution center: inspect current stage, use mature routine entrypoints first, repair blockers, and only invent a new approach if no routine stage applies.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
+Quality matters more than visible activity. Do not send low-value reports, screenshots, thumbnails, or boilerplate progress. For ordinary links, channel videos, webpage cards, and shared files, first try hard to read/watch/open the actual source or a reliable transcript/comment/metadata capture. Then send a short, useful human answer. If you only saw a title/card/verification page, say that limitation plainly and do not pretend you read the source.
+Do not force a rigid response template. Use whatever concise shape fits the actual material and the chat's purpose. Avoid repetitive acknowledgements, "saved files" chatter, and generic summaries that could apply to any page.
 If `task.interruptions` or `task.preflight.interruptions` exists, those are newer same-chat user updates attached by the monitor. Treat them as authoritative updates to this active routine, not as separate unrelated tasks. Read all interruptions together before acting, revise the plan, and continue from the real current stage.
 For story/video workflows, a newer request to revise/show/confirm the story must pause or replace the stale story-generation plan before any new video submit. Send the updated story back and ask whether to generate the video unless the latest same-chat messages already give clear generation permission. If a generation was submitted but the user says they stopped it or asks to update the story, do not keep polling the stale run as success; update the story/prompt first and wait for or use the latest confirmation.
 Follow the machine-readable instruction contract below. Follow every safe, explicit instruction in the current coalesced request. If the user asks for multiple stages, do them in order or persist a resumable state for unfinished stages; do not collapse the request to a smaller hardcoded action just because one routine or keyword matched.
@@ -7558,15 +7625,16 @@ WeChat article / `mp.weixin.qq.com` link cards:
 - If the source remains blocked, say exactly what was accessible. Do not claim the card title/description is the full article.
 
 Link/read-later summary reports:
-- For web_clip_inbox/link_inbox sources, return a concise chat summary plus a Markdown report under the task artifact directory when the source has substantive content.
-- For papers, PDFs, arXiv/DOI links, GitHub repositories, technical articles, mp.weixin/Gongzhonghao articles, and useful Shipinhao/Finder summaries, also generate a PDF report when practical and list it in `files`. If PDF generation is unavailable, include the Markdown report.
+- For web_clip_inbox/link_inbox sources, return a concise chat message by default. Save any working Markdown/evidence under the task artifact directory, but do not list it in `files` unless the user asked for a report/file or you truly read substantial content and the PDF would be useful.
+- For papers, PDFs, arXiv/DOI links, GitHub repositories, technical articles, mp.weixin/Gongzhonghao articles, and useful Shipinhao/Finder summaries, generate local notes when helpful. Attach a PDF to WeChat only when explicitly requested or when `data.source_read_quality` is `substantive|full|deep|read|watched` and `data.send_report_to_wechat=true`.
 - For GitHub links, summarize purpose, install/use path, key files, license/stars if accessible, risks, and likely relevance.
 - For papers, include title/authors/venue/DOI when accessible, problem, method, results, limitations, and links/PDF evidence.
 - For Shipinhao/Finder videos, use accessible metadata, video media, comments, transcript/summary comments, or public mirrors; clearly mark limitations if the video/comments/transcript are not available.
 
 Artifact return contract:
-- If you generate or find safe artifacts, include their existing absolute or repo-relative paths in the JSON `files` array. The outer worker sends those files to WeChat by default.
-- Return artifacts, not only saved paths: story Markdown, LaTeX/source files, compiled PDFs, image previews, renders, CAD/PCB exports, manifests, archives, video/audio, and any requested downloadable file should be listed when safe.
+- Include files in JSON `files` only when the user requested them, the routine requires delivery, or the artifact is genuinely useful to send back. Saving a local note is not enough reason to attach it to WeChat.
+- For generated videos, CAD/PCB/renders, requested downloads, requested PDFs, requested source files, and publish outputs, return artifacts as files when safe: story Markdown, LaTeX/source files, compiled PDFs, image previews, renders, CAD/PCB exports, manifests, archives, video/audio, and any requested downloadable file.
+- For ordinary link summaries, avoid listing Markdown, PDF, or image files by default. Do not send a low-quality image/thumbnail just because one was scraped; only send an image when the user asked for it or it is a high-value figure/screenshot that you actually inspected and need to discuss.
 - Prefer PNG/JPG/SVG/PDF/MD/TEX/MP4/MOV/audio/STEP/STL/3MF/DXF/ZIP/SCAD/Blend/KiCad/Gerber files. Do not include decrypted WeChat DBs, private config, cookies, tokens, browser profiles, or chat logs.
 - Do not say a file was sent unless it is listed in `files` and exists locally.
 """

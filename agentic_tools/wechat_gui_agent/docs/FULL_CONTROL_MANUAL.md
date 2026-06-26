@@ -131,14 +131,21 @@ target, so a worker send that appears mid-cycle stops further dry-open actions.
 
 ## Artifact Delivery Defaults
 
-Workers send safe Markdown artifacts directly, but mobile WeChat is poor at
-opening `.md` files. By default, `wechat_task_worker.py` generates Chinese and
-English PDF companions for every existing `.md` or `.markdown` attachment before
-sending files, for example `story.md`, `story.zh.pdf`, and `story.en.pdf`. It
-reuses sibling translated Markdown such as `story.en.md` when present, otherwise
-uses the agent backend to create the missing language before rendering with
-pandoc/XeLaTeX. Tune languages with `WECHAT_MARKDOWN_PDF_LANGUAGES=zh,en`.
-Disable only for debugging with `WECHAT_MARKDOWN_PDF_COMPANIONS=0`.
+Workers should not turn every saved note into a WeChat attachment. Ordinary
+link/read-later tasks save Markdown/evidence locally and send only a concise
+useful chat answer unless the user asked for a file/report or the worker
+explicitly marks a substantively read source as worth attaching. The daily
+career/self-analysis agent is the special case that attaches Chinese and English
+PDF companions, for example `YYYY-MM-DD-career-strategy.zh.pdf` and
+`YYYY-MM-DD-career-strategy.en.pdf`. General worker Markdown-to-PDF companions
+are opt-in with `WECHAT_MARKDOWN_PDF_COMPANIONS=1`.
+
+For source-reading chats, the preferred WeChat output is a short, grounded
+message. `鏈接` should try to read links/channel videos/articles and state the
+real accessible evidence. `写作 外语 挣钱` should turn shared material into
+high-quality writing/career/money ideas. `🍓我的设备`, `懒人科研`, and
+`lachlanchan` may run the full LabCanvas/LazyEdit/video/CAD/PCB tool surface
+when explicitly requested. `EchoMind` remains language teaching first.
 
 File attachments use the official Linux file chooser with clipboard path paste
 (`Ctrl+L`, paste absolute path, `Enter`) so the chosen file remains reviewable.
@@ -561,7 +568,7 @@ Then inspect fresh logs under `output/wechat_gui_agent/YYYY-MM-DD/`.
 | WeChat is locked, at entry, or sender is busy | Do not bypass the lock or run parallel clickers. `WECHAT_LOCKED`, `WECHAT_ENTRY_REQUIRED`, `WECHAT_SEND_BUSY`, `WECHAT_SEND_TIMEOUT`, and blank title-guard OCR become `send_deferred_locked` with `send_deferred_reason`, then the watchdog/worker flusher retries after unlock, Enter Weixin, or the active send finishes. GUI subprocess timeouts kill the whole process group so clipboard/helper children cannot hold the lane. |
 | Composer stays empty | Check for stale clipboard owners and sender screenshots. The GUI sender uses a bounded `xclip -selection clipboard -loops 1` owner plus `xdotool --clearmodifiers ctrl+v`; if paste fails, inspect `*-composed.png` before increasing retries. |
 | Multi-file artifact send times out | Keep the worker and GUI sender alarms aligned. The worker sets `WECHAT_GUI_SEND_MAX_SECONDS` from `WECHAT_WORKER_SEND_TIMEOUT_SECONDS`; raise `WECHAT_WORKER_GUI_SEND_MAX_SECONDS` only for slow remote desktops or large attachments. |
-| Text/source artifact send fails | Safe `.md`/`.txt`/`.json`/`.csv`/`.tex`/CAD/PCB artifacts are attachments by default. Fix the sender/title guard and let the deferred outbox retry; use `WECHAT_WORKER_SEND_FILES=0` only for a diagnostic path-only run. |
+| Text/source artifact send fails | Required CAD/PCB/media/download artifacts still use the deferred sender. Ordinary `.md`/report notes from link summaries should stay local unless explicitly requested or marked high-value by the worker. Use `WECHAT_WORKER_SEND_FILES=0` only for a diagnostic path-only run. |
 | Task replies to wrong chat | Treat as a bug; check route contract, send target, state path, and title guard logs. |
 | File missing | Run same-chat media sync and verify exact local/server ids before retrying. |
 | Worker hangs | Check queue status, worker log, and Codex session registry; stale claims are reclaimable. |

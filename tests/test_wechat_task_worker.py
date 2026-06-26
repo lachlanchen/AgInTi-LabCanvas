@@ -367,8 +367,9 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1", str(calls[0]["prompt"]))
         self.assertIn("waiting_confirmation", str(calls[0]["prompt"]))
         self.assertIn("Link/read-later summary reports", str(calls[0]["prompt"]))
-        self.assertIn("Markdown report", str(calls[0]["prompt"]))
-        self.assertIn("PDF report", str(calls[0]["prompt"]))
+        self.assertIn("return a concise chat message by default", str(calls[0]["prompt"]))
+        self.assertIn("Attach a PDF to WeChat only when explicitly requested", str(calls[0]["prompt"]))
+        self.assertIn("Do not send a low-quality image/thumbnail", str(calls[0]["prompt"]))
         self.assertIn("lazyedit-publish-workflow/SKILL.md", str(calls[0]["prompt"]))
         self.assertIn("scripts/lazyedit_publish.py", str(calls[0]["prompt"]))
         self.assertIn("--correction-prompt-file", str(calls[0]["prompt"]))
@@ -5010,7 +5011,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(payload["repaired_count"], 0)
         self.assertEqual(tasks[0]["status"], "done")
 
-    def test_send_result_attaches_markdown_and_pdf_companion_by_default(self) -> None:
+    def test_send_result_does_not_attach_markdown_pdf_companion_by_default(self) -> None:
         worker = load_worker()
         messages: list[str] = []
         files: list[Path] = []
@@ -5057,9 +5058,48 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             worker.ensure_markdown_language_source = original_language_source
             worker.render_markdown_pdf = original_render
 
-        self.assertEqual(files, [story, story.with_name("story.zh.pdf"), story.with_name("story.en.pdf"), preview])
+        self.assertEqual(files, [story, preview])
         self.assertNotIn("unsent_saved_files", task)
         self.assertEqual(messages, ["done"])
+
+    def test_research_summary_suppresses_optional_report_artifacts(self) -> None:
+        worker = load_worker()
+        messages: list[str] = []
+        files: list[Path] = []
+        original_message = worker.send_message
+        original_file = worker.send_file
+        try:
+            worker.send_message = lambda message, *_args, **_kwargs: messages.append(message)
+            worker.send_file = lambda file_path, *_args, **_kwargs: files.append(Path(file_path))
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                report = root / "summary.md"
+                preview = root / "thumbnail.png"
+                report.write_text("# Notes\n", encoding="utf-8")
+                preview.write_bytes(b"png")
+                task: dict[str, object] = {
+                    "routine": {"id": "research_summary"},
+                    "route_decision": {"route_kind": "research_or_summary"},
+                    "request": "Current coalesced request:\nread this link",
+                }
+                worker.send_result_once(
+                    {
+                        "message": "I could only read the page metadata; the article body was blocked.",
+                        "confirmation": "",
+                        "files": [str(report), str(preview)],
+                    },
+                    "鏈接",
+                    Path("/tmp/no-targets.json"),
+                    target={"name": "鏈接", "query": "鏈接", "expected_title": "鏈接"},
+                    task=task,
+                )
+        finally:
+            worker.send_message = original_message
+            worker.send_file = original_file
+
+        self.assertEqual(files, [])
+        self.assertEqual(messages, ["I could only read the page metadata; the article body was blocked."])
+        self.assertEqual(len(task["suppressed_chat_files"]), 2)
 
     def test_required_delivery_includes_source_and_cad_artifacts(self) -> None:
         worker = load_worker()
