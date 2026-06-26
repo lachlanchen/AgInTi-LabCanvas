@@ -23,11 +23,25 @@ else
   exit 1
 fi
 
-"${CHROME}" \
-  --remote-debugging-port="${PORT}" \
-  --user-data-dir="${PROFILE}" \
-  --no-first-run \
-  --new-window "${URL}" >/tmp/jlcpcb-order-chrome.log 2>&1 &
+if command -v setsid >/dev/null 2>&1; then
+  setsid "${CHROME}" \
+    --remote-debugging-port="${PORT}" \
+    --user-data-dir="${PROFILE}" \
+    --no-first-run \
+    --new-window "${URL}" >/tmp/jlcpcb-order-chrome.log 2>&1 < /dev/null &
+else
+  nohup "${CHROME}" \
+    --remote-debugging-port="${PORT}" \
+    --user-data-dir="${PROFILE}" \
+    --no-first-run \
+    --new-window "${URL}" >/tmp/jlcpcb-order-chrome.log 2>&1 < /dev/null &
+fi
+
+sleep 1
+if ! curl -fsS "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>&1; then
+  echo "Chrome launch did not expose CDP on port ${PORT}; see /tmp/jlcpcb-order-chrome.log" >&2
+  exit 1
+fi
 
 echo "Launched ${CHROME} with CDP port ${PORT}"
 echo "Profile: ${PROFILE}"

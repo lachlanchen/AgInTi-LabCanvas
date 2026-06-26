@@ -45,18 +45,19 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 
 ## Code Methods To Reuse
 
-- `connect_page()`: attaches to existing Chrome over CDP and prefers `pcbPlaceOrder`, then `pcbPlaceSuccess`.
+- `connect_page()`: attaches to existing Chrome over CDP, scores duplicate JLC tabs, prefers a visible clean order-check drawer for form work, and can prefer `pcbPlaceSuccess` for post-submit logging.
 - `click_button()` / `click_first_button_text()`: click visible buttons by exact text.
 - `click_option_near_label()`: safest way to choose a field option; it finds an exact label and clicks the matching option on the same row.
 - `select_standard_compensation()`: selects `按标准合同常规处理` and handles the comparison modal.
 - `select_courier()`: selects configured courier text, default `顺丰电商标快`.
 - `selected_order_check_text()`: reads only the visible order-check drawer instead of the whole page.
 - `visible_price_text()`: reads the right price panel for fee blockers.
-- `assert_clean_for_submit()`: blocks submit on missing fields, payment/recharge blockers, OSP incompatibility, or paid quality fee.
+- `assert_clean_for_submit()`: requires an open order-check drawer and blocks submit on missing fields, payment/recharge blockers, OSP incompatibility, or paid quality fee.
 - `fill_settings()`: fills board defaults and uses row-label selection for SMT/stencil.
 - `fill_address()`: fills private address/contact and then selects courier.
 - `global_submit_current_cart()`: global checkout path through `Review Before Payment`.
 - `handle_customer_code_modal()`: handles the `加客编` modal by selecting `每个单片内增加` and confirming after the free customer-code mark is selected.
+- `handle_smt_required_modal()`: handles the JLC `请选择本单是否需要SMT贴片` modal by confirming `确定，不需要SMT`, then reruns order check.
 
 ## Problems And Fixes
 
@@ -74,6 +75,10 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 | Page retains old material/layer state | Drawer shows wrong material or layer count | Set `板材类别`, `板子层数`, and `出货方式` by row label every run. |
 | JLC customer-code mark remains missing | Drawer shows `板上加标志 去填写` | Select `标志增加方式 -> 每个单片内增加`, choose `加嘉立创客编（免费）`, then confirm the `加客编` modal. |
 | Existing default address opens as modal | Address iframe blocks earlier fields on rerun | Reuse the selected address from the main order page when address/contact text is already present. |
+| Legacy upload already exists | User wants the old row submitted and no new upload | Use the row-specific `立即下单` for the matching Gerber stem or an existing `pcbFileId`; do not run upload again unless the row is absent or invalid. |
+| SMT confirmation modal blocks order check | `检查订单` opens `请选择本单是否需要SMT贴片` instead of the drawer | Click `确定，不需要SMT`, then click `检查订单` again. |
+| Confirmation/shipping still show `去填写` | Drawer reports `确认订单方式 去填写` or `发货方式 去填写` even after generic clicks | Select by row label: `确认订单方式 -> 手动确认订单`, `发货方式 -> 不同交期订单不一起发货`. |
+| Duplicate JLC tabs cause false guards | Submit helper reads a stale form or the whole page body and sees wrong material names | Prefer the tab with a visible clean order-check drawer; after success, prefer `pcbPlaceSuccess` for record/log commands. |
 
 ## China DOM Elements
 
@@ -90,6 +95,7 @@ Stable page markers:
 - Success page: URL contains `pcbPlaceSuccess`.
 - Upload input: first `input[type=file]`.
 - Uploaded file action: `立即下单`.
+- Existing uploaded row: match the Gerber ZIP stem and click that row's `立即下单`; this is safer than uploading a duplicate file.
 - Order check drawer: `.selectedParamsCompCheck` or visible `.el-drawer`.
 - Price panel: `#rightcontent` or `.rightcontentBox`.
 
@@ -112,6 +118,7 @@ Important labels/buttons:
 - Courier: `顺丰电商标快`.
 - Check: `检查订单`.
 - Submit from clean drawer: `确认并提交`.
+- SMT modal after check: `请选择本单是否需要SMT贴片` -> `确定，不需要SMT`, then rerun `检查订单`.
 
 ## Submit Gate
 
@@ -131,6 +138,10 @@ The selected drawer should contain:
 - `快递方式 顺丰电商标快`
 
 The price panel must not contain `品质赔付费`. After success, record the page and stop before payment.
+
+Do not submit from the plain form body. The submit guard should read the visible
+order-check drawer only. If the drawer is closed or another JLC tab is active,
+reopen `检查订单` on the correct row and verify the drawer again.
 
 ## Desktop Assistant Path
 

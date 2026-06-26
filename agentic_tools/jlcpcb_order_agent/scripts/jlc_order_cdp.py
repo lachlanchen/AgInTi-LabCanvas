@@ -57,7 +57,50 @@ def port_from_config(config: dict[str, Any]) -> int:
     return int(config.get("browser_debug_port") or os.environ.get("JLCPCB_CDP_PORT") or 49237)
 
 
-def connect_page(config: dict[str, Any], prefer_order: bool = True) -> Page:
+def page_score(page: Page, config: dict[str, Any], prefer_success: bool = False) -> int:
+    score = 0
+    if "pcbPlaceSuccess" in page.url:
+        score += 10000 if prefer_success else 500
+    if "pcbPlaceOrder" in page.url:
+        score += 1000
+    stem = ""
+    zip_path = resolve_path(config.get("gerber_zip"))
+    if zip_path:
+        stem = zip_path.stem
+    try:
+        data = page.evaluate(
+            """(stem) => {
+                const visible = (el) => {
+                    const r = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+                const drawer = [...document.querySelectorAll('.selectedParamsCompCheck,.el-drawer,.el-drawer__wrapper')]
+                    .filter((el) => visible(el) && text(el).includes('订单检查'))
+                    .map((el) => text(el))
+                    .sort((a, b) => b.length - a.length)[0] || '';
+                const body = text(document.body);
+                return {
+                    hasStem: !!stem && body.includes(stem),
+                    hasDrawer: !!drawer,
+                    cleanDrawer: !!drawer && !drawer.includes('未填写') && drawer.includes('确认并提交'),
+                };
+            }""",
+            stem,
+        )
+    except Exception:
+        return score
+    if data.get("hasStem"):
+        score += 100
+    if data.get("hasDrawer"):
+        score += 2000
+    if data.get("cleanDrawer"):
+        score += 2000
+    return score
+
+
+def connect_page(config: dict[str, Any], prefer_order: bool = True, prefer_success: bool = False) -> Page:
     global _PLAYWRIGHT, _BROWSER
     port = port_from_config(config)
     if _PLAYWRIGHT is None:
@@ -68,14 +111,11 @@ def connect_page(config: dict[str, Any], prefer_order: bool = True) -> Page:
     context = browser.contexts[0]
     pages = list(context.pages)
     if prefer_order:
-        for page in pages:
-            if "pcbPlaceOrder" in page.url:
-                page.bring_to_front()
-                return page
-        for page in pages:
-            if "pcbPlaceSuccess" in page.url:
-                page.bring_to_front()
-                return page
+        order_pages = [page for page in pages if "pcbPlaceOrder" in page.url or "pcbPlaceSuccess" in page.url]
+        if order_pages:
+            page = max(order_pages, key=lambda item: page_score(item, config, prefer_success=prefer_success))
+            page.bring_to_front()
+            return page
     for page in pages:
         if "jlc.com/newOrder" in page.url:
             page.bring_to_front()
@@ -381,9 +421,11 @@ def selected_order_check_text(page: Page) -> str:
                 return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
             };
             const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
-            const drawer = [...document.querySelectorAll('.selectedParamsCompCheck,.el-drawer')]
-                .find((el) => visible(el) && text(el).includes('参数检查'));
-            return drawer ? text(drawer) : '';
+            const drawers = [...document.querySelectorAll('.selectedParamsCompCheck,.el-drawer,.el-drawer__wrapper')]
+                .filter((el) => visible(el) && text(el).includes('订单检查'))
+                .map((el) => text(el))
+                .sort((a, b) => b.length - a.length);
+            return drawers[0] || '';
         }"""
     )
 
@@ -399,7 +441,9 @@ def visible_price_text(page: Page) -> str:
 
 def assert_clean_for_submit(page: Page, order: dict[str, Any]) -> None:
     text = page.locator("body").inner_text(timeout=10000)
-    check_text = selected_order_check_text(page) or " ".join(text.split())
+    check_text = selected_order_check_text(page)
+    if not check_text:
+        raise SystemExit("submit blocked: order-check drawer is not open; run check-order before submit")
     blockers = ["去填写", "系统未检测到", "充值", "余额不足", "检测到您的订单还有"]
     if any(blocker in check_text for blocker in blockers):
         raise SystemExit("submit blocked: order check still shows missing fields or payment/wallet blocker")
@@ -589,6 +633,33 @@ def close_order_check_drawer(page: Page) -> None:
     if closed:
         page.wait_for_timeout(1000)
         print(f"closed order-check drawer(s): {closed}")
+
+
+def handle_smt_required_modal(page: Page) -> bool:
+    clicked = page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const dialog = [...document.querySelectorAll('.el-dialog,.el-message-box')]
+                .find((el) => visible(el) && text(el).includes('请选择本单是否需要SMT贴片'));
+            if (!dialog) return false;
+            const target = [...dialog.querySelectorAll('button,div,span')]
+                .map((el) => ({el, label: text(el), rect: el.getBoundingClientRect()}))
+                .filter((row) => visible(row.el) && row.label.includes('确定') && row.label.includes('不需要SMT'))
+                .sort((a, b) => (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height))[0];
+            if (!target) return false;
+            target.el.click();
+            return true;
+        }"""
+    )
+    if clicked:
+        page.wait_for_timeout(1500)
+        print("confirmed SMT modal: 不需要SMT")
+    return bool(clicked)
 
 
 def status(args: argparse.Namespace) -> None:
@@ -847,7 +918,9 @@ def fill_settings(args: argparse.Namespace) -> None:
     click_option_near_any_label(page, ["是否SMT贴片", "是否需要SMT"], "不需要")
     click_option_near_label(page, "是否开钢网", "不需要")
     confirm_mode = getattr(args, "confirm_mode", None) or order.get("confirm_mode", "manual")
-    click_button(page, "系统自动扣款并确认" if confirm_mode == "auto" else "手动确认订单", 0)
+    confirm_label = "系统自动扣款并确认" if confirm_mode == "auto" else "手动确认订单"
+    if not click_option_near_label(page, "确认订单方式", confirm_label):
+        click_button(page, confirm_label, 0)
     click_button(page, "电子收据/送货单", 0)
     shipping_mode = (
         getattr(args, "shipping_mode", None)
@@ -855,7 +928,9 @@ def fill_settings(args: argparse.Namespace) -> None:
         or shipping.get("shipping_mode")
         or shipping.get("combine_orders")
     )
-    click_button(page, shipping_mode_label(shipping_mode), 0)
+    shipping_label = shipping_mode_label(shipping_mode)
+    if not click_option_near_label(page, "发货方式", shipping_label):
+        click_button(page, shipping_label, 0)
     select_order_channel_on_page(page, getattr(args, "order_channel", None) or order.get("order_channel", "web"))
     page.screenshot(path=args.screenshot, full_page=False)
     print(f"screenshot={args.screenshot}")
@@ -960,6 +1035,9 @@ def check_order(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     page = connect_page(config)
     click_button(page, "检查订单", 0)
+    page.wait_for_timeout(1500)
+    if handle_smt_required_modal(page):
+        click_button(page, "检查订单", 0)
     page.wait_for_timeout(2500)
     page.screenshot(path=args.screenshot, full_page=False)
     text = page.locator("body").inner_text(timeout=10000)
@@ -974,7 +1052,12 @@ def submit(args: argparse.Namespace) -> None:
     if not args.allow_submit:
         raise SystemExit("refusing final submit without --allow-submit")
     config = load_config(args.config)
-    page = connect_page(config)
+    page = connect_page(config, prefer_success=True)
+    if "pcbPlaceSuccess" in page.url:
+        print("china order already on JLC success page; no submit click needed")
+        page.screenshot(path=args.screenshot, full_page=False)
+        print(f"screenshot={args.screenshot}")
+        return
     order = config.get("order", {})
     assert_clean_for_submit(page, order)
     click_button(page, "确认并提交", 0)
@@ -1485,7 +1568,7 @@ def insert_order_snapshot(db_path: Path, snapshot: dict[str, Any]) -> int:
 
 def record_order(args: argparse.Namespace) -> None:
     config = load_config(args.config)
-    page = connect_page(config)
+    page = connect_page(config, prefer_success=str(args.status).startswith("submitted"))
     snapshot = build_order_snapshot(config, page, args.status, args.note)
     row_id = insert_order_snapshot(args.db, snapshot)
     print(f"recorded order snapshot id={row_id}")
@@ -1498,7 +1581,7 @@ def record_order(args: argparse.Namespace) -> None:
 
 def post_submit_log(args: argparse.Namespace) -> None:
     config = load_config(args.config)
-    page = connect_page(config)
+    page = connect_page(config, prefer_success=True)
     text = page.locator("body").inner_text(timeout=10000)
     order = config.get("order", {})
     shipping = config.get("shipping", {})
