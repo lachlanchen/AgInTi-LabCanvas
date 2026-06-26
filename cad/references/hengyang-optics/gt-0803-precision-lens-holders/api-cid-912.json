@@ -1,0 +1,170 @@
+[
+  {
+    "Name": "30mm笼式同轴三轴精密镜架",
+    "Model": "GT-080303",
+    "CategoryId": 912,
+    "Category": {
+      "Name": "GT-080303—顶丝式精密调整镜架",
+      "EnName": null,
+      "ParentId": 0,
+      "ImageUrl": null,
+      "BannerImage": null,
+      "MultiImage": null,
+      "EngineeringImage": null,
+      "EngineeringTitle": null,
+      "IsDetail": false,
+      "Info": null,
+      "Content": null,
+      "PriceRange": null,
+      "IsParameter": false,
+      "Parameter": null,
+      "IsDescription": false,
+      "Description": null,
+      "SketchMap": null,
+      "IsCurve": false,
+      "Curve": null,
+      "CurveUrl": null,
+      "IsAssemble": false,
+      "Assemble": null,
+      "IsTechnical": false,
+      "Technical": null,
+      "IsCase": false,
+      "Case": null,
+      "IsCustom": false,
+      "Custom": null,
+      "RelatedCategoryId": null,
+      "RelatedCategory": null,
+      "FilterJson": [
+        83
+      ],
+      "ParameterJson": [],
+      "SpecJson": {},
+      "children": null,
+      "RelatedKnowledgeId": null,
+      "RelatedKnowledge": null,
+      "ExpanddCategoryId": null,
+      "ExpandCategory": null,
+      "SelfParameterJson": null,
+      "Id": 912,
+      "Sort": 0,
+      "IsDel": false,
+      "Status": 0,
+      "CreateTime": "2026-06-26 13:30:24",
+      "CreateUser": null,
+      "UpdateTime": "2026-06-26 13:30:24",
+      "UpdateUser": null
+    },
+    "Code": "",
+    "ImageUrl": "/UploadFiles/2024/08-19/fjugbbh5qrb84stb.jpg?Ry04MDAtR1QtMDgwMzAzLmpwZw==",
+    "Images": "",
+    "Info": "",
+    "Content": "",
+    "Tags": "",
+    "Price": 420.0,
+    "OldPrice": 0.0,
+    "Stock": 100,
+    "Hits": 0,
+    "IsOnShelf": true,
+    "SendTime": "当天",
+    "PdfUrl": "/UploadFiles/2024/08-19/p2pqwglre11ejhxp.pdf?R1QtMDgwMzAzLnBkZg==",
+    "StepUrl": "",
+    "ZEMAXUrl": "",
+    "ZIPUrl": null,
+    "STPUrl": "/UploadFiles/2024/08-19/sugc2rdqgmasxhp8.stp?R1QtMDgwMzAzLnN0cA==",
+    "SpecUrl": null,
+    "SpecJson": {
+      "Id": 0,
+      "Spec-83": "Φ25.4mm顶丝式"
+    },
+    "ParameterJson": null,
+    "RelatedGoodsId": null,
+    "RelatedGoods": null,
+    "SelfSpecJson": [
+      {
+        "key": "材料",
+        "value": "铝合金（氧化黑）"
+      },
+      {
+        "key": "夹持尺寸",
+        "value": "φ25.4mm"
+      },
+      {
+        "key": "夹持厚度",
+        "value": "≥3mm"
+      },
+      {
+        "key": "锁紧方式",
+        "value": "顶丝式"
+      },
+      {
+        "key": "通光孔径",
+        "value": "φ23.9mm"
+      },
+      {
+        "key": "行程",
+        "value": "±3mm"
+      },
+      {
+        "key": "俯仰调节范围",
+        "value": "±5º"
+      },
+      {
+        "key": "规格",
+        "value": "四角有∅6mm接杆孔"
+      },
+      {
+        "key": "数量",
+        "value": "1个"
+      }
+    ],
+    "CommonParameter": null,
+    "AllParameterList": [
+      {
+        "key": "材料",
+        "value": "铝合金（氧化黑）"
+      },
+      {
+        "key": "夹持尺寸",
+        "value": "φ25.4mm"
+      },
+      {
+        "key": "夹持厚度",
+        "value": "≥3mm"
+      },
+      {
+        "key": "锁紧方式",
+        "value": "顶丝式"
+      },
+      {
+        "key": "通光孔径",
+        "value": "φ23.9mm"
+      },
+      {
+        "key": "行程",
+        "value": "±3mm"
+      },
+      {
+        "key": "俯仰调节范围",
+        "value": "±5º"
+      },
+      {
+        "key": "规格",
+        "value": "四角有∅6mm接杆孔"
+      },
+      {
+        "key": "数量",
+        "value": "1个"
+      }
+    ],
+    "AllParameterFormatList": null,
+    "DetailCategory": null,
+    "Id": 11405,
+    "Sort": 1717500357795,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2024-06-04 11:25:58",
+    "CreateUser": "admin",
+    "UpdateTime": "2025-04-23 11:35:02",
+    "UpdateUser": "HENGYANG-HONG"
+  }
+]

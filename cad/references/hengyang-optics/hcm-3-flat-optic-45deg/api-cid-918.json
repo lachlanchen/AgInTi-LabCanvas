@@ -1,0 +1,162 @@
+[
+  {
+    "Name": "矩形平片安装座",
+    "Model": "HCM-3B4C",
+    "CategoryId": 918,
+    "Category": {
+      "Name": "HCM-3B4C—矩形平片安装座",
+      "EnName": null,
+      "ParentId": 0,
+      "ImageUrl": null,
+      "BannerImage": null,
+      "MultiImage": null,
+      "EngineeringImage": null,
+      "EngineeringTitle": null,
+      "IsDetail": false,
+      "Info": null,
+      "Content": null,
+      "PriceRange": null,
+      "IsParameter": false,
+      "Parameter": null,
+      "IsDescription": false,
+      "Description": null,
+      "SketchMap": null,
+      "IsCurve": false,
+      "Curve": null,
+      "CurveUrl": null,
+      "IsAssemble": false,
+      "Assemble": null,
+      "IsTechnical": false,
+      "Technical": null,
+      "IsCase": false,
+      "Case": null,
+      "IsCustom": false,
+      "Custom": null,
+      "RelatedCategoryId": null,
+      "RelatedCategory": null,
+      "FilterJson": [
+        83,
+        111,
+        97,
+        173,
+        143
+      ],
+      "ParameterJson": [],
+      "SpecJson": {},
+      "children": null,
+      "RelatedKnowledgeId": null,
+      "RelatedKnowledge": null,
+      "ExpanddCategoryId": null,
+      "ExpandCategory": null,
+      "SelfParameterJson": null,
+      "Id": 918,
+      "Sort": 0,
+      "IsDel": false,
+      "Status": 0,
+      "CreateTime": "2026-06-26 13:30:57",
+      "CreateUser": null,
+      "UpdateTime": "2026-06-26 13:30:57",
+      "UpdateUser": null
+    },
+    "Code": "",
+    "ImageUrl": "/UploadFiles/2024/08-16/kvxpmujy1qebb1dw.jpg?Ry04MDAtSENNLTNCNEMuanBn",
+    "Images": "",
+    "Info": "",
+    "Content": "",
+    "Tags": "",
+    "Price": 320.0,
+    "OldPrice": 0.0,
+    "Stock": 93,
+    "Hits": 0,
+    "IsOnShelf": true,
+    "SendTime": "当天 ",
+    "PdfUrl": "/UploadFiles/2024/08-16/nj37idbxrwbfttpz.pdf?SENNLTNCNEMuUERG",
+    "StepUrl": "",
+    "ZEMAXUrl": "",
+    "ZIPUrl": null,
+    "STPUrl": "/UploadFiles/2024/08-16/vyda9i5w6bjrana7.stp?SENNLTNCNEMuc3Rw",
+    "SpecUrl": null,
+    "SpecJson": {
+      "Id": 0,
+      "Spec-83": "一般直接安装36×25mm矩形光学平片",
+      "Spec-111": "≤42mm×30mm",
+      "Spec-97": "≤3mm",
+      "Spec-173": "45°",
+      "Spec-143": "弹簧夹紧"
+    },
+    "ParameterJson": null,
+    "RelatedGoodsId": null,
+    "RelatedGoods": null,
+    "SelfSpecJson": [
+      {
+        "key": "材料",
+        "value": "铝合金（阳极氧化黑）"
+      },
+      {
+        "key": "安装尺寸",
+        "value": "≤42mm×30mm"
+      },
+      {
+        "key": "夹持厚度",
+        "value": "≤3mm"
+      },
+      {
+        "key": "安装方式",
+        "value": "45°安装，安装台阶45°对齐"
+      },
+      {
+        "key": "光学元件固定方式",
+        "value": "弹簧夹紧"
+      },
+      {
+        "key": "最小夹持边长",
+        "value": "25mm"
+      },
+      {
+        "key": "底部螺纹孔规格",
+        "value": "M4"
+      }
+    ],
+    "CommonParameter": null,
+    "AllParameterList": [
+      {
+        "key": "材料",
+        "value": "铝合金（阳极氧化黑）"
+      },
+      {
+        "key": "安装尺寸",
+        "value": "≤42mm×30mm"
+      },
+      {
+        "key": "夹持厚度",
+        "value": "≤3mm"
+      },
+      {
+        "key": "安装方式",
+        "value": "45°安装，安装台阶45°对齐"
+      },
+      {
+        "key": "光学元件固定方式",
+        "value": "弹簧夹紧"
+      },
+      {
+        "key": "最小夹持边长",
+        "value": "25mm"
+      },
+      {
+        "key": "底部螺纹孔规格",
+        "value": "M4"
+      }
+    ],
+    "AllParameterFormatList": null,
+    "DetailCategory": null,
+    "Id": 11414,
+    "Sort": 1717514100370,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2024-06-04 15:15:00",
+    "CreateUser": "admin",
+    "UpdateTime": "2025-04-30 11:35:49",
+    "UpdateUser": "admin-qin"
+  }
+]

@@ -1,0 +1,146 @@
+{
+  "Name": "快速安装镜架",
+  "Model": "HCP-0804",
+  "CategoryId": 873,
+  "Category": {
+    "Name": "30mm同轴快速安装镜架—HCP-08系列",
+    "EnName": null,
+    "ParentId": 0,
+    "ImageUrl": null,
+    "BannerImage": null,
+    "MultiImage": null,
+    "EngineeringImage": null,
+    "EngineeringTitle": null,
+    "IsDetail": false,
+    "Info": null,
+    "Content": null,
+    "PriceRange": null,
+    "IsParameter": false,
+    "Parameter": null,
+    "IsDescription": false,
+    "Description": null,
+    "SketchMap": null,
+    "IsCurve": false,
+    "Curve": null,
+    "CurveUrl": null,
+    "IsAssemble": false,
+    "Assemble": null,
+    "IsTechnical": false,
+    "Technical": null,
+    "IsCase": false,
+    "Case": null,
+    "IsCustom": false,
+    "Custom": null,
+    "RelatedCategoryId": null,
+    "RelatedCategory": null,
+    "FilterJson": [
+      42,
+      97
+    ],
+    "ParameterJson": [],
+    "SpecJson": {},
+    "children": null,
+    "RelatedKnowledgeId": null,
+    "RelatedKnowledge": null,
+    "ExpanddCategoryId": null,
+    "ExpandCategory": null,
+    "SelfParameterJson": null,
+    "Id": 873,
+    "Sort": 0,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2026-06-26 13:30:14",
+    "CreateUser": null,
+    "UpdateTime": "2026-06-26 13:30:14",
+    "UpdateUser": null
+  },
+  "Code": "",
+  "ImageUrl": "/UploadFiles/2024/08-16/6c6e2xe8xzgbyyc1.jpg?Ry04MDAtMy5qcGc=",
+  "Images": "",
+  "Info": "",
+  "Content": "<p><span style=\"font-size: 14pt; background-color: rgb(255, 255, 255);\"><strong><span style=\"color: rgb(230, 126, 35);\">HCP-0804 </span></strong>镜架通过柔性设计可以快速稳定地安装到30mm同轴系统中。</span></p>",
+  "Tags": "",
+  "Price": 365.0,
+  "OldPrice": 0.0,
+  "Stock": 100,
+  "Hits": 0,
+  "IsOnShelf": true,
+  "SendTime": "当天",
+  "PdfUrl": "/UploadFiles/2024/08-16/tusncrtc7gwr3udr.pdf?SENQLTA4MDQucGRm",
+  "StepUrl": "/UploadFiles/2024/08-16/hbn8vnwwb3hasgyc.step?SENQLTA4MDQuU1RFUA==",
+  "ZEMAXUrl": "",
+  "ZIPUrl": null,
+  "STPUrl": null,
+  "SpecUrl": null,
+  "SpecJson": {
+    "Id": 0,
+    "Spec-42": "Φ25.4mm",
+    "Spec-97": "≤5"
+  },
+  "ParameterJson": null,
+  "RelatedGoodsId": null,
+  "RelatedGoods": null,
+  "SelfSpecJson": [
+    {
+      "key": "材料",
+      "value": "铝合金（氧化黑）"
+    },
+    {
+      "key": "夹持尺寸",
+      "value": "φ25.4mm"
+    },
+    {
+      "key": "夹持厚度",
+      "value": "≤5mm"
+    },
+    {
+      "key": "锁紧方式",
+      "value": "1.035\"-40(SM1)螺纹锁圈式"
+    },
+    {
+      "key": "通光孔径",
+      "value": "φ23mm"
+    },
+    {
+      "key": "数量",
+      "value": "1个"
+    }
+  ],
+  "CommonParameter": null,
+  "AllParameterList": [
+    {
+      "key": "材料",
+      "value": "铝合金（氧化黑）"
+    },
+    {
+      "key": "夹持尺寸",
+      "value": "φ25.4mm"
+    },
+    {
+      "key": "夹持厚度",
+      "value": "≤5mm"
+    },
+    {
+      "key": "锁紧方式",
+      "value": "1.035\"-40(SM1)螺纹锁圈式"
+    },
+    {
+      "key": "通光孔径",
+      "value": "φ23mm"
+    },
+    {
+      "key": "数量",
+      "value": "1个"
+    }
+  ],
+  "AllParameterFormatList": null,
+  "DetailCategory": null,
+  "Id": 11387,
+  "Sort": 1717431299794,
+  "IsDel": false,
+  "Status": 0,
+  "CreateTime": "2024-06-03 16:15:00",
+  "CreateUser": "admin",
+  "UpdateTime": "2025-04-23 11:35:02",
+  "UpdateUser": "HENGYANG-HONG"
+}

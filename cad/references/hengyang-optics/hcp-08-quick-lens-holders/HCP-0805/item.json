@@ -1,0 +1,146 @@
+{
+  "Name": "快速安装镜架",
+  "Model": "HCP-0805",
+  "CategoryId": 873,
+  "Category": {
+    "Name": "30mm同轴快速安装镜架—HCP-08系列",
+    "EnName": null,
+    "ParentId": 0,
+    "ImageUrl": null,
+    "BannerImage": null,
+    "MultiImage": null,
+    "EngineeringImage": null,
+    "EngineeringTitle": null,
+    "IsDetail": false,
+    "Info": null,
+    "Content": null,
+    "PriceRange": null,
+    "IsParameter": false,
+    "Parameter": null,
+    "IsDescription": false,
+    "Description": null,
+    "SketchMap": null,
+    "IsCurve": false,
+    "Curve": null,
+    "CurveUrl": null,
+    "IsAssemble": false,
+    "Assemble": null,
+    "IsTechnical": false,
+    "Technical": null,
+    "IsCase": false,
+    "Case": null,
+    "IsCustom": false,
+    "Custom": null,
+    "RelatedCategoryId": null,
+    "RelatedCategory": null,
+    "FilterJson": [
+      42,
+      97
+    ],
+    "ParameterJson": [],
+    "SpecJson": {},
+    "children": null,
+    "RelatedKnowledgeId": null,
+    "RelatedKnowledge": null,
+    "ExpanddCategoryId": null,
+    "ExpandCategory": null,
+    "SelfParameterJson": null,
+    "Id": 873,
+    "Sort": 0,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2026-06-26 13:30:14",
+    "CreateUser": null,
+    "UpdateTime": "2026-06-26 13:30:14",
+    "UpdateUser": null
+  },
+  "Code": "",
+  "ImageUrl": "/UploadFiles/2024/08-16/5nnx3nm5njhhzwna.jpg?Ry04MDAtSENQLTA4MDUuanBn",
+  "Images": "",
+  "Info": "",
+  "Content": "<p><span style=\"font-size: 14pt;\"><strong><span style=\"color: rgb(230, 126, 35);\">HCP-0805</span></strong> 可旋转快速安装镜架用于30mm同轴系统中，可实现镜片的径向360&deg;手动旋转。光学元件通过滚花旋钮旋转到需要的角度，然后通过紧固螺丝锁定光学元件安装座的旋转位置。<br>装卡镜片方式采用螺纹压圈式，可裝卡不同厚度的镜片。快拆型挠性夹紧，可以把镜架安裝到四根支杆中的任意两根之上，在不拆解同轴系统的情况下快速把镜片接入到系统中，然后用紧固螺丝进行固定。如果将紧固螺丝调松，镜架则可以沿着笼杆滑动。</span></p>",
+  "Tags": "",
+  "Price": 480.0,
+  "OldPrice": 0.0,
+  "Stock": 99,
+  "Hits": 0,
+  "IsOnShelf": true,
+  "SendTime": "当天",
+  "PdfUrl": "/UploadFiles/2024/08-16/erkfetnyhfctjc8e.pdf?SENQLTA4MDUucGRm",
+  "StepUrl": "",
+  "ZEMAXUrl": "",
+  "ZIPUrl": null,
+  "STPUrl": "/UploadFiles/2024/08-16/u2ytbcalxixbmmmf.stp?SENQLTA4MDUuc3Rw",
+  "SpecUrl": null,
+  "SpecJson": {
+    "Id": 0,
+    "Spec-42": "Φ25.4mm",
+    "Spec-97": "≤8"
+  },
+  "ParameterJson": null,
+  "RelatedGoodsId": null,
+  "RelatedGoods": null,
+  "SelfSpecJson": [
+    {
+      "key": "材料",
+      "value": "铝合金（氧化黑）"
+    },
+    {
+      "key": "夹持尺寸",
+      "value": "φ25.4mm"
+    },
+    {
+      "key": "夹持厚度",
+      "value": "≤8mm"
+    },
+    {
+      "key": "锁紧方式",
+      "value": "1.035\"-40(SM1)螺纹锁圈式"
+    },
+    {
+      "key": "通光孔径",
+      "value": "φ23.5mm"
+    },
+    {
+      "key": "数量",
+      "value": "1个"
+    }
+  ],
+  "CommonParameter": null,
+  "AllParameterList": [
+    {
+      "key": "材料",
+      "value": "铝合金（氧化黑）"
+    },
+    {
+      "key": "夹持尺寸",
+      "value": "φ25.4mm"
+    },
+    {
+      "key": "夹持厚度",
+      "value": "≤8mm"
+    },
+    {
+      "key": "锁紧方式",
+      "value": "1.035\"-40(SM1)螺纹锁圈式"
+    },
+    {
+      "key": "通光孔径",
+      "value": "φ23.5mm"
+    },
+    {
+      "key": "数量",
+      "value": "1个"
+    }
+  ],
+  "AllParameterFormatList": null,
+  "DetailCategory": null,
+  "Id": 11386,
+  "Sort": 1717431299792,
+  "IsDel": false,
+  "Status": 0,
+  "CreateTime": "2024-06-03 16:15:00",
+  "CreateUser": "admin",
+  "UpdateTime": "2025-04-23 11:35:02",
+  "UpdateUser": "HENGYANG-HONG"
+}

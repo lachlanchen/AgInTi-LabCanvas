@@ -1,0 +1,158 @@
+[
+  {
+    "Name": "30mm同轴立方体矩形平片安装座",
+    "Model": "HCM-3R",
+    "CategoryId": 916,
+    "Category": {
+      "Name": "HCM-3R—立方体矩形平片安装座",
+      "EnName": null,
+      "ParentId": 0,
+      "ImageUrl": null,
+      "BannerImage": null,
+      "MultiImage": null,
+      "EngineeringImage": null,
+      "EngineeringTitle": null,
+      "IsDetail": false,
+      "Info": null,
+      "Content": null,
+      "PriceRange": null,
+      "IsParameter": false,
+      "Parameter": null,
+      "IsDescription": false,
+      "Description": null,
+      "SketchMap": null,
+      "IsCurve": false,
+      "Curve": null,
+      "CurveUrl": null,
+      "IsAssemble": false,
+      "Assemble": null,
+      "IsTechnical": false,
+      "Technical": null,
+      "IsCase": false,
+      "Case": null,
+      "IsCustom": false,
+      "Custom": null,
+      "RelatedCategoryId": null,
+      "RelatedCategory": null,
+      "FilterJson": [
+        83,
+        111,
+        97
+      ],
+      "ParameterJson": [],
+      "SpecJson": {},
+      "children": null,
+      "RelatedKnowledgeId": null,
+      "RelatedKnowledge": null,
+      "ExpanddCategoryId": null,
+      "ExpandCategory": null,
+      "SelfParameterJson": null,
+      "Id": 916,
+      "Sort": 0,
+      "IsDel": false,
+      "Status": 0,
+      "CreateTime": "2026-06-26 13:30:55",
+      "CreateUser": null,
+      "UpdateTime": "2026-06-26 13:30:55",
+      "UpdateUser": null
+    },
+    "Code": "",
+    "ImageUrl": "/UploadFiles/2024/08-16/thvrbusb6cugsqyg.jpg?Ry04MDAtSENNLTNSLmpwZw==",
+    "Images": "",
+    "Info": "",
+    "Content": "",
+    "Tags": "",
+    "Price": 695.0,
+    "OldPrice": 0.0,
+    "Stock": 95,
+    "Hits": 0,
+    "IsOnShelf": true,
+    "SendTime": "当天",
+    "PdfUrl": "/UploadFiles/2024/08-16/7rs2qcuzifcizbmj.pdf?SENNLTNSLlBERg==",
+    "StepUrl": "",
+    "ZEMAXUrl": "",
+    "ZIPUrl": null,
+    "STPUrl": "/UploadFiles/2024/08-16/4w5awrvqygj9yy7e.stp?SENNLTNSLnN0cA==",
+    "SpecUrl": null,
+    "SpecJson": {
+      "Id": 0,
+      "Spec-83": "适用30mm笼式系统",
+      "Spec-111": "≤42×30mm",
+      "Spec-97": "≤3mm"
+    },
+    "ParameterJson": null,
+    "RelatedGoodsId": null,
+    "RelatedGoods": null,
+    "SelfSpecJson": [
+      {
+        "key": "材料",
+        "value": "T6061铝合金（阳极氧化黑）"
+      },
+      {
+        "key": "安装尺寸",
+        "value": "≤42×30mm"
+      },
+      {
+        "key": "安装角度",
+        "value": "45°安装，安装台阶45°对齐"
+      },
+      {
+        "key": "安装厚度",
+        "value": "≤3mm"
+      },
+      {
+        "key": "最小夹持边长",
+        "value": "25mm"
+      },
+      {
+        "key": "底部螺纹孔规格",
+        "value": " M4"
+      },
+      {
+        "key": "固定方式",
+        "value": "弹簧夹紧"
+      }
+    ],
+    "CommonParameter": null,
+    "AllParameterList": [
+      {
+        "key": "材料",
+        "value": "T6061铝合金（阳极氧化黑）"
+      },
+      {
+        "key": "安装尺寸",
+        "value": "≤42×30mm"
+      },
+      {
+        "key": "安装角度",
+        "value": "45°安装，安装台阶45°对齐"
+      },
+      {
+        "key": "安装厚度",
+        "value": "≤3mm"
+      },
+      {
+        "key": "最小夹持边长",
+        "value": "25mm"
+      },
+      {
+        "key": "底部螺纹孔规格",
+        "value": " M4"
+      },
+      {
+        "key": "固定方式",
+        "value": "弹簧夹紧"
+      }
+    ],
+    "AllParameterFormatList": null,
+    "DetailCategory": null,
+    "Id": 11413,
+    "Sort": 1717513349379,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2024-06-04 15:02:29",
+    "CreateUser": "admin",
+    "UpdateTime": "2025-04-30 11:05:02",
+    "UpdateUser": "admin-qin"
+  }
+]

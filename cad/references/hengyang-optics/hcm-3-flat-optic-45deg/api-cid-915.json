@@ -1,0 +1,150 @@
+[
+  {
+    "Name": "30mm同轴立方体圆形平片安装座",
+    "Model": "HCM-3C",
+    "CategoryId": 915,
+    "Category": {
+      "Name": "HCM-3C—立方体圆形平片安装座",
+      "EnName": null,
+      "ParentId": 0,
+      "ImageUrl": null,
+      "BannerImage": null,
+      "MultiImage": null,
+      "EngineeringImage": null,
+      "EngineeringTitle": null,
+      "IsDetail": false,
+      "Info": null,
+      "Content": null,
+      "PriceRange": null,
+      "IsParameter": false,
+      "Parameter": null,
+      "IsDescription": false,
+      "Description": null,
+      "SketchMap": null,
+      "IsCurve": false,
+      "Curve": null,
+      "CurveUrl": null,
+      "IsAssemble": false,
+      "Assemble": null,
+      "IsTechnical": false,
+      "Technical": null,
+      "IsCase": false,
+      "Case": null,
+      "IsCustom": false,
+      "Custom": null,
+      "RelatedCategoryId": null,
+      "RelatedCategory": null,
+      "FilterJson": [
+        83,
+        111,
+        97
+      ],
+      "ParameterJson": [],
+      "SpecJson": {},
+      "children": null,
+      "RelatedKnowledgeId": null,
+      "RelatedKnowledge": null,
+      "ExpanddCategoryId": null,
+      "ExpandCategory": null,
+      "SelfParameterJson": null,
+      "Id": 915,
+      "Sort": 0,
+      "IsDel": false,
+      "Status": 0,
+      "CreateTime": "2026-06-26 13:30:54",
+      "CreateUser": null,
+      "UpdateTime": "2026-06-26 13:30:54",
+      "UpdateUser": null
+    },
+    "Code": "",
+    "ImageUrl": "/UploadFiles/2024/08-16/uktzwjxtc4v4fwvv.jpg?Ry04MDAtSENNLTNDLmpwZw==",
+    "Images": "",
+    "Info": "",
+    "Content": "",
+    "Tags": "",
+    "Price": 520.0,
+    "OldPrice": 0.0,
+    "Stock": 91,
+    "Hits": 0,
+    "IsOnShelf": true,
+    "SendTime": "当天",
+    "PdfUrl": "/UploadFiles/2024/08-16/chqeqtbsapgwgsny.pdf?SENNLTNDLlBERg==",
+    "StepUrl": "",
+    "ZEMAXUrl": "",
+    "ZIPUrl": "",
+    "STPUrl": "/UploadFiles/2024/08-16/xyzc7gjylrnnhgvt.stp?SENNLTNDLnN0cA==",
+    "SpecUrl": "",
+    "SpecJson": {
+      "Id": 0,
+      "Spec-83": "兼容30mm同轴系统",
+      "Spec-111": "φ25.4mm光学元件",
+      "Spec-97": "3~8mm"
+    },
+    "ParameterJson": null,
+    "RelatedGoodsId": null,
+    "RelatedGoods": null,
+    "SelfSpecJson": [
+      {
+        "key": "材料",
+        "value": "铝合金（阳极氧化黑）"
+      },
+      {
+        "key": "安装尺寸",
+        "value": "∅25.4mm"
+      },
+      {
+        "key": "安装角度",
+        "value": "45°安装，安装台阶45°对齐"
+      },
+      {
+        "key": "夹持厚度",
+        "value": "3~8mm"
+      },
+      {
+        "key": "固定方式",
+        "value": "M3紧定胶头螺丝固定"
+      },
+      {
+        "key": "底部螺纹孔规格",
+        "value": "M4"
+      }
+    ],
+    "CommonParameter": null,
+    "AllParameterList": [
+      {
+        "key": "材料",
+        "value": "铝合金（阳极氧化黑）"
+      },
+      {
+        "key": "安装尺寸",
+        "value": "∅25.4mm"
+      },
+      {
+        "key": "安装角度",
+        "value": "45°安装，安装台阶45°对齐"
+      },
+      {
+        "key": "夹持厚度",
+        "value": "3~8mm"
+      },
+      {
+        "key": "固定方式",
+        "value": "M3紧定胶头螺丝固定"
+      },
+      {
+        "key": "底部螺纹孔规格",
+        "value": "M4"
+      }
+    ],
+    "AllParameterFormatList": null,
+    "DetailCategory": null,
+    "Id": 11913,
+    "Sort": 1719828192452,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2024-07-01 10:03:12",
+    "CreateUser": "admin",
+    "UpdateTime": "2025-04-30 10:57:06",
+    "UpdateUser": "admin-qin"
+  }
+]

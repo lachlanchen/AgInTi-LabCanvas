@@ -1,0 +1,140 @@
+{
+  "Name": "支杆",
+  "Model": "HCT-050-P8",
+  "CategoryId": 837,
+  "Category": {
+    "Name": "笼式同轴支杆—HCT系列",
+    "EnName": null,
+    "ParentId": 0,
+    "ImageUrl": null,
+    "BannerImage": null,
+    "MultiImage": null,
+    "EngineeringImage": null,
+    "EngineeringTitle": null,
+    "IsDetail": false,
+    "Info": null,
+    "Content": null,
+    "PriceRange": null,
+    "IsParameter": false,
+    "Parameter": null,
+    "IsDescription": false,
+    "Description": null,
+    "SketchMap": null,
+    "IsCurve": false,
+    "Curve": null,
+    "CurveUrl": null,
+    "IsAssemble": false,
+    "Assemble": null,
+    "IsTechnical": false,
+    "Technical": null,
+    "IsCase": false,
+    "Case": null,
+    "IsCustom": false,
+    "Custom": null,
+    "RelatedCategoryId": null,
+    "RelatedCategory": null,
+    "FilterJson": [
+      83,
+      55,
+      3
+    ],
+    "ParameterJson": [],
+    "SpecJson": {},
+    "children": null,
+    "RelatedKnowledgeId": null,
+    "RelatedKnowledge": null,
+    "ExpanddCategoryId": null,
+    "ExpandCategory": null,
+    "SelfParameterJson": null,
+    "Id": 837,
+    "Sort": 0,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2026-06-26 13:31:27",
+    "CreateUser": null,
+    "UpdateTime": "2026-06-26 13:31:27",
+    "UpdateUser": null
+  },
+  "Code": "",
+  "ImageUrl": "/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+  "Images": "",
+  "Info": "",
+  "Content": "",
+  "Tags": "",
+  "Price": 230.0,
+  "OldPrice": 0.0,
+  "Stock": 97,
+  "Hits": 0,
+  "IsOnShelf": true,
+  "SendTime": "当天",
+  "PdfUrl": "/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+  "StepUrl": "/UploadFiles/2024/08-13/cmrkmghvkrbgqttz.step?SENULTA1MC5TVEVQ",
+  "ZEMAXUrl": "",
+  "ZIPUrl": "",
+  "STPUrl": "",
+  "SpecUrl": "",
+  "SpecJson": {
+    "Id": 0,
+    "Spec-3": "φ6mm",
+    "Spec-55": "50mm",
+    "Spec-83": "8根装"
+  },
+  "ParameterJson": null,
+  "RelatedGoodsId": null,
+  "RelatedGoods": null,
+  "SelfSpecJson": [
+    {
+      "key": "材质",
+      "value": "不锈钢"
+    },
+    {
+      "key": "直径",
+      "value": "φ6mm"
+    },
+    {
+      "key": "长度",
+      "value": "50mm"
+    },
+    {
+      "key": "规格",
+      "value": "两端M3螺纹孔，配有可拆卸的M3螺丝"
+    },
+    {
+      "key": "数量",
+      "value": "8根装"
+    }
+  ],
+  "CommonParameter": null,
+  "AllParameterList": [
+    {
+      "key": "材质",
+      "value": "不锈钢"
+    },
+    {
+      "key": "直径",
+      "value": "φ6mm"
+    },
+    {
+      "key": "长度",
+      "value": "50mm"
+    },
+    {
+      "key": "规格",
+      "value": "两端M3螺纹孔，配有可拆卸的M3螺丝"
+    },
+    {
+      "key": "数量",
+      "value": "8根装"
+    }
+  ],
+  "AllParameterFormatList": null,
+  "DetailCategory": null,
+  "Id": 35722,
+  "Sort": 1746532419058,
+  "IsDel": false,
+  "Status": 0,
+  "CreateTime": "2025-05-06 11:53:39",
+  "CreateUser": "admin-qin",
+  "UpdateTime": "2025-05-06 11:53:57",
+  "UpdateUser": "admin-qin"
+}

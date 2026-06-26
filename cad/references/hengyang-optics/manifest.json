@@ -1,0 +1,3319 @@
+{
+  "source": "https://www.hengyangbuy.com",
+  "downloaded_at": "2026-06-26T05:29:53.113846+00:00",
+  "categories": [
+    {
+      "slug": "gt-090101-waveplate-polarizer",
+      "label": "GT-090101 rotating waveplate/polarizer holder",
+      "reason": "Primary 30 mm cage geometry reference requested by the user.",
+      "page": "https://www.hengyangbuy.com/Product3?cid=790",
+      "api_cids": [
+        1042
+      ],
+      "files": [
+        {
+          "path": "gt-090101-waveplate-polarizer/Product3-cid-790.html",
+          "url": "https://www.hengyangbuy.com/Product3?cid=790",
+          "bytes": 124711,
+          "content_type": "text/html; charset=utf-8"
+        },
+        {
+          "path": "gt-090101-waveplate-polarizer/api-cid-1042.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=1042",
+          "bytes": 3940,
+          "content_type": "application/json"
+        }
+      ],
+      "items": [
+        {
+          "model": "GT-090101",
+          "name": "30mm笼式波片/偏振片架",
+          "id": 10678,
+          "price_cny": 415.0,
+          "category_id": 1042,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "φ25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤7mm",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "1.035\"-40(SM1)卡环锁圈式",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "φ23mm",
+              "unit": ""
+            },
+            {
+              "key": "旋转角度",
+              "value": "360°",
+              "unit": ""
+            },
+            {
+              "key": "刻度盘精度",
+              "value": "2°",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "四角有∅6mm接杆孔",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1个",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "gt-090101-waveplate-polarizer/GT-090101/item.json",
+              "bytes": 3596
+            },
+            {
+              "path": "gt-090101-waveplate-polarizer/GT-090101/GT-090101_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-15/nbtqkutvnaq1ywa9.pdf?R1QtMDkwMTAxLnBkZg==",
+              "bytes": 157162,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "gt-090101-waveplate-polarizer/GT-090101/GT-090101_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-15/u3h2kxly3wqwy3xk.stp?R1QtMDkwMTAxIC5zdHA=",
+              "bytes": 889786,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "gt-090101-waveplate-polarizer/GT-090101/GT-090101_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/07-26/dz9nu23kpkseckxj.jpg?Ry04MDAtR1QtMDkwMTAxLmpwZw==",
+              "bytes": 308981,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "hcp-22-23-24-lens-cage-plates",
+      "label": "HCP-22/HCP23/HCP24 1 inch lens cage plates",
+      "reason": "Simple 30 mm cage lens holder references for Ø25.4 mm optics.",
+      "page": "https://www.hengyangbuy.com/Product3?cid=869",
+      "api_cids": [
+        869
+      ],
+      "files": [
+        {
+          "path": "hcp-22-23-24-lens-cage-plates/Product3-cid-869.html",
+          "url": "https://www.hengyangbuy.com/Product3?cid=869",
+          "bytes": 103373,
+          "content_type": "text/html; charset=utf-8"
+        },
+        {
+          "path": "hcp-22-23-24-lens-cage-plates/api-cid-869.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=869",
+          "bytes": 12380,
+          "content_type": "application/json"
+        }
+      ],
+      "items": [
+        {
+          "model": "HCP-22",
+          "name": "压圈式镜架",
+          "id": 12816,
+          "price_cny": 140.0,
+          "category_id": 869,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "外形尺寸",
+              "value": "40×40mm",
+              "unit": ""
+            },
+            {
+              "key": "厚度",
+              "value": "10mm",
+              "unit": ""
+            },
+            {
+              "key": "安装厚度",
+              "value": "≤7mm",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "螺纹锁圈式",
+              "unit": ""
+            },
+            {
+              "key": "中心孔",
+              "value": "∅25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "笼杆固定",
+              "value": "M2螺纹孔",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "四角有∅6mm接杆孔",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1个",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcp-22-23-24-lens-cage-plates/HCP-22/item.json",
+              "bytes": 3745
+            },
+            {
+              "path": "hcp-22-23-24-lens-cage-plates/HCP-22/HCP-22_drawing-pdf.pdf",
+              "url": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/etwqcezdp4692qae.pdf?SENQLTIyLnBkZg==",
+              "bytes": 48144,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcp-22-23-24-lens-cage-plates/HCP-22/HCP-22_model-step.step",
+              "url": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/i24sra4ytv1kw55w.step?SENQLTIyLlNURVA=",
+              "bytes": 228045,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hcp-22-23-24-lens-cage-plates/HCP-22/HCP-22_product-image.jpg",
+              "url": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/s4b4cusfq2c75hy4.jpg?Ry04MDAtSENQMjMtMi5qcGc=",
+              "bytes": 271522,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCP23",
+          "name": "压圈式镜架",
+          "id": 12815,
+          "price_cny": 140.0,
+          "category_id": 869,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "外形尺寸",
+              "value": "40.6×40.6mm",
+              "unit": ""
+            },
+            {
+              "key": "厚度",
+              "value": "12.7mm",
+              "unit": ""
+            },
+            {
+              "key": "安装厚度",
+              "value": "≤10mm",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "压圈式锁紧",
+              "unit": ""
+            },
+            {
+              "key": "中心孔",
+              "value": "∅25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "笼杆固定",
+              "value": "M4螺纹孔",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "四角有∅6mm接杆孔",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1个（带二个卡环，一个白色垫片）",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcp-22-23-24-lens-cage-plates/HCP23/item.json",
+              "bytes": 3863
+            },
+            {
+              "path": "hcp-22-23-24-lens-cage-plates/HCP23/HCP23_drawing-pdf.pdf",
+              "url": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/9zinuuyaxeayhqhu.pdf?SENQMjMucGRm",
+              "bytes": 64127,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcp-22-23-24-lens-cage-plates/HCP23/HCP23_model-step.step",
+              "url": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/7kfmsaezrugwjcny.step?SENQMjMuU1RFUA==",
+              "bytes": 1015378,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hcp-22-23-24-lens-cage-plates/HCP23/HCP23_product-image.jpg",
+              "url": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/ubcqarfhbzcs9wjk.jpg?Ry04MDAtSENQMjMuanBn",
+              "bytes": 225933,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCP24",
+          "name": "顶丝式镜架",
+          "id": 12814,
+          "price_cny": 120.0,
+          "category_id": 869,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "外形尺寸",
+              "value": "40×40mm",
+              "unit": ""
+            },
+            {
+              "key": "厚度",
+              "value": "10mm",
+              "unit": ""
+            },
+            {
+              "key": "安装厚度",
+              "value": "≥3mm",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "顶丝式锁紧",
+              "unit": ""
+            },
+            {
+              "key": "中心孔",
+              "value": "∅25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "笼杆固定",
+              "value": "M2螺纹孔",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "四角有∅6mm接杆孔",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1个",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcp-22-23-24-lens-cage-plates/HCP24/item.json",
+              "bytes": 3722
+            },
+            {
+              "path": "hcp-22-23-24-lens-cage-plates/HCP24/HCP24_drawing-pdf.pdf",
+              "url": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/m5hmk1che7jzfqks.pdf?SENQMjQucGRm",
+              "bytes": 45644,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcp-22-23-24-lens-cage-plates/HCP24/HCP24_model-step.step",
+              "url": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/npif3g1jbiptba1q.step?SENQMjQuU1RFUA==",
+              "bytes": 186837,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hcp-22-23-24-lens-cage-plates/HCP24/HCP24_product-image.jpg",
+              "url": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/fzqhapzf4t18lh9t.jpg?Ry04MDAtSENQMjQuanBn",
+              "bytes": 249198,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "hcp-08-quick-lens-holders",
+      "label": "HCP-08 quick install lens holders",
+      "reason": "Quick removable Ø25.4 mm optic holder references.",
+      "page": "https://www.hengyangbuy.com/Product3?cid=873",
+      "api_cids": [
+        873
+      ],
+      "files": [
+        {
+          "path": "hcp-08-quick-lens-holders/Product3-cid-873.html",
+          "url": "https://www.hengyangbuy.com/Product3?cid=873",
+          "bytes": 84958,
+          "content_type": "text/html; charset=utf-8"
+        },
+        {
+          "path": "hcp-08-quick-lens-holders/api-cid-873.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=873",
+          "bytes": 12023,
+          "content_type": "application/json"
+        }
+      ],
+      "items": [
+        {
+          "model": "HCP-0801",
+          "name": "快速安装镜架",
+          "id": 11388,
+          "price_cny": 385.0,
+          "category_id": 873,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "φ25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤3mm",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "1.035\"-40(SM1)螺纹锁圈式",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "φ23mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "四角有∅6mm接杆孔",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1个（含镜座及固定座）",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcp-08-quick-lens-holders/HCP-0801/item.json",
+              "bytes": 3879
+            },
+            {
+              "path": "hcp-08-quick-lens-holders/HCP-0801/HCP-0801_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/jrr1usy8elfpxptu.pdf?SENQLTA4MDEucGRm",
+              "bytes": 73219,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcp-08-quick-lens-holders/HCP-0801/HCP-0801_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/dd6vcp2iemadzshk.step?SENQLTA4MDEuU1RFUA==",
+              "bytes": 547232,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hcp-08-quick-lens-holders/HCP-0801/HCP-0801_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/z7wk7gp43ljxe23b.jpg?Ry04MDAtMi5qcGc=",
+              "bytes": 244681,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCP-0804",
+          "name": "快速安装镜架",
+          "id": 11387,
+          "price_cny": 365.0,
+          "category_id": 873,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "φ25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤5mm",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "1.035\"-40(SM1)螺纹锁圈式",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "φ23mm",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1个",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcp-08-quick-lens-holders/HCP-0804/item.json",
+              "bytes": 3394
+            },
+            {
+              "path": "hcp-08-quick-lens-holders/HCP-0804/HCP-0804_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/tusncrtc7gwr3udr.pdf?SENQLTA4MDQucGRm",
+              "bytes": 40111,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcp-08-quick-lens-holders/HCP-0804/HCP-0804_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/hbn8vnwwb3hasgyc.step?SENQLTA4MDQuU1RFUA==",
+              "bytes": 227270,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hcp-08-quick-lens-holders/HCP-0804/HCP-0804_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/6c6e2xe8xzgbyyc1.jpg?Ry04MDAtMy5qcGc=",
+              "bytes": 238324,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCP-0805",
+          "name": "快速安装镜架",
+          "id": 11386,
+          "price_cny": 480.0,
+          "category_id": 873,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "φ25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤8mm",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "1.035\"-40(SM1)螺纹锁圈式",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "φ23.5mm",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1个",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcp-08-quick-lens-holders/HCP-0805/item.json",
+              "bytes": 3852
+            },
+            {
+              "path": "hcp-08-quick-lens-holders/HCP-0805/HCP-0805_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/erkfetnyhfctjc8e.pdf?SENQLTA4MDUucGRm",
+              "bytes": 177739,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcp-08-quick-lens-holders/HCP-0805/HCP-0805_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/u2ytbcalxixbmmmf.stp?SENQLTA4MDUuc3Rw",
+              "bytes": 290143,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hcp-08-quick-lens-holders/HCP-0805/HCP-0805_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/5nnx3nm5njhhzwna.jpg?Ry04MDAtSENQLTA4MDUuanBn",
+              "bytes": 233221,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "gt-0803-precision-lens-holders",
+      "label": "GT-0803 precision 1 inch lens holders",
+      "reason": "Precision adjustable Ø25.4 mm cage holder references.",
+      "page": "https://www.hengyangbuy.com/Product3?cid=878",
+      "api_cids": [
+        912,
+        913
+      ],
+      "files": [
+        {
+          "path": "gt-0803-precision-lens-holders/Product3-cid-878.html",
+          "url": "https://www.hengyangbuy.com/Product3?cid=878",
+          "bytes": 167846,
+          "content_type": "text/html; charset=utf-8"
+        },
+        {
+          "path": "gt-0803-precision-lens-holders/api-cid-912.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=912",
+          "bytes": 3878,
+          "content_type": "application/json"
+        },
+        {
+          "path": "gt-0803-precision-lens-holders/api-cid-913.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=913",
+          "bytes": 3919,
+          "content_type": "application/json"
+        }
+      ],
+      "items": [
+        {
+          "model": "GT-080303",
+          "name": "30mm笼式同轴三轴精密镜架",
+          "id": 11405,
+          "price_cny": 420.0,
+          "category_id": 912,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "φ25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≥3mm",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "顶丝式",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "φ23.9mm",
+              "unit": ""
+            },
+            {
+              "key": "行程",
+              "value": "±3mm",
+              "unit": ""
+            },
+            {
+              "key": "俯仰调节范围",
+              "value": "±5º",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "四角有∅6mm接杆孔",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1个",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "gt-0803-precision-lens-holders/GT-080303/item.json",
+              "bytes": 3538
+            },
+            {
+              "path": "gt-0803-precision-lens-holders/GT-080303/GT-080303_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/p2pqwglre11ejhxp.pdf?R1QtMDgwMzAzLnBkZg==",
+              "bytes": 79922,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "gt-0803-precision-lens-holders/GT-080303/GT-080303_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/sugc2rdqgmasxhp8.stp?R1QtMDgwMzAzLnN0cA==",
+              "bytes": 2520168,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "gt-0803-precision-lens-holders/GT-080303/GT-080303_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/fjugbbh5qrb84stb.jpg?Ry04MDAtR1QtMDgwMzAzLmpwZw==",
+              "bytes": 247742,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "GT-080304",
+          "name": "30mm笼式同轴三轴精密镜架",
+          "id": 11404,
+          "price_cny": 420.0,
+          "category_id": 913,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "φ25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤5.8mm",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "压圈式",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "φ22.9mm",
+              "unit": ""
+            },
+            {
+              "key": "行程",
+              "value": "±3mm",
+              "unit": ""
+            },
+            {
+              "key": "俯仰调节范围",
+              "value": "±5º",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "四角有∅6mm接杆孔",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1个（带2个压环）",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "gt-0803-precision-lens-holders/GT-080304/item.json",
+              "bytes": 3579
+            },
+            {
+              "path": "gt-0803-precision-lens-holders/GT-080304/GT-080304_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/tu47bi3guv9mjrmf.pdf?R1QtMDgwMzA0LnBkZg==",
+              "bytes": 65828,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "gt-0803-precision-lens-holders/GT-080304/GT-080304_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/6sat28hghy1cusbg.stp?R1QtMDgwMzA0LnN0cA==",
+              "bytes": 2580532,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "gt-0803-precision-lens-holders/GT-080304/GT-080304_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/hsqejjeteg7affj5.jpg?Ry04MDAtR1QtMDgwMzA0LmpwZw==",
+              "bytes": 251713,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "hcm-3-beam-splitter-cube",
+      "label": "HCM-3 beam splitter cube holders",
+      "reason": "Beam splitter cube and adapter references.",
+      "page": "https://www.hengyangbuy.com/Product3?cid=879",
+      "api_cids": [
+        914,
+        1036
+      ],
+      "files": [
+        {
+          "path": "hcm-3-beam-splitter-cube/Product3-cid-879.html",
+          "url": "https://www.hengyangbuy.com/Product3?cid=879",
+          "bytes": 152752,
+          "content_type": "text/html; charset=utf-8"
+        },
+        {
+          "path": "hcm-3-beam-splitter-cube/api-cid-914.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=914",
+          "bytes": 37910,
+          "content_type": "application/json"
+        },
+        {
+          "path": "hcm-3-beam-splitter-cube/api-cid-1036.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=1036",
+          "bytes": 9836,
+          "content_type": "application/json"
+        }
+      ],
+      "items": [
+        {
+          "model": "HC-05",
+          "name": "分束立方转接件",
+          "id": 11418,
+          "price_cny": 130.0,
+          "category_id": 914,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "铝合金（阳极氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "分束立方固定方式",
+              "value": "方形凹槽固定",
+              "unit": ""
+            },
+            {
+              "key": "适用分束立方尺寸",
+              "value": "5mm³",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": ">80%",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcm-3-beam-splitter-cube/HC-05/item.json",
+              "bytes": 8695
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-05/HC-05_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/s6xgqhjfxqvt7ahv.pdf?SEMtMDUuUERG",
+              "bytes": 37049,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-05/HC-05_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/csrmucm9hkbcriuh.stp?SEMtMDUuc3Rw",
+              "bytes": 315842,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-05/HC-05_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/4hcb6dyv3jgzhcq2.jpg?ODAwLUhDLTA1LmpwZw==",
+              "bytes": 128464,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HC-10",
+          "name": "分束立方转接件",
+          "id": 11417,
+          "price_cny": 130.0,
+          "category_id": 914,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "铝合金（阳极氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "分束立方固定方式",
+              "value": "方形凹槽固定",
+              "unit": ""
+            },
+            {
+              "key": "适用分束立方尺寸",
+              "value": "10mm³",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": ">80%",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcm-3-beam-splitter-cube/HC-10/item.json",
+              "bytes": 8700
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-10/HC-10_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/2m9j6zqyrea4nbic.pdf?SEMtMTAuUERG",
+              "bytes": 62639,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-10/HC-10_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/dkuehjk7itkkitfy.stp?SEMtMTAuc3Rw",
+              "bytes": 384860,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-10/HC-10_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/gu8afuffvpshkcmt.jpg?ODAwLUhDLTEwLmpwZw==",
+              "bytes": 120366,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HC-12.7",
+          "name": "分束立方转接件",
+          "id": 11416,
+          "price_cny": 130.0,
+          "category_id": 914,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "铝合金（阳极氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "分束立方固定方式",
+              "value": "方形凹槽固定",
+              "unit": ""
+            },
+            {
+              "key": "适用分束立方尺寸",
+              "value": "12.7mm³",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": ">80%",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcm-3-beam-splitter-cube/HC-12.7/item.json",
+              "bytes": 8720
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-12.7/HC-12.7_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/c7vva4vny8nkqhfr.pdf?SEMtMTIuNy5QREY=",
+              "bytes": 62435,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-12.7/HC-12.7_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/8xdpyft71wpcxlyt.stp?SEMtMTIuNy5zdHA=",
+              "bytes": 364436,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-12.7/HC-12.7_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/7xh4hjmkqwdxefm5.jpg?ODAwLUhDLTEyLjcuanBn",
+              "bytes": 123128,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HC-20",
+          "name": "分束立方转接件",
+          "id": 11415,
+          "price_cny": 130.0,
+          "category_id": 914,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "铝合金（阳极氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "分束立方固定方式",
+              "value": "方形凹槽固定",
+              "unit": ""
+            },
+            {
+              "key": "适用分束立方尺寸",
+              "value": "20mm³",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": ">80%",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcm-3-beam-splitter-cube/HC-20/item.json",
+              "bytes": 8700
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-20/HC-20_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/07-30/sq11rhpfndfev8us.pdf?SEMtMjAuUERG",
+              "bytes": 39415,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-20/HC-20_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/6gxrd1z3ijmakx6f.stp?SEMtMjAuc3Rw",
+              "bytes": 270503,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HC-20/HC-20_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/6hdebihguvem6yen.jpg?ODAwLUhDLTIwLmpwZw==",
+              "bytes": 116450,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCM-3",
+          "name": "30mm同轴分束立方安装座",
+          "id": 11419,
+          "price_cny": 570.0,
+          "category_id": 1036,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（阳极氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "外形尺寸",
+              "value": "42×42×42mm",
+              "unit": ""
+            },
+            {
+              "key": "安装尺寸",
+              "value": "≤42×30mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤3mm",
+              "unit": ""
+            },
+            {
+              "key": "适用分束立方边长",
+              "value": "25.4 mm",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "Ø25.4 mm",
+              "unit": ""
+            },
+            {
+              "key": "安装方式",
+              "value": "45°安装，安装台阶45°对齐",
+              "unit": ""
+            },
+            {
+              "key": "侧面螺纹/螺纹孔规格",
+              "value": "SM1/M3",
+              "unit": ""
+            },
+            {
+              "key": "底部螺纹孔规格",
+              "value": "M4",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcm-3-beam-splitter-cube/HCM-3/item.json",
+              "bytes": 9014
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HCM-3/HCM-3_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/mzzkmusclumcq8fa.pdf?SENNLTMucGRm",
+              "bytes": 341850,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HCM-3/HCM-3_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/pndsquncqhvttaxx.stp?SENNLTMuc3Rw",
+              "bytes": 2626299,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hcm-3-beam-splitter-cube/HCM-3/HCM-3_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-19/3wdf2a7hu7gh4mth.jpg?ODAwLTIuanBn",
+              "bytes": 147033,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "hcm-3-flat-optic-45deg",
+      "label": "HCM-3 45 degree flat optic holders",
+      "reason": "45 degree round/rectangular beam splitter or mirror holder references.",
+      "page": "https://www.hengyangbuy.com/Product3?cid=880",
+      "api_cids": [
+        915,
+        916,
+        917,
+        918
+      ],
+      "files": [
+        {
+          "path": "hcm-3-flat-optic-45deg/Product3-cid-880.html",
+          "url": "https://www.hengyangbuy.com/Product3?cid=880",
+          "bytes": 226447,
+          "content_type": "text/html; charset=utf-8"
+        },
+        {
+          "path": "hcm-3-flat-optic-45deg/api-cid-915.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=915",
+          "bytes": 3620,
+          "content_type": "application/json"
+        },
+        {
+          "path": "hcm-3-flat-optic-45deg/api-cid-916.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=916",
+          "bytes": 3762,
+          "content_type": "application/json"
+        },
+        {
+          "path": "hcm-3-flat-optic-45deg/api-cid-917.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=917",
+          "bytes": 3580,
+          "content_type": "application/json"
+        },
+        {
+          "path": "hcm-3-flat-optic-45deg/api-cid-918.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=918",
+          "bytes": 3865,
+          "content_type": "application/json"
+        }
+      ],
+      "items": [
+        {
+          "model": "HCM-3C",
+          "name": "30mm同轴立方体圆形平片安装座",
+          "id": 11913,
+          "price_cny": 520.0,
+          "category_id": 915,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（阳极氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "安装尺寸",
+              "value": "∅25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "安装角度",
+              "value": "45°安装，安装台阶45°对齐",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "3~8mm",
+              "unit": ""
+            },
+            {
+              "key": "固定方式",
+              "value": "M3紧定胶头螺丝固定",
+              "unit": ""
+            },
+            {
+              "key": "底部螺纹孔规格",
+              "value": "M4",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcm-3-flat-optic-45deg/HCM-3C/item.json",
+              "bytes": 3320
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3C/HCM-3C_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/chqeqtbsapgwgsny.pdf?SENNLTNDLlBERg==",
+              "bytes": 60740,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3C/HCM-3C_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/xyzc7gjylrnnhgvt.stp?SENNLTNDLnN0cA==",
+              "bytes": 3787270,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3C/HCM-3C_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/uktzwjxtc4v4fwvv.jpg?Ry04MDAtSENNLTNDLmpwZw==",
+              "bytes": 222326,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCM-3R",
+          "name": "30mm同轴立方体矩形平片安装座",
+          "id": 11413,
+          "price_cny": 695.0,
+          "category_id": 916,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "T6061铝合金（阳极氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "安装尺寸",
+              "value": "≤42×30mm",
+              "unit": ""
+            },
+            {
+              "key": "安装角度",
+              "value": "45°安装，安装台阶45°对齐",
+              "unit": ""
+            },
+            {
+              "key": "安装厚度",
+              "value": "≤3mm",
+              "unit": ""
+            },
+            {
+              "key": "最小夹持边长",
+              "value": "25mm",
+              "unit": ""
+            },
+            {
+              "key": "底部螺纹孔规格",
+              "value": "M4",
+              "unit": ""
+            },
+            {
+              "key": "固定方式",
+              "value": "弹簧夹紧",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcm-3-flat-optic-45deg/HCM-3R/item.json",
+              "bytes": 3446
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3R/HCM-3R_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/7rs2qcuzifcizbmj.pdf?SENNLTNSLlBERg==",
+              "bytes": 47961,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3R/HCM-3R_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/4w5awrvqygj9yy7e.stp?SENNLTNSLnN0cA==",
+              "bytes": 2412009,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3R/HCM-3R_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/thvrbusb6cugsqyg.jpg?Ry04MDAtSENNLTNSLmpwZw==",
+              "bytes": 236236,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCM-3B3C",
+          "name": "圆形平片安装座",
+          "id": 11412,
+          "price_cny": 260.0,
+          "category_id": 917,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "T6061铝合金（阳极氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "安装尺寸",
+              "value": "∅25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "安装厚度",
+              "value": "3~8mm",
+              "unit": ""
+            },
+            {
+              "key": "安装角度",
+              "value": "45°",
+              "unit": ""
+            },
+            {
+              "key": "固定方式",
+              "value": "M3紧定螺丝",
+              "unit": ""
+            },
+            {
+              "key": "底部螺纹孔规格",
+              "value": "M4",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcm-3-flat-optic-45deg/HCM-3B3C/item.json",
+              "bytes": 3274
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3B3C/HCM-3B3C_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/ueg3tibssfvws48c.pdf?SENNLTNCM0MuUERG",
+              "bytes": 50270,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3B3C/HCM-3B3C_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/6ttjyzryh9ztfk8r.stp?SENNLTNCM0Muc3Rw",
+              "bytes": 1176000,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3B3C/HCM-3B3C_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/ngsdw6mhawkcycuh.jpg?Ry04MDAtSENNLTNCM0MuanBn",
+              "bytes": 228578,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCM-3B4C",
+          "name": "矩形平片安装座",
+          "id": 11414,
+          "price_cny": 320.0,
+          "category_id": 918,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（阳极氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "安装尺寸",
+              "value": "≤42mm×30mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤3mm",
+              "unit": ""
+            },
+            {
+              "key": "安装方式",
+              "value": "45°安装，安装台阶45°对齐",
+              "unit": ""
+            },
+            {
+              "key": "光学元件固定方式",
+              "value": "弹簧夹紧",
+              "unit": ""
+            },
+            {
+              "key": "最小夹持边长",
+              "value": "25mm",
+              "unit": ""
+            },
+            {
+              "key": "底部螺纹孔规格",
+              "value": "M4",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hcm-3-flat-optic-45deg/HCM-3B4C/item.json",
+              "bytes": 3541
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3B4C/HCM-3B4C_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/nj37idbxrwbfttpz.pdf?SENNLTNCNEMuUERG",
+              "bytes": 37699,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3B4C/HCM-3B4C_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/vyda9i5w6bjrana7.stp?SENNLTNCNEMuc3Rw",
+              "bytes": 662255,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hcm-3-flat-optic-45deg/HCM-3B4C/HCM-3B4C_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/kvxpmujy1qebb1dw.jpg?Ry04MDAtSENNLTNCNEMuanBn",
+              "bytes": 250524,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "hkcb1pm-right-angle-mirror-holder",
+      "label": "HKCB1PM right-angle mirror holder",
+      "reason": "Triangle/right-angle cage mirror holder reference.",
+      "page": "https://www.hengyangbuy.com/Product3?cid=1035",
+      "api_cids": [
+        1035
+      ],
+      "files": [
+        {
+          "path": "hkcb1pm-right-angle-mirror-holder/Product3-cid-1035.html",
+          "url": "https://www.hengyangbuy.com/Product3?cid=1035",
+          "bytes": 151359,
+          "content_type": "text/html; charset=utf-8"
+        },
+        {
+          "path": "hkcb1pm-right-angle-mirror-holder/api-cid-1035.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=1035",
+          "bytes": 3925,
+          "content_type": "application/json"
+        }
+      ],
+      "items": [
+        {
+          "model": "HKCB1PM",
+          "name": "抛物面镜直角安装架",
+          "id": 12628,
+          "price_cny": 950.0,
+          "category_id": 1035,
+          "parameters": [
+            {
+              "key": "材料",
+              "value": "铝合金（氧化黑）",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "Ø25.4mm的离轴抛物面反射镜",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "螺纹锁圈式",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "φ25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "Z轴平移调节范围",
+              "value": "±3.0mm",
+              "unit": ""
+            },
+            {
+              "key": "俯仰/偏转调节范围",
+              "value": "±4º",
+              "unit": ""
+            },
+            {
+              "key": "角度分辨率",
+              "value": "7.6mrad/转",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "∅6mm接杆孔",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hkcb1pm-right-angle-mirror-holder/HKCB1PM/item.json",
+              "bytes": 3603
+            },
+            {
+              "path": "hkcb1pm-right-angle-mirror-holder/HKCB1PM/HKCB1PM_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/07-30/ppep5urgpt3z6buh.pdf?SEtDQjFQTS5wZGY=",
+              "bytes": 375491,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hkcb1pm-right-angle-mirror-holder/HKCB1PM/HKCB1PM_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-16/34wsavh7st3pwmvi.stp?SEtDQjFQTS5zdHA=",
+              "bytes": 4420609,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hkcb1pm-right-angle-mirror-holder/HKCB1PM/HKCB1PM_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-08/eh1upthe48nrhy1d.jpg?Ry04MDAtMi5qcGc=",
+              "bytes": 218000,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "hct-6mm-cage-rods",
+      "label": "HCT 6 mm 30 mm cage rods",
+      "reason": "Shared metal rod interface for 30 mm cage assemblies.",
+      "page": "https://www.hengyangbuy.com/Product3?cid=837",
+      "api_cids": [
+        837
+      ],
+      "files": [
+        {
+          "path": "hct-6mm-cage-rods/Product3-cid-837.html",
+          "url": "https://www.hengyangbuy.com/Product3?cid=837",
+          "bytes": 87707,
+          "content_type": "text/html; charset=utf-8"
+        },
+        {
+          "path": "hct-6mm-cage-rods/api-cid-837.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=837",
+          "bytes": 90865,
+          "content_type": "application/json"
+        }
+      ],
+      "items": [
+        {
+          "model": "HCT-150",
+          "name": "支杆",
+          "id": 62423,
+          "price_cny": 40.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "150mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-150/item.json",
+              "bytes": 2915
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-150/HCT-150_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-150/HCT-150_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-150-P4",
+          "name": "支杆",
+          "id": 62422,
+          "price_cny": 155.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "150mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "4根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-150-P4/item.json",
+              "bytes": 2919
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-150-P4/HCT-150-P4_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-150-P4/HCT-150-P4_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-150-P8",
+          "name": "支杆",
+          "id": 62421,
+          "price_cny": 310.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "150mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "8根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-150-P8/item.json",
+              "bytes": 2919
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-150-P8/HCT-150-P8_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-150-P8/HCT-150-P8_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-010",
+          "name": "支杆",
+          "id": 35733,
+          "price_cny": 20.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "10mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-010/item.json",
+              "bytes": 2966
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-010/HCT-010_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-010/HCT-010_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-09/vpa4gxttln3gq41x.step?SENULTAxMC5TVEVQ",
+              "bytes": 18220,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-010/HCT-010_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-010-P4",
+          "name": "支杆",
+          "id": 35732,
+          "price_cny": 75.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "10mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "4根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-010-P4/item.json",
+              "bytes": 2968
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-010-P4/HCT-010-P4_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-010-P4/HCT-010-P4_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-09/vpa4gxttln3gq41x.step?SENULTAxMC5TVEVQ",
+              "bytes": 18220,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-010-P4/HCT-010-P4_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-010-P8",
+          "name": "支杆",
+          "id": 35731,
+          "price_cny": 150.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "10mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "8根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-010-P8/item.json",
+              "bytes": 2969
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-010-P8/HCT-010-P8_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-010-P8/HCT-010-P8_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-09/vpa4gxttln3gq41x.step?SENULTAxMC5TVEVQ",
+              "bytes": 18220,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-010-P8/HCT-010-P8_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-012",
+          "name": "支杆",
+          "id": 35730,
+          "price_cny": 20.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "12mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-012/item.json",
+              "bytes": 2966
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-012/HCT-012_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-012/HCT-012_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/vmfptdd7ujswrgym.step?SENULTAxMi5TVEVQ",
+              "bytes": 30348,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-012/HCT-012_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-012-P4",
+          "name": "支杆",
+          "id": 35729,
+          "price_cny": 75.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "12mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "4根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-012-P4/item.json",
+              "bytes": 2968
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-012-P4/HCT-012-P4_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-012-P4/HCT-012-P4_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/vmfptdd7ujswrgym.step?SENULTAxMi5TVEVQ",
+              "bytes": 30348,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-012-P4/HCT-012-P4_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-012-P8",
+          "name": "支杆",
+          "id": 35728,
+          "price_cny": 150.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "12mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "8根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-012-P8/item.json",
+              "bytes": 2969
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-012-P8/HCT-012-P8_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-012-P8/HCT-012-P8_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/vmfptdd7ujswrgym.step?SENULTAxMi5TVEVQ",
+              "bytes": 30348,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-012-P8/HCT-012-P8_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-025",
+          "name": "支杆",
+          "id": 35727,
+          "price_cny": 25.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "25mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-025/item.json",
+              "bytes": 2965
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-025/HCT-025_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-025/HCT-025_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/kuyp5gmmw4fwpmvy.step?SENULTAyNS5TVEVQ",
+              "bytes": 30348,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-025/HCT-025_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-025-P4",
+          "name": "支杆",
+          "id": 35726,
+          "price_cny": 95.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "25mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "4根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-025-P4/item.json",
+              "bytes": 2968
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-025-P4/HCT-025-P4_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-025-P4/HCT-025-P4_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/kuyp5gmmw4fwpmvy.step?SENULTAyNS5TVEVQ",
+              "bytes": 30348,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-025-P4/HCT-025-P4_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-025-P8",
+          "name": "支杆",
+          "id": 35725,
+          "price_cny": 190.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "25mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "8根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-025-P8/item.json",
+              "bytes": 2969
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-025-P8/HCT-025-P8_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-025-P8/HCT-025-P8_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/kuyp5gmmw4fwpmvy.step?SENULTAyNS5TVEVQ",
+              "bytes": 30348,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-025-P8/HCT-025-P8_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-050",
+          "name": "支杆",
+          "id": 35724,
+          "price_cny": 30.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "50mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-050/item.json",
+              "bytes": 2965
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-050/HCT-050_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-050/HCT-050_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/cmrkmghvkrbgqttz.step?SENULTA1MC5TVEVQ",
+              "bytes": 30340,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-050/HCT-050_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-050-P4",
+          "name": "支杆",
+          "id": 35723,
+          "price_cny": 115.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "50mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "4根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-050-P4/item.json",
+              "bytes": 2969
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-050-P4/HCT-050-P4_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-050-P4/HCT-050-P4_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/cmrkmghvkrbgqttz.step?SENULTA1MC5TVEVQ",
+              "bytes": 30340,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-050-P4/HCT-050-P4_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-050-P8",
+          "name": "支杆",
+          "id": 35722,
+          "price_cny": 230.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "50mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "8根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-050-P8/item.json",
+              "bytes": 2969
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-050-P8/HCT-050-P8_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-050-P8/HCT-050-P8_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/cmrkmghvkrbgqttz.step?SENULTA1MC5TVEVQ",
+              "bytes": 30340,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-050-P8/HCT-050-P8_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-075",
+          "name": "支杆",
+          "id": 35721,
+          "price_cny": 32.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "75mm,",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-075/item.json",
+              "bytes": 2968
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-075/HCT-075_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-075/HCT-075_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/z3fvnjzbtcct5sud.stp?SENULTA3NS5zdHA=",
+              "bytes": 23914,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-075/HCT-075_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-075-P4",
+          "name": "支杆",
+          "id": 35720,
+          "price_cny": 120.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "75mm,",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "4根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-075-P4/item.json",
+              "bytes": 2971
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-075-P4/HCT-075-P4_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-075-P4/HCT-075-P4_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/z3fvnjzbtcct5sud.stp?SENULTA3NS5zdHA=",
+              "bytes": 23914,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-075-P4/HCT-075-P4_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-075-P8",
+          "name": "支杆",
+          "id": 35719,
+          "price_cny": 240.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "75mm,",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "8根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-075-P8/item.json",
+              "bytes": 2971
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-075-P8/HCT-075-P8_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-075-P8/HCT-075-P8_model-stp.stp",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/z3fvnjzbtcct5sud.stp?SENULTA3NS5zdHA=",
+              "bytes": 23914,
+              "content_type": "application/octet-stream",
+              "kind": "model-stp"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-075-P8/HCT-075-P8_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-100",
+          "name": "支杆",
+          "id": 35718,
+          "price_cny": 35.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "100mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-100/item.json",
+              "bytes": 2972
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-100/HCT-100_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-100/HCT-100_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/f5bmgwrqg5bkmykd.step?SENULTEwMCAuU1RFUA==",
+              "bytes": 30342,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-100/HCT-100_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-100-P4",
+          "name": "支杆",
+          "id": 35717,
+          "price_cny": 135.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "100mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "4根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-100-P4/item.json",
+              "bytes": 2976
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-100-P4/HCT-100-P4_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-100-P4/HCT-100-P4_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/f5bmgwrqg5bkmykd.step?SENULTEwMCAuU1RFUA==",
+              "bytes": 30342,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-100-P4/HCT-100-P4_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-100-P8",
+          "name": "支杆",
+          "id": 35716,
+          "price_cny": 270.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "100mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "8根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-100-P8/item.json",
+              "bytes": 2976
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-100-P8/HCT-100-P8_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-100-P8/HCT-100-P8_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/f5bmgwrqg5bkmykd.step?SENULTEwMCAuU1RFUA==",
+              "bytes": 30342,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-100-P8/HCT-100-P8_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-200",
+          "name": "支杆",
+          "id": 35715,
+          "price_cny": 50.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "200mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-200/item.json",
+              "bytes": 2968
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-200/HCT-200_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-200/HCT-200_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/npxxsxqlgpffvkgh.step?SENULTIwMC5TVEVQ",
+              "bytes": 30339,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-200/HCT-200_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-200-P4",
+          "name": "支杆",
+          "id": 35714,
+          "price_cny": 195.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "200mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "4根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-200-P4/item.json",
+              "bytes": 2972
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-200-P4/HCT-200-P4_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-200-P4/HCT-200-P4_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/npxxsxqlgpffvkgh.step?SENULTIwMC5TVEVQ",
+              "bytes": 30339,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-200-P4/HCT-200-P4_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-200-P8",
+          "name": "支杆",
+          "id": 35713,
+          "price_cny": 390.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "200mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "8根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-200-P8/item.json",
+              "bytes": 2972
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-200-P8/HCT-200-P8_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-200-P8/HCT-200-P8_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/npxxsxqlgpffvkgh.step?SENULTIwMC5TVEVQ",
+              "bytes": 30339,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-200-P8/HCT-200-P8_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-300",
+          "name": "支杆",
+          "id": 35712,
+          "price_cny": 100.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "300mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-300/item.json",
+              "bytes": 2970
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-300/HCT-300_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-300/HCT-300_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/hvdkvhn817etwkdn.step?SENULTMwMC5TVEVQ",
+              "bytes": 30342,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-300/HCT-300_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-300-P4",
+          "name": "支杆",
+          "id": 35711,
+          "price_cny": 395.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "300mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "4根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-300-P4/item.json",
+              "bytes": 2972
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-300-P4/HCT-300-P4_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-300-P4/HCT-300-P4_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/hvdkvhn817etwkdn.step?SENULTMwMC5TVEVQ",
+              "bytes": 30342,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-300-P4/HCT-300-P4_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-400",
+          "name": "支杆",
+          "id": 35710,
+          "price_cny": 150.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "400mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "1根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-400/item.json",
+              "bytes": 2970
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-400/HCT-400_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-400/HCT-400_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/t96cahvzfrhdvhyq.step?SENULTQwMC5TVEVQ",
+              "bytes": 30346,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-400/HCT-400_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "HCT-400-P4",
+          "name": "支杆",
+          "id": 35709,
+          "price_cny": 595.0,
+          "category_id": 837,
+          "parameters": [
+            {
+              "key": "材质",
+              "value": "不锈钢",
+              "unit": ""
+            },
+            {
+              "key": "直径",
+              "value": "φ6mm",
+              "unit": ""
+            },
+            {
+              "key": "长度",
+              "value": "400mm",
+              "unit": ""
+            },
+            {
+              "key": "规格",
+              "value": "两端M3螺纹孔，配有可拆卸的M3螺丝",
+              "unit": ""
+            },
+            {
+              "key": "数量",
+              "value": "4根装",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "hct-6mm-cage-rods/HCT-400-P4/item.json",
+              "bytes": 2972
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-400-P4/HCT-400-P4_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/ywz5bh1gvnxnvxsa.pdf?SENULemAmueUqOesvOW8j+aUr+adhi5wZGY=",
+              "bytes": 146497,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-400-P4/HCT-400-P4_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-13/t96cahvzfrhdvhyq.step?SENULTQwMC5TVEVQ",
+              "bytes": 30346,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "hct-6mm-cage-rods/HCT-400-P4/HCT-400-P4_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/tp/qupc6hvcrppbana9.jpg",
+              "bytes": 256114,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

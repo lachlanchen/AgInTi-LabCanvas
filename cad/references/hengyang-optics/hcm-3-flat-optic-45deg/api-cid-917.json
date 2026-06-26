@@ -1,0 +1,153 @@
+[
+  {
+    "Name": "圆形平片安装座",
+    "Model": "HCM-3B3C",
+    "CategoryId": 917,
+    "Category": {
+      "Name": "HCM-3B3C—立方体矩形平片安装座",
+      "EnName": null,
+      "ParentId": 0,
+      "ImageUrl": null,
+      "BannerImage": null,
+      "MultiImage": null,
+      "EngineeringImage": null,
+      "EngineeringTitle": null,
+      "IsDetail": false,
+      "Info": null,
+      "Content": null,
+      "PriceRange": null,
+      "IsParameter": false,
+      "Parameter": null,
+      "IsDescription": false,
+      "Description": null,
+      "SketchMap": null,
+      "IsCurve": false,
+      "Curve": null,
+      "CurveUrl": null,
+      "IsAssemble": false,
+      "Assemble": null,
+      "IsTechnical": false,
+      "Technical": null,
+      "IsCase": false,
+      "Case": null,
+      "IsCustom": false,
+      "Custom": null,
+      "RelatedCategoryId": null,
+      "RelatedCategory": null,
+      "FilterJson": [
+        111,
+        173,
+        143,
+        97
+      ],
+      "ParameterJson": [],
+      "SpecJson": {},
+      "children": null,
+      "RelatedKnowledgeId": null,
+      "RelatedKnowledge": null,
+      "ExpanddCategoryId": null,
+      "ExpandCategory": null,
+      "SelfParameterJson": null,
+      "Id": 917,
+      "Sort": 0,
+      "IsDel": false,
+      "Status": 0,
+      "CreateTime": "2026-06-26 13:30:56",
+      "CreateUser": null,
+      "UpdateTime": "2026-06-26 13:30:56",
+      "UpdateUser": null
+    },
+    "Code": "",
+    "ImageUrl": "/UploadFiles/2024/08-16/ngsdw6mhawkcycuh.jpg?Ry04MDAtSENNLTNCM0MuanBn",
+    "Images": "",
+    "Info": "",
+    "Content": "",
+    "Tags": "",
+    "Price": 260.0,
+    "OldPrice": 0.0,
+    "Stock": 99,
+    "Hits": 0,
+    "IsOnShelf": true,
+    "SendTime": "当天",
+    "PdfUrl": "/UploadFiles/2024/08-16/ueg3tibssfvws48c.pdf?SENNLTNCM0MuUERG",
+    "StepUrl": "",
+    "ZEMAXUrl": "",
+    "ZIPUrl": null,
+    "STPUrl": "/UploadFiles/2024/08-16/6ttjyzryh9ztfk8r.stp?SENNLTNCM0Muc3Rw",
+    "SpecUrl": null,
+    "SpecJson": {
+      "Id": 0,
+      "Spec-83": "",
+      "Spec-111": "∅25.4mm",
+      "Spec-173": "45°安装",
+      "Spec-143": "紧定螺丝",
+      "Spec-97": "3~8mm"
+    },
+    "ParameterJson": null,
+    "RelatedGoodsId": null,
+    "RelatedGoods": null,
+    "SelfSpecJson": [
+      {
+        "key": "材料",
+        "value": "T6061铝合金（阳极氧化黑）"
+      },
+      {
+        "key": "安装尺寸",
+        "value": "∅25.4mm"
+      },
+      {
+        "key": "安装厚度",
+        "value": "3~8mm"
+      },
+      {
+        "key": "安装角度",
+        "value": "45°"
+      },
+      {
+        "key": "固定方式",
+        "value": "M3紧定螺丝"
+      },
+      {
+        "key": "底部螺纹孔规格",
+        "value": "M4"
+      }
+    ],
+    "CommonParameter": null,
+    "AllParameterList": [
+      {
+        "key": "材料",
+        "value": "T6061铝合金（阳极氧化黑）"
+      },
+      {
+        "key": "安装尺寸",
+        "value": "∅25.4mm"
+      },
+      {
+        "key": "安装厚度",
+        "value": "3~8mm"
+      },
+      {
+        "key": "安装角度",
+        "value": "45°"
+      },
+      {
+        "key": "固定方式",
+        "value": "M3紧定螺丝"
+      },
+      {
+        "key": "底部螺纹孔规格",
+        "value": "M4"
+      }
+    ],
+    "AllParameterFormatList": null,
+    "DetailCategory": null,
+    "Id": 11412,
+    "Sort": 1717513143710,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2024-06-04 14:59:04",
+    "CreateUser": "admin",
+    "UpdateTime": "2025-04-30 11:15:12",
+    "UpdateUser": "admin-qin"
+  }
+]

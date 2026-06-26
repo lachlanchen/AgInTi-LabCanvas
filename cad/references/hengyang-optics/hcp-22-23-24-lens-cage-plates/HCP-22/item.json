@@ -1,0 +1,174 @@
+{
+  "Name": "压圈式镜架",
+  "Model": "HCP-22",
+  "CategoryId": 869,
+  "Category": {
+    "Name": "30mm同轴系统φ1英寸压圈式顶丝式镜架—HCP-22/HCP23/HCP24",
+    "EnName": null,
+    "ParentId": 0,
+    "ImageUrl": null,
+    "BannerImage": null,
+    "MultiImage": null,
+    "EngineeringImage": null,
+    "EngineeringTitle": null,
+    "IsDetail": false,
+    "Info": null,
+    "Content": null,
+    "PriceRange": null,
+    "IsParameter": false,
+    "Parameter": null,
+    "IsDescription": false,
+    "Description": null,
+    "SketchMap": null,
+    "IsCurve": false,
+    "Curve": null,
+    "CurveUrl": null,
+    "IsAssemble": false,
+    "Assemble": null,
+    "IsTechnical": false,
+    "Technical": null,
+    "IsCase": false,
+    "Case": null,
+    "IsCustom": false,
+    "Custom": null,
+    "RelatedCategoryId": null,
+    "RelatedCategory": null,
+    "FilterJson": [
+      83,
+      3,
+      33,
+      97
+    ],
+    "ParameterJson": [],
+    "SpecJson": {},
+    "children": null,
+    "RelatedKnowledgeId": null,
+    "RelatedKnowledge": null,
+    "ExpanddCategoryId": null,
+    "ExpandCategory": null,
+    "SelfParameterJson": null,
+    "Id": 869,
+    "Sort": 0,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2026-06-26 13:30:01",
+    "CreateUser": null,
+    "UpdateTime": "2026-06-26 13:30:01",
+    "UpdateUser": null
+  },
+  "Code": "",
+  "ImageUrl": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/s4b4cusfq2c75hy4.jpg?Ry04MDAtSENQMjMtMi5qcGc=",
+  "Images": "",
+  "Info": "",
+  "Content": "",
+  "Tags": "",
+  "Price": 140.0,
+  "OldPrice": 0.0,
+  "Stock": 84,
+  "Hits": 0,
+  "IsOnShelf": true,
+  "SendTime": "当天",
+  "PdfUrl": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/etwqcezdp4692qae.pdf?SENQLTIyLnBkZg==",
+  "StepUrl": "http://hengyangbuy.com/UploadFiles/30cage-system-mounts/i24sra4ytv1kw55w.step?SENQLTIyLlNURVA=",
+  "ZEMAXUrl": "",
+  "ZIPUrl": "",
+  "STPUrl": "",
+  "SpecUrl": "",
+  "SpecJson": {
+    "Id": 0,
+    "Spec-3": "∅25.4mm",
+    "Spec-33": "10mm",
+    "Spec-83": "1.035\"-40螺纹锁圈式",
+    "Spec-97": "≤7mm"
+  },
+  "ParameterJson": null,
+  "RelatedGoodsId": null,
+  "RelatedGoods": null,
+  "SelfSpecJson": [
+    {
+      "key": "材料",
+      "value": "铝合金（氧化黑）"
+    },
+    {
+      "key": "外形尺寸",
+      "value": "40×40mm"
+    },
+    {
+      "key": "厚度",
+      "value": "10mm"
+    },
+    {
+      "key": "安装厚度",
+      "value": "≤7mm"
+    },
+    {
+      "key": "锁紧方式",
+      "value": "螺纹锁圈式"
+    },
+    {
+      "key": "中心孔",
+      "value": "∅25.4mm"
+    },
+    {
+      "key": "笼杆固定",
+      "value": "M2螺纹孔"
+    },
+    {
+      "key": "规格",
+      "value": "四角有∅6mm接杆孔"
+    },
+    {
+      "key": "数量",
+      "value": "1个"
+    }
+  ],
+  "CommonParameter": null,
+  "AllParameterList": [
+    {
+      "key": "材料",
+      "value": "铝合金（氧化黑）"
+    },
+    {
+      "key": "外形尺寸",
+      "value": "40×40mm"
+    },
+    {
+      "key": "厚度",
+      "value": "10mm"
+    },
+    {
+      "key": "安装厚度",
+      "value": "≤7mm"
+    },
+    {
+      "key": "锁紧方式",
+      "value": "螺纹锁圈式"
+    },
+    {
+      "key": "中心孔",
+      "value": "∅25.4mm"
+    },
+    {
+      "key": "笼杆固定",
+      "value": "M2螺纹孔"
+    },
+    {
+      "key": "规格",
+      "value": "四角有∅6mm接杆孔"
+    },
+    {
+      "key": "数量",
+      "value": "1个"
+    }
+  ],
+  "AllParameterFormatList": null,
+  "DetailCategory": null,
+  "Id": 12816,
+  "Sort": 1723211563064,
+  "IsDel": false,
+  "Status": 0,
+  "CreateTime": "2024-08-09 13:52:43",
+  "CreateUser": "admin1",
+  "UpdateTime": "2026-01-22 09:36:14",
+  "UpdateUser": "HENGYANG-QIN"
+}

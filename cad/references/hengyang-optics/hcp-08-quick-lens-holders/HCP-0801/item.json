@@ -1,0 +1,154 @@
+{
+  "Name": "快速安装镜架",
+  "Model": "HCP-0801",
+  "CategoryId": 873,
+  "Category": {
+    "Name": "30mm同轴快速安装镜架—HCP-08系列",
+    "EnName": null,
+    "ParentId": 0,
+    "ImageUrl": null,
+    "BannerImage": null,
+    "MultiImage": null,
+    "EngineeringImage": null,
+    "EngineeringTitle": null,
+    "IsDetail": false,
+    "Info": null,
+    "Content": null,
+    "PriceRange": null,
+    "IsParameter": false,
+    "Parameter": null,
+    "IsDescription": false,
+    "Description": null,
+    "SketchMap": null,
+    "IsCurve": false,
+    "Curve": null,
+    "CurveUrl": null,
+    "IsAssemble": false,
+    "Assemble": null,
+    "IsTechnical": false,
+    "Technical": null,
+    "IsCase": false,
+    "Case": null,
+    "IsCustom": false,
+    "Custom": null,
+    "RelatedCategoryId": null,
+    "RelatedCategory": null,
+    "FilterJson": [
+      42,
+      97
+    ],
+    "ParameterJson": [],
+    "SpecJson": {},
+    "children": null,
+    "RelatedKnowledgeId": null,
+    "RelatedKnowledge": null,
+    "ExpanddCategoryId": null,
+    "ExpandCategory": null,
+    "SelfParameterJson": null,
+    "Id": 873,
+    "Sort": 0,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2026-06-26 13:30:14",
+    "CreateUser": null,
+    "UpdateTime": "2026-06-26 13:30:14",
+    "UpdateUser": null
+  },
+  "Code": "",
+  "ImageUrl": "/UploadFiles/2024/08-16/z7wk7gp43ljxe23b.jpg?Ry04MDAtMi5qcGc=",
+  "Images": "",
+  "Info": "",
+  "Content": "<p><span style=\"font-size: 14pt; background-color: rgb(255, 255, 255);\"><strong><span style=\"color: rgb(230, 126, 35);\">HCP-0801 </span></strong>镜架分为固定座及镜座两个组件，通过磁钢片快速连接，镜座为锁圈式锁紧镜片，固定座通过四个&empty;6mm通孔可与 <strong><span style=\"color: rgb(230, 126, 35);\">HCT系列</span></strong> 同轴支杆配合使用。使用时需注意要将前后组件上的标识对齐，底座和镜座才可以正确定位。</span></p>",
+  "Tags": "",
+  "Price": 385.0,
+  "OldPrice": 0.0,
+  "Stock": 100,
+  "Hits": 0,
+  "IsOnShelf": true,
+  "SendTime": "当天",
+  "PdfUrl": "/UploadFiles/2024/08-16/jrr1usy8elfpxptu.pdf?SENQLTA4MDEucGRm",
+  "StepUrl": "/UploadFiles/2024/08-16/dd6vcp2iemadzshk.step?SENQLTA4MDEuU1RFUA==",
+  "ZEMAXUrl": "",
+  "ZIPUrl": null,
+  "STPUrl": null,
+  "SpecUrl": null,
+  "SpecJson": {
+    "Id": 0,
+    "Spec-42": "Φ25.4mm",
+    "Spec-97": "≤3"
+  },
+  "ParameterJson": null,
+  "RelatedGoodsId": null,
+  "RelatedGoods": null,
+  "SelfSpecJson": [
+    {
+      "key": "材料",
+      "value": "铝合金（氧化黑）"
+    },
+    {
+      "key": "夹持尺寸",
+      "value": "φ25.4mm"
+    },
+    {
+      "key": "夹持厚度",
+      "value": "≤3mm"
+    },
+    {
+      "key": "锁紧方式",
+      "value": "1.035\"-40(SM1)螺纹锁圈式"
+    },
+    {
+      "key": "通光孔径",
+      "value": "φ23mm"
+    },
+    {
+      "key": "规格",
+      "value": "四角有∅6mm接杆孔"
+    },
+    {
+      "key": "数量",
+      "value": "1个（含镜座及固定座）"
+    }
+  ],
+  "CommonParameter": null,
+  "AllParameterList": [
+    {
+      "key": "材料",
+      "value": "铝合金（氧化黑）"
+    },
+    {
+      "key": "夹持尺寸",
+      "value": "φ25.4mm"
+    },
+    {
+      "key": "夹持厚度",
+      "value": "≤3mm"
+    },
+    {
+      "key": "锁紧方式",
+      "value": "1.035\"-40(SM1)螺纹锁圈式"
+    },
+    {
+      "key": "通光孔径",
+      "value": "φ23mm"
+    },
+    {
+      "key": "规格",
+      "value": "四角有∅6mm接杆孔"
+    },
+    {
+      "key": "数量",
+      "value": "1个（含镜座及固定座）"
+    }
+  ],
+  "AllParameterFormatList": null,
+  "DetailCategory": null,
+  "Id": 11388,
+  "Sort": 1717431299796,
+  "IsDel": false,
+  "Status": 0,
+  "CreateTime": "2024-06-03 16:15:00",
+  "CreateUser": "admin",
+  "UpdateTime": "2025-04-23 11:35:02",
+  "UpdateUser": "HENGYANG-HONG"
+}

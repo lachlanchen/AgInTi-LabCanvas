@@ -1,0 +1,161 @@
+[
+  {
+    "Name": "抛物面镜直角安装架",
+    "Model": "HKCB1PM",
+    "CategoryId": 1035,
+    "Category": {
+      "Name": "30mm笼式抛物面镜直角安装架—HKCB1PM",
+      "EnName": null,
+      "ParentId": 0,
+      "ImageUrl": null,
+      "BannerImage": null,
+      "MultiImage": null,
+      "EngineeringImage": null,
+      "EngineeringTitle": null,
+      "IsDetail": false,
+      "Info": null,
+      "Content": null,
+      "PriceRange": null,
+      "IsParameter": false,
+      "Parameter": null,
+      "IsDescription": false,
+      "Description": null,
+      "SketchMap": null,
+      "IsCurve": false,
+      "Curve": null,
+      "CurveUrl": null,
+      "IsAssemble": false,
+      "Assemble": null,
+      "IsTechnical": false,
+      "Technical": null,
+      "IsCase": false,
+      "Case": null,
+      "IsCustom": false,
+      "Custom": null,
+      "RelatedCategoryId": null,
+      "RelatedCategory": null,
+      "FilterJson": [
+        83
+      ],
+      "ParameterJson": [],
+      "SpecJson": {},
+      "children": null,
+      "RelatedKnowledgeId": null,
+      "RelatedKnowledge": null,
+      "ExpanddCategoryId": null,
+      "ExpandCategory": null,
+      "SelfParameterJson": null,
+      "Id": 1035,
+      "Sort": 0,
+      "IsDel": false,
+      "Status": 0,
+      "CreateTime": "2026-06-26 13:31:17",
+      "CreateUser": null,
+      "UpdateTime": "2026-06-26 13:31:17",
+      "UpdateUser": null
+    },
+    "Code": null,
+    "ImageUrl": "/UploadFiles/2024/08-08/eh1upthe48nrhy1d.jpg?Ry04MDAtMi5qcGc=",
+    "Images": null,
+    "Info": null,
+    "Content": null,
+    "Tags": null,
+    "Price": 950.0,
+    "OldPrice": 0.0,
+    "Stock": 10,
+    "Hits": 0,
+    "IsOnShelf": true,
+    "SendTime": "当天",
+    "PdfUrl": "/UploadFiles/2024/07-30/ppep5urgpt3z6buh.pdf?SEtDQjFQTS5wZGY=",
+    "StepUrl": "",
+    "ZEMAXUrl": null,
+    "ZIPUrl": null,
+    "STPUrl": "/UploadFiles/2024/08-16/34wsavh7st3pwmvi.stp?SEtDQjFQTS5zdHA=",
+    "SpecUrl": null,
+    "SpecJson": {
+      "Spec-83": "直角光学调整架，用于离轴抛物面反射镜，兼容30 mm笼式系统和SM1螺纹，M6安装孔"
+    },
+    "ParameterJson": null,
+    "RelatedGoodsId": [],
+    "RelatedGoods": null,
+    "SelfSpecJson": [
+      {
+        "key": "材料",
+        "value": "铝合金（氧化黑）"
+      },
+      {
+        "key": "夹持尺寸",
+        "value": "Ø25.4mm的离轴抛物面反射镜"
+      },
+      {
+        "key": "锁紧方式",
+        "value": "螺纹锁圈式"
+      },
+      {
+        "key": "通光孔径",
+        "value": "φ25.4mm"
+      },
+      {
+        "key": "Z轴平移调节范围",
+        "value": "±3.0mm"
+      },
+      {
+        "key": "俯仰/偏转调节范围",
+        "value": "±4º"
+      },
+      {
+        "key": "角度分辨率",
+        "value": "7.6mrad/转"
+      },
+      {
+        "key": "规格",
+        "value": "∅6mm接杆孔"
+      }
+    ],
+    "CommonParameter": null,
+    "AllParameterList": [
+      {
+        "key": "材料",
+        "value": "铝合金（氧化黑）"
+      },
+      {
+        "key": "夹持尺寸",
+        "value": "Ø25.4mm的离轴抛物面反射镜"
+      },
+      {
+        "key": "锁紧方式",
+        "value": "螺纹锁圈式"
+      },
+      {
+        "key": "通光孔径",
+        "value": "φ25.4mm"
+      },
+      {
+        "key": "Z轴平移调节范围",
+        "value": "±3.0mm"
+      },
+      {
+        "key": "俯仰/偏转调节范围",
+        "value": "±4º"
+      },
+      {
+        "key": "角度分辨率",
+        "value": "7.6mrad/转"
+      },
+      {
+        "key": "规格",
+        "value": "∅6mm接杆孔"
+      }
+    ],
+    "AllParameterFormatList": null,
+    "DetailCategory": null,
+    "Id": 12628,
+    "Sort": 1722351041464,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2024-07-30 14:50:41",
+    "CreateUser": "admin1",
+    "UpdateTime": "2025-04-23 10:02:53",
+    "UpdateUser": "HENGYANG-HONG"
+  }
+]
