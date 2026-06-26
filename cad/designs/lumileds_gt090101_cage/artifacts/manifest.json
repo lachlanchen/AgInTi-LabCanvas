@@ -1,0 +1,36 @@
+{
+  "parameters": {
+    "name": "lumileds_gt090101_cage",
+    "reference_product": "Hengyang Optics GT-090101",
+    "reference_page": "https://www.hengyangbuy.com/Product3?cid=790",
+    "reference_stp": "cad/references/hengyang-gt090101/GT-090101.stp",
+    "reference_pdf": "cad/references/hengyang-gt090101/GT-090101.pdf",
+    "body_width_mm": 42.0,
+    "body_height_mm": 42.0,
+    "body_thickness_mm": 9.0,
+    "corner_radius_mm": 2.0,
+    "cage_rod_pitch_mm": 30.0,
+    "cage_rod_clearance_diameter_mm": 6.35,
+    "light_aperture_diameter_mm": 9.5,
+    "front_chamfer_diameter_mm": 13.5,
+    "pcb_outer_diameter_mm": 24.0,
+    "pcb_pocket_diameter_mm": 24.6,
+    "pcb_thickness_mm": 1.6,
+    "pcb_pocket_depth_mm": 1.9,
+    "pcb_mount_pattern_mm": 12.0,
+    "pcb_mount_hole_diameter_mm": 2.35,
+    "pcb_mount_counterbore_diameter_mm": 4.8,
+    "pcb_mount_counterbore_depth_mm": 2.2,
+    "connector_relief_width_mm": 10.5,
+    "connector_relief_depth_mm": 2.4,
+    "connector_relief_reach_mm": 16.0,
+    "print_clearance_note": "Rod and PCB pockets include clearance for FDM/resin printed prototypes; tune after first print."
+  },
+  "artifacts": {
+    "holder_step": "cad/designs/lumileds_gt090101_cage/artifacts/lumileds_gt090101_cage_holder.step",
+    "holder_stl": "cad/designs/lumileds_gt090101_cage/artifacts/lumileds_gt090101_cage_holder.stl",
+    "assembly_step": "cad/designs/lumileds_gt090101_cage/artifacts/lumileds_gt090101_cage_assembly.step",
+    "assembly_stl": "cad/designs/lumileds_gt090101_cage/artifacts/lumileds_gt090101_cage_assembly.stl",
+    "dimension_svg": "cad/designs/lumileds_gt090101_cage/artifacts/lumileds_gt090101_cage_dimension_sketch.svg"
+  }
+}
