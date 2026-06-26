@@ -5017,13 +5017,21 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         original_message = worker.send_message
         original_file = worker.send_file
         original_render = worker.render_markdown_pdf
+        original_language_source = worker.ensure_markdown_language_source
         try:
             worker.send_message = lambda message, *_args, **_kwargs: messages.append(message)
             worker.send_file = lambda file_path, *_args, **_kwargs: files.append(Path(file_path))
+
+            def fake_language_source(source: Path, language: str) -> Path:
+                translated = source.with_name(f"{source.stem}.{language}.md")
+                translated.write_text(f"# Story {language}\n", encoding="utf-8")
+                return translated
+
             def fake_render_markdown_pdf(source: Path, output: Path) -> Path:
                 output.write_bytes(b"%PDF-1.4\n")
                 return output
 
+            worker.ensure_markdown_language_source = fake_language_source
             worker.render_markdown_pdf = fake_render_markdown_pdf
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -5046,9 +5054,10 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         finally:
             worker.send_message = original_message
             worker.send_file = original_file
+            worker.ensure_markdown_language_source = original_language_source
             worker.render_markdown_pdf = original_render
 
-        self.assertEqual(files, [story, story.with_suffix(".pdf"), preview])
+        self.assertEqual(files, [story, story.with_name("story.zh.pdf"), story.with_name("story.en.pdf"), preview])
         self.assertNotIn("unsent_saved_files", task)
         self.assertEqual(messages, ["done"])
 

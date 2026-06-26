@@ -158,6 +158,11 @@ OUTBOUND_SUFFIXES = {
 DEFAULT_AUTO_SEND_SUFFIXES = set(OUTBOUND_SUFFIXES)
 DEFAULT_MAX_OUTBOUND_BYTES = 100 * 1024 * 1024
 MARKDOWN_PDF_COMPANION_SUFFIXES = {".md", ".markdown"}
+MARKDOWN_PDF_DEFAULT_LANGUAGES = ("zh", "en")
+MARKDOWN_PDF_LANGUAGE_LABELS = {
+    "zh": "Simplified Chinese",
+    "en": "English",
+}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 AUDIO_SUFFIXES = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".amr", ".opus"}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".svg"}
@@ -1235,30 +1240,189 @@ def add_markdown_pdf_companions(files: list[str]) -> list[str]:
         if not path_text:
             continue
         expanded.append(path_text)
-        companion = ensure_markdown_pdf_companion(Path(path_text))
-        if companion:
+        for companion in ensure_markdown_pdf_companions(Path(path_text)):
             expanded.append(str(companion))
     return unique_strings(expanded)
 
 
 def ensure_markdown_pdf_companion(path: Path) -> Path | None:
+    companions = ensure_markdown_pdf_companions(path)
+    return companions[0] if companions else None
+
+
+def ensure_markdown_pdf_companions(path: Path) -> list[Path]:
     source = path.expanduser()
     if source.suffix.lower() not in MARKDOWN_PDF_COMPANION_SUFFIXES:
-        return None
+        return []
     if not source.is_absolute():
         source = (ROOT / source).resolve()
     if not source.is_file():
+        return []
+    companions: list[Path] = []
+    for language in markdown_pdf_languages():
+        companion = ensure_markdown_pdf_companion_for_language(source, language)
+        if companion:
+            companions.append(companion)
+    return unique_paths(companions)
+
+
+def markdown_pdf_languages() -> list[str]:
+    raw = os.environ.get("WECHAT_MARKDOWN_PDF_LANGUAGES", ",".join(MARKDOWN_PDF_DEFAULT_LANGUAGES))
+    languages: list[str] = []
+    for part in raw.split(","):
+        language = normalize_markdown_pdf_language(part)
+        if language and language not in languages:
+            languages.append(language)
+    return languages or list(MARKDOWN_PDF_DEFAULT_LANGUAGES)
+
+
+def normalize_markdown_pdf_language(value: str) -> str:
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    aliases = {
+        "cn": "zh",
+        "zh-cn": "zh",
+        "zh-hans": "zh",
+        "zh-sg": "zh",
+        "chinese": "zh",
+        "中文": "zh",
+        "zh": "zh",
+        "en-us": "en",
+        "en-gb": "en",
+        "english": "en",
+        "英文": "en",
+        "en": "en",
+    }
+    return aliases.get(normalized, "")
+
+
+def unique_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    output: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            output.append(path)
+    return output
+
+
+def ensure_markdown_pdf_companion_for_language(source: Path, language: str) -> Path | None:
+    language_source = ensure_markdown_language_source(source, language)
+    if not language_source or not language_source.is_file():
         return None
-    output = source.with_suffix(".pdf")
+    output = markdown_pdf_output_path(source, language)
     try:
-        if output.is_file() and output.stat().st_size > 0 and output.stat().st_mtime >= source.stat().st_mtime:
+        source_mtime = max(source.stat().st_mtime, language_source.stat().st_mtime)
+        if output.is_file() and output.stat().st_size > 0 and output.stat().st_mtime >= source_mtime:
             return output
     except OSError:
         pass
     try:
-        return render_markdown_pdf(source, output)
+        return render_markdown_pdf(language_source, output)
     except Exception:
         return None
+
+
+def markdown_pdf_output_path(source: Path, language: str) -> Path:
+    base = markdown_language_base_stem(source)
+    return source.with_name(f"{base}.{language}.pdf")
+
+
+def markdown_language_base_stem(source: Path) -> str:
+    stem = source.stem
+    for language in MARKDOWN_PDF_LANGUAGE_LABELS:
+        suffix = f".{language}"
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return stem
+
+
+def ensure_markdown_language_source(source: Path, language: str) -> Path | None:
+    if source_language_matches(source, language):
+        return source
+    translated = markdown_translation_path(source, language)
+    try:
+        if translated.is_file() and translated.stat().st_size > 0 and translated.stat().st_mtime >= source.stat().st_mtime:
+            return translated
+    except OSError:
+        pass
+    if os.environ.get("WECHAT_MARKDOWN_PDF_TRANSLATE_WITH_AGENT", "1") == "0":
+        return source if os.environ.get("WECHAT_MARKDOWN_PDF_TRANSLATE_FALLBACK_COPY", "0") == "1" else None
+    return translate_markdown_for_pdf(source, translated, language)
+
+
+def source_language_matches(source: Path, language: str) -> bool:
+    stem = source.stem.lower()
+    if stem.endswith(f".{language}"):
+        return True
+    text = read_text_prefix(source)
+    detected = detect_markdown_primary_language(text)
+    return detected == language
+
+
+def read_text_prefix(path: Path, limit: int = 12000) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")[:limit]
+    except OSError:
+        return ""
+
+
+def detect_markdown_primary_language(text: str) -> str:
+    cjk_count = len(re.findall(r"[\u3400-\u9fff]", text or ""))
+    latin_count = len(re.findall(r"[A-Za-z]", text or ""))
+    if cjk_count >= 80 and cjk_count >= latin_count * 0.25:
+        return "zh"
+    return "en"
+
+
+def markdown_translation_path(source: Path, language: str) -> Path:
+    base = markdown_language_base_stem(source)
+    return source.with_name(f"{base}.{language}.md")
+
+
+def translate_markdown_for_pdf(source: Path, output: Path, language: str) -> Path | None:
+    target_label = MARKDOWN_PDF_LANGUAGE_LABELS.get(language)
+    if not target_label:
+        return None
+    text = source.read_text(encoding="utf-8", errors="ignore")
+    if not text.strip():
+        return None
+    prompt = f"""Translate this Markdown report into {target_label}.
+
+Rules:
+- Return only Markdown.
+- Preserve heading levels, lists, tables, links, file paths, code blocks, and numeric evidence.
+- Translate prose, headings, captions, and checklist text naturally.
+- Do not add commentary, apologies, or a summary.
+- Do not remove safety notes or caveats.
+
+Markdown source:
+```markdown
+{text}
+```
+"""
+    result = run_codex_session(
+        prompt,
+        backend=select_agent_backend({}),
+        chat_name="markdown-pdf-companion",
+        role=f"translate_{language}",
+        model=os.environ.get("WECHAT_MARKDOWN_TRANSLATION_MODEL", DEFAULT_WORKER_MODEL),
+        reasoning_effort=os.environ.get("WECHAT_MARKDOWN_TRANSLATION_EFFORT", "low"),
+        sandbox="read-only",
+        timeout_seconds=int(os.environ.get("WECHAT_MARKDOWN_TRANSLATION_TIMEOUT_SECONDS", "300")),
+        workdir=ROOT,
+        reuse=False,
+    )
+    message = strip_markdown_fence(str(result.get("message") or "").strip())
+    if not result.get("ok") or not message:
+        return None
+    output.write_text(message.rstrip() + "\n", encoding="utf-8")
+    return output
+
+
+def strip_markdown_fence(text: str) -> str:
+    match = re.fullmatch(r"\s*```(?:markdown|md)?\s*\n(.*?)\n```\s*", text, flags=re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else text
 
 
 def render_markdown_pdf(source: Path, output: Path) -> Path | None:

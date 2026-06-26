@@ -102,6 +102,11 @@ designing a new workflow from scratch or waiting for manual operator rescue.
   ignore AutoPublish-cache files and other chats, then return the MP4 through
   the required artifact delivery gate.
 - GUI file delivery is a first-class state, not a best-effort afterthought.
+- Markdown artifacts should be sent with bilingual PDF companions by default:
+  `*.zh.pdf` and `*.en.pdf`. Reuse sibling translated Markdown when available;
+  otherwise the worker may call the agent backend to translate the missing
+  language before pandoc/XeLaTeX rendering. This is controlled by
+  `WECHAT_MARKDOWN_PDF_LANGUAGES`.
 - File attachments should use the official Linux file chooser with clipboard
   path paste (`Ctrl+L`, paste absolute path, `Enter`). If WeChat locks during
   that file-picker flow, the worker releases the serialized send lock, runs the

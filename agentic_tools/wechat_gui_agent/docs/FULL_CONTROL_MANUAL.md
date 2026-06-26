@@ -132,10 +132,13 @@ target, so a worker send that appears mid-cycle stops further dry-open actions.
 ## Artifact Delivery Defaults
 
 Workers send safe Markdown artifacts directly, but mobile WeChat is poor at
-opening `.md` files. By default, `wechat_task_worker.py` generates a same-name
-PDF companion for every existing `.md` or `.markdown` attachment before sending
-files, for example `story.md` plus `story.pdf`. Disable only for debugging with
-`WECHAT_MARKDOWN_PDF_COMPANIONS=0`.
+opening `.md` files. By default, `wechat_task_worker.py` generates Chinese and
+English PDF companions for every existing `.md` or `.markdown` attachment before
+sending files, for example `story.md`, `story.zh.pdf`, and `story.en.pdf`. It
+reuses sibling translated Markdown such as `story.en.md` when present, otherwise
+uses the agent backend to create the missing language before rendering with
+pandoc/XeLaTeX. Tune languages with `WECHAT_MARKDOWN_PDF_LANGUAGES=zh,en`.
+Disable only for debugging with `WECHAT_MARKDOWN_PDF_COMPANIONS=0`.
 
 File attachments use the official Linux file chooser with clipboard path paste
 (`Ctrl+L`, paste absolute path, `Enter`) so the chosen file remains reviewable.

@@ -16,7 +16,7 @@ import time
 from typing import Any
 
 from wechat_agent_backend import run_agent_session, select_agent_backend
-from wechat_task_worker import ensure_markdown_pdf_companion, send_file, send_message
+from wechat_task_worker import ensure_markdown_pdf_companions, send_file, send_message
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -457,10 +457,11 @@ def send_daily_result(args: argparse.Namespace, report: Path, body: str) -> dict
         status["errors"].append(f"message: {exc}")
     if args.attach_report:
         report_files = [report]
-        companion = ensure_markdown_pdf_companion(report)
-        if companion:
-            status["pdf_companion"] = str(companion)
-            report_files.append(companion)
+        companions = ensure_markdown_pdf_companions(report)
+        if companions:
+            status["pdf_companions"] = [str(path) for path in companions]
+            status["pdf_companion"] = str(companions[0])
+            report_files.extend(companions)
         for report_file in report_files:
             try:
                 send_file(report_file, args.send_chat, args.send_targets)
