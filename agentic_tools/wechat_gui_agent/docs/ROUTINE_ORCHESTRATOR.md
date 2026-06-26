@@ -8,13 +8,21 @@ invent a new workflow when a routine already covers the request.
 
 ```text
 direct DB monitor
+  -> reused per-chat route agent
   -> route decision
   -> routine contract
   -> JSONL task queue
   -> worker writes routine_contract.json/.md
-  -> deterministic stages and Codex worker supervision
+  -> deterministic probes/gates and reused Codex worker supervision
   -> artifact delivery gate
 ```
+
+In bridge mode, the WeChat monitor is transport only. The current coalesced
+message is forwarded to the route agent as if it were an interactive Codex
+message in that chat. If backend work is needed, the worker receives the exact
+same user intent plus a routine contract. Follow-up WeChat messages in the same
+chat append as task interruptions, so the reused worker session can revise the
+plan or continue the routine instead of starting a disconnected hardcoded task.
 
 ## Routine Registry
 
@@ -94,6 +102,9 @@ Required behavior:
 
 - select routines from the current `route_decision` and current request;
 - treat route and routine contracts as source-of-truth intent boundaries;
+- treat routines as callable tool contracts, not as a replacement for agent
+  reasoning; the worker may choose another safe tool path when the current
+  request does not fit a mature routine;
 - treat the human operator as approval-only for real blockers; normal safe
   work must continue through queue state, deterministic stages, and the resumed
   per-chat worker session;

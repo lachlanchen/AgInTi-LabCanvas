@@ -123,7 +123,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         assert route is not None
         self.assertEqual(route["route_decision"]["route_kind"], "cad_pcb_labcanvas")
         self.assertEqual(route["route_decision"]["route_agent_model"], "gpt-5.3-codex-spark")
-        self.assertIn("all safe generated or fetched artifacts", route["task"])
+        self.assertIn("message forwarded from WeChat into the backend Codex session", route["task"])
+        self.assertIn("plus files only when the user requested files/artifacts", route["task"])
 
     def test_all_monitored_chats_share_backend_route_skills_for_explicit_work(self) -> None:
         chats = [
@@ -524,6 +525,56 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(decision["route_kind"], "file_download_or_save")
         self.assertEqual(decision["route_agent_overridden"], "agent_chat_only_despite_worker_heuristic")
 
+    def test_agent_bridge_mode_trusts_route_agent_chat_only(self) -> None:
+        config = self.backend_chat_config("🍓我的设备", "device_inbox")
+        config["agent_bridge_mode"] = True
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row("Could you send me the generated video in the group?", local_id=72, server_id="srv-72")
+        context = [
+            self.row("Xiaoyunque 视频已生成并下载完成。已保存到 LALACHAN/Videos。", sender="self", local_id=70),
+            row,
+        ]
+
+        with mock.patch.object(
+            direct_chatops,
+            "agent_route_decision",
+            return_value={"route_kind": "chat_only", "worker_needed": False, "reason": "agent says reply in chat"},
+        ):
+            route = direct_chatops.immediate_task_route(config, row, context, focus_rows=[row])
+
+        self.assertIsNone(route)
+
+    def test_agent_bridge_mode_marks_worker_task_prompt(self) -> None:
+        config = self.backend_chat_config("懒人科研", "research")
+        config["agent_bridge_mode"] = True
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row("read this article and tell me the point", local_id=81, server_id="srv-81")
+
+        with mock.patch.object(
+            direct_chatops,
+            "agent_route_decision",
+            return_value={
+                "route_kind": "research_or_summary",
+                "project": "generic",
+                "worker_needed": True,
+                "needs_recent_media": False,
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+                "source_policy": "current_request_only",
+                "reason": "backend reading requested",
+                "confidence": 0.9,
+            },
+        ):
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertTrue(route["route_decision"]["agent_bridge_mode"])
+        self.assertIn("message forwarded from WeChat into the backend Codex session", route["task"])
+        self.assertIn("tool guidance, not as a hardcoded script", route["task"])
+
     def test_story_video_followup_appends_as_same_chat_interruption(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "queue.jsonl"
@@ -568,6 +619,76 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(tasks[0]["interruption_pending"])
         self.assertEqual(tasks[0]["interruptions"][0]["source"]["local_id"], 202)
         self.assertIn("First update the story", tasks[0]["request"])
+
+    def test_agent_bridge_mode_general_followup_appends_as_interruption(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            original_task = {
+                "id": "task-301",
+                "chat": "懒人科研",
+                "status": "in_progress",
+                "agent_bridge_mode": True,
+                "created_at": "2026-06-25T12:00:00",
+                "request": "Current coalesced request:\nRead the paper and summarize the method.",
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "project": "generic",
+                    "worker_needed": True,
+                    "agent_bridge_mode": True,
+                },
+                "source": {
+                    "chat": "懒人科研",
+                    "config_id": "lazyresearch",
+                    "message_table": "MSG0",
+                    "server_id": "srv-301",
+                    "local_id": 301,
+                },
+                "routine": {"id": "research_summary"},
+            }
+            queue.write_text(json.dumps(original_task, ensure_ascii=False) + "\n", encoding="utf-8")
+            incoming = {
+                "id": "task-302",
+                "chat": "懒人科研",
+                "status": "pending",
+                "agent_bridge_mode": True,
+                "created_at": "2026-06-25T12:01:00",
+                "request": "Current coalesced request:\nAlso compare it with the figure I sent.",
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "project": "generic",
+                    "worker_needed": True,
+                    "agent_bridge_mode": True,
+                },
+                "source": {
+                    "chat": "懒人科研",
+                    "config_id": "lazyresearch",
+                    "message_table": "MSG0",
+                    "server_id": "srv-302",
+                    "local_id": 302,
+                },
+                "context": [
+                    {
+                        "local_id": 302,
+                        "server_id": "srv-302",
+                        "sender": "friend",
+                        "sender_display": "陈苗",
+                        "local_type": 1,
+                        "content": "Also compare it with the figure I sent.",
+                    }
+                ],
+                "routine": {"id": "research_summary"},
+            }
+
+            merged, appended = direct_chatops.append_worker_task_once(queue, incoming)
+            tasks = direct_chatops.read_worker_queue_tasks(queue)
+
+        self.assertFalse(appended)
+        self.assertTrue(merged["interruption_appended"])
+        self.assertEqual(len(tasks), 1)
+        self.assertTrue(tasks[0]["interruption_pending"])
+        self.assertEqual(tasks[0]["interruptions"][0]["source"]["local_id"], 302)
+        self.assertEqual(tasks[0]["interrupt_delivery"], "recorded_for_next_agent_turn_or_stale_reclaim")
+        self.assertIn("Also compare it", tasks[0]["request"])
 
     def test_story_video_followup_promotes_story_task_to_generated_video(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2117,6 +2238,9 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 self.assertIn("current coalesced request is authoritative", prompt)
                 self.assertIn("Preserve every safe explicit instruction", prompt)
                 self.assertIn("Keyword heuristics are safety fallbacks only", prompt)
+                self.assertIn("WeChat is a communication bridge to backend Codex/AI sessions", prompt)
+                self.assertIn("Available backend routines:", prompt)
+                self.assertIn("research_summary", prompt)
                 self.assertIn("blue notebook idea", prompt)
                 return {
                     "ok": True,

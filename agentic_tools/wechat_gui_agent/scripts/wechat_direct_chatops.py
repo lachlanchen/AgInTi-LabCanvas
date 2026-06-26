@@ -29,7 +29,7 @@ from file_lock import exclusive_lock, fcntl_compat as fcntl
 from wechat_agent_backend import run_agent_session as run_codex_session, select_agent_backend
 from wechat_memory import organize_messages
 from wechat_mirror import DEFAULT_DB, record_event
-from wechat_routines import build_routine_contract, ensure_task_routine_contract
+from wechat_routines import ROUTINES, build_routine_contract, ensure_task_routine_contract
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -116,6 +116,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "claude": {"model": "", "timeout_seconds": 60},
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 60},
         "codex_session_reuse": True,
+        "agent_bridge_mode": False,
         "agent_route_enabled": True,
         "agent_route_prefilter": "agent_first",
         "agent_router": {
@@ -1993,6 +1994,7 @@ def immediate_task_route(
         return None
     current_request = combined_focus_request(config, row, context_rows, focus_rows=focus_rows)
     combined = current_request or visible_message_text(row)
+    bridge_mode = agent_bridge_mode(config)
     attachment_trigger = is_attachment_trigger(config, row)
     lalachan_task = is_lalachan_story_video_task(combined)
     complex_task = is_complex_research_task(config, combined, focus_rows=focus_rows)
@@ -2013,11 +2015,11 @@ def immediate_task_route(
         story_or_script_task=story_or_script_task,
         link_inbox_summary_task=link_inbox_summary_task,
     )
-    agent_first = agent_route_prefilter_mode(config) == "agent_first" and bool(config.get("agent_route_enabled", False))
+    agent_first = (bridge_mode or agent_route_prefilter_mode(config) == "agent_first") and bool(config.get("agent_route_enabled", False))
     if agent_first:
         route_decision = agent_route_decision(config, row, context_rows, focus_rows=focus_rows, current_request=combined)
         if not route_decision_requires_worker(route_decision):
-            if is_language_analysis_mode(config):
+            if bridge_mode or is_language_analysis_mode(config):
                 return None
             if route_agent_chat_only_is_completion_status(route_decision) or looks_like_bot_self_reply(config, visible_message_text(row)):
                 return None
@@ -2030,6 +2032,8 @@ def immediate_task_route(
             route_decision = fallback
         if route_decision.get("route_agent_error") and not heuristic_candidate:
             return None
+        if bridge_mode:
+            route_decision["agent_bridge_mode"] = True
     else:
         if not heuristic_candidate:
             return None
@@ -2105,18 +2109,18 @@ def immediate_task_route(
     )
     routine_json = json.dumps(routine_contract, ensure_ascii=False, indent=2, sort_keys=True)
     task = (
-        "Handle this WeChat request as backend work. "
-        "Use available local tools, download, sync, copy, or generate needed artifacts into ignored private/output folders, "
-        "and return a concise message plus all safe generated or fetched artifacts to send back, not just filesystem paths. "
-        "Artifacts include full stories, Markdown, LaTeX, PDFs, images, renders, CAD/PCB exports, source manifests, videos, audio, archives, and previews. "
-        "Follow every safe, explicit instruction in the current coalesced request; if the user asks for multiple stages, preserve those stages and complete them in order or leave a resumable state. "
-        "Do not shrink a broad safe request to a smaller hardcoded action just because a keyword matched first. "
+        "Treat this as a message forwarded from WeChat into the backend Codex session for this chat. "
+        "Use the route decision and routine contract as tool guidance, not as a hardcoded script. "
+        "Read the current coalesced request and recent context like an interactive Codex thread: follow every safe explicit instruction, "
+        "preserve multi-stage intent, and complete the requested work or leave a resumable state. "
+        "Use mature local routines, CLIs, and scripts first when they fit; if they do not fit, reason and choose the right safe tool path. "
+        "Return a natural concise answer plus files only when the user requested files/artifacts, the routine requires delivery, or the artifact is genuinely useful. "
         "For any WeChat attachment or shared object, inspect the structured message text and recent synced media first: "
         "images/screenshots, PDFs, documents, archives, audio/voice, video, webpage cards, mini programs, "
         "YouTube, Shipinhao/视频号, Bilibili, links, contact/location cards, CAD/PCB files, and other formats. "
         "Extract useful metadata such as title, URL, filename, extension, media path, size, timestamp, checksum/token, and visible content before summarizing. "
         "For link/read-later inbox groups, default to source-grounded summaries and highlights for shared links/cards/media; "
-        "for papers, GitHub repos, technical articles, mp.weixin/Gongzhonghao articles, and Shipinhao/Finder summaries, return Markdown and PDF reports when useful and safe. "
+        "for papers, GitHub repos, technical articles, mp.weixin/Gongzhonghao articles, and Shipinhao/Finder summaries, attach reports only when they add real value or the user asks. "
         "If the task asks to save media/files, keep the source-scoped copy path or generated output path in the result `files` array when it is safe to send. "
         "Strict source isolation: use only media/files from this exact chat and the current source/reference local_id rows below. "
         "Do not borrow media, files, or generated artifacts from another group, direct message, old request, or unrelated download folder. "
@@ -2618,6 +2622,10 @@ def agent_route_prefilter_mode(config: dict[str, Any]) -> str:
     return "agent_first" if bool(config.get("agent_route_enabled", False)) else "heuristic"
 
 
+def agent_bridge_mode(config: dict[str, Any]) -> bool:
+    return bool(config.get("agent_bridge_mode", False))
+
+
 def heuristic_worker_route_candidate(
     config: dict[str, Any],
     text: str,
@@ -2654,6 +2662,14 @@ def route_decision_requires_worker(route_decision: dict[str, Any]) -> bool:
     if route_kind == "chat_only":
         return False
     return bool(route_decision.get("worker_needed", bool(route_kind)))
+
+
+def route_routine_catalog() -> str:
+    lines = []
+    for routine_id, routine in sorted(ROUTINES.items()):
+        kinds = ", ".join(routine.route_kinds)
+        lines.append(f"- {routine_id} ({kinds}): {routine.purpose}")
+    return "\n".join(lines)
 
 
 def agent_route_decision(
@@ -2710,6 +2726,7 @@ def build_agent_route_prompt(
 ) -> str:
     context = format_prompt_context(config, row, context_rows, focus_rows=focus_rows)
     request = current_request or visible_message_text(row)
+    routine_catalog = route_routine_catalog()
     return f"""Classify the current WeChat request for a backend worker.
 Return only JSON. No markdown.
 
@@ -2729,6 +2746,9 @@ Allowed route_kind values:
 - other_worker
 
 Important distinction:
+- WeChat is a communication bridge to backend Codex/AI sessions. Treat the current coalesced request like a message in an interactive Codex thread for this chat, not like a keyword command table.
+- Choose `chat_only` only when the normal fast chat agent can answer naturally without backend tools. Choose a worker route when the request benefits from files, links, media, CAD/PCB, images, video, publishing, reports, or other tool work.
+- Routines are available tools/contracts for the worker. Pick the closest route_kind so the worker can use the mature routine, but do not shrink the user's intent to a hardcoded routine if another safe tool path is needed.
 - The current coalesced request is authoritative. Preserve every safe explicit instruction and classify toward the closest backend routine instead of dropping stages.
 - In writing_language_money, personal_organizer, and lachlanchan-style DM chats, requests about what to write, career direction, making money, monetization, opportunities, talent/strengths, personal positioning, products to build, GitHub/lazying.art direction, or "what should I do" should route to career_strategy with worker_needed=true.
 - If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
@@ -2751,6 +2771,9 @@ Important distinction:
 - Use other_worker only when a backend Codex worker can materially finish the request; do not use it just because the message is ambiguous.
 - When worker_needed=true, write `ack` as one natural, non-mechanical chat acknowledgement only if an immediate acknowledgement is useful. It should reflect the concrete task without promising that the source has already been read. Avoid boilerplate like "收到，我先处理"; for link/read-later messages, a short silent enqueue is often better than a visible ack.
 - When worker_needed=false, use an empty `ack`.
+
+Available backend routines:
+{routine_catalog}
 
 JSON schema:
 {{
@@ -5059,6 +5082,7 @@ def enqueue_worker_task(
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "agent_backend": backend,
         "agent_backend_config": agent_backend_config(config, backend),
+        "agent_bridge_mode": agent_bridge_mode(config),
         "route": build_route_contract(config),
         "route_decision": route_decision or {},
         "instruction_contract": build_instruction_contract(config, route_decision or {}),
@@ -5323,6 +5347,8 @@ def is_interruptible_task(task: dict[str, Any]) -> bool:
     route_kind = str(route.get("route_kind") or "")
     routine_id = str(routine.get("id") or "")
     project = str(route.get("project") or "").lower()
+    if bool(task.get("agent_bridge_mode")) or bool(route.get("agent_bridge_mode")):
+        return route_kind != "chat_only"
     if route_kind in INTERRUPTIBLE_ROUTE_KINDS or routine_id in INTERRUPTIBLE_ROUTINE_IDS:
         return True
     if project == "lalachan":

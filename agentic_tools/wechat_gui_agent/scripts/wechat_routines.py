@@ -42,6 +42,7 @@ COMMON_RULES = (
 
 AUTONOMY_CHEAT_SHEET = (
     "WeChat is only the message box; the durable agent is the monitor, queue, routine registry, session registry, worker, probes, and guarded sender.",
+    "Bridge mode forwards current WeChat intent to the reused per-chat Codex session; routines are callable contracts, not a keyword replacement for agent reasoning.",
     "Every actionable request becomes a source-scoped queue task with route_decision, routine, instruction_contract, and artifact delivery expectations.",
     "The worker must supervise the named routine first, using mature entrypoints and deterministic probes before asking a resumed per-chat agent to reason.",
     "Use the same chat's resumed worker session for ambiguous, repair, browser, or tool-heavy work; do not require the human operator to supervise manually.",
@@ -534,6 +535,7 @@ def agent_autonomy_contract(routine: RoutineDefinition) -> dict[str, Any]:
     return {
         "system_role": "autonomous_routine_supervisor",
         "wechat_role": "message_transport_only",
+        "bridge_mode": "wechat_messages_forward_to_reused_agent_sessions",
         "human_operator_role": "approval_only_for_login_captcha_payment_public_posting_deletion_or_unsafe_irreversible_actions",
         "execution_center": "wechat_task_worker.run_task_orchestrator",
         "agent_session": "resume_exact_chat_worker_session",

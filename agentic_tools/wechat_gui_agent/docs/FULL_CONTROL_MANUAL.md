@@ -20,9 +20,10 @@ WeChat official Linux client on Xvfb/noVNC
   -> private decrypt refresh cache
   -> direct per-chat monitors
   -> mirror + memory + media databases
-  -> fast router agent
+  -> reused per-chat route agent
   -> JSONL worker queue
-  -> Codex/LabCanvas worker tools
+  -> reused per-chat Codex/LabCanvas worker session
+  -> routine probes, safety gates, and artifact delivery
   -> guarded GUI sender with OCR title check
   -> WeChat message/file reply
 ```
@@ -30,6 +31,15 @@ WeChat official Linux client on Xvfb/noVNC
 The system intentionally keeps read, reasoning, worker execution, and send
 separate. This makes crosstalk, duplicate replies, and wrong-chat sends easier
 to detect and block.
+
+Bridge-mode chats should behave like WeChat is only the message transport for a
+backend Codex conversation. The monitor does not try to become the agent. It
+coalesces current messages, preserves same-chat source rows/media, asks the
+route session whether to answer directly or enqueue a worker, and appends later
+same-chat messages as interruptions for the reused worker session. Deterministic
+logic is limited to privacy/source isolation, current-message permission gates,
+known routine probes, wait-state polling, retry/unlock, and verified file send
+back.
 
 ## Primary Entry Points
 
@@ -270,10 +280,12 @@ labcanvas wechat voice-transcribe --config "<DIRECT_CONFIG>" --local-id 121 --js
 
 Before a worker task is queued, the fast monitor converts the route decision
 into a named routine from `wechat_routines.py`. The task stores `task.routine`.
-For hard artifact requests, deterministic guards override a bad `chat_only`
-route: if the current coalesced request asks to send/save/download/copy a file,
-video, image, audio, PDF, or generated artifact, the task is queued for the
-worker even when the route model misclassifies it as chat.
+When `agent_bridge_mode=true`, this route decision is agent-first: a safe
+`chat_only` decision stays in the direct chat path, and backend decisions become
+source-scoped tasks with a routine contract. Non-bridge legacy configs may still
+use deterministic hard-artifact guards as a safety fallback, but monitored
+bridge chats should prefer the route agent plus the routine menu over keyword
+dispatch.
 Voice rows are handled before this routing step: `wechat_voice_transcribe.py`
 uses decrypted `message/media_0.db`/`VoiceInfo`, the private decrypt venv's
 `pilk` SILK decoder, and a separate ASR Python that can import OpenAI

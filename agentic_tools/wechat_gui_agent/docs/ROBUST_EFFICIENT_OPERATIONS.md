@@ -6,25 +6,37 @@ media sync, generated-video workflows, LazyEdit publishing, or GUI sending.
 
 ## Operating Model
 
-Treat WeChat as a command mirror, not as the executor. The durable system is:
+Treat WeChat as a communication bridge, not as the executor. A WeChat message
+should feel like a message sent into the same interactive Codex thread for that
+chat. The durable system is:
 
 ```text
 official WeChat client
   -> local decrypted mirror
   -> per-chat fast monitor
-  -> route decision and source context
-  -> routine contract
+  -> reused per-chat route Codex session
+  -> source context and routine contract
   -> JSONL worker queue
-  -> deterministic routines and Codex worker sessions
+  -> reused per-chat Codex worker session
+  -> deterministic routine probes and gates
   -> artifact delivery gate
   -> guarded GUI sender
 ```
 
 The fast monitor should be responsive and cheap. It reads local DB/files,
-coalesces bursts, classifies intent, saves memory items, and enqueues slow work.
-The worker owns tool execution, artifact creation, long browser jobs, and final
-deliverables. Deterministic routines own polling, resend, and poststage work so
-long waits do not hold a model call open.
+coalesces bursts, saves memory items, and asks the route agent whether this is
+normal chat or backend work. Keyword checks remain safety fallbacks, not the
+capability map. The worker owns tool execution, artifact creation, long browser
+jobs, and final deliverables. Deterministic code should stay narrow: transport,
+source isolation, safety gates, known routine probes, wait-state polling, retry,
+and verified send-back.
+
+In `agent_bridge_mode`, the route agent is trusted for safe `chat_only`
+decisions even when a keyword heuristic would have enqueued work. Backend tasks
+carry `agent_bridge_mode=true`, and later same-chat messages append as
+interruptions to the active task so the reused worker session can adjust plan,
+story, prompt, media references, or publish scope like an interactive Codex
+conversation.
 
 The routine registry is implemented in
 `agentic_tools/wechat_gui_agent/scripts/wechat_routines.py` and documented in
@@ -39,6 +51,9 @@ deterministic routine stages only for mature probes and gates, then resumes the
 same per-chat Codex worker session for reasoning, repair, browser work, and
 tool-heavy execution. The Codex worker supervises that contract rather than
 designing a new workflow from scratch or waiting for manual operator rescue.
+Routines are callable contracts and cheat sheets for mature work such as
+LazyEdit, Xiaoyunque, CAD/PCB, media sync, PDFs, and artifact sending. They
+should speed the agent up, not replace agent reasoning.
 
 ## Non-Negotiable Invariants
 
