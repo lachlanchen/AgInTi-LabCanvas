@@ -362,9 +362,10 @@ labels latest and bot/self rows in the prompt, which lets the router resolve
 incomplete follow-ups such as "same one" and avoid repeating a previous answer.
 With `coalesce_new_messages` enabled, a burst of actionable rows is answered
 once at the latest row while earlier actionable rows are marked `FOCUS`.
-EchoMind must analyze every `FOCUS` plus `LATEST` sentence in the single reply;
-LazyResearch must include every `FOCUS` plus `LATEST` instruction in the chat
-reply or worker task. The router should chip in when the chat clearly asks for
+EchoMind must analyze every `FOCUS` plus `LATEST` sentence or meaningful
+mixed-language segment in the single reply; compactness must not drop earlier
+items. LazyResearch must include every `FOCUS` plus `LATEST` instruction in the
+chat reply or worker task. The router should chip in when the chat clearly asks for
 help, shows confusion, mentions the bot, or needs a short expert note; otherwise
 it should return `NO_REPLY` for ordinary side conversation. It asks the
 low-reasoning router for one of four shapes:

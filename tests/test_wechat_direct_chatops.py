@@ -1430,7 +1430,12 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("NO_REPLY", prompt)
         self.assertIn("full recent context", prompt)
         self.assertIn("Analyze every FOCUS row", prompt)
+        self.assertIn("internal coverage check", prompt)
+        self.assertIn("meaningful mixed-language segment", prompt)
+        self.assertIn("prioritize covering all items", prompt)
         self.assertIn("separate mini-analysis", prompt)
+        self.assertIn("Do not collapse the burst", prompt)
+        self.assertIn("single mixed-language message", prompt)
         self.assertIn("Avoid repeating", prompt)
 
     def test_research_prompt_uses_context_for_fragments_and_duplicates(self) -> None:
