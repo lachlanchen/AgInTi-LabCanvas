@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="846" height="639" viewBox="0 0 846 639">
+<rect width="100%" height="100%" fill="white"/>
+<rect x="48.0" y="48.0" width="360.0" height="373.5" rx="18.0" fill="#151515" stroke="#333" stroke-width="2"/>
+<circle cx="228.0" cy="234.75" r="111.14999999999999" fill="none" stroke="#48bb78" stroke-width="2" stroke-dasharray="7 4"/>
+<circle cx="228.0" cy="234.75" r="43.199999999999996" fill="white" stroke="#edf2f7" stroke-width="2"/>
+<rect x="192.0" y="201.0" width="216.0" height="90.0" fill="#805ad5" opacity="0.38" stroke="#553c9a" stroke-width="2"/>
+<circle cx="93.0" cy="369.75" r="28.575" fill="#eef6ff" stroke="#63b3ed" stroke-width="2"/>
+<circle cx="93.0" cy="99.75" r="28.575" fill="#eef6ff" stroke="#63b3ed" stroke-width="2"/>
+<circle cx="363.0" cy="369.75" r="28.575" fill="#eef6ff" stroke="#63b3ed" stroke-width="2"/>
+<circle cx="363.0" cy="99.75" r="28.575" fill="#eef6ff" stroke="#63b3ed" stroke-width="2"/>
+<circle cx="174.0" cy="288.75" r="10.575000000000001" fill="#fff7bf" stroke="#d69e2e" stroke-width="2"/>
+<circle cx="174.0" cy="180.75" r="10.575000000000001" fill="#fff7bf" stroke="#d69e2e" stroke-width="2"/>
+<circle cx="282.0" cy="288.75" r="10.575000000000001" fill="#fff7bf" stroke="#d69e2e" stroke-width="2"/>
+<circle cx="282.0" cy="180.75" r="10.575000000000001" fill="#fff7bf" stroke="#d69e2e" stroke-width="2"/>
+<circle cx="319.8" cy="257.43" r="10.799999999999999" fill="#fed7d7" stroke="#e53e3e" stroke-width="2"/>
+<circle cx="319.8" cy="257.43" r="14.4" fill="none" stroke="#f56565" stroke-width="2" stroke-dasharray="4 3"/>
+<circle cx="319.8" cy="234.57" r="10.799999999999999" fill="#fed7d7" stroke="#e53e3e" stroke-width="2"/>
+<circle cx="319.8" cy="234.57" r="14.4" fill="none" stroke="#f56565" stroke-width="2" stroke-dasharray="4 3"/>
+<text x="444" y="48" font-family="Arial, sans-serif" font-size="17" font-weight="700" fill="#1a202c">Lumileds holder - 2P right-angle header variant</text>
+<text x="444" y="73" font-family="Arial, sans-serif" font-size="13" font-weight="400" fill="#1a202c">Envelope: 40.0 x 41.5 x 11.0 mm</text>
+<text x="444" y="98" font-family="Arial, sans-serif" font-size="13" font-weight="400" fill="#1a202c">Cage rods: 30 mm pitch, D6.35 clearance</text>
+<text x="444" y="123" font-family="Arial, sans-serif" font-size="13" font-weight="400" fill="#1a202c">Pin holes: D2.4 mm = D2.0 + 0.4 print clearance</text>
+<text x="444" y="148" font-family="Arial, sans-serif" font-size="13" font-weight="400" fill="#1a202c">Pin pitch: 2.54 mm; front popup relief D3.2 mm</text>
+<text x="444" y="173" font-family="Arial, sans-serif" font-size="13" font-weight="400" fill="#1a202c">Dupont/header pocket: 24.0 x 10.0 mm in plan</text>
+<text x="444" y="198" font-family="Arial, sans-serif" font-size="13" font-weight="400" fill="#1a202c">M3 pilot: D2.6 mm, not a loose D3.0 mm clearance</text>
+<text x="444" y="223" font-family="Arial, sans-serif" font-size="13" font-weight="400" fill="#1a202c">OpenHI LED holder reference: two D2.0-ish pin holes on 2.54 mm pitch</text>
+</svg>

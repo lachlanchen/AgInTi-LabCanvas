@@ -21,6 +21,7 @@ These raw zip and STEP dumps are intentionally ignored by git. Keep them local u
 
 - `designs/cmount_reflector_adapter/`: printable C-mount male to reflector-cube adapter draft. One end uses a printer-compensated external C-mount-like thread; the other end is a 20 x 20 x 20 mm internal reflector chamber with 3 mm walls.
 - `designs/cmount_threaded_reflector_assembly/`: two-part design with versioned artifacts. Current v2 has a 50 mm male-male C-mount tube, 15 mm male threads on each end, 28.4 mm thick center body, and a top-open 20.4 x 20.4 x 20.4 mm reflector holder with a max 20 mm internal female thread. The v2 artifacts are split into named run folders; see `designs/cmount_threaded_reflector_assembly/artifacts/v2_15mm_threads_print_fit/RUNS.md` for the single-file copy recommendation.
+- `designs/lumileds_hengyang_30mm_cage_holder_2p_right_angle/`: new independent Lumileds 30 mm cage holder variant with OpenHI-inspired 2.54 mm pitch 2P right-angle header relief, 2.4 mm pin holes, front-side pin popup clearance, Dupont plug/wire clearance, and a reduced 2.6 mm M3 pilot.
 
 ## Research Notes
 
