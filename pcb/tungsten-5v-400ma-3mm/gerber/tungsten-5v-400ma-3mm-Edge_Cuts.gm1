@@ -1,0 +1,28 @@
+%TF.GenerationSoftware,KiCad,Pcbnew,10.0.3-10.0.3~ubuntu24.04.1*%
+%TF.CreationDate,2026-06-26T14:50:27+08:00*%
+%TF.ProjectId,tungsten-5v-400ma-3mm,74756e67-7374-4656-9e2d-35762d343030,rev?*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Profile,NP*%
+%FSLAX46Y46*%
+G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
+G04 Created by KiCad (PCBNEW 10.0.3-10.0.3~ubuntu24.04.1) date 2026-06-26 14:50:27*
+%MOMM*%
+%LPD*%
+G01*
+G04 APERTURE LIST*
+%TA.AperFunction,Profile*%
+%ADD10C,0.200000*%
+%TD*%
+G04 APERTURE END LIST*
+D10*
+X162000000Y-100000000D02*
+G75*
+G02*
+X138000000Y-100000000I-12000000J0D01*
+G01*
+X138000000Y-100000000D02*
+G75*
+G02*
+X162000000Y-100000000I12000000J0D01*
+G01*
+M02*

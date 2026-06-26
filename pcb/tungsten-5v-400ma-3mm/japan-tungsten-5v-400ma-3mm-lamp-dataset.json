@@ -1,0 +1,48 @@
+{
+  "component_family": "Japan original 3 mm non-polar tungsten filament lamp",
+  "dataset_created": "2026-06-26",
+  "intended_pcb": "pcb/tungsten-5v-400ma-3mm/tungsten-5v-400ma-3mm.kicad_pcb",
+  "source_status": "user-provided listing and dimensions; verify against physical sample before volume use",
+  "listing_text": "5v 400 ma (10个)日本原装 2W 5V 400mA 无极性3mm钨丝灯泡 暖黄色光小灯珠",
+  "electrical": {
+    "voltage_v": 5.0,
+    "current_ma": 400.0,
+    "power_w": 2.0,
+    "polarity": "non-polar tungsten filament",
+    "expected_light": "warm yellow"
+  },
+  "mechanical": {
+    "bulb_diameter_mm": 3.0,
+    "lead_diameter_mm": 0.25,
+    "lead_pitch_mm": 1.0,
+    "selected_pcb_drill_mm": 0.45,
+    "selected_pad_diameter_mm": 0.75,
+    "hole_edge_gap_mm": 0.55,
+    "pad_edge_gap_mm": 0.25
+  },
+  "pcb_assumptions": {
+    "board_style": "24 mm round carrier matching the existing LED/tungsten carrier family",
+    "mounting": "four M2 NPTH holes on 12 x 12 mm pattern",
+    "external_connector": "rear-side 1x02 2.54 mm horizontal pin header footprint",
+    "surface_finish": "auto for JLC China; small 24 mm board usually uses lead-free HASL instead of OSP",
+    "copper": "1 oz is sufficient for 400 mA on short traces; neck-down at lamp pads is 0.3 mm",
+    "thermal_warning": "2 W tungsten lamp still runs hot; verify FR4 temperature, lamp standoff, and airflow."
+  },
+  "manufacturing_sources": [
+    {
+      "title": "JLCPCB PCB manufacturing capabilities",
+      "url": "https://jlcpcb.com/capabilities/pcb-capabilities",
+      "used_for": "Current JLC manufacturing capability cross-check."
+    },
+    {
+      "title": "JLCPCB via design guidance",
+      "url": "https://jlcpcb.com/blog/pcb-via-design-best-practices",
+      "used_for": "0.3 mm and larger holes are easier; minimum mechanical drill increments and slot notes."
+    },
+    {
+      "title": "JLCPCB hole-size pitfall note",
+      "url": "https://jlcpcb.com/blog/how-to-avoid-pitfalls-in-pcb-design",
+      "used_for": "Small-hole warning; standard 0.3 mm hole guidance and slot cautions."
+    }
+  ]
+}

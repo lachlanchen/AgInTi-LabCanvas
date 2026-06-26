@@ -1,0 +1,64 @@
+{
+  "created_at": "2026-06-26T07:09:58.437747+00:00",
+  "project_name": "tungsten-5v-400ma-3mm",
+  "upload_file": "tungsten-5v-400ma-3mm-jlcpcb-gerber.zip",
+  "sha256": "21923b442d3bd2d85a28d89e10df388d6464ef730bc04c48f4f7d8178a8f7626",
+  "size_bytes": 5983,
+  "files": [
+    {
+      "name": "tungsten-5v-400ma-3mm-B_Cu.gbl",
+      "size_bytes": 970,
+      "crc32": "7c13ca5e"
+    },
+    {
+      "name": "tungsten-5v-400ma-3mm-B_Mask.gbs",
+      "size_bytes": 1555,
+      "crc32": "7408d26f"
+    },
+    {
+      "name": "tungsten-5v-400ma-3mm-B_Silkscreen.gbo",
+      "size_bytes": 5109,
+      "crc32": "93fd0a40"
+    },
+    {
+      "name": "tungsten-5v-400ma-3mm-Edge_Cuts.gm1",
+      "size_bytes": 695,
+      "crc32": "629ee3b7"
+    },
+    {
+      "name": "tungsten-5v-400ma-3mm-F_Cu.gtl",
+      "size_bytes": 1514,
+      "crc32": "c674769e"
+    },
+    {
+      "name": "tungsten-5v-400ma-3mm-F_Mask.gts",
+      "size_bytes": 1555,
+      "crc32": "9a94391c"
+    },
+    {
+      "name": "tungsten-5v-400ma-3mm-F_Silkscreen.gto",
+      "size_bytes": 1079,
+      "crc32": "f4729f77"
+    },
+    {
+      "name": "tungsten-5v-400ma-3mm.drl",
+      "size_bytes": 597,
+      "crc32": "e8963e8f"
+    }
+  ],
+  "excluded_review_files": [
+    "../gerber/tungsten-5v-400ma-3mm-B_Fab.gbr",
+    "../gerber/tungsten-5v-400ma-3mm-F_Fab.gbr",
+    "../gerber/tungsten-5v-400ma-3mm-drl_map.svg",
+    "../gerber/tungsten-5v-400ma-3mm-job.gbrjob"
+  ],
+  "validation_reports": {
+    "erc": "../artifacts/erc.json",
+    "drc": "../artifacts/drc.json",
+    "drill_report": "../artifacts/drill-report.txt"
+  },
+  "renders": {
+    "close": "../artifacts/tungsten-5v-400ma-3mm-render.png",
+    "full": "../artifacts/tungsten-5v-400ma-3mm-render-full.png"
+  }
+}

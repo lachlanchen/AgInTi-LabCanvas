@@ -1,0 +1,13 @@
+(kicad_sch
+	(version 20231120)
+	(generator "labcanvas-tungsten-5v-generator")
+	(generator_version "1.0")
+	(uuid "21b5f488-b285-58a3-a097-6f347a52b303")
+	(paper "A4")
+	(lib_symbols)
+	(text "Board-only schematic stub. The PCB connects J1 directly to a non-polar 5 V 400 mA tungsten lamp." (at 87.63 76.2 0)
+		(effects (font (size 1.27 1.27)) (justify left bottom))
+		(uuid "2c497cd0-bc39-58ac-9a29-fd1d84bf9766")
+	)
+	(sheet_instances (path "/" (page "1")))
+)

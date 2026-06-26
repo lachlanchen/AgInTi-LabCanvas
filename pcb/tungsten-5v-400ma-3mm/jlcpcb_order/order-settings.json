@@ -1,0 +1,64 @@
+{
+  "schema": "agentic_tools/jlcpcb_order_agent/board-order-settings.v1",
+  "manufacturer": "JLCPCB / JiaLiChuang",
+  "project_name": "tungsten-5v-400ma-3mm",
+  "order_type": "bare PCB fabrication only",
+  "board_dir": "..",
+  "gerber_dir": "../gerber",
+  "gerber_zip": "tungsten-5v-400ma-3mm-jlcpcb-gerber.zip",
+  "board": {
+    "name": "tungsten-5v-400ma-3mm",
+    "layers": 2,
+    "shape": "round",
+    "expected_size_mm": {
+      "x": 24.0,
+      "y": 24.0
+    },
+    "delivery_format": "Single PCB"
+  },
+  "order": {
+    "quantity": 5,
+    "material": "FR-4",
+    "layers": 2,
+    "thickness_mm": 1.6,
+    "copper_weight": "1 oz",
+    "surface_finish": "auto-china-size-aware",
+    "surface_finish_china": "auto",
+    "surface_finish_global": "Lead-free HASL",
+    "solder_mask": "green",
+    "silkscreen": "white",
+    "confirm_mode": "manual",
+    "shipping_mode": "separate",
+    "order_channel": "web",
+    "compensation": "按标准合同常规处理",
+    "smt": "not_needed",
+    "stencil": "not_needed"
+  },
+  "disabled_options": {
+    "pcb_assembly": true,
+    "smt_stencil": true,
+    "castellated_holes": true,
+    "edge_plating": true
+  },
+  "validation": {
+    "allow_drc_warnings": true,
+    "allowed_drc_warning_types": [
+      "lib_footprint_mismatch",
+      "silk_edge_clearance"
+    ]
+  },
+  "validation_reports": {
+    "erc": "../artifacts/erc.json",
+    "drc": "../artifacts/drc.json",
+    "drill_report": "../artifacts/drill-report.txt"
+  },
+  "renders": {
+    "close": "../artifacts/tungsten-5v-400ma-3mm-render.png",
+    "full": "../artifacts/tungsten-5v-400ma-3mm-render-full.png"
+  },
+  "notes": [
+    "China site should choose lead-free HASL automatically for this 24 mm board because OSP is rejected when any side is under 70 mm.",
+    "No SMT, no stencil, no PCB assembly; the 3 mm tungsten lamp is installed manually.",
+    "Verify actual 0.25 mm foot fit in 0.45 mm plated holes before ordering many copies."
+  ]
+}

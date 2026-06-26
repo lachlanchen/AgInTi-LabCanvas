@@ -100,7 +100,7 @@ def gerber_files(config: dict[str, Any], config_path: Path) -> list[Path]:
     for path in sorted(gerber_dir.iterdir()):
         if not path.is_file():
             continue
-        if path.suffix.lower() in {".svg", ".png", ".pdf", ".txt"}:
+        if is_non_manufacturing_gerber_artifact(path):
             continue
         files.append(path)
     required = [".gtl", ".gbl", ".gts", ".gbs", ".gto", ".gbo", ".gm1", ".drl"]
@@ -109,6 +109,18 @@ def gerber_files(config: dict[str, Any], config_path: Path) -> list[Path]:
     if missing:
         raise SystemExit(f"Gerber package is missing required suffixes: {', '.join(missing)}")
     return files
+
+
+def is_non_manufacturing_gerber_artifact(path: Path) -> bool:
+    suffix = path.suffix.lower()
+    name = path.name.lower()
+    if suffix in {".svg", ".png", ".pdf", ".txt"}:
+        return True
+    if suffix == ".gbrjob":
+        return True
+    if "-f_fab." in name or "-b_fab." in name or "_f_fab." in name or "_b_fab." in name:
+        return True
+    return False
 
 
 def zip_path_for_config(config: dict[str, Any], config_path: Path) -> Path:
@@ -148,7 +160,7 @@ def package_gerbers(config: dict[str, Any], config_path: Path) -> dict[str, Any]
         "excluded_review_files": [
             os.path.relpath(path, output.parent)
             for path in sorted(resolve_from_config(config_path, config.get("gerber_dir") or "../gerber").glob("*"))
-            if path.suffix.lower() in {".svg", ".png", ".pdf", ".txt"}
+            if is_non_manufacturing_gerber_artifact(path)
         ],
         "validation_reports": config.get("validation_reports", {}),
         "renders": config.get("renders", {}),

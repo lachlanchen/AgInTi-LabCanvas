@@ -1,0 +1,24 @@
+Drill report for tungsten-5v-400ma-3mm.kicad_pcb
+Created on 2026-06-26T14:50:28
+
+Copper Layer Stackup:
+    =============================================================
+    L1 :  F.Cu                      front
+    L2 :  B.Cu                      back
+
+
+Drill file 'tungsten-5v-400ma-3mm.drl' contains
+    plated through holes:
+    =============================================================
+    T1  0.450mm  0.0177"  (2 holes))
+    T2  1.000mm  0.0394"  (2 holes))
+
+    Total plated holes count 4
+
+
+Not plated through holes are merged with plated holes
+    unplated through holes:
+    =============================================================
+    T3  2.200mm  0.0866"  (4 holes))
+
+    Total unplated holes count 4

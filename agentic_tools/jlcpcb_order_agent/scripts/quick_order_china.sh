@@ -14,7 +14,7 @@ ZIP_ARG="${1:-}"
 "$SCRIPT_DIR/launch_shared_chrome.sh"
 
 prepare_cmd=(
-  python3 "$SCRIPT_DIR/jlc_order_cdp.py"
+  python3 -u "$SCRIPT_DIR/jlc_order_cdp.py"
   --config "$CONFIG"
   --screenshot "$SCREENSHOT"
   prepare
@@ -30,16 +30,16 @@ fi
 
 "${prepare_cmd[@]}"
 
-python3 "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" record-order \
+python3 -u "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" record-order \
   --status "china_checked" \
   --note "Quick China flow checked order; channel=$ORDER_CHANNEL finish=$SURFACE_FINISH shipping=$SHIPPING_MODE."
 
 if [[ "$ALLOW_SUBMIT" == "1" ]]; then
-  python3 "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" --screenshot "$SCREENSHOT" submit --allow-submit
-  python3 "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" record-order \
+  python3 -u "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" --screenshot "$SCREENSHOT" submit --allow-submit
+  python3 -u "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" record-order \
     --status "submitted_pending_review" \
     --note "Quick China flow submitted after explicit JLCPCB_ALLOW_SUBMIT=1."
-  python3 "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" post-submit-log
+  python3 -u "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" post-submit-log
 else
   echo "Prepared and checked. Final submit was not run; set JLCPCB_ALLOW_SUBMIT=1 only after manual review."
 fi

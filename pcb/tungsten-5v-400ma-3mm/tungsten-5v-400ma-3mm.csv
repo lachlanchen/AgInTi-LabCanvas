@@ -1,0 +1,4 @@
+Id,Designator,Footprint,Quantity,Designation,Notes
+1,"H1,H2,H3,H4",MountingHole_2.2mm_M2,4,M2 mounting holes,same 24 mm carrier family
+2,L1,Japan_Tungsten_3mm_5V_400mA_1mmPitch,1,3 mm 5 V 400 mA tungsten lamp,"0.25 mm feet, 1.0 mm pitch, non-polar"
+3,J1,PinHeader_1x02_P2.54mm_Horizontal,1,5 V input connector,manual solder/use connector

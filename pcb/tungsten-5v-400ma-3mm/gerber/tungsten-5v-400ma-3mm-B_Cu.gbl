@@ -1,0 +1,41 @@
+%TF.GenerationSoftware,KiCad,Pcbnew,10.0.3-10.0.3~ubuntu24.04.1*%
+%TF.CreationDate,2026-06-26T14:50:27+08:00*%
+%TF.ProjectId,tungsten-5v-400ma-3mm,74756e67-7374-4656-9e2d-35762d343030,rev?*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Copper,L2,Bot*%
+%TF.FilePolarity,Positive*%
+%FSLAX46Y46*%
+G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
+G04 Created by KiCad (PCBNEW 10.0.3-10.0.3~ubuntu24.04.1) date 2026-06-26 14:50:27*
+%MOMM*%
+%LPD*%
+G01*
+G04 APERTURE LIST*
+%TA.AperFunction,ComponentPad*%
+%ADD10C,0.750000*%
+%TD*%
+%TA.AperFunction,ComponentPad*%
+%ADD11R,2.000000X2.000000*%
+%TD*%
+%TA.AperFunction,ComponentPad*%
+%ADD12O,2.000000X2.000000*%
+%TD*%
+G04 APERTURE END LIST*
+D10*
+%TO.P,L1,1,A*%
+%TO.N,LAMP_A_5V*%
+X150000000Y-99500000D03*
+%TO.P,L1,2,B*%
+%TO.N,LAMP_B_RETURN*%
+X150000000Y-100500000D03*
+%TD*%
+D11*
+%TO.P,J1,1,B*%
+%TO.N,LAMP_B_RETURN*%
+X160000000Y-101000000D03*
+D12*
+%TO.P,J1,2,A*%
+%TO.N,LAMP_A_5V*%
+X160000000Y-98460000D03*
+%TD*%
+M02*

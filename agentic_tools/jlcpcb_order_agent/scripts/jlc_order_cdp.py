@@ -148,6 +148,189 @@ def click_first_button_text(page: Page, text: str) -> bool:
     return click_button_containing(page, [text], 0)
 
 
+def upload_row_state(page: Page, stem: str) -> dict[str, Any]:
+    return page.evaluate(
+        """(stem) => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const names = [...document.querySelectorAll('td,div,span')]
+                .map((el) => ({el, txt: text(el), rect: el.getBoundingClientRect()}))
+                .filter((row) => visible(row.el)
+                    && row.txt.includes(stem)
+                    && row.txt.length < 180
+                    && row.rect.height < 80)
+                .sort((a, b) => a.rect.y - b.rect.y);
+            if (!names.length) return {found: false, ready: false, text: ''};
+            const stateFor = (name) => {
+                const y = name.rect.y + name.rect.height / 2;
+                const buttons = [...document.querySelectorAll('button,div,span')]
+                    .map((el) => ({el, txt: text(el), rect: el.getBoundingClientRect(), disabled: el.disabled || el.classList.contains('is-disabled')}))
+                    .filter((row) => visible(row.el)
+                        && row.txt.includes('立即下单')
+                        && !row.disabled
+                        && row.rect.x > name.rect.x
+                        && row.rect.width <= 140
+                        && Math.abs((row.rect.y + row.rect.height / 2) - y) < 45)
+                    .sort((a, b) => {
+                        const aBtn = String(a.el.className).includes('btn') ? 0 : 1;
+                        const bBtn = String(b.el.className).includes('btn') ? 0 : 1;
+                        return aBtn - bBtn || Math.abs((a.rect.y + a.rect.height / 2) - y) - Math.abs((b.rect.y + b.rect.height / 2) - y);
+                    });
+                const bandText = [...document.querySelectorAll('td,div,span,button')]
+                    .map((el) => ({el, txt: text(el), rect: el.getBoundingClientRect()}))
+                    .filter((row) => visible(row.el) && Math.abs((row.rect.y + row.rect.height / 2) - y) < 45)
+                    .map((row) => row.txt)
+                    .join(' ');
+                const loading = /处理中|解析中|上传中/.test(bandText)
+                    || [...document.querySelectorAll('.el-icon-loading,.is-loading,.el-loading-mask,.el-loading-spinner')]
+                        .some((el) => visible(el) && Math.abs((el.getBoundingClientRect().y + el.getBoundingClientRect().height / 2) - y) < 45);
+                const success = /已下单/.test(bandText)
+                    || [...document.querySelectorAll('.el-icon-success,.el-icon-circle-check,.el-icon-check')]
+                        .some((el) => visible(el) && Math.abs((el.getBoundingClientRect().y + el.getBoundingClientRect().height / 2) - y) < 45);
+                return {orderButton: buttons[0], loading, success, bandText};
+            };
+            let chosen = null;
+            for (const name of names) {
+                const state = stateFor(name);
+                if (state.orderButton && !state.loading) {
+                    chosen = state;
+                    break;
+                }
+            }
+            if (!chosen) chosen = stateFor(names[0]);
+            const orderButton = chosen.orderButton;
+            const loading = chosen.loading;
+            const success = chosen.success;
+            const bandText = chosen.bandText;
+            return {
+                found: true,
+                ready: !!orderButton && !loading,
+                loading,
+                success,
+                hasOrderButton: !!orderButton,
+                text: bandText,
+            };
+        }""",
+        stem,
+    )
+
+
+def click_uploaded_row_order_button(page: Page, stem: str) -> bool:
+    target = page.evaluate(
+        """(stem) => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const names = [...document.querySelectorAll('td,div,span')]
+                .map((el) => ({el, txt: text(el), rect: el.getBoundingClientRect()}))
+                .filter((row) => visible(row.el)
+                    && row.txt.includes(stem)
+                    && row.txt.length < 180
+                    && row.rect.height < 80)
+                .sort((a, b) => a.rect.y - b.rect.y);
+            let target = null;
+            for (const name of names) {
+                const y = name.rect.y + name.rect.height / 2;
+                const bandText = [...document.querySelectorAll('td,div,span,button')]
+                    .map((el) => ({el, txt: text(el), rect: el.getBoundingClientRect()}))
+                    .filter((row) => visible(row.el) && Math.abs((row.rect.y + row.rect.height / 2) - y) < 45)
+                    .map((row) => row.txt)
+                    .join(' ');
+                const loading = /处理中|解析中|上传中/.test(bandText)
+                    || [...document.querySelectorAll('.el-icon-loading,.is-loading,.el-loading-mask,.el-loading-spinner')]
+                        .some((el) => visible(el) && Math.abs((el.getBoundingClientRect().y + el.getBoundingClientRect().height / 2) - y) < 45);
+                if (loading) continue;
+                const buttons = [...document.querySelectorAll('button,div,span')]
+                    .map((el) => ({el, txt: text(el), rect: el.getBoundingClientRect(), disabled: el.disabled || el.classList.contains('is-disabled')}))
+                    .filter((row) => visible(row.el)
+                        && row.txt.includes('立即下单')
+                        && !row.disabled
+                        && row.rect.x > name.rect.x
+                        && row.rect.width <= 140
+                        && Math.abs((row.rect.y + row.rect.height / 2) - y) < 45)
+                    .sort((a, b) => {
+                        const aBtn = String(a.el.className).includes('btn') ? 0 : 1;
+                        const bBtn = String(b.el.className).includes('btn') ? 0 : 1;
+                        return aBtn - bBtn || Math.abs((a.rect.y + a.rect.height / 2) - y) - Math.abs((b.rect.y + b.rect.height / 2) - y);
+                    });
+                if (buttons[0]) {
+                    target = buttons[0].el;
+                    break;
+                }
+            }
+            if (!target) return false;
+            target.scrollIntoView({block: 'center', inline: 'nearest'});
+            const r = target.getBoundingClientRect();
+            return {x: r.x, y: r.y, w: r.width, h: r.height, text: text(target), cls: String(target.className)};
+        }""",
+        stem,
+    )
+    if not target:
+        return False
+    page.mouse.click(target["x"] + target["w"] / 2, target["y"] + target["h"] / 2)
+    page.wait_for_timeout(1000)
+    print(f"clicked uploaded file order button: {stem}")
+    return True
+
+
+def upload_success_panel_ready(page: Page) -> bool:
+    return bool(
+        page.evaluate(
+            """() => {
+                const visible = (el) => {
+                    const r = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+                return [...document.querySelectorAll('div,section')]
+                    .some((el) => visible(el)
+                        && text(el).includes('文件上传成功')
+                        && [...el.querySelectorAll('button')]
+                            .some((button) => visible(button) && text(button) === '立即下单'));
+            }"""
+        )
+    )
+
+
+def click_upload_success_order_button(page: Page) -> bool:
+    clicked = page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const panels = [...document.querySelectorAll('div,section')]
+                .filter((el) => visible(el) && text(el).includes('文件上传成功'))
+                .sort((a, b) => a.getBoundingClientRect().y - b.getBoundingClientRect().y);
+            for (const panel of panels) {
+                const buttons = [...panel.querySelectorAll('button')]
+                    .filter((button) => visible(button) && text(button) === '立即下单')
+                    .sort((a, b) => a.getBoundingClientRect().y - b.getBoundingClientRect().y);
+                const target = buttons[0];
+                if (target) {
+                    target.scrollIntoView({block: 'center', inline: 'nearest'});
+                    target.click();
+                    return true;
+                }
+            }
+            return false;
+        }"""
+    )
+    if clicked:
+        print("clicked upload-success order button")
+    return bool(clicked)
+
+
 def select_material_modal_fr4(page: Page) -> None:
     text = page.locator("body").inner_text(timeout=10000)
     if "请选择板材类别" not in text:
@@ -214,17 +397,34 @@ def visible_price_text(page: Page) -> str:
     )
 
 
-def assert_clean_for_submit(page: Page, require_surface_finish: str | None = None) -> None:
+def assert_clean_for_submit(page: Page, order: dict[str, Any]) -> None:
     text = page.locator("body").inner_text(timeout=10000)
     check_text = selected_order_check_text(page) or " ".join(text.split())
     blockers = ["去填写", "系统未检测到", "充值", "余额不足", "检测到您的订单还有"]
     if any(blocker in check_text for blocker in blockers):
         raise SystemExit("submit blocked: order check still shows missing fields or payment/wallet blocker")
+    expected_material = str(order.get("material") or "").upper()
+    if expected_material == "FR-4":
+        if "FR-4" not in check_text and "FR4" not in check_text:
+            raise SystemExit("submit blocked: order check does not show expected FR-4 material")
+        wrong_materials = ["铜基板", "热电分离", "铝基板", "柔性板", "FPC"]
+        if any(material in check_text for material in wrong_materials):
+            raise SystemExit("submit blocked: order check shows wrong board material/type")
+    expected_layers = str(order.get("layers") or "")
+    if expected_layers and not re.search(rf"(板子层数|板子层|层数)\\s*{re.escape(expected_layers)}", check_text):
+        raise SystemExit(f"submit blocked: order check does not show expected layer count {expected_layers}")
+    expected_quantity = str(order.get("quantity") or "")
+    if expected_quantity and not re.search(rf"(板子数量|数量)\\s*{re.escape(expected_quantity)}", check_text):
+        raise SystemExit(f"submit blocked: order check does not show expected quantity {expected_quantity}")
     price_text = visible_price_text(page)
     if "品质赔付费" in price_text:
         raise SystemExit("submit blocked: paid quality compensation is still selected")
     if "品质赔付服务" in check_text and "品质赔付服务 按标准合同常规处理" not in check_text:
         raise SystemExit("submit blocked: order check does not confirm standard quality compensation")
+    require_surface_finish = order.get("surface_finish")
+    if require_surface_finish and require_surface_finish not in {"auto", "auto-china-size-aware"}:
+        if str(require_surface_finish) not in check_text:
+            raise SystemExit(f"submit blocked: order check does not show expected surface finish {require_surface_finish}")
     if require_surface_finish and require_surface_finish.upper() == "OSP":
         if "选择OSP工艺生产不能支持" in text or "当前订单尺寸过小" in text:
             raise SystemExit("submit blocked: JLC says OSP is not supported for this board size")
@@ -416,24 +616,67 @@ def upload(args: argparse.Namespace) -> None:
     if "newOnlinePlaceOrder" not in page.url:
         page.goto(CHINA_UPLOAD_URL, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(1500)
+    stem = zip_path.stem
+    if upload_success_panel_ready(page):
+        print(f"upload_already_ready={stem}")
+        page.screenshot(path=args.screenshot, full_page=False)
+        print(f"screenshot={args.screenshot}")
+        return
+    state = upload_row_state(page, stem)
+    if state.get("ready"):
+        print(f"upload_row_already_ready={stem}")
+        page.screenshot(path=args.screenshot, full_page=False)
+        print(f"screenshot={args.screenshot}")
+        return
     file_input = page.locator("input[type=file]").first
     file_input.set_input_files(str(zip_path))
     print(f"uploaded={zip_path}")
-    for attempt in range(60):
+    ready = False
+    for attempt in range(90):
         page.wait_for_timeout(2000)
         text = page.locator("body").inner_text(timeout=10000)
-        if "立即下单" in text and zip_path.stem in text:
+        state = upload_row_state(page, stem)
+        if upload_success_panel_ready(page):
+            ready = True
+            print(f"upload_success_panel_ready={stem}")
+            break
+        if state.get("ready"):
+            ready = True
+            print(f"upload_ready={stem}")
+            break
+        if "立即下单" in text and stem in text and attempt >= 5 and state.get("hasOrderButton"):
+            # Some JLC revisions keep a decorative status icon in the row even
+            # after the button is usable. Give it a few extra polls, then allow
+            # the row-specific button click instead of failing on old rows.
+            ready = True
+            print(f"upload_ready_with_status_icon={stem}")
             break
         print(f"poll={attempt + 1}")
     page.screenshot(path=args.screenshot, full_page=False)
     print(f"screenshot={args.screenshot}")
+    if not ready:
+        raise SystemExit(f"uploaded file did not become order-ready: {stem}")
 
 
 def open_order_form(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     page = connect_page(config, prefer_order=False)
-    button = page.locator("button:has-text('立即下单')").last
-    button.click(timeout=15000)
+    zip_path = resolve_path(getattr(args, "zip", None) or config.get("gerber_zip"))
+    if zip_path and zip_path.exists():
+        stem = zip_path.stem
+        for attempt in range(30):
+            if upload_row_state(page, stem).get("ready") and click_uploaded_row_order_button(page, stem):
+                break
+            page.wait_for_timeout(1000)
+            print(f"wait_order_button={attempt + 1}")
+        else:
+            raise SystemExit(
+                f"could not click row-specific order button for uploaded file: {stem}; "
+                "refusing upload-success fallback because it can select the wrong JLC product family"
+            )
+    else:
+        button = page.locator("button:has-text('立即下单')").last
+        button.click(timeout=15000)
     page.wait_for_timeout(3000)
     page.screenshot(path=args.screenshot, full_page=False)
     print(f"url={page.url}")
@@ -445,7 +688,17 @@ def set_quantity(page: Page, quantity: int) -> None:
     page.wait_for_timeout(500)
     q = page.locator("input[placeholder='数量'], input.listInput").first
     q.scroll_into_view_if_needed(timeout=3000)
-    q.click(timeout=5000)
+    try:
+        current = q.input_value(timeout=2000).strip()
+    except PlaywrightTimeoutError:
+        current = ""
+    if current == str(quantity):
+        print(f"quantity={current} (already selected)")
+        return
+    try:
+        q.click(timeout=5000)
+    except PlaywrightTimeoutError:
+        q.click(timeout=5000, force=True)
     page.wait_for_timeout(500)
     # JLC uses a custom grid. Click by exact visible text first, then fall back to
     # the observed first-cell coordinates for prototype quantity 5.
@@ -723,7 +976,7 @@ def submit(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     page = connect_page(config)
     order = config.get("order", {})
-    assert_clean_for_submit(page, order.get("surface_finish"))
+    assert_clean_for_submit(page, order)
     click_button(page, "确认并提交", 0)
     success = False
     for _ in range(20):
@@ -1326,7 +1579,9 @@ def main() -> None:
     p_upload = sub.add_parser("upload")
     p_upload.add_argument("--zip")
     p_upload.set_defaults(func=upload)
-    sub.add_parser("open-order-form").set_defaults(func=open_order_form)
+    p_order_form = sub.add_parser("open-order-form")
+    p_order_form.add_argument("--zip")
+    p_order_form.set_defaults(func=open_order_form)
     p_fill = sub.add_parser("fill-settings")
     p_fill.add_argument("--surface-finish")
     p_fill.add_argument("--shipping-mode", choices=["separate", "combined"], default=None)
