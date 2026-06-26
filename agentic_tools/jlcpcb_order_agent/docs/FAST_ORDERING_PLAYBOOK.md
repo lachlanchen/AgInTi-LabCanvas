@@ -2,6 +2,9 @@
 
 This document records the problems, DOM elements, scripts, and fixes from the successful China web order so the next Gerber order can be completed faster.
 
+For the 2026-06-26 tungsten 5V 400mA order narrative and exact recovery
+sequence, see `TUNGSTEN_5V_400MA_ORDER_HANDOFF.md`.
+
 ## Fast Path
 
 ```bash

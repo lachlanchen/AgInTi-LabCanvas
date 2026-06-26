@@ -1,6 +1,12 @@
 # Auto Order System Runbook
 
-This runbook documents the exact system used for the HYBEC HBL-273/HBL-667 G4 bare-PCB JLC order.
+This runbook documents the browser-assisted JLCPCB/JiaLiChuang bare-PCB order
+system. It started with the HYBEC HBL-273/HBL-667 G4 board and was later
+hardened during the tungsten 5V 400mA lamp board order.
+
+For the tungsten 5V 400mA run-specific handoff, including the legacy uploaded
+row, SMT modal, stale-tab guard, and final success logging fixes, see
+`TUNGSTEN_5V_400MA_ORDER_HANDOFF.md`.
 
 ## Scope
 

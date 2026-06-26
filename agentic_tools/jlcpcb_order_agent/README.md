@@ -174,6 +174,10 @@ The database is `~/.config/jlcpcb-order/orders.sqlite3` with mode `600`. It stor
 
 For the detailed next-time checklist, exact DOM labels, script methods, and problem/fix table, see `docs/FAST_ORDERING_PLAYBOOK.md`.
 
+For the 2026-06-26 tungsten 5V 400mA order run, including the exact legacy-row
+submission problem, SMT modal, stale-tab issue, and final clean-drawer contract,
+see `docs/TUNGSTEN_5V_400MA_ORDER_HANDOFF.md`.
+
 For the shared manufacturing-order automation index covering both JLCPCB PCB orders and Wenext 3D-print orders, see `../ORDER_AUTOMATION.md`.
 
 ## Price and Shipping Notes
