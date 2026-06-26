@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1305" height="515" viewBox="0 0 1305 515">
+<rect width="100%" height="100%" fill="white"/>
+<rect x="55.00" y="55.00" width="675.00" height="405.00" fill="#f7fafc" stroke="#1a202c" stroke-width="2"/>
+<rect x="107.50" y="175.00" width="570.00" height="165.00" fill="white" stroke="#718096" stroke-width="2"/>
+<rect x="70.00" y="85.00" width="645.00" height="345.00" fill="rgba(49,151,149,0.10)" stroke="#319795" stroke-width="2" stroke-dasharray="7 5"/>
+<rect x="113.12" y="176.88" width="558.75" height="161.25" fill="rgba(49,151,149,0.16)" stroke="#319795" stroke-width="2"/>
+<circle cx="392.50" cy="257.50" r="132.00" fill="none" stroke="#805ad5" stroke-width="2" stroke-dasharray="7 5"/>
+<rect x="107.50" y="160.00" width="570.00" height="195.00" fill="none" stroke="#e53e3e" stroke-width="2" stroke-dasharray="7 5"/>
+<circle cx="392.50" cy="257.50" r="75.00" fill="#fffaf0" stroke="#dd6b20" stroke-width="2"/>
+<circle cx="280.00" cy="370.00" r="24.00" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="280.00" cy="145.00" r="24.00" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="505.00" cy="370.00" r="24.00" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="505.00" cy="145.00" r="24.00" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="88.75" cy="257.50" r="10.12" fill="#edf2f7" stroke="#4a5568" stroke-width="2"/>
+<circle cx="696.25" cy="257.50" r="10.12" fill="#edf2f7" stroke="#4a5568" stroke-width="2"/>
+<text x="764.00" y="55.00" font-family="Arial" font-size="17" font-weight="700" fill="#1a202c">Elegant modular cage sample holder</text>
+<text x="764.00" y="80.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Use as two parts: frame + one cartridge</text>
+<text x="764.00" y="105.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Frame: 90.0 x 54.0 mm, middle removed</text>
+<text x="764.00" y="130.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Top/bottom cage rods pass through the four blue holes</text>
+<text x="764.00" y="155.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Clear rod gap is about 23.6 mm</text>
+<text x="764.00" y="180.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">OpenHI strip cartridge: 74.5 x 21.5 mm seat</text>
+<text x="764.00" y="205.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Petri cartridge: 35.2 mm loose cup for 33 mm dish</text>
+<text x="764.00" y="230.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Dashed red: standard 76 x 26 slide, too wide for cage gap</text>
+<text x="764.00" y="255.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Gray holes: M2.5/M2.6 cartridge screws</text>
+</svg>
