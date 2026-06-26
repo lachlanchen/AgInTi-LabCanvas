@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from datetime import datetime, timezone
@@ -69,6 +70,13 @@ CATEGORIES = [
         "reason": "Triangle/right-angle cage mirror holder reference.",
     },
     {
+        "slug": "gkm-010-polarizer-waveplate-holders",
+        "label": "GKM-010 circular thin polarizer/waveplate holders",
+        "page_cid": 999,
+        "api_cids": [999],
+        "reason": "GKM-0102 Ø25.4 mm polarizer/waveplate holder requested for future optomechanical references.",
+    },
+    {
         "slug": "hct-6mm-cage-rods",
         "label": "HCT 6 mm 30 mm cage rods",
         "page_cid": 837,
@@ -107,6 +115,10 @@ def fetch_text(url: str) -> tuple[str, str]:
     return body.decode("utf-8", errors="replace"), content_type
 
 
+def clean_snapshot_text(text: str) -> str:
+    return "\n".join(line.rstrip() for line in text.splitlines()) + "\n"
+
+
 def get_json(cid: int) -> list[dict[str, Any]]:
     query = urlencode({"cid": cid})
     text, _ = fetch_text(f"{BASE_URL}/API/Web/Goods/GetGoodsByCategoryId?{query}")
@@ -140,14 +152,53 @@ def item_parameters(item: dict[str, Any]) -> list[dict[str, str]]:
     return result
 
 
-def main() -> None:
-    manifest: dict[str, Any] = {
-        "source": BASE_URL,
-        "downloaded_at": datetime.now(timezone.utc).isoformat(),
-        "categories": [],
-    }
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        metavar="SLUG",
+        help="Download only the named category slug and merge it into the existing manifest.",
+    )
+    return parser.parse_args()
 
+
+def ordered_categories(categories_by_slug: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    ordered = []
+    seen = set()
     for category in CATEGORIES:
+        slug = category["slug"]
+        if slug in categories_by_slug:
+            ordered.append(categories_by_slug[slug])
+            seen.add(slug)
+    ordered.extend(value for slug, value in categories_by_slug.items() if slug not in seen)
+    return ordered
+
+
+def main() -> None:
+    args = parse_args()
+    only = set(args.only)
+    known_slugs = {category["slug"] for category in CATEGORIES}
+    unknown = sorted(only - known_slugs)
+    if unknown:
+        raise SystemExit(f"Unknown category slug(s): {', '.join(unknown)}")
+
+    manifest_path = ROOT / "manifest.json"
+    if only and manifest_path.exists():
+        manifest: dict[str, Any] = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["downloaded_at"] = datetime.now(timezone.utc).isoformat()
+        categories_by_slug = {category["slug"]: category for category in manifest.get("categories", [])}
+    else:
+        manifest = {
+            "source": BASE_URL,
+            "downloaded_at": datetime.now(timezone.utc).isoformat(),
+            "categories": [],
+        }
+        categories_by_slug = {}
+
+    categories_to_download = [category for category in CATEGORIES if not only or category["slug"] in only]
+    for category in categories_to_download:
         category_dir = ROOT / category["slug"]
         category_dir.mkdir(parents=True, exist_ok=True)
         category_record: dict[str, Any] = {
@@ -163,7 +214,7 @@ def main() -> None:
         page_url = f"{BASE_URL}/Product3?cid={category['page_cid']}"
         page_text, page_content_type = fetch_text(page_url)
         page_path = category_dir / f"Product3-cid-{category['page_cid']}.html"
-        page_path.write_text(page_text, encoding="utf-8")
+        page_path.write_text(clean_snapshot_text(page_text), encoding="utf-8")
         category_record["files"].append(
             {
                 "path": str(page_path.relative_to(ROOT)),
@@ -231,9 +282,9 @@ def main() -> None:
                 item_record["downloads"].append(info)
             category_record["items"].append(item_record)
 
-        manifest["categories"].append(category_record)
+        categories_by_slug[category["slug"]] = category_record
 
-    manifest_path = ROOT / "manifest.json"
+    manifest["categories"] = ordered_categories(categories_by_slug)
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     write_readme(manifest, ROOT / "README.md")
     print(manifest_path)

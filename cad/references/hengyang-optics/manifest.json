@@ -1,6 +1,6 @@
 {
   "source": "https://www.hengyangbuy.com",
-  "downloaded_at": "2026-06-26T05:29:53.113846+00:00",
+  "downloaded_at": "2026-06-26T05:50:21.119332+00:00",
   "categories": [
     {
       "slug": "gt-090101-waveplate-polarizer",
@@ -1568,6 +1568,359 @@
               "path": "hkcb1pm-right-angle-mirror-holder/HKCB1PM/HKCB1PM_product-image.jpg",
               "url": "https://www.hengyangbuy.com/UploadFiles/2024/08-08/eh1upthe48nrhy1d.jpg?Ry04MDAtMi5qcGc=",
               "bytes": 218000,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "gkm-010-polarizer-waveplate-holders",
+      "label": "GKM-010 circular thin polarizer/waveplate holders",
+      "reason": "GKM-0102 Ø25.4 mm polarizer/waveplate holder requested for future optomechanical references.",
+      "page": "https://www.hengyangbuy.com/Product3?cid=999",
+      "api_cids": [
+        999
+      ],
+      "files": [
+        {
+          "path": "gkm-010-polarizer-waveplate-holders/Product3-cid-999.html",
+          "url": "https://www.hengyangbuy.com/Product3?cid=999",
+          "bytes": 81298,
+          "content_type": "text/html; charset=utf-8"
+        },
+        {
+          "path": "gkm-010-polarizer-waveplate-holders/api-cid-999.json",
+          "url": "https://www.hengyangbuy.com/API/Web/Goods/GetGoodsByCategoryId?cid=999",
+          "bytes": 16060,
+          "content_type": "application/json"
+        }
+      ],
+      "items": [
+        {
+          "model": "GKM-0101",
+          "name": "圆形薄片式偏振片架/波片架",
+          "id": 54587,
+          "price_cny": 165.0,
+          "category_id": 999,
+          "parameters": [
+            {
+              "key": "类型",
+              "value": "圆形薄片式偏振片/波片架",
+              "unit": ""
+            },
+            {
+              "key": "主体材料",
+              "value": "铝合金(氧化黑)",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "顶端压圈式",
+              "unit": ""
+            },
+            {
+              "key": "螺纹压圈(卡环)",
+              "value": "SM05×2",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "Ø12.7mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤9mm",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "∅10mm",
+              "unit": ""
+            },
+            {
+              "key": "旋转角度",
+              "value": "360°",
+              "unit": ""
+            },
+            {
+              "key": "支杆安装孔",
+              "value": "M4螺纹孔",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0101/item.json",
+              "bytes": 3669
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0101/GKM-0101_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/rfjyz3d3mudka18d.pdf?R0tNLTAxMDEucGRm",
+              "bytes": 185120,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0101/GKM-0101_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/zbjgrcqjhk1fefzd.step?R0tNLTAxMDEuU1RFUA==",
+              "bytes": 142638,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0101/GKM-0101_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/b2ec9sv3gyghhs2b.jpg",
+              "bytes": 312541,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "GKM-0102",
+          "name": "圆形薄片式偏振片架/波片架",
+          "id": 54586,
+          "price_cny": 175.0,
+          "category_id": 999,
+          "parameters": [
+            {
+              "key": "类型",
+              "value": "圆形薄片式偏振片/波片架",
+              "unit": ""
+            },
+            {
+              "key": "主体材料",
+              "value": "铝合金(氧化黑)",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "顶端压圈式",
+              "unit": ""
+            },
+            {
+              "key": "螺纹压圈(卡环)",
+              "value": "SM1×2",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "Ø25.4mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤9mm",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "∅22mm",
+              "unit": ""
+            },
+            {
+              "key": "旋转角度",
+              "value": "360°",
+              "unit": ""
+            },
+            {
+              "key": "支杆安装孔",
+              "value": "M4螺纹孔",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0102/item.json",
+              "bytes": 3667
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0102/GKM-0102_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/dcblmytpxadczyan.pdf?R0tNLTAxMDIucGRm",
+              "bytes": 115486,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0102/GKM-0102_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/ut3p3ptbmeh4qcrf.step?R0tNLTAxMDIuU1RFUA==",
+              "bytes": 142636,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0102/GKM-0102_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/ycdmddaysvhppcj4.jpg",
+              "bytes": 338068,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "GKM-0103",
+          "name": "圆形薄片式偏振片架/波片架",
+          "id": 54585,
+          "price_cny": 195.0,
+          "category_id": 999,
+          "parameters": [
+            {
+              "key": "类型",
+              "value": "圆形薄片式偏振片/波片架",
+              "unit": ""
+            },
+            {
+              "key": "主体材料",
+              "value": "铝合金(氧化黑)",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "顶端压圈式",
+              "unit": ""
+            },
+            {
+              "key": "螺纹压圈(卡环)",
+              "value": "SM1.5×2",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "Ø30mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤8mm",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "∅27mm",
+              "unit": ""
+            },
+            {
+              "key": "旋转角度",
+              "value": "360°",
+              "unit": ""
+            },
+            {
+              "key": "支杆安装孔",
+              "value": "M4螺纹孔",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0103/item.json",
+              "bytes": 3665
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0103/GKM-0103_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/f2qnmufefzsqut1v.pdf?R0tNLTAxMDMucGRm",
+              "bytes": 110468,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0103/GKM-0103_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/nwwy5e3mwjuzwkt5.step?R0tNLTAxMDMuU1RFUA==",
+              "bytes": 142408,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0103/GKM-0103_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/reec4sue8zupwhrf.jpg",
+              "bytes": 349454,
+              "content_type": "image/jpeg",
+              "kind": "product-image"
+            }
+          ]
+        },
+        {
+          "model": "GKM-0104",
+          "name": "圆形薄片式偏振片架/波片架",
+          "id": 54584,
+          "price_cny": 250.0,
+          "category_id": 999,
+          "parameters": [
+            {
+              "key": "类型",
+              "value": "圆形薄片式偏振片/波片架",
+              "unit": ""
+            },
+            {
+              "key": "主体材料",
+              "value": "铝合金(氧化黑)",
+              "unit": ""
+            },
+            {
+              "key": "锁紧方式",
+              "value": "顶端压圈式",
+              "unit": ""
+            },
+            {
+              "key": "螺纹压圈(卡环)",
+              "value": "SM2×2",
+              "unit": ""
+            },
+            {
+              "key": "夹持尺寸",
+              "value": "Ø50.8mm",
+              "unit": ""
+            },
+            {
+              "key": "夹持厚度",
+              "value": "≤11.5mm",
+              "unit": ""
+            },
+            {
+              "key": "通光孔径",
+              "value": "∅46mm",
+              "unit": ""
+            },
+            {
+              "key": "旋转角度",
+              "value": "360°",
+              "unit": ""
+            },
+            {
+              "key": "支杆安装孔",
+              "value": "M4螺纹孔",
+              "unit": ""
+            }
+          ],
+          "downloads": [
+            {
+              "kind": "item-json",
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0104/item.json",
+              "bytes": 3676
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0104/GKM-0104_drawing-pdf.pdf",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/m9wy9d1fjhi3hmb6.pdf?R0tNLTAxMDQucGRm",
+              "bytes": 151074,
+              "content_type": "application/pdf",
+              "kind": "drawing-pdf"
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0104/GKM-0104_model-step.step",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/uybsxtmgsch325ca.step?R0tNLTAxMDQuU1RFUA==",
+              "bytes": 157201,
+              "content_type": "application/octet-stream",
+              "kind": "model-step"
+            },
+            {
+              "path": "gkm-010-polarizer-waveplate-holders/GKM-0104/GKM-0104_product-image.jpg",
+              "url": "https://www.hengyangbuy.com/UploadFiles/4-mount/gkm/5ppnpx7ynktfawax.jpg",
+              "bytes": 354207,
               "content_type": "image/jpeg",
               "kind": "product-image"
             }

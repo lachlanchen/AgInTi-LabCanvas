@@ -4,7 +4,7 @@ Downloaded public reference materials for the Lumileds cage-holder design.
 The files are local references only; verify dimensions against vendor drawings before machining.
 
 Source site: <https://www.hengyangbuy.com>
-Downloaded at: `2026-06-26T05:29:53.113846+00:00`
+Downloaded at: `2026-06-26T05:50:21.119332+00:00`
 
 ## Categories
 
@@ -75,6 +75,17 @@ Downloaded at: `2026-06-26T05:29:53.113846+00:00`
 - Why included: Triangle/right-angle cage mirror holder reference.
 - Product rows: 1
   - `HKCB1PM` 抛物面镜直角安装架: 3 files. 材料=铝合金（氧化黑）; 夹持尺寸=Ø25.4mm的离轴抛物面反射镜; 锁紧方式=螺纹锁圈式; 通光孔径=φ25.4mm; Z轴平移调节范围=±3.0mm
+
+### GKM-010 circular thin polarizer/waveplate holders
+
+- Page: <https://www.hengyangbuy.com/Product3?cid=999>
+- Folder: `gkm-010-polarizer-waveplate-holders/`
+- Why included: GKM-0102 Ø25.4 mm polarizer/waveplate holder requested for future optomechanical references.
+- Product rows: 4
+  - `GKM-0101` 圆形薄片式偏振片架/波片架: 3 files. 类型=圆形薄片式偏振片/波片架; 主体材料=铝合金(氧化黑); 锁紧方式=顶端压圈式; 螺纹压圈(卡环)=SM05×2; 夹持尺寸=Ø12.7mm
+  - `GKM-0102` 圆形薄片式偏振片架/波片架: 3 files. 类型=圆形薄片式偏振片/波片架; 主体材料=铝合金(氧化黑); 锁紧方式=顶端压圈式; 螺纹压圈(卡环)=SM1×2; 夹持尺寸=Ø25.4mm
+  - `GKM-0103` 圆形薄片式偏振片架/波片架: 3 files. 类型=圆形薄片式偏振片/波片架; 主体材料=铝合金(氧化黑); 锁紧方式=顶端压圈式; 螺纹压圈(卡环)=SM1.5×2; 夹持尺寸=Ø30mm
+  - `GKM-0104` 圆形薄片式偏振片架/波片架: 3 files. 类型=圆形薄片式偏振片/波片架; 主体材料=铝合金(氧化黑); 锁紧方式=顶端压圈式; 螺纹压圈(卡环)=SM2×2; 夹持尺寸=Ø50.8mm
 
 ### HCT 6 mm 30 mm cage rods
 

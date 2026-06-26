@@ -1,0 +1,172 @@
+{
+  "Name": "圆形薄片式偏振片架/波片架",
+  "Model": "GKM-0104",
+  "CategoryId": 999,
+  "Category": {
+    "Name": "GKM-010系列—圆形薄片式偏振片/波片架",
+    "EnName": null,
+    "ParentId": 0,
+    "ImageUrl": null,
+    "BannerImage": null,
+    "MultiImage": null,
+    "EngineeringImage": null,
+    "EngineeringTitle": null,
+    "IsDetail": false,
+    "Info": null,
+    "Content": null,
+    "PriceRange": null,
+    "IsParameter": false,
+    "Parameter": null,
+    "IsDescription": false,
+    "Description": null,
+    "SketchMap": null,
+    "IsCurve": false,
+    "Curve": null,
+    "CurveUrl": null,
+    "IsAssemble": false,
+    "Assemble": null,
+    "IsTechnical": false,
+    "Technical": null,
+    "IsCase": false,
+    "Case": null,
+    "IsCustom": false,
+    "Custom": null,
+    "RelatedCategoryId": null,
+    "RelatedCategory": null,
+    "FilterJson": [
+      100,
+      97,
+      93
+    ],
+    "ParameterJson": [],
+    "SpecJson": {},
+    "children": null,
+    "RelatedKnowledgeId": null,
+    "RelatedKnowledge": null,
+    "ExpanddCategoryId": null,
+    "ExpandCategory": null,
+    "SelfParameterJson": null,
+    "Id": 999,
+    "Sort": 0,
+    "IsDel": false,
+    "Status": 0,
+    "CreateTime": "2026-06-26 13:51:04",
+    "CreateUser": null,
+    "UpdateTime": "2026-06-26 13:51:04",
+    "UpdateUser": null
+  },
+  "Code": "",
+  "ImageUrl": "/UploadFiles/4-mount/gkm/5ppnpx7ynktfawax.jpg",
+  "Images": "",
+  "Info": "",
+  "Content": "",
+  "Tags": "",
+  "Price": 250.0,
+  "OldPrice": 0.0,
+  "Stock": 98,
+  "Hits": 0,
+  "IsOnShelf": true,
+  "SendTime": "当天",
+  "PdfUrl": "/UploadFiles/4-mount/gkm/m9wy9d1fjhi3hmb6.pdf?R0tNLTAxMDQucGRm",
+  "StepUrl": "/UploadFiles/4-mount/gkm/uybsxtmgsch325ca.step?R0tNLTAxMDQuU1RFUA==",
+  "ZEMAXUrl": "",
+  "ZIPUrl": "",
+  "STPUrl": "",
+  "SpecUrl": "",
+  "SpecJson": {
+    "Id": 0,
+    "Spec-100": "Ø50.8mm",
+    "Spec-97": "≤11.5mm",
+    "Spec-93": "M4"
+  },
+  "ParameterJson": null,
+  "RelatedGoodsId": null,
+  "RelatedGoods": null,
+  "SelfSpecJson": [
+    {
+      "key": "类型",
+      "value": "圆形薄片式偏振片/波片架"
+    },
+    {
+      "key": "主体材料",
+      "value": "铝合金(氧化黑)"
+    },
+    {
+      "key": "锁紧方式",
+      "value": "顶端压圈式"
+    },
+    {
+      "key": "螺纹压圈(卡环)",
+      "value": "SM2×2"
+    },
+    {
+      "key": "夹持尺寸",
+      "value": "Ø50.8mm"
+    },
+    {
+      "key": "夹持厚度",
+      "value": "≤11.5mm"
+    },
+    {
+      "key": "通光孔径",
+      "value": "∅46mm"
+    },
+    {
+      "key": "旋转角度",
+      "value": "360°"
+    },
+    {
+      "key": "支杆安装孔",
+      "value": "M4螺纹孔"
+    }
+  ],
+  "CommonParameter": null,
+  "AllParameterList": [
+    {
+      "key": "类型",
+      "value": "圆形薄片式偏振片/波片架"
+    },
+    {
+      "key": "主体材料",
+      "value": "铝合金(氧化黑)"
+    },
+    {
+      "key": "锁紧方式",
+      "value": "顶端压圈式"
+    },
+    {
+      "key": "螺纹压圈(卡环)",
+      "value": "SM2×2"
+    },
+    {
+      "key": "夹持尺寸",
+      "value": "Ø50.8mm"
+    },
+    {
+      "key": "夹持厚度",
+      "value": "≤11.5mm"
+    },
+    {
+      "key": "通光孔径",
+      "value": "∅46mm"
+    },
+    {
+      "key": "旋转角度",
+      "value": "360°"
+    },
+    {
+      "key": "支杆安装孔",
+      "value": "M4螺纹孔"
+    }
+  ],
+  "AllParameterFormatList": null,
+  "DetailCategory": null,
+  "Id": 54584,
+  "Sort": 1766079843115,
+  "IsDel": false,
+  "Status": 0,
+  "CreateTime": "2025-12-18 17:44:03",
+  "CreateUser": "HENGYANG-HONG",
+  "UpdateTime": "2026-01-22 14:17:49",
+  "UpdateUser": "HENGYANG-QIN"
+}
