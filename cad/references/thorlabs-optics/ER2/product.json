@@ -1,0 +1,122 @@
+{
+  "id": "544c4b7e-b7e3-4f88-b389-a6554a5a1b8b",
+  "code": "ER2",
+  "name": "ER2",
+  "slug": "ER2",
+  "imgSrc": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/780.webp?v=2025-11-15-19-56-32",
+  "images": [
+    {
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/780.webp?v=2025-11-15-19-56-32"
+    }
+  ],
+  "assets": [
+    {
+      "id": "cce58ac1-c4df-4195-9142-91e9e4003c5e",
+      "name": "0780-E0W.pdf",
+      "group": "CAD PDF",
+      "description": "CAD PDF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/0780-e0w.pdf?v=0116112047",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.pdf?v=0116112047",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "44faf523-25f1-4f6d-913f-e3f14d1fc07f",
+      "name": "0780-E0W.dxf",
+      "group": "CAD DXF",
+      "description": "CAD DXF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/0780-e0w.dxf?v=0116112048",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.dxf?v=0116112048",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "2f632e65-5fd1-4e07-b714-ee7bbc8602d8",
+      "name": "0780-E0W.sldprt",
+      "group": "Solidworks",
+      "description": "Solidworks",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/0780-e0w.sldprt?v=0116112048",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.sldprt?v=0116112048",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "c4e99ea7-5259-4d44-8cff-98b8f35eac35",
+      "name": "0780-E0W.step",
+      "group": "Step",
+      "description": "Step",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/0780-e0w.step?v=0116112049",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.step?v=0116112049",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "825e3c58-30fd-487c-bfe8-3abdc44ad0b8",
+      "name": "0780-E0W.html",
+      "group": "eDrawing / 3D Model",
+      "description": "eDrawing / 3D Model",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/0780-e0w.html?v=0116112049",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.html?v=0116112049",
+      "mimeType": null,
+      "size": 0
+    }
+  ],
+  "descriptionsWithFallbacksTL": [
+    {
+      "reviewType": "FamilyPageUrl",
+      "content": "/30-and-60-mm-cage-system-construction-rods"
+    },
+    {
+      "reviewType": "PerItemNoteEUR",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteBRL",
+      "content": null
+    },
+    {
+      "reviewType": "Breadcrumb",
+      "content": "[[\"30 and 60 mm Cage System Construction Rods\",\"/30-and-60-mm-cage-system-construction-rods\"],[\"Cage System Construction\",\"/cage-system-construction\"],[\"Optical Cage Systems\",\"/optical-cage-systems\"],[\"Optomechanical Components\",\"/optomechanical-components\"],[\"Optomechanics\",\"/optomechanics\"],[\"All Products\",\"/main-visual-navigation\"],[\"ER2\",\"/item/er2\"]]"
+    },
+    {
+      "reviewType": "FamilyPageName",
+      "content": "30 and 60 mm Cage System Construction Rods"
+    },
+    {
+      "reviewType": "CalibrationInstructions",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteGBP",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteCNY",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteSEK",
+      "content": null
+    },
+    {
+      "reviewType": "CalibrationTerms",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNote",
+      "content": null
+    },
+    {
+      "reviewType": "ItemUrl",
+      "content": "/item/er2"
+    },
+    {
+      "reviewType": "PerItemNoteJPY",
+      "content": null
+    },
+    {
+      "reviewType": "Title",
+      "content": "Cage Assembly Rod, 2\" Long, Ø6 mm"
+    }
+  ]
+}

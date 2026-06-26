@@ -1,0 +1,122 @@
+{
+  "id": "6a296582-9efb-4c30-8e71-0eda59cd43fa",
+  "code": "C4W",
+  "name": "C4W",
+  "slug": "C4W",
+  "imgSrc": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/198.webp?v=2025-11-15-19-47-30",
+  "images": [
+    {
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/198.webp?v=2025-11-15-19-47-30"
+    }
+  ],
+  "assets": [
+    {
+      "id": "68e9d405-1fd0-495e-a10c-ace52b8c95b3",
+      "name": "C4W-E0W.pdf",
+      "group": "CAD PDF",
+      "description": "CAD PDF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/c4w-e0w.pdf?v=0116104950",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.pdf?v=0116104950",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "fa2d1afd-8b0b-444f-b418-e49ef4cdae7a",
+      "name": "C4W-E0W.dxf",
+      "group": "CAD DXF",
+      "description": "CAD DXF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/c4w-e0w.dxf?v=0116104950",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.dxf?v=0116104950",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "004b0c6e-3971-4c10-9dd3-aad7c4a6a842",
+      "name": "C4W-E0W.sldprt",
+      "group": "Solidworks",
+      "description": "Solidworks",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/c4w-e0w.sldprt?v=0116104950",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.sldprt?v=0116104950",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "72f28c2e-9a2b-4d66-86a0-c2fd446813a2",
+      "name": "C4W-E0W.step",
+      "group": "Step",
+      "description": "Step",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/c4w-e0w.step?v=0116104956",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.step?v=0116104956",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "ceee8809-873d-4af6-9e95-dede7537b7c4",
+      "name": "C4W-E0W.html",
+      "group": "eDrawing / 3D Model",
+      "description": "eDrawing / 3D Model",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/c4w-e0w.html?v=0116104958",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.html?v=0116104958",
+      "mimeType": null,
+      "size": 0
+    }
+  ],
+  "descriptionsWithFallbacksTL": [
+    {
+      "reviewType": "PerItemNoteSEK",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteGBP",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteEUR",
+      "content": null
+    },
+    {
+      "reviewType": "FamilyPageName",
+      "content": "30 mm Cage Cubes"
+    },
+    {
+      "reviewType": "PerItemNote",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteJPY",
+      "content": null
+    },
+    {
+      "reviewType": "CalibrationInstructions",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteBRL",
+      "content": null
+    },
+    {
+      "reviewType": "CalibrationTerms",
+      "content": null
+    },
+    {
+      "reviewType": "ItemUrl",
+      "content": "/item/c4w"
+    },
+    {
+      "reviewType": "Breadcrumb",
+      "content": "[[\"30 mm Cage Cubes\",\"/30-mm-cage-cubes\"],[\"30 mm Cage Cubes and Accessories\",\"/30-mm-cage-cubes-and-accessories\"],[\"30 mm Cage Cubes\",\"/30-mm-cage-cubes-guide-2\"],[\"30 mm Cage Components\",\"/30-mm-cage-components\"],[\"Optical Cage Systems\",\"/optical-cage-systems\"],[\"Optomechanical Components\",\"/optomechanical-components\"],[\"Optomechanics\",\"/optomechanics\"],[\"All Products\",\"/main-visual-navigation\"],[\"C4W\",\"/item/c4w\"]]"
+    },
+    {
+      "reviewType": "FamilyPageUrl",
+      "content": "/30-mm-cage-cubes"
+    },
+    {
+      "reviewType": "PerItemNoteCNY",
+      "content": null
+    },
+    {
+      "reviewType": "Title",
+      "content": "30 mm Cage Cube"
+    }
+  ]
+}

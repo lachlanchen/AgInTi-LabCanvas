@@ -1,0 +1,122 @@
+{
+  "id": "5c916cbe-6adb-484b-b0e1-9f8f96cf5a66",
+  "code": "SM1L10",
+  "name": "SM1L10",
+  "slug": "SM1L10",
+  "imgSrc": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371.webp?v=2025-11-15-19-02-05",
+  "images": [
+    {
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371.webp?v=2025-11-15-19-02-05"
+    }
+  ],
+  "assets": [
+    {
+      "id": "bdd13ca0-3340-4c39-9277-bf27f56c6539",
+      "name": "0371-E0W.pdf",
+      "group": "CAD PDF",
+      "description": "CAD PDF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.pdf?v=0116025718",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.pdf?v=0116025718",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "5eac2c3c-b27a-47ed-bbd6-64f12e3b1aaa",
+      "name": "0371-E0W.dxf",
+      "group": "CAD DXF",
+      "description": "CAD DXF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.dxf?v=0116025719",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.dxf?v=0116025719",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "f51d466f-191b-4608-82d6-0a14e07ae4ca",
+      "name": "0371-E0W.sldprt",
+      "group": "Solidworks",
+      "description": "Solidworks",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.sldprt?v=0116025719",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.sldprt?v=0116025719",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "4803e77c-f60a-473c-9fa6-3a457b7c565e",
+      "name": "0371-E0W.step",
+      "group": "Step",
+      "description": "Step",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.step?v=0116025721",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.step?v=0116025721",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "27f76200-8e1e-48f4-8fe4-38b407da7dac",
+      "name": "0371-E0W.html",
+      "group": "eDrawing / 3D Model",
+      "description": "eDrawing / 3D Model",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.html?v=0116025720",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.html?v=0116025720",
+      "mimeType": null,
+      "size": 0
+    }
+  ],
+  "descriptionsWithFallbacksTL": [
+    {
+      "reviewType": "Title",
+      "content": "SM1 Lens Tube, 1.00\" Thread Depth, One Retaining Ring Included"
+    },
+    {
+      "reviewType": "CalibrationTerms",
+      "content": null
+    },
+    {
+      "reviewType": "Breadcrumb",
+      "content": "[[\"\\u00D81\\u0022 Lens Tubes\",\"/1-inch-lens-tubes\"],[\"\\u00D81\\u0022 Lens Tubes\",\"/1-inch-lens-tubes-guide\"],[\"Lens Tube Systems\",\"/lens-tube-systems\"],[\"Optomechanical Components\",\"/optomechanical-components\"],[\"Optomechanics\",\"/optomechanics\"],[\"All Products\",\"/main-visual-navigation\"],[\"SM1L10\",\"/item/sm1l10\"]]"
+    },
+    {
+      "reviewType": "PerItemNoteJPY",
+      "content": null
+    },
+    {
+      "reviewType": "CalibrationInstructions",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteEUR",
+      "content": null
+    },
+    {
+      "reviewType": "ItemUrl",
+      "content": "/item/sm1l10"
+    },
+    {
+      "reviewType": "FamilyPageUrl",
+      "content": "/1-inch-lens-tubes"
+    },
+    {
+      "reviewType": "PerItemNote",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteCNY",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteSEK",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteBRL",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteGBP",
+      "content": null
+    },
+    {
+      "reviewType": "FamilyPageName",
+      "content": "Ø1\" Lens Tubes"
+    }
+  ]
+}

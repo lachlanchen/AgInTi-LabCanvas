@@ -1,0 +1,132 @@
+{
+  "id": "fab44567-bf02-4513-a151-e32aa2d4d035",
+  "code": "CP02T",
+  "name": "CP02T",
+  "slug": "CP02T",
+  "imgSrc": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-xl.jpg?v=2025-11-15-17-54-41",
+  "images": [
+    {
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-xl.jpg?v=2025-11-15-17-54-41"
+    }
+  ],
+  "assets": [
+    {
+      "id": "561c4759-058d-4bb3-8271-ef9bb0526088",
+      "name": "1703-E0W.pdf",
+      "group": "CAD PDF",
+      "description": "CAD PDF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-e0w.pdf?v=0116110150",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.pdf?v=0116110150",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "2bf611d9-f711-43b8-807e-c1cf95fb1338",
+      "name": "1703-E0W.dxf",
+      "group": "CAD DXF",
+      "description": "CAD DXF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-e0w.dxf?v=0116110151",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.dxf?v=0116110151",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "dd4e2406-a756-4645-82d8-2101ec65d16e",
+      "name": "1703-E0W.sldprt",
+      "group": "Solidworks",
+      "description": "Solidworks",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-e0w.sldprt?v=0116110151",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.sldprt?v=0116110151",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "3cead882-7ae9-42ac-8940-bd1f6cba6ba5",
+      "name": "1703-E0W.step",
+      "group": "Step",
+      "description": "Step",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-e0w.step?v=0116110152",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.step?v=0116110152",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "d5c0f833-3647-4ae8-9980-23693e867275",
+      "name": "1703-E0W.html",
+      "group": "eDrawing / 3D Model",
+      "description": "eDrawing / 3D Model",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-e0w.html?v=0116110153",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.html?v=0116110153",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "4cc4e809-1eff-4d1d-8e67-b3d75d413f8f",
+      "name": "CP02T.pdf",
+      "group": "Catalog Presentation",
+      "description": "Additional Info",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/cp02t.pdf?v=0116110153",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/cp02t.pdf?v=0116110153",
+      "mimeType": null,
+      "size": 0
+    }
+  ],
+  "descriptionsWithFallbacksTL": [
+    {
+      "reviewType": "CalibrationInstructions",
+      "content": null
+    },
+    {
+      "reviewType": "Title",
+      "content": "SM1-Threaded 30 mm Cage Plate, 0.50\" Thick, 2 Retaining Rings, 8-32 Tap"
+    },
+    {
+      "reviewType": "ItemUrl",
+      "content": "/item/cp02t"
+    },
+    {
+      "reviewType": "FamilyPageUrl",
+      "content": "/standard-30-mm-cage-plates"
+    },
+    {
+      "reviewType": "Breadcrumb",
+      "content": "[[\"Standard 30 mm Cage Plates\",\"/standard-30-mm-cage-plates\"],[\"30 mm Cage Plates\",\"/30-mm-cage-plates\"],[\"30 mm Cage Components\",\"/30-mm-cage-components\"],[\"Optical Cage Systems\",\"/optical-cage-systems\"],[\"Optomechanical Components\",\"/optomechanical-components\"],[\"Optomechanics\",\"/optomechanics\"],[\"All Products\",\"/main-visual-navigation\"],[\"CP02T\",\"/item/cp02t\"]]"
+    },
+    {
+      "reviewType": "PerItemNoteJPY",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteSEK",
+      "content": null
+    },
+    {
+      "reviewType": "CalibrationTerms",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteCNY",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteBRL",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteEUR",
+      "content": null
+    },
+    {
+      "reviewType": "FamilyPageName",
+      "content": "Standard 30 mm Cage Plates"
+    },
+    {
+      "reviewType": "PerItemNoteGBP",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNote",
+      "content": null
+    }
+  ]
+}

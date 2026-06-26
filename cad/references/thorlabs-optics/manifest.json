@@ -1,0 +1,855 @@
+{
+  "source": "https://www.thorlabs.com",
+  "graphql_endpoint": "https://www.thorlabs.com/graphql",
+  "downloaded_at": "2026-06-26T06:09:20.472688+00:00",
+  "store": {
+    "storeId": "Thorlabs-Website",
+    "catalogId": "e40c12f7-09da-46fb-a7ae-e74518090386",
+    "storeName": "Thorlabs",
+    "storeUrl": "https://www.thorlabs.com",
+    "defaultLanguage": {
+      "cultureName": "en-US",
+      "twoLetterLanguageName": "en"
+    },
+    "defaultCurrency": {
+      "code": "USD"
+    },
+    "settings": {
+      "environmentName": ""
+    }
+  },
+  "asset_groups": [
+    "Step",
+    "CAD PDF",
+    "CAD DXF"
+  ],
+  "products": [
+    {
+      "code": "C4W",
+      "id": "6a296582-9efb-4c30-8e71-0eda59cd43fa",
+      "name": "C4W",
+      "slug": "C4W",
+      "page": "https://www.thorlabs.com/thorproduct.cfm?partnumber=C4W",
+      "folder": "C4W",
+      "downloads": [
+        {
+          "kind": "product-json",
+          "path": "cad/references/thorlabs-optics/C4W/product.json",
+          "bytes": 4093
+        },
+        {
+          "path": "cad/references/thorlabs-optics/C4W/C4W_product-image.webp",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/198.webp?v=2025-11-15-19-47-30",
+          "bytes": 204300,
+          "content_type": "image/webp",
+          "skipped": false,
+          "kind": "product-image"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/C4W/C4W_CAD_PDF_C4W-E0W.pdf",
+          "url": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.pdf?v=0116104950",
+          "bytes": 578215,
+          "content_type": "application/pdf",
+          "skipped": false,
+          "kind": "CAD PDF",
+          "asset_id": "68e9d405-1fd0-495e-a10c-ace52b8c95b3"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/C4W/C4W_CAD_DXF_C4W-E0W.dxf",
+          "url": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.dxf?v=0116104950",
+          "bytes": 561736,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "CAD DXF",
+          "asset_id": "fa2d1afd-8b0b-444f-b418-e49ef4cdae7a"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/C4W/C4W_Step_C4W-E0W.step",
+          "url": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.step?v=0116104956",
+          "bytes": 1007168,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "Step",
+          "asset_id": "72f28c2e-9a2b-4d66-86a0-c2fd446813a2"
+        }
+      ],
+      "assets": [
+        {
+          "id": "68e9d405-1fd0-495e-a10c-ace52b8c95b3",
+          "name": "C4W-E0W.pdf",
+          "group": "CAD PDF",
+          "description": "CAD PDF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/c4w-e0w.pdf?v=0116104950",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.pdf?v=0116104950",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "fa2d1afd-8b0b-444f-b418-e49ef4cdae7a",
+          "name": "C4W-E0W.dxf",
+          "group": "CAD DXF",
+          "description": "CAD DXF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/c4w-e0w.dxf?v=0116104950",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.dxf?v=0116104950",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "004b0c6e-3971-4c10-9dd3-aad7c4a6a842",
+          "name": "C4W-E0W.sldprt",
+          "group": "Solidworks",
+          "description": "Solidworks",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/c4w-e0w.sldprt?v=0116104950",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.sldprt?v=0116104950",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "72f28c2e-9a2b-4d66-86a0-c2fd446813a2",
+          "name": "C4W-E0W.step",
+          "group": "Step",
+          "description": "Step",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/c4w-e0w.step?v=0116104956",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.step?v=0116104956",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "ceee8809-873d-4af6-9e95-dede7537b7c4",
+          "name": "C4W-E0W.html",
+          "group": "eDrawing / 3D Model",
+          "description": "eDrawing / 3D Model",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/c4/c4w/c4w/c4w-e0w.html?v=0116104958",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/c4/c4w/c4w/c4w-e0w.html?v=0116104958",
+          "mimeType": null,
+          "size": 0
+        }
+      ]
+    },
+    {
+      "code": "CP02T",
+      "id": "fab44567-bf02-4513-a151-e32aa2d4d035",
+      "name": "CP02T",
+      "slug": "CP02T",
+      "page": "https://www.thorlabs.com/thorproduct.cfm?partnumber=CP02T",
+      "folder": "CP02T",
+      "downloads": [
+        {
+          "kind": "product-json",
+          "path": "cad/references/thorlabs-optics/CP02T/product.json",
+          "bytes": 4602
+        },
+        {
+          "path": "cad/references/thorlabs-optics/CP02T/CP02T_product-image.jpg",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-xl.jpg?v=2025-11-15-17-54-41",
+          "bytes": 65984,
+          "content_type": "image/jpeg",
+          "skipped": false,
+          "kind": "product-image"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/CP02T/CP02T_CAD_PDF_1703-E0W.pdf",
+          "url": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.pdf?v=0116110150",
+          "bytes": 180269,
+          "content_type": "application/pdf",
+          "skipped": false,
+          "kind": "CAD PDF",
+          "asset_id": "561c4759-058d-4bb3-8271-ef9bb0526088"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/CP02T/CP02T_CAD_DXF_1703-E0W.dxf",
+          "url": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.dxf?v=0116110151",
+          "bytes": 562122,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "CAD DXF",
+          "asset_id": "2bf611d9-f711-43b8-807e-c1cf95fb1338"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/CP02T/CP02T_Step_1703-E0W.step",
+          "url": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.step?v=0116110152",
+          "bytes": 2626519,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "Step",
+          "asset_id": "3cead882-7ae9-42ac-8940-bd1f6cba6ba5"
+        }
+      ],
+      "assets": [
+        {
+          "id": "561c4759-058d-4bb3-8271-ef9bb0526088",
+          "name": "1703-E0W.pdf",
+          "group": "CAD PDF",
+          "description": "CAD PDF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-e0w.pdf?v=0116110150",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.pdf?v=0116110150",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "2bf611d9-f711-43b8-807e-c1cf95fb1338",
+          "name": "1703-E0W.dxf",
+          "group": "CAD DXF",
+          "description": "CAD DXF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-e0w.dxf?v=0116110151",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.dxf?v=0116110151",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "dd4e2406-a756-4645-82d8-2101ec65d16e",
+          "name": "1703-E0W.sldprt",
+          "group": "Solidworks",
+          "description": "Solidworks",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-e0w.sldprt?v=0116110151",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.sldprt?v=0116110151",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "3cead882-7ae9-42ac-8940-bd1f6cba6ba5",
+          "name": "1703-E0W.step",
+          "group": "Step",
+          "description": "Step",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-e0w.step?v=0116110152",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.step?v=0116110152",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "d5c0f833-3647-4ae8-9980-23693e867275",
+          "name": "1703-E0W.html",
+          "group": "eDrawing / 3D Model",
+          "description": "eDrawing / 3D Model",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/1703-e0w.html?v=0116110153",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/1703-e0w.html?v=0116110153",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "4cc4e809-1eff-4d1d-8e67-b3d75d413f8f",
+          "name": "CP02T.pdf",
+          "group": "Catalog Presentation",
+          "description": "Additional Info",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/c/cp/cp0/cp02t/cp02t.pdf?v=0116110153",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/c/cp/cp0/cp02t/cp02t.pdf?v=0116110153",
+          "mimeType": null,
+          "size": 0
+        }
+      ]
+    },
+    {
+      "code": "ER1",
+      "id": "961028bf-8af8-4184-a71d-40843e6b15bd",
+      "name": "ER1",
+      "slug": "ER1",
+      "page": "https://www.thorlabs.com/thorproduct.cfm?partnumber=ER1",
+      "folder": "ER1",
+      "downloads": [
+        {
+          "kind": "product-json",
+          "path": "cad/references/thorlabs-optics/ER1/product.json",
+          "bytes": 4108
+        },
+        {
+          "path": "cad/references/thorlabs-optics/ER1/ER1_product-image.webp",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er1/er1/775.webp?v=2025-11-15-19-56-32",
+          "bytes": 29054,
+          "content_type": "image/webp",
+          "skipped": false,
+          "kind": "product-image"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/ER1/ER1_CAD_PDF_0775-E0W.pdf",
+          "url": "https://media.thorlabs.com/globalassets/items/e/er/er1/er1/0775-e0w.pdf?v=0116112043",
+          "bytes": 86068,
+          "content_type": "application/pdf",
+          "skipped": false,
+          "kind": "CAD PDF",
+          "asset_id": "c34faaaf-5494-4bee-bf5b-57cfcd5732bc"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/ER1/ER1_CAD_DXF_0775-E0W.dxf",
+          "url": "https://media.thorlabs.com/globalassets/items/e/er/er1/er1/0775-e0w.dxf?v=0116112044",
+          "bytes": 309103,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "CAD DXF",
+          "asset_id": "ae0a94e0-5640-40e8-b187-51c6f3f71ee0"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/ER1/ER1_Step_0775-E0W.step",
+          "url": "https://media.thorlabs.com/globalassets/items/e/er/er1/er1/0775-e0w.step?v=0116112045",
+          "bytes": 886794,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "Step",
+          "asset_id": "efc3e2c0-6549-4bbc-959f-34dfc28807c8"
+        }
+      ],
+      "assets": [
+        {
+          "id": "c34faaaf-5494-4bee-bf5b-57cfcd5732bc",
+          "name": "0775-E0W.pdf",
+          "group": "CAD PDF",
+          "description": "CAD PDF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er1/er1/0775-e0w.pdf?v=0116112043",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er1/er1/0775-e0w.pdf?v=0116112043",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "ae0a94e0-5640-40e8-b187-51c6f3f71ee0",
+          "name": "0775-E0W.dxf",
+          "group": "CAD DXF",
+          "description": "CAD DXF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er1/er1/0775-e0w.dxf?v=0116112044",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er1/er1/0775-e0w.dxf?v=0116112044",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "5d0f91a9-374b-4827-a1c6-eda389d63971",
+          "name": "0775-E0W.sldprt",
+          "group": "Solidworks",
+          "description": "Solidworks",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er1/er1/0775-e0w.sldprt?v=0116112044",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er1/er1/0775-e0w.sldprt?v=0116112044",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "efc3e2c0-6549-4bbc-959f-34dfc28807c8",
+          "name": "0775-E0W.step",
+          "group": "Step",
+          "description": "Step",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er1/er1/0775-e0w.step?v=0116112045",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er1/er1/0775-e0w.step?v=0116112045",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "9135150d-020e-49f8-a972-d48dfc1f34ed",
+          "name": "0775-E0W.html",
+          "group": "eDrawing / 3D Model",
+          "description": "eDrawing / 3D Model",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er1/er1/0775-e0w.html?v=0116112046",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er1/er1/0775-e0w.html?v=0116112046",
+          "mimeType": null,
+          "size": 0
+        }
+      ]
+    },
+    {
+      "code": "ER2",
+      "id": "544c4b7e-b7e3-4f88-b389-a6554a5a1b8b",
+      "name": "ER2",
+      "slug": "ER2",
+      "page": "https://www.thorlabs.com/thorproduct.cfm?partnumber=ER2",
+      "folder": "ER2",
+      "downloads": [
+        {
+          "kind": "product-json",
+          "path": "cad/references/thorlabs-optics/ER2/product.json",
+          "bytes": 4108
+        },
+        {
+          "path": "cad/references/thorlabs-optics/ER2/ER2_product-image.webp",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/780.webp?v=2025-11-15-19-56-32",
+          "bytes": 17382,
+          "content_type": "image/webp",
+          "skipped": false,
+          "kind": "product-image"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/ER2/ER2_CAD_PDF_0780-E0W.pdf",
+          "url": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.pdf?v=0116112047",
+          "bytes": 135536,
+          "content_type": "application/pdf",
+          "skipped": false,
+          "kind": "CAD PDF",
+          "asset_id": "cce58ac1-c4df-4195-9142-91e9e4003c5e"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/ER2/ER2_CAD_DXF_0780-E0W.dxf",
+          "url": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.dxf?v=0116112048",
+          "bytes": 277095,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "CAD DXF",
+          "asset_id": "44faf523-25f1-4f6d-913f-e3f14d1fc07f"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/ER2/ER2_Step_0780-E0W.step",
+          "url": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.step?v=0116112049",
+          "bytes": 885049,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "Step",
+          "asset_id": "c4e99ea7-5259-4d44-8cff-98b8f35eac35"
+        }
+      ],
+      "assets": [
+        {
+          "id": "cce58ac1-c4df-4195-9142-91e9e4003c5e",
+          "name": "0780-E0W.pdf",
+          "group": "CAD PDF",
+          "description": "CAD PDF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/0780-e0w.pdf?v=0116112047",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.pdf?v=0116112047",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "44faf523-25f1-4f6d-913f-e3f14d1fc07f",
+          "name": "0780-E0W.dxf",
+          "group": "CAD DXF",
+          "description": "CAD DXF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/0780-e0w.dxf?v=0116112048",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.dxf?v=0116112048",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "2f632e65-5fd1-4e07-b714-ee7bbc8602d8",
+          "name": "0780-E0W.sldprt",
+          "group": "Solidworks",
+          "description": "Solidworks",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/0780-e0w.sldprt?v=0116112048",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.sldprt?v=0116112048",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "c4e99ea7-5259-4d44-8cff-98b8f35eac35",
+          "name": "0780-E0W.step",
+          "group": "Step",
+          "description": "Step",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/0780-e0w.step?v=0116112049",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.step?v=0116112049",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "825e3c58-30fd-487c-bfe8-3abdc44ad0b8",
+          "name": "0780-E0W.html",
+          "group": "eDrawing / 3D Model",
+          "description": "eDrawing / 3D Model",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/e/er/er2/er2/0780-e0w.html?v=0116112049",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/e/er/er2/er2/0780-e0w.html?v=0116112049",
+          "mimeType": null,
+          "size": 0
+        }
+      ]
+    },
+    {
+      "code": "KCB1",
+      "id": "7af6c148-db94-48aa-898c-158005724c55",
+      "name": "KCB1",
+      "slug": "KCB1",
+      "page": "https://www.thorlabs.com/thorproduct.cfm?partnumber=KCB1",
+      "folder": "KCB1",
+      "downloads": [
+        {
+          "kind": "product-json",
+          "path": "cad/references/thorlabs-optics/KCB1/product.json",
+          "bytes": 4374
+        },
+        {
+          "path": "cad/references/thorlabs-optics/KCB1/KCB1_product-image.webp",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/kc/kcb/kcb1/13038.webp?v=2025-11-15-21-42-28",
+          "bytes": 151220,
+          "content_type": "image/webp",
+          "skipped": false,
+          "kind": "product-image"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/KCB1/KCB1_CAD_PDF_13038-E0W.pdf",
+          "url": "https://media.thorlabs.com/globalassets/items/k/kc/kcb/kcb1/13038-e0w.pdf?v=0116115809",
+          "bytes": 203556,
+          "content_type": "application/pdf",
+          "skipped": false,
+          "kind": "CAD PDF",
+          "asset_id": "66669ab0-c7a6-4907-ab7f-538e30ee7b1d"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/KCB1/KCB1_CAD_DXF_13038-E0W.dxf",
+          "url": "https://media.thorlabs.com/globalassets/items/k/kc/kcb/kcb1/13038-e0w.dxf?v=0116115810",
+          "bytes": 1015550,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "CAD DXF",
+          "asset_id": "e0b900ed-3835-49a5-8ac4-be192878f510"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/KCB1/KCB1_Step_13038-E0W.step",
+          "url": "https://media.thorlabs.com/globalassets/items/k/kc/kcb/kcb1/13038-e0w.step?v=0116115812",
+          "bytes": 4509579,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "Step",
+          "asset_id": "87ac1edb-704e-490a-9053-52d8fd49d096"
+        }
+      ],
+      "assets": [
+        {
+          "id": "66669ab0-c7a6-4907-ab7f-538e30ee7b1d",
+          "name": "13038-E0W.pdf",
+          "group": "CAD PDF",
+          "description": "CAD PDF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/kc/kcb/kcb1/13038-e0w.pdf?v=0116115809",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/k/kc/kcb/kcb1/13038-e0w.pdf?v=0116115809",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "e0b900ed-3835-49a5-8ac4-be192878f510",
+          "name": "13038-E0W.dxf",
+          "group": "CAD DXF",
+          "description": "CAD DXF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/kc/kcb/kcb1/13038-e0w.dxf?v=0116115810",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/k/kc/kcb/kcb1/13038-e0w.dxf?v=0116115810",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "9ec47e06-b4be-486d-aee7-a6b1b8152814",
+          "name": "13038-E0W.sldprt",
+          "group": "Solidworks",
+          "description": "Solidworks",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/kc/kcb/kcb1/13038-e0w.sldprt?v=0116115810",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/k/kc/kcb/kcb1/13038-e0w.sldprt?v=0116115810",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "10676328-4396-4fac-8ed4-73e98bbfb956",
+          "name": "13038-E0W.html",
+          "group": "eDrawing / 3D Model",
+          "description": "eDrawing / 3D Model",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/kc/kcb/kcb1/13038-e0w.html?v=0116115811",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/k/kc/kcb/kcb1/13038-e0w.html?v=0116115811",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "87ac1edb-704e-490a-9053-52d8fd49d096",
+          "name": "13038-E0W.step",
+          "group": "Step",
+          "description": "Step",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/kc/kcb/kcb1/13038-e0w.step?v=0116115812",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/k/kc/kcb/kcb1/13038-e0w.step?v=0116115812",
+          "mimeType": null,
+          "size": 0
+        }
+      ]
+    },
+    {
+      "code": "KM100",
+      "id": "0c02550d-3c69-44c8-9a4d-04688e51119e",
+      "name": "KM100",
+      "slug": "KM100",
+      "page": "https://www.thorlabs.com/thorproduct.cfm?partnumber=KM100",
+      "folder": "KM100",
+      "downloads": [
+        {
+          "kind": "product-json",
+          "path": "cad/references/thorlabs-optics/KM100/product.json",
+          "bytes": 4225
+        },
+        {
+          "path": "cad/references/thorlabs-optics/KM100/KM100_product-image.webp",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628.webp?v=2025-11-15-16-38-41",
+          "bytes": 143518,
+          "content_type": "image/webp",
+          "skipped": false,
+          "kind": "product-image"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/KM100/KM100_CAD_PDF_6628-E0W.pdf",
+          "url": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.pdf?v=0116115950",
+          "bytes": 182326,
+          "content_type": "application/pdf",
+          "skipped": false,
+          "kind": "CAD PDF",
+          "asset_id": "e481c118-856c-4d20-8837-e1b20d765ed8"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/KM100/KM100_CAD_DXF_6628-E0W.dxf",
+          "url": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.dxf?v=0116115950",
+          "bytes": 545196,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "CAD DXF",
+          "asset_id": "cdeaba35-c0ed-4f22-b9b8-6a98cb4a48d5"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/KM100/KM100_Step_6628-E0W.step",
+          "url": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.step?v=0116115952",
+          "bytes": 3368499,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "Step",
+          "asset_id": "a0573019-2fb0-4a4a-9607-a8faf317d7ed"
+        }
+      ],
+      "assets": [
+        {
+          "id": "e481c118-856c-4d20-8837-e1b20d765ed8",
+          "name": "6628-E0W.pdf",
+          "group": "CAD PDF",
+          "description": "CAD PDF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628-e0w.pdf?v=0116115950",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.pdf?v=0116115950",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "cdeaba35-c0ed-4f22-b9b8-6a98cb4a48d5",
+          "name": "6628-E0W.dxf",
+          "group": "CAD DXF",
+          "description": "CAD DXF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628-e0w.dxf?v=0116115950",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.dxf?v=0116115950",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "5d73e44c-c94e-4f59-933c-181f7487e7ef",
+          "name": "6628-E0W.sldprt",
+          "group": "Solidworks",
+          "description": "Solidworks",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628-e0w.sldprt?v=0116115951",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.sldprt?v=0116115951",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "e5db9ef8-d31a-4fb8-b512-ba6fef95f304",
+          "name": "6628-E0W.html",
+          "group": "eDrawing / 3D Model",
+          "description": "eDrawing / 3D Model",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628-e0w.html?v=0116115951",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.html?v=0116115951",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "a0573019-2fb0-4a4a-9607-a8faf317d7ed",
+          "name": "6628-E0W.step",
+          "group": "Step",
+          "description": "Step",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628-e0w.step?v=0116115952",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.step?v=0116115952",
+          "mimeType": null,
+          "size": 0
+        }
+      ]
+    },
+    {
+      "code": "LCP02",
+      "id": "f149cf4b-7a86-46f7-b6fa-810d161c50ba",
+      "name": "LCP02",
+      "slug": "LCP02",
+      "page": "https://www.thorlabs.com/thorproduct.cfm?partnumber=LCP02",
+      "folder": "LCP02",
+      "downloads": [
+        {
+          "kind": "product-json",
+          "path": "cad/references/thorlabs-optics/LCP02/product.json",
+          "bytes": 4127
+        },
+        {
+          "path": "cad/references/thorlabs-optics/LCP02/LCP02_product-image.jpg",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-xl.jpg?v=2025-11-15-18-45-57",
+          "bytes": 38620,
+          "content_type": "image/jpeg",
+          "skipped": false,
+          "kind": "product-image"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/LCP02/LCP02_CAD_PDF_2869-E0W.pdf",
+          "url": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.pdf?v=0116123028",
+          "bytes": 131418,
+          "content_type": "application/pdf",
+          "skipped": false,
+          "kind": "CAD PDF",
+          "asset_id": "23e88c63-208c-48f5-b8ed-f75341ae2910"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/LCP02/LCP02_CAD_DXF_2869-E0W.dxf",
+          "url": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.dxf?v=0116123029",
+          "bytes": 527062,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "CAD DXF",
+          "asset_id": "32a7082d-3551-416c-94f6-c39be03e2df0"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/LCP02/LCP02_Step_2869-E0W.step",
+          "url": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.step?v=0116123030",
+          "bytes": 3518546,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "Step",
+          "asset_id": "5b884b10-185f-4a28-9ef9-6e48838ac5a3"
+        }
+      ],
+      "assets": [
+        {
+          "id": "23e88c63-208c-48f5-b8ed-f75341ae2910",
+          "name": "2869-E0W.pdf",
+          "group": "CAD PDF",
+          "description": "CAD PDF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-e0w.pdf?v=0116123028",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.pdf?v=0116123028",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "32a7082d-3551-416c-94f6-c39be03e2df0",
+          "name": "2869-E0W.dxf",
+          "group": "CAD DXF",
+          "description": "CAD DXF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-e0w.dxf?v=0116123029",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.dxf?v=0116123029",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "1e06cc29-14d3-4632-bfaf-797e15097e83",
+          "name": "2869-E0W.sldprt",
+          "group": "Solidworks",
+          "description": "Solidworks",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-e0w.sldprt?v=0116123029",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.sldprt?v=0116123029",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "5b884b10-185f-4a28-9ef9-6e48838ac5a3",
+          "name": "2869-E0W.step",
+          "group": "Step",
+          "description": "Step",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-e0w.step?v=0116123030",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.step?v=0116123030",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "8a8ac22d-84c6-4ee5-b90a-32b687890e5a",
+          "name": "LCP02.pdf",
+          "group": "Catalog Presentation",
+          "description": "Additional Information",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/lcp02.pdf?v=0116123030",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/lcp02.pdf?v=0116123030",
+          "mimeType": null,
+          "size": 0
+        }
+      ]
+    },
+    {
+      "code": "SM1L10",
+      "id": "5c916cbe-6adb-484b-b0e1-9f8f96cf5a66",
+      "name": "SM1L10",
+      "slug": "SM1L10",
+      "page": "https://www.thorlabs.com/thorproduct.cfm?partnumber=SM1L10",
+      "folder": "SM1L10",
+      "downloads": [
+        {
+          "kind": "product-json",
+          "path": "cad/references/thorlabs-optics/SM1L10/product.json",
+          "bytes": 4095
+        },
+        {
+          "path": "cad/references/thorlabs-optics/SM1L10/SM1L10_product-image.webp",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371.webp?v=2025-11-15-19-02-05",
+          "bytes": 25006,
+          "content_type": "image/webp",
+          "skipped": false,
+          "kind": "product-image"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/SM1L10/SM1L10_CAD_PDF_0371-E0W.pdf",
+          "url": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.pdf?v=0116025718",
+          "bytes": 389776,
+          "content_type": "application/pdf",
+          "skipped": false,
+          "kind": "CAD PDF",
+          "asset_id": "bdd13ca0-3340-4c39-9277-bf27f56c6539"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/SM1L10/SM1L10_CAD_DXF_0371-E0W.dxf",
+          "url": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.dxf?v=0116025719",
+          "bytes": 395502,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "CAD DXF",
+          "asset_id": "5eac2c3c-b27a-47ed-bbd6-64f12e3b1aaa"
+        },
+        {
+          "path": "cad/references/thorlabs-optics/SM1L10/SM1L10_Step_0371-E0W.step",
+          "url": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.step?v=0116025721",
+          "bytes": 1610867,
+          "content_type": "application/octet-stream",
+          "skipped": false,
+          "kind": "Step",
+          "asset_id": "4803e77c-f60a-473c-9fa6-3a457b7c565e"
+        }
+      ],
+      "assets": [
+        {
+          "id": "bdd13ca0-3340-4c39-9277-bf27f56c6539",
+          "name": "0371-E0W.pdf",
+          "group": "CAD PDF",
+          "description": "CAD PDF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.pdf?v=0116025718",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.pdf?v=0116025718",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "5eac2c3c-b27a-47ed-bbd6-64f12e3b1aaa",
+          "name": "0371-E0W.dxf",
+          "group": "CAD DXF",
+          "description": "CAD DXF",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.dxf?v=0116025719",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.dxf?v=0116025719",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "f51d466f-191b-4608-82d6-0a14e07ae4ca",
+          "name": "0371-E0W.sldprt",
+          "group": "Solidworks",
+          "description": "Solidworks",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.sldprt?v=0116025719",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.sldprt?v=0116025719",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "4803e77c-f60a-473c-9fa6-3a457b7c565e",
+          "name": "0371-E0W.step",
+          "group": "Step",
+          "description": "Step",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.step?v=0116025721",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.step?v=0116025721",
+          "mimeType": null,
+          "size": 0
+        },
+        {
+          "id": "27f76200-8e1e-48f4-8fe4-38b407da7dac",
+          "name": "0371-E0W.html",
+          "group": "eDrawing / 3D Model",
+          "description": "eDrawing / 3D Model",
+          "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.html?v=0116025720",
+          "optiUrl": "https://media.thorlabs.com/globalassets/items/s/sm/sm1/sm1l10/0371-e0w.html?v=0116025720",
+          "mimeType": null,
+          "size": 0
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

@@ -24,6 +24,10 @@ These raw zip and STEP dumps are intentionally ignored by git. Keep them local u
 
 ## Research Notes
 
+- `tools/optical_reference_downloader.py`: reusable optical CAD reference downloader for Hengyang and Thorlabs parts, plus TeX/PDF report generation.
+- `references/OPTICAL_REFERENCE_DOWNLOADER.md`: exact tools, endpoints, commands, and agent workflow for fast optical setup reference collection.
+- `references/thorlabs-optics/`: local Thorlabs common 30 mm cage starter references with STEP, CAD PDF, CAD DXF, product image, and product JSON files.
+- `reports/optical-reference-quick-design/optical_reference_quick_design.pdf`: compiled quick-design report for the current Lumileds holder and optical reference library.
 - `research/openhi_nature_step_notes.md`: inventory and inferred C-mount dimensions from the OpenHI/Nature STEP examples.
 - `references/cmount-reflector-adapter-scale.md`: 1:1 scale table for the C-mount reflector adapter.
 - `references/cmount-threaded-reflector-assembly-scale.md`: scale table and old A/B/C 4f branch evidence for the newer two-part reflector assembly.

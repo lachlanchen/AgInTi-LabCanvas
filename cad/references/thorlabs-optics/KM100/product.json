@@ -1,0 +1,122 @@
+{
+  "id": "0c02550d-3c69-44c8-9a4d-04688e51119e",
+  "code": "KM100",
+  "name": "KM100",
+  "slug": "KM100",
+  "imgSrc": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628.webp?v=2025-11-15-16-38-41",
+  "images": [
+    {
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628.webp?v=2025-11-15-16-38-41"
+    }
+  ],
+  "assets": [
+    {
+      "id": "e481c118-856c-4d20-8837-e1b20d765ed8",
+      "name": "6628-E0W.pdf",
+      "group": "CAD PDF",
+      "description": "CAD PDF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628-e0w.pdf?v=0116115950",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.pdf?v=0116115950",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "cdeaba35-c0ed-4f22-b9b8-6a98cb4a48d5",
+      "name": "6628-E0W.dxf",
+      "group": "CAD DXF",
+      "description": "CAD DXF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628-e0w.dxf?v=0116115950",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.dxf?v=0116115950",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "5d73e44c-c94e-4f59-933c-181f7487e7ef",
+      "name": "6628-E0W.sldprt",
+      "group": "Solidworks",
+      "description": "Solidworks",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628-e0w.sldprt?v=0116115951",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.sldprt?v=0116115951",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "e5db9ef8-d31a-4fb8-b512-ba6fef95f304",
+      "name": "6628-E0W.html",
+      "group": "eDrawing / 3D Model",
+      "description": "eDrawing / 3D Model",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628-e0w.html?v=0116115951",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.html?v=0116115951",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "a0573019-2fb0-4a4a-9607-a8faf317d7ed",
+      "name": "6628-E0W.step",
+      "group": "Step",
+      "description": "Step",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/k/km/km1/km100/6628-e0w.step?v=0116115952",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/k/km/km1/km100/6628-e0w.step?v=0116115952",
+      "mimeType": null,
+      "size": 0
+    }
+  ],
+  "descriptionsWithFallbacksTL": [
+    {
+      "reviewType": "PerItemNoteJPY",
+      "content": null
+    },
+    {
+      "reviewType": "FamilyPageUrl",
+      "content": "/kinematic-mirror-mounts-with-two-adjusters"
+    },
+    {
+      "reviewType": "PerItemNoteEUR",
+      "content": null
+    },
+    {
+      "reviewType": "CalibrationInstructions",
+      "content": null
+    },
+    {
+      "reviewType": "Title",
+      "content": "Kinematic Mirror Mount for Ø1\" Optics"
+    },
+    {
+      "reviewType": "PerItemNoteSEK",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNote",
+      "content": null
+    },
+    {
+      "reviewType": "FamilyPageName",
+      "content": "Kinematic Mirror Mounts with Two Adjusters"
+    },
+    {
+      "reviewType": "CalibrationTerms",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteBRL",
+      "content": null
+    },
+    {
+      "reviewType": "ItemUrl",
+      "content": "/item/km100"
+    },
+    {
+      "reviewType": "PerItemNoteGBP",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteCNY",
+      "content": null
+    },
+    {
+      "reviewType": "Breadcrumb",
+      "content": "[[\"Kinematic Mirror Mounts with Two Adjusters\",\"/kinematic-mirror-mounts-with-two-adjusters\"],[\"Kinematic Mounts for Round Optics\",\"/kinematic-mounts-for-round-optics\"],[\"Optical Mirror Mounts\",\"/optical-mirror-mounts\"],[\"Optomechanical Mounts\",\"/optomechanical-mounts\"],[\"Optomechanical Components\",\"/optomechanical-components\"],[\"Optomechanics\",\"/optomechanics\"],[\"All Products\",\"/main-visual-navigation\"],[\"KM100\",\"/item/km100\"]]"
+    }
+  ]
+}

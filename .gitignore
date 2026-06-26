@@ -23,6 +23,9 @@ agentic_tools/**/private*.json
 cad/sources/*.zip
 cad/extracted/
 cad/.conda/
+cad/reports/**/*.aux
+cad/reports/**/*.log
+cad/reports/**/*.out
 
 # Local operator handoffs
 handoff/lalachan-story-video-generation-handoff.md

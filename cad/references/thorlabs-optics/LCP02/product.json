@@ -1,0 +1,122 @@
+{
+  "id": "f149cf4b-7a86-46f7-b6fa-810d161c50ba",
+  "code": "LCP02",
+  "name": "LCP02",
+  "slug": "LCP02",
+  "imgSrc": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-xl.jpg?v=2025-11-15-18-45-57",
+  "images": [
+    {
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-xl.jpg?v=2025-11-15-18-45-57"
+    }
+  ],
+  "assets": [
+    {
+      "id": "23e88c63-208c-48f5-b8ed-f75341ae2910",
+      "name": "2869-E0W.pdf",
+      "group": "CAD PDF",
+      "description": "CAD PDF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-e0w.pdf?v=0116123028",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.pdf?v=0116123028",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "32a7082d-3551-416c-94f6-c39be03e2df0",
+      "name": "2869-E0W.dxf",
+      "group": "CAD DXF",
+      "description": "CAD DXF",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-e0w.dxf?v=0116123029",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.dxf?v=0116123029",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "1e06cc29-14d3-4632-bfaf-797e15097e83",
+      "name": "2869-E0W.sldprt",
+      "group": "Solidworks",
+      "description": "Solidworks",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-e0w.sldprt?v=0116123029",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.sldprt?v=0116123029",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "5b884b10-185f-4a28-9ef9-6e48838ac5a3",
+      "name": "2869-E0W.step",
+      "group": "Step",
+      "description": "Step",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/2869-e0w.step?v=0116123030",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/2869-e0w.step?v=0116123030",
+      "mimeType": null,
+      "size": 0
+    },
+    {
+      "id": "8a8ac22d-84c6-4ee5-b90a-32b687890e5a",
+      "name": "LCP02.pdf",
+      "group": "Catalog Presentation",
+      "description": "Additional Information",
+      "url": "https://thin01mstroc282prod.dxcloud.episerver.net/globalassets/items/l/lc/lcp/lcp02/lcp02.pdf?v=0116123030",
+      "optiUrl": "https://media.thorlabs.com/globalassets/items/l/lc/lcp/lcp02/lcp02.pdf?v=0116123030",
+      "mimeType": null,
+      "size": 0
+    }
+  ],
+  "descriptionsWithFallbacksTL": [
+    {
+      "reviewType": "PerItemNoteJPY",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteBRL",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNote",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteGBP",
+      "content": null
+    },
+    {
+      "reviewType": "Title",
+      "content": "30 mm to 60 mm Cage Plate Adapter, 8-32 Tap"
+    },
+    {
+      "reviewType": "FamilyPageUrl",
+      "content": "/standard-60-mm-cage-plates"
+    },
+    {
+      "reviewType": "ItemUrl",
+      "content": "/item/lcp02"
+    },
+    {
+      "reviewType": "Breadcrumb",
+      "content": "[[\"Standard 60 mm Cage Plates\",\"/standard-60-mm-cage-plates\"],[\"60 mm Cage Plates\",\"/60-mm-cage-plates\"],[\"60 mm Cage Components\",\"/60-mm-cage-components\"],[\"Optical Cage Systems\",\"/optical-cage-systems\"],[\"Optomechanical Components\",\"/optomechanical-components\"],[\"Optomechanics\",\"/optomechanics\"],[\"All Products\",\"/main-visual-navigation\"],[\"LCP02\",\"/item/lcp02\"]]"
+    },
+    {
+      "reviewType": "CalibrationInstructions",
+      "content": null
+    },
+    {
+      "reviewType": "FamilyPageName",
+      "content": "Standard 60 mm Cage Plates"
+    },
+    {
+      "reviewType": "PerItemNoteSEK",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteEUR",
+      "content": null
+    },
+    {
+      "reviewType": "CalibrationTerms",
+      "content": null
+    },
+    {
+      "reviewType": "PerItemNoteCNY",
+      "content": null
+    }
+  ]
+}
