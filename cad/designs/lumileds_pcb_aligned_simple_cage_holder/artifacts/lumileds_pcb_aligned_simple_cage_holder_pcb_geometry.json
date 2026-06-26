@@ -1,0 +1,56 @@
+{
+  "source_pcb": "pcb/lumileds-no-resistor/lumileds-no-resistor.kicad_pcb",
+  "pcb_center_kicad_mm": {
+    "x": 150.0,
+    "y": 100.0
+  },
+  "pcb_outer_diameter_mm": 24.0,
+  "pcb_radius_mm": 12.0,
+  "led_center_relative_mm": {
+    "x": 0.0,
+    "y": 0.0,
+    "source": "LXCL_MN08_4000"
+  },
+  "mounting_holes_relative_mm": [
+    {
+      "x": -6.0,
+      "y": -6.0,
+      "drill_mm": 2.2,
+      "source": "MountingHole_2.2mm_M2"
+    },
+    {
+      "x": 6.0,
+      "y": -6.0,
+      "drill_mm": 2.2,
+      "source": "MountingHole_2.2mm_M2"
+    },
+    {
+      "x": -6.0,
+      "y": 6.0,
+      "drill_mm": 2.2,
+      "source": "MountingHole_2.2mm_M2"
+    },
+    {
+      "x": 6.0,
+      "y": 6.0,
+      "drill_mm": 2.2,
+      "source": "MountingHole_2.2mm_M2"
+    }
+  ],
+  "header_pins_relative_mm": [
+    {
+      "name": "1",
+      "x": 10.0,
+      "y": 1.0,
+      "drill_mm": 1.0,
+      "source": "PinHeader_1x02_P2.54mm_Horizontal"
+    },
+    {
+      "name": "2",
+      "x": 10.0,
+      "y": -1.54,
+      "drill_mm": 1.0,
+      "source": "PinHeader_1x02_P2.54mm_Horizontal"
+    }
+  ]
+}
