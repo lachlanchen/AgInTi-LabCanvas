@@ -80,8 +80,8 @@ there is room to place and remove the slide or dish with fingers.
 | `m3_thread_pilot_diameter_mm` | `2.6` |
 | `rod_socket_x_pitch_mm` | `60.0` |
 | `rod_socket_y_pitch_mm` | `56.0` |
-| `top_rod_socket_centers_mm` | `[[-30.0, 28.0], [30.0, 28.0]]` |
-| `bottom_rod_socket_centers_mm` | `[[-30.0, -28.0], [30.0, -28.0]]` |
+| `top_rod_socket_centers_mm` | `[[-30.0, -28.0], [30.0, -28.0], [-30.0, 28.0], [30.0, 28.0]]` |
+| `bottom_rod_socket_centers_mm` | `[[-30.0, -28.0], [30.0, -28.0], [-30.0, 28.0], [30.0, 28.0]]` |
 | `openhi_strip_nominal_mm` | `[72.96, 20.0]` |
 | `openhi_strip_seat_mm` | `[75.0, 22.0]` |
 | `openhi_strip_sink_depth_mm` | `1.2` |
@@ -93,7 +93,7 @@ there is room to place and remove the slide or dish with fingers.
 | `finger_notch_height_mm` | `28.0` |
 | `finger_notch_depth_mm` | `3.0` |
 | `print_fit_note` | `Male lock feet are nominal -0.2 mm, matching holes are nominal +0.2 mm. Rod sockets use 6.4 mm clearance; M3 pilot/thread places use 2.6 mm.` |
-| `orientation_note` | `Bottom part owns the lower rod sockets and sample seats. Top part owns the upper rod sockets and the open viewing/access window.` |
+| `orientation_note` | `Bottom part owns four lower rod sockets and sample seats. Top part owns four upper rod sockets and the open viewing/access window.` |
 
 ## Print Notes
 
