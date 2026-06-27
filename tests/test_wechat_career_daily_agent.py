@@ -127,6 +127,28 @@ Why it matters: It turns reflection into evidence.
         self.assertEqual(status["pdf_companion"], "/tmp/report.zh.pdf")
         self.assertEqual(status["pdf_companions"], ["/tmp/report.zh.pdf", "/tmp/report.en.pdf"])
 
+    def test_send_daily_result_marks_missing_pdf_companion(self):
+        module = load_wechat_career_daily_agent()
+        sent_messages = []
+        sent_files = []
+        module.send_message = lambda message, chat, send_targets: sent_messages.append((message, chat, send_targets))
+        module.send_file = lambda report, chat, send_targets: sent_files.append((report, chat, send_targets))
+        module.ensure_markdown_pdf_companions = lambda report: []
+        args = argparse.Namespace(
+            send_chat="lachlanchan",
+            send_targets=Path("/tmp/send-targets.json"),
+            attach_report=True,
+        )
+
+        status = module.send_daily_result(args, Path("/tmp/report.md"), "## Today")
+
+        self.assertTrue(status["message_sent"])
+        self.assertFalse(status["file_sent"])
+        self.assertEqual(sent_files[0][0], Path("/tmp/report.md"))
+        self.assertEqual(status["pdf_companions"], [])
+        self.assertTrue(status["pdf_required"])
+        self.assertTrue(any("no Markdown PDF companions" in error for error in status["errors"]))
+
     def test_run_daily_writes_trace_bundle_and_sanitized_share_report(self):
         module = load_wechat_career_daily_agent()
         temp_dir = tempfile.TemporaryDirectory()

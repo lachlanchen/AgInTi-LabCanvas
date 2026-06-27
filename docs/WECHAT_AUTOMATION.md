@@ -184,7 +184,16 @@ labcanvas wechat install-user-scripts
 ~/scripts/labcanvas-wechat-hold.sh start
 ~/scripts/create-labcanvas-wechat-tmux.sh
 ~/scripts/create-labcanvas-wechat-stack.sh
+~/scripts/create-labcanvas-wechat-after-reboot.sh
 ```
+
+For boot persistence, keep the user service
+`~/.config/systemd/user/create-tmux-session.service` enabled and call the
+after-reboot wrapper from `~/scripts/create_tmux_session.sh` as a guarded final
+section. That wrapper starts or reloads the WeChat desktop stack, direct
+monitors, worker queue, media sync, LabCanvas web panel, and the daily
+career/self-analysis scheduler without breaking the rest of the tmux startup
+script.
 
 ## LabCanvas Worker Tools
 

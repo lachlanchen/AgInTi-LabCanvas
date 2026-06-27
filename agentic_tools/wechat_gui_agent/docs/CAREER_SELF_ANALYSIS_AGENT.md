@@ -42,7 +42,9 @@ Full WeChat stack after reboot:
 
 The after-reboot wrapper starts the normal WeChat supervisor, LabCanvas web
 panel, and this daily scheduler together. Prefer it when recovering the whole
-system after a machine reboot.
+system after a machine reboot. On this workstation, it is also called from the
+enabled user tmux entrypoint `~/scripts/create_tmux_session.sh`, so reboot
+startup follows the same path as manual recovery.
 
 Status:
 
@@ -62,6 +64,18 @@ report plus Chinese and English PDF companions, for example
 `2026-06-26-career-strategy.en.pdf`. Missing language Markdown is generated
 through the existing agent backend, then rendered with pandoc/XeLaTeX so the
 report is easier to read on mobile WeChat.
+
+The launch wrappers set:
+
+```bash
+WECHAT_MARKDOWN_PDF_LANGUAGES=zh,en
+WECHAT_MARKDOWN_PDF_PANDOC=$HOME/miniconda3/bin/pandoc
+WECHAT_MARKDOWN_PDF_ENGINE=xelatex
+```
+
+If PDF generation fails, the daily sender now records a `pdf:` error and marks
+`file_sent` false instead of silently treating Markdown-only delivery as
+complete.
 
 ## Code Surfaces
 

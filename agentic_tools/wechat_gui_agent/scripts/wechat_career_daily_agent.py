@@ -461,17 +461,22 @@ def send_daily_result(args: argparse.Namespace, report: Path, body: str) -> dict
     if args.attach_report:
         report_files = [report]
         companions = ensure_markdown_pdf_companions(report)
+        status["pdf_companions"] = [str(path) for path in companions]
+        status["pdf_required"] = True
         if companions:
-            status["pdf_companions"] = [str(path) for path in companions]
             status["pdf_companion"] = str(companions[0])
             report_files.extend(companions)
+        else:
+            status["errors"].append(
+                "pdf: no Markdown PDF companions were generated; check pandoc/xelatex/PATH and WECHAT_MARKDOWN_PDF_* settings"
+            )
         for report_file in report_files:
             try:
                 send_file(report_file, args.send_chat, args.send_targets)
                 status["files_sent"].append(str(report_file))
             except Exception as exc:  # noqa: BLE001
                 status["errors"].append(f"file {report_file}: {exc}")
-        status["file_sent"] = len(status["files_sent"]) == len(report_files)
+        status["file_sent"] = bool(companions) and len(status["files_sent"]) == len(report_files)
     return status
 
 
