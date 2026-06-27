@@ -1,0 +1,176 @@
+{
+  "title": "AgInTi LabCanvas hardware design studio",
+  "slug": "labcanvas-hardware-studio",
+  "description": "Editable first render showing CAD, PCB, optical, sensor, and game-engine handoff tools in one lab canvas.",
+  "render": {
+    "width": 2000,
+    "height": 1300,
+    "world_color": [0.68, 0.72, 0.76],
+    "camera": {
+      "type": "ortho",
+      "location": [300, -340, 230],
+      "target": [0, 0, 52],
+      "ortho_scale": 500
+    }
+  },
+  "materials": {
+    "beam": {"color": [1.0, 0.45, 0.12, 0.45], "alpha": 0.45},
+    "blue_beam": {"color": [0.1, 0.55, 1.0, 0.35], "alpha": 0.35},
+    "sample": {"color": [0.35, 0.95, 0.7, 0.62], "alpha": 0.62},
+    "pcb": {"color": [0.02, 0.42, 0.28, 1.0]},
+    "cad": {"color": [0.9, 0.9, 0.84, 1.0]},
+    "render": {"color": [0.12, 0.15, 0.24, 1.0]}
+  },
+  "elements": [
+    {
+      "type": "baseplate",
+      "name": "lab canvas workplane",
+      "size": [470, 220, 8],
+      "holes": true,
+      "hole_spacing": 20
+    },
+    {
+      "type": "rail_pair",
+      "name": "optical rails",
+      "length": 390,
+      "y_offsets": [-22, 22],
+      "z": 13
+    },
+    {
+      "type": "beam",
+      "name": "spectrum path",
+      "start": [-190, 0, 72],
+      "end": [188, 0, 72],
+      "radius": 2.7,
+      "material": "beam"
+    },
+    {
+      "type": "beam",
+      "name": "control pipeline",
+      "start": [-190, 82, 48],
+      "end": [190, 82, 48],
+      "radius": 1.5,
+      "material": "blue_beam"
+    },
+    {
+      "type": "led_source",
+      "name": "dual tungsten source",
+      "x": -190,
+      "label": "Dual tungsten\nlamps"
+    },
+    {
+      "type": "optic",
+      "name": "diffuser",
+      "x": -138,
+      "label": "Diffuser",
+      "material": "glass"
+    },
+    {
+      "type": "optic",
+      "name": "as7341 sampling plane",
+      "x": -84,
+      "label": "AS7341\nspectral tap",
+      "material": "sample"
+    },
+    {
+      "type": "lcd_light_valve",
+      "name": "vspice lc valve",
+      "x": -26,
+      "label": "V-SPICE\nLC valve"
+    },
+    {
+      "type": "optic",
+      "name": "sample",
+      "x": 36,
+      "label": "Sample",
+      "material": "sample"
+    },
+    {
+      "type": "optic",
+      "name": "analyzer",
+      "x": 96,
+      "label": "Analyzer",
+      "material": "glass"
+    },
+    {
+      "type": "event_camera",
+      "name": "event camera",
+      "x": 186,
+      "label": "KV260\nEvent camera"
+    },
+    {
+      "type": "electronics_board",
+      "name": "arduino controller",
+      "location": [-165, 72, 22],
+      "size": [72, 44, 8],
+      "material": "controller",
+      "label": "Arduino\nPWM/I2C"
+    },
+    {
+      "type": "electronics_board",
+      "name": "kicad pcb",
+      "location": [-58, 72, 22],
+      "size": [74, 44, 8],
+      "material": "pcb",
+      "label": "KiCad\nPCB"
+    },
+    {
+      "type": "electronics_board",
+      "name": "openscad cad",
+      "location": [50, 72, 22],
+      "size": [74, 44, 8],
+      "material": "cad",
+      "label": "OpenSCAD\nCAD"
+    },
+    {
+      "type": "electronics_board",
+      "name": "blender renderer",
+      "location": [160, 72, 22],
+      "size": [78, 46, 8],
+      "material": "render",
+      "label": "Blender\nrender"
+    },
+    {
+      "type": "wire",
+      "name": "i2c spectral bus",
+      "points": [[-165, 58, 30], [-84, 42, 52], [-84, 7, 75]],
+      "material": "blue"
+    },
+    {
+      "type": "wire",
+      "name": "pwm lamp drive",
+      "points": [[-165, 85, 30], [-190, 55, 38], [-190, 0, 68]],
+      "material": "red"
+    },
+    {
+      "type": "wire",
+      "name": "pcb to cad handoff",
+      "points": [[-58, 72, 34], [50, 72, 34]],
+      "material": "green"
+    },
+    {
+      "type": "wire",
+      "name": "cad to blender handoff",
+      "points": [[50, 72, 34], [160, 72, 34]],
+      "material": "yellow"
+    },
+    {
+      "type": "label",
+      "name": "title",
+      "text": "AgInTi LabCanvas: CAD + PCB + optical spectrum + render workflow",
+      "location": [0, -95, 24],
+      "size": 8.5,
+      "rotation": [75, 0, 0],
+      "material": "white"
+    },
+    {
+      "type": "label",
+      "name": "method",
+      "text": "AS7341 measures spectrum | Arduino controls lamps | KiCad/OpenSCAD create manufacturable artifacts | Blender renders paper figures",
+      "location": [0, -95, 12],
+      "size": 4.4,
+      "rotation": [75, 0, 0],
+      "material": "white"
+    }
+  ]
+}
