@@ -54,6 +54,48 @@ python -m agenticapp render-scene examples\labcanvas-hardware-studio.scene.json 
   --blender-bin "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
 ```
 
+Convenience wrapper:
+
+```powershell
+.\scripts\windows_render_hardware_studio.ps1
+```
+
+## Reproducible Windows Deployment Scripts
+
+Install or refresh the Windows design stack:
+
+```powershell
+.\scripts\windows_install_design_toolchain.ps1
+```
+
+Skip large launchers such as Epic Games Launcher:
+
+```powershell
+.\scripts\windows_install_design_toolchain.ps1 -SkipLargeLaunchers
+```
+
+Check command availability and LabCanvas status:
+
+```powershell
+.\scripts\windows_labcanvas_doctor.ps1
+```
+
+These scripts are Windows-first equivalents of the previous Ubuntu-oriented setup flow. They rely on `winget`, `pip`, and the local source checkout.
+
+## Methods Used In This Deployment
+
+1. Installed the repository into `C:\Users\Administrator\Projects\AgInTi-LabCanvas`.
+2. Used `winget` to install CAD/PCB/render tools.
+3. Used `python -m pip install -e .` to expose the LabCanvas Python CLI from the source checkout.
+4. Used `PYTHONPATH=src` plus `python -m agenticapp render-scene` for a deterministic local render.
+5. Used Blender headless mode through the explicit path:
+
+```text
+C:\Program Files\Blender Foundation\Blender 5.1\blender.exe
+```
+
+6. Saved the editable scene spec and render outputs in `examples/`.
+
 ## Practical Role Split
 
 - KiCad: exact PCB schematics, layout, DRC/ERC, Gerbers.
