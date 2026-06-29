@@ -102,7 +102,7 @@ def sync_once(args: argparse.Namespace, failure_backoff_until: dict[str, float] 
             emit_target_event(result)
             return [result]
 
-    configs = prioritize_configs(discover_configs(args.configs), args.priority)
+    configs = rotate_limited_configs(prioritize_configs(discover_configs(args.configs), args.priority), args)
     max_targets = max(0, int(getattr(args, "max_targets_per_cycle", 0) or 0))
     opened_or_attempted = 0
     only = {item.strip() for item in args.only if item.strip()}
@@ -143,6 +143,7 @@ def sync_once(args: argparse.Namespace, failure_backoff_until: dict[str, float] 
         except Exception as exc:
             results.append({"config": str(config_path), "ok": False, "error": str(exc)[:500]})
             emit_target_event(results[-1])
+    advance_chat_sync_rotation(args, len(configs), max_targets, bool(only))
     return results
 
 
@@ -288,6 +289,24 @@ def prioritize_configs(paths: list[Path], raw_priority: str) -> list[Path]:
         return (min(ranks) if ranks else len(priority_index), paths.index(path))
 
     return sorted(paths, key=key)
+
+
+def rotate_limited_configs(paths: list[Path], args: argparse.Namespace) -> list[Path]:
+    """Rotate limited sync passes so later chats are not starved forever."""
+    max_targets = max(0, int(getattr(args, "max_targets_per_cycle", 0) or 0))
+    if max_targets <= 0 or len(paths) <= max_targets or getattr(args, "only", None):
+        return paths
+    offset = int(getattr(args, "_chat_sync_offset", 0) or 0) % len(paths)
+    if offset <= 0:
+        return paths
+    return paths[offset:] + paths[:offset]
+
+
+def advance_chat_sync_rotation(args: argparse.Namespace, total_configs: int, max_targets: int, only: bool) -> None:
+    if only or max_targets <= 0 or total_configs <= max_targets:
+        return
+    current = int(getattr(args, "_chat_sync_offset", 0) or 0)
+    args._chat_sync_offset = (current + max_targets) % total_configs
 
 
 def emit_target_event(result: dict[str, Any]) -> None:

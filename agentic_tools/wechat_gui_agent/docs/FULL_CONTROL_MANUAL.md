@@ -129,6 +129,7 @@ target, so a worker send that appears mid-cycle stops further dry-open actions.
 | `wechat_media_sync.py` | Copy same-chat files/images/videos from WeChat folders into private storage. |
 | `wechat_media_sync_loop.sh` | Repeat `media-sync` for configured chats. |
 | `wechat_autopublish_video.py` | Resolve exact WeChat video rows and copy MP4 to Nutstore AutoPublish. |
+| `shipinhao_comment_intel.py` | Read-only analyzer for exported Shipinhao/Finder comment JSON or compatible `wx_channel` API exports. |
 | `wechat_memory.py` | Structured local inbox/memory tables for notes, todos, links, and summaries. |
 | `wechat_mirror.py` | SQLite evidence log for GUI sends, reads, screenshots, and direct messages. |
 | `wechat_codex_sessions.py` | Per-chat fast/worker Codex session registry. |

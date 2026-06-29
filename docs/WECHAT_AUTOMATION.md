@@ -135,6 +135,9 @@ transcript, or a reliable public mirror are not accessible, do not produce a
 "deep analysis" or imply the source was watched/read. Report the limitation and
 ask for the video/comments/transcript or manual browser access if deeper
 analysis is needed.
+For implementation details and the reusable comment-intelligence helper, see
+`agentic_tools/wechat_gui_agent/docs/SHIPINHAO_COMMENT_RESEARCH.md` and
+`agentic_tools/wechat_gui_agent/scripts/shipinhao_comment_intel.py`.
 
 Inspect the private organizer without opening raw chat tables:
 

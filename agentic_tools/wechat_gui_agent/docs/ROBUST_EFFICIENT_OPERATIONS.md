@@ -123,6 +123,14 @@ should speed the agent up, not replace agent reasoning.
   asks for them, or when the worker truly read substantial content and marks the
   report as worth sending. The daily self-analysis agent is the normal
   bilingual zh/en PDF path.
+- Shipinhao/Finder/视频号 research tasks should run the read-only comment
+  intelligence preflight when an exported `comment_data` JSON or compatible
+  local `wx_channel` API profile is available. The worker writes
+  `task.preflight.shipinhao_comment_intel` and
+  `output/wechat_worker/<task-id>/shipinhao_comment_intel/manifest.*`; agents
+  must use that as auxiliary evidence and stay source-limited when no video,
+  transcript, comment export, or reliable mirror is available. Never post
+  comments or ask Yuanbao from the account without explicit current permission.
 - Chat behavior by purpose:
   `鏈接` reads shared links/cards/videos/files and replies with a short useful
   summary or a clear limitation; `🍓我的设备`, `懒人科研`, and `lachlanchan` can run

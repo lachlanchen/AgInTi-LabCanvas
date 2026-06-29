@@ -143,6 +143,71 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertFalse(worker.is_video_publish_task(task))
         self.assertFalse(worker.should_preflight_autopublish(task))
 
+    def test_shipinhao_comment_preflight_reads_exported_json(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            comments = tmp_path / "comment_data" / "shipinhao-comments.json"
+            comments.parent.mkdir(parents=True)
+            comments.write_text(
+                json.dumps(
+                    {
+                        "objectId": "oid-123",
+                        "objectNonceId": "nonce-456",
+                        "title": "demo video",
+                        "author": "demo author",
+                        "source": "finderGetCommentList",
+                        "commentInfo": [
+                            {
+                                "nickname": "A",
+                                "content": "@元宝 这个视频的英文全文",
+                                "likeCount": 5,
+                                "levelTwoComment": [],
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "id": "shipinhao-preflight",
+                "chat": "鏈接",
+                "routine": {"id": "research_summary"},
+                "route_decision": {"route_kind": "research_or_summary"},
+                "request": f"Current coalesced request:\n总结这个视频号，并检查评论 {comments}\n\nRecent history:\n",
+            }
+
+            preflight = worker.prepare_worker_preflight(task, tmp_path / "artifact")
+            manifest_exists = Path(preflight["shipinhao_comment_intel"]["manifest_json"]).is_file()
+
+        intel = preflight["shipinhao_comment_intel"]
+        self.assertEqual(intel["status"], "ok")
+        self.assertEqual(intel["source_quality"], "comment_hits")
+        self.assertTrue(manifest_exists)
+        summary = intel["results"][0]["summary"]
+        self.assertEqual(summary["comment_count"], 1)
+        self.assertIn("@元宝", json.dumps(summary["keyword_hits"], ensure_ascii=False))
+
+    def test_shipinhao_comment_preflight_marks_missing_source(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "shipinhao-missing-source",
+            "chat": "鏈接",
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Current coalesced request:\n总结这个视频号并看评论里有没有元宝总结。\n\nRecent history:\n",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(worker.os.environ, {"WECHAT_WX_CHANNEL_API_URL": ""}, clear=False):
+                preflight = worker.prepare_worker_preflight(task, Path(tmp))
+
+        intel = preflight["shipinhao_comment_intel"]
+        self.assertEqual(intel["status"], "not_available")
+        self.assertIn("No exported Shipinhao comment JSON", intel["reason"])
+        self.assertIn("Do not fabricate", intel["recommended_next"])
+
     def test_matching_lazyedit_publish_jobs_deduplicates_numeric_string_ids(self) -> None:
         worker = load_worker()
         with mock.patch.object(
@@ -358,6 +423,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("studio lab-task", str(calls[0]["prompt"]))
         self.assertIn("render-scene", str(calls[0]["prompt"]))
         self.assertIn("Shipinhao/Finder", str(calls[0]["prompt"]))
+        self.assertIn("task.preflight.shipinhao_comment_intel", str(calls[0]["prompt"]))
+        self.assertIn("shipinhao_comment_intel.py", str(calls[0]["prompt"]))
         self.assertIn("@元宝", str(calls[0]["prompt"]))
         self.assertIn("英文全文", str(calls[0]["prompt"]))
         self.assertIn("Do not post a comment", str(calls[0]["prompt"]))

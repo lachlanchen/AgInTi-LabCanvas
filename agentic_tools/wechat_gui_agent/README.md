@@ -259,6 +259,9 @@ or asking Yuanbao from the account requires explicit user confirmation. If the
 actual video, comments, transcript, or a reliable public mirror are unavailable,
 the worker should not produce a deep analysis; it should report the limitation
 and ask for the source material or manual browser access.
+For the concrete logged-in page/API approach and the local analyzer helper, see
+`docs/SHIPINHAO_COMMENT_RESEARCH.md` and
+`scripts/shipinhao_comment_intel.py`.
 
 Direct contacts can be monitored with the same config shape as groups. Keep a
 unique `chat_name`, `message_table`, and `state_path` for each contact. Set

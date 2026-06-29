@@ -29,3 +29,4 @@ cad/reports/**/*.out
 
 # Local operator handoffs
 handoff/lalachan-story-video-generation-handoff.md
+npm-debug.log*

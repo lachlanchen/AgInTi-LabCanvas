@@ -39,6 +39,7 @@ DEFAULT_AUTOPUBLISH_DIR = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/hom
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 GUI_SEND_LOCK = PRIVATE / "wechat_gui_send.lock"
+SHIPINHAO_COMMENT_INTEL_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_comment_intel.py"
 EFFORT_ORDER = ["low", "medium", "high", "xhigh"]
 CLAIMED_STATUS = "in_progress"
 SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
@@ -3083,6 +3084,9 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         task["preflight"] = preflight
     if is_file_intake_task(task):
         preflight["file_intake"] = prepare_file_intake_preflight(task, artifact_dir)
+    if should_prepare_shipinhao_comment_intel(task):
+        preflight["shipinhao_comment_intel"] = prepare_shipinhao_comment_intel_preflight(task, artifact_dir)
+        task["preflight"] = preflight
     if not is_video_publish_task(task):
         return preflight
     context_path = artifact_dir / "lazyedit_correction_context.md"
@@ -3111,6 +3115,291 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     context_path.write_text(build_lazyedit_correction_context(task, preflight=preflight), encoding="utf-8")
     metadata_path.write_text(build_lazyedit_metadata_brief(task, preflight=preflight), encoding="utf-8")
     return preflight
+
+
+def should_prepare_shipinhao_comment_intel(task: dict[str, Any]) -> bool:
+    if not task_is_research_summary(task):
+        return False
+    text = json.dumps(task, ensure_ascii=False).casefold()
+    markers = [
+        "shipinhao",
+        "视频号",
+        "視頻號",
+        "finder",
+        "finderfeed",
+        "channels.weixin.qq.com",
+        "objectnonceid",
+        "object_nonce_id",
+        "comment_data",
+        "findergetcommentlist",
+        "@元宝",
+        "腾讯元宝",
+    ]
+    return any(marker.casefold() in text for marker in markers)
+
+
+def prepare_shipinhao_comment_intel_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+    output_dir = artifact_dir / "shipinhao_comment_intel"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest: dict[str, Any] = {
+        "status": "not_available",
+        "tool": str(SHIPINHAO_COMMENT_INTEL_SCRIPT),
+        "rule": "Use comment evidence only as auxiliary context; do not claim the video was watched unless media/transcript was also available.",
+        "results": [],
+    }
+    if not SHIPINHAO_COMMENT_INTEL_SCRIPT.exists():
+        manifest["status"] = "missing_tool"
+        manifest["reason"] = "shipinhao_comment_intel.py is missing."
+        write_shipinhao_comment_preflight_manifest(output_dir, manifest)
+        return manifest
+
+    timeout = max(10, int_or_none(os.environ.get("WECHAT_SHIPINHAO_COMMENT_INTEL_TIMEOUT_SECONDS")) or 240)
+    comment_json_paths = extract_shipinhao_comment_json_paths(task)
+    for index, source_path in enumerate(comment_json_paths, start=1):
+        result = run_shipinhao_comment_intel(
+            [
+                sys.executable,
+                str(SHIPINHAO_COMMENT_INTEL_SCRIPT),
+                "--comments-json",
+                str(source_path),
+                "--markdown-out",
+                str(output_dir / f"comments-{index}.md"),
+                "--json-out",
+                str(output_dir / f"comments-{index}.json"),
+                "--json",
+            ],
+            timeout=timeout,
+        )
+        result["source_path"] = str(source_path)
+        manifest["results"].append(result)
+
+    if not manifest["results"]:
+        profile = extract_shipinhao_comment_profile(task)
+        api_url = shipinhao_comment_api_url()
+        if api_url and profile.get("object_id") and profile.get("nonce_id"):
+            result = run_shipinhao_comment_intel(
+                [
+                    sys.executable,
+                    str(SHIPINHAO_COMMENT_INTEL_SCRIPT),
+                    "--api-url",
+                    api_url,
+                    "--object-id",
+                    str(profile.get("object_id") or ""),
+                    "--nonce-id",
+                    str(profile.get("nonce_id") or ""),
+                    "--title",
+                    str(profile.get("title") or ""),
+                    "--author",
+                    str(profile.get("author") or ""),
+                    "--markdown-out",
+                    str(output_dir / "comments-api.md"),
+                    "--json-out",
+                    str(output_dir / "comments-api.json"),
+                    "--json",
+                ],
+                timeout=timeout,
+            )
+            result["api_url"] = api_url
+            result["profile"] = profile
+            manifest["results"].append(result)
+        else:
+            missing = []
+            if not api_url:
+                missing.append("WECHAT_WX_CHANNEL_API_URL")
+            if not profile.get("object_id"):
+                missing.append("object_id")
+            if not profile.get("nonce_id"):
+                missing.append("nonce_id")
+            manifest["reason"] = "No exported Shipinhao comment JSON or complete wx_channel API profile was available."
+            manifest["missing"] = missing
+            manifest["recommended_next"] = (
+                "Open/export the Shipinhao comments through a logged-in wx_channel/native session, "
+                "or provide a comment_data JSON path. Do not fabricate a deep video analysis."
+            )
+
+    ok_results = [item for item in manifest["results"] if bool(item.get("ok"))]
+    if ok_results:
+        manifest["status"] = "ok"
+        qualities = [str((item.get("summary") or {}).get("source_quality") or "") for item in ok_results if isinstance(item.get("summary"), dict)]
+        if "comment_hits" in qualities:
+            manifest["source_quality"] = "comment_hits"
+        elif "comments_available" in qualities:
+            manifest["source_quality"] = "comments_available"
+        else:
+            manifest["source_quality"] = "no_comments"
+    elif manifest["results"]:
+        manifest["status"] = "failed"
+        manifest["reason"] = "Shipinhao comment intelligence command failed for all available sources."
+
+    write_shipinhao_comment_preflight_manifest(output_dir, manifest)
+    return manifest
+
+
+def write_shipinhao_comment_preflight_manifest(output_dir: Path, manifest: dict[str, Any]) -> None:
+    json_path = output_dir / "manifest.json"
+    md_path = output_dir / "manifest.md"
+    manifest["manifest_json"] = str(json_path)
+    manifest["manifest_md"] = str(md_path)
+    json_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    lines = [
+        "# Shipinhao Comment Preflight",
+        "",
+        f"- Status: `{manifest.get('status')}`",
+        f"- Source quality: `{manifest.get('source_quality') or ''}`",
+        f"- Reason: {manifest.get('reason') or ''}",
+        f"- Tool: `{manifest.get('tool')}`",
+        "",
+    ]
+    for result_index, result in enumerate(manifest.get("results") or [], start=1):
+        if not isinstance(result, dict):
+            continue
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        lines.extend(
+            [
+                f"## Result {result_index}",
+                "",
+                f"- OK: `{bool(result.get('ok'))}`",
+                f"- Source: `{result.get('source_path') or result.get('api_url') or ''}`",
+                f"- Markdown: `{result.get('markdown') or ''}`",
+                f"- JSON: `{result.get('json') or ''}`",
+                f"- Comments scanned: {summary.get('comment_count') or 0}",
+                f"- Keyword hits: {len(summary.get('keyword_hits') or []) if isinstance(summary.get('keyword_hits'), list) else 0}",
+                "",
+            ]
+        )
+    md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def run_shipinhao_comment_intel(command: list[str], *, timeout: int) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "ok": False,
+            "returncode": None,
+            "error": f"timeout after {timeout}s",
+            "stdout": collapse_context_text(exc.stdout or "", max_len=800),
+            "stderr": collapse_context_text(exc.stderr or "", max_len=800),
+        }
+    except OSError as exc:
+        return {"ok": False, "returncode": None, "error": str(exc)}
+
+    output = (proc.stdout or "").strip()
+    summary: dict[str, Any] = {}
+    if output:
+        try:
+            parsed = json.loads(output)
+            if isinstance(parsed, dict):
+                summary = parsed
+        except json.JSONDecodeError:
+            pass
+    markdown_path = command_value_after(command, "--markdown-out")
+    json_path = command_value_after(command, "--json-out")
+    return {
+        "ok": proc.returncode == 0 and bool(summary.get("ok", proc.returncode == 0)),
+        "returncode": proc.returncode,
+        "summary": summary,
+        "markdown": markdown_path,
+        "json": json_path,
+        "stdout": collapse_context_text(proc.stdout, max_len=1200),
+        "stderr": collapse_context_text(proc.stderr, max_len=1200) if proc.stderr.strip() else "",
+    }
+
+
+def command_value_after(command: list[str], flag: str) -> str:
+    try:
+        index = command.index(flag)
+    except ValueError:
+        return ""
+    if index + 1 >= len(command):
+        return ""
+    return str(command[index + 1])
+
+
+def extract_shipinhao_comment_json_paths(task: dict[str, Any]) -> list[Path]:
+    candidates: list[Path] = []
+    raw_env = os.environ.get("WECHAT_SHIPINHAO_COMMENT_JSON", "")
+    raw_text = "\n".join(
+        [
+            raw_env.replace(os.pathsep, "\n"),
+            json.dumps(task, ensure_ascii=False),
+        ]
+    )
+    for token in re.findall(r"(?:~?/|/)[^\s\"'<>]+?\.json", raw_text):
+        path = Path(token.rstrip(").,，;；]】\"'")).expanduser()
+        if path.is_file() and shipinhao_comment_json_looks_relevant(path):
+            candidates.append(path.resolve())
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique[:6]
+
+
+def shipinhao_comment_json_looks_relevant(path: Path) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if isinstance(payload.get("commentInfo"), list) or isinstance(payload.get("comments"), list):
+        return True
+    keys = {str(key).casefold() for key in payload.keys()}
+    return bool({"objectid", "object_id", "objectnonceid", "object_nonce_id", "findergetcommentlist"} & keys)
+
+
+def extract_shipinhao_comment_profile(task: dict[str, Any]) -> dict[str, str]:
+    route = task_route_decision(task)
+    profile: dict[str, str] = {
+        "object_id": "",
+        "nonce_id": "",
+        "title": "",
+        "author": "",
+    }
+    for key in ("object_id", "nonce_id", "title", "author"):
+        value = route.get(key)
+        if value:
+            profile[key] = str(value)
+    for source_key in ("objectId", "object_id"):
+        value = route.get(source_key)
+        if value and not profile["object_id"]:
+            profile["object_id"] = str(value)
+    for source_key in ("objectNonceId", "object_nonce_id", "nonceId", "nonce_id"):
+        value = route.get(source_key)
+        if value and not profile["nonce_id"]:
+            profile["nonce_id"] = str(value)
+
+    text = json.dumps(task, ensure_ascii=False)
+    if not profile["object_id"]:
+        match = re.search(r"(?:object[_-]?id|objectId)\s*[:=]\s*[\"']?([A-Za-z0-9_-]{6,})", text, flags=re.I)
+        if match:
+            profile["object_id"] = match.group(1)
+    if not profile["nonce_id"]:
+        match = re.search(r"(?:nonce[_-]?id|objectNonceId|nonceId)\s*[:=]\s*[\"']?([A-Za-z0-9_-]{6,})", text, flags=re.I)
+        if match:
+            profile["nonce_id"] = match.group(1)
+    if not profile["title"]:
+        match = re.search(r"<title>(.*?)</title>", text, flags=re.I | re.S)
+        if match:
+            profile["title"] = html.unescape(collapse_context_text(match.group(1), max_len=160))
+    if not profile["author"]:
+        match = re.search(r"<(?:sourcedisplayname|author)>(.*?)</(?:sourcedisplayname|author)>", text, flags=re.I | re.S)
+        if match:
+            profile["author"] = html.unescape(collapse_context_text(match.group(1), max_len=120))
+    return profile
+
+
+def shipinhao_comment_api_url() -> str:
+    for name in ("WECHAT_WX_CHANNEL_API_URL", "WECHAT_SHIPINHAO_WX_CHANNEL_API_URL", "WX_CHANNEL_API_URL"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value.rstrip("/")
+    return ""
 
 
 def is_file_intake_task(task: dict[str, Any]) -> bool:
@@ -7609,6 +7898,11 @@ LazyEdit/AutoPublish video publishing:
 
 Shipinhao/Finder and short-video shares:
 - Treat comment sections as useful auxiliary evidence when they are accessible from the local GUI, cached metadata, a browser-assist session, or a public mirrored page.
+- First inspect `task.preflight.shipinhao_comment_intel` when present. If it is `status=ok`, read its manifest and JSON/Markdown summaries before answering. If it is `not_available`, be source-limited unless video media/transcript/another reliable source is available.
+- To analyze an exported comment file yourself, run:
+  `agentic_tools/wechat_gui_agent/scripts/shipinhao_comment_intel.py --comments-json <comment_data.json> --markdown-out {artifact_dir}/shipinhao-comments.md --json-out {artifact_dir}/shipinhao-comments.json --json`
+- If a compatible logged-in `wx_channel` API is running and object ids are known, run:
+  `agentic_tools/wechat_gui_agent/scripts/shipinhao_comment_intel.py --api-url "$WECHAT_WX_CHANNEL_API_URL" --object-id <OBJECT_ID> --nonce-id <NONCE_ID> --markdown-out {artifact_dir}/shipinhao-comments.md --json-out {artifact_dir}/shipinhao-comments.json --json`
 - Search visible or retrieved comments for Tencent Yuanbao-style prompts such as `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`, `转写`, `transcript`, and `summary`; these comments often request or contain transcript/summary material.
 - Also skim other highly visible comments for quoted lines, timestamps, topic summaries, corrections, names, links, or context that helps infer the video content.
 - Do not post a comment or ask Yuanbao yourself unless the user explicitly requests that action. Reading comments is allowed; writing comments needs confirmation.
