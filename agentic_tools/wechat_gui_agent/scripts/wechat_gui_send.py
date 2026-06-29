@@ -63,7 +63,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--display", default=":97", help="X display running WeChat. Default: :97.")
     parser.add_argument("--target", action="append", default=[], help="Chat/group/contact name. Repeatable.")
-    parser.add_argument("--targets-file", type=Path, help="JSON file with a target list or {targets,message}.")
+    parser.add_argument("--targets-file", type=Path, help="JSON file with a target list, {targets,message}, or a target registry mapping.")
     parser.add_argument("--message", default="test", help="Message text. Default: test.")
     parser.add_argument("--send", action="store_true", help="Actually press Enter in the message composer.")
     parser.add_argument(
@@ -159,8 +159,10 @@ def install_process_timeout() -> None:
 
 
 def load_targets(cli_targets: list[str], targets_file: Path | None, default_message: str) -> tuple[list[TargetSpec], str]:
-    raw_targets: list[Any] = list(cli_targets)
+    raw_cli_targets: list[Any] = list(cli_targets)
+    raw_targets: list[Any] = []
     message = default_message
+    registry: dict[str, Any] = {}
     if targets_file:
         raw = json.loads(targets_file.read_text(encoding="utf-8"))
         if isinstance(raw, list):
@@ -168,12 +170,20 @@ def load_targets(cli_targets: list[str], targets_file: Path | None, default_mess
         elif isinstance(raw, dict):
             if "message" in raw:
                 message = str(raw["message"])
-            file_targets = raw.get("targets", [])
-            if not isinstance(file_targets, list):
-                raise SystemExit(f"{targets_file} field 'targets' must be a list")
-            raw_targets.extend(file_targets)
+            if "targets" in raw:
+                file_targets = raw.get("targets", [])
+                if not isinstance(file_targets, list):
+                    raise SystemExit(f"{targets_file} field 'targets' must be a list")
+                raw_targets.extend(file_targets)
+            elif any(key in raw for key in ("name", "target", "query")):
+                raw_targets.append(raw)
+            else:
+                registry = {str(key): value for key, value in raw.items() if isinstance(value, dict)}
         else:
             raise SystemExit(f"{targets_file} must be a JSON list or object")
+    for item in raw_cli_targets:
+        key = str(item)
+        raw_targets.append(registry.get(key, item))
     targets = [target_from_raw(item) for item in raw_targets]
     return targets, message
 

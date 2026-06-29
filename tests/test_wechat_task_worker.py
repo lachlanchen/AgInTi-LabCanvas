@@ -208,6 +208,33 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn("No exported Shipinhao comment JSON", intel["reason"])
         self.assertIn("Do not fabricate", intel["recommended_next"])
 
+    def test_shipinhao_comment_profile_extracts_wechat_xml_cdata_ids(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "shipinhao-xml-profile",
+            "chat": "鏈接",
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": (
+                "Current coalesced request:\n"
+                "<finderFeed>"
+                "<objectId><![CDATA[14792814475849631952]]></objectId>"
+                "<nickname><![CDATA[Roy价值知行荟]]></nickname>"
+                "<desc><![CDATA[巴菲特与芒格谈消费品]]></desc>"
+                "<objectNonceId><![CDATA[7860797635834206573_4_20_13_1_1782694936919416_bd6fb930-7364-11f1-bc60-fb1d69ad351a]]></objectNonceId>"
+                "<megaVideo><objectId><![CDATA[]]></objectId><objectNonceId><![CDATA[]]></objectNonceId></megaVideo>"
+                "</finderFeed>\n\nRecent history:\n"
+            ),
+        }
+
+        profile = worker.extract_shipinhao_comment_profile(task)
+
+        self.assertEqual(profile["object_id"], "14792814475849631952")
+        self.assertEqual(
+            profile["nonce_id"],
+            "7860797635834206573_4_20_13_1_1782694936919416_bd6fb930-7364-11f1-bc60-fb1d69ad351a",
+        )
+
     def test_matching_lazyedit_publish_jobs_deduplicates_numeric_string_ids(self) -> None:
         worker = load_worker()
         with mock.patch.object(

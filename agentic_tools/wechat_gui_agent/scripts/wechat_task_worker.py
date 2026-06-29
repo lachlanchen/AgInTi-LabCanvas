@@ -3383,6 +3383,14 @@ def extract_shipinhao_comment_profile(task: dict[str, Any]) -> dict[str, str]:
         match = re.search(r"(?:nonce[_-]?id|objectNonceId|nonceId)\s*[:=]\s*[\"']?([A-Za-z0-9_-]{6,})", text, flags=re.I)
         if match:
             profile["nonce_id"] = match.group(1)
+    if not profile["object_id"]:
+        values = extract_xml_text_values(text, "objectId")
+        if values:
+            profile["object_id"] = values[-1]
+    if not profile["nonce_id"]:
+        values = extract_xml_text_values(text, "objectNonceId")
+        if values:
+            profile["nonce_id"] = values[-1]
     if not profile["title"]:
         match = re.search(r"<title>(.*?)</title>", text, flags=re.I | re.S)
         if match:
@@ -3392,6 +3400,17 @@ def extract_shipinhao_comment_profile(task: dict[str, Any]) -> dict[str, str]:
         if match:
             profile["author"] = html.unescape(collapse_context_text(match.group(1), max_len=120))
     return profile
+
+
+def extract_xml_text_values(text: str, tag: str) -> list[str]:
+    values: list[str] = []
+    pattern = rf"<{re.escape(tag)}>\s*(?:<!\[CDATA\[(?P<cdata>.*?)\]\]>|(?P<plain>.*?))\s*</{re.escape(tag)}>"
+    for match in re.finditer(pattern, text, flags=re.I | re.S):
+        value = match.group("cdata") if match.group("cdata") is not None else match.group("plain")
+        value = html.unescape(str(value or "").strip())
+        if value and value != "0":
+            values.append(value)
+    return values
 
 
 def shipinhao_comment_api_url() -> str:

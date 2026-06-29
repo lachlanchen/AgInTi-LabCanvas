@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -24,6 +25,32 @@ def load_wechat_gui_send():
 
 
 class WeChatGuiSendTests(unittest.TestCase):
+    def test_load_targets_resolves_cli_target_from_registry_mapping(self):
+        module = load_wechat_gui_send()
+        with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "鏈接": {
+                        "name": "鏈接",
+                        "query": "鏈接",
+                        "expected_title": "鏈接",
+                        "expected_title_aliases": ["链接"],
+                        "result_click": [165, 100],
+                    }
+                },
+                handle,
+                ensure_ascii=False,
+            )
+            handle.flush()
+
+            targets, message = module.load_targets(["鏈接"], Path(handle.name), "hello")
+
+        self.assertEqual(message, "hello")
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].name, "鏈接")
+        self.assertEqual(targets[0].expected_title_aliases, ("链接",))
+        self.assertEqual(targets[0].result_click, (165, 100))
+
     def test_target_fallback_clicks_preserve_order_without_duplicates(self):
         module = load_wechat_gui_send()
 
