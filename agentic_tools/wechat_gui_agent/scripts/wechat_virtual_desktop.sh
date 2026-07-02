@@ -21,7 +21,12 @@ LAUNCH_LOG="$LOG_DIR/wechat_virtual_desktop_launch.log"
   -- /bin/true >"$LAUNCH_LOG"
 
 if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible --class wechat >/dev/null 2>&1; then
-  env -u WAYLAND_DISPLAY DISPLAY="$DISPLAY_ID" XAUTHORITY= NO_AT_BRIDGE=1 QT_QPA_PLATFORM=xcb \
+  env -u WAYLAND_DISPLAY \
+    -u QT_PLUGIN_PATH \
+    -u QT_QPA_PLATFORM_PLUGIN_PATH \
+    -u QT_QPA_FONTDIR \
+    -u QT_STYLE_OVERRIDE \
+    DISPLAY="$DISPLAY_ID" XAUTHORITY= NO_AT_BRIDGE=1 QT_QPA_PLATFORM=xcb \
     setsid -f /usr/bin/wechat >"$LOG_DIR/wechat_app.log" 2>&1
   sleep 5
 fi
