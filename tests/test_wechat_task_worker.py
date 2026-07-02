@@ -1336,6 +1336,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             source.parent.mkdir()
             source.write_bytes(b"png-bytes" * 5000)
             ocr_text = tmp_path / "artifact" / "image_text" / "legal-standard.ocr.txt"
+            vision_text = tmp_path / "artifact" / "image_text" / "legal-standard.vision.txt"
             task = {
                 "id": "read-image-task",
                 "chat": "懒人科研",
@@ -1360,17 +1361,32 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                                 "languages": "eng+chi_sim+chi_tra+jpn",
                             },
                         ):
-                            preflight = worker.prepare_media_resolution_preflight(task, tmp_path / "artifact")
-                            task["preflight"] = {"media_resolution": preflight}
-                            tool_context = worker.build_media_resolution_tool_context(task)
+                            with mock.patch.object(
+                                worker,
+                                "codex_read_image_file",
+                                return_value={
+                                    "status": "ok",
+                                    "text_path": str(vision_text),
+                                    "text_preview": "Codex read: Article title and body text",
+                                    "model": "gpt-5.5",
+                                    "reasoning_effort": "low",
+                                },
+                            ):
+                                preflight = worker.prepare_media_resolution_preflight(task, tmp_path / "artifact")
+                                task["preflight"] = {"media_resolution": preflight}
+                                tool_context = worker.build_media_resolution_tool_context(task)
 
             copied = preflight["copied"]
             manifest_text = Path(preflight["manifest_md"]).read_text(encoding="utf-8")
 
         self.assertEqual(copied[0]["ocr"]["status"], "ok")
+        self.assertEqual(copied[0]["vision"]["status"], "ok")
         self.assertEqual(copied[0]["image_metadata"]["width"], 1200)
+        self.assertIn("Codex image read:", tool_context)
+        self.assertIn("Codex read: Article title and body text", tool_context)
         self.assertIn("OCR text:", tool_context)
         self.assertIn("Legal standard image OCR text", tool_context)
+        self.assertIn("Codex image preview", manifest_text)
         self.assertIn("OCR preview", manifest_text)
 
     def test_gui_cache_probe_clicks_visible_image_when_image_source_is_missing(self) -> None:

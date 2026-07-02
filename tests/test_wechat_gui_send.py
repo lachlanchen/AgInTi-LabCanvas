@@ -782,7 +782,7 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertEqual(clicks, [(265, 434)])
         self.assertEqual(result["visible_chat_list_match"]["text"], "懒人科研")
 
-    def test_open_target_accepts_visible_row_when_header_ocr_is_noisy(self):
+    def test_open_target_accepts_visible_row_when_header_ocr_is_noisy_and_relaxed_allowed(self):
         module = load_wechat_gui_send()
         target = module.TargetSpec(
             name="🍓我的设备",
@@ -828,6 +828,7 @@ class WeChatGuiSendTests(unittest.TestCase):
                     False,
                     False,
                     False,
+                    relaxed_visible_fallback_allowed=True,
                 )
         finally:
             module.run = original_run
@@ -839,6 +840,63 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["visible_chat_list_title_guard"])
         self.assertEqual(result["title_guard_source"], "visible_chat_list_match")
+
+    def test_open_target_does_not_accept_visible_row_fallback_by_default(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="🍓我的设备",
+            query="我的设备",
+            expected_title="🍓我的设备",
+            expected_title_aliases=("我的设备",),
+            allow_title_guard_fallback=True,
+        )
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t10\t1\t1\t1\t64\t164\t58\t15\t80\t🍓",
+                "5\t1\t10\t1\t1\t2\t88\t164\t58\t15\t80\t我的设备",
+            ]
+        )
+        original_run = module.run
+        original_screenshot = module.screenshot
+        original_title_candidates = module.title_window_candidates
+        original_sleep = module.time.sleep
+        original_click = module.click
+        try:
+            module.screenshot = lambda _env, path: Path(path).write_bytes(b"fake screenshot")
+            module.title_window_candidates = lambda _env, window: [window]
+            module.time.sleep = lambda _seconds: None
+            module.click = lambda *_args, **_kwargs: None
+
+            def fake_run(command, *, env, check=True):
+                if command[0] == "tesseract":
+                    if command[-1] == "tsv":
+                        return subprocess.CompletedProcess(command, 0, tsv, "")
+                    return subprocess.CompletedProcess(command, 0, "SRNR (4)", "")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            with tempfile.TemporaryDirectory() as tmp:
+                result = module.open_target(
+                    {},
+                    module.Window("1", 100, 200, 1000, 700),
+                    target,
+                    0,
+                    Path(tmp),
+                    "wechat-visible-row-noisy-title-default-test",
+                    False,
+                    False,
+                    False,
+                )
+        finally:
+            module.run = original_run
+            module.screenshot = original_screenshot
+            module.title_window_candidates = original_title_candidates
+            module.time.sleep = original_sleep
+            module.click = original_click
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["visible_chat_list_match"]["normalized"], "我的设备")
 
     def test_visible_row_fallback_requires_target_opt_in(self):
         module = load_wechat_gui_send()

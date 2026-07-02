@@ -280,7 +280,21 @@ def send_one(
                 "WECHAT_LOCKED: Weixin for Linux is locked and requires normal phone-side unlock before GUI sends."
             )
 
-    guard = open_target(env, window, target, pause, out_dir, shot_prefix, skip_title_guard, prefer_current, allow_search)
+    relaxed_visible_fallback_allowed = target.allow_title_guard_fallback and (
+        not do_send or target.allow_live_title_guard_fallback
+    )
+    guard = open_target(
+        env,
+        window,
+        target,
+        pause,
+        out_dir,
+        shot_prefix,
+        skip_title_guard,
+        prefer_current,
+        allow_search,
+        relaxed_visible_fallback_allowed=relaxed_visible_fallback_allowed,
+    )
     opened_path = out_dir / f"{shot_prefix}-opened.png"
     if not guard["ok"]:
         fallback_allowed = target.allow_title_guard_fallback and (not do_send or target.allow_live_title_guard_fallback)
@@ -381,6 +395,7 @@ def open_target(
     skip_title_guard: bool,
     prefer_current: bool = False,
     allow_search: bool = True,
+    relaxed_visible_fallback_allowed: bool = False,
 ) -> dict[str, Any]:
     def verify(label: str) -> dict[str, Any]:
         time.sleep(max(pause, float(os.environ.get("WECHAT_INITIAL_TITLE_WAIT", "1.2"))))
@@ -432,7 +447,7 @@ def open_target(
             if guard["ok"]:
                 return {**guard, "visible_chat_list_match": match}
             fallback_guard = visible_chat_list_fallback_guard(guard, target, match)
-            if fallback_guard:
+            if fallback_guard and relaxed_visible_fallback_allowed:
                 return fallback_guard
             if not (allow_search and target.allow_search):
                 return {

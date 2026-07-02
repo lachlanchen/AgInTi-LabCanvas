@@ -844,7 +844,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertFalse(direct_chatops.should_respond(config, {}, self.row("普通消息")))
         self.assertEqual(direct_chatops.response_skip_reason(config, {}, self.row("普通消息")), "no_trigger")
 
-    def test_self_messages_cannot_be_enabled_as_commands(self) -> None:
+    def test_legacy_self_flags_still_do_not_enable_commands(self) -> None:
         config = self.base_config()
         config["ignore_self_messages"] = False
         config["respond_to_self"] = True
@@ -856,19 +856,19 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         state = {"sent_reply_texts": ["你好\nPinyin: nǐ hǎo"]}
         self.assertFalse(direct_chatops.should_respond(config, state, self.row("你好\nPinyin: nǐ hǎo", sender="self")))
 
-    def test_human_self_command_flags_do_not_route_own_messages(self) -> None:
+    def test_human_self_command_policy_routes_own_text_but_keeps_bot_loop_guard(self) -> None:
         config = self.base_config()
         config["allow_human_self_messages"] = True
         config["self_message_policy"] = "human_commands"
 
-        self.assertFalse(direct_chatops.should_respond(config, {}, self.row("could you summarize this", sender="self")))
+        self.assertTrue(direct_chatops.should_respond(config, {}, self.row("could you summarize this", sender="self")))
         self.assertEqual(
             direct_chatops.response_skip_reason(config, {}, self.row("could you summarize this", sender="self")),
-            "self_ignored",
+            "",
         )
         self.assertEqual(
             direct_chatops.response_skip_reason(config, {}, self.row("<msg><img md5=\"abc\" /></msg>", sender="self", local_type=3)),
-            "self_ignored",
+            "self_non_text",
         )
         self.assertEqual(
             direct_chatops.response_skip_reason(config, {}, self.row("收到，我先处理，完成后把结果发回来。", sender="self")),
@@ -925,9 +925,32 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             ),
             "self_bot_reply",
         )
-        self.assertFalse(
+        self.assertTrue(
             direct_chatops.should_respond(config, {}, self.row("Show me the story here full story explicit story", sender="self"))
         )
+
+    def test_human_self_policy_can_route_own_image_when_text_only_disabled(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        config["self_messages_text_only"] = False
+        config["analysis_mode"] = ""
+        config["respond_to_attachments"] = True
+        config["attachment_trigger_local_types"] = [3]
+
+        row = self.row("<msg><img md5=\"abc\" /></msg>", sender="self", local_type=3)
+
+        self.assertTrue(direct_chatops.should_respond(config, {}, row))
+        self.assertEqual(direct_chatops.response_skip_reason(config, {}, row), "")
+
+    def test_language_mode_attachment_requires_explicit_enable(self) -> None:
+        config = self.base_config()
+        row = self.row("<msg><img md5=\"abc\" /></msg>", local_type=3)
+
+        self.assertFalse(direct_chatops.is_attachment_trigger(config, row))
+        config["respond_to_attachments"] = True
+        config["attachment_trigger_local_types"] = [3]
+        self.assertTrue(direct_chatops.is_attachment_trigger(config, row))
 
     def test_self_context_is_always_labeled_bot_self(self) -> None:
         config = self.base_config()

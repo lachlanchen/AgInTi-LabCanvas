@@ -1235,7 +1235,12 @@ def self_message_skip_reason(config: dict[str, Any], state: dict[str, Any], row:
         return "self_loop_guard"
     if looks_like_bot_self_reply(config, visible_message_text(row)):
         return "self_bot_reply"
-    return "self_ignored"
+    if not allow_human_self_messages(config):
+        return "self_ignored"
+    base_type, _ = split_message_type(row.get("local_type"))
+    if bool(config.get("self_messages_text_only", True)) and base_type != 1:
+        return "self_non_text"
+    return ""
 
 
 def allow_human_self_messages(config: dict[str, Any]) -> bool:
@@ -1751,12 +1756,13 @@ def organizer_enabled(config: dict[str, Any]) -> bool:
 
 
 def is_attachment_trigger(config: dict[str, Any], row: dict[str, Any]) -> bool:
-    if is_language_analysis_mode(config):
+    if is_language_analysis_mode(config) and not bool(config.get("respond_to_attachments", False)):
         return False
     if is_quote_reply_message(row):
         return False
     default_enabled = not is_language_analysis_mode(config)
-    if not bool(config.get("respond_to_attachments", default_enabled)):
+    enabled = bool(config.get("respond_to_attachments", default_enabled))
+    if not enabled:
         return False
     local_type, _ = split_message_type(row.get("local_type"))
     allowed = {int(item) for item in config.get("attachment_trigger_local_types", [3, 34, 42, 43, 47, 48, 49])}

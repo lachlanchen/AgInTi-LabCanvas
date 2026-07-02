@@ -3914,6 +3914,7 @@ def enrich_media_resolution_copies_with_image_read(copied: list[dict[str, Any]],
         if metadata.get("status") not in {"ok", "metadata_unavailable"}:
             item["ocr"] = {"status": "skipped", "reason": metadata.get("status") or "image_unreadable"}
             continue
+        item["vision"] = codex_read_image_file(path, artifact_dir / "image_text")
         item["ocr"] = ocr_image_file(path, artifact_dir / "image_text")
 
 
@@ -3988,6 +3989,59 @@ def ocr_image_file(path: Path, output_dir: Path) -> dict[str, Any]:
         "languages": languages,
         "ocr_input_path": str(ocr_input),
         "attempts": attempts,
+    }
+
+
+def codex_read_image_file(path: Path, output_dir: Path) -> dict[str, Any]:
+    if os.environ.get("WECHAT_WORKER_DISABLE_CODEX_IMAGE_READ"):
+        return {"status": "skipped", "reason": "disabled"}
+    if shutil.which("codex") is None:
+        return {"status": "skipped", "reason": "codex_missing"}
+    output_dir.mkdir(parents=True, exist_ok=True)
+    text_path = unique_intake_target(output_dir, f"{path.stem}.vision.txt", index=1)
+    model = os.environ.get("WECHAT_IMAGE_READ_MODEL", "gpt-5.5")
+    effort = os.environ.get("WECHAT_IMAGE_READ_EFFORT", "low")
+    timeout = float(os.environ.get("WECHAT_IMAGE_READ_TIMEOUT", "90"))
+    prompt = (
+        "Read this WeChat image. Extract all visible text exactly when possible, "
+        "preserving line breaks and language. If there is little or no text, briefly "
+        "describe the visual content. Return plain text only, no markdown framing."
+    )
+    command = [
+        "codex",
+        "exec",
+        "--json",
+        "-m",
+        model,
+        "-c",
+        f'model_reasoning_effort="{effort}"',
+        "--sandbox",
+        "read-only",
+        "-C",
+        str(ROOT),
+        "-i",
+        str(path),
+        "-o",
+        str(text_path),
+        prompt,
+    ]
+    try:
+        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        return {"status": "timeout", "model": model, "reasoning_effort": effort, "timeout_seconds": exc.timeout}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"status": "error", "model": model, "reasoning_effort": effort, "error": str(exc)[:300]}
+    text = normalize_ocr_text(text_path.read_text(encoding="utf-8", errors="replace") if text_path.exists() else "")
+    if text:
+        text_path.write_text(text + "\n", encoding="utf-8")
+    return {
+        "status": "ok" if proc.returncode == 0 and text else ("empty" if proc.returncode == 0 else "failed"),
+        "text_path": str(text_path),
+        "text_preview": collapse_context_text(text, max_len=700),
+        "model": model,
+        "reasoning_effort": effort,
+        "returncode": proc.returncode,
+        "stderr": collapse_context_text(proc.stderr, max_len=500) if proc.stderr.strip() else "",
     }
 
 
@@ -4411,6 +4465,11 @@ def media_resolution_markdown(manifest: dict[str, Any]) -> str:
                 if metadata.get("width") and metadata.get("height"):
                     dims = f" {metadata.get('width')}x{metadata.get('height')}"
                 lines.append(f"  - Image metadata: `{metadata.get('status')}`{dims} {metadata.get('format') or ''}".rstrip())
+            vision = item.get("vision") if isinstance(item.get("vision"), dict) else {}
+            if vision:
+                lines.append(f"  - Codex image read: `{vision.get('status')}` `{vision.get('text_path') or ''}`")
+                if vision.get("text_preview"):
+                    lines.append(f"  - Codex image preview: {collapse_context_text(vision.get('text_preview'), max_len=360)}")
             ocr = item.get("ocr") if isinstance(item.get("ocr"), dict) else {}
             if ocr:
                 lines.append(f"  - OCR: `{ocr.get('status')}` `{ocr.get('text_path') or ''}`")
@@ -7982,6 +8041,12 @@ def build_media_resolution_tool_context(task: dict[str, Any]) -> str:
                 f"    image={metadata.get('width')}x{metadata.get('height')} "
                 f"format={metadata.get('format') or ''}"
             )
+        vision = item.get("vision") if isinstance(item.get("vision"), dict) else {}
+        if vision:
+            if vision.get("text_path"):
+                lines.append(f"    Codex image read: `{vision.get('text_path')}` status={vision.get('status')} model={vision.get('model')}")
+            if vision.get("text_preview"):
+                lines.append(f"    Codex image preview: {collapse_context_text(vision.get('text_preview'), max_len=500)}")
         ocr = item.get("ocr") if isinstance(item.get("ocr"), dict) else {}
         if ocr:
             if ocr.get("text_path"):
@@ -7990,7 +8055,7 @@ def build_media_resolution_tool_context(task: dict[str, Any]) -> str:
                 lines.append(f"    OCR preview: {collapse_context_text(ocr.get('text_preview'), max_len=360)}")
     if media.get("manifest_md") or media.get("manifest_json"):
         lines.append(f"  - Manifest: `{media.get('manifest_md') or media.get('manifest_json')}`")
-    lines.append("  - For image-reading tasks, use the OCR text path/preview above first, then inspect the image file itself if more visual context is needed.")
+    lines.append("  - For image-reading tasks, use the Codex image read text first, then OCR text, then inspect the image file itself if more visual context is needed.")
     lines.append("  - Do not say the image/file is missing if one of these files exists and matches the requested source.")
     return "\n".join(lines) + "\n"
 
