@@ -2,6 +2,7 @@
 
 *.blend binary -whitespace
 *.7z binary -whitespace
+*.zip binary -whitespace
 *.jpg binary -whitespace
 *.jpeg binary -whitespace
 *.png binary -whitespace

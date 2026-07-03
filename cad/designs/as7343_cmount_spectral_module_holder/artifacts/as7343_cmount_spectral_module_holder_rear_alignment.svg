@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1166" height="494" viewBox="0 0 1166 494">
+<rect width="100%" height="100%" fill="white"/>
+<rect x="58.00" y="58.00" width="450.00" height="378.00" rx="8" fill="#f7fafc" stroke="#1a202c" stroke-width="2"/>
+<rect x="139.00" y="139.00" width="288.00" height="216.00" fill="#e6f0ff" stroke="#2b6cb0" stroke-width="2" stroke-dasharray="8 5"/>
+<rect x="58.00" y="166.00" width="77.40" height="162.00" fill="#fff5f5" stroke="#c53030" stroke-width="2" stroke-dasharray="5 4"/>
+<line x1="58.00" y1="247.00" x2="508.00" y2="247.00" stroke="#cbd5e0" stroke-width="1"/>
+<line x1="283.00" y1="58.00" x2="283.00" y2="436.00" stroke="#cbd5e0" stroke-width="1"/>
+<circle cx="283.00" cy="247.00" r="36.00" fill="#fff7d6" stroke="#d69e2e" stroke-width="2"/><text x="291.00" y="239.00" font-family="Arial" font-size="12" fill="#1a202c">optical axis / AS7343</text>
+<rect x="269.05" y="238.00" width="27.90" height="18.00" fill="#c69214" stroke="#1a202c" stroke-width="1.5"/>
+<circle cx="103.00" cy="391.00" r="10.80" fill="#edf2f7" stroke="#4a5568" stroke-width="2"/><text x="111.00" y="383.00" font-family="Arial" font-size="12" fill="#1a202c">bottom_left</text>
+<circle cx="103.00" cy="103.00" r="10.80" fill="#edf2f7" stroke="#4a5568" stroke-width="2"/><text x="111.00" y="95.00" font-family="Arial" font-size="12" fill="#1a202c">top_left</text>
+<circle cx="463.00" cy="391.00" r="10.80" fill="#edf2f7" stroke="#4a5568" stroke-width="2"/><text x="471.00" y="383.00" font-family="Arial" font-size="12" fill="#1a202c">bottom_right</text>
+<circle cx="463.00" cy="103.00" r="10.80" fill="#edf2f7" stroke="#4a5568" stroke-width="2"/><text x="471.00" y="95.00" font-family="Arial" font-size="12" fill="#1a202c">top_right</text>
+<text x="544.00" y="58.00" font-family="Arial" font-size="17" font-weight="700" fill="#1a202c">AS7343 C-mount spectral module holder</text>
+<text x="544.00" y="83.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">View: rear tray, looking along optical axis</text>
+<text x="544.00" y="108.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Gold rectangle: AS7343 3.1 x 2 mm package centered on axis</text>
+<text x="544.00" y="133.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Blue dashed rectangle: estimated module tray, parametric</text>
+<text x="544.00" y="158.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Gray holes: optional M2 clamp/lid holes outside the module area</text>
+<text x="544.00" y="183.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Red dashed slot: 1x5 header/cable relief side</text>
+<text x="544.00" y="208.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">C-mount side: OpenHI 24.8 mm female receiver, 0.8 mm pitch thread</text>
+</svg>
