@@ -117,7 +117,8 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertEqual(contract["default_effort"], "low")
         self.assertIn("metadata_receipt", stage_ids)
         self.assertIn("do not resend the uploaded file", contract["artifact_policy"])
-        self.assertIn("Do not deep-read", " ".join(contract["rules"]))
+        self.assertIn("automatically read/describe", " ".join(contract["rules"]))
+        self.assertIn("For non-image bare uploads", " ".join(contract["rules"]))
 
     def test_video_publish_routine_requires_terminal_publish_verification(self) -> None:
         routines = load_routines()

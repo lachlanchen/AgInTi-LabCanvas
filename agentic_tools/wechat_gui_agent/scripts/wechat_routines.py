@@ -280,7 +280,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
         id="file_intake",
         title="Bare File Intake",
         route_kinds=("file_intake",),
-        purpose="Perform a cheap default intake for a WeChat file upload that has no explicit instruction.",
+        purpose="Perform default intake for a WeChat upload that has no explicit instruction.",
         default_effort="low",
         stages=(
             {
@@ -308,7 +308,8 @@ ROUTINES: dict[str, RoutineDefinition] = {
         ),
         rules=COMMON_RULES
         + (
-            "Do not deep-read, summarize, translate, convert, or publish a bare upload unless the current message explicitly asks.",
+            "For raster image uploads, automatically read/describe the exact source image with Codex vision plus OCR.",
+            "For non-image bare uploads, do not deep-read, summarize, translate, convert, or publish unless the current message explicitly asks.",
             "The copied file and manifest are for follow-up tasks from the same source chat.",
         ),
     ),

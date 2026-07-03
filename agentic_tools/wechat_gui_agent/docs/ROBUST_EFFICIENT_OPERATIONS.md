@@ -130,11 +130,16 @@ should speed the agent up, not replace agent reasoning.
   source attachment or thumbnail exists. GUI screenshot crop fallback is opt-in
   only (`--allow-visible-crop-fallback`) because the visible chat can move and
   capture later bot replies instead of the source image.
-- Bare file or image uploads with no explicit instruction are still work: route
-  them to `file_intake`, sync/copy the exact source into
-  `output/wechat_worker/<task-id>/intake/`, record metadata and checksum, and
-  send a short receipt. Do not deep-read or summarize unless the current
-  message asks for it.
+- Bare uploads with no explicit instruction are still work: route them to
+  `file_intake`, sync/copy the exact source into
+  `output/wechat_worker/<task-id>/intake/`, and record metadata plus checksum.
+  Raster images are automatically read with Codex vision
+  (`WECHAT_IMAGE_READ_MODEL=gpt-5.5`, `WECHAT_IMAGE_READ_EFFORT=low`) and OCR,
+  then described back to the originating chat. For non-image files, send a
+  short saved-file receipt and wait for an explicit summary/extraction request.
+  The file-intake preflight must prefer `media_resolution.copied[*].task_copy_path`
+  over broad "Recent synced files" appendices so old images/files cannot be
+  mistaken for the new source upload.
 - Follow-up requests such as “send the video here”, “download/save the generated
   video”, or “submit it to LazyEdit” should first resolve the newest bounded-age
   same-chat generated MP4 from the worker artifact ledger. This resolver must

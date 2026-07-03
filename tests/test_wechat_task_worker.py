@@ -1205,6 +1205,101 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertEqual([item["filename"] for item in copied], ["Chaos_Making_New_Science_2015.pdf"])
 
+    def test_file_intake_prefers_source_scoped_media_resolution_for_bare_image(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            exact = tmp_path / "source_media" / "current-image.jpg"
+            old = tmp_path / "downloads" / "old-image.jpg"
+            exact.parent.mkdir(parents=True)
+            old.parent.mkdir(parents=True)
+            exact.write_bytes(b"current-image-bytes")
+            old.write_bytes(b"old-image-bytes")
+            artifact_dir = tmp_path / "artifact"
+            task = {
+                "id": "20260703162934-69",
+                "chat": "🍓我的设备",
+                "source": {"local_id": 69, "kind": "image", "local_type": 3},
+                "route_decision": {"route_kind": "file_intake", "needs_recent_media": True},
+                "preflight": {
+                    "media_resolution": {
+                        "copied": [
+                            {
+                                "task_copy_path": str(exact),
+                                "filename": exact.name,
+                                "suffix": ".jpg",
+                                "size_bytes": exact.stat().st_size,
+                                "score": 245,
+                                "match_reasons": ["token:current", "source_mtime_window"],
+                                "image_metadata": {"status": "ok", "width": 500, "height": 281, "format": "JPEG", "mode": "RGB"},
+                                "vision": {
+                                    "status": "ok",
+                                    "text_preview": "Visible text: large text\\nImage caption: a screenshot with a white text panel\\nNotes: none",
+                                    "model": "gpt-5.5",
+                                    "reasoning_effort": "low",
+                                },
+                                "ocr": {"status": "ok", "text_preview": "large text"},
+                            }
+                        ]
+                    }
+                },
+                "request": (
+                    "Current coalesced request:\n"
+                    "New WeChat image upload received with no explicit instruction.\n\n"
+                    "Recent synced WeChat files:\n"
+                    f"- {old} ({old.stat().st_size} bytes)"
+                ),
+            }
+
+            with mock.patch.object(worker, "codex_read_image_file", side_effect=AssertionError("vision should be reused")):
+                preflight = worker.prepare_file_intake_preflight(task, artifact_dir)
+
+            copied = preflight["copied"]
+
+        self.assertEqual([item["filename"] for item in copied], ["current-image.jpg"])
+        self.assertIn("Visible text", copied[0]["vision"]["text_preview"])
+        self.assertEqual(copied[0]["ocr"]["text_preview"], "large text")
+
+    def test_file_intake_result_describes_bare_image(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {"route_kind": "file_intake"},
+            "preflight": {
+                "file_intake": {
+                    "copied": [
+                        {
+                            "filename": "current-image.jpg",
+                            "saved_path": "/tmp/current-image.jpg",
+                            "suffix": ".jpg",
+                            "size_bytes": 94006,
+                            "sha256": "2a3b0108c35f6d13172e3e04ece6e7a9",
+                            "image_metadata": {"status": "ok", "width": 500, "height": 281, "format": "JPEG"},
+                            "vision": {
+                                "status": "ok",
+                                "model": "gpt-5.5",
+                                "reasoning_effort": "low",
+                                "text_preview": (
+                                    "Visible text: BIG TITLE\\n"
+                                    "Image caption: a cropped web article screenshot with dense Chinese text\\n"
+                                    "Notes: none"
+                                ),
+                            },
+                            "ocr": {"status": "ok", "text_preview": "BIG TITLE"},
+                        }
+                    ]
+                }
+            },
+        }
+
+        payload = json.loads(worker.deterministic_file_intake_result(task) or "{}")
+
+        self.assertIn("我已自动读取这张图片", payload["message"])
+        self.assertIn("gpt-5.5 low", payload["message"])
+        self.assertIn("Image caption", payload["message"])
+        self.assertIn("BIG TITLE", payload["message"])
+        self.assertNotIn("没有深度阅读", payload["message"])
+        self.assertEqual(payload["data"]["status"], "image_read")
+
     def test_media_resolution_preflight_prefers_decoded_image_and_exposes_task_copy(self) -> None:
         worker = load_worker()
         import wechat_mirror  # type: ignore

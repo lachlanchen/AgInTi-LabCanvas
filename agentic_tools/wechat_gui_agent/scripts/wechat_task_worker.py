@@ -3081,8 +3081,9 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         generated_status = inspect_generated_video_status(task)
         if generated_status:
             preflight["generated_video_status"] = generated_status
-    if should_prepare_media_resolution(task):
-        preflight["media_resolution"] = prepare_media_resolution_preflight(task, artifact_dir)
+    if should_prepare_media_resolution(task) and not file_intake_has_explicit_non_image_request_files(task):
+        media_task = source_scoped_file_intake_task(task) if is_file_intake_task(task) else task
+        preflight["media_resolution"] = prepare_media_resolution_preflight(media_task, artifact_dir)
         task["preflight"] = preflight
     if is_file_intake_task(task):
         preflight["file_intake"] = prepare_file_intake_preflight(task, artifact_dir)
@@ -3426,6 +3427,46 @@ def shipinhao_comment_api_url() -> str:
 def is_file_intake_task(task: dict[str, Any]) -> bool:
     route = task_route_decision(task)
     return str(route.get("route_kind") or "") == "file_intake"
+
+
+def source_scoped_file_intake_task(task: dict[str, Any]) -> dict[str, Any]:
+    """Limit bare upload media resolution to the actual source row.
+
+    The direct monitor appends recent synced files and context rows to help
+    workers, but a bare image/file upload should never borrow media from nearby
+    old rows. The normal fallback path can still use explicit current-request
+    filenames when mirror resolution is unavailable.
+    """
+    scoped = dict(task)
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    scoped["source"] = dict(source)
+    scoped["context"] = []
+    scoped["request"] = strip_recent_synced_files_section(str(task.get("request") or ""))
+    return scoped
+
+
+def file_intake_has_explicit_non_image_request_files(task: dict[str, Any]) -> bool:
+    if not is_file_intake_task(task) or task_source_is_image(task):
+        return False
+    paths = extract_request_synced_files_from_task(task)
+    return bool(paths)
+
+
+def strip_recent_synced_files_section(request: str) -> str:
+    lines = str(request or "").splitlines()
+    result: list[str] = []
+    skipping = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped in {"Recent synced WeChat files:", "Recent synced files:"}:
+            skipping = True
+            continue
+        if skipping:
+            if stripped.startswith("- "):
+                continue
+            skipping = False
+        result.append(line)
+    return "\n".join(result)
 
 
 def should_prepare_media_resolution(task: dict[str, Any]) -> bool:
@@ -3912,14 +3953,16 @@ def enrich_media_resolution_copies_with_image_read(copied: list[dict[str, Any]],
         suffix = str(item.get("suffix") or path.suffix).lower()
         if suffix not in OCR_IMAGE_SUFFIXES:
             continue
-        metadata = image_file_metadata(path)
+        metadata = item.get("image_metadata") if isinstance(item.get("image_metadata"), dict) else image_file_metadata(path)
         if metadata:
             item["image_metadata"] = metadata
         if metadata.get("status") not in {"ok", "metadata_unavailable"}:
             item["ocr"] = {"status": "skipped", "reason": metadata.get("status") or "image_unreadable"}
             continue
-        item["vision"] = codex_read_image_file(path, artifact_dir / "image_text")
-        item["ocr"] = ocr_image_file(path, artifact_dir / "image_text")
+        if not isinstance(item.get("vision"), dict):
+            item["vision"] = codex_read_image_file(path, artifact_dir / "image_text")
+        if not isinstance(item.get("ocr"), dict):
+            item["ocr"] = ocr_image_file(path, artifact_dir / "image_text")
 
 
 def image_file_metadata(path: Path) -> dict[str, Any]:
@@ -4104,10 +4147,12 @@ def tesseract_available_languages() -> set[str]:
 def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
     intake_dir = artifact_dir / "intake"
     intake_dir.mkdir(parents=True, exist_ok=True)
-    source_paths = extract_recent_synced_files_from_task(task)
+    source_items = extract_file_intake_source_items(task)
     copied: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
-    for index, source in enumerate(source_paths[:8], start=1):
+    limit = 1 if task_source_is_image(task) or any(item_path_suffix(item) in OCR_IMAGE_SUFFIXES for item in source_items[:1]) else 8
+    for index, item in enumerate(source_items[:limit], start=1):
+        source = source_item_path(item)
         if not source.is_file():
             skipped.append({"path": str(source), "reason": "missing"})
             continue
@@ -4122,16 +4167,30 @@ def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> d
         except OSError as exc:
             skipped.append({"path": str(source), "reason": f"copy-failed: {exc}"[:160]})
             continue
-        copied.append(
-            {
-                "source_path": str(source),
-                "saved_path": str(target),
-                "filename": source.name,
-                "suffix": source.suffix.lower(),
-                "size_bytes": stat.st_size,
-                "sha256": sha256_file(target),
-            }
-        )
+        copied_item = {
+            "source_path": str(source),
+            "saved_path": str(target),
+            "task_copy_path": str(target),
+            "filename": source.name,
+            "suffix": source.suffix.lower(),
+            "size_bytes": stat.st_size,
+            "sha256": sha256_file(target),
+        }
+        if isinstance(item, dict):
+            for key in (
+                "mirror_path",
+                "match_reasons",
+                "score",
+                "image_metadata",
+                "vision",
+                "ocr",
+                "matched_by",
+                "metadata",
+            ):
+                if key in item:
+                    copied_item[key] = item[key]
+        copied.append(copied_item)
+    enrich_media_resolution_copies_with_image_read(copied, artifact_dir)
     manifest = {
         "task_id": task.get("id"),
         "chat": task.get("chat"),
@@ -4140,7 +4199,7 @@ def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> d
         "copied": copied,
         "skipped": skipped,
         "status": "ok" if copied else "missing",
-        "policy": "bare file upload intake only; no deep read/summary unless explicitly requested",
+        "policy": "source-scoped bare upload intake; raster images are automatically described with Codex vision plus OCR; other files receive a lightweight receipt unless explicitly requested",
     }
     manifest_json = artifact_dir / "file_intake_manifest.json"
     manifest_md = artifact_dir / "file_intake_manifest.md"
@@ -4151,7 +4210,57 @@ def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> d
     return manifest
 
 
+def extract_file_intake_source_items(task: dict[str, Any]) -> list[dict[str, Any] | Path]:
+    request_paths = extract_request_synced_files_from_task(task)
+    if request_paths and not task_source_is_image(task):
+        return request_paths
+    media_resolution = (task.get("preflight") or {}).get("media_resolution") if isinstance(task.get("preflight"), dict) else {}
+    if isinstance(media_resolution, dict):
+        resolved = [
+            item
+            for item in media_resolution.get("copied") or []
+            if isinstance(item, dict) and item.get("task_copy_path") and Path(str(item.get("task_copy_path"))).expanduser().is_file()
+        ]
+        if resolved:
+            return resolved
+    if request_paths:
+        return request_paths
+    return extract_recent_synced_files_from_task(task)
+
+
+def source_item_path(item: dict[str, Any] | Path) -> Path:
+    if isinstance(item, dict):
+        raw = item.get("task_copy_path") or item.get("saved_path") or item.get("mirror_path") or item.get("source_path") or ""
+        return Path(str(raw)).expanduser().resolve()
+    return item.expanduser().resolve()
+
+
+def item_path_suffix(item: dict[str, Any] | Path) -> str:
+    if isinstance(item, dict):
+        raw_suffix = str(item.get("suffix") or "")
+        if raw_suffix:
+            return raw_suffix.lower()
+    return source_item_path(item).suffix.lower()
+
+
 def extract_recent_synced_files_from_task(task: dict[str, Any]) -> list[Path]:
+    files = extract_request_synced_files_from_task(task)
+    if files:
+        return files
+    media_resolution = (task.get("preflight") or {}).get("media_resolution") if isinstance(task.get("preflight"), dict) else {}
+    if isinstance(media_resolution, dict):
+        resolved = [
+            Path(str(item.get("task_copy_path") or "")).expanduser().resolve()
+            for item in media_resolution.get("copied") or []
+            if isinstance(item, dict) and item.get("task_copy_path")
+        ]
+        if resolved:
+            return resolved
+    mirror_matches = [Path(str(item.get("mirror_path") or "")).expanduser().resolve() for item in resolve_synced_media_from_mirror(task, limit=8)]
+    return [path for path in mirror_matches if path.is_file()]
+
+
+def extract_request_synced_files_from_task(task: dict[str, Any]) -> list[Path]:
     request = str(task.get("request") or "")
     files: list[Path] = []
     for line in request.splitlines():
@@ -4179,20 +4288,7 @@ def extract_recent_synced_files_from_task(task: dict[str, Any]) -> list[Path]:
         return local_id_matches
     if files:
         return ranked_media_paths(files)[:8]
-    media_resolution = (task.get("preflight") or {}).get("media_resolution") if isinstance(task.get("preflight"), dict) else {}
-    if isinstance(media_resolution, dict):
-        resolved = [
-            Path(str(item.get("task_copy_path") or "")).expanduser().resolve()
-            for item in media_resolution.get("copied") or []
-            if isinstance(item, dict) and item.get("task_copy_path")
-        ]
-        if resolved:
-            return resolved
-    mirror_matches = [Path(str(item.get("mirror_path") or "")).expanduser().resolve() for item in resolve_synced_media_from_mirror(task, limit=8)]
-    for path in mirror_matches:
-        if path.is_file() and path not in files:
-            files.append(path)
-    return ranked_media_paths(files)[:8]
+    return []
 
 
 def ranked_media_paths(paths: list[Path]) -> list[Path]:
@@ -6014,6 +6110,24 @@ def deterministic_file_intake_result(task: dict[str, Any]) -> str | None:
     if copied:
         file_count = len(copied)
         first = copied[0] if isinstance(copied[0], dict) else {}
+        if intake_item_is_image(first):
+            message = image_intake_description_message(first)
+            status = "image_read"
+            saved = str(first.get("saved_path") or "")
+            return json.dumps(
+                {
+                    "message": message,
+                    "files": [],
+                    "confirmation": "",
+                    "data": {
+                        "file_intake": intake,
+                        "status": status,
+                        "saved_path": saved,
+                        "require_file_delivery": False,
+                    },
+                },
+                ensure_ascii=False,
+            )
         filename = str(first.get("filename") or "file")
         size = int(first.get("size_bytes") or 0)
         suffix = str(first.get("suffix") or "file")
@@ -6047,6 +6161,59 @@ def deterministic_file_intake_result(task: dict[str, Any]) -> str | None:
         },
         ensure_ascii=False,
     )
+
+
+def task_source_is_image(task: dict[str, Any]) -> bool:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    kind = str(source.get("kind") or "").lower()
+    local_type = int_or_none(source.get("local_type"))
+    return kind == "image" or local_type == 3
+
+
+def intake_item_is_image(item: dict[str, Any]) -> bool:
+    suffix = str(item.get("suffix") or Path(str(item.get("filename") or "")).suffix).lower()
+    if suffix in OCR_IMAGE_SUFFIXES:
+        return True
+    metadata = item.get("image_metadata") if isinstance(item.get("image_metadata"), dict) else {}
+    return metadata.get("status") == "ok" and bool(metadata.get("width") or metadata.get("height"))
+
+
+def image_intake_description_message(item: dict[str, Any]) -> str:
+    filename = str(item.get("filename") or Path(str(item.get("saved_path") or "")).name or "image")
+    size = int(item.get("size_bytes") or 0)
+    checksum = str(item.get("sha256") or "")
+    metadata = item.get("image_metadata") if isinstance(item.get("image_metadata"), dict) else {}
+    dims = ""
+    if metadata.get("width") and metadata.get("height"):
+        dims = f"{metadata.get('width')}x{metadata.get('height')}"
+    vision = item.get("vision") if isinstance(item.get("vision"), dict) else {}
+    ocr = item.get("ocr") if isinstance(item.get("ocr"), dict) else {}
+    vision_text = str(vision.get("text_preview") or "").strip()
+    ocr_text = str(ocr.get("text_preview") or "").strip()
+    model = str(vision.get("model") or os.environ.get("WECHAT_IMAGE_READ_MODEL", "gpt-5.5"))
+    effort = str(vision.get("reasoning_effort") or os.environ.get("WECHAT_IMAGE_READ_EFFORT", "low"))
+    lines = [f"我已自动读取这张图片（{model} {effort}）："]
+    if vision_text:
+        lines.append(vision_text)
+    elif ocr_text:
+        lines.append("视觉描述暂时没有返回；OCR 识别到：")
+        lines.append(ocr_text)
+    else:
+        status = str(vision.get("status") or ocr.get("status") or "unknown")
+        reason = str(vision.get("reason") or vision.get("error") or ocr.get("reason") or ocr.get("error") or "")
+        lines.append(f"暂时没有读出清晰内容（status={status}{', ' + reason if reason else ''}）。")
+    if ocr_text and ocr_text not in vision_text:
+        lines.append("")
+        lines.append("OCR 文字：")
+        lines.append(ocr_text)
+    file_bits = [filename, f"{size} bytes"]
+    if dims:
+        file_bits.append(dims)
+    if checksum:
+        file_bits.append(f"sha256 {checksum[:16]}…")
+    lines.append("")
+    lines.append("文件：" + "，".join(file_bits))
+    return "\n".join(lines).strip()
 
 
 def resolved_video_artifact_result(task: dict[str, Any], resolved: dict[str, Any]) -> str | None:
