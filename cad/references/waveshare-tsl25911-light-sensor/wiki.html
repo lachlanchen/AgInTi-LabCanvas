@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html class="client-nojs" lang="zh-Hans-CN" dir="ltr">
+<head>
+<meta charset="UTF-8"/>
+<title>TSL25911 Light Sensor - Waveshare Wiki</title>
+<script>document.documentElement.className="client-js";RLCONF={"wgBreakFrames":!1,"wgSeparatorTransformTable":["",""],"wgDigitTransformTable":["",""],"wgDefaultDateFormat":"zh","wgMonthNames":["","1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"],"wgRequestId":"7c364024f6b1d7e3531cd045","wgCSPNonce":!1,"wgCanonicalNamespace":"","wgCanonicalSpecialPageName":!1,"wgNamespaceNumber":0,"wgPageName":"TSL25911_Light_Sensor","wgTitle":"TSL25911 Light Sensor","wgCurRevisionId":84168,"wgRevisionId":84168,"wgArticleId":7137,"wgIsArticle":!0,"wgIsRedirect":!1,"wgAction":"view","wgUserName":null,"wgUserGroups":["*"],"wgCategories":["I2C接口","模块","光传感器","传感器"],"wgPageContentLanguage":"zh-cn","wgPageContentModel":"wikitext","wgRelevantPageName":"TSL25911_Light_Sensor","wgRelevantArticleId":7137,"wgIsProbablyEditable":!1,"wgRelevantPageIsProbablyEditable":!1,"wgRestrictionEdit":[],"wgRestrictionMove":[]};RLSTATE={"ext.gadget.tabber"
+:"ready","site.styles":"ready","noscript":"ready","user.styles":"ready","user":"ready","user.options":"loading","jquery.makeCollapsible.styles":"ready","mediawiki.toc.styles":"ready","skins.tweeki.styles":"ready","skins.tweeki.bootstraptheme.styles":"ready","skins.tweeki.externallinks.styles":"ready","skins.tweeki.awesome.styles":"ready"};RLPAGEMODULES=["site","mediawiki.page.startup","mediawiki.page.ready","jquery.makeCollapsible","mediawiki.toc","ext.FancyBoxThumbs","ext.gadget.subnavber","ext.gadget.slidenav","ext.HighlightjsIntegration","skins.tweeki.messages","skins.tweeki.scripts"];</script>
+<script>(RLQ=window.RLQ||[]).push(function(){mw.loader.implement("user.options@1hzgi",function($,jQuery,require,module){/*@nomin*/mw.user.tokens.set({"patrolToken":"+\\","watchToken":"+\\","csrfToken":"+\\"});mw.user.options.set({"variant":"zh-cn"});
+});});</script>
+<link rel="stylesheet" href="/w/load.php?lang=zh-cn&amp;modules=jquery.makeCollapsible.styles%7Cmediawiki.toc.styles%7Cskins.tweeki.awesome.styles%7Cskins.tweeki.bootstraptheme.styles%7Cskins.tweeki.externallinks.styles%7Cskins.tweeki.styles&amp;only=styles&amp;skin=tweeki"/>
+<script async="" src="/w/load.php?lang=zh-cn&amp;modules=startup&amp;only=scripts&amp;raw=1&amp;skin=tweeki"></script>
+<meta name="ResourceLoaderDynamicStyles" content=""/>
+<link rel="stylesheet" href="/w/load.php?lang=zh-cn&amp;modules=ext.gadget.tabber&amp;only=styles&amp;skin=tweeki"/>
+<link rel="stylesheet" href="/w/load.php?lang=zh-cn&amp;modules=site.styles&amp;only=styles&amp;skin=tweeki"/>
+<meta name="generator" content="MediaWiki 1.35.5"/>
+<meta property="og:image" content="https://www.waveshare.net/w/upload/thumb/1/1e/TSL25911-Light-Sensor-1.jpg/1200px-TSL25911-Light-Sensor-1.jpg"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="shortcut icon" href="/favicon.ico"/>
+<link rel="search" type="application/opensearchdescription+xml" href="/w/opensearch_desc.php" title="Waveshare Wiki (zh-cn)"/>
+<link rel="EditURI" type="application/rsd+xml" href="https://www.waveshare.net/w/api.php?action=rsd"/>
+<link rel="alternate" type="application/atom+xml" title="Waveshare Wiki的Atom feed" href="/w/index.php?title=%E7%89%B9%E6%AE%8A:%E6%9C%80%E8%BF%91%E6%9B%B4%E6%94%B9&amp;feed=atom"/>
+<!--[if lt IE 9]><script src="/w/resources/lib/html5shiv/html5shiv.js"></script><![endif]-->
+</head>
+<body class="mediawiki ltr sitedir-ltr mw-hide-empty-elt ns-0 ns-subject page-TSL25911_Light_Sensor rootpage-TSL25911_Light_Sensor skin-tweeki action-view tweeki-animateLayout tweeki-non-advanced tweeki-user-anon">			<!-- navbar -->
+			<div id="mw-navigation" class="navbar navbar-default navbar-fixed-top navbar-expand-lg fixed-top navbar-light bg-light" role="navigation">
+				<h2>导航菜单</h2>
+				<div id="mw-head" class="navbar-inner">
+					<div class="container">
+
+						<div class="navbar-header">
+							<button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
+								<span class="sr-only">Toggle navigation</span>
+								<span class="icon-bar"></span>
+								<span class="icon-bar"></span>
+								<span class="icon-bar"></span>
+							</button>
+
+							<a href="/wiki/Main_Page" class="navbar-brand"><img src="https://www.waveshare.net/w/upload/b/b6/Waveshare-logo.png" alt="Waveshare Wiki" /></a>
+						</div>
+
+						<div id="navbar" class="navbar-collapse collapse">
+													<ul class="nav navbar-nav">
+							<li class="nav"><a href="https://www.waveshare.net" id="n-https.253A.252F.252Fwww.waveshare.net" rel="nofollow" target="_blank">微雪商城</a></li><li class="nav"><a href="#" id="n-raspberry-pi" class="dropdown-toggle" data-toggle="dropdown">Raspberry Pi <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523rpi-boards-.25E4.25B8.25BB.25E6.259D.25BF.252F.25E5.25A5.2597.25E4.25BB.25B6.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#RPi-Boards 主板/套件]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#RPi-Boards">主板/套件</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523rpi-displays-.25E6.2598.25BE.25E7.25A4.25BA.25E5.25B1.258F.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#RPi-Displays 显示屏]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#RPi-Displays">显示屏</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523rpi-cameras-.25E6.2591.2584.25E5.2583.258F.25E5.25A4.25B4.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#RPi-Cameras 摄像头]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#RPi-Cameras">摄像头</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523rpi-expansions-.25E6.2589.25A9.25E5.25B1.2595.25E6.259D.25BF.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#RPi-Expansions 扩展板]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#RPi-Expansions">扩展板</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523rpi-laptops-.25E7.25AC.2594.25E8.25AE.25B0.25E6.259C.25AC.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#RPi-Laptops 笔记本]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#RPi-Laptops">笔记本</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523rpi-robots-.25E6.259C.25BA.25E5.2599.25A8.25E4.25BA.25BA.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#RPi-Robots 机器人]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#RPi-Robots">机器人</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523rpi-games-.25E6.25B8.25B8.25E6.2588.258F.25E6.259C.25BA.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#RPi-Games 游戏机]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#RPi-Games">游戏机</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523android-linux-boards-android.252Flinux.25E4.25B8.25BB.25E6.259D.25BF.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Android-Linux-Boards Android/Linux主板]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Android-Linux-Boards">Android/Linux主板</a></a></li></ul></li><li class="nav"><a href="#" id="n-.25E4.25BA.25BA.25E5.25B7.25A5.25E6.2599.25BA.25E8.2583.25BD" class="dropdown-toggle" data-toggle="dropdown">人工智能 <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523jetson-ai-boards-.25E4.25B8.25BB.25E6.259D.25BF.252F.25E5.25A5.2597.25E4.25BB.25B6.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Jetson-AI-Boards 主板/套件]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Jetson-AI-Boards">主板/套件</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523jetson-ai-displays-.25E6.2598.25BE.25E7.25A4.25BA.25E5.25B1.258F.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Jetson-AI-Displays 显示屏]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Jetson-AI-Displays">显示屏</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523jetson-ai-cameras-.25E6.2591.2584.25E5.2583.258F.25E5.25A4.25B4.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Jetson-AI-Cameras 摄像头]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Jetson-AI-Cameras">摄像头</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523jetson-ai-hat-.25E6.2589.25A9.25E5.25B1.2595.25E6.259D.25BF.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Jetson-AI-HAT 扩展板]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Jetson-AI-HAT">扩展板</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523jetson-ai-robots-.25E6.259C.25BA.25E5.2599.25A8.25E4.25BA.25BA.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Jetson-AI-Robots 机器人]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Jetson-AI-Robots">机器人</a></a></li></ul></li><li class="nav"><a href="#" id="n-.25E6.2598.25BE.25E7.25A4.25BA.25E5.25B1.258F" class="dropdown-toggle" data-toggle="dropdown">显示屏 <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523display-lcd-oleds-lcd.252Foled.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Display-LCD-OLEDs LCD/OLED]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Display-LCD-OLEDs">LCD/OLED</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523display-e-paper-e-paper.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Display-e-Paper e-Paper]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Display-e-Paper">e-Paper</a></a></li></ul></li><li class="nav"><a href="#" id="n-.25E6.25A8.25A1.25E5.259D.2597" class="dropdown-toggle" data-toggle="dropdown">模块 <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523long-range-wireless-comm-.25E8.25BF.259C.25E8.25B7.259D.25E7.25A6.25BB.25E6.2597.25A0.25E7.25BA.25BF.25E9.2580.259A.25E4.25BF.25A1.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Long-range-wireless-comm 远距离无线通信]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Long-range-wireless-comm">远距离无线通信</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523short-range-wireless-comm-.25E8.25BF.2591.25E8.25B7.259D.25E7.25A6.25BB.25E6.2597.25A0.25E7.25BA.25BF.25E9.2580.259A.25E4.25BF.25A1.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Short-range-wireless-comm 近距离无线通信]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Short-range-wireless-comm">近距离无线通信</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523wired-communication-.25E6.259C.2589.25E7.25BA.25BF.25E9.2580.259A.25E4.25BF.25A1.252F.25E6.258E.25A5.25E5.258F.25A3.25E8.25BD.25AC.25E6.258D.25A2.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Wired-communication 有线通信/接口转换]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Wired-communication">有线通信/接口转换</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523misc-cameras-av-.25E6.2591.2584.25E5.2583.258F.25E5.25A4.25B4.252F.25E9.259F.25B3.25E8.25A7.2586.25E9.25A2.2591.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Misc-cameras-av 摄像头/音视频]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Misc-cameras-av">摄像头/音视频</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523misc-sensor-modules-.25E4.25BC.25A0.25E6.2584.259F.25E5.2599.25A8.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Misc-sensor-modules 传感器]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Misc-sensor-modules">传感器</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523misc-servos-motors-.25E7.2594.25B5.25E6.259C.25BA.252F.25E8.2588.25B5.25E6.259C.25BA.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Misc-servos-motors 电机/舵机]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Misc-servos-motors">电机/舵机</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523misc-other-modules-.25E5.25A4.25A7.25E6.259D.2582.25E7.2583.25A9.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Misc-other-modules 大杂烩]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Misc-other-modules">大杂烩</a></a></li></ul></li><li class="nav"><a href="#" id="n-.25E6.259C.25BA.25E5.2599.25A8.25E4.25BA.25BA" class="dropdown-toggle" data-toggle="dropdown">机器人 <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523robotics-cars-.25E6.2599.25BA.25E8.2583.25BD.25E8.25BD.25A6.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Robotics-cars 智能车]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Robotics-cars">智能车</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523robotics-drivers-sensors-.25E9.25A9.25B1.25E5.258A.25A8.25E5.2599.25A8.252F.25E4.25BC.25A0.25E6.2584.259F.25E5.2599.25A8.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Robotics-drivers-sensors 驱动器/传感器]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Robotics-drivers-sensors">驱动器/传感器</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523robotics-robot-arms-.25E6.259C.25BA.25E6.25A2.25B0.25E6.2589.258B.252F.25E4.25BA.2591.25E5.258F.25B0.25E6.258E.25A7.25E5.2588.25B6.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Robotics-robot-arms 机械手/云台控制]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Robotics-robot-arms">机械手/云台控制</a></a></li></ul></li><li class="nav"><a href="#" id="n-mcu.252Ffpga" class="dropdown-toggle" data-toggle="dropdown">MCU/FPGA <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523arduino-main-boards-arduino.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#Arduino-main-boards Arduino]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#Arduino-main-boards">Arduino</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523micro.253Abit-micro.253Abit.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#micro:bit micro:bit]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#micro:bit">micro:bit</a></a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523mcu.2farm-stm32" class="PIC"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#MCU.2FARM STM32" tabindex="-1">LPC</a></li><li id="n-.255Bhttps.253A.252F.252F.257B.257Bservername.257D.257D.252Fwiki.252Fmain_page.2523fpga-fpga.255D"><a href="INVALID-TITLE:[https://www.waveshare.net/wiki/Main_Page#FPGA FPGA]" tabindex="-1"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/wiki/Main_Page#FPGA">FPGA</a></a></li></ul></li>							</ul>
+						
+													<ul class="nav navbar-nav navbar-right">
+							</ul>
+				<form class="navbar-form navbar-right" action="/w/index.php" id="searchform">
+					<div class="form-group"><input type="search" name="search" placeholder="搜索" title="搜索Waveshare Wiki[f]" accesskey="f" id="searchInput" class="search-query form-control"/><input type="submit" name="go" value="前往" title="若相同标题存在，则直接前往该页面" id="mw-searchButton" class="searchButton btn hidden"/>
+					</div>
+				</form><ul class="nav navbar-nav navbar-right"><li class="nav"><a href="https://docs.waveshare.net" id="n-https.253A.252F.252Fdocs.waveshare.net" rel="nofollow" target="_blank">微雪文档</a></li>							</ul>
+						</div>
+						
+					</div>
+				</div>
+			</div>
+			<!-- /navbar -->
+					<div id="mw-page-base"></div>
+			<div id="mw-head-base"></div>
+			<a id="top"></a>
+
+			<!-- content -->
+			<div id="contentwrapper" class="user-loggedout not-editable container with-navbar with-navbar-fixed">
+
+				
+				<div class="row">
+					<div class="col-md-offset-2 col-md-10" role="main">
+								<div class="mw-body" id="content">
+			<div id="mw-js-message" style="display:none;"></div>
+									<h1 id="firstHeading" class="firstHeading page-header" lang="zh-Hans-CN"><span dir="auto">TSL25911 Light Sensor</span></h1>
+									<!-- bodyContent -->
+			<div id="bodyContent">
+								<div id="siteSub">来自Waveshare Wiki</div>
+								<div id="contentSub"></div>
+												<div id="jump-to-nav" class="mw-jump">
+					跳转至：					<a href="#mw-navigation">导航</a>、					<a href="#p-search">搜索</a>
+				</div>
+				<div id="mw-content-text" lang="zh-Hans-CN" dir="ltr" class="mw-content-ltr"><div class="mw-parser-output"><div class="wiki-pages blue-color">
+<div class="tabberlive newwsnav" id="wsnavbar">
+<ul class="tabbernav">
+<li class="nav-link"><a href="#myintro">说明</a></li>
+<li class="nav-link"><a href="#myresources">资料</a></li>
+<li class="nav-link"><a href="#myfaq">FAQ</a></li>
+<li class="nav-link"><a href="#mysupport">售后</a></li>
+</ul>
+</div>
+<div class="tabber">
+<table id="infotable" class="a-r at-c roundy bgd-blue bl-blue" style="margin-left: 5px; margin-bottom: 5px;">
+
+<tbody><tr>
+<td colspan="2">
+<table class="at-c roundy" style="background: transparent;width:100%;">
+
+<tbody><tr>
+<td class="at-c textwhite" style="display: none;"><span style="font-size:1.5em; line-height: 36px;"><b>TSL25911 Light Sensor</b></span>
+</td></tr>
+<tr>
+<td class="at-c bgwhite" style="margin:5px;"><a href="https://www.waveshare.net/shop/TSL25911-Light-Sensor.htm" title="Light Sensor" target="_blank" rel="nofollow noreferrer noopener"><img alt="Light-Sensor" src="/w/upload/thumb/1/1e/TSL25911-Light-Sensor-1.jpg/360px-TSL25911-Light-Sensor-1.jpg" decoding="async" loading="lazy" width="360" height="270" srcset="/w/upload/thumb/1/1e/TSL25911-Light-Sensor-1.jpg/540px-TSL25911-Light-Sensor-1.jpg 1.5x, /w/upload/thumb/1/1e/TSL25911-Light-Sensor-1.jpg/720px-TSL25911-Light-Sensor-1.jpg 2x" /></a>
+</td></tr></tbody></table>
+</td></tr>
+<tr style="display:none;">
+<td colspan="2">
+<table class="roundy" style="background: transparent;width:100%;">
+
+<tbody><tr>
+<td class="at-c textwhite"><b>{{{name2}}}</b>
+</td></tr>
+<tr>
+<td class="at-c bgwhite" style="margin:5px;">
+</td></tr></tbody></table>
+</td></tr>
+<tr style="display:none;">
+<td>
+<table class="roundy" style="background: transparent;width:100%;">
+
+<tbody><tr>
+<td class="at-c textwhite"><b>{{{name3}}}</b>
+</td></tr>
+<tr>
+<td class="at-c bgwhite" style="margin:5px;">
+</td></tr></tbody></table>
+</td></tr>
+<tr>
+<td colspan="2">
+<table class="roundy" style="background: transparent; border-collapse:collapse;width:100%;display: none;">
+<tbody><tr>
+<td style="width:2%;">
+</td>
+<td style="width:3%;">
+</td>
+<th colspan="2" width="90%" class="alignt-center roundytop bgl-white">基本信息
+</th>
+<td style="width:3%;">
+</td>
+<td style="width:2%;">
+</td></tr>
+<tr>
+<th colspan="3" width="90px" class="alignt-right roundytl bgwhite b-blue" style="border-width: 0 0 1px 0;">分类：
+</th>
+<td colspan="3" class="at-l roundytr b-blue bgwhite" style="border-width: 0 0 1px 0;">光传感器模块
+</td></tr>
+<tr style="display:none;">
+<th colspan="3" width="90px" class="alignt-right bgwhite b-blue" style="border-width: 0 0 1px 0;">{{{userDefinedInfo1}}}：
+</th>
+<td colspan="3" class="at-l b-blue bgwhite" style="border-width: 0 0 1px 0;">{{{userdefinedvalue1}}}
+</td></tr>
+<tr style="display:none;">
+<th colspan="3" width="90px" class="alignt-right bgwhite b-blue" style="border-width: 0 0 1px 0;">{{{userDefinedInfo2}}}：
+</th>
+<td colspan="3" class="at-l b-blue bgwhite" style="border-width: 0 0 1px 0;">{{{userdefinedvalue2}}}
+</td></tr>
+<tr style="display:none;">
+<th colspan="3" width="90px" class="alignt-right bgwhite b-blue" style="border-width: 0 0 1px 0;">{{{userDefinedInfo3}}}：
+</th>
+<td colspan="3" class="at-l b-blue bgwhite" style="border-width: 0 0 1px 0;">{{{userdefinedvalue3}}}
+</td></tr>
+<tr>
+<th colspan="3" width="90px" class="alignt-right roundybl bgwhite">品牌：
+</th>
+<td colspan="3" class="at-l roundybr bgwhite">Waveshare
+</td></tr></tbody></table>
+</td></tr>
+<tr>
+<td colspan="2">
+<table class="align-right roundy" style="background: transparent; border-collapse:collapse;width:100%;">
+<tbody><tr>
+<td style="width:2%;">
+</td>
+<td style="width:3%;">
+</td>
+<th colspan="2" width="90%" class="alignt-center roundytop"><font color="white">功能简介</font>
+</th>
+<td style="width:3%;">
+</td>
+<td style="width:2%;">
+</td></tr>
+<tr>
+<td colspan="6" class="at-c">
+<table class="roundy bd-未知 bgl-未知 textblack bw-1 fulltable">
+
+<tbody><tr>
+<td>
+<table class="roundy bgwhite fulltable" style="text-align:center">
+
+<tbody><tr>
+<td class="roundyleft textwhite bgd-blue bl-blue bw-1" style="width:25%;opacity: 0.8;padding-bottom: 5px;"><small><b>特性</b></small>
+</td>
+<td class="roundyright bl-blue bw-1" colspan="3" style="width:75%;padding-bottom: 5px;color: #666;"><small>环境光传感器</small>
+</td></tr>
+<tr style="display:none;">
+<td class="roundyleft textwhite bgd-blue bl-blue bw-1" style="width:25%;opacity: 0.8;padding-bottom: 5px;"><small>'<b><i></i></b></small>
+</td>
+<td class="roundyright bl-blue bw-1" colspan="3" style="width:75%;padding-bottom: 5px;color: #666;"><small>无特性，不解释</small>
+</td></tr>
+<tr style="display:none;">
+<td class="roundyleft textwhite bgd-blue bl-blue bw-1" style="width:25%;opacity: 0.8;padding-bottom: 5px;"><small>'<b><i></i></b></small>
+</td>
+<td class="roundyright bl-blue bw-1" colspan="3" style="width:75%;padding-bottom: 5px;color: #666;"><small>无特性，不解释</small>
+</td></tr>
+<tr style="display:none;">
+<td class="roundyleft textwhite bgd-blue bl-blue bw-1" style="width:25%;opacity: 0.8;padding-bottom: 5px;"><small>'<b><i></i></b></small>
+</td>
+<td class="roundyright bl-blue bw-1" colspan="3" style="width:75%;padding-bottom: 5px;color: #666;"><small>无特性，不解释</small>
+</td></tr>
+<tr style="display:none;">
+<td class="roundyleft textwhite bgd-blue bl-blue bw-1" style="width:25%;opacity: 0.8;padding-bottom: 5px;"><small>'<b><i></i></b></small>
+</td>
+<td class="roundyright bl-blue bw-1" colspan="3" style="width:75%;padding-bottom: 5px;color: #666;"><small>无特性，不解释</small>
+</td></tr>
+<tr>
+<td class="roundyleft textwhite bgd-blue bl-blue bw-1" style="width:25%;opacity: 0.8;padding-bottom: 5px;"><small><b>接口</b></small>
+</td>
+<td class="roundyright bl-blue bw-1 hide" style="width:25%;padding-bottom: 5px;color: #666;"><small></small>
+</td>
+<td class="roundyright bl-blue bw-1 hide" style="width:25%;padding-bottom: 5px;color: #666;"><small></small>
+</td>
+<td class="roundyright bl-blue bw-1" style="width:25%;padding-bottom: 5px;color: #666;"><small><a href="/wiki/%E5%88%86%E7%B1%BB:I2C%E6%8E%A5%E5%8F%A3" title="分类:I2C接口">I2C</a></small>
+</td></tr></tbody></table>
+</td></tr></tbody></table>
+</td></tr></tbody></table>
+</td></tr>
+<tr>
+<td colspan="2">
+<table class="align-right roundy" style="background: transparent; border-collapse:collapse;width:100%;display:none;">
+<tbody><tr>
+<td style="width:2%;">
+</td>
+<td style="width:3%;">
+</td>
+<th colspan="2" width="90%" class="alignt-center roundytop bgl-white">相关产品
+</th>
+<td style="width:3%;">
+</td>
+<td style="width:2%;">
+</td></tr>
+<tr>
+<td colspan="6" class="at-c">
+<table class="roundy bw-1 fulltable table table-striped table-bordered mw-collapsed align-left">
+
+<tbody><tr>
+<th>
+</th></tr>
+<tr style="display:none;">
+<th>♦   {{{Product1}}}
+</th></tr>
+<tr style="display:none;">
+<th>♦   {{{Product2}}}
+</th></tr>
+<tr style="display:none;">
+<th>♦   {{{Product3}}}
+</th></tr>
+<tr style="display:none;">
+<th>♦   {{{Product4}}}
+</th></tr>
+<tr style="display:none;">
+<th>♦   {{{Product5}}}
+</th></tr>
+<tr style="display:none;">
+<td>—— <span style="font-size:14px;text-align: left;font-weight: bold;">类目1</span> ——
+</td></tr>
+<tr>
+<td>
+<table class="mw-collapsible mw-collapsed align-left">
+
+<tbody><tr style="display:none;">
+<td><span style="font-size:14px;text-align: left;color: #0645ad;font-weight: bold;">♦   类目1</span>
+</td></tr>
+<tr style="font-size:13px; text-align: left;">
+<td>
+<p>列表1
+</p>
+</td></tr></tbody></table>
+</td></tr>
+<tr>
+<td>
+<table class="mw-collapsible mw-collapsed align-left">
+
+<tbody><tr style="display:none;">
+<td><span style="font-size:14px;text-align: left;color: #0645ad;font-weight: bold;">♦   类目2</span>
+</td></tr>
+<tr style="font-size:13px; text-align: left;">
+<td>
+<p>列表2
+</p>
+</td></tr></tbody></table>
+</td></tr>
+<tr>
+<td>
+<table class="mw-collapsible mw-collapsed align-left">
+
+<tbody><tr style="display:none;">
+<td><span style="font-size:14px;text-align: left;color: #0645ad;font-weight: bold;">♦   类目3</span>
+</td></tr>
+<tr style="font-size:13px; text-align: left;">
+<td>
+<p>列表3
+</p>
+</td></tr></tbody></table>
+</td></tr>
+<tr>
+<td>
+<table class="mw-collapsible mw-collapsed align-left">
+
+<tbody><tr style="display:none;">
+<td><span style="font-size:14px;text-align: left;color: #0645ad;font-weight: bold;">♦   类目4</span>
+</td></tr>
+<tr style="font-size:13px; text-align: left;">
+<td>
+<p>列表4
+</p>
+</td></tr></tbody></table>
+</td></tr>
+<tr>
+<td>
+<table class="mw-collapsible mw-collapsed align-left">
+
+<tbody><tr style="display:none;">
+<td><span style="font-size:14px;text-align: left;color: #0645ad;font-weight: bold;">♦   类目5</span>
+</td></tr>
+<tr style="font-size:13px; text-align: left;">
+<td>
+<p>列表5
+</p>
+</td></tr></tbody></table>
+</td></tr></tbody></table>
+</td></tr></tbody></table>
+</td></tr></tbody></table>
+<div class="tabbertab" title="说明" id="myintro">
+<div id="toc" class="toc" role="navigation" aria-labelledby="mw-toc-heading"><input type="checkbox" role="button" id="toctogglecheckbox" class="toctogglecheckbox" style="display:none" /><div class="toctitle" lang="zh-Hans-CN" dir="ltr"><h2 id="mw-toc-heading">目录</h2><span class="toctogglespan"><label class="toctogglelabel" for="toctogglecheckbox"></label></span></div>
+<ul>
+<li class="toclevel-1"><a href="#.E8.AF.B4.E6.98.8E"><span class="tocnumber">1</span> <span class="toctext">说明</span></a>
+<ul>
+<li class="toclevel-2 tocsection-1"><a href="#.E4.BA.A7.E5.93.81.E6.A6.82.E8.BF.B0"><span class="tocnumber">1.1</span> <span class="toctext">产品概述</span></a></li>
+<li class="toclevel-2 tocsection-2"><a href="#.E4.BA.A7.E5.93.81.E7.89.B9.E6.80.A7"><span class="tocnumber">1.2</span> <span class="toctext">产品特性</span></a></li>
+<li class="toclevel-2 tocsection-3"><a href="#.E4.BA.A7.E5.93.81.E5.8F.82.E6.95.B0"><span class="tocnumber">1.3</span> <span class="toctext">产品参数</span></a></li>
+<li class="toclevel-2 tocsection-4"><a href="#.E6.8E.A5.E5.8F.A3.E8.AF.B4.E6.98.8E"><span class="tocnumber">1.4</span> <span class="toctext">接口说明</span></a></li>
+<li class="toclevel-2 tocsection-5"><a href="#.E7.A1.AC.E4.BB.B6.E8.AF.B4.E6.98.8E"><span class="tocnumber">1.5</span> <span class="toctext">硬件说明</span></a>
+<ul>
+<li class="toclevel-3 tocsection-6"><a href="#.E8.8A.AF.E7.89.87"><span class="tocnumber">1.5.1</span> <span class="toctext">芯片</span></a></li>
+<li class="toclevel-3 tocsection-7"><a href="#.E9.80.9A.E4.BF.A1.E5.8D.8F.E8.AE.AE"><span class="tocnumber">1.5.2</span> <span class="toctext">通信协议</span></a></li>
+</ul>
+</li>
+<li class="toclevel-2 tocsection-8"><a href="#.E6.A0.91.E8.8E.93.E6.B4.BE.E4.BD.BF.E7.94.A8"><span class="tocnumber">1.6</span> <span class="toctext">树莓派使用</span></a>
+<ul>
+<li class="toclevel-3 tocsection-9"><a href="#.E5.BC.80.E5.90.AFI2C.E6.8E.A5.E5.8F.A3"><span class="tocnumber">1.6.1</span> <span class="toctext">开启I2C接口</span></a></li>
+<li class="toclevel-3 tocsection-10"><a href="#.E5.AE.89.E8.A3.85.E5.BA.93"><span class="tocnumber">1.6.2</span> <span class="toctext">安装库</span></a></li>
+<li class="toclevel-3 tocsection-11"><a href="#.E7.A1.AC.E4.BB.B6.E8.BF.9E.E6.8E.A5"><span class="tocnumber">1.6.3</span> <span class="toctext">硬件连接</span></a></li>
+<li class="toclevel-3 tocsection-12"><a href="#.E4.B8.8B.E8.BD.BD.E5.B9.B6.E8.BF.90.E8.A1.8C.E6.B5.8B.E8.AF.95.E4.BE.8B.E7.A8.8B"><span class="tocnumber">1.6.4</span> <span class="toctext">下载并运行测试例程</span></a>
+<ul>
+<li class="toclevel-4 tocsection-13"><a href="#.E6.AD.A4.E5.A4.96.EF.BC.8C.E4.B9.9F.E5.8F.AF.E4.BB.A5.E4.B8.8B.E8.BD.BD.E6.88.91.E4.BB.ACGitHub.E4.B8.8A.E9.9D.A2.E7.9A.84.E5.B7.A5.E7.A8.8B.EF.BC.9A"><span class="tocnumber">1.6.4.1</span> <span class="toctext">此外，也可以下载我们GitHub上面的工程：</span></a></li>
+</ul>
+</li>
+<li class="toclevel-3 tocsection-14"><a href="#C.E7.A8.8B.E5.BA.8F"><span class="tocnumber">1.6.5</span> <span class="toctext">C程序</span></a>
+<ul>
+<li class="toclevel-4 tocsection-15"><a href="#.E9.A2.84.E6.9C.9F.E6.95.88.E6.9E.9C.E5.A6.82.E4.B8.8B.E5.9B.BE"><span class="tocnumber">1.6.5.1</span> <span class="toctext">预期效果如下图</span></a></li>
+</ul>
+</li>
+<li class="toclevel-3 tocsection-16"><a href="#python.E7.A8.8B.E5.BA.8F"><span class="tocnumber">1.6.6</span> <span class="toctext">python程序</span></a></li>
+</ul>
+</li>
+<li class="toclevel-2 tocsection-17"><a href="#STM32.E4.BD.BF.E7.94.A8"><span class="tocnumber">1.7</span> <span class="toctext">STM32使用</span></a>
+<ul>
+<li class="toclevel-3 tocsection-18"><a href="#.E7.A1.AC.E4.BB.B6.E8.BF.9E.E6.8E.A5_2"><span class="tocnumber">1.7.1</span> <span class="toctext">硬件连接</span></a></li>
+<li class="toclevel-3 tocsection-19"><a href="#.E9.A2.84.E6.9C.9F.E6.95.88.E6.9E.9C"><span class="tocnumber">1.7.2</span> <span class="toctext">预期效果</span></a>
+<ul>
+<li class="toclevel-4 tocsection-20"><a href="#.E7.94.B5.E8.84.91.E6.89.93.E5.BC.80.E4.B8.B2.E5.8F.A3.E5.8A.A9.E6.89.8B.EF.BC.8C.E9.80.89.E6.8B.A9.E5.AF.B9.E5.BA.94.E7.9A.84.E7.AB.AF.E5.8F.A3.EF.BC.8C.E5.8D.B3.E5.8F.AF.E6.9F.A5.E7.9C.8B.E5.AE.9E.E9.AA.8C.E7.8E.B0.E8.B1.A1.EF.BC.9A"><span class="tocnumber">1.7.2.1</span> <span class="toctext">电脑打开串口助手，选择对应的端口，即可查看实验现象：</span></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toclevel-2 tocsection-21"><a href="#Arduino.E4.BD.BF.E7.94.A8"><span class="tocnumber">1.8</span> <span class="toctext">Arduino使用</span></a>
+<ul>
+<li class="toclevel-3 tocsection-22"><a href="#.E7.A1.AC.E4.BB.B6.E8.BF.9E.E6.8E.A5_3"><span class="tocnumber">1.8.1</span> <span class="toctext">硬件连接</span></a></li>
+<li class="toclevel-3 tocsection-23"><a href="#.E9.A2.84.E6.9C.9F.E6.95.88.E6.9E.9C_2"><span class="tocnumber">1.8.2</span> <span class="toctext">预期效果</span></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toclevel-1"><a href="#.E8.B5.84.E6.96.99"><span class="tocnumber">2</span> <span class="toctext">资料</span></a>
+<ul>
+<li class="toclevel-2 tocsection-24"><a href="#.E6.96.87.E6.A1.A3"><span class="tocnumber">2.1</span> <span class="toctext">文档</span></a></li>
+<li class="toclevel-2 tocsection-25"><a href="#.E7.A8.8B.E5.BA.8F"><span class="tocnumber">2.2</span> <span class="toctext">程序</span></a></li>
+<li class="toclevel-2 tocsection-26"><a href="#.E6.95.B0.E6.8D.AE.E6.89.8B.E5.86.8C"><span class="tocnumber">2.3</span> <span class="toctext">数据手册</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1"><a href="#FAQ"><span class="tocnumber">3</span> <span class="toctext">FAQ</span></a></li>
+<li class="toclevel-1"><a href="#.E6.8A.80.E6.9C.AF.E6.94.AF.E6.8C.81"><span class="tocnumber">4</span> <span class="toctext">技术支持</span></a></li>
+</ul>
+</div>
+
+<h1><span id="说明"></span><span class="mw-headline" id=".E8.AF.B4.E6.98.8E">说明</span></h1>
+<h2><span id="产品概述"></span><span class="mw-headline" id=".E4.BA.A7.E5.93.81.E6.A6.82.E8.BF.B0">产品概述</span></h2>
+<p>TSL2591x Light Sensor是以TSL25911为核心	的环境光传感器。能感知周围的环境光强度，并通过I2C接口输出。输出数据使用公式推导出以勒克斯为单位的照度（环境光光强）以近似人眼反应。
+</p>
+<h2><span id="产品特性"></span><span class="mw-headline" id=".E4.BA.A7.E5.93.81.E7.89.B9.E6.80.A7">产品特性</span></h2>
+<ul><li>采用TSL25911FN，可测量红外光及人类可见光 (相比TSL2561测量范围更广)</li>
+<li>内置ADC，通过I2C接口可直接输出光强度，不易受噪声干扰</li>
+<li>灵敏度高达188uLux，动态范围宽达600M:1</li>
+<li>内置红外光敏二极管，即使在红外噪声干扰大的环境中也能较精确的测量</li>
+<li>具有中断输出，可编程上下限阈值</li>
+<li>板载电平转换电路，可兼容3.3V/5V的工作电平</li>
+<li>提供完善的配套资料手册(Raspberry/Arduino/STM32示例程序和用户手册等)</li></ul>
+<h2><span id="产品参数"></span><span class="mw-headline" id=".E4.BA.A7.E5.93.81.E5.8F.82.E6.95.B0">产品参数</span></h2>
+<ul><li>工作电压: 	3.3V/5V</li>
+<li>传感器: 	TSL25911FN</li>
+<li>逻辑电压: 	3.3V/5V</li>
+<li>通信接口: 	I2C</li>
+<li>有效量程: 	0-88000Lux</li>
+<li>产品尺寸: 	27mm x 20mm</li>
+<li>固定孔径: 	2.0mm</li></ul>
+<h2><span id="接口说明"></span><span class="mw-headline" id=".E6.8E.A5.E5.8F.A3.E8.AF.B4.E6.98.8E">接口说明</span></h2>
+<ul><li>引脚功能</li></ul>
+<table border="2;" style="width:800px;">
+
+<tbody><tr style="background:#000088; color:white;" align="center">
+<td>引脚号</td>
+<td>标识</td>
+<td>管脚描述
+</td></tr>
+<tr align="center">
+<td width="100px">1
+</td>
+<td>VCC</td>
+<td>3.3V/5V电源正
+</td></tr>
+<tr align="center">
+<td>2</td>
+<td>GND</td>
+<td>电源地
+</td></tr>
+<tr align="center">
+<td>3</td>
+<td>SDA</td>
+<td>I2C数据线
+</td></tr>
+<tr align="center">
+<td>4</td>
+<td>SCL</td>
+<td>I2C时钟线
+</td></tr>
+<tr align="center">
+<td>5</td>
+<td>INT</td>
+<td>外部中断引脚
+</td></tr>
+</tbody></table><br />
+<h2><span id="硬件说明"></span><span class="mw-headline" id=".E7.A1.AC.E4.BB.B6.E8.AF.B4.E6.98.8E">硬件说明</span></h2>
+<h3><span id="芯片"></span><span class="mw-headline" id=".E8.8A.AF.E7.89.87">芯片</span></h3>
+<p>本产品采用TSL25911FN为核心，是一款基于IIC总线通信的光强数字转换器。传感器将一个宽带光电二极管（可见光和红外光）和一个红外响应光电二极管组合在能够在有效的16 位动态范围（16 位分辨率）上提供近光适应响应的单个 CMOS 集成电路上。两个积分 ADC将光电二极管电流转换为表示在每个通道上测量的辐照度的数字输出。该数字输出可以被输到微处理器，其中使用经验公式导出以勒克斯为单位的照度（环境光水平）以近似人眼反应。
+</p>
+<h3><span id="通信协议"></span><span class="mw-headline" id=".E9.80.9A.E4.BF.A1.E5.8D.8F.E8.AE.AE">通信协议</span></h3>
+<p>从上面功能引脚表得知使用的是I2C通信，I2C 通信，一条数据线，一条时钟线。 I2C 总线在传送数据过程中共有三种类型信号：开始信号、结束信号和应答信号。<br />
+<a href="/wiki/%E6%96%87%E4%BB%B6:TSL2591%E5%86%99%E6%97%B6%E5%BA%8F.png" class="image"><img alt="TSL2591写时序.png" src="/w/upload/1/19/TSL2591%E5%86%99%E6%97%B6%E5%BA%8F.png" decoding="async" loading="lazy" width="900" height="237" /></a><br />
+开始信号：SCL 为高电平时， SDA 由高电平向低电平跳变，开始传送数据。<br />
+结束信号：SCL 为高电平时， SDA 由低电平向高电平跳变，结束传送数据。<br />
+应答信号：接收数据的 IC 在接收到 8bit 数据后，向发送数据的 IC 发出特定的低电平脉冲，表示已收到数据。<br />
+</p>
+<ul><li>I2C写数据时序<br /></li></ul>
+<p><a href="/wiki/%E6%96%87%E4%BB%B6:Tsl2591%E5%86%99.png" class="image"><img alt="Tsl2591写.png" src="/w/upload/1/18/Tsl2591%E5%86%99.png" decoding="async" loading="lazy" width="900" height="162" /></a><br />	 
+首先主机（即树莓派，后面统称为主机）会发送一个开始信号，然后将其 I2C 的 7 位地址与写操作位组合成 8 位的数据发送给从机（即 TSL2581 传感器模块,后面统称为从机），从机接收到后会响应一个应答信号，主机此时将命令寄存器地址发送给从机，从机接收到发送响应信号，此时主机发送命令寄存的值，从机回应一个响应信号，直到主机发送一个停止信号，此次 I2C 写数据操作结束<br />
+</p>
+<ul><li>I2C读数据时序<br /></li></ul>
+<p><a href="/wiki/%E6%96%87%E4%BB%B6:2591%E8%AF%BB.png" class="image"><img alt="2591读.png" src="/w/upload/thumb/a/aa/2591%E8%AF%BB.png/900px-2591%E8%AF%BB.png" decoding="async" loading="lazy" width="900" height="162" srcset="/w/upload/a/aa/2591%E8%AF%BB.png 1.5x" /></a> <br />
+首先主机会发送一个开始信号，然后将其 I2C 的 7 位地址与写操作位组合成 8 位的数据发送给从机，从机接收到后会响应一个应答信号，主机此时将命令寄存器地址发送给从机，从机接收到发送响应信号，此时主机重新发送一个开始信号，并且将其 7 位地址和读操作位组合成 8 位的数据发送给从机，从机接收到信号后发送响应信号，再将其寄存器中的值发送给主机，主机端给予响应信号，直到主机端发送停止信号，此次通信结束。<br />
+</p>
+<ul><li>I2C地址<br /></li></ul>
+<p>TSL25911的I2C设备地址为0X29 <br />
+<a href="/wiki/%E6%96%87%E4%BB%B6:25912C%E5%9C%B0%E5%9D%80.png" class="image"><img alt="25912C地址.png" src="/w/upload/9/9d/25912C%E5%9C%B0%E5%9D%80.png" decoding="async" loading="lazy" width="900" height="169" /></a><br />
+TSL25911数据手册第28页<br />
+注意：0X29这个设备地址是7位的，8位设备地址需要向高位移一位变成0X52<br />
+</p>
+<h2><span id="树莓派使用"></span><span class="mw-headline" id=".E6.A0.91.E8.8E.93.E6.B4.BE.E4.BD.BF.E7.94.A8">树莓派使用</span></h2>
+<h3><span id="开启I2C接口"></span><span class="mw-headline" id=".E5.BC.80.E5.90.AFI2C.E6.8E.A5.E5.8F.A3">开启I2C接口</span></h3>
+<ul><li>在终端执行:</li></ul>
+<pre>sudo raspi-config 
+#选择 Interfacing Options -&gt; I2C -&gt;yes 启动 i2C 内核驱动
+</pre>
+<p><a href="/wiki/%E6%96%87%E4%BB%B6:2591%E6%A0%91%E8%8E%93%E6%B4%BE.png" class="image"><img alt="2591树莓派.png" src="/w/upload/8/87/2591%E6%A0%91%E8%8E%93%E6%B4%BE.png" decoding="async" loading="lazy" width="900" height="1083" /></a> <br />
+</p>
+<ul><li>然后重启树莓派</li></ul>
+<pre>sudo reboot
+</pre>
+<h3><span id="安装库"></span><span class="mw-headline" id=".E5.AE.89.E8.A3.85.E5.BA.93">安装库</span></h3>
+<ul><li>安装BCM2835，打开树莓派终端，并运行下指令</li></ul>
+<pre>wget http://www.airspayce.com/mikem/bcm2835/bcm2835-1.60.tar.gz
+tar zxvf bcm2835-1.60.tar.gz 
+cd bcm2835-1.60/
+sudo ./configure
+sudo make
+sudo make check
+sudo make install
+</pre>
+<ul><li>安装wiringpi</li></ul>
+<pre>sudo apt-get install wiringpi
+#对于树莓派4B可能需要进行升级：
+cd /tmp
+wget https://project-downloads.drogon.net/wiringpi-latest.deb
+sudo dpkg -i wiringpi-latest.deb
+gpio -v
+</pre>
+<h3><span id="硬件连接"></span><span class="mw-headline" id=".E7.A1.AC.E4.BB.B6.E8.BF.9E.E6.8E.A5">硬件连接</span></h3>
+<table border="2;" style="width:800px;">
+
+<tbody><tr style="background:#000088; color:white;" align="center">
+<td>TSL25911 Light Sensor</td>
+<td>树莓派（BCM）
+</td></tr>
+<tr align="center">
+<td width="400px">VCC</td>
+<td>3.3V
+</td></tr>
+<tr align="center">
+<td>GND</td>
+<td>GND
+</td></tr>
+<tr align="center">
+<td>SDA</td>
+<td>SDA(2)
+</td></tr>
+<tr align="center">
+<td>SCL</td>
+<td>SCL(3)
+</td></tr>
+<tr align="center">
+<td>INT</td>
+<td>4
+</td></tr>
+</tbody></table><br /><a href="/wiki/%E6%96%87%E4%BB%B6:TSL25911-Pi-WS.jpg" class="image"><img alt="TSL25911-Pi-WS.jpg" src="/w/upload/thumb/d/d7/TSL25911-Pi-WS.jpg/900px-TSL25911-Pi-WS.jpg" decoding="async" loading="lazy" width="900" height="563" srcset="/w/upload/d/d7/TSL25911-Pi-WS.jpg 1.5x" /></a>
+<h3><span id="下载并运行测试例程"></span><span class="mw-headline" id=".E4.B8.8B.E8.BD.BD.E5.B9.B6.E8.BF.90.E8.A1.8C.E6.B5.8B.E8.AF.95.E4.BE.8B.E7.A8.8B">下载并运行测试例程</span></h3>
+<pre>sudo apt-get install p7zip-full
+wget http://www.waveshare.net/w/upload/b/bc/TSL2591X_Light_Sensor_code.7z
+7z x TSL2591X_Light_Sensor_code.7z -r -o./TSL2591X_Light_Sensor_code
+sudo chmod 777 -R  TSL2591X_Light_Sensor_code
+</pre>
+<h4><span id="此外，也可以下载我们GitHub上面的工程："></span><span class="mw-headline" id=".E6.AD.A4.E5.A4.96.EF.BC.8C.E4.B9.9F.E5.8F.AF.E4.BB.A5.E4.B8.8B.E8.BD.BD.E6.88.91.E4.BB.ACGitHub.E4.B8.8A.E9.9D.A2.E7.9A.84.E5.B7.A5.E7.A8.8B.EF.BC.9A">此外，也可以下载我们GitHub上面的工程：</span></h4>
+<pre>sudo git clone https://github.com/waveshare/TSL2591X-Light-Sensor
+</pre>
+<ul><li>请注意目录稍微有些不同</li></ul>
+<h3><span id="C程序"></span><span class="mw-headline" id="C.E7.A8.8B.E5.BA.8F">C程序</span></h3>
+<pre>cd TSL2591X_Light_Sensor_code/TSL2591x_Light_Sensor_code/RaspberryPi/c
+make clean
+make
+sudo ./main
+</pre>
+<h4><span id="预期效果如下图"></span><span class="mw-headline" id=".E9.A2.84.E6.9C.9F.E6.95.88.E6.9E.9C.E5.A6.82.E4.B8.8B.E5.9B.BE">预期效果如下图</span></h4>
+<p><a href="/wiki/%E6%96%87%E4%BB%B6:TSL25911_RPI_test.png" class="image"><img alt="TSL25911 RPI test.png" src="/w/upload/b/bf/TSL25911_RPI_test.png" decoding="async" loading="lazy" width="900" height="275" /></a>
+</p>
+<ul><li>注意：示例的程序目录以实际为准；</li></ul>
+<h3><span id="python程序"></span><span class="mw-headline" id="python.E7.A8.8B.E5.BA.8F">python程序</span></h3>
+<pre>cd
+cd TSL2591X_Light_Sensor_code/TSL2591x_Light_Sensor_code/RaspberryPi/python/examples
+sudo python main.py
+</pre>
+<p><a href="/wiki/%E6%96%87%E4%BB%B6:TSL25911_RPI_test_python.png" class="image"><img alt="TSL25911 RPI test python.png" src="/w/upload/e/e1/TSL25911_RPI_test_python.png" decoding="async" loading="lazy" width="900" height="157" /></a>
+</p>
+<h2><span id="STM32使用"></span><span class="mw-headline" id="STM32.E4.BD.BF.E7.94.A8">STM32使用</span></h2>
+<p><b>在产品百科界面下载程序，然后解压。STM32程序位于 ~/ STM32/…</b> 
+打开STM32中的\XNUCLEO-F103RB\MDK-ARM\demo.uvprojx，使用Keil uVision5打开。例程使用的是HAL库。测试使用的开发板为微雪XNUCLEO-F103RB，芯片为STM32F103RBT6，如需换芯片或者想使用标准库你只需要更改DEV_Config.c和.h即可，实现里面的函数和宏定义即可。换芯片也可以使用STM32CubeMX。例程使用串口2（PA2,PA3）输出数据。串口波特率为115200，其他默认：数据位8位，停止位1位，没有校验。<br />
+参考微雪课堂：<a target="_blank" rel="nofollow noreferrer noopener" class="external free" href="https://www.waveshare.net/study/article-644-1.html">https://www.waveshare.net/study/article-644-1.html</a>
+</p>
+<h3><span id="硬件连接_2"></span><span class="mw-headline" id=".E7.A1.AC.E4.BB.B6.E8.BF.9E.E6.8E.A5_2">硬件连接</span></h3>
+<table border="2;" style="width:800px;">
+
+<tbody><tr style="background:#000088; color:white;" align="center">
+<td width="400px">TCS34725 Color Sensor</td>
+<td>STM32
+</td></tr>
+<tr align="center">
+<td>VCC</td>
+<td>3.3V
+</td></tr>
+<tr align="center">
+<td>GND</td>
+<td>GND
+</td></tr>
+<tr align="center">
+<td>SDA</td>
+<td>SDA/D14/PB9
+</td></tr>
+<tr align="center">
+<td>SCL</td>
+<td>SCL/D15/PB8
+</td></tr>
+<tr align="center">
+<td>INT</td>
+<td>D8/PA9
+</td></tr>
+</tbody></table><br /><a href="/wiki/%E6%96%87%E4%BB%B6:TSL25911-STM32-WS.jpg" class="image"><img alt="TSL25911-STM32-WS.jpg" src="/w/upload/thumb/2/2d/TSL25911-STM32-WS.jpg/900px-TSL25911-STM32-WS.jpg" decoding="async" loading="lazy" width="900" height="563" srcset="/w/upload/2/2d/TSL25911-STM32-WS.jpg 1.5x" /></a>
+<h3><span id="预期效果"></span><span class="mw-headline" id=".E9.A2.84.E6.9C.9F.E6.95.88.E6.9E.9C">预期效果</span></h3>
+<h4><span id="电脑打开串口助手，选择对应的端口，即可查看实验现象："></span><span class="mw-headline" id=".E7.94.B5.E8.84.91.E6.89.93.E5.BC.80.E4.B8.B2.E5.8F.A3.E5.8A.A9.E6.89.8B.EF.BC.8C.E9.80.89.E6.8B.A9.E5.AF.B9.E5.BA.94.E7.9A.84.E7.AB.AF.E5.8F.A3.EF.BC.8C.E5.8D.B3.E5.8F.AF.E6.9F.A5.E7.9C.8B.E5.AE.9E.E9.AA.8C.E7.8E.B0.E8.B1.A1.EF.BC.9A">电脑打开串口助手，选择对应的端口，即可查看实验现象：</span></h4>
+<p><a href="/wiki/%E6%96%87%E4%BB%B6:Stm2519%E6%95%88%E6%9E%9C.png" class="image"><img alt="Stm2519效果.png" src="/w/upload/8/8e/Stm2519%E6%95%88%E6%9E%9C.png" decoding="async" loading="lazy" width="900" height="672" /></a>
+</p>
+<h2><span id="Arduino使用"></span><span class="mw-headline" id="Arduino.E4.BD.BF.E7.94.A8">Arduino使用</span></h2>
+<p>在产品百科界面下载程序，然后解压。Arduino程序位于 ~/Arduino UNO/… 
+把Arduino目录下的文件夹复制到Arduino安装目录的libraries下，一般是<br />
+C:\Users\XXX\Documents\Arduino\libraries  或者  C:\Program Files (x86)\Arduino\libraries<br />
+打开Arduino IDE: 点击 File-&gt; Example，查看是否有TSL25911选项，若有说明库导入成功，打开TSL25911-demo, 选择对应的COM口，下载到UNO上,打开串口监视器，即可查看实验现象；
+</p>
+<h3><span id="硬件连接_3"></span><span class="mw-headline" id=".E7.A1.AC.E4.BB.B6.E8.BF.9E.E6.8E.A5_3">硬件连接</span></h3>
+<table border="2;" style="width:800px;">
+
+<tbody><tr style="background:#000088; color:white;" align="center">
+<td width="400px">TCS34725 Color Sensor</td>
+<td>Arduino
+</td></tr>
+<tr align="center">
+<td>VCC</td>
+<td>3.3V/5V
+</td></tr>
+<tr align="center">
+<td>GND</td>
+<td>GND
+</td></tr>
+<tr align="center">
+<td>SDA</td>
+<td>SDA
+</td></tr>
+<tr align="center">
+<td>SCL</td>
+<td>SCL
+</td></tr>
+<tr align="center">
+<td>INT</td>
+<td>D8
+</td></tr>
+</tbody></table><br /><a href="/wiki/%E6%96%87%E4%BB%B6:TSL25911-Arduino-WS.jpg" class="image"><img alt="TSL25911-Arduino-WS.jpg" src="/w/upload/thumb/8/81/TSL25911-Arduino-WS.jpg/900px-TSL25911-Arduino-WS.jpg" decoding="async" loading="lazy" width="900" height="563" srcset="/w/upload/8/81/TSL25911-Arduino-WS.jpg 1.5x" /></a>
+<h3><span id="预期效果_2"></span><span class="mw-headline" id=".E9.A2.84.E6.9C.9F.E6.95.88.E6.9E.9C_2">预期效果</span></h3>
+<p>下图为测试输出数据：<br />
+<a href="/wiki/%E6%96%87%E4%BB%B6:Arduino%E6%95%88%E6%9E%9C.png" class="image"><img alt="Arduino效果.png" src="/w/upload/7/70/Arduino%E6%95%88%E6%9E%9C.png" decoding="async" loading="lazy" width="900" height="839" /></a><br />
+</p>
+</div>
+<div class="tabbertab" title="资料" id="myresources">
+<h1><span id="资料"></span><span class="mw-headline" id=".E8.B5.84.E6.96.99">资料</span></h1>
+<h3><span id="文档"></span><span class="mw-headline" id=".E6.96.87.E6.A1.A3">文档</span></h3>
+<ul><li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/w/upload/5/5a/TSL2591X_Light_Sensor_SchDoc.pdf">原理图</a><br /></li></ul>
+<h3><span id="程序"></span><span class="mw-headline" id=".E7.A8.8B.E5.BA.8F">程序</span></h3>
+<ul><li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/w/upload/b/bc/TSL2591X_Light_Sensor_code.7z">示例程序</a><br /></li>
+<li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://github.com/waveshare/TSL2591X-Light-Sensor">Github</a><br /></li></ul>
+<h3><span id="数据手册"></span><span class="mw-headline" id=".E6.95.B0.E6.8D.AE.E6.89.8B.E5.86.8C">数据手册</span></h3>
+<ul><li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/w/upload/3/31/TSL2591.pdf">TSL2591</a><br /></li></ul>
+<p><br />
+</p>
+</div>
+<div class="tabbertab" title="FAQ" id="myfaq">
+<h1><span class="mw-headline" id="FAQ">FAQ</span></h1>
+<div class="panel-group">
+				<div class="panel panel-default">
+					<div class="panel-heading">
+						<h4 class="panel-title">
+							<a data-toggle="collapse" data-parent="#accordion" href="#accordion1">
+								<b>问题：</b>例程输出数据全部为0或者初始化失败？如图：<br />
+</a><a href="/wiki/%E6%96%87%E4%BB%B6:Questuion3.png" class="image"><img alt="Questuion3.png" src="/w/upload/2/29/Questuion3.png" decoding="async" loading="lazy" width="900" height="635" /></a> 
+							
+						</h4>
+					</div>
+					<div id="accordion1" class="panel-collapse collapse in">
+						<div class="panel-body">
+<div>
+请检查管脚连接是否正确。</div>
+<div style="display:none;"></div>
+<div style="display:none;"></div>
+<p><font color="red" style="display:none;"></font>
+</p>
+						</div>
+					</div>
+				</div>
+</div>
+<p><br />
+</p>
+<div class="panel-group">
+				<div class="panel panel-default">
+					<div class="panel-heading">
+						<h4 class="panel-title">
+							<a data-toggle="collapse" data-parent="#accordion" href="#accordion2">
+								<b>问题：</b> 不正确的使用树莓派控制可能会导致？ 
+							</a>
+						</h4>
+					</div>
+					<div id="accordion2" class="panel-collapse collapse in">
+						<div class="panel-body">
+<div>
+如果运行wiringPi例程正常，再运行python或者BCM2835可能会屏幕无法正常刷新，因为bcm2835库是树莓派cpu芯片的库函数，底层是直接操作寄存器，而wiringPi库和python的底层都是通过读写linux系统的设备文件操作设备，可能导致GPIO口异常，重启树莓派可完美解决。 </div>
+<div style="display:none;"></div>
+<div style="display:none;"></div>
+<p><font color="red" style="display:none;"></font>
+</p>
+						</div>
+					</div>
+				</div>
+</div>
+<p><br />
+</p>
+<div class="panel-group">
+				<div class="panel panel-default">
+					<div class="panel-heading">
+						<h4 class="panel-title">
+							<a data-toggle="collapse" data-parent="#accordion" href="#accordion3">
+								<b>问题：</b>STM32和Arduino例程串口输出没有数据或者数据输出乱码？ 
+							</a>
+						</h4>
+					</div>
+					<div id="accordion3" class="panel-collapse collapse in">
+						<div class="panel-body">
+<div>
+<p>确认波特率是否设置为115200，对于STM32例程请确认电脑正确连接开发板USART2（PA2,PA3），PA2为TXD，并且选择正确的COM端口。控制面板-&gt;硬件-&gt;设备管理器。
+<br />
+</p>
+<a href="/wiki/%E6%96%87%E4%BB%B6:2591question2.png" class="image"><img alt="2591question2.png" src="/w/upload/6/6f/2591question2.png" decoding="async" loading="lazy" width="800" height="521" /></a></div>
+<div style="display:none;"></div>
+<div style="display:none;"></div>
+<p><font color="red" style="display:none;"></font>
+</p>
+						</div>
+					</div>
+				</div>
+</div>
+<p><br />
+</p>
+</div>
+<div class="tabbertab" title="售后" id="mysupport">
+<h1><span id="技术支持"></span><span class="mw-headline" id=".E6.8A.80.E6.9C.AF.E6.94.AF.E6.8C.81">技术支持</span></h1>
+<p><br />联系人：林工<br />
+EMAIL：3005425717@qq.com<br />
+电话：0755-83043099<br />
+QQ：3005425717<br />
+微信：扫下方二维码添加<br />
+<a href="/wiki/%E6%96%87%E4%BB%B6:Lzr.png" class="image"><img alt="Lzr.png" src="/w/upload/thumb/8/8d/Lzr.png/200px-Lzr.png" decoding="async" loading="lazy" width="200" height="200" srcset="/w/upload/thumb/8/8d/Lzr.png/300px-Lzr.png 1.5x, /w/upload/8/8d/Lzr.png 2x" /></a><br />
+</p>
+<style data-mw-deduplicate="TemplateStyles:r75601">.mw-parser-output .note{background-position:left 7px top 50%;padding:0.5em 0.5em 0.5em 40px;margin:0.5em 0;overflow:hidden;background-color:#f8f9fa;background-repeat:no-repeat;border:1px solid #ddd}.mw-parser-output .note-inline{display:inline-block;vertical-align:middle}.mw-parser-output .note-info{background-color:#f6efe5;background-size:25px;border-color:#ac6600;padding-left:40px;min-height:28px}.mw-parser-output .note-reminder{background-color:#fff9ea;background-size:25px;border-color:#fc3;min-height:28px}.mw-parser-output .note-warn{background-color:#fff9ea;background-size:25px;border-color:#fc3;min-height:28px}.mw-parser-output .note-error{background-color:#fee7e6;background-size:25px;border-color:#c33;min-height:28px}</style><div role="note" class="note note-error">说明：进行售后服务前，请准备好客户信息（定货单位、定货人等），以供验证</div></div>
+</div></div>
+<!-- 
+NewPP limit report
+Cached time: 20260703070936
+Cache expiry: 86400
+Dynamic content: false
+Complications: []
+CPU time usage: 0.067 seconds
+Real time usage: 0.075 seconds
+Preprocessor visited node count: 589/1000000
+Post‐expand include size: 8967/2097152 bytes
+Template argument size: 2258/2097152 bytes
+Highest expansion depth: 6/40
+Expensive parser function count: 1/100
+Unstrip recursion depth: 0/20
+Unstrip post‐expand size: 4567/5000000 bytes
+-->
+<!--
+Transclusion expansion time report (%,ms,calls,template)
+100.00%   28.489      1 -total
+ 46.72%   13.310      1 模板:Service17
+ 40.45%   11.524      1 模板:Note
+ 32.03%    9.124      3 模板:FAQ
+ 18.70%    5.327      1 模板:外围模块
+-->
+
+<!-- Saved in parser cache with key ws_wiki_135_cn:pcache:idhash:7137-0!canonical!groups=* and timestamp 20260703070936 and revision id 84168
+ -->
+</div></div>								<div class="printfooter">
+				取自“<a dir="ltr" href="https://www.waveshare.net/w/index.php?title=TSL25911_Light_Sensor&amp;oldid=84168">https://www.waveshare.net/w/index.php?title=TSL25911_Light_Sensor&amp;oldid=84168</a>”				</div>
+												<div id="catlinks" class="catlinks" data-mw="interface"><div id="mw-normal-catlinks" class="mw-normal-catlinks"><a href="/wiki/%E7%89%B9%E6%AE%8A:%E9%A1%B5%E9%9D%A2%E5%88%86%E7%B1%BB" title="特殊:页面分类">分类</a>：<ul><li><a href="/wiki/%E5%88%86%E7%B1%BB:%E6%A8%A1%E5%9D%97" title="分类:模块">模块</a></li><li><a href="/wiki/%E5%88%86%E7%B1%BB:%E5%85%89%E4%BC%A0%E6%84%9F%E5%99%A8" title="分类:光传感器">光传感器</a></li><li><a href="/wiki/%E5%88%86%E7%B1%BB:%E4%BC%A0%E6%84%9F%E5%99%A8" title="分类:传感器">传感器</a></li></ul></div><div id="mw-hidden-catlinks" class="mw-hidden-catlinks mw-hidden-cats-hidden">隐藏分类：<ul><li><a href="/wiki/%E5%88%86%E7%B1%BB:I2C%E6%8E%A5%E5%8F%A3" title="分类:I2C接口">I2C接口</a></li></ul></div></div>												<div class="visualClear"></div>
+							</div>
+			<!-- /bodyContent -->
+		</div>
+						</div>
+				</div>
+			</div>
+			<!-- /content -->
+
+			<!-- sidebar-left -->
+			<div class="sidebar-wrapper sidebar-left-wrapper">
+				<div class="sidebar-container container">
+					<div class="row">
+						<div id="sidebar-left" class="col-md-2 col-md-offset-0">
+							<div id="tweekiTOC"></div>						</div>
+					</div>
+				</div>
+			</div>
+			<!-- /sidebar-left -->
+					<!-- footer -->
+			<div id="footer" role="contentinfo" class="footer container footer-sticky bg-light">
+			<ul id="footer-custom"><li class="dropup"><a href="/w/index.php?title=%E7%89%B9%E6%AE%8A:%E7%94%A8%E6%88%B7%E7%99%BB%E5%BD%95&amp;returnto=TSL25911+Light+Sensor" title="我们鼓励您登录；然而，这不是强制性的[o]" accesskey="o">Login / Create Account</a></li><li class="dropup"><a href="INVALID-TITLE:[https://www.waveshare.net Copyright © 2022 深圳市微雪电子有限公司 版权所有]" id="n-.255Bhttps.253A.252F.252Fwww.waveshare.net-copyright-.25C2.25A9-2022-.25E6.25B7.25B1.25E5.259C.25B3.25E5.25B8.2582.25E5.25BE.25AE.25E9.259B.25AA.25E7.2594.25B5.25E5.25AD.2590.25E6.259C.2589.25E9.2599.2590.25E5.2585.25AC.25E5.258F.25B8-.25E7.2589.2588.25E6.259D.2583.25E6.2589.2580.25E6.259C.2589.255D"><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net">Copyright © 2022 深圳市微雪电子有限公司 版权所有</a></a></li></ul><div style="clear:both"></div>			</div>
+			<!-- /footer -->
+		
+<script>
+var fbtFancyBoxOptions = {"openEffect":"elastic","closeEffect":"elastic","helpers":{"title":{"type":"inside"}}};
+</script>
+
+<script>(RLQ=window.RLQ||[]).push(function(){mw.config.set({"wgPageParseReport":{"limitreport":{"cputime":"0.067","walltime":"0.075","ppvisitednodes":{"value":589,"limit":1000000},"postexpandincludesize":{"value":8967,"limit":2097152},"templateargumentsize":{"value":2258,"limit":2097152},"expansiondepth":{"value":6,"limit":40},"expensivefunctioncount":{"value":1,"limit":100},"unstrip-depth":{"value":0,"limit":20},"unstrip-size":{"value":4567,"limit":5000000},"timingprofile":["100.00%   28.489      1 -total"," 46.72%   13.310      1 模板:Service17"," 40.45%   11.524      1 模板:Note"," 32.03%    9.124      3 模板:FAQ"," 18.70%    5.327      1 模板:外围模块"]},"cachereport":{"timestamp":"20260703070936","ttl":86400,"transientcontent":false}}});mw.config.set({"wgBackendResponseTime":93});});</script>	</body>
+</html>

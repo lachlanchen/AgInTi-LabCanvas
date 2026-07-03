@@ -1,6 +1,10 @@
 *.sh text eol=lf
 
 *.blend binary -whitespace
+*.7z binary -whitespace
+*.jpg binary -whitespace
+*.jpeg binary -whitespace
+*.png binary -whitespace
 *.dxf -diff -whitespace
 *.pdf binary -whitespace
 *.step -diff -whitespace
