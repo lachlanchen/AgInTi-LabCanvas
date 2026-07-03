@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 import json
 from pathlib import Path
 import sqlite3
@@ -13,6 +14,40 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_media_sync.py"
+
+
+def make_test_jpeg(*, truncate_eoi: bool = False) -> bytes:
+    try:
+        from PIL import Image
+    except Exception as exc:  # pragma: no cover - exercised only when Pillow is unavailable.
+        raise unittest.SkipTest("Pillow is not installed") from exc
+    buffer = BytesIO()
+    Image.new("RGB", (32, 24), (245, 245, 245)).save(buffer, format="JPEG")
+    payload = buffer.getvalue()
+    if truncate_eoi and payload.endswith(b"\xff\xd9"):
+        return payload[:-2]
+    return payload
+
+
+def make_v2_container(payload: bytes, *, key: bytes, xor_key: int) -> bytes:
+    try:
+        from Crypto.Cipher import AES
+        from Crypto.Util import Padding
+    except ModuleNotFoundError as exc:  # pragma: no cover - exercised only when pycryptodome is unavailable.
+        raise unittest.SkipTest("pycryptodome is not installed") from exc
+
+    aes_payload = payload[: min(32, len(payload))]
+    raw_payload = payload[len(aes_payload) : len(aes_payload) + 13]
+    xor_payload = payload[len(aes_payload) + len(raw_payload) :]
+    encrypted = AES.new(key, AES.MODE_ECB).encrypt(Padding.pad(aes_payload, AES.block_size))
+    return (
+        b"\x07\x08V2\x08\x07"
+        + struct.pack("<LL", len(aes_payload), len(xor_payload))
+        + b"\x00"
+        + encrypted
+        + raw_payload
+        + bytes(byte ^ xor_key for byte in xor_payload)
+    )
 
 
 class WeChatMediaSyncTests(unittest.TestCase):
@@ -163,30 +198,13 @@ class WeChatMediaSyncTests(unittest.TestCase):
             self.assertEqual(metadata["decode_status"], "decoded-xor")
 
     def test_decodes_v2_dat_container_with_image_key(self) -> None:
-        try:
-            from Crypto.Cipher import AES
-            from Crypto.Util import Padding
-        except ModuleNotFoundError:
-            self.skipTest("pycryptodome is not installed")
-
         sys.path.insert(0, str(SCRIPT.parent))
         import wechat_media_sync
 
         key = b"1234567890abcdef"
         xor_key = 0x44
-        payload = b"\xff\xd8\xff\xe0" + b"jpeg-v2-container" + b"\xff\xd9"
-        aes_payload = payload[:8]
-        raw_payload = payload[8:12]
-        xor_payload = payload[12:]
-        encrypted = AES.new(key, AES.MODE_ECB).encrypt(Padding.pad(aes_payload, AES.block_size))
-        container = (
-            b"\x07\x08V2\x08\x07"
-            + struct.pack("<LL", len(aes_payload), len(xor_payload))
-            + b"\x00"
-            + encrypted
-            + raw_payload
-            + bytes(byte ^ xor_key for byte in xor_payload)
-        )
+        payload = make_test_jpeg(truncate_eoi=True)
+        container = make_v2_container(payload, key=key, xor_key=xor_key)
         with tempfile.TemporaryDirectory() as tmp:
             dat = Path(tmp) / "quoted_v2.dat"
             dat.write_bytes(container)
@@ -197,6 +215,55 @@ class WeChatMediaSyncTests(unittest.TestCase):
         self.assertEqual(decoded["status"], "decoded-v-container")
         self.assertEqual(decoded["format"], "jpg")
         self.assertEqual(decoded["data"], payload)
+
+    def test_sync_overwrites_stale_decoded_file_with_same_length(self) -> None:
+        key = b"1234567890abcdef"
+        xor_key = 0x44
+        payload = make_test_jpeg(truncate_eoi=True)
+        container = make_v2_container(payload, key=key, xor_key=xor_key)
+        token = "cafecafecafecafecafecafecafecafe"
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "source-cache"
+            source.mkdir()
+            dat = source / f"{token}.dat"
+            dat.write_bytes(container)
+            dest = base / "downloads"
+            stale = dest / "testchat" / "source-cache" / f"{token}.jpg"
+            stale.parent.mkdir(parents=True)
+            stale.write_bytes(b"x" * len(payload))
+            db = base / "mirror.sqlite"
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--chat",
+                    "testchat",
+                    "--source",
+                    str(source),
+                    "--dest",
+                    str(dest),
+                    "--db",
+                    str(db),
+                    "--since-minutes",
+                    "0",
+                    "--match-token",
+                    token,
+                    "--image-aes-key",
+                    key.decode("ascii"),
+                    "--image-xor-key",
+                    hex(xor_key),
+                    "--summary-only",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(stale.read_bytes(), payload)
 
     def test_sync_adds_associated_thumb_for_attach_token_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

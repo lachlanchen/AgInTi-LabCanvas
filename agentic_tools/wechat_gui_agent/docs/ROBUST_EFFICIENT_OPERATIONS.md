@@ -112,7 +112,12 @@ should speed the agent up, not replace agent reasoning.
   `local_id`/media tokens/time window, selects one best non-thumbnail candidate,
   and runs the same Codex image reader (`WECHAT_IMAGE_READ_MODEL=gpt-5.5`,
   `WECHAT_IMAGE_READ_EFFORT=low`) plus OCR before optionally sending one
-  concise report back to the originating chat with `--send`.
+  concise report back to the originating chat with `--send`. Prefer decoded
+  `msg/attach/.../Img/<md5>.jpg` originals over `cache/.../Bubble/*_b` previews;
+  Bubble previews can be gray placeholders and must not win when a readable
+  source attachment or thumbnail exists. GUI screenshot crop fallback is opt-in
+  only (`--allow-visible-crop-fallback`) because the visible chat can move and
+  capture later bot replies instead of the source image.
 - Bare file or image uploads with no explicit instruction are still work: route
   them to `file_intake`, sync/copy the exact source into
   `output/wechat_worker/<task-id>/intake/`, record metadata and checksum, and

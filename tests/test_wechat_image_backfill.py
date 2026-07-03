@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 import importlib.util
 from pathlib import Path
 import sys
@@ -8,6 +9,16 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def make_jpeg(color: tuple[int, int, int], size: tuple[int, int] = (64, 48)) -> bytes:
+    try:
+        from PIL import Image
+    except Exception as exc:  # pragma: no cover - exercised only when Pillow is unavailable.
+        raise unittest.SkipTest("Pillow is not installed") from exc
+    buffer = BytesIO()
+    Image.new("RGB", size, color).save(buffer, format="JPEG")
+    return buffer.getvalue()
 
 
 def load_backfill():
@@ -54,6 +65,26 @@ class WeChatImageBackfillTests(unittest.TestCase):
                 [
                     {"mirror_path": str(thumb), "suffix": ".jpg", "score": 100, "size_bytes": thumb.stat().st_size},
                     {"mirror_path": str(original), "suffix": ".jpg", "score": 100, "size_bytes": original.stat().st_size},
+                ]
+            )
+
+        self.assertEqual(Path(candidate["mirror_path"]).name, "abc123.jpg")
+
+    def test_best_image_candidate_rejects_gray_bubble_when_full_attachment_exists(self) -> None:
+        backfill = load_backfill()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = root / "msg" / "attach" / "chat" / "2026-07" / "Img" / "abc123.jpg"
+            bubble = root / "cache" / "2026-07" / "Message" / "chat" / "Bubble" / "abc123_b.jpg"
+            original.parent.mkdir(parents=True)
+            bubble.parent.mkdir(parents=True)
+            original.write_bytes(make_jpeg((250, 250, 250), size=(800, 1200)))
+            bubble.write_bytes(make_jpeg((130, 130, 130), size=(220, 500)))
+
+            candidate = backfill.best_image_candidate(
+                [
+                    {"mirror_path": str(bubble), "suffix": ".jpg", "score": 100, "size_bytes": bubble.stat().st_size},
+                    {"mirror_path": str(original), "suffix": ".jpg", "score": 60, "size_bytes": original.stat().st_size},
                 ]
             )
 

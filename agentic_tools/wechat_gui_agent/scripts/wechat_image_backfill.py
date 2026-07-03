@@ -42,6 +42,11 @@ def main() -> int:
     parser.add_argument("--send", action="store_true", help="Send the combined report to the WeChat chat.")
     parser.add_argument("--send-targets", type=Path, default=worker.DEFAULT_SEND_TARGETS)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--allow-visible-crop-fallback",
+        action="store_true",
+        help="Allow GUI screenshot crop fallback for the newest row. Off by default to avoid capturing later chat replies.",
+    )
     parser.add_argument("--model", default=os.environ.get("WECHAT_IMAGE_READ_MODEL", "gpt-5.5"))
     parser.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_IMAGE_READ_EFFORT", "low"))
     parser.add_argument("--json", action="store_true", help="Print machine-readable output.")
@@ -61,7 +66,7 @@ def main() -> int:
         artifact_dir = run_dir / f"{index:02d}-local-{row.get('local_id')}"
         artifact_dir.mkdir(parents=True, exist_ok=True)
         task = build_image_task(config, row, rows)
-        if row.get("local_id") == newest_local_id:
+        if args.allow_visible_crop_fallback and row.get("local_id") == newest_local_id:
             task.setdefault("source", {})["allow_visible_crop_fallback"] = True
         result = process_image_row(task, artifact_dir)
         result["row"] = row_public_snapshot(row)
@@ -335,7 +340,7 @@ def candidate_matches_resource_md5(item: dict[str, Any], resource_md5: str) -> b
 
 
 def best_image_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
-    readable = []
+    readable: list[dict[str, Any]] = []
     for item in candidates:
         path = Path(str(item.get("mirror_path") or "")).expanduser()
         if not path.is_file():
@@ -346,6 +351,9 @@ def best_image_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | N
         readable.append(item)
     if not readable:
         return None
+    non_placeholder = [item for item in readable if not image_candidate_is_placeholder(item)]
+    if non_placeholder:
+        return max(non_placeholder, key=image_candidate_score)
     return max(readable, key=image_candidate_score)
 
 
@@ -358,10 +366,12 @@ def image_candidate_score(item: dict[str, Any]) -> tuple[float, int, int, float,
     path_text = path.as_posix().lower()
     stem = path.stem.lower()
     score = float(item.get("score") or 0)
-    if "/img/" in path_text and not re.search(r"_(?:t|h|b|w)$", stem):
-        score += 80
+    if "/msg/attach/" in path_text and "/img/" in path_text and not re.search(r"_(?:t|h|b|w)$", stem):
+        score += 260
+    elif "/img/" in path_text and not re.search(r"_(?:t|h|b|w)$", stem):
+        score += 160
     if "/bubble/" in path_text:
-        score += 30
+        score -= 220
     if "/thumb/" in path_text or stem.endswith("_thumb"):
         score -= 80
     if re.search(r"_(?:t|h|w)$", stem):
@@ -372,12 +382,23 @@ def image_candidate_score(item: dict[str, Any]) -> tuple[float, int, int, float,
         width = int(metadata.get("width") or 0)
         height = int(metadata.get("height") or 0)
         if image_looks_like_placeholder(path):
-            score -= 380
+            score -= 620
     else:
         score -= 500
         width = 0
         height = 0
     return score, width * height, size, float(item.get("source_mtime") or 0.0), path.name
+
+
+def image_candidate_is_placeholder(item: dict[str, Any]) -> bool:
+    path = Path(str(item.get("mirror_path") or "")).expanduser()
+    if not path.is_file():
+        return True
+    path_text = path.as_posix().lower()
+    metadata = worker.image_file_metadata(path)
+    if metadata.get("status") != "ok":
+        return True
+    return "/bubble/" in path_text and image_looks_like_placeholder(path)
 
 
 def image_looks_like_placeholder(path: Path) -> bool:

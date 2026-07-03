@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import re
 import struct
+from io import BytesIO
 
 from wechat_mirror import DEFAULT_DB, record_event, record_media_files
 
@@ -159,7 +160,10 @@ def sync_candidate(
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = decode_result["data"] if decode_result else None
-        if target.exists() and (payload is None or target.stat().st_size == len(payload)):
+        if target.exists() and payload is None:
+            item["status"] = "exists"
+            return
+        if target.exists() and payload is not None and target.read_bytes() == payload:
             item["status"] = "exists"
             return
         if payload is not None:
@@ -315,11 +319,31 @@ def decode_wechat_v_container(data: bytes, *, image_aes_key: bytes | None, image
     except Exception:
         return None
     fmt = detect_media_extension_from_bytes(payload).lstrip(".")
-    if fmt == "jpg" and xor_size >= 2 and not payload.endswith(b"\xff\xd9"):
+    if fmt == "jpg" and not decoded_jpeg_is_readable(payload):
         return None
     if fmt == "png" and xor_size >= 2 and b"IEND" not in payload[-12:]:
         return None
     return (fmt, payload) if fmt else None
+
+
+def decoded_jpeg_is_readable(payload: bytes) -> bool:
+    try:
+        from PIL import Image, ImageFile
+    except Exception:
+        return payload.startswith(b"\xff\xd8\xff") and len(payload) > 1024
+    try:
+        previous = ImageFile.LOAD_TRUNCATED_IMAGES
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        with Image.open(BytesIO(payload)) as image:
+            image.load()
+            return image.format == "JPEG" and image.width > 0 and image.height > 0
+    except Exception:
+        return False
+    finally:
+        try:
+            ImageFile.LOAD_TRUNCATED_IMAGES = previous
+        except Exception:
+            pass
 
 
 def decode_xor_dat(data: bytes) -> tuple[str, bytes] | None:
