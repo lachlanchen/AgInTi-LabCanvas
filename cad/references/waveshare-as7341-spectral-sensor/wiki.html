@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html class="client-nojs" lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8"/>
+<title>AS7341 Spectral Color Sensor - Waveshare Wiki</title>
+<script>document.documentElement.className="client-js";RLCONF={"wgBreakFrames":!1,"wgSeparatorTransformTable":["",""],"wgDigitTransformTable":["",""],"wgDefaultDateFormat":"dmy","wgMonthNames":["","January","February","March","April","May","June","July","August","September","October","November","December"],"wgRequestId":"5296b131aa28e9b7a9d36941","wgCSPNonce":!1,"wgCanonicalNamespace":"","wgCanonicalSpecialPageName":!1,"wgNamespaceNumber":0,"wgPageName":"AS7341_Spectral_Color_Sensor","wgTitle":"AS7341 Spectral Color Sensor","wgCurRevisionId":99320,"wgRevisionId":99320,"wgArticleId":7903,"wgIsArticle":!0,"wgIsRedirect":!1,"wgAction":"view","wgUserName":null,"wgUserGroups":["*"],"wgCategories":[],"wgPageContentLanguage":"en","wgPageContentModel":"wikitext","wgRelevantPageName":"AS7341_Spectral_Color_Sensor","wgRelevantArticleId":7903,"wgIsProbablyEditable":!1,"wgRelevantPageIsProbablyEditable":!1,"wgRestrictionEdit":[],"wgRestrictionMove":[]};RLSTATE={"ext.gadget.tabber":
+"ready","site.styles":"ready","noscript":"ready","user.styles":"ready","user":"ready","user.options":"loading","jquery.makeCollapsible.styles":"ready","mediawiki.toc.styles":"ready","skins.tweeki.styles":"ready","skins.tweeki.bootstraptheme.styles":"ready","skins.tweeki.externallinks.styles":"ready","skins.tweeki.awesome.styles":"ready"};RLPAGEMODULES=["site","mediawiki.page.startup","mediawiki.page.ready","jquery.makeCollapsible","mediawiki.toc","ext.FancyBoxThumbs","ext.HighlightjsIntegration","skins.tweeki.messages","skins.tweeki.scripts"];</script>
+<script>(RLQ=window.RLQ||[]).push(function(){mw.loader.implement("user.options@1hzgi",function($,jQuery,require,module){/*@nomin*/mw.user.tokens.set({"patrolToken":"+\\","watchToken":"+\\","csrfToken":"+\\"});
+});});</script>
+<link rel="stylesheet" href="/w/Uy8Yw0y/aAdkk0o.php?lang=en&amp;modules=jquery.makeCollapsible.styles%7Cmediawiki.toc.styles%7Cskins.tweeki.awesome.styles%7Cskins.tweeki.bootstraptheme.styles%7Cskins.tweeki.externallinks.styles%7Cskins.tweeki.styles&amp;only=styles&amp;skin=tweeki"/>
+<script async="" src="/w/Uy8Yw0y/aAdkk0o.php?lang=en&amp;modules=startup&amp;only=scripts&amp;raw=1&amp;skin=tweeki"></script>
+<meta name="ResourceLoaderDynamicStyles" content=""/>
+<link rel="stylesheet" href="/w/Uy8Yw0y/aAdkk0o.php?lang=en&amp;modules=ext.gadget.tabber&amp;only=styles&amp;skin=tweeki"/>
+<link rel="stylesheet" href="/w/Uy8Yw0y/aAdkk0o.php?lang=en&amp;modules=site.styles&amp;only=styles&amp;skin=tweeki"/>
+<meta name="generator" content="MediaWiki 1.35.5"/>
+<meta property="og:image" content="https://www.waveshare.com/w/upload/b/b9/AS7341_Spectral_Color_Sensor-1.jpeg"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="shortcut icon" href="/w/favicon.ico"/>
+<link rel="search" type="application/opensearchdescription+xml" href="/w/opensearch_desc.php" title="Waveshare Wiki (en)"/>
+<link rel="EditURI" type="application/rsd+xml" href="https://www.waveshare.com/w/api.php?action=rsd"/>
+<link rel="alternate" type="application/atom+xml" title="Waveshare Wiki Atom feed" href="/w/index.php?title=Special:RecentChanges&amp;feed=atom"/>
+<!--[if lt IE 9]><script src="/w/resources/lib/html5shiv/html5shiv.js"></script><![endif]-->
+</head>
+<body class="mediawiki ltr sitedir-ltr mw-hide-empty-elt ns-0 ns-subject page-AS7341_Spectral_Color_Sensor rootpage-AS7341_Spectral_Color_Sensor skin-tweeki action-view tweeki-animateLayout tweeki-non-advanced tweeki-user-anon">			<!-- navbar -->
+			<div id="mw-navigation" class="navbar navbar-default navbar-fixed-top navbar-expand-lg fixed-top navbar-light bg-light" role="navigation">
+				<h2>Navigation menu</h2>
+				<div id="mw-head" class="navbar-inner">
+					<div class="container">
+
+						<div class="navbar-header">
+							<button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-collapse">
+								<span class="sr-only">Toggle navigation</span>
+								<span class="icon-bar"></span>
+								<span class="icon-bar"></span>
+								<span class="icon-bar"></span>
+							</button>
+
+							<a href="/wiki/Main_Page" class="navbar-brand"><img src="https://www.waveshare.com/w/upload/a/a7/Ws-watermark-en.svg" alt="Waveshare Wiki" /></a>
+						</div>
+
+						<div id="navbar" class="navbar-collapse collapse">
+													<ul class="nav navbar-nav">
+							<li class="nav"><a href="#" id="n-raspberry-pi" class="dropdown-toggle" data-toggle="dropdown">Raspberry Pi <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-main_page.2523rpi-boards"><a href="/wiki/Main_Page#RPi-Boards" tabindex="-1">Boards/Kits</a></li><li id="n-main_page.2523rpi-displays"><a href="/wiki/Main_Page#RPi-Displays" tabindex="-1">Displays</a></li><li id="n-main_page.2523rpi-cameras"><a href="/wiki/Main_Page#RPi-Cameras" tabindex="-1">Cameras</a></li><li id="n-main_page.2523rpi-expansions"><a href="/wiki/Main_Page#RPi-Expansions" tabindex="-1">Expansions</a></li><li id="n-main_page.2523rpi-laptops"><a href="/wiki/Main_Page#RPi-Laptops" tabindex="-1">All-in-one</a></li><li id="n-main_page.2523rpi-robots"><a href="/wiki/Main_Page#RPi-Robots" tabindex="-1">Robots</a></li><li id="n-main_page.2523rpi-games"><a href="/wiki/Main_Page#RPi-Games" tabindex="-1">Portable Gaming</a></li><li id="n-main_page.2523rpi-acces"><a href="/wiki/Main_Page#RPi-Acces" tabindex="-1">Accessories</a></li><li id="n-main_page.2523android-linux-boards"><a href="/wiki/Main_Page#Android-Linux-Boards" tabindex="-1">Other Android/Linux Boards</a></li></ul></li><li class="nav"><a href="#" id="n-ai" class="dropdown-toggle" data-toggle="dropdown">AI <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-main_page.2523jetson-ai-boards"><a href="/wiki/Main_Page#Jetson-AI-Boards" tabindex="-1">Boards/Kits</a></li><li id="n-main_page.2523jetson-ai-displays"><a href="/wiki/Main_Page#Jetson-AI-Displays" tabindex="-1">Displays</a></li><li id="n-main_page.2523jetson-ai-cameras"><a href="/wiki/Main_Page#Jetson-AI-Cameras" tabindex="-1">Cameras</a></li><li id="n-main_page.2523jetson-ai-hat"><a href="/wiki/Main_Page#Jetson-AI-HAT" tabindex="-1">Expansions</a></li><li id="n-main_page.2523jetson-ai-robots"><a href="/wiki/Main_Page#Jetson-AI-Robots" tabindex="-1">Robots</a></li></ul></li><li class="nav"><a href="#" id="n-displays" class="dropdown-toggle" data-toggle="dropdown">Displays <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-main_page.2523display-lcd-oleds"><a href="/wiki/Main_Page#Display-LCD-OLEDs" tabindex="-1">LCD/OLED</a></li><li id="n-main_page.2523display-e-paper"><a href="/wiki/Main_Page#Display-e-Paper" tabindex="-1">e-Paper</a></li></ul></li><li class="nav"><a href="#" id="n-iot" class="dropdown-toggle" data-toggle="dropdown">IoT <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-main_page.2523long-range-wireless-comm"><a href="/wiki/Main_Page#Long-range-wireless-comm" tabindex="-1">Long Range Wireless</a></li><li id="n-main_page.2523short-range-wireless-comm"><a href="/wiki/Main_Page#Short-range-wireless-comm" tabindex="-1">Short Range Wireless</a></li><li id="n-main_page.2523wired-communication"><a href="/wiki/Main_Page#Wired-communication" tabindex="-1">Wired Comm / Converter</a></li><li id="n-main_page.2523misc-cameras-av"><a href="/wiki/Main_Page#Misc-cameras-av" tabindex="-1">Cameras / Audio / Video</a></li><li id="n-main_page.2523misc-sensor-modules"><a href="/wiki/Main_Page#Misc-sensor-modules" tabindex="-1">Sensors</a></li><li id="n-main_page.2523misc-servos-motors"><a href="/wiki/Main_Page#Misc-servos-motors" tabindex="-1">Motors / Servos</a></li><li id="n-main_page.2523misc-other-modules"><a href="/wiki/Main_Page#Misc-other-modules" tabindex="-1">others</a></li></ul></li><li class="nav"><a href="#" id="n-robotics" class="dropdown-toggle" data-toggle="dropdown">Robotics <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-main_page.2523robotics-cars"><a href="/wiki/Main_Page#Robotics-cars" tabindex="-1">Mobile Robots</a></li><li id="n-main_page.2523dog-like-robots"><a href="/wiki/Main_Page#Dog-like-Robots" tabindex="-1">Dog-like Robots</a></li><li id="n-main_page.2523robotics-drivers-sensors"><a href="/wiki/Main_Page#Robotics-drivers-sensors" tabindex="-1">Drivers / Sensors</a></li><li id="n-main_page.2523robotics-robot-arms"><a href="/wiki/Main_Page#Robotics-robot-arms" tabindex="-1">Robot Arm / Control</a></li></ul></li><li class="nav"><a href="#" id="n-mcu.252Ffpga" class="dropdown-toggle" data-toggle="dropdown">MCU/FPGA <b class="caret"></b></a><ul class="dropdown-menu " role="menu"><li id="n-main_page.2523arduino-main-boards"><a href="/wiki/Main_Page#Arduino-main-boards" tabindex="-1">Arduino</a></li><li id="n-main_page.2523micro.253Abit"><a href="/wiki/Main_Page#micro:bit" tabindex="-1">micro:bit</a></li><li id="n-main_page.2523mcu.2farm" class="LPC"><a href="/wiki/Main_Page#MCU.2FARM" tabindex="-1">STM32</a></li><li id="n-main_page.2523fpga"><a href="/wiki/Main_Page#FPGA" tabindex="-1">FPGA</a></li></ul></li><li class="nav"><a href="https://service.waveshare.com" id="n-https.253A.252F.252Fservice.waveshare.com" rel="nofollow" target="_blank">Support</a></li>							</ul>
+						
+													<ul class="nav navbar-nav navbar-right">
+							</ul>
+				<form class="navbar-form navbar-right" action="/w/index.php" id="searchform">
+					<div class="form-group"><input type="search" name="search" placeholder="Product name search" title="Search Waveshare Wiki [f]" accesskey="f" id="searchInput" class="search-query form-control"/><input type="submit" name="go" value="Go" title="Go to a page with this exact name if it exists" id="mw-searchButton" class="searchButton btn hidden"/>
+					</div>
+				</form><ul class="nav navbar-nav navbar-right">							</ul>
+						</div>
+						
+					</div>
+				</div>
+			</div>
+			<!-- /navbar -->
+					<div id="mw-page-base"></div>
+			<div id="mw-head-base"></div>
+			<a id="top"></a>
+
+			<!-- content -->
+			<div id="contentwrapper" class="user-loggedout not-editable container with-navbar with-navbar-fixed">
+
+				
+				<div class="row">
+					<div class="col-md-offset-2 col-md-10" role="main">
+								<div class="mw-body" id="content">
+			<div id="mw-js-message" style="display:none;"></div>
+									<h1 id="firstHeading" class="firstHeading page-header" lang="en"><span dir="auto">AS7341 Spectral Color Sensor</span></h1>
+									<!-- bodyContent -->
+			<div id="bodyContent">
+								<div id="siteSub">From Waveshare Wiki</div>
+								<div id="contentSub"></div>
+												<div id="jump-to-nav" class="mw-jump">
+					Jump to:					<a href="#mw-navigation">navigation</a>, 					<a href="#p-search">search</a>
+				</div>
+				<div id="mw-content-text" lang="en" dir="ltr" class="mw-content-ltr"><div class="mw-parser-output"><div class="wiki-pages jet-green-color">
+<table id="infotable" class="a-r at-c roundy bgd-green bl-white" style="margin-left: 5px; margin-bottom: 5px; width: 30%;">
+
+<tbody><tr>
+<td>
+<table class="at-c roundy" style="background: transparent;width:100%;">
+
+<tbody><tr>
+<td class="at-c textwhite"><b>AS7341 Spectral Color Sensor</b>
+</td></tr>
+<tr>
+<td class="at-c bgwhite" style="margin:5px;"><a href="https://www.waveshare.com/as7341-spectral-color-sensor.htm" title="AS7341 Spectral Color Sensor" target="_blank" rel="nofollow noreferrer noopener"><img alt="AS7341 Spectral Color Sensor" src="/w/upload/thumb/b/b9/AS7341_Spectral_Color_Sensor-1.jpeg/300px-AS7341_Spectral_Color_Sensor-1.jpeg" decoding="async" loading="lazy" width="300" height="225" srcset="/w/upload/b/b9/AS7341_Spectral_Color_Sensor-1.jpeg 1.5x" /></a><br /><br /><small>AS7341 Spectral Color Sensor, Visible Spectrum Sensor, Multi Channels, High Precision, I2C Bus</small>
+</td></tr></tbody></table>
+</td></tr>
+<tr style="display:none;">
+<td>
+<table class="roundy" style="background: transparent;width:100%;">
+
+<tbody><tr>
+<td class="at-c textwhite"><b>{{{name2}}}</b>
+</td></tr>
+<tr>
+<td class="at-c bgwhite" style="margin:5px;"><br />
+</td></tr></tbody></table>
+</td></tr>
+<tr style="display:none;">
+<td>
+<table class="roundy" style="background: transparent;width:100%;">
+
+<tbody><tr>
+<td class="at-c textwhite"><b>{{{name3}}}</b>
+</td></tr>
+<tr>
+<td class="at-c bgwhite" style="margin:5px;"><br />
+</td></tr></tbody></table>
+</td></tr>
+<tr style="display:none;">
+<td>
+<table class="roundy" style="background: transparent;width:100%;">
+
+<tbody><tr>
+<td class="at-c textwhite"><b>{{{name4}}}</b>
+</td></tr>
+<tr>
+<td class="at-c bgwhite" style="margin:5px;"><br />
+</td></tr></tbody></table>
+</td></tr>
+<tr style="display:none;">
+<td>
+<table class="roundy" style="background: transparent;width:100%;">
+
+<tbody><tr>
+<td class="at-c textwhite"><b>{{{name5}}}</b>
+</td></tr>
+<tr>
+<td class="at-c bgwhite" style="margin:5px;"><br />
+</td></tr></tbody></table>
+</td></tr>
+<tr style="display:none;">
+<td>
+<table class="roundy" style="background: transparent;width:100%;">
+
+<tbody><tr>
+<td class="at-c textwhite"><b>{{{name6}}}</b>
+</td></tr>
+<tr>
+<td class="at-c bgwhite" style="margin:5px;"><br />
+</td></tr></tbody></table>
+</td></tr>
+<tr>
+<td>
+<table class="roundy" style="display:none;">
+<tbody><tr>
+<td style="width:2%;">
+</td>
+<td style="width:3%;">
+</td>
+<th colspan="2" width="90%" class="at-c roundytop bgl-white">Primary Attribute
+</th>
+<td style="width:3%;">
+</td>
+<td style="width:2%;">
+</td></tr>
+<tr>
+<td colspan="6" width="90px" class="at-c roundytl roundytr bgwhite b-green" style="border-width: 0 0 1px 0;"><b>Category:</b> <a href="/wiki/Category:Modules" title="Category:Modules"> Sensors</a>
+</td></tr>
+<tr style="display:none;">
+<th colspan="3" width="90px" class="at-r bgwhite b-green" style="border-width: 0 0 1px 0;">{{{userDefinedInfo}}}:
+</th>
+<td colspan="3" class="at-l b-green bgwhite" style="border-width: 0 0 1px 0;">{{{userdefinedvalue}}}
+</td></tr>
+<tr style="display:none;">
+<td colspan="6" width="90px" class="at-c roundybl roundybr bgwhite"><b>Brand:</b> Waveshare
+</td></tr></tbody></table>
+</td></tr>
+<tr>
+<td>
+<table class="a-r roundy" style="display:none;">
+<tbody><tr>
+<td style="width:2%;">
+</td>
+<td style="width:3%;">
+</td>
+<th colspan="2" width="90%" class="at-c roundytop bgl-white">Website
+</th>
+<td style="width:3%;">
+</td>
+<td style="width:2%;">
+</td></tr>
+<tr>
+<td colspan="6" width="90px" class="at-c roundytl roundytr bgwhite b-green" style="border-width: 0 0 1px 0;"><b>International:</b> <a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.com/as7341-spectral-color-sensor.htm">Website</a>
+</td></tr>
+<tr>
+<td colspan="6" width="90px" class="at-c roundybl roundybr bgwhite"><b>Chinese:</b> <a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.net/shop/AS7341-Spectral-Color-Sensor.htm">官方中文站点</a>
+</td></tr></tbody></table>
+</td></tr>
+<tr style="display:none;">
+<td>
+<table class="a-r roundy" style="background: transparent; border-collapse:collapse;width:100%;display:none;">
+<tbody><tr>
+<td style="width:2%;">
+</td>
+<td style="width:3%;">
+</td>
+<th colspan="2" width="90%" class="at-c roundytop bgl-white">Onboard Interfaces
+</th>
+<td style="width:3%;">
+</td>
+<td style="width:2%;">
+</td></tr>
+<tr>
+<td colspan="6" width="90px" class="at-l roundy bgwhite b-green" style="border-width: 0 0 1px 0;">
+<table class="roundy bgwhite fulltable" style="text-align:center;">
+
+<tbody><tr>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td></tr>
+<tr>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td></tr>
+<tr>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td></tr>
+<tr>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td></tr>
+<tr>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td>
+<td class="roundy bl-gray bw-1" style="width:25%;display:none;"><small></small>
+</td></tr></tbody></table>
+</td></tr></tbody></table>
+</td></tr>
+<tr style="display:none;">
+<td>
+<table class="a-r roundy" style="background: transparent; border-collapse:collapse;width:100%;;display:none;">
+<tbody><tr>
+<td style="width:2%;">
+</td>
+<td style="width:3%;">
+</td>
+<th colspan="2" width="90%" class="at-c roundytop bgl-white">Related Products
+</th>
+<td style="width:3%;">
+</td>
+<td style="width:2%;">
+</td></tr>
+<tr>
+<td colspan="6" width="90px" class="at-l roundy bgwhite b-green" style="border-width: 0 0 1px 0;">
+</td></tr></tbody></table>
+</td></tr></tbody></table>
+<div id="toc" class="toc" role="navigation" aria-labelledby="mw-toc-heading"><input type="checkbox" role="button" id="toctogglecheckbox" class="toctogglecheckbox" style="display:none" /><div class="toctitle" lang="en" dir="ltr"><h2 id="mw-toc-heading">Contents</h2><span class="toctogglespan"><label class="toctogglelabel" for="toctogglecheckbox"></label></span></div>
+<ul>
+<li class="toclevel-1 tocsection-1"><a href="#Overview"><span class="tocnumber">1</span> <span class="toctext">Overview</span></a>
+<ul>
+<li class="toclevel-2 tocsection-2"><a href="#Introduction"><span class="tocnumber">1.1</span> <span class="toctext">Introduction</span></a></li>
+<li class="toclevel-2 tocsection-3"><a href="#Feature"><span class="tocnumber">1.2</span> <span class="toctext">Feature</span></a></li>
+<li class="toclevel-2 tocsection-4"><a href="#Specification"><span class="tocnumber">1.3</span> <span class="toctext">Specification</span></a></li>
+<li class="toclevel-2 tocsection-5"><a href="#Pinout"><span class="tocnumber">1.4</span> <span class="toctext">Pinout</span></a></li>
+<li class="toclevel-2 tocsection-6"><a href="#Hardware_description"><span class="tocnumber">1.5</span> <span class="toctext">Hardware description</span></a>
+<ul>
+<li class="toclevel-3 tocsection-7"><a href="#AS7341_Chip"><span class="tocnumber">1.5.1</span> <span class="toctext">AS7341 Chip</span></a></li>
+<li class="toclevel-3 tocsection-8"><a href="#Working_Protocol"><span class="tocnumber">1.5.2</span> <span class="toctext">Working Protocol</span></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toclevel-1"><a href="#Arduino"><span class="tocnumber">2</span> <span class="toctext">Arduino</span></a>
+<ul>
+<li class="toclevel-2"><a href="#Hardware_connection"><span class="tocnumber">2.1</span> <span class="toctext">Hardware connection</span></a></li>
+<li class="toclevel-2"><a href="#Run_the_demo"><span class="tocnumber">2.2</span> <span class="toctext">Run the demo</span></a></li>
+<li class="toclevel-2"><a href="#Demo_description"><span class="tocnumber">2.3</span> <span class="toctext">Demo description</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1"><a href="#STM32"><span class="tocnumber">3</span> <span class="toctext">STM32</span></a>
+<ul>
+<li class="toclevel-2"><a href="#Hardware_connection_2"><span class="tocnumber">3.1</span> <span class="toctext">Hardware connection</span></a></li>
+<li class="toclevel-2"><a href="#Demo_description_2"><span class="tocnumber">3.2</span> <span class="toctext">Demo description</span></a>
+<ul>
+<li class="toclevel-3"><a href="#NUCLEO-F103RB"><span class="tocnumber">3.2.1</span> <span class="toctext">NUCLEO-F103RB</span></a></li>
+<li class="toclevel-3"><a href="#OpenH743I-C"><span class="tocnumber">3.2.2</span> <span class="toctext">OpenH743I-C</span></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toclevel-1"><a href="#Raspberry_Pi"><span class="tocnumber">4</span> <span class="toctext">Raspberry Pi</span></a>
+<ul>
+<li class="toclevel-2"><a href="#Hardware_connection_3"><span class="tocnumber">4.1</span> <span class="toctext">Hardware connection</span></a>
+<ul>
+<li class="toclevel-3"><a href="#Enable_I2C_interface"><span class="tocnumber">4.1.1</span> <span class="toctext">Enable I2C interface</span></a></li>
+<li class="toclevel-3"><a href="#Libraries_Installation"><span class="tocnumber">4.1.2</span> <span class="toctext">Libraries Installation</span></a></li>
+</ul>
+</li>
+<li class="toclevel-2"><a href="#Download_the_demo"><span class="tocnumber">4.2</span> <span class="toctext">Download the demo</span></a></li>
+<li class="toclevel-2"><a href="#C"><span class="tocnumber">4.3</span> <span class="toctext">C</span></a></li>
+<li class="toclevel-2"><a href="#python"><span class="tocnumber">4.4</span> <span class="toctext">python</span></a></li>
+<li class="toclevel-2"><a href="#Download_and_Test_Demo"><span class="tocnumber">4.5</span> <span class="toctext">Download and Test Demo</span></a></li>
+<li class="toclevel-2"><a href="#Demo_description_3"><span class="tocnumber">4.6</span> <span class="toctext">Demo description</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-9"><a href="#Resources"><span class="tocnumber">5</span> <span class="toctext">Resources</span></a>
+<ul>
+<li class="toclevel-2 tocsection-10"><a href="#Document"><span class="tocnumber">5.1</span> <span class="toctext">Document</span></a></li>
+<li class="toclevel-2 tocsection-11"><a href="#Demo"><span class="tocnumber">5.2</span> <span class="toctext">Demo</span></a></li>
+<li class="toclevel-2 tocsection-12"><a href="#Datasheet"><span class="tocnumber">5.3</span> <span class="toctext">Datasheet</span></a></li>
+<li class="toclevel-2 tocsection-13"><a href="#Software"><span class="tocnumber">5.4</span> <span class="toctext">Software</span></a></li>
+</ul>
+</li>
+<li class="toclevel-1 tocsection-14"><a href="#FAQ"><span class="tocnumber">6</span> <span class="toctext">FAQ</span></a></li>
+<li class="toclevel-1 tocsection-15"><a href="#Support"><span class="tocnumber">7</span> <span class="toctext">Support</span></a></li>
+</ul>
+</div>
+
+<h1><span class="mw-headline" id="Overview">Overview</span></h1>
+<h2><span class="mw-headline" id="Introduction">Introduction</span></h2>
+<p>With AS7341 visible spectrum sensing IC as the core, this product can sense the visible light component values of different bands in the environment. It is also quite impressive in sensitivity and accuracy. At the same time, its volume is very small. To make a miniature spectrum analyzer, it will be a very good choice.
+</p>
+<h2><span class="mw-headline" id="Feature">Feature</span></h2>
+<ul><li>Incorporates AS7341 chip, which integrates 8 x visible spectrum channels, 1 x near-infrared channel, and 1 x no filter channel.</li>
+<li>Embedded 6 x independent 16-bit ADC, which allows effective processing of data in parallel.</li>
+<li>Dedicated channel to detect ambient light flicker on the specific frequency.</li>
+<li>2 x high brightness LEDs, can be used as fill light in a dim environment.</li>
+<li>Interrupt pin to output inner ADC real-time operating status.</li>
+<li>Features spectrum interrupt detection, with programable high/low thresholds.</li>
+<li>Provides general-purpose input/output GPIO pin.</li>
+<li>Onboard voltage translator, compatible with 3.3V/5V operating voltage.</li>
+<li>Comes with online development resources and manual (examples for Raspberry Pi/Arduino/STM32).</li></ul>
+<h2><span class="mw-headline" id="Specification">Specification</span></h2>
+<ul><li>Operating voltage: 3.3V/5V</li>
+<li>Operating current: 20mA (LED off) 70mA (LED on)</li>
+<li>Sensor: AS7341</li>
+<li>Logical voltage: 3.3V/5V</li>
+<li>Interface: I2C</li>
+<li>Dimension: 30.5mm x 23mm</li>
+<li>Mounting hole size: 2.0mm</li></ul>
+<h2><span class="mw-headline" id="Pinout">Pinout</span></h2>
+<table border="1;" style="width:700px;text-align:center" align="center">
+
+<tbody><tr style="background:green; color:white;" align="center">
+<td>Pin number</td>
+<td>PIN</td>
+<td>Description
+</td></tr>
+<tr>
+<td>1</td>
+<td>VCC</td>
+<td>3.3V/5V Power input
+</td></tr>
+<tr>
+<td>2</td>
+<td>GND</td>
+<td>Ground
+</td></tr>
+<tr>
+<td>3</td>
+<td>SDA</td>
+<td>I2C data cable
+</td></tr>
+<tr>
+<td>4</td>
+<td>SCL</td>
+<td>I2C clock cable
+</td></tr>
+<tr>
+<td>5</td>
+<td>INT</td>
+<td>Interrupt output pin
+</td></tr>
+<tr>
+<td>6</td>
+<td>GPIO</td>
+<td>input/output GPIO port
+</td></tr></tbody></table>
+<h2><span class="mw-headline" id="Hardware_description">Hardware description</span></h2>
+<h3><span class="mw-headline" id="AS7341_Chip">AS7341 Chip</span></h3>
+<p>This product uses AS7341-DLGM as the core, which is an 11-channel IC for spectrum recognition and color matching applications. The spectral response is defined at a wavelength of about 350nm to 1000nm. 6 channels can be processed in parallel by independent adcs, while the other channels can be accessed through a multiplexer. AS7341 integrates the filter into the silicon of standard CMOS through a nano-optical deposition interference filter. The technology and its package provide a built-in aperture to control the light entering the sensor array. Its control and spectral data access are realized through the serial I²C interface.
+</p>
+<h3><span class="mw-headline" id="Working_Protocol">Working Protocol</span></h3>
+<p>This product uses I2C communication with one data line and one clock line. There are three types of signals in the I2C bus in the process of transmitting data: START signal, STOP signal, and Response signal.
+</p><p><a href="/wiki/File:TSL2591.png" class="image"><img alt="TSL2591.png" src="/w/upload/thumb/0/02/TSL2591.png/700px-TSL2591.png" decoding="async" loading="lazy" width="700" height="184" srcset="/w/upload/0/02/TSL2591.png 1.5x" /></a>
+</p><p>START signal: When SCL is high level, SDA jumps from high to low to start transmitting data.<br />
+STOP signal: When SCL is high level, SDA jumps from low level to high level, ending the data transmission.<br />
+Response signal: After receiving the 8bit data, the data receiving IC sends a specific low-level pulse to the data sending IC to indicate that the data has been received.<br />
+</p>
+<ul><li>I2C write data timing</li></ul>
+<p><a href="/wiki/File:Tsl2591_02.png" class="image"><img alt="Tsl2591 02.png" src="/w/upload/thumb/2/26/Tsl2591_02.png/700px-Tsl2591_02.png" decoding="async" loading="lazy" width="700" height="126" srcset="/w/upload/2/26/Tsl2591_02.png 1.5x" /></a>
+</p><p>First, the host(ie, Raspberry Pi) will send a start signal, and then combine its I2C 7-bit address and write operation bits into 8-bit data and send it to the slave (ie TSL2581 sensor module), the slave will respond with a response signal after receiving it. The host sends the command register address to the slave, and then the slave receives this response signal. At this time, the master sends the value of the command register and the slave responds with a response signal. Until the host sends a STOP signal, the I2C write data operation ends.
+</p>
+<ul><li>I2C read data timing</li></ul>
+<p><a href="/wiki/File:TSL2591_03.png" class="image"><img alt="TSL2591 03.png" src="/w/upload/thumb/1/1f/TSL2591_03.png/600px-TSL2591_03.png" decoding="async" loading="lazy" width="600" height="108" srcset="/w/upload/thumb/1/1f/TSL2591_03.png/900px-TSL2591_03.png 1.5x, /w/upload/1/1f/TSL2591_03.png 2x" /></a>
+</p><p>First, the host will send a START signal, and then combine its I2C 7-bit address and write operation bit into 8-bit data and send it to the slave. After receiving it, the slave will respond with a response signal, and the host will send the command register address at this time. After the slave receives the sending response signal, the host will send a START signal again, and combines its 7-bit address and read operation bit into 8-bit data and sends it to the slave. The slave sends a response after receiving the signal, then sends the value in its register to the host. And the host gives a response signal until the host sends a stop signal, and this communication ends.
+</p>
+<ul><li>I2C address</li></ul>
+<p>The I2C device address of AS7341 is 0X39 which you can check on page 21 of the AS7341 data sheet.
+</p><p><a href="/wiki/File:AS7341-I2C-address.png" class="image"><img alt="AS7341-I2C-address.png" src="/w/upload/thumb/0/03/AS7341-I2C-address.png/600px-AS7341-I2C-address.png" decoding="async" loading="lazy" width="600" height="230" srcset="/w/upload/0/03/AS7341-I2C-address.png 1.5x" /></a>
+</p><p>This example is tested on Arduino UNO. If you use other models of Arduino, please pay attention to whether the related pins are connected correctly.
+</p>
+<div class="wiki-pages jet-green-color">
+<h1><span class="mw-headline" id="Arduino">Arduino</span></h1>
+<h2><span class="mw-headline" id="Hardware_connection">Hardware connection</span></h2>
+<p><a href="/wiki/File:AS7341_Spectral_Color.jpg" class="image"><img alt="AS7341 Spectral Color.jpg" src="/w/upload/3/3e/AS7341_Spectral_Color.jpg" decoding="async" loading="lazy" width="700" height="443" /></a>
+</p>
+<h2><span class="mw-headline" id="Run_the_demo">Run the demo</span></h2>
+<ul><li>After downloading the demo, unzip this .7z file on your PC.</li>
+<li>The Arduino program is located in ~/Arduino/... Copy the Waveshare_AS7341 folder from this directory to the libraries in the Arduino installation directory, usually in C:\Users\XXX\Documents\Arduino\libraries or C:\Program Files (x86)\Arduino \libraries.</li>
+<li>Open Arduino IDE, click File-&gt;Example, and check whether there has Waveshare_AS7341 option.</li></ul>
+<dl><dd><a href="/wiki/File:AS7341_clear_Arduino.png" class="image"><img alt="AS7341 clear Arduino.png" src="/w/upload/thumb/7/7e/AS7341_clear_Arduino.png/700px-AS7341_clear_Arduino.png" decoding="async" loading="lazy" width="700" height="1102" srcset="/w/upload/7/7e/AS7341_clear_Arduino.png 1.5x" /></a></dd></dl>
+<ul><li>If the Waveshare_AS7341 library is imported successfully, open the ino project file in the Arduino/Waveshare_AS7341/example</li>
+<li>Select the corresponding model of the development board and COM port, compile the program, and then download it to UNO, and open the serial monitor.</li></ul>
+<dl><dd><a href="/wiki/File:AS7341_clear_Arduino_2.png" class="image"><img alt="AS7341 clear Arduino 2.png" src="/w/upload/thumb/1/16/AS7341_clear_Arduino_2.png/700px-AS7341_clear_Arduino_2.png" decoding="async" loading="lazy" width="700" height="894" srcset="/w/upload/1/16/AS7341_clear_Arduino_2.png 1.5x" /></a></dd></dl>
+<ul><li>Demo phenomena:</li></ul>
+<dl><dd><a href="/wiki/File:AS7341_Arduino_com.png" class="image"><img alt="AS7341 Arduino com.png" src="/w/upload/thumb/c/c2/AS7341_Arduino_com.png/600px-AS7341_Arduino_com.png" decoding="async" loading="lazy" width="600" height="443" srcset="/w/upload/c/c2/AS7341_Arduino_com.png 1.5x" /></a></dd></dl>
+<h2><span class="mw-headline" id="Demo_description">Demo description</span></h2>
+<p>There are several different test projects on the Arduino/Waveshare_AS7341/example directory, here we give some describes and precautions.
+</p>
+<ul><li>AS7341_Getdata is used to obtain 10 channels of test data. AS7341 has only 6 independent ADCs, but it has 11 channels, which requires multiplexer SMUX. For related configuration, please refer to the reference code of the datasheet manual.</li>
+<li>AS7341_Getdata includes the driver code to turn on the fill light LED and adjust the brightness.</li></ul>
+<pre class="code2highlight lang-c">AS7341_EnableLED(true);// LED Enable</pre>
+<pre class="code2highlight lang-c">AS7341_ControlLed(false,10);//Turn on or off the LED and set the brightness of the LED</pre>
+<p>If you want to use the LED to fill the light, you can change the "false" of the two lines of code to "true".
+</p>
+<ul><li>AS7341_Getflicker is used to detect 100 or 120Hz ambient light flicker, you need to generate a flickering light of this frequency by yourself. Adjust the integration time, gain, etc. to detect a flicker of different frequencies.</li>
+<li>AS7341_Syns configures the sensor mode as SYNS mode. In this mode, the GPIO port of the sensor needs to receive a falling edge signal to trigger measurement, and each falling edge triggers a measurement.</li></ul>
+<p>This module does not directly connect to the GPIO port by default. Therefore, during your testing, you can briefly touch the GPIO port with the 3.3v or 5V pin of the development board and then disconnect it to obtain a falling edge signal. And in your actual use, you can connect the GPIO port to the trigger source directly.
+</p>
+<pre class="code2highlight lang-c">while(!AS7341_MeasureComplete());   // Jump out of this loop when GPIO receives a valid signal.</pre>
+<ul><li>AS7341_INT is the spectrum interrupt test. It sets the upper and lower thresholds for interrupt generation. At the same time, you can set the channel triggered by the interrupt. The channel selection can be one of CH0-CH4. When the interrupt is triggered by the change of ambient light, read the value of the relevant register to check whether it is triggered.</li></ul>
+<pre class="code2highlight lang-c">AS7341_SetInterruptPersistence(0);   // Set the sensitivity of spectrum interruption</pre>
+<pre class="code2highlight lang-c">AS7341_SetSpectralThresholdChannel(4);  //Set the channel to detect interrupts</pre>
+<ul><li>AS7341_pinINT is an experiment on the INT pin on the module. After each measurement of AS7341, the INT pin will become low level. You can configure the relevant register to set how often the sensor measures the environmental spectrum data, which also determines the INT pin How often does the foot jump. In this demo, the measurement time is set to 1s, and the level status of the INT pin is monitored at the same time.</li>
+<li>AS7341_Clear is to reset all the register enable bits that are turned on in the AS7341.</li></ul>
+<p>This demo has been verified on NUCLEO-F103RB (chip model STM32RBT6) and OpenH743I-C (chip model STM32H743IIT6). If you need to migrate to other boards, please pay attention to the relevant configuration and Hardware connection.
+</p>
+<h1><span class="mw-headline" id="STM32">STM32</span></h1>
+<h2><span class="mw-headline" id="Hardware_connection_2">Hardware connection</span></h2>
+<p><a href="/wiki/File:AS7341_Spectral_Color02.jpg" class="image"><img alt="AS7341 Spectral Color02.jpg" src="/w/upload/a/a8/AS7341_Spectral_Color02.jpg" decoding="async" loading="lazy" width="700" height="438" /></a>
+</p>
+<table border="1;" style="width:700px;text-align:center" align="center">
+
+<tbody><tr style="background:green; color:white;" align="center">
+<td>AS7341 Spectral Color Sensor</td>
+<td>XNUCLEO-F103RB
+</td></tr>
+<tr>
+<td>VCC</td>
+<td>3.3V/5V Power input
+</td></tr>
+<tr>
+<td>GND</td>
+<td>Ground
+</td></tr>
+<tr>
+<td>SDA</td>
+<td>SDA/D14/PB9
+</td></tr>
+<tr>
+<td>SCL</td>
+<td>SCL/D15/PB8
+</td></tr>
+<tr>
+<td>INT</td>
+<td>D8/PA9
+</td></tr>
+<tr>
+<td>GPIO</td>
+<td>/
+</td></tr></tbody></table>
+<p>Hardware connection with OpenH743I-C.
+</p>
+<table border="1;" style="width:700px;text-align:center" align="center">
+
+<tbody><tr style="background:green; color:white;" align="center">
+<td>AS7341 Spectral Color Sensor</td>
+<td>OpenH743I-C
+</td></tr>
+<tr>
+<td>VCC</td>
+<td>3.3V/5V Power input
+</td></tr>
+<tr>
+<td>GND</td>
+<td>Ground
+</td></tr>
+<tr>
+<td>SDA</td>
+<td>PD13(I2C4 SDA)
+</td></tr>
+<tr>
+<td>SCL</td>
+<td>PD12(I2C4 SCL)
+</td></tr>
+<tr>
+<td>INT</td>
+<td>PD11
+</td></tr>
+<tr>
+<td>GPIO</td>
+<td>/
+</td></tr></tbody></table>
+<h2><span class="mw-headline" id="Demo_description_2">Demo description</span></h2>
+<p>Go to <a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.waveshare.com/wiki/AS7341_Spectral_Color_Sensor#Resources">Resources</a> and downloading the <a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://files.waveshare.com/wiki/AS7341%20Spectral%20Color%20Sensor/AS7341_Spectral_Color_Sensor_code.7z">demo</a>, then unzip it on your PC. The STM32 demo is located in ~/ STM32/… . You can see the two folders NUCLEO-F103RB and OpenH743I-C.
+</p>
+<h3><span class="mw-headline" id="NUCLEO-F103RB">NUCLEO-F103RB</span></h3>
+<ul><li>Open STM32\XNUCLEO-F103RB\MDK-ARM\demo.uvprojx on the demo folder, this demo uses HAL library.</li>
+<li>If you need to change the chip or want to use the standard library, you just need to change DEV_Config.c and .h to implement the functions and macro definitions inside. The chip can also be configured by using STM32CubeMX. This demo uses serial port 2 (PA2, PA3) to output data.</li>
+<li>The serial port baud rate is 115200, and other options use the default values: 8 data bits, 1 stop bit, and no parity bit. The serial port assistant tool is provided in the folder.</li></ul>
+<h3><span class="mw-headline" id="OpenH743I-C">OpenH743I-C</span></h3>
+<ul><li>Open STM32\OpenH743I-C\MDK-ARM\I2C.uvprojx, this demo also uses the HAL library. The two are different in terms of chip signals and peripheral configuration, but the test demo used is exactly the same. Here we take OpenH743I-C as an example.</li>
+<li>Open main.c in the project, and uncomment the program that needs to be tested. Shown in the picture below:</li></ul>
+<dl><dd><a href="/wiki/File:AS7341_STM32_test.png" class="image"><img alt="AS7341 STM32 test.png" src="/w/upload/thumb/f/f7/AS7341_STM32_test.png/700px-AS7341_STM32_test.png" decoding="async" loading="lazy" width="700" height="817" srcset="/w/upload/thumb/f/f7/AS7341_STM32_test.png/1050px-AS7341_STM32_test.png 1.5x, /w/upload/f/f7/AS7341_STM32_test.png 2x" /></a></dd></dl>
+<ul><li>Connect the downloader, connect the serial data line to USART1, and click compile to download and verify.</li>
+<li>The related demo usage and instructions have been explained in the Arduino tutorial, you can check it on the Arduino chapter page.</li>
+<li>Test result:</li></ul>
+<dl><dd><a href="/wiki/File:AS7341_STM32_com.png" class="image"><img alt="AS7341 STM32 com.png" src="/w/upload/f/fe/AS7341_STM32_com.png" decoding="async" loading="lazy" width="500" height="649" /></a></dd></dl>
+<p>This example uses Raspberry Pi 3 Model B, provides BCM2835, WiringPi, file IO, RPI (Python) library demos.
+</p>
+<h1><span class="mw-headline" id="Raspberry_Pi">Raspberry Pi</span></h1>
+<h2><span class="mw-headline" id="Hardware_connection_3">Hardware connection</span></h2>
+<dl><dd><a href="/wiki/File:AS7341_Spectral_Color_03.jpg" class="image"><img alt="AS7341 Spectral Color 03.jpg" src="/w/upload/f/fd/AS7341_Spectral_Color_03.jpg" decoding="async" loading="lazy" width="700" height="462" /></a></dd></dl>
+<table border="1;" style="width:700px;text-align:center" align="center">
+
+<tbody><tr style="background:green; color:white;" align="center">
+<td>AS7341 Spectral Color Sensor</td>
+<td>Raspberry Pi (BCM)
+</td></tr>
+<tr>
+<td>VCC</td>
+<td>3.3V/5V Power input
+</td></tr>
+<tr>
+<td>GND</td>
+<td>Ground
+</td></tr>
+<tr>
+<td>SDA</td>
+<td>SDA(2)
+</td></tr>
+<tr>
+<td>SCL</td>
+<td>SCL(3)
+</td></tr>
+<tr>
+<td>INT</td>
+<td>4
+</td></tr>
+<tr>
+<td>GPIO</td>
+<td>/
+</td></tr></tbody></table>
+<h3><span class="mw-headline" id="Enable_I2C_interface">Enable I2C interface</span></h3>
+<ul><li>Open the terminal, and use the command to enter the configuration page.</li></ul>
+<pre>sudo raspi-config
+Choose Interfacing Options -&gt; I2C -&gt; Yes to enable I2C interface.
+</pre>
+<p><a href="/wiki/File:RPI_open_i2c.png" class="image"><img alt="RPI open i2c.png" src="/w/upload/5/5c/RPI_open_i2c.png" decoding="async" loading="lazy" width="600" height="766" /></a>
+</p><p>And then reboot the system:
+</p>
+<pre>sudo reboot
+</pre>
+<h3><span class="mw-headline" id="Libraries_Installation">Libraries Installation</span></h3>
+<ul><li>Install lg library:</li></ul>
+<pre>#Open the Raspberry Pi terminal and run the following commands:  
+wget https://github.com/joan2937/lg/archive/master.zip
+unzip master.zip
+cd lg-master
+make
+sudo make install
+#For more details, you can refer to https://github.com/gpiozero/lg
+</pre>
+<ul><li>Install gpiod library (Optional)</li></ul>
+<div class="mw-collapsible-content">
+<pre>#Open the Raspberry Pi terminal and run the following commands:  
+sudo apt-get update
+sudo apt install gpiod libgpiod-dev
+</pre> 
+<ul><li>Install BCM2835 (Optional)</li></ul>
+<pre>#Open the Raspberry Pi terminal and run the following commands:
+wget http://www.airspayce.com/mikem/bcm2835/bcm2835-1.71.tar.gz
+tar zxvf bcm2835-1.71.tar.gz 
+cd bcm2835-1.71/
+sudo ./configure &amp;&amp; sudo make &amp;&amp; sudo make check &amp;&amp; sudo make install
+#for more details, you can refer to http://www.airspayce.com/mikem/bcm2835/
+</pre>
+<ul><li>Install wiringPi (Optional)</li></ul>
+<pre>#Open the Raspberry Pi terminal and run the following commands:  
+sudo apt-get install wiringpi
+#For Raspberry Pi systems after May 2019 (earlier may not be performed), an upgrade may be required:
+wget https://project-downloads.drogon.net/wiringpi-latest.deb
+sudo dpkg -i wiringpi-latest.deb
+gpio -v
+#Run gpio -v, it will display 2.52 version; if not, the installation fails.  
+
+#For Bullseye branch system:
+git clone https://github.com/WiringPi/WiringPi
+cd WiringPi
+./build
+gpio -v
+# Running gpio -v, it will display 2.60 version; if not, the installation fails  
+</pre>
+<h2><span class="mw-headline" id="Download_the_demo">Download the demo</span></h2>
+<p>Open the terminal of the Raspberry Pi, execute command to download demo codes:
+</p>
+<pre>sudo apt-get install p7zip-full
+wget https://files.waveshare.com/upload/b/b3/AS7341_Spectral_Color_Sensor_code.7z
+7z x AS7341_Spectral_Color_Sensor_code.7z -r -o./AS7341_Spectral_Color_Sensor_code
+sudo chmod 777 -R  AS7341_Spectral_Color_Sensor_code
+</pre>
+<h2><span class="mw-headline" id="C">C</span></h2>
+<pre>cd AS7341_Spectral_Color_Sensor_code/AS7341_Spectral_Color_Sensor_code/RaspberryPi/c
+make clean
+make
+</pre>
+<p>Enter the following command to execute the demo:
+</p>
+<pre>sudo ./main data
+</pre>
+<ul><li>【Note】The 'data' here can be changed to flicker, syns, int, pinint, clear to verify different test demos, and its meaning is explained in the code.</li></ul>
+<p>data corresponds to the Arduino's AS7341_Getdata demo<br />
+flicker corresponds to Arduino's AS7341_Getflicker demo<br />
+syns corresponds to Arduino's AS7341_Syns demo<br />
+int corresponds to Arduino's AS7341_INT demo<br />
+pinint corresponds to Arduino's AS7341_pinINT demo<br />
+clear corresponds to the AS7341_Clear demo of Arduino<br />
+</p>
+<ul><li>Take the execution of sudo ./main data as an example, the test result is:</li></ul>
+<dl><dd><a href="/wiki/File:AS7341_Raspberry_com_c.png" class="image"><img alt="AS7341 Raspberry com c.png" src="/w/upload/thumb/5/51/AS7341_Raspberry_com_c.png/800px-AS7341_Raspberry_com_c.png" decoding="async" loading="lazy" width="800" height="392" srcset="/w/upload/5/51/AS7341_Raspberry_com_c.png 1.5x" /></a></dd></dl>
+<h2><span class="mw-headline" id="python">python</span></h2>
+<ul><li>Install libraries:</li></ul>
+<pre>sudo apt-get update
+sudo apt-get install python3-pip
+sudo apt-get install python3-pil
+sudo apt-get install python3-numpy
+sudo pip3 install smbus
+</pre>
+<ul><li>Install libraries: (python2)</li></ul>
+<pre>sudo apt-get update
+sudo apt-get install python-pip
+sudo apt-get install python-pil
+sudo apt-get install python-numpy
+sudo pip install smbus
+</pre>
+<ul><li>Install gpiozero  libraries: (The system is installed by default, if not please follow the command below to install it.)</li></ul>
+<pre>sudo apt-get update
+# python3
+sudo apt install python3-gpiozero
+# python2
+sudo apt install python-gpiozero
+</pre>
+<h2><span class="mw-headline" id="Download_and_Test_Demo">Download and Test Demo</span></h2>
+<pre>sudo apt-get install p7zip-full
+wget https://files.waveshare.com/upload/b/b3/AS7341_Spectral_Color_Sensor_code.7z
+7z x AS7341_Spectral_Color_Sensor_code.7z -r -o./AS7341_Spectral_Color_Sensor_code
+sudo chmod 777 -R  AS7341_Spectral_Color_Sensor_code
+</pre>
+<pre>cd
+cd AS7341_Spectral_Color_Sensor_code/AS7341_Spectral_Color_Sensor_code/RaspberryPi/python/examples
+</pre>
+<p>Execute:
+</p>
+<pre> # python3
+ sudo python3 data.py
+ # python2
+ sudo python data.py
+</pre>
+<p>to validate the test demo.<br />
+</p>
+<ul><li>【Note】The "data" here can be changed to flicker, syns, int, pinint, clear to verify different test demos and its meaning is explained in the code.</li></ul>
+<p>data corresponds to the Arduino's AS7341_Getdata demo<br />
+flicker corresponds to Arduino's AS7341_Getflicker demo<br />
+syns corresponds to Arduino's AS7341_Syns demo<br />
+int corresponds to Arduino's AS7341_INT demo<br />
+pinint corresponds to Arduino's AS7341_pinINT demo<br />
+clear corresponds to the AS7341_Clear demo of Arduino<br />
+</p>
+<ul><li>Take the execution of data.py as an example, the test result is:</li></ul>
+<dl><dd><a href="/wiki/File:AS7341_Raspberry_com_python.png" class="image"><img alt="AS7341 Raspberry com python.png" src="/w/upload/thumb/1/18/AS7341_Raspberry_com_python.png/800px-AS7341_Raspberry_com_python.png" decoding="async" loading="lazy" width="800" height="618" srcset="/w/upload/1/18/AS7341_Raspberry_com_python.png 1.5x" /></a></dd></dl>
+<h2><span class="mw-headline" id="Demo_description_3">Demo description</span></h2>
+<p>The functions of all test demos and the points that need attention have been introduced in the Arduino tutorial. When executing sudo ./main syns or python syns.py, you need to pull up the GPIO port and then pull it down to generate a falling edge signal. You can connect the GPIO pin to the high-level pin for a short time and then released to generate a falling edge signal.
+</p>
+<h1><span class="mw-headline" id="Resources">Resources</span></h1>
+<h2><span class="mw-headline" id="Document">Document</span></h2>
+<ul><li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://files.waveshare.com/upload/3/3c/AS7341_Spectral_Color_Sensor_SchDoc.pdf">Schematic</a></li>
+<li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://files.waveshare.com/wiki/AS7341%20Spectral%20Color%20Sensor/As7341_spectral_color_sensor.rar">3D drawing</a></li></ul>
+<h2><span class="mw-headline" id="Demo">Demo</span></h2>
+<ul><li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://files.waveshare.com/wiki/AS7341%20Spectral%20Color%20Sensor/AS7341_Spectral_Color_Sensor_code.7z">Demo</a></li></ul>
+<h2><span class="mw-headline" id="Datasheet">Datasheet</span></h2>
+<ul><li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://files.waveshare.com/upload/f/f9/AS7341.pdf">AS7341 datasheet</a></li>
+<li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://files.waveshare.com/upload/f/f9/AS7341_V3.0.pdf">AS7341_V3.0 datasheet</a></li>
+<li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://ams.com/zh/as7341#tab/shop-now">AS7341 sensor official website</a></li></ul>
+<h2><span class="mw-headline" id="Software">Software</span></h2>
+<ul><li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://www.arduino.cc/en/Main/Software">Arduino IDE</a></li>
+<li><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://files.waveshare.com/upload/5/5f/Sscom.7z">Sscom</a></li></ul>
+<h1><span class="mw-headline" id="FAQ">FAQ</span></h1>
+<div class="panel-group">
+				<div class="panel panel-default">
+					<div class="panel-heading">
+						<h4 class="panel-title">
+							<a data-toggle="collapse" data-parent="#accordion" href="#accordion1">
+								Question: Why is it that after I power on as described in the tutorial, the serial port only prints a little prompt and no longer outputs any data or the output data is all 0?
+
+							</a>
+						</h4>
+					</div>
+					<div id="accordion1" class="panel-collapse collapse in">
+						<div class="panel-body">
+<div>&#160;<b>Answer:</b></div>
+<div>Please check whether the hardware connection is OK, especially if the line sequence of SDA and SCL should not be reversed, and reconnect the sensor after powering off and re-run the program.
+</div>
+<div style="display:none;"></div>
+<div style="display:none;"></div>
+<p><font color="red" style="display:none;">{{{5}}}</font>
+</p>
+						</div>
+					</div>
+				</div>
+</div>
+<p><br />
+</p>
+<h1><span class="mw-headline" id="Support">Support</span></h1>
+<p><br />
+<br />
+</p>
+<div style="background:linear-gradient(to bottom right,#91C942,#7DB036); border-radius:15px; width:100%;min-width:750px;">
+<div style="display:flex;flex-direction: row;align-items: flex-start;">
+<div style="flex:l; font-size:15px; width:70%; margin-top:20px; margin-bottom:20px; margin-right:40px;padding-left:40px;">
+<p style="font-size:20px; font-weight:bold;">
+Technical Support
+</p>
+<p>
+If you need technical support or have any feedback/review, please click the <b>Submit Now</b> button to submit a ticket, Our support team will check and reply to you within 1 to 2 working days. Please be patient as we make every effort to help you to resolve the issue. 
+<br /> 
+Working Time: 9 AM - 6 PM GMT+8 (Monday to Friday)
+</p>
+</div>
+<div style="margin-top:94px;">
+<div id="service" style="display:flex; flex:r; background-color:#393939; color:white; text-align:center; font-size:20px; border-radius:20px;">
+<p><a target="_blank" rel="nofollow noreferrer noopener" class="external text" href="https://service.waveshare.com/">Submit Now</a>
+</p>
+</div>
+</div>
+</div>
+</div>
+</div></div></div>
+<!-- 
+NewPP limit report
+Cached time: 20260703124513
+Cache expiry: 0
+Dynamic content: true
+Complications: []
+CPU time usage: 0.129 seconds
+Real time usage: 0.251 seconds
+Preprocessor visited node count: 538/1000000
+Post‐expand include size: 17440/2097152 bytes
+Template argument size: 1178/2097152 bytes
+Highest expansion depth: 8/40
+Expensive parser function count: 0/100
+Unstrip recursion depth: 0/20
+Unstrip post‐expand size: 3705/5000000 bytes
+-->
+<!--
+Transclusion expansion time report (%,ms,calls,template)
+100.00%  116.500      1 -total
+ 28.75%   33.497      1 Template:Infobox_item
+ 16.29%   18.973      1 Template:FAQ
+ 15.58%   18.147      1 Template:AS7341_Spectral_Color_Sensor-Arduino-Guides
+ 13.15%   15.318      1 Template:AS7341_Spectral_Color_Sensor-STM32-Guides
+ 13.00%   15.142      1 Template:AS7341_Spectral_Color_Sensor-RaspberryPi-Guides
+ 12.39%   14.434      1 Template:Servicebox1
+ 10.50%   12.234      1 Template:Amazon_nolink
+-->
+</div></div>								<div class="printfooter">
+				Retrieved from "<a dir="ltr" href="https://www.waveshare.com/w/index.php?title=AS7341_Spectral_Color_Sensor&amp;oldid=99320">https://www.waveshare.com/w/index.php?title=AS7341_Spectral_Color_Sensor&amp;oldid=99320</a>"				</div>
+												<div id="catlinks" class="catlinks catlinks-allhidden" data-mw="interface"></div>												<div class="visualClear"></div>
+							</div>
+			<!-- /bodyContent -->
+		</div>
+						</div>
+				</div>
+			</div>
+			<!-- /content -->
+
+			<!-- sidebar-left -->
+			<div class="sidebar-wrapper sidebar-left-wrapper">
+				<div class="sidebar-container container">
+					<div class="row">
+						<div id="sidebar-left" class="col-md-2 col-md-offset-0">
+							<div id="tweekiTOC"></div>						</div>
+					</div>
+				</div>
+			</div>
+			<!-- /sidebar-left -->
+					<!-- footer -->
+			<div id="footer" role="contentinfo" class="footer container footer-sticky bg-light">
+			<ul id="footer-custom"><li class="dropup"><a href="/w/index.php?title=Special:UserLogin&amp;returnto=AS7341+Spectral+Color+Sensor" title="You are encouraged to log in; however, it is not mandatory [o]" accesskey="o">Login / Create Account</a></li></ul><div style="clear:both"></div>			</div>
+			<!-- /footer -->
+		
+<script>
+var fbtFancyBoxOptions = {};
+</script>
+
+<script>(RLQ=window.RLQ||[]).push(function(){mw.config.set({"wgPageParseReport":{"limitreport":{"cputime":"0.129","walltime":"0.251","ppvisitednodes":{"value":538,"limit":1000000},"postexpandincludesize":{"value":17440,"limit":2097152},"templateargumentsize":{"value":1178,"limit":2097152},"expansiondepth":{"value":8,"limit":40},"expensivefunctioncount":{"value":0,"limit":100},"unstrip-depth":{"value":0,"limit":20},"unstrip-size":{"value":3705,"limit":5000000},"timingprofile":["100.00%  116.500      1 -total"," 28.75%   33.497      1 Template:Infobox_item"," 16.29%   18.973      1 Template:FAQ"," 15.58%   18.147      1 Template:AS7341_Spectral_Color_Sensor-Arduino-Guides"," 13.15%   15.318      1 Template:AS7341_Spectral_Color_Sensor-STM32-Guides"," 13.00%   15.142      1 Template:AS7341_Spectral_Color_Sensor-RaspberryPi-Guides"," 12.39%   14.434      1 Template:Servicebox1"," 10.50%   12.234      1 Template:Amazon_nolink"]},"cachereport":{"timestamp":"20260703124513","ttl":0,"transientcontent":true}}});mw.config.set({"wgBackendResponseTime":728});});</script>	<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a155fc6b7d6004ab',t:'MTc4MzA4MjcxMg=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>

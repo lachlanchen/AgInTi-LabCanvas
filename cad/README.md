@@ -22,12 +22,14 @@ These raw zip and STEP dumps are intentionally ignored by git. Keep them local u
 - `designs/cmount_reflector_adapter/`: printable C-mount male to reflector-cube adapter draft. One end uses a printer-compensated external C-mount-like thread; the other end is a 20 x 20 x 20 mm internal reflector chamber with 3 mm walls.
 - `designs/cmount_threaded_reflector_assembly/`: two-part design with versioned artifacts. Current v2 has a 50 mm male-male C-mount tube, 15 mm male threads on each end, 28.4 mm thick center body, and a top-open 20.4 x 20.4 x 20.4 mm reflector holder with a max 20 mm internal female thread. The v2 artifacts are split into named run folders; see `designs/cmount_threaded_reflector_assembly/artifacts/v2_15mm_threads_print_fit/RUNS.md` for the single-file copy recommendation.
 - `designs/lumileds_hengyang_30mm_cage_holder_2p_right_angle/`: new independent Lumileds 30 mm cage holder variant with OpenHI-inspired 2.54 mm pitch 2P right-angle header relief, 2.4 mm pin holes, front-side pin popup clearance, Dupont plug/wire clearance, and a reduced 2.6 mm M3 pilot.
+- `designs/as7341_cmount_sensor_holder/`: independent Waveshare AS7341 holder with an OpenHI-print-fit `24.8 mm` female C-mount receiver, centered AS7341 optical aperture, shallow board pocket, two M2 mounting holes, cable relief, STEP/STL exports, thread cutter, alignment drawings, and Blender render.
 
 ## Research Notes
 
 - `tools/optical_reference_downloader.py`: reusable optical CAD reference downloader for Hengyang and Thorlabs parts, plus TeX/PDF report generation.
 - `references/OPTICAL_REFERENCE_DOWNLOADER.md`: exact tools, endpoints, commands, and agent workflow for fast optical setup reference collection.
 - `references/thorlabs-optics/`: local Thorlabs common 30 mm cage starter references with STEP, CAD PDF, CAD DXF, product image, and product JSON files.
+- `references/waveshare-as7341-spectral-sensor/`: Waveshare AS7341 wiki/product snapshots, schematic, datasheets, official 3D STEP/DXF/PDF package, outline image, and drawing preview used by the AS7341 C-mount holder.
 - `reports/optical-reference-quick-design/optical_reference_quick_design.pdf`: compiled quick-design report for the current Lumileds holder and optical reference library.
 - `research/openhi_nature_step_notes.md`: inventory and inferred C-mount dimensions from the OpenHI/Nature STEP examples.
 - `references/cmount-reflector-adapter-scale.md`: 1:1 scale table for the C-mount reflector adapter.

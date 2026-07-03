@@ -4,4 +4,6 @@
 *.dxf -diff -whitespace
 *.pdf binary -whitespace
 *.step -diff -whitespace
+*.stp -diff -whitespace
 *.stl -diff -whitespace
+cad/references/**/*.html -diff -whitespace
