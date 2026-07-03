@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -158,3 +160,51 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertEqual(result["returncode"], 124)
         self.assertEqual(len(calls), 1)
         self.assertIn("resume", calls[0])
+
+    def test_resolve_codex_binary_finds_nvm_install_when_path_is_minimal(self) -> None:
+        sessions = load_sessions()
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            codex = home / ".nvm" / "versions" / "node" / "v22.21.0" / "bin" / "codex"
+            codex.parent.mkdir(parents=True)
+            codex.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            codex.chmod(0o755)
+            with mock.patch.object(sessions.Path, "home", return_value=home), mock.patch.object(sessions.shutil, "which", return_value=None), mock.patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=False):
+                resolved = sessions.resolve_codex_binary()
+
+        self.assertEqual(resolved, str(codex))
+
+    def test_resolve_codex_binary_prefers_nvm_over_home_bin_wrapper(self) -> None:
+        sessions = load_sessions()
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            wrapper = home / "bin" / "codex"
+            wrapper.parent.mkdir(parents=True)
+            wrapper.write_text("#!/usr/bin/env bash\nexit 127\n", encoding="utf-8")
+            wrapper.chmod(0o755)
+            codex = home / ".nvm" / "versions" / "node" / "v22.21.0" / "bin" / "codex"
+            codex.parent.mkdir(parents=True)
+            codex.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            codex.chmod(0o755)
+            with mock.patch.object(sessions.Path, "home", return_value=home), mock.patch.object(sessions.shutil, "which", return_value=str(wrapper)), mock.patch.dict(os.environ, {"PATH": str(wrapper.parent), "WECHAT_CODEX_BIN": "", "CODEX_BIN": ""}, clear=False):
+                resolved = sessions.resolve_codex_binary()
+
+        self.assertEqual(resolved, str(codex))
+
+    def test_run_codex_once_returns_structured_error_when_codex_missing(self) -> None:
+        sessions = load_sessions()
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            with mock.patch.object(sessions.Path, "home", return_value=home), mock.patch.object(sessions.shutil, "which", return_value=None), mock.patch.dict(os.environ, {"PATH": "/usr/bin", "WECHAT_CODEX_BIN": ""}, clear=False):
+                result = sessions.run_codex_once(
+                    "hello",
+                    thread_id="",
+                    model="gpt-5.5",
+                    reasoning_effort="low",
+                    sandbox="read-only",
+                    timeout_seconds=1,
+                    workdir=ROOT,
+                )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["returncode"], 127)

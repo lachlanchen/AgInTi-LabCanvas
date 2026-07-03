@@ -8362,6 +8362,8 @@ def worker_result_needs_escalation(result: str) -> bool:
         return True
     if worker_result_is_terminal_blocker(text):
         return False
+    if worker_result_is_infrastructure_failure(text):
+        return False
     failure_markers = [
         "worker failed",
         "codex failed",
@@ -8382,6 +8384,19 @@ def worker_result_needs_escalation(result: str) -> bool:
     if any(marker in text for marker in failure_markers):
         return True
     return len(text) < 80
+
+
+def worker_result_is_infrastructure_failure(text: str) -> bool:
+    markers = [
+        "codex wrapper error:",
+        "codex executable was not found",
+        "executable not found:",
+        "no such file or directory: 'codex'",
+        'no such file or directory: "codex"',
+        "returncode 127",
+        "exit 127",
+    ]
+    return any(marker in text for marker in markers)
 
 
 def worker_result_is_terminal_blocker(text: str) -> bool:

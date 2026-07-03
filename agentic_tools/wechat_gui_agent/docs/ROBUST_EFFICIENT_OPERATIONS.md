@@ -79,6 +79,18 @@ should speed the agent up, not replace agent reasoning.
   never become new backend tasks. If the route agent says a message is bot
   completion/status with no new backend work, do not let keyword fallback
   override it into a publish route.
+- Self-generated failure diagnostics are also bot output. Messages such as
+  `Worker failed via codex: ...`, `codex wrapper error: ...`, missing-Codex
+  launcher errors, or route-agent failure notices must be ignored as self
+  replies, not treated as new research or repair tasks. Infrastructure failures
+  are terminal diagnostics for that attempt and must not trigger higher-effort
+  model escalation.
+- Worker and route sessions must resolve a real Codex binary inside tmux,
+  conda/venv, and restart-wrapper environments. Prefer explicit
+  `WECHAT_CODEX_BIN`/`CODEX_BIN`, then concrete nvm installs such as
+  `~/.nvm/versions/node/*/bin/codex`, before generic `PATH` wrappers like
+  `~/bin/codex`. A wrapper that cannot find the real Codex binary should fail
+  visibly without crashing the monitor loop.
 - Old history can explain context, but cannot authorize LazyEdit, public
   posting, purchases, deletion, or other irreversible actions.
 - Source media must match the same chat and exact source or quoted message. If
@@ -135,6 +147,14 @@ should speed the agent up, not replace agent reasoning.
   asks for them, or when the worker truly read substantial content and marks the
   report as worth sending. The daily self-analysis agent is the normal
   bilingual zh/en PDF path.
+- In link/read-later chats such as `鏈接`, forwarded Gongzhonghao/mp.weixin
+  article cards are `research_summary` tasks by default. Source-card routing
+  must happen before CAD/PCB/3D keyword fallback because URL hashes can contain
+  misleading substrings such as `3d`. If the mp.weixin URL itself returns
+  `环境异常` or a verification page, the worker should still reply: use the
+  card title/source, any WeChat-native capture, and safe same-title public
+  mirrors when available; otherwise state the verification blocker concisely.
+  Do not open an external browser by default.
 - Shipinhao/Finder/视频号 research tasks should run the read-only comment
   intelligence preflight when an exported `comment_data` JSON or compatible
   local `wx_channel` API profile is available. The worker writes

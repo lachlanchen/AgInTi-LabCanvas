@@ -246,6 +246,22 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(route["project"], "career")
         self.assertTrue(route["worker_needed"])
 
+    def test_link_inbox_mp_weixin_preempts_cad_markers_inside_url_hashes(self) -> None:
+        config = self.backend_chat_config("鏈接", "link_inbox")
+        text = (
+            "[WeChat link]\n"
+            "title: 从控制理论的第一性原理，重看具身智能。\n"
+            "url: https://mp.weixin.qq.com/s?__biz=Mzk0ODY4MjU3MQ==&sn=018ea782d209581e247ce347678dbf1a&x=d3d\n"
+            "source: 具身智能之心"
+        )
+        row = self.row(text, local_type=49)
+
+        route = direct_chatops.fallback_route_decision(config, text, row, [row], focus_rows=[row])
+
+        self.assertEqual(route["route_kind"], "research_or_summary")
+        self.assertEqual(route["source_policy"], "current_plus_explicit_refs")
+        self.assertTrue(route["needs_recent_media"])
+
     def test_obvious_document_artifact_overrides_route_agent_chat_only(self) -> None:
         config = self.backend_chat_config("懒人科研", "research")
         config["agent_route_enabled"] = True
@@ -922,6 +938,22 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 config,
                 {},
                 self.row("Here is the verified generated video for this group.", sender="self"),
+            ),
+            "self_bot_reply",
+        )
+        self.assertEqual(
+            direct_chatops.response_skip_reason(
+                config,
+                {},
+                self.row("Worker failed via codex: codex wrapper error: could not find real codex binary in PATH", sender="self"),
+            ),
+            "self_bot_reply",
+        )
+        self.assertEqual(
+            direct_chatops.response_skip_reason(
+                config,
+                {},
+                self.row("codex wrapper error: could not find real codex binary in PATH", sender="self"),
             ),
             "self_bot_reply",
         )

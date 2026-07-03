@@ -1292,6 +1292,12 @@ def looks_like_bot_self_reply(config: dict[str, Any], text: str) -> bool:
         "no new user request detected",
         "downloaded the exact xiaoyunque generated mp4",
         "here is the verified generated video",
+        "worker failed via codex:",
+        "worker failed before completion:",
+        "worker failed:",
+        "codex wrapper error:",
+        "codex failed:",
+        "route agent failed:",
         "已继续完成生成视频",
         "已自动完成 exact 视频保存",
         "视频已严格按 exact source 保存",
@@ -2883,6 +2889,8 @@ def fallback_route_decision(
         route_kind = "generate_video"
     elif is_bare_file_intake_request(row, text) or is_bare_image_intake_request(row, text):
         route_kind = "file_intake"
+    elif link_inbox_summary_task:
+        route_kind = "research_or_summary"
     elif is_career_strategy_task(config, text):
         route_kind = "career_strategy"
     elif is_document_artifact_task(text):
@@ -2897,8 +2905,6 @@ def fallback_route_decision(
         route_kind = "story_or_script"
     elif is_image_generation_task(text):
         route_kind = "edit_existing_media" if contextual_media_task else "generate_image"
-    elif link_inbox_summary_task:
-        route_kind = "research_or_summary"
     elif is_research_or_summary_task(text) or is_complex_research_task(config, text, focus_rows=focus_rows):
         route_kind = "research_or_summary"
     elif publish_allowed or permission_question:

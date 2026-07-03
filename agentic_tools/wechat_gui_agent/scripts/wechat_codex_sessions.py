@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 from typing import Any
@@ -92,8 +93,19 @@ def run_codex_once(
 ) -> dict[str, Any]:
     with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False) as out:
         output_path = Path(out.name)
+    codex_bin = resolve_codex_binary()
+    if not codex_bin:
+        output_path.unlink(missing_ok=True)
+        return {
+            "ok": False,
+            "message": "Codex failed: codex executable was not found in PATH or known local install locations.",
+            "thread_id": thread_id,
+            "returncode": 127,
+            "stderr_tail": "codex executable not found",
+            "stdout_tail": "",
+        }
     command = [
-        "codex",
+        codex_bin,
         "exec",
         "--json",
         "-m",
@@ -120,6 +132,7 @@ def run_codex_once(
             text=True,
             check=False,
             timeout=timeout_seconds,
+            env=codex_subprocess_env(codex_bin),
         )
         message = output_path.read_text(encoding="utf-8", errors="replace").strip() if output_path.exists() else ""
         parsed_thread_id = parse_thread_id(proc.stdout) or thread_id
@@ -140,8 +153,64 @@ def run_codex_once(
             "stderr_tail": "timeout",
             "stdout_tail": "",
         }
+    except FileNotFoundError as exc:
+        return {
+            "ok": False,
+            "message": f"Codex failed: executable not found: {exc.filename or codex_bin}",
+            "thread_id": thread_id,
+            "returncode": 127,
+            "stderr_tail": str(exc),
+            "stdout_tail": "",
+        }
     finally:
         output_path.unlink(missing_ok=True)
+
+
+def resolve_codex_binary() -> str:
+    configured = os.environ.get("WECHAT_CODEX_BIN") or os.environ.get("CODEX_BIN") or ""
+    candidates: list[Path] = []
+    if configured:
+        configured_path = Path(configured).expanduser()
+        if configured_path.is_absolute() or "/" in configured:
+            candidates.append(configured_path)
+        else:
+            found = shutil.which(configured)
+            if found:
+                return found
+    home = Path.home()
+    # tmux/restart-wrapper environments can put ~/bin ahead of nvm. On this
+    # workstation ~/bin/codex is a compatibility wrapper that fails unless the
+    # real Node-installed Codex is already in PATH, so prefer concrete nvm
+    # installs before a generic PATH lookup.
+    candidates.extend(sorted((home / ".nvm" / "versions" / "node").glob("*/bin/codex"), reverse=True))
+    found = shutil.which("codex")
+    if found:
+        candidates.append(Path(found))
+    candidates.extend(
+        [
+            home / ".local" / "bin" / "codex",
+            Path("/usr/local/bin/codex"),
+            home / "bin" / "codex",
+        ]
+    )
+    seen: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.expanduser()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return ""
+
+
+def codex_subprocess_env(codex_bin: str) -> dict[str, str]:
+    env = os.environ.copy()
+    bin_dir = str(Path(codex_bin).expanduser().parent)
+    current_path = env.get("PATH", "")
+    if bin_dir and bin_dir not in current_path.split(os.pathsep):
+        env["PATH"] = bin_dir + os.pathsep + current_path
+    return env
 
 
 def parse_thread_id(events: str) -> str:

@@ -313,6 +313,16 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIsNotNone(next_policy)
         self.assertEqual(next_policy["reasoning_effort"], "medium")
 
+    def test_worker_policy_does_not_escalate_codex_launcher_failure(self) -> None:
+        worker = load_worker()
+        self.assertIsNone(
+            worker.escalated_policy(
+                {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "danger-full-access", "timeout_seconds": 300},
+                "Worker failed via codex: codex wrapper error: could not find real codex binary in PATH",
+            )
+        )
+        self.assertFalse(worker.worker_result_needs_escalation("Codex failed: codex executable was not found in PATH."))
+
     def test_worker_policy_escalates_to_xhigh_for_failed_high_result(self) -> None:
         worker = load_worker()
         next_policy = worker.escalated_policy(

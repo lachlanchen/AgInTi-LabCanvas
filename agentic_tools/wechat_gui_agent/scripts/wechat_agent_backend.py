@@ -16,7 +16,7 @@ import uuid
 from typing import Any
 
 from file_lock import exclusive_lock
-from wechat_codex_sessions import DEFAULT_REGISTRY, ROOT, run_codex_session, session_key
+from wechat_codex_sessions import DEFAULT_REGISTRY, ROOT, resolve_codex_binary, run_codex_session, session_key
 
 
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
@@ -262,4 +262,4 @@ def backend_available(backend: str) -> str:
     selected = normalize_backend(backend)
     if selected == "claude":
         return shutil.which(os.environ.get("WECHAT_CLAUDE_BIN") or "claude") or ""
-    return shutil.which("codex") or ""
+    return resolve_codex_binary()
