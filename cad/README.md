@@ -25,6 +25,7 @@ These raw zip and STEP dumps are intentionally ignored by git. Keep them local u
 - `designs/as7341_cmount_sensor_holder/`: independent Waveshare AS7341 holder with an OpenHI-print-fit `24.8 mm` female C-mount receiver, centered AS7341 optical aperture, shallow board pocket, two M2 mounting holes, cable relief, STEP/STL exports, thread cutter, alignment drawings, and Blender render.
 - `designs/tsl25911_cmount_intensity_sensor_holder/`: independent Waveshare TSL25911 light/intensity sensor holder with the same OpenHI-print-fit `24.8 mm` female C-mount receiver, centered sensing window, shallow `27 x 20 mm` board pocket, two M2 mounting holes, right-side 5-pin connector/Dupont relief, STEP/STL exports, thread cutter, alignment drawings, and Blender render.
 - `designs/as7343_cmount_spectral_module_holder/`: independent AS7343 spectral analysis module holder with the same OpenHI-print-fit `24.8 mm` female C-mount receiver, centered AS7343 package datum, parametric centered module tray, 1x5 header relief, optional M2 clamp/lid holes, STEP/STL exports, thread cutter, alignment drawings, and Blender render.
+- `designs/gy302_bh1750_cmount_light_sensor_holder/`: independent GY-302 BH1750 light sensor holder with the same OpenHI-print-fit `24.8 mm` female C-mount receiver, centered BH1750 photodiode datum, parametric `14 x 19 mm` module tray, estimated two-hole mount, 1x5 header relief, STEP/STL exports, thread cutter, alignment drawings, and Blender render.
 
 ## Research Notes
 
@@ -34,6 +35,7 @@ These raw zip and STEP dumps are intentionally ignored by git. Keep them local u
 - `references/waveshare-as7341-spectral-sensor/`: Waveshare AS7341 wiki/product snapshots, schematic, datasheets, official 3D STEP/DXF/PDF package, outline image, and drawing preview used by the AS7341 C-mount holder.
 - `references/waveshare-tsl25911-light-sensor/`: Waveshare TSL25911 wiki/product snapshots, schematic, datasheet, code package, product images, and dimension drawing used by the TSL25911 C-mount intensity sensor holder.
 - `references/as7343-spectral-analysis-module/`: copied AS7343 spectral analysis module reference set with schematic image, ams OSRAM datasheet/app notes, and Arduino example library zip used by the AS7343 C-mount spectral module holder.
+- `references/gy302-bh1750-light-sensor/`: copied GY-302 BH1750 local datasheet and schematic used by the GY-302 C-mount light sensor holder.
 - `reports/optical-reference-quick-design/optical_reference_quick_design.pdf`: compiled quick-design report for the current Lumileds holder and optical reference library.
 - `research/openhi_nature_step_notes.md`: inventory and inferred C-mount dimensions from the OpenHI/Nature STEP examples.
 - `references/cmount-reflector-adapter-scale.md`: 1:1 scale table for the C-mount reflector adapter.
