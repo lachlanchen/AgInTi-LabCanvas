@@ -106,6 +106,13 @@ should speed the agent up, not replace agent reasoning.
   injected into the worker prompt as evidence for image-reading tasks. If WeChat
   exposes only a broken or tiny cached image, the GUI probe also saves visible
   screenshot crops as `visible_wechat_image_fallback` candidates.
+- For chat-level image backfill, use
+  `agentic_tools/wechat_gui_agent/scripts/wechat_image_backfill.py --config <direct-config> --limit N`.
+  It reads recent direct monitor image rows, source-scopes each row by
+  `local_id`/media tokens/time window, selects one best non-thumbnail candidate,
+  and runs the same Codex image reader (`WECHAT_IMAGE_READ_MODEL=gpt-5.5`,
+  `WECHAT_IMAGE_READ_EFFORT=low`) plus OCR before optionally sending one
+  concise report back to the originating chat with `--send`.
 - Bare file or image uploads with no explicit instruction are still work: route
   them to `file_intake`, sync/copy the exact source into
   `output/wechat_worker/<task-id>/intake/`, record metadata and checksum, and

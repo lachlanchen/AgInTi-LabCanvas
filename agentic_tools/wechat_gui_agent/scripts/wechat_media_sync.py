@@ -239,12 +239,30 @@ def image_decode_keys(aes_arg: str, xor_arg: str) -> tuple[bytes | None, int]:
         aes_key = aes_key or str(payload.get("image_aes_key") or "")
         if not xor_value and "image_xor_key" in payload:
             xor_value = str(payload.get("image_xor_key"))
+    if not xor_value:
+        xor_value = latest_image_xor_key_from_logs()
     aes_bytes = aes_key.encode("ascii", errors="ignore")[:16] if aes_key else None
     try:
         xor_key = int(str(xor_value), 0) if xor_value else 0x88
     except ValueError:
         xor_key = 0x88
     return aes_bytes if aes_bytes and len(aes_bytes) == 16 else None, xor_key & 0xFF
+
+
+def latest_image_xor_key_from_logs() -> str:
+    log_dir = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private" / "logs"
+    if not log_dir.is_dir():
+        return ""
+    logs = sorted(log_dir.glob("find_image_key*.log"), key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
+    for log_path in logs[:5]:
+        try:
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        matches = re.findall(r"(?:XOR key|xor_key|image_xor_key)\s*[:=]\s*(0x[0-9A-Fa-f]{1,2}|\d{1,3})", text)
+        if matches:
+            return matches[-1]
+    return ""
 
 
 def decode_wechat_dat(path: Path, *, image_aes_key: bytes | None, image_xor_key: int) -> dict[str, object] | None:
@@ -297,6 +315,10 @@ def decode_wechat_v_container(data: bytes, *, image_aes_key: bytes | None, image
     except Exception:
         return None
     fmt = detect_media_extension_from_bytes(payload).lstrip(".")
+    if fmt == "jpg" and xor_size >= 2 and not payload.endswith(b"\xff\xd9"):
+        return None
+    if fmt == "png" and xor_size >= 2 and b"IEND" not in payload[-12:]:
+        return None
     return (fmt, payload) if fmt else None
 
 

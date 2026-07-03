@@ -1776,6 +1776,39 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
         self.assertFalse(worker.should_send_worker_result(task, result))
 
+    def test_confirmation_blocker_is_sent_even_when_progress_is_suppressed(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Current coalesced request:\nread this mp.weixin article",
+        }
+        result = {
+            "message": "Only the card title was readable.",
+            "files": [],
+            "confirmation": "Open it in native WeChat webview or provide screenshots.",
+        }
+
+        self.assertTrue(worker.should_send_worker_result(task, result))
+
+    def test_unreadable_large_image_candidate_still_requests_gui_probe(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "bad.jpg"
+            bad.write_bytes(b"\xff\xd8\xff\xe0" + b"not-a-real-jpeg" * 4096)
+            task = {
+                "chat": "鏈接",
+                "source": {"kind": "image", "local_type": 3},
+                "route_decision": {"route_kind": "research_or_summary", "needs_recent_media": True},
+                "request": "Current coalesced request:\nread this image",
+            }
+            reason = worker.media_gui_cache_probe_reason(
+                task,
+                [{"mirror_path": str(bad), "suffix": ".jpg", "size_bytes": bad.stat().st_size}],
+            )
+
+        self.assertTrue(reason.startswith("cached_image_unreadable"))
+
     def test_publish_progress_is_not_sent_by_default(self) -> None:
         worker = load_worker()
         task = {

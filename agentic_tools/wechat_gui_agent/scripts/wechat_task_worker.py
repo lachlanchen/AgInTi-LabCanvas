@@ -1013,6 +1013,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
 
 
 def should_send_worker_result(task: dict[str, Any], result: dict[str, Any]) -> bool:
+    if result.get("confirmation"):
+        return True
     if existing_video_publish_result_is_nonterminal(task, result):
         return os.environ.get("WECHAT_WORKER_SEND_PUBLISH_PROGRESS", "0") == "1"
     if not generated_video_result_is_nonterminal(task, result):
@@ -3561,8 +3563,10 @@ def media_gui_cache_probe_reason(task: dict[str, Any], candidates: list[dict[str
             if width >= min_width and height >= min_height and size >= min_bytes:
                 return ""
             best_reason = f"cached_image_too_small:{width}x{height}:{size}"
-        elif size >= min_bytes:
+        elif metadata.get("status") == "metadata_unavailable" and size >= min_bytes:
             return ""
+        else:
+            best_reason = f"cached_image_unreadable:{size}"
     return best_reason
 
 
@@ -4003,9 +4007,10 @@ def codex_read_image_file(path: Path, output_dir: Path) -> dict[str, Any]:
     effort = os.environ.get("WECHAT_IMAGE_READ_EFFORT", "low")
     timeout = float(os.environ.get("WECHAT_IMAGE_READ_TIMEOUT", "90"))
     prompt = (
-        "Read this WeChat image. Extract all visible text exactly when possible, "
-        "preserving line breaks and language. If there is little or no text, briefly "
-        "describe the visual content. Return plain text only, no markdown framing."
+        "Read this WeChat image. Return plain text only with these labels: "
+        "Visible text:, Image caption:, Notes:. Extract visible text exactly when "
+        "possible, preserving line breaks and language. For Image caption, briefly "
+        "describe the image itself. Use None when a section has no content."
     )
     command = [
         "codex",

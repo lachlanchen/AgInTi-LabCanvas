@@ -174,7 +174,7 @@ class WeChatMediaSyncTests(unittest.TestCase):
 
         key = b"1234567890abcdef"
         xor_key = 0x44
-        payload = b"\xff\xd8\xff\xe0" + b"jpeg-v2-container"
+        payload = b"\xff\xd8\xff\xe0" + b"jpeg-v2-container" + b"\xff\xd9"
         aes_payload = payload[:8]
         raw_payload = payload[8:12]
         xor_payload = payload[12:]
