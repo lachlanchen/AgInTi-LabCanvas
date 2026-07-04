@@ -116,3 +116,26 @@ For a shared Shipinhao card, the automation can still use GUI assist:
 This should be implemented as a read-only action by default. It should never
 send comments, likes, follows, or Yuanbao prompts without explicit current
 permission.
+
+## Native Visible Capture Fallback
+
+When `wx_channel` comment export is not available but the official WeChat client
+already shows the Shipinhao/Finder detail page, use the read-only capture helper:
+
+```bash
+agentic_tools/wechat_gui_agent/scripts/shipinhao_native_capture.py \
+  --output-dir output/wechat_worker/TASK_ID/shipinhao-native-capture \
+  --scrolls 3 \
+  --json
+```
+
+The helper does not click like/follow/comment buttons. It captures the visible
+WeChat window, OCRs the title/comment area, sends read-only `Page_Down` events,
+and writes screenshots, OCR text, `shipinhao-visible-comments.md`, and
+`manifest.json`. Treat this as evidence for visible title/comments only. It is
+not proof that the complete video was watched.
+
+If the user asks to `@元宝` or request a transcript from Yuanbao, that is a
+public comment/reply action from the account. The worker should first read
+existing comments for Yuanbao/transcript/summary clues. Posting a new Yuanbao
+prompt requires explicit current confirmation for that specific video.

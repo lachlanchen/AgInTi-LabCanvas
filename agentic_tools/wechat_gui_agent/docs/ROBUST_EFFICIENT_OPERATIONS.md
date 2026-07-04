@@ -166,8 +166,12 @@ should speed the agent up, not replace agent reasoning.
   `task.preflight.shipinhao_comment_intel` and
   `output/wechat_worker/<task-id>/shipinhao_comment_intel/manifest.*`; agents
   must use that as auxiliary evidence and stay source-limited when no video,
-  transcript, comment export, or reliable mirror is available. Never post
-  comments or ask Yuanbao from the account without explicit current permission.
+  transcript, comment export, or reliable mirror is available. If JSON/API
+  export is missing but the official WeChat/Channels detail page is visible, use
+  `agentic_tools/wechat_gui_agent/scripts/shipinhao_native_capture.py` to capture
+  screenshots and OCR visible title/comments as read-only evidence. Never post
+  comments or ask Yuanbao from the account without explicit current per-video
+  permission.
 - Chat behavior by purpose:
   `鏈接` reads shared links/cards/videos/files and replies with a short useful
   summary or a clear limitation; `🍓我的设备`, `懒人科研`, and `lachlanchan` can run

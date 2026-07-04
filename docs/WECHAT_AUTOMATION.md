@@ -135,6 +135,10 @@ transcript, or a reliable public mirror are not accessible, do not produce a
 "deep analysis" or imply the source was watched/read. Report the limitation and
 ask for the video/comments/transcript or manual browser access if deeper
 analysis is needed.
+If comment export is unavailable but the native WeChat/Channels page is visible,
+use `agentic_tools/wechat_gui_agent/scripts/shipinhao_native_capture.py` to make
+a read-only screenshot/OCR packet for visible title/comments. This fallback does
+not authorize likes, follows, comments, or Yuanbao prompts.
 For implementation details and the reusable comment-intelligence helper, see
 `agentic_tools/wechat_gui_agent/docs/SHIPINHAO_COMMENT_RESEARCH.md` and
 `agentic_tools/wechat_gui_agent/scripts/shipinhao_comment_intel.py`.

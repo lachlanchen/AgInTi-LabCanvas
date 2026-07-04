@@ -24,6 +24,19 @@ def load_shipinhao_comment_intel():
     return module
 
 
+def load_shipinhao_native_capture():
+    path = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_native_capture.py"
+    spec = importlib.util.spec_from_file_location("shipinhao_native_capture_for_tests", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    scripts_dir = str(path.parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class ShipinhaoCommentIntelTests(unittest.TestCase):
     def test_summary_detects_yuanbao_hits_in_comments_and_replies(self) -> None:
         module = load_shipinhao_comment_intel()
@@ -88,6 +101,16 @@ class ShipinhaoCommentIntelTests(unittest.TestCase):
         self.assertEqual(summary["source_quality"], "comments_available")
         self.assertIn("No matching Yuanbao", rendered)
         self.assertIn("no Yuanbao/transcript request was found", rendered)
+
+    def test_native_capture_plan_is_read_only(self) -> None:
+        module = load_shipinhao_native_capture()
+
+        plan = module.build_plan(output_dir=Path("/tmp/shipinhao-capture"), display=":97", scrolls=3, lang="chi_sim+eng")
+
+        self.assertTrue(plan["read_only"])
+        self.assertFalse(plan["public_actions"])
+        self.assertIn("OCR", " ".join(plan["steps"]))
+        self.assertIn("No likes", " ".join(plan["non_goals"]))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import signal
 import shutil
 import sqlite3
@@ -40,6 +41,7 @@ DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 GUI_SEND_LOCK = PRIVATE / "wechat_gui_send.lock"
 SHIPINHAO_COMMENT_INTEL_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_comment_intel.py"
+SHIPINHAO_NATIVE_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_native_capture.py"
 EFFORT_ORDER = ["low", "medium", "high", "xhigh"]
 CLAIMED_STATUS = "in_progress"
 SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
@@ -3148,6 +3150,7 @@ def prepare_shipinhao_comment_intel_preflight(task: dict[str, Any], artifact_dir
         "status": "not_available",
         "tool": str(SHIPINHAO_COMMENT_INTEL_SCRIPT),
         "rule": "Use comment evidence only as auxiliary context; do not claim the video was watched unless media/transcript was also available.",
+        "access_ladder": shipinhao_content_access_ladder(task, output_dir),
         "results": [],
     }
     if not SHIPINHAO_COMMENT_INTEL_SCRIPT.exists():
@@ -3217,8 +3220,18 @@ def prepare_shipinhao_comment_intel_preflight(task: dict[str, Any], artifact_dir
             manifest["missing"] = missing
             manifest["recommended_next"] = (
                 "Open/export the Shipinhao comments through a logged-in wx_channel/native session, "
-                "or provide a comment_data JSON path. Do not fabricate a deep video analysis."
+                "run the native visible capture helper, or provide a comment_data JSON path. "
+                "Do not fabricate a deep video analysis."
             )
+            manifest["native_capture"] = shipinhao_native_capture_plan(output_dir)
+            if shipinhao_public_yuanbao_requested(task):
+                manifest["yuanbao_public_action"] = {
+                    "requested": True,
+                    "allowed_by_default": False,
+                    "status": "needs_current_per_video_confirmation",
+                    "reason": "Asking Yuanbao from this account writes a public comment/reply on the video.",
+                    "safe_alternative": "Read existing Yuanbao/transcript/summary comments first; only post a new prompt after explicit confirmation for this specific video.",
+                }
 
     ok_results = [item for item in manifest["results"] if bool(item.get("ok"))]
     if ok_results:
@@ -3253,6 +3266,18 @@ def write_shipinhao_comment_preflight_manifest(output_dir: Path, manifest: dict[
         f"- Tool: `{manifest.get('tool')}`",
         "",
     ]
+    native_capture = manifest.get("native_capture") if isinstance(manifest.get("native_capture"), dict) else {}
+    if native_capture:
+        lines.extend(
+            [
+                "## Native Visible Capture Fallback",
+                "",
+                f"- Command: `{native_capture.get('command')}`",
+                f"- Output directory: `{native_capture.get('output_dir')}`",
+                "- This is read-only and captures/OCRs the visible WeChat/Channels page.",
+                "",
+            ]
+        )
     for result_index, result in enumerate(manifest.get("results") or [], start=1):
         if not isinstance(result, dict):
             continue
@@ -3271,6 +3296,77 @@ def write_shipinhao_comment_preflight_manifest(output_dir: Path, manifest: dict[
             ]
         )
     md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def shipinhao_content_access_ladder(task: dict[str, Any], output_dir: Path) -> list[dict[str, Any]]:
+    profile = extract_shipinhao_comment_profile(task)
+    api_url = shipinhao_comment_api_url()
+    return [
+        {
+            "stage": "wechat_card_metadata",
+            "action": "Use Finder XML/card title/source/desc/object IDs from the mirrored message as weak metadata.",
+            "available": bool(profile.get("object_id") or profile.get("title") or profile.get("author")),
+        },
+        {
+            "stage": "cached_or_exact_media",
+            "action": "If the source-scoped video was synced/downloaded, transcribe or summarize the actual MP4 before relying on comments.",
+            "available": False,
+            "note": "Handled by media_resolution/autopublish-video preflights when exact media exists.",
+        },
+        {
+            "stage": "wx_channel_comment_export",
+            "action": "Use a logged-in wx_channel-compatible API to export comments/replies, then run shipinhao_comment_intel.py.",
+            "available": bool(api_url and profile.get("object_id") and profile.get("nonce_id")),
+            "requires": ["WECHAT_WX_CHANNEL_API_URL", "object_id", "nonce_id"],
+        },
+        {
+            "stage": "native_visible_capture",
+            "action": "Open the card in official WeChat/Channels, capture screenshots and OCR visible title/comments/readable transcript clues.",
+            "available": SHIPINHAO_NATIVE_CAPTURE_SCRIPT.exists(),
+            "command": shipinhao_native_capture_command(output_dir),
+        },
+        {
+            "stage": "yuanbao_public_prompt",
+            "action": "Only after explicit current per-video confirmation, post a Yuanbao/transcript prompt and later read the reply/comment.",
+            "available": False,
+            "requires_confirmation": True,
+            "reason": "This writes a public comment/reply from the account.",
+        },
+    ]
+
+
+def shipinhao_native_capture_plan(output_dir: Path) -> dict[str, Any]:
+    capture_dir = output_dir / "native_visible_capture"
+    return {
+        "status": "available" if SHIPINHAO_NATIVE_CAPTURE_SCRIPT.exists() else "missing_tool",
+        "tool": str(SHIPINHAO_NATIVE_CAPTURE_SCRIPT),
+        "output_dir": str(capture_dir),
+        "command": shipinhao_native_capture_command(output_dir),
+        "read_only": True,
+        "public_actions": False,
+    }
+
+
+def shipinhao_native_capture_command(output_dir: Path) -> str:
+    capture_dir = output_dir / "native_visible_capture"
+    return (
+        f"{shlex.quote(sys.executable)} {shlex.quote(str(SHIPINHAO_NATIVE_CAPTURE_SCRIPT))} "
+        f"--output-dir {shlex.quote(str(capture_dir))} --scrolls 3 --json"
+    )
+
+
+def shipinhao_public_yuanbao_requested(task: dict[str, Any]) -> bool:
+    text = json.dumps(task, ensure_ascii=False).casefold()
+    patterns = [
+        r"@元宝",
+        r"at\s+yuanbao",
+        r"ask\s+yuanbao",
+        r"问.{0,12}元宝",
+        r"让.{0,12}元宝",
+        r"叫.{0,12}元宝",
+        r"元宝.{0,12}(?:总结|全文|转写|字幕|transcript|summary)",
+    ]
+    return any(re.search(pattern, text, flags=re.I | re.S) for pattern in patterns)
 
 
 def run_shipinhao_comment_intel(command: list[str], *, timeout: int) -> dict[str, Any]:
@@ -8155,6 +8251,9 @@ Shipinhao/Finder and short-video shares:
   `agentic_tools/wechat_gui_agent/scripts/shipinhao_comment_intel.py --api-url "$WECHAT_WX_CHANNEL_API_URL" --object-id <OBJECT_ID> --nonce-id <NONCE_ID> --markdown-out {artifact_dir}/shipinhao-comments.md --json-out {artifact_dir}/shipinhao-comments.json --json`
 - Search visible or retrieved comments for Tencent Yuanbao-style prompts such as `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`, `转写`, `transcript`, and `summary`; these comments often request or contain transcript/summary material.
 - Also skim other highly visible comments for quoted lines, timestamps, topic summaries, corrections, names, links, or context that helps infer the video content.
+- If comment JSON/API export is unavailable but the official WeChat/Channels page is visible, run the read-only native capture fallback:
+  `agentic_tools/wechat_gui_agent/scripts/shipinhao_native_capture.py --output-dir {artifact_dir}/shipinhao-native-capture --scrolls 3 --json`
+  Then read the OCR Markdown before answering. It is valid evidence for visible title/comments only, not proof that the whole video was watched.
 - Do not post a comment or ask Yuanbao yourself unless the user explicitly requests that action. Reading comments is allowed; writing comments needs confirmation.
 - If the actual video, comments, transcript, or reliable public mirror are not available, do not produce a "deep analysis" or imply you watched/read the source. Return a source-limited note, state what was accessible, and ask the user to provide the video/comments/transcript or approve a manual/browser path if deeper analysis is needed.
 

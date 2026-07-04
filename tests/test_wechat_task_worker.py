@@ -207,6 +207,30 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(intel["status"], "not_available")
         self.assertIn("No exported Shipinhao comment JSON", intel["reason"])
         self.assertIn("Do not fabricate", intel["recommended_next"])
+        self.assertIn("access_ladder", intel)
+        self.assertIn("native_capture", intel)
+        self.assertTrue(intel["native_capture"]["read_only"])
+        self.assertFalse(intel["native_capture"]["public_actions"])
+        self.assertIn("shipinhao_native_capture.py", intel["native_capture"]["command"])
+
+    def test_shipinhao_yuanbao_public_prompt_needs_confirmation(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "shipinhao-yuanbao",
+            "chat": "鏈接",
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Current coalesced request:\n打开这个视频号，@元宝 这个视频的英文全文。\n\nRecent history:\n",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(worker.os.environ, {"WECHAT_WX_CHANNEL_API_URL": ""}, clear=False):
+                preflight = worker.prepare_worker_preflight(task, Path(tmp))
+
+        action = preflight["shipinhao_comment_intel"]["yuanbao_public_action"]
+        self.assertTrue(action["requested"])
+        self.assertFalse(action["allowed_by_default"])
+        self.assertEqual(action["status"], "needs_current_per_video_confirmation")
 
     def test_shipinhao_comment_profile_extracts_wechat_xml_cdata_ids(self) -> None:
         worker = load_worker()
