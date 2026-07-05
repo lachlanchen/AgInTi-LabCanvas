@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 import re
 import shutil
@@ -15,6 +16,7 @@ from .scene_spec import slugify
 
 ROOT = Path.cwd()
 JLC_ORDER_SCRIPT = Path("agentic_tools/jlcpcb_order_agent/scripts/submit_board_order.py")
+MAX_LINKED_FILENAME_LENGTH = 80
 
 
 @dataclass(frozen=True)
@@ -315,7 +317,7 @@ def write_lab_task_artifacts(plan: dict[str, Any], storage_dir: Path, root: Path
             if source.suffix.lower() not in {".png", ".svg", ".json", ".md", ".step", ".stl", ".zip", ".kicad_pcb", ".kicad_sch", ".scad"}:
                 continue
             parent_slug = slugify(source.parent.name) or "source"
-            destination = linked_dir / f"{workflow['slug']}--{parent_slug}--{source.name}"
+            destination = linked_dir / linked_artifact_name(workflow["slug"], parent_slug, source)
             if destination in copied_destinations:
                 continue
             shutil.copy2(source, destination)
@@ -334,6 +336,19 @@ def write_lab_task_artifacts(plan: dict[str, Any], storage_dir: Path, root: Path
             "linked": [relpath(path, storage_dir) for path in copied],
         },
     }
+
+
+def linked_artifact_name(workflow_slug: str, parent_slug: str, source: Path) -> str:
+    name = f"{workflow_slug}--{parent_slug}--{source.name}"
+    if len(name) <= MAX_LINKED_FILENAME_LENGTH:
+        return name
+
+    digest = hashlib.sha1(str(source).encode("utf-8")).hexdigest()[:10]
+    suffix = "".join(source.suffixes) or source.suffix
+    suffix_length = len(suffix)
+    prefix_budget = max(24, MAX_LINKED_FILENAME_LENGTH - suffix_length - len(digest) - 3)
+    prefix = f"{workflow_slug}--{parent_slug}--{source.stem}"
+    return f"{prefix[:prefix_budget]}--{digest}{suffix}"
 
 
 def render_markdown(plan: dict[str, Any]) -> str:
