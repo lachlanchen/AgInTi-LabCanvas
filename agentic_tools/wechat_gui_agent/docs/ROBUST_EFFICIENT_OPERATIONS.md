@@ -190,6 +190,10 @@ should speed the agent up, not replace agent reasoning.
   worker-outbox tasks instead of dropping them. Preserve
   `send_deferred_reason` as `wechat_locked`, `gui_send_busy`,
   `gui_send_timeout`, `wechat_entry_required`, or `title_guard_blank`.
+- Duplicate-response guards must not use placeholder WeChat `server_id` values
+  such as `0`, empty, `null`, or `-1` as globally unique ids. Store a per-row
+  response key and fall back to `local_id` for placeholder server ids so
+  EchoMind and other fast chats do not silently ignore later messages.
 - Worker reloads must not leave orphaned GUI send helpers holding the send lock
   forever. Before checking the serialized send lane, the worker reaps stale
   orphaned `wechat_gui_send.py` processes older than

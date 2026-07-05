@@ -817,12 +817,45 @@ def is_inbound_user_row(config: dict[str, Any], row: dict[str, Any]) -> bool:
 def mark_responded_rows(state: dict[str, Any], rows: list[dict[str, Any]]) -> None:
     existing = [str(item) for item in state.get("responded_server_ids", [])]
     seen = set(existing)
+    key_existing = [str(item) for item in state.get("responded_message_keys", [])]
+    key_seen = set(key_existing)
     for row in rows:
         server_id = str(row.get("server_id") or "")
-        if server_id and server_id not in seen:
+        if valid_response_server_id(server_id) and server_id not in seen:
             existing.append(server_id)
             seen.add(server_id)
+        key = response_message_key(row)
+        if key and key not in key_seen:
+            key_existing.append(key)
+            key_seen.add(key)
     state["responded_server_ids"] = existing[-200:]
+    state["responded_message_keys"] = key_existing[-400:]
+
+
+def response_already_recorded(state: dict[str, Any], row: dict[str, Any]) -> bool:
+    key = response_message_key(row)
+    if key and key in {str(item) for item in state.get("responded_message_keys", [])}:
+        return True
+    server_id = str(row.get("server_id") or "")
+    return valid_response_server_id(server_id) and server_id in {str(item) for item in state.get("responded_server_ids", [])}
+
+
+def response_message_key(row: dict[str, Any]) -> str:
+    server_id = str(row.get("server_id") or "").strip()
+    if valid_response_server_id(server_id):
+        return f"server:{server_id}"
+    try:
+        local_id = int(row.get("local_id") or 0)
+    except (TypeError, ValueError):
+        local_id = 0
+    if local_id > 0:
+        return f"local:{local_id}"
+    return ""
+
+
+def valid_response_server_id(server_id: str) -> bool:
+    normalized = str(server_id or "").strip()
+    return bool(normalized) and normalized not in {"0", "-1", "None", "none", "null", "NULL"}
 
 
 def prepare_force_latest_user_burst(config: dict[str, Any], state: dict[str, Any], count: int) -> dict[str, Any]:
@@ -1210,7 +1243,7 @@ def response_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dic
     voice_as_text = base_type == 34 and voice_transcript_available(row)
     if allowed_local_types and base_type not in allowed_local_types and not attachment_trigger and not quote_trigger and not voice_as_text:
         return "unsupported_type"
-    if str(row["server_id"]) in set(state.get("responded_server_ids", [])):
+    if response_already_recorded(state, row):
         return "already_responded"
     text = visible_message_text(row)
     if is_dangerous_message(config, text):

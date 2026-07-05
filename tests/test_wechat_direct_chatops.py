@@ -854,6 +854,20 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             "self_ignored",
         )
 
+    def test_placeholder_server_id_does_not_suppress_later_echomind_messages(self) -> None:
+        config = self.base_config()
+        state: dict[str, object] = {}
+        first = self.row("今日は寒いです", server_id="0", local_id=41)
+        second = self.row("明日は晴れます", server_id="0", local_id=42)
+
+        self.assertTrue(direct_chatops.should_respond(config, state, first))
+        direct_chatops.mark_responded_rows(state, [first])
+
+        self.assertIn("local:41", state["responded_message_keys"])
+        self.assertNotIn("0", state.get("responded_server_ids", []))
+        self.assertEqual(direct_chatops.response_skip_reason(config, state, first), "already_responded")
+        self.assertEqual(direct_chatops.response_skip_reason(config, state, second), "")
+
     def test_non_trigger_message_reports_skip_reason(self) -> None:
         config = self.base_config()
         config["respond_to_all"] = False
