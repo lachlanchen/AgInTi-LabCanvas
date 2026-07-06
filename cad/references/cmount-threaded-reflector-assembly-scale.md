@@ -43,6 +43,11 @@ Current v2 runs:
 
 The old STEP thread profile uses a swept triangular tooth: `0.4 mm` radial height, `0.8 mm` base, and `0.8 mm` pitch/gap. The camera-side printed male label is `24.4`; matching female/cutter labels are `24.8`. Use this as a diametral print allowance table rather than scaling the full part.
 
+Purchased taps now recorded in the reusable thread reference:
+
+- C-mount standard tap: `1"-32UN`, also searched as `C口镜头丝锥` or `1-32UN tap`.
+- Larger available tap: `M30x0.75`, useful for new tooling-based large-thread interfaces. It is close to, but not identical with, the old OpenHI larger `29.6` root / about `30.6-30.9 mm` crest / inferred `0.8 mm` pitch family.
+
 See `openhi-print-fit-and-thread-reference.md` for the measured table.
 
 ## Current V2 Tube

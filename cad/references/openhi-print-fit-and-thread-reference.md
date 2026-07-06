@@ -21,6 +21,23 @@ The old STEP files include repeated swept-triangle evidence:
 
 Practical rule: model the old printed thread as a `0.8 mm` pitch helix with a triangular tooth that is `0.4 mm` high and `0.8 mm` wide. Industrial C-mount is 1"-32, but the local STEP geometry appears rounded to `0.8 mm`.
 
+## Purchased Thread Tools
+
+Use this table when choosing whether to tap/chase a printed part or model a new
+mate around available tooling.
+
+| Tool bought | How to say/search it | Use | Relation to STEP evidence |
+| --- | --- | --- | --- |
+| C-mount standard tap | `C口镜头丝锥 1"-32UN`, `1-32UN tap`, `1 inch 32 TPI` | Real C-mount female/internal thread; best for optical C-mount compatibility | Standard C-mount is `25.4 mm` major diameter and `0.79375 mm` pitch. This is the correct standard tool for the smaller camera/C-mount side. |
+| Metric fine tap | `M30x0.75 丝锥`, `M30 x 0.75 right-hand tap` | Practical available tool for the larger OpenHI lens/top/BS family if designing new matching parts around this tap | The old STEP larger family is labelled around `Thread lens 29.6` with about `30.6 x 30.9 mm` crest envelope and inferred `0.8 mm` pitch. `M30x0.75` is close but not the same; use it deliberately as a new tooling-based interface or test-fit before relying on old-part compatibility. |
+
+Taobao wording:
+
+```text
+C口标准丝锥：C口镜头螺纹丝锥，规格 1"-32UN，右旋，60度牙型。
+30mm细牙丝锥：M30x0.75 丝锥，右旋，60度牙型。
+```
+
 ## Mating Fit Table
 
 | Fit role | Reference STEP evidence | Measured envelope | Print-fit rule |
