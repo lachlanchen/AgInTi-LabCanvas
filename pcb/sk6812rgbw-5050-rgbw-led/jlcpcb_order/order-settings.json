@@ -1,0 +1,56 @@
+{
+  "schema": "agentic_tools/jlcpcb_order_agent/board-order-settings.v1",
+  "manufacturer": "JLCPCB / JiaLiChuang",
+  "project_name": "sk6812rgbw-5050-rgbw-led",
+  "order_type": "bare PCB fabrication only",
+  "board_dir": "..",
+  "gerber_dir": "../gerber",
+  "gerber_zip": "sk6812rgbw-5050-rgbw-led-jlcpcb-gerber.zip",
+  "board": {
+    "name": "sk6812rgbw-5050-rgbw-led",
+    "layers": 2,
+    "shape": "round",
+    "expected_size_mm": {
+      "x": 24.0,
+      "y": 24.0
+    },
+    "delivery_format": "Single PCB"
+  },
+  "order": {
+    "quantity": 5,
+    "material": "FR-4",
+    "layers": 2,
+    "thickness_mm": 1.6,
+    "copper_weight": "1 oz",
+    "surface_finish": "auto-china-size-aware",
+    "surface_finish_china": "auto",
+    "surface_finish_global": "Lead-free HASL",
+    "solder_mask": "green",
+    "silkscreen": "white",
+    "confirm_mode": "manual",
+    "shipping_mode": "separate",
+    "compensation": "standard",
+    "smt": "not_needed",
+    "stencil": "not_needed"
+  },
+  "disabled_options": {
+    "pcb_assembly": true,
+    "smt_stencil": true,
+    "castellated_holes": true,
+    "edge_plating": true
+  },
+  "validation_reports": {
+    "erc": "../artifacts/erc.json",
+    "drc": "../artifacts/drc.json",
+    "drill_report": "../artifacts/drill-report.txt"
+  },
+  "renders": {
+    "close": "../artifacts/sk6812rgbw-5050-rgbw-led-render.png",
+    "full": "../artifacts/sk6812rgbw-5050-rgbw-led-render-full.png"
+  },
+  "notes": [
+    "Bare PCB only; LED, R1, C1, and header are manually assembled unless a future SMT order has exact LCSC/JLC part mapping.",
+    "China site may reject OSP for very small boards; let the order tool choose a size-compatible finish.",
+    "Pin order at J1 is 5V, GND, DIN, DOUT from the visible bottom pad toward the top; top-to-bottom is DOUT, DIN, GND, 5V."
+  ]
+}

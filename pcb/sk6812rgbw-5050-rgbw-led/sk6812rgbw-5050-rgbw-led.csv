@@ -1,0 +1,6 @@
+Id,Designator,Footprint,Quantity,Designation,Notes
+1,"H1,H2,H3,H4",MountingHole_2.2mm_M2,4,M2 mounting holes,same 24 mm carrier family
+2,D1,SK6812RGBW_5050_PLCC4,1,SK6812RGBW 5050 addressable RGBW LED,"datasheet pinout: pad 1 VDD, 2 DOUT, 3 VSS, 4 DIN"
+3,R1,R_0603,1,330 ohm DIN series resistor,place close to LED data input
+4,C1,C_0603,1,0.1 uF decoupling capacitor,place close to VDD/VSS
+5,J1,PinHeader_1x04_P2.54mm_Horizontal,1,5V/GND/DIN/DOUT connector,manual install

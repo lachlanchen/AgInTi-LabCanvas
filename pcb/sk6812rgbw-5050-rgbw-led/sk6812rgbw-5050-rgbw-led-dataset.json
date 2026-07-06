@@ -1,0 +1,54 @@
+{
+  "component_family": "SK6812RGBW 5050 addressable RGBW LED with integrated IC",
+  "dataset_created": "2026-07-06",
+  "intended_pcb": "pcb/sk6812rgbw-5050-rgbw-led/sk6812rgbw-5050-rgbw-led.kicad_pcb",
+  "source_status": "datasheet-backed carrier; confirm exact vendor reel footprint before volume assembly",
+  "user_listing_text": "高亮SK6812RGBW幻彩 5050RGBW幻彩内置IC四色合一高亮LED灯珠包邮",
+  "datasheet_sources": [
+    {
+      "title": "SK6812RGBW Specification, OPSCO Optoelectronics, Rev.01",
+      "url": "https://cdn-shop.adafruit.com/product-files/2757/p2757_SK6812RGBW_REV01.pdf",
+      "used_for": "5050 RGBW package, pin functions, supply range, 32-bit protocol, and timing"
+    },
+    {
+      "title": "SK6812RGBX-XX Rev.07 5050 RGBW specification",
+      "url": "https://www.rose-lighting.com/wp-content/uploads/sites/53/2020/05/SK6812RGBX-XX-REV.07-EN-5050-RGBW.pdf",
+      "used_for": "Later RGBW-family cross-check of package, application notes, and timing"
+    },
+    {
+      "title": "KiCad LED_SK6812_PLCC4_5.0x5.0mm_P3.2mm footprint",
+      "url": "file:///usr/share/kicad/footprints/LED_SMD.pretty/LED_SK6812_PLCC4_5.0x5.0mm_P3.2mm.kicad_mod",
+      "used_for": "Local 5050 SK6812 pad geometry and STEP model; pin mapping overridden by RGBW datasheet"
+    }
+  ],
+  "pinout": {
+    "1": "VDD / +5V",
+    "2": "DOUT / cascaded data output",
+    "3": "VSS / GND",
+    "4": "DIN / data input"
+  },
+  "electrical": {
+    "nominal_supply_v": 5.0,
+    "absolute_supply_range_v": [
+      3.5,
+      5.5
+    ],
+    "normal_operating_condition_v": "4.5 to 5.5 V in datasheet electrical-characteristics table",
+    "data_protocol": "single-wire NRZ, 32-bit RGBW color stream",
+    "data_rate_kbps": 800,
+    "logic_high_requirement": "DIN high >= 3.4 V at VDD=5.0 V",
+    "estimated_max_led_current_ma": "60-80 depending RGBW bin/current limit"
+  },
+  "pcb_assumptions": {
+    "board_style": "24 mm round carrier matching the existing LED/lamp carrier family",
+    "mounting": "four M2 NPTH holes on 12 x 12 mm pattern",
+    "connector": "rear-side 1x04 2.54 mm horizontal header with 5V, GND, DIN, DOUT",
+    "din_series_resistor": "330 ohm 0603 near LED DIN pad",
+    "decoupling": "0.1 uF 0603 capacitor near VDD/VSS",
+    "trace_widths": {
+      "power_mm": 0.5,
+      "data_mm": 0.25
+    },
+    "soldering": "manual soldering or JLC SMT if the exact SK6812RGBW reel and orientation are matched later"
+  }
+}

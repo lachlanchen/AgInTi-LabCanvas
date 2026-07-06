@@ -1,0 +1,13 @@
+(kicad_sch
+	(version 20231120)
+	(generator "labcanvas-sk6812rgbw-generator")
+	(generator_version "1.0")
+	(uuid "afbf9c98-85ee-5eb3-98a5-e2eec89bb10c")
+	(paper "A4")
+	(lib_symbols)
+	(text "Board-only schematic stub. The PCB has one SK6812RGBW 5050 LED, 330R DIN resistor, 0.1uF local decoupling, and 1x04 5V/GND/DIN/DOUT header." (at 65 76.2 0)
+		(effects (font (size 1.27 1.27)) (justify left bottom))
+		(uuid "0d4b1bbe-9de0-52e8-8514-875d4933fa11")
+	)
+	(sheet_instances (path "/" (page "1")))
+)
