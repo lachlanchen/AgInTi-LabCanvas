@@ -1,0 +1,54 @@
+{
+  "component_family": "WS2812B 5050 addressable RGB LED with integrated IC",
+  "dataset_created": "2026-07-06",
+  "intended_pcb": "pcb/ws2812b-5050-rgb-led/ws2812b-5050-rgb-led.kicad_pcb",
+  "source_status": "datasheet-backed carrier; confirm exact vendor reel footprint before volume assembly",
+  "user_listing_text": "WS2812B灯珠 5050RGB幻彩雾状LED发光二极管内置IC可编程贴片5V",
+  "datasheet_sources": [
+    {
+      "title": "WS2812B Datasheet, WORLDSEMI CO., LIMITED, Jan 2016 V1.0",
+      "url": "https://cdn.sparkfun.com/assets/e/6/1/f/4/WS2812B-LED-datasheet.pdf",
+      "used_for": "5050 package, pin functions, supply range, protocol, and timing"
+    },
+    {
+      "title": "WS2812B Datasheet mirror used by KiCad footprint metadata",
+      "url": "https://cdn-shop.adafruit.com/datasheets/WS2812B.pdf",
+      "used_for": "KiCad LED symbol/footprint cross-check and pin mapping"
+    },
+    {
+      "title": "KiCad LED_WS2812B_PLCC4_5.0x5.0mm_P3.2mm footprint",
+      "url": "file:///usr/share/kicad/footprints/LED_SMD.pretty/LED_WS2812B_PLCC4_5.0x5.0mm_P3.2mm.kicad_mod",
+      "used_for": "Pad geometry and 3D model reference"
+    }
+  ],
+  "pinout": {
+    "1": "VDD / +5V",
+    "2": "DOUT / cascaded data output",
+    "3": "VSS / GND",
+    "4": "DIN / data input"
+  },
+  "electrical": {
+    "nominal_supply_v": 5.0,
+    "absolute_supply_range_v": [
+      3.5,
+      5.3
+    ],
+    "normal_operating_condition_v": "4.5 to 5.5 V in datasheet electrical-characteristics table",
+    "data_protocol": "single-wire NRZ, 24-bit GRB color stream",
+    "data_rate_kbps": 800,
+    "logic_high_requirement": "DIN high >= 0.7*VDD",
+    "estimated_max_led_current_ma": 60
+  },
+  "pcb_assumptions": {
+    "board_style": "24 mm round carrier matching the existing LED/lamp carrier family",
+    "mounting": "four M2 NPTH holes on 12 x 12 mm pattern",
+    "connector": "rear-side 1x04 2.54 mm horizontal header with 5V, GND, DIN, DOUT",
+    "din_series_resistor": "330 ohm 0603 near LED DIN pad",
+    "decoupling": "0.1 uF 0603 capacitor near VDD/VSS",
+    "trace_widths": {
+      "power_mm": 0.5,
+      "data_mm": 0.25
+    },
+    "soldering": "manual soldering or JLC SMT if the exact WS2812B reel and orientation are matched later"
+  }
+}
