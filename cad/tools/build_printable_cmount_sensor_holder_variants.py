@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Build support-filled printable variants of the C-mount sensor holders."""
+"""Build clean printable variants of the C-mount sensor holders.
+
+The historical folders are named ``*_printable_saddle``. They now intentionally
+contain clean, no-saddle geometry because the flat fill made the holders bulky
+and visually awkward.
+"""
 
 from __future__ import annotations
 
@@ -42,7 +47,7 @@ VARIANTS: dict[str, VariantSpec] = {
         key="gy302",
         source_stem="gy302_bh1750_cmount_light_sensor_holder",
         variant_stem="gy302_bh1750_cmount_light_sensor_holder_printable_saddle",
-        title="GY-302 BH1750 C-Mount Light Sensor Holder Printable Saddle",
+        title="GY-302 BH1750 C-Mount Light Sensor Holder Clean Printable",
         sensor_label="BH1750 photodiode/package",
         datum_key="sensor",
     ),
@@ -50,7 +55,7 @@ VARIANTS: dict[str, VariantSpec] = {
         key="as7343",
         source_stem="as7343_cmount_spectral_module_holder",
         variant_stem="as7343_cmount_spectral_module_holder_printable_saddle",
-        title="AS7343 C-Mount Spectral Module Holder Printable Saddle",
+        title="AS7343 C-Mount Spectral Module Holder Clean Printable",
         sensor_label="AS7343 package/window",
         datum_key="sensor",
     ),
@@ -58,7 +63,7 @@ VARIANTS: dict[str, VariantSpec] = {
         key="tsl25911",
         source_stem="tsl25911_cmount_intensity_sensor_holder",
         variant_stem="tsl25911_cmount_intensity_sensor_holder_printable_saddle",
-        title="TSL25911 C-Mount Intensity Sensor Holder Printable Saddle",
+        title="TSL25911 C-Mount Intensity Sensor Holder Clean Printable",
         sensor_label="TSL25911 window",
         datum_key="window",
     ),
@@ -66,7 +71,7 @@ VARIANTS: dict[str, VariantSpec] = {
         key="as7341",
         source_stem="as7341_cmount_sensor_holder",
         variant_stem="as7341_cmount_sensor_holder_printable_saddle",
-        title="AS7341 C-Mount Sensor Holder Printable Saddle",
+        title="AS7341 C-Mount Sensor Holder Clean Printable",
         sensor_label="AS7341 aperture",
         datum_key="aperture",
     ),
@@ -92,56 +97,15 @@ def total_length(module: ModuleType) -> float:
     return float(module.total_length())
 
 
-def support_saddle(module: ModuleType) -> cq.Workplane:
-    """Flat-bottom fill under the C-mount socket/tube.
-
-    The original clean holders use a round C-mount socket and a smaller bridge.
-    This support saddle fills the lower half of that round section down to the
-    part's print plane, while the bore/thread is re-cut afterward.
-    """
-
-    params = module.PARAMS
-    socket_outer = float(params["socket_outer_diameter_mm"])
-    plate_x0 = float(params["female_socket_length_mm"]) + float(params["tube_length_mm"])
-    plate_bottom = float(params["sensor_plate_center_z_mm"]) - float(params["sensor_plate_height_z_mm"]) / 2.0
-    bottom_z = min(-socket_outer / 2.0, plate_bottom)
-    top_z = 0.0
-    length = plate_x0 + 0.25
-    return module.x_box(
-        (length / 2.0 - 0.05, 0.0, (bottom_z + top_z) / 2.0),
-        (length + 0.10, socket_outer, top_z - bottom_z),
-    )
+def remove_legacy_saddle_files(artifact_dir: Path, variant_stem: str) -> None:
+    for suffix in ("step", "stl"):
+        legacy = artifact_dir / f"{variant_stem}_support_saddle.{suffix}"
+        if legacy.exists():
+            legacy.unlink()
 
 
-def recut_core_clearances(module: ModuleType, holder: cq.Workplane) -> cq.Workplane:
-    params = module.PARAMS
-    holder = holder.cut(module.female_bore_cutter()).cut(module.female_thread_cutter())
-    holder = holder.cut(module.x_cylinder(params["optical_bore_diameter_mm"], total_length(module) + 2.0, -1.0))
-    ref = module.board_reference_geometry()
-
-    if hasattr(module, "board_mount_hole_cutter"):
-        for hole in ref["mounting_holes_relative_to_sensor_mm"]:
-            holder = holder.cut(module.board_mount_hole_cutter(hole["y"], hole["z"]))
-    if hasattr(module, "clamp_hole_cutter"):
-        for hole in ref["optional_clamp_holes_relative_to_sensor_mm"]:
-            holder = holder.cut(module.clamp_hole_cutter(hole["y"], hole["z"]))
-    if hasattr(module, "screw_hole_cutter"):
-        hole_groups = (
-            ref.get("mounting_holes_relative_to_window_mm")
-            or ref.get("mounting_holes_relative_to_aperture_mm")
-            or []
-        )
-        for hole in hole_groups:
-            holder = holder.cut(module.screw_hole_cutter(hole["y"], hole["z"]))
-
-    return holder.clean()
-
-
-def build_printable_holder(module: ModuleType) -> tuple[cq.Workplane, cq.Workplane]:
-    saddle = support_saddle(module)
-    holder = module.build_holder().union(saddle)
-    holder = recut_core_clearances(module, holder)
-    return holder, saddle
+def build_clean_holder(module: ModuleType) -> cq.Workplane:
+    return module.build_holder().clean()
 
 
 def add_if_available(assembly: cq.Assembly, module: ModuleType, func_name: str, name: str, color: cq.Color) -> cq.Workplane | None:
@@ -153,12 +117,11 @@ def add_if_available(assembly: cq.Assembly, module: ModuleType, func_name: str, 
     return obj
 
 
-def build_assembly(module: ModuleType, holder: cq.Workplane, saddle: cq.Workplane, spec: VariantSpec) -> tuple[cq.Assembly, dict[str, cq.Workplane]]:
+def build_assembly(module: ModuleType, holder: cq.Workplane, spec: VariantSpec) -> tuple[cq.Assembly, dict[str, cq.Workplane]]:
     assembly = cq.Assembly(name=f"{spec.variant_stem}_assembly")
-    assembly.add(holder, name="printed_holder_with_flat_bottom_saddle", color=cq.Color(0.10, 0.10, 0.09, 1.0))
-    assembly.add(saddle, name="added_print_saddle_reference", color=cq.Color(0.72, 0.62, 0.44, 0.35))
+    assembly.add(holder, name="clean_printable_holder_no_saddle_fill", color=cq.Color(0.10, 0.10, 0.09, 1.0))
 
-    proxies: dict[str, cq.Workplane] = {"support_saddle": saddle}
+    proxies: dict[str, cq.Workplane] = {}
     board = add_if_available(assembly, module, "build_board_proxy", "board_proxy", cq.Color(0.0, 0.22, 0.50, 0.72))
     sensor = add_if_available(assembly, module, "build_sensor_proxy", "sensor_on_optical_axis", cq.Color(0.95, 0.74, 0.10, 1.0))
     accessory = (
@@ -216,23 +179,24 @@ def center_check(module: ModuleType, spec: VariantSpec) -> dict[str, Any]:
 def write_readme(spec: VariantSpec, module: ModuleType, manifest: dict[str, Any]) -> None:
     outputs = manifest["outputs"]
     center = manifest["center_check"]
-    support = manifest["print_support_saddle"]
+    print_policy = manifest["print_policy"]
     output_rows = "\n".join(f"| {key} | `{value}` |" for key, value in outputs.items())
     source_readme = spec.source_dir / "README.md"
     original_note = repo_path(source_readme) if source_readme.exists() else repo_path(spec.source_dir)
     readme = f"""# {spec.title}
 
-This is a new printable variant of `{spec.source_stem}`. The original clean,
-aligned holder is left unchanged.
+This folder keeps the historical `{spec.variant_stem}` name, but the generated
+geometry is now the clean holder shape with no flat-bottom saddle/fill body.
+The source holder remains the authoritative parametric design.
 
 ## What Changed
 
-- Added an integrated flat-bottom saddle below the C-mount socket/tube so the
-  round receiver no longer starts as a suspended cliff when printed flat.
-- Re-cut the female C-mount bore, printed internal thread, optical bore, and
-  screw/clamp holes after adding the saddle.
+- Removed the integrated flat-bottom saddle and overflow fill because it made
+  the design visually bulky.
 - Preserved the original board pocket, sensor datum, thread convention, and
   source reference assumptions.
+- Re-exported the holder, board proxy, sensor proxy, connector/header proxy,
+  thread cutter, optical axis, assembly, render, and print-orientation render.
 
 ## Sensor Center Check
 
@@ -242,14 +206,14 @@ aligned holder is left unchanged.
 {json.dumps(center, indent=2, ensure_ascii=False)}
 ```
 
-## Print Saddle
+## Print Policy
 
 ```json
-{json.dumps(support, indent=2, ensure_ascii=False)}
+{json.dumps(print_policy, indent=2, ensure_ascii=False)}
 ```
 
 Use the holder STL for printing. Use the assembly STEP/STL to inspect the board
-proxy, sensor datum, thread cutter, optical axis, and added saddle together.
+proxy, sensor datum, thread cutter, and optical axis together.
 
 ## Source Design
 
@@ -278,9 +242,10 @@ def export_variant(spec: VariantSpec) -> dict[str, Any]:
     module = load_source_module(spec)
     artifact_dir = spec.variant_dir / "artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    remove_legacy_saddle_files(artifact_dir, spec.variant_stem)
 
-    holder, saddle = build_printable_holder(module)
-    assembly, proxies = build_assembly(module, holder, saddle, spec)
+    holder = build_clean_holder(module)
+    assembly, proxies = build_assembly(module, holder, spec)
 
     outputs: dict[str, str] = {}
 
@@ -306,24 +271,27 @@ def export_variant(spec: VariantSpec) -> dict[str, Any]:
     outputs["print_orientation_render_png"] = repo_path(artifact_dir / f"{spec.variant_stem}_print_orientation_render.png")
 
     params = module.PARAMS
-    socket_outer = float(params["socket_outer_diameter_mm"])
-    plate_bottom = float(params["sensor_plate_center_z_mm"]) - float(params["sensor_plate_height_z_mm"]) / 2.0
-    support = {
-        "type": "integrated flat-bottom C-mount saddle",
-        "x_range_mm": [0.0, round(float(params["female_socket_length_mm"]) + float(params["tube_length_mm"]) + 0.25, 4)],
-        "y_range_mm": [round(-socket_outer / 2.0, 4), round(socket_outer / 2.0, 4)],
-        "z_range_mm": [round(min(-socket_outer / 2.0, plate_bottom), 4), 0.0],
-        "purpose": "Fill the underside of the round C-mount socket/tube down to the print plane.",
+    bbox = holder.val().BoundingBox()
+    print_policy = {
+        "type": "clean holder without extra saddle or overflow fill",
+        "legacy_folder_name": spec.variant_stem,
+        "saddle_fill_removed": True,
+        "holder_bounding_box_mm": {
+            "x": [round(bbox.xmin, 4), round(bbox.xmax, 4)],
+            "y": [round(bbox.ymin, 4), round(bbox.ymax, 4)],
+            "z": [round(bbox.zmin, 4), round(bbox.zmax, 4)],
+        },
+        "print_note": "Use normal slicer-generated supports if needed. The CAD no longer adds a custom fill block under the C-mount tube.",
     }
 
     manifest = {
         "name": spec.variant_stem,
         "source_design": repo_path(spec.source_dir),
-        "variant": "printable_saddle",
+        "variant": "clean_printable_no_saddle_fill",
         "params": params,
         "reference_geometry": module.board_reference_geometry(),
         "center_check": center_check(module, spec),
-        "print_support_saddle": support,
+        "print_policy": print_policy,
         "outputs": outputs,
     }
     manifest_path = artifact_dir / "manifest.json"

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Render printable saddle variants of the C-mount sensor holders."""
+"""Render clean printable variants of the C-mount sensor holders.
+
+The output folders keep their historical ``*_printable_saddle`` names, but the
+geometry is now the plain holder without the older integrated fill block.
+"""
 
 from __future__ import annotations
 
@@ -133,7 +137,7 @@ def render_variant(key: str) -> None:
 
     imported = []
     for out_key, label, mat_key in (
-        ("holder_stl", "printable holder with integrated saddle", "holder"),
+        ("holder_stl", "clean printable holder", "holder"),
         ("board_proxy_stl", "board proxy", "board"),
         ("sensor_proxy_stl", "sensor datum proxy", "sensor"),
         ("accessory_proxy_stl", "connector/header clearance proxy", "accessory"),
@@ -146,7 +150,8 @@ def render_variant(key: str) -> None:
     mins, maxs = object_bounds(imported)
     center = (mins + maxs) / 2.0
     span = max(maxs.x - mins.x, maxs.y - mins.y, maxs.z - mins.z)
-    floor_z = manifest["print_support_saddle"]["z_range_mm"][0]
+    policy_bbox = manifest.get("print_policy", {}).get("holder_bounding_box_mm", {})
+    floor_z = policy_bbox.get("z", [mins.z])[0]
     add_floor("print orientation floor plane", center, max(span * 1.45, 80.0), floor_z, mats["floor"])
 
     bpy.ops.object.light_add(type="AREA", location=(center.x - 30, center.y - 46, center.z + 55))

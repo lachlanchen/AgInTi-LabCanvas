@@ -1,7 +1,7 @@
 {
   "name": "gy302_bh1750_cmount_light_sensor_holder_printable_saddle",
   "source_design": "cad/designs/gy302_bh1750_cmount_light_sensor_holder",
-  "variant": "printable_saddle",
+  "variant": "clean_printable_no_saddle_fill",
   "params": {
     "name": "gy302_bh1750_cmount_light_sensor_holder",
     "design_date": "2026-07-03",
@@ -95,27 +95,29 @@
     },
     "note": "The active sensor datum is at Y=0, Z=0. Board center may be offset when the sensor is not at board center."
   },
-  "print_support_saddle": {
-    "type": "integrated flat-bottom C-mount saddle",
-    "x_range_mm": [
-      0.0,
-      30.25
-    ],
-    "y_range_mm": [
-      -17.0,
-      17.0
-    ],
-    "z_range_mm": [
-      -19.0,
-      0.0
-    ],
-    "purpose": "Fill the underside of the round C-mount socket/tube down to the print plane."
+  "print_policy": {
+    "type": "clean holder without extra saddle or overflow fill",
+    "legacy_folder_name": "gy302_bh1750_cmount_light_sensor_holder_printable_saddle",
+    "saddle_fill_removed": true,
+    "holder_bounding_box_mm": {
+      "x": [
+        -0.0058,
+        37.0002
+      ],
+      "y": [
+        -21.0002,
+        21.0002
+      ],
+      "z": [
+        -19.0002,
+        19.0002
+      ]
+    },
+    "print_note": "Use normal slicer-generated supports if needed. The CAD no longer adds a custom fill block under the C-mount tube."
   },
   "outputs": {
     "holder_step": "cad/designs/gy302_bh1750_cmount_light_sensor_holder_printable_saddle/artifacts/gy302_bh1750_cmount_light_sensor_holder_printable_saddle_holder.step",
     "holder_stl": "cad/designs/gy302_bh1750_cmount_light_sensor_holder_printable_saddle/artifacts/gy302_bh1750_cmount_light_sensor_holder_printable_saddle_holder.stl",
-    "support_saddle_step": "cad/designs/gy302_bh1750_cmount_light_sensor_holder_printable_saddle/artifacts/gy302_bh1750_cmount_light_sensor_holder_printable_saddle_support_saddle.step",
-    "support_saddle_stl": "cad/designs/gy302_bh1750_cmount_light_sensor_holder_printable_saddle/artifacts/gy302_bh1750_cmount_light_sensor_holder_printable_saddle_support_saddle.stl",
     "board_proxy_step": "cad/designs/gy302_bh1750_cmount_light_sensor_holder_printable_saddle/artifacts/gy302_bh1750_cmount_light_sensor_holder_printable_saddle_board_proxy.step",
     "board_proxy_stl": "cad/designs/gy302_bh1750_cmount_light_sensor_holder_printable_saddle/artifacts/gy302_bh1750_cmount_light_sensor_holder_printable_saddle_board_proxy.stl",
     "sensor_proxy_step": "cad/designs/gy302_bh1750_cmount_light_sensor_holder_printable_saddle/artifacts/gy302_bh1750_cmount_light_sensor_holder_printable_saddle_sensor_proxy.step",

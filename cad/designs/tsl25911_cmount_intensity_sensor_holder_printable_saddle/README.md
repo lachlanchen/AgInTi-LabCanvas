@@ -1,16 +1,17 @@
-# TSL25911 C-Mount Intensity Sensor Holder Printable Saddle
+# TSL25911 C-Mount Intensity Sensor Holder Clean Printable
 
-This is a new printable variant of `tsl25911_cmount_intensity_sensor_holder`. The original clean,
-aligned holder is left unchanged.
+This folder keeps the historical `tsl25911_cmount_intensity_sensor_holder_printable_saddle` name, but the generated
+geometry is now the clean holder shape with no flat-bottom saddle/fill body.
+The source holder remains the authoritative parametric design.
 
 ## What Changed
 
-- Added an integrated flat-bottom saddle below the C-mount socket/tube so the
-  round receiver no longer starts as a suspended cliff when printed flat.
-- Re-cut the female C-mount bore, printed internal thread, optical bore, and
-  screw/clamp holes after adding the saddle.
+- Removed the integrated flat-bottom saddle and overflow fill because it made
+  the design visually bulky.
 - Preserved the original board pocket, sensor datum, thread convention, and
   source reference assumptions.
+- Re-exported the holder, board proxy, sensor proxy, connector/header proxy,
+  thread cutter, optical axis, assembly, render, and print-orientation render.
 
 ## Sensor Center Check
 
@@ -36,29 +37,33 @@ aligned holder is left unchanged.
 }
 ```
 
-## Print Saddle
+## Print Policy
 
 ```json
 {
-  "type": "integrated flat-bottom C-mount saddle",
-  "x_range_mm": [
-    0.0,
-    30.25
-  ],
-  "y_range_mm": [
-    -17.0,
-    17.0
-  ],
-  "z_range_mm": [
-    -18.0,
-    0.0
-  ],
-  "purpose": "Fill the underside of the round C-mount socket/tube down to the print plane."
+  "type": "clean holder without extra saddle or overflow fill",
+  "legacy_folder_name": "tsl25911_cmount_intensity_sensor_holder_printable_saddle",
+  "saddle_fill_removed": true,
+  "holder_bounding_box_mm": {
+    "x": [
+      -0.0061,
+      37.0002
+    ],
+    "y": [
+      -25.0002,
+      25.0002
+    ],
+    "z": [
+      -18.0002,
+      18.0002
+    ]
+  },
+  "print_note": "Use normal slicer-generated supports if needed. The CAD no longer adds a custom fill block under the C-mount tube."
 }
 ```
 
 Use the holder STL for printing. Use the assembly STEP/STL to inspect the board
-proxy, sensor datum, thread cutter, optical axis, and added saddle together.
+proxy, sensor datum, thread cutter, and optical axis together.
 
 ## Source Design
 
@@ -72,8 +77,6 @@ proxy, sensor datum, thread cutter, optical axis, and added saddle together.
 | --- | --- |
 | holder_step | `cad/designs/tsl25911_cmount_intensity_sensor_holder_printable_saddle/artifacts/tsl25911_cmount_intensity_sensor_holder_printable_saddle_holder.step` |
 | holder_stl | `cad/designs/tsl25911_cmount_intensity_sensor_holder_printable_saddle/artifacts/tsl25911_cmount_intensity_sensor_holder_printable_saddle_holder.stl` |
-| support_saddle_step | `cad/designs/tsl25911_cmount_intensity_sensor_holder_printable_saddle/artifacts/tsl25911_cmount_intensity_sensor_holder_printable_saddle_support_saddle.step` |
-| support_saddle_stl | `cad/designs/tsl25911_cmount_intensity_sensor_holder_printable_saddle/artifacts/tsl25911_cmount_intensity_sensor_holder_printable_saddle_support_saddle.stl` |
 | board_proxy_step | `cad/designs/tsl25911_cmount_intensity_sensor_holder_printable_saddle/artifacts/tsl25911_cmount_intensity_sensor_holder_printable_saddle_board_proxy.step` |
 | board_proxy_stl | `cad/designs/tsl25911_cmount_intensity_sensor_holder_printable_saddle/artifacts/tsl25911_cmount_intensity_sensor_holder_printable_saddle_board_proxy.stl` |
 | sensor_proxy_step | `cad/designs/tsl25911_cmount_intensity_sensor_holder_printable_saddle/artifacts/tsl25911_cmount_intensity_sensor_holder_printable_saddle_sensor_proxy.step` |
