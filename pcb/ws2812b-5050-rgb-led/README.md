@@ -4,6 +4,8 @@
 
 ![Zoomed-out full-board render](artifacts/ws2812b-5050-rgb-led-render-full.png)
 
+![Flat top copper and silkscreen plot](artifacts/ws2812b-5050-rgb-led-plain-top.png)
+
 This generated KiCad project adapts the existing 24 mm round LED carrier style
 to a single WS2812B 5050 addressable RGB LED.
 
@@ -15,7 +17,11 @@ to a single WS2812B 5050 addressable RGB LED.
 - `DIN` is routed directly to the LED for a cleaner single-LED carrier. Add an
   external 220-470 ohm series resistor only when the controller lead is long or
   noisy.
-- Local supply stability: `0.1 uF` 0603 capacitor close to LED `VDD`/`VSS`.
+- Top copper is intentionally simple: one visible route for each LED foot
+  (`VDD`, `DOUT`, `GND`, `DIN`).
+- Local supply stability: `0.1 uF` 0603 capacitor on `B.Cu`; it connects from
+  the back side through the side header pads so it does not appear as another
+  LED leg on the top render.
 
 ## Datasheet Notes
 
@@ -38,6 +44,8 @@ meets the datasheet threshold.
 - `references/`: downloaded datasheet copies when available.
 - `artifacts/ws2812b-5050-rgb-led-render.png`: close KiCad render.
 - `artifacts/ws2812b-5050-rgb-led-render-full.png`: full-board render.
+- `artifacts/ws2812b-5050-rgb-led-plain-top.png`: flat top copper and
+  silkscreen plot without 3D component bodies.
 - `artifacts/ws2812b-5050-rgb-led.step`: KiCad STEP export.
 - `gerber/`: Gerber and Excellon drill outputs.
 - `jlcpcb_order/`: optional JLC bare-board order package.

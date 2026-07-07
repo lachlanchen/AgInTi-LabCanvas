@@ -42,13 +42,14 @@
   "pcb_assumptions": {
     "board_style": "24 mm round carrier matching the existing LED/lamp carrier family",
     "mounting": "four M2 NPTH holes on 12 x 12 mm pattern",
-    "connector": "two side 1x02 2.54 mm headers: left J1 is DOUT/+5V, right J2 is GND/DIN",
+    "connector": "two side 1x02 2.54 mm headers with KiCad-model-aligned holes: left J1 top-to-bottom is DOUT/+5V, right J2 top-to-bottom is GND/DIN",
     "din_series_resistor": "not fitted; direct DIN route for a compact single-LED carrier. Add external 220-470 ohm series resistance if the controller lead is long or noisy.",
-    "decoupling": "0.1 uF 0603 capacitor near VDD/VSS",
+    "decoupling": "0.1 uF 0603 capacitor on B.Cu, connected from the back side through the side header pads so top-side routing remains visually one trace per LED foot",
     "trace_widths": {
       "power_mm": 0.5,
       "data_mm": 0.3
     },
+    "visible_top_routing": "four F.Cu traces only: LED foot 1 VDD, foot 2 DOUT, foot 3 GND, foot 4 DIN",
     "soldering": "manual soldering or JLC SMT if the exact WS2812B reel and orientation are matched later"
   }
 }

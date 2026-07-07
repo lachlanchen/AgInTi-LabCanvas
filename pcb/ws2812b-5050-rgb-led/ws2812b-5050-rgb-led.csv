@@ -1,5 +1,5 @@
 Id,Designator,Footprint,Quantity,Designation,Notes
 1,"H1,H2,H3,H4",MountingHole_2.2mm_M2,4,M2 mounting holes,same 24 mm carrier family
 2,D1,WS2812B_5050_PLCC4,1,WS2812B 5050 addressable RGB LED,"pad 1 VDD, 2 DOUT, 3 VSS, 4 DIN"
-3,C1,C_0603,1,0.1 uF decoupling capacitor,place close to VDD/VSS
+3,C1,C_0603,1,0.1 uF backside decoupling capacitor,on B.Cu; keeps top routing one trace per LED foot
 4,"J1,J2",PinHeader_1x02_P2.54mm_Vertical,2,split side headers,"J1 DOUT/+5V, J2 GND/DIN"

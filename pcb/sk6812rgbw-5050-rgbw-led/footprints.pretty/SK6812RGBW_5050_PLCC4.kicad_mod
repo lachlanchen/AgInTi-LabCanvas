@@ -41,7 +41,7 @@
 		(fp_line (start 2.75 1.95) (end 2.75 -2.5) (stroke (width 0.10) (type solid)) (layer "F.Fab") (uuid "8a9da21e-df83-5c69-acbc-39ec29779797"))
 		(fp_line (start 2.75 -2.5) (end -2.75 -2.5) (stroke (width 0.10) (type solid)) (layer "F.Fab") (uuid "04ffcf84-4b30-548a-876c-e74f7bfa7808"))
 		(fp_rect (start -3.6 -2.85) (end 3.6 2.85) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd") (uuid "773d08a1-1917-58d7-9fcf-1888eac50a0b"))
-		(fp_text user "1" (at -4 -1.6 0) (layer "F.SilkS") (uuid "e0ae3be8-f58d-5d4d-9b7c-73160a32c9a0") (effects (font (size 0.8 0.8) (thickness 0.15))))
+		(fp_text user "1" (at -3.65 -3.3 0) (layer "F.SilkS") (uuid "e0ae3be8-f58d-5d4d-9b7c-73160a32c9a0") (effects (font (size 0.8 0.8) (thickness 0.10))))
 		(pad "1" smd roundrect (at -2.45 -1.6) (size 1.5 1.0) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.08) (net 1 "+5V") (pinfunction "VDD") (pintype "power_in") (uuid "9dc443c2-f31d-5dc8-b144-d2575d46d823"))
 		(pad "2" smd roundrect (at -2.45 1.6) (size 1.5 1.0) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.08) (net 4 "DOUT") (pinfunction "DOUT") (pintype "output") (uuid "c50aab7b-58e3-58a1-8b3e-5daff0862d7d"))
 		(pad "3" smd roundrect (at 2.45 1.6) (size 1.5 1.0) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.08) (net 2 "GND") (pinfunction "VSS") (pintype "power_in") (uuid "03f7c815-ce99-50db-b248-175b6ba24075"))
