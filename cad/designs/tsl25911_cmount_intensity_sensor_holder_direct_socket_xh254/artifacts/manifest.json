@@ -1,0 +1,115 @@
+{
+  "name": "tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254",
+  "params": {
+    "name": "tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254",
+    "design_variant": "direct C-mount socket to TSL25911 sensor holder plate with XH2.54 5P socket relief; no bridge block and no middle tube",
+    "design_date": "2026-07-07",
+    "units": "mm",
+    "cmount_standard_note": "Industrial C-mount is 1-32 UNS, 0.79375 mm pitch; this part follows the local OpenHI printed 0.8 mm pitch convention.",
+    "openhi_female_root_diameter_mm": 24.8,
+    "openhi_female_thread_cutter_crest_diameter_mm": 25.6,
+    "thread_pitch_mm": 0.8,
+    "thread_tooth_height_mm": 0.4,
+    "thread_tooth_base_mm": 0.8,
+    "female_socket_length_mm": 12.0,
+    "female_thread_start_mm": 0.2,
+    "female_thread_length_mm": 10.0,
+    "socket_outer_diameter_mm": 34.0,
+    "optical_bore_diameter_mm": 8.0,
+    "omitted_middle_connector_length_mm": 0.0,
+    "sensor_plate_thickness_mm": 7.0,
+    "sensor_plate_width_y_mm": 50.0,
+    "sensor_plate_height_z_mm": 36.0,
+    "sensor_plate_center_z_mm": 0.0,
+    "module_board_long_y_mm": 27.0,
+    "module_board_short_z_mm": 20.0,
+    "sensor_to_sensor_side_short_edge_y_mm": 7.5,
+    "connector_side": "positive_y_edge_opposite_sensor_side",
+    "module_board_size_source": "User-corrected TSL25911 module geometry: PCB is 20 x 27 mm; TSL25911 sensing window is centered across the 20 mm short edge and 7.5 mm from the sensor-side short edge opposite the connector/socket edge.",
+    "board_pocket_clearance_total_mm": 1.0,
+    "board_pocket_depth_mm": 2.2,
+    "board_thickness_mm": 1.6,
+    "tsl25911_package_width_y_mm": 3.0,
+    "tsl25911_package_height_z_mm": 3.6,
+    "tsl25911_package_thickness_x_mm": 1.0,
+    "tsl25911_window_diameter_mm": 1.4,
+    "mount_hole_diameter_mm": 2.0,
+    "mount_hole_clearance_diameter_mm": 2.4,
+    "mount_hole_y_from_sensor_side_edge_mm": 2.0,
+    "mount_hole_z_from_board_edge_mm": 2.0,
+    "xh254_5p_socket_width_z_mm": 14.0,
+    "xh254_5p_socket_depth_y_mm": 6.0,
+    "xh254_5p_socket_height_x_mm": 5.5,
+    "xh254_socket_clearance_total_mm": 1.0,
+    "xh254_socket_relief_extra_y_mm": 1.0,
+    "source_wiki": "https://www.waveshare.net/wiki/TSL25911_Light_Sensor",
+    "source_product": "https://www.waveshare.net/shop/TSL25911-Light-Sensor.htm",
+    "source_github": "https://github.com/waveshare/TSL2591X-Light-Sensor"
+  },
+  "reference_geometry": {
+    "board_center_relative_to_sensor_mm": {
+      "y": 6.0,
+      "z": 0.0
+    },
+    "board_bounds_relative_to_sensor_mm": {
+      "y_min": -7.5,
+      "y_max": 19.5,
+      "z_min": -10.0,
+      "z_max": 10.0
+    },
+    "mounting_holes_relative_to_sensor_mm": [
+      {
+        "name": "M2_bottom",
+        "y": -5.5,
+        "z": -8.0,
+        "source_diameter_mm": 2.0,
+        "cut_diameter_mm": 2.4
+      },
+      {
+        "name": "M2_top",
+        "y": -5.5,
+        "z": 8.0,
+        "source_diameter_mm": 2.0,
+        "cut_diameter_mm": 2.4
+      }
+    ],
+    "xh254_socket_relative_to_sensor_mm": {
+      "name": "XH2.54_5P_socket_relief",
+      "assumed_side": "positive_y_edge_opposite_sensor_side",
+      "y_min": 13.0,
+      "y_max": 21.0,
+      "z_min": -7.5,
+      "z_max": 7.5,
+      "height_x_mm": 5.5,
+      "nominal_body_mm": {
+        "parallel_to_short_edge_z": 14.0,
+        "height_x": 5.5,
+        "parallel_to_long_edge_y": 6.0
+      }
+    },
+    "notes": [
+      "User-corrected TSL25911 module geometry: PCB is 20 x 27 mm; TSL25911 sensing window is centered across the 20 mm short edge and 7.5 mm from the sensor-side short edge opposite the connector/socket edge.",
+      "Coordinate convention: Y is the 27 mm long direction between the two short edges; Z is the 20 mm short-edge direction. Sensor datum is on the optical axis at Y=0, Z=0. The connector/socket side is positive Y unless a caliper check says otherwise."
+    ]
+  },
+  "outputs": {
+    "multibody_holder_step": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_multibody_holder.step",
+    "multibody_holder_stl": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_multibody_holder.stl",
+    "cmount_socket_step": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_cmount_socket.step",
+    "cmount_socket_stl": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_cmount_socket.stl",
+    "sensor_plate_step": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_sensor_plate.step",
+    "sensor_plate_stl": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_sensor_plate.stl",
+    "assembly_step": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_assembly.step",
+    "assembly_stl": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_assembly.stl",
+    "thread_cutter_step": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_female_thread_cutter.step",
+    "thread_cutter_stl": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_female_thread_cutter.stl",
+    "board_proxy_step": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_board_proxy.step",
+    "board_proxy_stl": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_board_proxy.stl",
+    "rear_alignment_svg": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_rear_alignment.svg",
+    "rear_alignment_png": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_rear_alignment.png",
+    "rear_alignment_pdf": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_rear_alignment.pdf",
+    "render_png": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_render.png",
+    "rear_alignment_render_png": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254_rear_alignment_render.png",
+    "blend": "cad/designs/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254/artifacts/tsl25911_cmount_intensity_sensor_holder_direct_socket_xh254.blend"
+  }
+}
