@@ -88,26 +88,27 @@ class WeChatCodexSessionTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, '{"type":"thread.started","thread_id":"thread-1"}\n', "")
 
                 sessions.subprocess.run = fake_run
-                first = sessions.run_codex_session(
-                    "hello",
-                    chat_name="EchoMind",
-                    role="fast",
-                    model="gpt-5.5",
-                    reasoning_effort="low",
-                    sandbox="read-only",
-                    timeout_seconds=30,
-                    registry_path=registry,
-                )
-                second = sessions.run_codex_session(
-                    "again",
-                    chat_name="EchoMind",
-                    role="fast",
-                    model="gpt-5.5",
-                    reasoning_effort="low",
-                    sandbox="read-only",
-                    timeout_seconds=30,
-                    registry_path=registry,
-                )
+                with mock.patch.object(sessions, "resolve_codex_binary", return_value="/usr/bin/codex"):
+                    first = sessions.run_codex_session(
+                        "hello",
+                        chat_name="EchoMind",
+                        role="fast",
+                        model="gpt-5.5",
+                        reasoning_effort="low",
+                        sandbox="read-only",
+                        timeout_seconds=30,
+                        registry_path=registry,
+                    )
+                    second = sessions.run_codex_session(
+                        "again",
+                        chat_name="EchoMind",
+                        role="fast",
+                        model="gpt-5.5",
+                        reasoning_effort="low",
+                        sandbox="read-only",
+                        timeout_seconds=30,
+                        registry_path=registry,
+                    )
                 data = json.loads(registry.read_text(encoding="utf-8"))
         finally:
             sessions.subprocess.run = original_run
@@ -141,16 +142,17 @@ class WeChatCodexSessionTests(unittest.TestCase):
                     raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
 
                 sessions.subprocess.run = fake_run
-                result = sessions.run_codex_session(
-                    "hello",
-                    chat_name="EchoMind",
-                    role="fast",
-                    model="gpt-5.5",
-                    reasoning_effort="low",
-                    sandbox="read-only",
-                    timeout_seconds=5,
-                    registry_path=registry,
-                )
+                with mock.patch.object(sessions, "resolve_codex_binary", return_value="/usr/bin/codex"):
+                    result = sessions.run_codex_session(
+                        "hello",
+                        chat_name="EchoMind",
+                        role="fast",
+                        model="gpt-5.5",
+                        reasoning_effort="low",
+                        sandbox="read-only",
+                        timeout_seconds=5,
+                        registry_path=registry,
+                    )
         finally:
             sessions.subprocess.run = original_run
 

@@ -3693,6 +3693,7 @@ def media_gui_cache_probe_reason(task: dict[str, Any], candidates: list[dict[str
             size = path.stat().st_size
         except OSError:
             continue
+        suffix = str(item.get("suffix") or path.suffix).lower()
         metadata = image_file_metadata(path)
         if metadata.get("status") == "ok":
             width = int(metadata.get("width") or 0)
@@ -3700,7 +3701,7 @@ def media_gui_cache_probe_reason(task: dict[str, Any], candidates: list[dict[str
             if width >= min_width and height >= min_height and size >= min_bytes:
                 return ""
             best_reason = f"cached_image_too_small:{width}x{height}:{size}"
-        elif metadata.get("status") == "metadata_unavailable" and size >= min_bytes:
+        elif metadata.get("status") == "metadata_unavailable" and suffix not in OCR_IMAGE_SUFFIXES and size >= min_bytes:
             return ""
         else:
             best_reason = f"cached_image_unreadable:{size}"

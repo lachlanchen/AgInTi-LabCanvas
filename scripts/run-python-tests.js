@@ -8,6 +8,8 @@ const root = path.resolve(__dirname, "..");
 const env = {
   ...process.env,
   PYTHONPATH: [path.join(root, "src"), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+  WECHAT_WORKER_DISABLE_CODEX_IMAGE_READ:
+    process.env.WECHAT_WORKER_DISABLE_CODEX_IMAGE_READ || "1",
 };
 const python =
   process.env.LABCANVAS_PYTHON ||
