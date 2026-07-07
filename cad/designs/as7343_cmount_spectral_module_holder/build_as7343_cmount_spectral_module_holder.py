@@ -39,9 +39,9 @@ PARAMS = {
     "sensor_plate_width_y_mm": 50.0,
     "sensor_plate_height_z_mm": 42.0,
     "sensor_plate_center_z_mm": 0.0,
-    "estimated_module_board_width_y_mm": 32.0,
-    "estimated_module_board_height_z_mm": 24.0,
-    "module_board_size_source": "No board mechanical drawing was found in the supplied AS7343 module files; this is a parametric tray estimate.",
+    "estimated_module_board_width_y_mm": 23.0,
+    "estimated_module_board_height_z_mm": 15.0,
+    "module_board_size_source": "User-corrected AS7343 module geometry: PCB is 15 x 23 mm; pin sockets are on the negative-Y short edge; AS7343 package is centered across the 15 mm short edge and 6 mm from the opposite positive-Y short edge.",
     "board_pocket_clearance_total_mm": 1.0,
     "board_pocket_depth_mm": 2.2,
     "board_thickness_mm": 1.6,
@@ -49,7 +49,7 @@ PARAMS = {
     "as7343_package_height_z_mm": 2.0,
     "as7343_package_thickness_x_mm": 1.0,
     "as7343_window_diameter_mm": 1.0,
-    "as7343_sensor_offset_y_mm": 0.0,
+    "as7343_sensor_offset_y_mm": 5.5,
     "as7343_sensor_offset_z_mm": 0.0,
     "header_relief_side": "negative_y",
     "header_relief_width_y_mm": 12.0,
@@ -124,13 +124,14 @@ def board_reference_geometry() -> dict[str, object]:
         "z_min": round(-board_h / 2.0 - sensor_z, 4),
         "z_max": round(board_h / 2.0 - sensor_z, 4),
     }
-    clamp_y = board_w / 2.0 + PARAMS["optional_clamp_hole_margin_y_mm"]
+    clamp_y_min = bounds["y_min"] - PARAMS["optional_clamp_hole_margin_y_mm"]
+    clamp_y_max = bounds["y_max"] + PARAMS["optional_clamp_hole_margin_y_mm"]
     clamp_z = board_h / 2.0 + PARAMS["optional_clamp_hole_margin_z_mm"]
     clamp_holes = [
-        {"name": "clamp_bottom_left", "y": -clamp_y, "z": -clamp_z},
-        {"name": "clamp_top_left", "y": -clamp_y, "z": clamp_z},
-        {"name": "clamp_bottom_right", "y": clamp_y, "z": -clamp_z},
-        {"name": "clamp_top_right", "y": clamp_y, "z": clamp_z},
+        {"name": "clamp_bottom_left", "y": clamp_y_min, "z": -clamp_z},
+        {"name": "clamp_top_left", "y": clamp_y_min, "z": clamp_z},
+        {"name": "clamp_bottom_right", "y": clamp_y_max, "z": -clamp_z},
+        {"name": "clamp_top_right", "y": clamp_y_max, "z": clamp_z},
     ]
     return {
         "board_center_relative_to_sensor_mm": {
@@ -147,7 +148,7 @@ def board_reference_geometry() -> dict[str, object]:
         ],
         "notes": [
             PARAMS["module_board_size_source"],
-            "The holder centers the AS7343 package on the optical axis. If the real module sensor is offset, update as7343_sensor_offset_y_mm/z_mm and regenerate.",
+            "Coordinate convention: Y is the 23 mm board length from pin-socket edge to sensor-side edge; Z is the 15 mm short-edge width. Sensor datum is on the optical axis at Y=0, Z=0; board center is 5.5 mm toward the pin sockets.",
         ],
     }
 
@@ -286,9 +287,9 @@ def build_axis_proxy() -> cq.Workplane:
 def build_assembly() -> cq.Assembly:
     assembly = cq.Assembly(name=f"{STEM}_assembly")
     assembly.add(build_holder(), name="printed_holder_openhi_24p8_receiver", color=cq.Color(0.08, 0.08, 0.08, 1.0))
-    assembly.add(build_board_proxy(), name="estimated_as7343_module_board_proxy", color=cq.Color(0.0, 0.23, 0.48, 0.70))
+    assembly.add(build_board_proxy(), name="as7343_15x23_module_board_proxy_sensor_6mm_from_front_edge", color=cq.Color(0.0, 0.23, 0.48, 0.70))
     assembly.add(build_sensor_proxy(), name="as7343_package_centered_on_optical_axis", color=cq.Color(0.95, 0.78, 0.20, 1.0))
-    assembly.add(build_header_proxy(), name="one_by_five_header_clearance_proxy", color=cq.Color(0.95, 0.92, 0.82, 0.65))
+    assembly.add(build_header_proxy(), name="negative_y_pin_socket_clearance_proxy", color=cq.Color(0.95, 0.92, 0.82, 0.65))
     assembly.add(female_thread_cutter(), name="female_thread_boolean_cutter", color=cq.Color(0.9, 0.2, 0.1, 0.35))
     assembly.add(build_axis_proxy(), name="optical_axis_proxy", color=cq.Color(1.0, 0.72, 0.08, 0.6))
     return assembly
@@ -339,9 +340,9 @@ def write_alignment_svg(path: Path) -> None:
         "AS7343 C-mount spectral module holder",
         "View: rear tray, looking along optical axis",
         "Gold rectangle: AS7343 3.1 x 2 mm package centered on axis",
-        "Blue dashed rectangle: estimated module tray, parametric",
+        "Blue dashed rectangle: 15 x 23 mm AS7343 module tray",
         "Gray holes: optional M2 clamp/lid holes outside the module area",
-        "Red dashed slot: 1x5 header/cable relief side",
+        "Red dashed slot: negative-Y pin-socket/cable relief side",
         "C-mount side: OpenHI 24.8 mm female receiver, 0.8 mm pitch thread",
     ]
     for index, text in enumerate(legend):
@@ -409,18 +410,19 @@ an OpenHI-print-fit C-mount receiver. Older CAD designs are not modified.
 - Local OpenHI print-fit table: `cad/references/openhi-print-fit-and-thread-reference.md`
 
 The supplied module references include the AS7343 datasheet, app notes, example
-code, and a schematic image, but no mechanical board outline. The holder is
-therefore parametric: it centers the AS7343 package on the optical axis and uses
-an estimated centered module tray. Measure the real PCB and update the
-`estimated_module_board_*` and `as7343_sensor_offset_*` parameters if needed.
+code, and a schematic image. The physical tray now follows the corrected module
+geometry provided after checking the board: `15 x 23 mm`, pin sockets on the
+negative-Y short edge, and the AS7343 package centered across the 15 mm short
+edge and `6 mm` from the opposite positive-Y short edge. The board center is
+therefore `5.5 mm` toward the pin sockets relative to the optical axis.
 
 ## Design Intent
 
 - Put the AS7343 sensing package on the C-mount optical axis.
 - Use the local OpenHI printed C-mount convention: `24.8 mm` female bore/root,
   `25.6 mm` internal thread-cutter crest, `0.8 mm` pitch, `0.4 mm` tooth height.
-- Provide a rear module tray with left-side 1x5 header/cable relief.
-- Add four optional M2 clamp/lid holes outside the estimated module footprint.
+- Provide a rear module tray with negative-Y pin-socket/cable relief.
+- Add four optional M2 clamp/lid holes outside the corrected module footprint.
 
 ## Geometry Used
 

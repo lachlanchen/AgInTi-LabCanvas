@@ -12,18 +12,19 @@ an OpenHI-print-fit C-mount receiver. Older CAD designs are not modified.
 - Local OpenHI print-fit table: `cad/references/openhi-print-fit-and-thread-reference.md`
 
 The supplied module references include the AS7343 datasheet, app notes, example
-code, and a schematic image, but no mechanical board outline. The holder is
-therefore parametric: it centers the AS7343 package on the optical axis and uses
-an estimated centered module tray. Measure the real PCB and update the
-`estimated_module_board_*` and `as7343_sensor_offset_*` parameters if needed.
+code, and a schematic image. The physical tray now follows the corrected module
+geometry provided after checking the board: `15 x 23 mm`, pin sockets on the
+negative-Y short edge, and the AS7343 package centered across the 15 mm short
+edge and `6 mm` from the opposite positive-Y short edge. The board center is
+therefore `5.5 mm` toward the pin sockets relative to the optical axis.
 
 ## Design Intent
 
 - Put the AS7343 sensing package on the C-mount optical axis.
 - Use the local OpenHI printed C-mount convention: `24.8 mm` female bore/root,
   `25.6 mm` internal thread-cutter crest, `0.8 mm` pitch, `0.4 mm` tooth height.
-- Provide a rear module tray with left-side 1x5 header/cable relief.
-- Add four optional M2 clamp/lid holes outside the estimated module footprint.
+- Provide a rear module tray with negative-Y pin-socket/cable relief.
+- Add four optional M2 clamp/lid holes outside the corrected module footprint.
 
 ## Geometry Used
 
@@ -31,7 +32,7 @@ Board center relative to the AS7343 package:
 
 ```json
 {
-  "y": -0.0,
+  "y": -5.5,
   "z": -0.0
 }
 ```
@@ -40,10 +41,10 @@ Optional clamp holes:
 
 | Hole | y mm | z mm | holder cut dia mm |
 | --- | ---: | ---: | ---: |
-| clamp_bottom_left | `-20.0` | `-16.0` | `2.4` |
-| clamp_top_left | `-20.0` | `16.0` | `2.4` |
-| clamp_bottom_right | `20.0` | `-16.0` | `2.4` |
-| clamp_top_right | `20.0` | `16.0` | `2.4` |
+| clamp_bottom_left | `-21.0` | `-11.5` | `2.4` |
+| clamp_top_left | `-21.0` | `11.5` | `2.4` |
+| clamp_bottom_right | `10.0` | `-11.5` | `2.4` |
+| clamp_top_right | `10.0` | `11.5` | `2.4` |
 
 ## Outputs
 
@@ -88,9 +89,9 @@ Optional clamp holes:
 | `sensor_plate_width_y_mm` | `50.0` |
 | `sensor_plate_height_z_mm` | `42.0` |
 | `sensor_plate_center_z_mm` | `0.0` |
-| `estimated_module_board_width_y_mm` | `32.0` |
-| `estimated_module_board_height_z_mm` | `24.0` |
-| `module_board_size_source` | `No board mechanical drawing was found in the supplied AS7343 module files; this is a parametric tray estimate.` |
+| `estimated_module_board_width_y_mm` | `23.0` |
+| `estimated_module_board_height_z_mm` | `15.0` |
+| `module_board_size_source` | `User-corrected AS7343 module geometry: PCB is 15 x 23 mm; pin sockets are on the negative-Y short edge; AS7343 package is centered across the 15 mm short edge and 6 mm from the opposite positive-Y short edge.` |
 | `board_pocket_clearance_total_mm` | `1.0` |
 | `board_pocket_depth_mm` | `2.2` |
 | `board_thickness_mm` | `1.6` |
@@ -98,7 +99,7 @@ Optional clamp holes:
 | `as7343_package_height_z_mm` | `2.0` |
 | `as7343_package_thickness_x_mm` | `1.0` |
 | `as7343_window_diameter_mm` | `1.0` |
-| `as7343_sensor_offset_y_mm` | `0.0` |
+| `as7343_sensor_offset_y_mm` | `5.5` |
 | `as7343_sensor_offset_z_mm` | `0.0` |
 | `header_relief_side` | `negative_y` |
 | `header_relief_width_y_mm` | `12.0` |

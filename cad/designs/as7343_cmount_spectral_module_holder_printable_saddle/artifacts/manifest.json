@@ -22,9 +22,9 @@
     "sensor_plate_width_y_mm": 50.0,
     "sensor_plate_height_z_mm": 42.0,
     "sensor_plate_center_z_mm": 0.0,
-    "estimated_module_board_width_y_mm": 32.0,
-    "estimated_module_board_height_z_mm": 24.0,
-    "module_board_size_source": "No board mechanical drawing was found in the supplied AS7343 module files; this is a parametric tray estimate.",
+    "estimated_module_board_width_y_mm": 23.0,
+    "estimated_module_board_height_z_mm": 15.0,
+    "module_board_size_source": "User-corrected AS7343 module geometry: PCB is 15 x 23 mm; pin sockets are on the negative-Y short edge; AS7343 package is centered across the 15 mm short edge and 6 mm from the opposite positive-Y short edge.",
     "board_pocket_clearance_total_mm": 1.0,
     "board_pocket_depth_mm": 2.2,
     "board_thickness_mm": 1.6,
@@ -32,7 +32,7 @@
     "as7343_package_height_z_mm": 2.0,
     "as7343_package_thickness_x_mm": 1.0,
     "as7343_window_diameter_mm": 1.0,
-    "as7343_sensor_offset_y_mm": 0.0,
+    "as7343_sensor_offset_y_mm": 5.5,
     "as7343_sensor_offset_z_mm": 0.0,
     "header_relief_side": "negative_y",
     "header_relief_width_y_mm": 12.0,
@@ -46,44 +46,44 @@
   },
   "reference_geometry": {
     "board_center_relative_to_sensor_mm": {
-      "y": -0.0,
+      "y": -5.5,
       "z": -0.0
     },
     "board_bounds_relative_to_sensor_mm": {
-      "y_min": -16.0,
-      "y_max": 16.0,
-      "z_min": -12.0,
-      "z_max": 12.0
+      "y_min": -17.0,
+      "y_max": 6.0,
+      "z_min": -7.5,
+      "z_max": 7.5
     },
     "optional_clamp_holes_relative_to_sensor_mm": [
       {
         "name": "clamp_bottom_left",
-        "y": -20.0,
-        "z": -16.0,
+        "y": -21.0,
+        "z": -11.5,
         "cut_diameter_mm": 2.4
       },
       {
         "name": "clamp_top_left",
-        "y": -20.0,
-        "z": 16.0,
+        "y": -21.0,
+        "z": 11.5,
         "cut_diameter_mm": 2.4
       },
       {
         "name": "clamp_bottom_right",
-        "y": 20.0,
-        "z": -16.0,
+        "y": 10.0,
+        "z": -11.5,
         "cut_diameter_mm": 2.4
       },
       {
         "name": "clamp_top_right",
-        "y": 20.0,
-        "z": 16.0,
+        "y": 10.0,
+        "z": 11.5,
         "cut_diameter_mm": 2.4
       }
     ],
     "notes": [
-      "No board mechanical drawing was found in the supplied AS7343 module files; this is a parametric tray estimate.",
-      "The holder centers the AS7343 package on the optical axis. If the real module sensor is offset, update as7343_sensor_offset_y_mm/z_mm and regenerate."
+      "User-corrected AS7343 module geometry: PCB is 15 x 23 mm; pin sockets are on the negative-Y short edge; AS7343 package is centered across the 15 mm short edge and 6 mm from the opposite positive-Y short edge.",
+      "Coordinate convention: Y is the 23 mm board length from pin-socket edge to sensor-side edge; Z is the 15 mm short-edge width. Sensor datum is on the optical axis at Y=0, Z=0; board center is 5.5 mm toward the pin sockets."
     ]
   },
   "center_check": {
@@ -98,7 +98,7 @@
     },
     "sensor_datum_is_on_optical_axis": true,
     "board_center_relative_to_sensor_or_window_mm": {
-      "y": -0.0,
+      "y": -5.5,
       "z": -0.0
     },
     "note": "The active sensor datum is at Y=0, Z=0. Board center may be offset when the sensor is not at board center."

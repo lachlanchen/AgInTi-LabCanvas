@@ -149,14 +149,11 @@ def center_check(module: ModuleType, spec: VariantSpec) -> dict[str, Any]:
     ref = module.board_reference_geometry()
     if spec.datum_key == "sensor":
         board_center = ref.get("board_center_relative_to_sensor_mm", {})
-        y_offset = float(params.get(f"{spec.key}_sensor_offset_y_mm", 0.0))
-        z_offset = float(params.get(f"{spec.key}_sensor_offset_z_mm", 0.0))
-        if spec.key == "gy302":
-            y_offset = float(params.get("bh1750_sensor_offset_y_mm", 0.0))
-            z_offset = float(params.get("bh1750_sensor_offset_z_mm", 0.0))
-        if spec.key == "as7343":
-            y_offset = float(params.get("as7343_sensor_offset_y_mm", 0.0))
-            z_offset = float(params.get("as7343_sensor_offset_z_mm", 0.0))
+        # The source builders place the active sensor/window at the optical axis.
+        # Their *_sensor_offset_* params describe board-center offset relative to
+        # that datum, not displacement of the datum itself.
+        y_offset = 0.0
+        z_offset = 0.0
     elif spec.datum_key == "window":
         board_center = ref.get("board_center_relative_to_window_mm", {})
         y_offset = 0.0
@@ -179,6 +176,7 @@ def center_check(module: ModuleType, spec: VariantSpec) -> dict[str, Any]:
 def write_readme(spec: VariantSpec, module: ModuleType, manifest: dict[str, Any]) -> None:
     outputs = manifest["outputs"]
     center = manifest["center_check"]
+    reference_geometry = manifest.get("reference_geometry", {})
     print_policy = manifest["print_policy"]
     output_rows = "\n".join(f"| {key} | `{value}` |" for key, value in outputs.items())
     source_readme = spec.source_dir / "README.md"
@@ -204,6 +202,15 @@ The source holder remains the authoritative parametric design.
 
 ```json
 {json.dumps(center, indent=2, ensure_ascii=False)}
+```
+
+## Board Reference Geometry
+
+The source design reports board bounds and connector-side offsets relative to
+the active sensor/window datum:
+
+```json
+{json.dumps(reference_geometry, indent=2, ensure_ascii=False)}
 ```
 
 ## Print Policy

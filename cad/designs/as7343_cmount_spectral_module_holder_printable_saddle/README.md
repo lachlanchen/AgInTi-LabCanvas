@@ -30,10 +30,60 @@ The source holder remains the authoritative parametric design.
   },
   "sensor_datum_is_on_optical_axis": true,
   "board_center_relative_to_sensor_or_window_mm": {
-    "y": -0.0,
+    "y": -5.5,
     "z": -0.0
   },
   "note": "The active sensor datum is at Y=0, Z=0. Board center may be offset when the sensor is not at board center."
+}
+```
+
+## Board Reference Geometry
+
+The source design reports board bounds and connector-side offsets relative to
+the active sensor/window datum:
+
+```json
+{
+  "board_center_relative_to_sensor_mm": {
+    "y": -5.5,
+    "z": -0.0
+  },
+  "board_bounds_relative_to_sensor_mm": {
+    "y_min": -17.0,
+    "y_max": 6.0,
+    "z_min": -7.5,
+    "z_max": 7.5
+  },
+  "optional_clamp_holes_relative_to_sensor_mm": [
+    {
+      "name": "clamp_bottom_left",
+      "y": -21.0,
+      "z": -11.5,
+      "cut_diameter_mm": 2.4
+    },
+    {
+      "name": "clamp_top_left",
+      "y": -21.0,
+      "z": 11.5,
+      "cut_diameter_mm": 2.4
+    },
+    {
+      "name": "clamp_bottom_right",
+      "y": 10.0,
+      "z": -11.5,
+      "cut_diameter_mm": 2.4
+    },
+    {
+      "name": "clamp_top_right",
+      "y": 10.0,
+      "z": 11.5,
+      "cut_diameter_mm": 2.4
+    }
+  ],
+  "notes": [
+    "User-corrected AS7343 module geometry: PCB is 15 x 23 mm; pin sockets are on the negative-Y short edge; AS7343 package is centered across the 15 mm short edge and 6 mm from the opposite positive-Y short edge.",
+    "Coordinate convention: Y is the 23 mm board length from pin-socket edge to sensor-side edge; Z is the 15 mm short-edge width. Sensor datum is on the optical axis at Y=0, Z=0; board center is 5.5 mm toward the pin sockets."
+  ]
 }
 ```
 

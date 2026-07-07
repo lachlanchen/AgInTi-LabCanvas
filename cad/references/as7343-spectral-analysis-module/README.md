@@ -17,10 +17,16 @@ Local reference snapshot copied from:
 ## Mechanical Notes
 
 The provided files do not include a module PCB outline, STEP, DXF, or measured
-mounting-hole drawing. The C-mount holder in
-`cad/designs/as7343_cmount_spectral_module_holder/` therefore uses a parametric
-centered tray and centers the AS7343 package on the optical axis. Measure the
-real PCB before printing if the board must fit tightly.
+mounting-hole drawing. A later physical/reference check supplied the module
+layout used by the C-mount holder:
+
+- PCB size: `15 x 23 mm`.
+- Pin sockets: on one short edge.
+- Sensor position: centered across the `15 mm` short edge and `6 mm` from the
+  opposite short edge, away from the pin sockets.
+
+The holder in `cad/designs/as7343_cmount_spectral_module_holder/` uses this
+corrected layout and centers the AS7343 package on the optical axis.
 
 Chip-level values used by the holder:
 
