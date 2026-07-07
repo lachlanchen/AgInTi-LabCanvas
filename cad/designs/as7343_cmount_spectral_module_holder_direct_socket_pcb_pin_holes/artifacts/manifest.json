@@ -1,0 +1,143 @@
+{
+  "name": "as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes",
+  "params": {
+    "name": "as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes",
+    "design_variant": "direct C-mount socket to sensor holder plate; five pin-header reserved holes placed on the PCB placeholder, not outside the PCB",
+    "design_date": "2026-07-07",
+    "units": "mm",
+    "cmount_standard_note": "Industrial C-mount is 1-32 UNS, 0.79375 mm pitch; this part follows the local OpenHI printed 0.8 mm pitch convention.",
+    "openhi_female_root_diameter_mm": 24.8,
+    "openhi_female_thread_cutter_crest_diameter_mm": 25.6,
+    "thread_pitch_mm": 0.8,
+    "thread_tooth_height_mm": 0.4,
+    "thread_tooth_base_mm": 0.8,
+    "female_socket_length_mm": 12.0,
+    "female_thread_start_mm": 0.2,
+    "female_thread_length_mm": 10.0,
+    "socket_outer_diameter_mm": 34.0,
+    "optical_bore_diameter_mm": 8.0,
+    "omitted_middle_connector_length_mm": 0.0,
+    "sensor_plate_thickness_mm": 7.0,
+    "sensor_plate_width_y_mm": 50.0,
+    "sensor_plate_height_z_mm": 42.0,
+    "sensor_plate_center_z_mm": 0.0,
+    "estimated_module_board_width_y_mm": 23.0,
+    "estimated_module_board_height_z_mm": 15.0,
+    "module_board_size_source": "User-corrected AS7343 module geometry: PCB is 15 x 23 mm; pin sockets are on the negative-Y short edge; AS7343 package is centered across the 15 mm short edge and 6 mm from the opposite positive-Y short edge.",
+    "board_pocket_clearance_total_mm": 1.0,
+    "board_pocket_depth_mm": 2.2,
+    "board_thickness_mm": 1.6,
+    "as7343_package_width_y_mm": 3.1,
+    "as7343_package_height_z_mm": 2.0,
+    "as7343_package_thickness_x_mm": 1.0,
+    "as7343_window_diameter_mm": 1.0,
+    "as7343_sensor_offset_y_mm": 5.5,
+    "as7343_sensor_offset_z_mm": 0.0,
+    "pin_header_hole_side": "negative_y_short_edge_on_pcb",
+    "pin_header_hole_count": 5,
+    "pin_header_hole_pitch_z_mm": 2.54,
+    "pin_header_hole_diameter_mm": 1.4,
+    "pin_header_hole_y_offset_inside_board_from_negative_y_edge_mm": 2.5,
+    "optional_clamp_hole_diameter_mm": 2.4,
+    "optional_clamp_hole_margin_y_mm": 4.0,
+    "optional_clamp_hole_margin_z_mm": 4.0,
+    "source_chip_product": "https://ams-osram.com/products/sensor-solutions/ambient-light-color-spectral-proximity-sensors/ams-as7343-spectral-sensor",
+    "source_chip_datasheet_local": "cad/references/as7343-spectral-analysis-module/资料/AS7343_DS001046_6-00.pdf",
+    "source_module_schematic_local": "cad/references/as7343-spectral-analysis-module/AS7343光谱分析模块原理图.png"
+  },
+  "reference_geometry": {
+    "board_center_relative_to_sensor_mm": {
+      "y": -5.5,
+      "z": -0.0
+    },
+    "board_bounds_relative_to_sensor_mm": {
+      "y_min": -17.0,
+      "y_max": 6.0,
+      "z_min": -7.5,
+      "z_max": 7.5
+    },
+    "pin_header_holes_relative_to_sensor_mm": [
+      {
+        "name": "pcb_pin_header_1",
+        "y": -14.5,
+        "z": -5.08,
+        "cut_diameter_mm": 1.4
+      },
+      {
+        "name": "pcb_pin_header_2",
+        "y": -14.5,
+        "z": -2.54,
+        "cut_diameter_mm": 1.4
+      },
+      {
+        "name": "pcb_pin_header_3",
+        "y": -14.5,
+        "z": 0.0,
+        "cut_diameter_mm": 1.4
+      },
+      {
+        "name": "pcb_pin_header_4",
+        "y": -14.5,
+        "z": 2.54,
+        "cut_diameter_mm": 1.4
+      },
+      {
+        "name": "pcb_pin_header_5",
+        "y": -14.5,
+        "z": 5.08,
+        "cut_diameter_mm": 1.4
+      }
+    ],
+    "optional_clamp_holes_relative_to_sensor_mm": [
+      {
+        "name": "clamp_bottom_left",
+        "y": -21.0,
+        "z": -11.5,
+        "cut_diameter_mm": 2.4
+      },
+      {
+        "name": "clamp_top_left",
+        "y": -21.0,
+        "z": 11.5,
+        "cut_diameter_mm": 2.4
+      },
+      {
+        "name": "clamp_bottom_right",
+        "y": 10.0,
+        "z": -11.5,
+        "cut_diameter_mm": 2.4
+      },
+      {
+        "name": "clamp_top_right",
+        "y": 10.0,
+        "z": 11.5,
+        "cut_diameter_mm": 2.4
+      }
+    ],
+    "notes": [
+      "User-corrected AS7343 module geometry: PCB is 15 x 23 mm; pin sockets are on the negative-Y short edge; AS7343 package is centered across the 15 mm short edge and 6 mm from the opposite positive-Y short edge.",
+      "Coordinate convention: Y is the 23 mm board length from pin-socket edge to sensor-side edge; Z is the 15 mm short-edge width. Sensor datum is on the optical axis at Y=0, Z=0; board center is 5.5 mm toward the pin sockets.",
+      "The five pin-header reserved holes are on the PCB placeholder itself, 2.5 mm inside the negative-Y board edge; they are no longer drawn next to the board."
+    ]
+  },
+  "outputs": {
+    "multibody_holder_step": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_multibody_holder.step",
+    "multibody_holder_stl": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_multibody_holder.stl",
+    "cmount_socket_step": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_cmount_socket.step",
+    "cmount_socket_stl": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_cmount_socket.stl",
+    "sensor_plate_step": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_sensor_plate.step",
+    "sensor_plate_stl": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_sensor_plate.stl",
+    "assembly_step": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_assembly.step",
+    "assembly_stl": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_assembly.stl",
+    "thread_cutter_step": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_female_thread_cutter.step",
+    "thread_cutter_stl": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_female_thread_cutter.stl",
+    "board_proxy_step": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_board_proxy.step",
+    "board_proxy_stl": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_board_proxy.stl",
+    "rear_alignment_svg": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_rear_alignment.svg",
+    "rear_alignment_png": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_rear_alignment.png",
+    "rear_alignment_pdf": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_rear_alignment.pdf",
+    "render_png": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_render.png",
+    "rear_alignment_render_png": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes_rear_alignment_render.png",
+    "blend": "cad/designs/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes/artifacts/as7343_cmount_spectral_module_holder_direct_socket_pcb_pin_holes.blend"
+  }
+}
