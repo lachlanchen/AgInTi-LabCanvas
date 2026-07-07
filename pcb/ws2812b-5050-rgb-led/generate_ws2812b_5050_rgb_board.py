@@ -23,7 +23,6 @@ PROJECT = OUT_DIR / f"{BOARD_NAME}.kicad_pro"
 SCHEMATIC = OUT_DIR / f"{BOARD_NAME}.kicad_sch"
 FP_LIB_TABLE = OUT_DIR / "fp-lib-table"
 LED_FP = FOOTPRINT_DIR / "WS2812B_5050_PLCC4.kicad_mod"
-R_FP = FOOTPRINT_DIR / "R_0603.kicad_mod"
 C_FP = FOOTPRINT_DIR / "C_0603.kicad_mod"
 DATASET = OUT_DIR / "ws2812b-5050-rgb-led-dataset.json"
 BOM = OUT_DIR / f"{BOARD_NAME}.csv"
@@ -44,13 +43,19 @@ PARAMS = {
     "recommended_logic_high": "0.7*VDD minimum",
     "data_rate_kbps": 800,
     "full_white_estimated_ma": 60,
-    "din_series_resistor_ohm": 330,
+    "din_series_resistor": "not fitted on this clean carrier; add an external 220-470 ohm resistor if the controller lead is long or noisy",
     "decoupling_capacitor": "0.1 uF 0603 X7R close to VDD/VSS",
     "connector_pitch_mm": 2.54,
     "connector_drill_mm": 1.0,
     "connector_pad_mm": 2.0,
+    "left_header_x": 141.3,
+    "right_header_x": 158.7,
+    "header_top_y": 101.27,
+    "header_bottom_y": 98.73,
+    "capacitor_x": 150.0,
+    "capacitor_y": 95.6,
     "trace_width_power_mm": 0.5,
-    "trace_width_data_mm": 0.25,
+    "trace_width_data_mm": 0.3,
 }
 
 
@@ -97,7 +102,7 @@ def led_footprint_block() -> str:
 \t\t(at {cx:g} {cy:g})
 \t\t(descr "WS2812B 5050 PLCC-4 addressable RGB LED; KiCad pad geometry")
 \t\t(tags "WS2812B 5050 RGB LED NeoPixel addressable")
-{fp_text("Reference", "D1", "0 -3.5 0", "F.SilkS")}
+{fp_text("Reference", "D1", "0 3.6 0", "F.SilkS")}
 {fp_text("Value", "WS2812B_5050", "0 4 0", "F.Fab")}
 {fp_text("Footprint", "Custom:WS2812B_5050_PLCC4", "0 0 0", "F.Fab", True)}
 {fp_text("Description", "WS2812B 5050 RGB LED with integrated controller", "0 0 0", "F.Fab", True)}
@@ -117,37 +122,18 @@ def led_footprint_block() -> str:
 \t\t(pad "1" smd roundrect (at -2.45 -1.65) (size 1.5 0.9) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1) (net 1 "+5V") (pinfunction "VDD") (pintype "power_in") (uuid "{uid("d1:pad1")}"))
 \t\t(pad "2" smd roundrect (at -2.45 1.65) (size 1.5 0.9) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1) (net 4 "DOUT") (pinfunction "DOUT") (pintype "output") (uuid "{uid("d1:pad2")}"))
 \t\t(pad "3" smd roundrect (at 2.45 1.65) (size 1.5 0.9) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1) (net 2 "GND") (pinfunction "VSS") (pintype "power_in") (uuid "{uid("d1:pad3")}"))
-\t\t(pad "4" smd roundrect (at 2.45 -1.65) (size 1.5 0.9) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1) (net 5 "DIN_LED") (pinfunction "DIN") (pintype "input") (uuid "{uid("d1:pad4")}"))
+\t\t(pad "4" smd roundrect (at 2.45 -1.65) (size 1.5 0.9) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1) (net 3 "DIN") (pinfunction "DIN") (pintype "input") (uuid "{uid("d1:pad4")}"))
 \t\t(model "{model}" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0)))
 \t)"""
 
 
-def resistor_block() -> str:
-    return f"""
-\t(footprint "Custom:R_0603"
-\t\t(layer "F.Cu")
-\t\t(uuid "{uid("r1")}")
-\t\t(at 156.3 98.35)
-\t\t(descr "0603 resistor, simple local footprint")
-{fp_text("Reference", "R1", "0 -1.1 0", "F.SilkS")}
-{fp_text("Value", "330R", "0 1.1 0", "F.Fab")}
-{fp_text("Footprint", "Custom:R_0603", "0 0 0", "F.Fab", True)}
-\t\t(attr smd)
-\t\t(fp_line (start -0.15 -0.48) (end 0.15 -0.48) (stroke (width 0.10) (type solid)) (layer "F.SilkS") (uuid "{uid("r1:silk1")}"))
-\t\t(fp_line (start -0.15 0.48) (end 0.15 0.48) (stroke (width 0.10) (type solid)) (layer "F.SilkS") (uuid "{uid("r1:silk2")}"))
-\t\t(fp_rect (start -1.55 -0.75) (end 1.55 0.75) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd") (uuid "{uid("r1:crtyd")}"))
-\t\t(fp_rect (start -0.8 -0.4) (end 0.8 0.4) (stroke (width 0.10) (type solid)) (fill none) (layer "F.Fab") (uuid "{uid("r1:fab")}"))
-\t\t(pad "1" smd roundrect (at -0.8 0) (size 0.8 0.95) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.15) (net 5 "DIN_LED") (pinfunction "1") (pintype "passive") (uuid "{uid("r1:pad1")}"))
-\t\t(pad "2" smd roundrect (at 0.8 0) (size 0.8 0.95) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.15) (net 3 "DIN") (pinfunction "2") (pintype "passive") (uuid "{uid("r1:pad2")}"))
-\t)"""
-
-
 def capacitor_block() -> str:
+    p = PARAMS
     return f"""
 \t(footprint "Custom:C_0603"
 \t\t(layer "F.Cu")
 \t\t(uuid "{uid("c1")}")
-\t\t(at 151 104)
+\t\t(at {p['capacitor_x']:g} {p['capacitor_y']:g})
 \t\t(descr "0603 capacitor, simple local footprint")
 {fp_text("Reference", "C1", "0 -1.1 0", "F.Fab", True)}
 {fp_text("Value", "0.1uF", "0 1.1 0", "F.Fab")}
@@ -157,33 +143,31 @@ def capacitor_block() -> str:
 \t\t(fp_line (start -0.15 0.48) (end 0.15 0.48) (stroke (width 0.10) (type solid)) (layer "F.SilkS") (uuid "{uid("c1:silk2")}"))
 \t\t(fp_rect (start -1.55 -0.75) (end 1.55 0.75) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd") (uuid "{uid("c1:crtyd")}"))
 \t\t(fp_rect (start -0.8 -0.4) (end 0.8 0.4) (stroke (width 0.10) (type solid)) (fill none) (layer "F.Fab") (uuid "{uid("c1:fab")}"))
-\t\t(pad "1" smd roundrect (at -0.8 0) (size 0.8 0.95) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.15) (net 2 "GND") (pinfunction "1") (pintype "passive") (uuid "{uid("c1:pad1")}"))
-\t\t(pad "2" smd roundrect (at 0.8 0) (size 0.8 0.95) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.15) (net 1 "+5V") (pinfunction "2") (pintype "passive") (uuid "{uid("c1:pad2")}"))
+\t\t(pad "1" smd roundrect (at -0.8 0) (size 0.8 0.95) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.15) (net 1 "+5V") (pinfunction "1") (pintype "passive") (uuid "{uid("c1:pad1")}"))
+\t\t(pad "2" smd roundrect (at 0.8 0) (size 0.8 0.95) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.15) (net 2 "GND") (pinfunction "2") (pintype "passive") (uuid "{uid("c1:pad2")}"))
 \t)"""
 
 
-def connector_block() -> str:
+def two_pin_header_block(ref: str, x: float, y: float, value: str, pad1: tuple[int, str, str], pad2: tuple[int, str, str]) -> str:
     p = PARAMS
-    model = "/usr/share/kicad/3dmodels/Connector_PinHeader_2.54mm.3dshapes/PinHeader_1x04_P2.54mm_Horizontal.step"
+    model = "/usr/share/kicad/3dmodels/Connector_PinHeader_2.54mm.3dshapes/PinHeader_1x02_P2.54mm_Vertical.step"
+    pad1_net, pad1_name, pad1_fn = pad1
+    pad2_net, pad2_name, pad2_fn = pad2
     return f"""
-\t(footprint "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Horizontal"
-\t\t(layer "B.Cu")
-\t\t(uuid "{uid("j1")}")
-\t\t(at 158.7 103.81)
-\t\t(descr "Through-hole angled pin header, 1x04, 2.54mm pitch")
-\t\t(tags "1x04 2.54mm pin header WS2812B")
-{fp_text("Reference", "J1", "-1.8 2.3 0", "B.Fab", True)}
-{fp_text("Value", "5V_GND_DIN_DOUT", "-1.8 -9.8 0", "B.Fab", True)}
-{fp_text("Footprint", "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Horizontal", "0 0 0", "F.Fab", True)}
+\t(footprint "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
+\t\t(layer "F.Cu")
+\t\t(uuid "{uid(ref.lower())}")
+\t\t(at {x:g} {y:g})
+\t\t(descr "Through-hole vertical pin header, 1x02, 2.54mm pitch")
+\t\t(tags "1x02 2.54mm pin header WS2812B clean split")
+{fp_text("Reference", ref, "0 -1.9 0", "F.Fab", True)}
+{fp_text("Value", value, "0 3.9 0", "F.Fab", True)}
+{fp_text("Footprint", "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical", "0 0 0", "F.Fab", True)}
 \t\t(attr through_hole)
-\t\t(fp_line (start -1.27 1.27) (end -1.27 -8.89) (stroke (width 0.10) (type solid)) (layer "B.Fab") (uuid "{uid("j1:fab1")}"))
-\t\t(fp_line (start 1.15 1.27) (end -1.27 1.27) (stroke (width 0.10) (type solid)) (layer "B.Fab") (uuid "{uid("j1:fab2")}"))
-\t\t(fp_line (start 1.15 -8.89) (end -1.27 -8.89) (stroke (width 0.10) (type solid)) (layer "B.Fab") (uuid "{uid("j1:fab3")}"))
-\t\t(fp_line (start 1.15 1.27) (end 1.15 -8.89) (stroke (width 0.10) (type solid)) (layer "B.Fab") (uuid "{uid("j1:fab4")}"))
-\t\t(pad "1" thru_hole rect (at 0 0) (size {p['connector_pad_mm']} {p['connector_pad_mm']}) (drill {p['connector_drill_mm']}) (layers "*.Cu" "*.Mask") (remove_unused_layers no) (net 1 "+5V") (pinfunction "5V") (pintype "power_in") (uuid "{uid("j1:pad1")}"))
-\t\t(pad "2" thru_hole oval (at 0 -2.54) (size {p['connector_pad_mm']} {p['connector_pad_mm']}) (drill {p['connector_drill_mm']}) (layers "*.Cu" "*.Mask") (remove_unused_layers no) (net 2 "GND") (pinfunction "GND") (pintype "power_in") (uuid "{uid("j1:pad2")}"))
-\t\t(pad "3" thru_hole oval (at 0 -5.08) (size {p['connector_pad_mm']} {p['connector_pad_mm']}) (drill {p['connector_drill_mm']}) (layers "*.Cu" "*.Mask") (remove_unused_layers no) (net 3 "DIN") (pinfunction "DIN") (pintype "input") (uuid "{uid("j1:pad3")}"))
-\t\t(pad "4" thru_hole oval (at 0 -7.62) (size {p['connector_pad_mm']} {p['connector_pad_mm']}) (drill {p['connector_drill_mm']}) (layers "*.Cu" "*.Mask") (remove_unused_layers no) (net 4 "DOUT") (pinfunction "DOUT") (pintype "output") (uuid "{uid("j1:pad4")}"))
+\t\t(fp_rect (start -1.27 -3.81) (end 1.27 1.27) (stroke (width 0.10) (type solid)) (fill none) (layer "F.Fab") (uuid "{uid(ref + ':fab')}"))
+\t\t(fp_rect (start -1.55 -4.1) (end 1.55 1.55) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd") (uuid "{uid(ref + ':crtyd')}"))
+\t\t(pad "1" thru_hole rect (at 0 0) (size {p['connector_pad_mm']} {p['connector_pad_mm']}) (drill {p['connector_drill_mm']}) (layers "*.Cu" "*.Mask") (remove_unused_layers no) (net {pad1_net} "{pad1_name}") (pinfunction "{pad1_fn}") (pintype "passive") (uuid "{uid(ref + ':pad1')}"))
+\t\t(pad "2" thru_hole oval (at 0 -2.54) (size {p['connector_pad_mm']} {p['connector_pad_mm']}) (drill {p['connector_drill_mm']}) (layers "*.Cu" "*.Mask") (remove_unused_layers no) (net {pad2_net} "{pad2_name}") (pinfunction "{pad2_fn}") (pintype "passive") (uuid "{uid(ref + ':pad2')}"))
 \t\t(model "{model}" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0)))
 \t)"""
 
@@ -252,40 +236,30 @@ def board_text() -> str:
 \t(net 2 "GND")
 \t(net 3 "DIN")
 \t(net 4 "DOUT")
-\t(net 5 "DIN_LED")
 {mounting_hole("H1", cx - mount, cy - mount)}
 {mounting_hole("H2", cx + mount, cy - mount)}
 {mounting_hole("H3", cx + mount, cy + mount)}
 {mounting_hole("H4", cx - mount, cy + mount)}
 {led_footprint_block()}
-{resistor_block()}
 {capacitor_block()}
-{connector_block()}
+{two_pin_header_block("J1", p["left_header_x"], p["header_top_y"], "DOUT_5V", (4, "DOUT", "DOUT"), (1, "+5V", "5V"))}
+{two_pin_header_block("J2", p["right_header_x"], p["header_top_y"], "GND_DIN", (2, "GND", "GND"), (3, "DIN", "DIN"))}
 \t(gr_circle (center {cx:g} {cy:g}) (end {cx + r:g} {cy:g}) (stroke (width 0.2) (type default)) (fill none) (layer "Edge.Cuts") (uuid "{uid("edge")}"))
 \t(gr_text "WS2812B 5050 RGB" (at {cx:g} {cy + 10.2:g} 0) (layer "F.Fab") (uuid "{uid("text:title")}") (effects (font (size 0.62 0.62) (thickness 0.10))))
-\t(gr_text "J1: 5V GND DIN DOUT" (at {cx:g} {cy - 10.2:g} 0) (layer "F.Fab") (uuid "{uid("text:pinout")}") (effects (font (size 0.52 0.52) (thickness 0.08))))
-\t(gr_text "5V" (at 156.6 103.8 0) (layer "F.SilkS") (uuid "{uid("text:5v")}") (effects (font (size 0.8 0.8) (thickness 0.10))))
-\t(gr_text "G" (at 156.7 101.25 0) (layer "F.SilkS") (uuid "{uid("text:gnd")}") (effects (font (size 0.8 0.8) (thickness 0.10))))
-\t(gr_text "DI" (at 156.5 98.72 0) (layer "F.Fab") (uuid "{uid("text:din")}") (effects (font (size 0.8 0.8) (thickness 0.10))))
-\t(gr_text "DO" (at 156.4 96.18 0) (layer "F.SilkS") (uuid "{uid("text:dout")}") (effects (font (size 0.8 0.8) (thickness 0.10))))
+\t(gr_text "J1: DO/5V  J2: G/DI" (at {cx:g} {cy - 10.2:g} 0) (layer "F.Fab") (uuid "{uid("text:pinout")}") (effects (font (size 0.52 0.52) (thickness 0.08))))
+\t(gr_text "DO" (at 143.55 101.28 0) (layer "F.SilkS") (uuid "{uid("text:dout")}") (effects (font (size 0.8 0.8) (thickness 0.11))))
+\t(gr_text "5V" (at 143.55 98.72 0) (layer "F.SilkS") (uuid "{uid("text:5v")}") (effects (font (size 0.8 0.8) (thickness 0.11))))
+\t(gr_text "G" (at 156.55 101.28 0) (layer "F.SilkS") (uuid "{uid("text:gnd")}") (effects (font (size 0.8 0.8) (thickness 0.11))))
+\t(gr_text "DI" (at 156.45 98.72 0) (layer "F.SilkS") (uuid "{uid("text:din")}") (effects (font (size 0.8 0.8) (thickness 0.11))))
 \t(gr_text "JLCJLCJLCJLC" (at {cx:g} {cy + 9.2:g} 0) (layer "B.SilkS") (uuid "{uid("text:jlc-order")}") (effects (font (size 0.8 0.8) (thickness 0.10)) (justify mirror)))
-\t(segment (start 158.7 103.81) (end 151.8 104) (width 0.5) (layer "F.Cu") (net 1) (uuid "{uid("seg:5v1")}"))
-\t(segment (start 151.8 104) (end 151.8 105) (width 0.5) (layer "F.Cu") (net 1) (uuid "{uid("seg:5v2")}"))
-\t(segment (start 151.8 105) (end 145.8 105) (width 0.5) (layer "F.Cu") (net 1) (uuid "{uid("seg:5v3")}"))
-\t(segment (start 145.8 105) (end 145.8 98.35) (width 0.5) (layer "F.Cu") (net 1) (uuid "{uid("seg:5v4")}"))
-\t(segment (start 145.8 98.35) (end 147.55 98.35) (width 0.5) (layer "F.Cu") (net 1) (uuid "{uid("seg:5v5")}"))
-\t(segment (start 158.7 101.27) (end 153.5 101.65) (width 0.5) (layer "F.Cu") (net 2) (uuid "{uid("seg:gnd1")}"))
-\t(segment (start 153.5 101.65) (end 152.45 101.65) (width 0.5) (layer "F.Cu") (net 2) (uuid "{uid("seg:gnd2")}"))
-\t(segment (start 150.2 104) (end 150.2 101.65) (width 0.3) (layer "F.Cu") (net 2) (uuid "{uid("seg:c1g")}"))
-\t(segment (start 150.2 101.65) (end 152.45 101.65) (width 0.3) (layer "F.Cu") (net 2) (uuid "{uid("seg:c1g2")}"))
-\t(segment (start 158.7 98.73) (end 157.1 98.35) (width 0.25) (layer "F.Cu") (net 3) (uuid "{uid("seg:din1")}"))
-\t(segment (start 155.5 98.35) (end 152.45 98.35) (width 0.25) (layer "F.Cu") (net 5) (uuid "{uid("seg:dinled1")}"))
-\t(segment (start 158.7 96.19) (end 156 96.2) (width 0.25) (layer "B.Cu") (net 4) (uuid "{uid("seg:dout1")}"))
-\t(segment (start 156 96.2) (end 154.2 99.0) (width 0.25) (layer "B.Cu") (net 4) (uuid "{uid("seg:dout2")}"))
-\t(segment (start 154.2 99.0) (end 154.2 102.8) (width 0.25) (layer "B.Cu") (net 4) (uuid "{uid("seg:dout3")}"))
-\t(segment (start 154.2 102.8) (end 148.2 103.2) (width 0.25) (layer "B.Cu") (net 4) (uuid "{uid("seg:dout4")}"))
-\t(via (at 148.2 103.2) (size 0.8) (drill 0.4) (layers "F.Cu" "B.Cu") (net 4) (uuid "{uid("via:dout")}"))
-\t(segment (start 148.2 103.2) (end 147.55 101.65) (width 0.25) (layer "F.Cu") (net 4) (uuid "{uid("seg:dout5")}"))
+\t(segment (start 141.3 98.73) (end 147.55 98.35) (width 0.5) (layer "F.Cu") (net 1) (uuid "{uid("seg:5v-header-led")}"))
+\t(segment (start 147.55 98.35) (end 149.2 95.6) (width 0.35) (layer "F.Cu") (net 1) (uuid "{uid("seg:5v-cap")}"))
+\t(segment (start 158.7 101.27) (end 152.45 101.65) (width 0.5) (layer "F.Cu") (net 2) (uuid "{uid("seg:gnd-header-led")}"))
+\t(segment (start 158.7 101.27) (end 160.2 101.27) (width 0.35) (layer "F.Cu") (net 2) (uuid "{uid("seg:gnd-cap1")}"))
+\t(segment (start 160.2 101.27) (end 160.2 95.6) (width 0.35) (layer "F.Cu") (net 2) (uuid "{uid("seg:gnd-cap2")}"))
+\t(segment (start 160.2 95.6) (end 150.8 95.6) (width 0.35) (layer "F.Cu") (net 2) (uuid "{uid("seg:gnd-cap3")}"))
+\t(segment (start 158.7 98.73) (end 152.45 98.35) (width 0.3) (layer "F.Cu") (net 3) (uuid "{uid("seg:din")}"))
+\t(segment (start 141.3 101.27) (end 147.55 101.65) (width 0.3) (layer "F.Cu") (net 4) (uuid "{uid("seg:dout")}"))
 )"""
 
 
@@ -303,10 +277,6 @@ def footprint_file_text(kind: str) -> str:
         block = led_footprint_block().replace('\t(footprint "Custom:WS2812B_5050_PLCC4"', '(footprint "WS2812B_5050_PLCC4"', 1)
         block = block.replace(f'\n\t\t(uuid "{uid("d1")}")', "")
         return block.strip() + "\n"
-    if kind == "r":
-        block = resistor_block().replace('\t(footprint "Custom:R_0603"', '(footprint "R_0603"', 1)
-        block = block.replace(f'\n\t\t(uuid "{uid("r1")}")', "")
-        return block.strip() + "\n"
     if kind == "c":
         block = capacitor_block().replace('\t(footprint "Custom:C_0603"', '(footprint "C_0603"', 1)
         block = block.replace(f'\n\t\t(uuid "{uid("c1")}")', "")
@@ -322,7 +292,7 @@ def schematic_text() -> str:
 \t(uuid "{uid("schematic")}")
 \t(paper "A4")
 \t(lib_symbols)
-\t(text "Board-only schematic stub. The PCB has one WS2812B 5050 LED, 330R DIN resistor, 0.1uF local decoupling, and 1x04 5V/GND/DIN/DOUT header." (at 65 76.2 0)
+\t(text "Board-only schematic stub. The PCB has one WS2812B 5050 LED, direct DIN/DOUT routing, 0.1uF local decoupling, and two 1x02 side headers: J1 DOUT/+5V, J2 GND/DIN." (at 65 76.2 0)
 \t\t(effects (font (size 1.27 1.27)) (justify left bottom))
 \t\t(uuid "{uid("sch:text")}")
 \t)
@@ -372,12 +342,12 @@ def dataset() -> dict:
         "pcb_assumptions": {
             "board_style": "24 mm round carrier matching the existing LED/lamp carrier family",
             "mounting": "four M2 NPTH holes on 12 x 12 mm pattern",
-            "connector": "rear-side 1x04 2.54 mm horizontal header with 5V, GND, DIN, DOUT",
-            "din_series_resistor": "330 ohm 0603 near LED DIN pad",
+            "connector": "two side 1x02 2.54 mm headers: left J1 is DOUT/+5V, right J2 is GND/DIN",
+            "din_series_resistor": "not fitted; direct DIN route for a compact single-LED carrier. Add external 220-470 ohm series resistance if the controller lead is long or noisy.",
             "decoupling": "0.1 uF 0603 capacitor near VDD/VSS",
             "trace_widths": {
                 "power_mm": 0.5,
-                "data_mm": 0.25,
+                "data_mm": 0.3,
             },
             "soldering": "manual soldering or JLC SMT if the exact WS2812B reel and orientation are matched later",
         },
@@ -389,9 +359,8 @@ def write_bom() -> None:
         ["Id", "Designator", "Footprint", "Quantity", "Designation", "Notes"],
         ["1", "H1,H2,H3,H4", "MountingHole_2.2mm_M2", "4", "M2 mounting holes", "same 24 mm carrier family"],
         ["2", "D1", "WS2812B_5050_PLCC4", "1", "WS2812B 5050 addressable RGB LED", "pad 1 VDD, 2 DOUT, 3 VSS, 4 DIN"],
-        ["3", "R1", "R_0603", "1", "330 ohm DIN series resistor", "place close to LED data input"],
-        ["4", "C1", "C_0603", "1", "0.1 uF decoupling capacitor", "place close to VDD/VSS"],
-        ["5", "J1", "PinHeader_1x04_P2.54mm_Horizontal", "1", "5V/GND/DIN/DOUT connector", "manual install"],
+        ["3", "C1", "C_0603", "1", "0.1 uF decoupling capacitor", "place close to VDD/VSS"],
+        ["4", "J1,J2", "PinHeader_1x02_P2.54mm_Vertical", "2", "split side headers", "J1 DOUT/+5V, J2 GND/DIN"],
     ]
     with BOM.open("w", newline="", encoding="utf-8") as handle:
         csv.writer(handle, lineterminator="\n").writerows(rows)
@@ -411,9 +380,11 @@ to a single WS2812B 5050 addressable RGB LED.
 - Board outline: 24 mm circular carrier.
 - Mounting: four M2 NPTH holes on a 12 x 12 mm pattern.
 - LED: WS2812B 5050 PLCC-4, centered on the board.
-- Header: 1x04 2.54 mm rear-side connector. Bottom-to-top in the render is
-  `5V`, `GND`, `DIN`, `DOUT`.
-- Input protection habit: `330R` 0603 series resistor on `DIN`.
+- Headers: two 1x02 2.54 mm side connectors. Left side is `DOUT`/`5V`;
+  right side is `GND`/`DIN`.
+- `DIN` is routed directly to the LED for a cleaner single-LED carrier. Add an
+  external 220-470 ohm series resistor only when the controller lead is long or
+  noisy.
 - Local supply stability: `0.1 uF` 0603 capacitor close to LED `VDD`/`VSS`.
 
 ## Datasheet Notes
@@ -505,9 +476,9 @@ def write_order_files() -> None:
             "full": f"../artifacts/{BOARD_NAME}-render-full.png",
         },
         "notes": [
-            "Bare PCB only; LED, R1, C1, and header are manually assembled unless a future SMT order has exact LCSC/JLC part mapping.",
+            "Bare PCB only; LED, C1, and the two 1x02 headers are manually assembled unless a future SMT order has exact LCSC/JLC part mapping.",
             "China site may reject OSP for very small boards; let the order tool choose a size-compatible finish.",
-            "Pin order at J1 is 5V, GND, DIN, DOUT from the visible bottom pad toward the top; top-to-bottom is DOUT, DIN, GND, 5V.",
+            "J1 left side top-to-bottom is DOUT, +5V. J2 right side top-to-bottom is GND, DIN.",
         ],
     }
     (ORDER_DIR / "order-settings.json").write_text(json.dumps(settings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -515,8 +486,8 @@ def write_order_files() -> None:
         f"""# JLCPCB Order Pack: {BOARD_NAME}
 
 This folder is generated for bare-PCB fabrication only. The WS2812B LED,
-resistor, capacitor, and header are intended for manual assembly unless a later
-SMT order maps exact parts and orientation.
+capacitor, and two 1x02 headers are intended for manual assembly unless a later
+SMT order maps exact parts and orientation. No onboard DIN resistor is fitted.
 
 ```bash
 python3 agentic_tools/jlcpcb_order_agent/scripts/submit_board_order.py \\
@@ -562,7 +533,7 @@ def main() -> None:
     SCHEMATIC.write_text(schematic_text(), encoding="utf-8")
     FP_LIB_TABLE.write_text(fp_lib_table_text() + "\n", encoding="utf-8")
     LED_FP.write_text(footprint_file_text("led"), encoding="utf-8")
-    R_FP.write_text(footprint_file_text("r"), encoding="utf-8")
+    (FOOTPRINT_DIR / "R_0603.kicad_mod").unlink(missing_ok=True)
     C_FP.write_text(footprint_file_text("c"), encoding="utf-8")
     LOCAL_GITIGNORE.write_text("*.kicad_prl\nfp-info-cache\n", encoding="utf-8")
     DATASET.write_text(json.dumps(dataset(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

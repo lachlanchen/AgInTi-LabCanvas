@@ -4,9 +4,9 @@
 		(descr "WS2812B 5050 PLCC-4 addressable RGB LED; KiCad pad geometry")
 		(tags "WS2812B 5050 RGB LED NeoPixel addressable")
 		(property "Reference" "D1"
-			(at 0 -3.5 0)
+			(at 0 3.6 0)
 			(layer "F.SilkS")
-			(uuid "5cd7af36-5352-522c-8ba0-1b5f57fc2025")
+			(uuid "6ffd7afc-c0b0-55eb-84f6-052685e779de")
 			(effects (font (size 1 1) (thickness 0.15)))
 		)
 		(property "Value" "WS2812B_5050"
@@ -45,6 +45,6 @@
 		(pad "1" smd roundrect (at -2.45 -1.65) (size 1.5 0.9) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1) (net 1 "+5V") (pinfunction "VDD") (pintype "power_in") (uuid "f35547b6-b32f-5b45-848d-6a650962c64e"))
 		(pad "2" smd roundrect (at -2.45 1.65) (size 1.5 0.9) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1) (net 4 "DOUT") (pinfunction "DOUT") (pintype "output") (uuid "4f369851-12f2-5fa1-90cf-f38810d5c694"))
 		(pad "3" smd roundrect (at 2.45 1.65) (size 1.5 0.9) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1) (net 2 "GND") (pinfunction "VSS") (pintype "power_in") (uuid "b065ca9e-3640-54a0-89a2-4218f8aeff18"))
-		(pad "4" smd roundrect (at 2.45 -1.65) (size 1.5 0.9) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1) (net 5 "DIN_LED") (pinfunction "DIN") (pintype "input") (uuid "9592e95a-362e-5a7e-b8a4-b8cc0c3f579b"))
+		(pad "4" smd roundrect (at 2.45 -1.65) (size 1.5 0.9) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.1) (net 3 "DIN") (pinfunction "DIN") (pintype "input") (uuid "9592e95a-362e-5a7e-b8a4-b8cc0c3f579b"))
 		(model "${KICAD10_3DMODEL_DIR}/LED_SMD.3dshapes/LED_WS2812B_PLCC4_5.0x5.0mm_P3.2mm.step" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0)))
 	)

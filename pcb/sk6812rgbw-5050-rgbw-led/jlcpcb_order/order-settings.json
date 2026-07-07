@@ -49,8 +49,8 @@
     "full": "../artifacts/sk6812rgbw-5050-rgbw-led-render-full.png"
   },
   "notes": [
-    "Bare PCB only; LED, R1, C1, and header are manually assembled unless a future SMT order has exact LCSC/JLC part mapping.",
+    "Bare PCB only; LED, C1, and the two 1x02 headers are manually assembled unless a future SMT order has exact LCSC/JLC part mapping.",
     "China site may reject OSP for very small boards; let the order tool choose a size-compatible finish.",
-    "Pin order at J1 is 5V, GND, DIN, DOUT from the visible bottom pad toward the top; top-to-bottom is DOUT, DIN, GND, 5V."
+    "J1 left side top-to-bottom is DOUT, +5V. J2 right side top-to-bottom is GND, DIN."
   ]
 }

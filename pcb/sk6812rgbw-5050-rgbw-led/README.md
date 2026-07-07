@@ -11,9 +11,11 @@ to a single SK6812RGBW 5050 addressable RGBW LED. The footprint uses the local
 - Board outline: 24 mm circular carrier.
 - Mounting: four M2 NPTH holes on a 12 x 12 mm pattern.
 - LED: SK6812RGBW 5050 PLCC-4, centered on the board.
-- Header: 1x04 2.54 mm rear-side connector. Bottom-to-top in the render is
-  `5V`, `GND`, `DIN`, `DOUT`.
-- Input protection habit: `330R` 0603 series resistor on `DIN`.
+- Headers: two 1x02 2.54 mm side connectors. Left side is `DOUT`/`5V`;
+  right side is `GND`/`DIN`.
+- `DIN` is routed directly to the LED for a cleaner single-LED carrier. Add an
+  external 220-470 ohm series resistor only when the controller lead is long or
+  noisy.
 - Local supply stability: `0.1 uF` 0603 capacitor close to LED `VDD`/`VSS`.
 
 ## Datasheet Notes

@@ -42,12 +42,12 @@
   "pcb_assumptions": {
     "board_style": "24 mm round carrier matching the existing LED/lamp carrier family",
     "mounting": "four M2 NPTH holes on 12 x 12 mm pattern",
-    "connector": "rear-side 1x04 2.54 mm horizontal header with 5V, GND, DIN, DOUT",
-    "din_series_resistor": "330 ohm 0603 near LED DIN pad",
+    "connector": "two side 1x02 2.54 mm headers: left J1 is DOUT/+5V, right J2 is GND/DIN",
+    "din_series_resistor": "not fitted; direct DIN route for a compact single-LED carrier. Add external 220-470 ohm series resistance if the controller lead is long or noisy.",
     "decoupling": "0.1 uF 0603 capacitor near VDD/VSS",
     "trace_widths": {
       "power_mm": 0.5,
-      "data_mm": 0.25
+      "data_mm": 0.3
     },
     "soldering": "manual soldering or JLC SMT if the exact SK6812RGBW reel and orientation are matched later"
   }

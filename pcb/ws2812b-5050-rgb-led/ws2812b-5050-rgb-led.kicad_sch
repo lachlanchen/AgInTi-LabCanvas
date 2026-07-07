@@ -5,7 +5,7 @@
 	(uuid "59f0cd7b-8744-523e-b24b-fa7417e1f193")
 	(paper "A4")
 	(lib_symbols)
-	(text "Board-only schematic stub. The PCB has one WS2812B 5050 LED, 330R DIN resistor, 0.1uF local decoupling, and 1x04 5V/GND/DIN/DOUT header." (at 65 76.2 0)
+	(text "Board-only schematic stub. The PCB has one WS2812B 5050 LED, direct DIN/DOUT routing, 0.1uF local decoupling, and two 1x02 side headers: J1 DOUT/+5V, J2 GND/DIN." (at 65 76.2 0)
 		(effects (font (size 1.27 1.27)) (justify left bottom))
 		(uuid "5a5309b8-9830-5c42-9af0-14a975b5e4d3")
 	)
