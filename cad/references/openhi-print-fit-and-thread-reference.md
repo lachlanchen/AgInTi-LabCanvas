@@ -73,6 +73,13 @@ For future female printed C-mount experiments, a reasonable starting point is:
 
 If using a real `1"-32UN` tap, design the pilot for tapping and cut the thread physically rather than relying on printed thread accuracy.
 
+For the AS7343 and TSL25911 direct C-mount sensor holders, the corrected
+standard-like printed variant treats `25.4 mm` as the nominal internal
+thread/groove maximum, not the smooth female pilot. Use a `25.0 mm` pilot/root
+and a `25.4 mm` nominal thread cutter maximum, with only a tiny boolean overlap
+for robustness. Do not use a `25.4 mm` pilot and then cut a larger groove unless
+the intent is a deliberately loose high-clearance experiment.
+
 ## Lens C Holder 30.0/30.4 Receiver Fix
 
 For `cad/extracted/OpenHI_STEP/Lens C holder.step`, the corrected task is to tighten the positive-X OpenHI female receiver, not to add C-mount.
