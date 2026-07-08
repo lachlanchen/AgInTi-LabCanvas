@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="974" height="494" viewBox="0 0 974 494">
+<rect width="100%" height="100%" fill="white"/>
+<rect x="54.00" y="54.00" width="386.40" height="386.40" fill="#f7fafc" stroke="#1a202c" stroke-width="2"/><text x="54.00" y="46.00" font-family="Arial" font-size="12" fill="#1a202c">42 x 42 mm holder</text>
+<line x1="54.00" y1="247.20" x2="440.40" y2="247.20" stroke="#cbd5e0" stroke-width="1"/>
+<line x1="247.20" y1="54.00" x2="247.20" y2="440.40" stroke="#cbd5e0" stroke-width="1"/>
+<circle cx="109.20" cy="385.20" r="29.44" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="109.20" cy="109.20" r="29.44" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="385.20" cy="385.20" r="29.44" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="385.20" cy="109.20" r="29.44" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<rect x="161.64" y="152.44" width="171.12" height="189.52" fill="#e6fffa" stroke="#319795" stroke-width="2"/>
+<rect x="164.40" y="155.20" width="165.60" height="184.00" fill="none" stroke="#2c7a7b" stroke-width="2" stroke-dasharray="6 4"/>
+<rect x="178.20" y="178.20" width="138.00" height="138.00" fill="none" stroke="#718096" stroke-width="2" stroke-dasharray="5 4"/>
+<rect x="187.40" y="187.40" width="119.60" height="119.60" fill="#fffaf0" stroke="#dd6b20" stroke-width="2"/>
+<rect x="232.30" y="339.20" width="6.44" height="73.60" fill="#feebc8" stroke="#c05621" stroke-width="2"/>
+<rect x="255.66" y="339.20" width="6.44" height="73.60" fill="#feebc8" stroke="#c05621" stroke-width="2"/>
+<text x="474.40" y="54.00" font-family="Arial" font-size="17" font-weight="700" fill="#1a202c">QYH1123 light-valve cage holder</text>
+<text x="474.40" y="79.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Origin: active aperture center and 30 mm cage center</text>
+<text x="474.40" y="104.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Valve body: 18 x 20 x 2 mm</text>
+<text x="474.40" y="129.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Active area: 15 x 15 mm; through window: 13 x 13 mm</text>
+<text x="474.40" y="154.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Pocket/sink: +0.6 mm XY clearance, 2.2 mm deep</text>
+<text x="474.40" y="179.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Terrace lip: 1.0 mm per side inside the V.A.</text>
+<text x="474.40" y="204.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Centered variant: valve body, active area, pin pair, and cage datum share x=0</text>
+<text x="474.40" y="229.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Pins: 2.54 mm pitch, bottom shallow relief for 8 mm tails</text>
+<text x="474.40" y="254.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Cage rods: 30 mm pitch, 6.4 mm clearance</text>
+</svg>
