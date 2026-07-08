@@ -21,6 +21,23 @@ The old STEP files include repeated swept-triangle evidence:
 
 Practical rule: model the old printed thread as a `0.8 mm` pitch helix with a triangular tooth that is `0.4 mm` high and `0.8 mm` wide. Industrial C-mount is 1"-32, but the local STEP geometry appears rounded to `0.8 mm`.
 
+## Thread Runout Modeling Rule
+
+When a swept helix starts and stops exactly on the nominal end faces, the first
+and last partial teeth can disappear or leave a short smooth section. For clean
+printed threads:
+
+- Female/internal thread by subtraction: make the thread cutter extend by about
+  half a pitch beyond each nominal end before subtraction. For the local
+  `0.8 mm` pitch, use `0.4 mm` extra at each end. The final socket body clips
+  the cutter naturally, so no visible overflow remains.
+- Male/external thread: generate the male thread with the same extra half pitch,
+  then trim/cut the final solid back to the real mount end face. This preserves
+  a fully developed thread at the end without leaving thread geometry outside
+  the intended cylinder length.
+- Keep the tooth height, tooth base, and pitch unchanged when adding this
+  runout. The runout is a construction technique, not a thread-spec change.
+
 ## Purchased Thread Tools
 
 Use this table when choosing whether to tap/chase a printed part or model a new
