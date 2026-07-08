@@ -1249,6 +1249,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(route["route_decision"]["needs_recent_media"])
         self.assertIn("Bare File Intake", route["task"])
         self.assertIn("automatically read/describe", route["task"])
+        self.assertIn("For non-image bare uploads", route["task"])
         self.assertIn("local_id=61", route["task"])
 
     def test_transcribed_voice_is_treated_as_text_in_echomind(self) -> None:
