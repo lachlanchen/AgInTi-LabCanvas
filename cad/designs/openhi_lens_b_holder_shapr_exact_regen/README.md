@@ -70,4 +70,4 @@ blender --background --python cad/designs/openhi_lens_b_holder_shapr_exact_regen
 
 ## Next Editable Variant
 
-For the next printer-fit experiment, create a sibling parametric/surgical variant from this exact baseline and change only the requested female receiver/thread construction, such as a normal `25.4 mm` C-mount-sized receiver. Keep this proof-of-concept folder unchanged.
+For the corrected printer-fit experiment, create a sibling parametric/surgical variant from this exact baseline and change only the requested OpenHI female receiver/thread construction. The current print-fit sibling is `openhi_lens_b_holder_receiver_30p0_30p4_print_fit`, which keeps the 30 mm OpenHI family, changes the old positive-Z `30.2 mm` receiver start/root to a `30.0 mm` pilot, cuts a `30.4 mm` groove envelope, and shortens the lens-side 45 degree chamfer to `25.5 -> 30.0 mm` over `2.25 mm`. Keep this proof-of-concept folder unchanged.

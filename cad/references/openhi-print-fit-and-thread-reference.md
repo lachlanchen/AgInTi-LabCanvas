@@ -20,7 +20,7 @@ Current Shapr3D experience on Ubuntu:
 - Preserve named bodies separately where possible. For Lens C, `Thread BS` is the left threaded solid and `T branch head (1)` is the main holder body.
 - STEP export/re-import can shift reported tolerance boxes by a few microns. Record construction facts and tolerance-based checks instead of brittle exact bbox string equality.
 
-The earlier `openhi_lens_c_holder_receiver_25p4` folder was a C-mount-sized experiment and is not the corrected Lens C OpenHI task. The corrected Lens C task is a 30 mm OpenHI print-fit change, not a 25.4 mm C-mount conversion.
+The earlier `openhi_lens_c_holder_receiver_25p4` folder was a C-mount-sized experiment and is not the corrected Lens C OpenHI task. The corrected Lens B/C OpenHI tasks are 30 mm OpenHI print-fit changes, not 25.4 mm C-mount conversions.
 
 ## Thread Tooth Profile
 
@@ -100,6 +100,34 @@ Corrected print-fit idea:
 | thread section | starts at x `327.25 mm`; preserves the old thread end near x `335.9 mm` |
 
 Important chamfer rule: when reducing the female start diameter from `30.2` to `30.0`, adjust the lens-side 45 degree transition chamfer. Keeping the old x-length would make the chamfer angle/landing inconsistent. The clean OpenHI version preserves the 25.5 mm lens seat and shortens the 45 degree chamfer from `2.35 mm` to `2.25 mm`.
+
+## Lens B Holder 30.0/30.4 Receiver Fix
+
+For `cad/extracted/OpenHI_STEP/Lens B holder.step`, the equivalent task is to tighten the positive-Z OpenHI female receiver while preserving the original side holes, oblique end sink, lower bore, and outer envelope.
+
+Original measured receiver evidence:
+
+| Feature | Original value |
+| --- | ---: |
+| larger lens-thread axis | along Z around `(x=254.633, y=210.0)` |
+| positive-Z female receiver cylindrical/root faces | about `30.2 mm` |
+| lens seat cylinder before receiver chamfer | `25.5 mm`, z `649.6-650.0 mm` |
+| original transition chamfer | `25.5 -> 30.2 mm`, z `650.0-652.35 mm`, about 45 degrees |
+| original thread zone | starts near z `652.35 mm` and ends near z `660.1 mm` |
+
+Corrected print-fit idea:
+
+| Feature | New value |
+| --- | ---: |
+| female smooth pilot/start diameter | `30.0 mm` |
+| female groove/thread cutter max diameter | `30.4 mm` |
+| pitch | `0.8 mm` |
+| radial tooth height | `0.2 mm` |
+| preserved lens seat | `25.5 mm`, z `649.6-650.0 mm` |
+| rebuilt transition chamfer | `25.5 -> 30.0 mm`, length `2.25 mm`, z `650.0-652.25 mm` |
+| thread section | starts at z `652.25 mm`; length `7.85 mm` |
+
+Use the same chamfer rule as Lens C: preserve the lens seat, land the 45 degree transition on the new `30.0 mm` pilot, and shorten the transition from `2.35 mm` to `2.25 mm`. For the Lens B Z-axis thread, a directly generated Z-axis helix can export as a split STEP body; the stable method is to construct the cutter as an X-axis helix, rotate it into Z, then subtract it from the reused source B-rep.
 
 ## Purchased Thread Tools
 
