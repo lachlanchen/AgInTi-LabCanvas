@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1166" height="440" viewBox="0 0 1166 440">
+<rect width="100%" height="100%" fill="white"/>
+<rect x="58.00" y="58.00" width="450.00" height="324.00" rx="8" fill="#f7fafc" stroke="#1a202c" stroke-width="2"/>
+<rect x="215.50" y="130.00" width="243.00" height="180.00" fill="#e6f0ff" stroke="#2b6cb0" stroke-width="2" stroke-dasharray="8 5"/>
+<rect x="400.00" y="152.50" width="113.40" height="135.00" fill="#fff4e6" stroke="#dd6b20" stroke-width="2" stroke-dasharray="7 4"/>
+<rect x="400.00" y="152.50" width="72.00" height="135.00" fill="#fff5f5" stroke="#c53030" stroke-width="2" stroke-dasharray="5 4"/>
+<line x1="58.00" y1="220.00" x2="508.00" y2="220.00" stroke="#cbd5e0" stroke-width="1"/>
+<line x1="283.00" y1="58.00" x2="283.00" y2="382.00" stroke="#cbd5e0" stroke-width="1"/>
+<circle cx="283.00" cy="220.00" r="36.00" fill="#fff7d6" stroke="#d69e2e" stroke-width="2"/><text x="291.00" y="212.00" font-family="Arial" font-size="12" fill="#1a202c">optical axis / TSL25911</text>
+<rect x="269.50" y="203.80" width="27.00" height="32.40" fill="#c69214" stroke="#1a202c" stroke-width="1.5"/>
+<circle cx="233.50" cy="292.00" r="10.80" fill="#edf2f7" stroke="#4a5568" stroke-width="2"/><text x="241.50" y="284.00" font-family="Arial" font-size="12" fill="#1a202c">M2_bottom</text>
+<circle cx="233.50" cy="148.00" r="10.80" fill="#edf2f7" stroke="#4a5568" stroke-width="2"/><text x="241.50" y="140.00" font-family="Arial" font-size="12" fill="#1a202c">M2_top</text>
+<text x="544.00" y="58.00" font-family="Arial" font-size="17" font-weight="700" fill="#1a202c">TSL25911 C-mount intensity sensor holder</text>
+<text x="544.00" y="83.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">View: rear tray, looking along optical axis</text>
+<text x="544.00" y="108.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Gold rectangle: TSL25911 package/window centered on axis</text>
+<text x="544.00" y="133.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Blue dashed rectangle: 20 x 27 mm module tray</text>
+<text x="544.00" y="158.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Gray holes: two M2 holes from the sensor-side short edge</text>
+<text x="544.00" y="183.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Red dashed slot: XH2.54 5P socket body clearance on connector edge</text>
+<text x="544.00" y="208.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Orange slot: same connector zone opened fully to holder edge for wires</text>
+<text x="544.00" y="233.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Socket X-depth: 2.25 mm PCB sink + 6.5 mm net = 8.75 mm</text>
+<text x="544.00" y="258.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">C-mount side: OpenHI 24.8 mm female receiver, 0.8 mm pitch thread</text>
+</svg>
