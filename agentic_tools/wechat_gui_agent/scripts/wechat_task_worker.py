@@ -2853,19 +2853,25 @@ Task:
         backend_config=worker_backend_config(task, backend),
     )
     if not result["ok"]:
-        return f"Worker failed via {backend}: {str(result.get('stderr_tail') or result.get('message') or '').strip()[:1000]}"
+        actual_backend = str(result.get("backend") or backend)
+        return f"Worker failed via {actual_backend}: {str(result.get('stderr_tail') or result.get('message') or '').strip()[:1000]}"
+    actual_backend = str(result.get("backend") or backend)
     task["agent_session"] = {
-        "backend": backend,
+        "backend": actual_backend,
+        "requested_backend": backend,
         "role": "worker",
         "thread_id_short": str(result.get("thread_id") or "")[:8],
         "resumed": bool(result.get("resumed")),
         "fallback_started": bool(result.get("fallback_started")),
+        "backend_fallback_used": bool(result.get("backend_fallback_used")),
+        "backend_attempts": result.get("backend_attempts") if isinstance(result.get("backend_attempts"), list) else [],
     }
     task["codex_session"] = {
         "role": "worker",
         "thread_id_short": str(result.get("thread_id") or "")[:8],
         "resumed": bool(result.get("resumed")),
         "fallback_started": bool(result.get("fallback_started")),
+        "backend_fallback_used": bool(result.get("backend_fallback_used")),
     }
     return str(result.get("message") or "").strip()
 
@@ -2896,6 +2902,7 @@ def default_worker_execution_contract(task: dict[str, Any], instruction: dict[st
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
         "agent_backend": select_agent_backend(task),
         "agent_entrypoint": "wechat_agent_backend.run_agent_session",
+        "agent_backend_fallback": "codex Spark quota -> codex gpt-5.5 low -> AgInTi; unavailable primary backend -> AgInTi",
         "codex_entrypoint": "wechat_codex_sessions.run_codex_session",
         "codex_exec_mode": "resume_per_chat_worker_session",
         "claude_exec_mode": "stable_per_chat_role_session_id",

@@ -114,6 +114,19 @@ def load_config(path: Path) -> dict[str, Any]:
         "mirror_db": str(DEFAULT_DB),
         "agent_backend": "codex",
         "claude": {"model": "", "timeout_seconds": 60},
+        "aginti": {
+            "command": os.environ.get("WECHAT_AGINTI_COMMAND", "aginti"),
+            "args": os.environ.get("WECHAT_AGINTI_ARGS", "agent run --stdin"),
+            "workspace": os.environ.get("WECHAT_AGINTI_WORKSPACE", "../Agent/AgInTiFlow"),
+            "timeout_seconds": 120,
+            "wrap_prompt": True,
+        },
+        "agent_fallbacks": {
+            "enabled": True,
+            "quota_fallback_model": "gpt-5.5",
+            "quota_fallback_reasoning_effort": "low",
+            "fallback_to_aginti": True,
+        },
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 60},
         "codex_session_reuse": True,
         "agent_bridge_mode": False,
@@ -2748,6 +2761,8 @@ def agent_route_decision(
         fallback["route_agent_error"] = str(result.get("stderr_tail") or result.get("message") or "")[:500]
         fallback["route_agent_model"] = policy["model"]
         fallback["route_agent_backend"] = backend
+        fallback["route_agent_actual_backend"] = str(result.get("backend") or backend)
+        fallback["route_agent_backend_fallback_used"] = bool(result.get("backend_fallback_used"))
         return fallback
     parsed = parse_route_decision(str(result.get("message") or ""))
     if not parsed:
@@ -2758,6 +2773,9 @@ def agent_route_decision(
     parsed["route_agent_model"] = policy["model"]
     parsed["route_agent_reasoning_effort"] = policy["reasoning_effort"]
     parsed["route_agent_backend"] = backend
+    parsed["route_agent_actual_backend"] = str(result.get("backend") or backend)
+    parsed["route_agent_actual_model"] = str(result.get("model") or policy["model"])
+    parsed["route_agent_backend_fallback_used"] = bool(result.get("backend_fallback_used"))
     return enforce_route_safety(parsed, current_request or visible_message_text(row), fallback)
 
 
@@ -4955,7 +4973,20 @@ def run_codex(
 def agent_backend_config(config: dict[str, Any], backend: str) -> dict[str, Any]:
     selected = select_agent_backend({"agent_backend": backend})
     raw = config.get(selected)
-    return raw if isinstance(raw, dict) else {}
+    selected_config = dict(raw) if isinstance(raw, dict) else {}
+    selected_config["_backends"] = {
+        name: dict(value)
+        for name, value in {
+            "codex": config.get("codex"),
+            "claude": config.get("claude"),
+            "aginti": config.get("aginti"),
+        }.items()
+        if isinstance(value, dict)
+    }
+    fallback_config = config.get("agent_fallbacks") or config.get("backend_fallbacks")
+    if isinstance(fallback_config, dict):
+        selected_config["agent_fallbacks"] = dict(fallback_config)
+    return selected_config
 
 
 def format_prompt_context(

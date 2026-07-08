@@ -239,6 +239,21 @@ should speed the agent up, not replace agent reasoning.
   Code, but it must still use the same route, worker, queue, media, and
   artifact-delivery contracts. Do not bypass source isolation or delivery gates
   because the backend changed.
+- Backend fallback is centralized in
+  `agentic_tools/wechat_gui_agent/scripts/wechat_agent_backend.py`. If the
+  selected Codex model is Spark and the live attempt fails with quota/rate-limit
+  text, the same chat/role turn retries once with `gpt-5.5` and low reasoning.
+  If the Codex/Claude attempt is still quota-limited or the selected backend is
+  unavailable, the turn falls back to AgInTi using the configured
+  `aginti.command`, `aginti.args`, and `aginti.workspace`. Timeouts and normal
+  weak agent answers do not trigger backend fallback; those stay under the
+  worker effort-escalation policy.
+- Keep fallback configuration system-level through `agent_fallbacks` and the
+  per-backend `codex`/`claude`/`aginti` config blocks. Do not implement a
+  one-off Spark quota workaround inside EchoMind, link inbox, video generation,
+  LazyEdit, or another individual routine. Every call to
+  `wechat_agent_backend.run_agent_session` should get the same fallback
+  behavior and should record `backend_attempts` plus `backend_fallback_used`.
 - Keep `immediate_route_enabled=true` for monitored chats that should enqueue
   backend work. `immediate_ack_enabled=false` only suppresses the visible ack;
   it must not be used as the routing kill switch.
