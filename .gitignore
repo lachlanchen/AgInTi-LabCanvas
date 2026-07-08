@@ -26,6 +26,8 @@ cad/.conda/
 cad/reports/**/*.aux
 cad/reports/**/*.log
 cad/reports/**/*.out
+cad/analysis/**/blobs/
+cad/analysis/**/workspace.sqlite
 
 # Local operator handoffs
 handoff/lalachan-story-video-generation-handoff.md
