@@ -50,6 +50,6 @@ cad/.conda/cad-python/bin/python cad/designs/openhi_lens_c_holder_shapr_exact_re
 blender --background --python cad/designs/openhi_lens_c_holder_shapr_exact_regen/render_openhi_lens_c_holder_shapr_exact_regen.py
 ```
 
-## Next Variant
+## Variant Notes
 
-Keep this exact proof-of-concept folder unchanged. For the 25.4 mm experiment, use the sibling `openhi_lens_c_holder_receiver_25p4` design.
+Keep this exact proof-of-concept folder unchanged. `openhi_lens_c_holder_receiver_25p4` is only a C-mount-sized experiment. The corrected OpenHI Lens C print-fit change is `openhi_lens_c_holder_receiver_30p0_30p4_print_fit`, which keeps the 30 mm family and tightens the positive-X receiver to a 30.0 mm pilot with a 30.4 mm groove cutter.

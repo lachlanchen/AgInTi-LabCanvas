@@ -8,6 +8,20 @@ This note records the print-fit dimensions inferred from the local OpenHI/Nature
 
 Use these values for parts that thread into, slip into, or otherwise mate with the old 4f system. Do not scale a whole model to tune fit. Change the named male, female, pocket, or clearance parameters.
 
+## Shapr3D And STEP Regeneration Notes
+
+`/home/lachlan/Downloads/Nature.shapr` and `cad/extracted/OpenHI_STEP/` should be treated as the same OpenHI/Nature design geometry. The STEP folder is the flatter working export: the bodies were moved to a root-level/simple layout so the agent can inspect and export them more easily.
+
+Current Shapr3D experience on Ubuntu:
+
+- The `.shapr` file can be inspected as a package/database, but the useful holder solids are imported Parasolid/B-rep bodies, not a clean editable Shapr feature tree.
+- Exact regeneration should therefore start from the exported STEP B-rep and verify bbox, solid count, face count, surface type counts, and thread/chamfer evidence.
+- Make physical-fit changes as sibling surgical variants from the exact baseline. Do not overwrite the exact regeneration folder.
+- Preserve named bodies separately where possible. For Lens C, `Thread BS` is the left threaded solid and `T branch head (1)` is the main holder body.
+- STEP export/re-import can shift reported tolerance boxes by a few microns. Record construction facts and tolerance-based checks instead of brittle exact bbox string equality.
+
+The earlier `openhi_lens_c_holder_receiver_25p4` folder was a C-mount-sized experiment and is not the corrected Lens C OpenHI task. The corrected Lens C task is a 30 mm OpenHI print-fit change, not a 25.4 mm C-mount conversion.
+
 ## Thread Tooth Profile
 
 The old STEP files include repeated swept-triangle evidence:
@@ -37,6 +51,55 @@ printed threads:
   the intended cylinder length.
 - Keep the tooth height, tooth base, and pitch unchanged when adding this
   runout. The runout is a construction technique, not a thread-spec change.
+
+## C-Mount Versus OpenHI 30 mm Thread
+
+Do not mix the two systems:
+
+- Standard C-mount is `1"-32 UN`: nominal major diameter `25.4 mm`, pitch `0.79375 mm`.
+- In a printed CAD model, a male C-mount thread may use a smaller root cylinder such as `24.6 mm`, with thread crests reaching `25.4 mm`.
+- For a female C-mount socket, make a smaller pilot bore, then subtract a male-thread-shaped cutter whose max diameter is `25.4 mm` or slightly larger for print clearance. A plain `25.8 mm` hole is usually too large and may not engage.
+- The OpenHI lens/BS/top family is a larger printed thread family near 30 mm. Do not convert Lens B/C holders to 25.4 mm unless the actual task is to make a new C-mount adapter.
+
+For future female printed C-mount experiments, a reasonable starting point is:
+
+| Parameter | Starting value |
+| --- | ---: |
+| nominal C-mount major diameter | `25.4 mm` |
+| pitch | `0.79375 mm` or local rounded `0.8 mm` |
+| male root | about `24.6 mm` |
+| female pilot | about `24.8-25.0 mm` |
+| female cutter max | `25.4-25.8 mm`, depending required printer clearance |
+
+If using a real `1"-32UN` tap, design the pilot for tapping and cut the thread physically rather than relying on printed thread accuracy.
+
+## Lens C Holder 30.0/30.4 Receiver Fix
+
+For `cad/extracted/OpenHI_STEP/Lens C holder.step`, the corrected task is to tighten the positive-X OpenHI female receiver, not to add C-mount.
+
+Original measured receiver evidence:
+
+| Feature | Original value |
+| --- | ---: |
+| left preserved `Thread BS` male/root-like thread faces | about `29.8 mm` |
+| positive-X female receiver cylindrical/root faces | about `30.2 mm` |
+| center bore | `24.0 mm` |
+| lens seat cylinder before receiver chamfer | `25.5 mm`, x `324.5-325.0 mm` |
+| original transition chamfer | `25.5 -> 30.2 mm`, x `325.0-327.35 mm`, about 45 degrees |
+
+Corrected print-fit idea:
+
+| Feature | New value |
+| --- | ---: |
+| female smooth pilot/start diameter | `30.0 mm` |
+| female groove/thread cutter max diameter | `30.4 mm` |
+| pitch | `0.8 mm` |
+| radial tooth height | `0.2 mm` |
+| preserved lens seat | `25.5 mm`, x `324.5-325.0 mm` |
+| rebuilt transition chamfer | `25.5 -> 30.0 mm`, length `2.25 mm`, x `325.0-327.25 mm` |
+| thread section | starts at x `327.25 mm`; preserves the old thread end near x `335.9 mm` |
+
+Important chamfer rule: when reducing the female start diameter from `30.2` to `30.0`, adjust the lens-side 45 degree transition chamfer. Keeping the old x-length would make the chamfer angle/landing inconsistent. The clean OpenHI version preserves the 25.5 mm lens seat and shortens the 45 degree chamfer from `2.35 mm` to `2.25 mm`.
 
 ## Purchased Thread Tools
 

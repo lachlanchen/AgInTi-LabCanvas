@@ -2,6 +2,10 @@
 
 This is a sibling proof-of-concept variant of the exact Lens C holder regeneration. It keeps the left `Thread BS` solid unchanged, fills the old positive-X receiver, then cuts a new nominal 25.4 mm female/internal receiver.
 
+## Correction Note
+
+This folder is a C-mount-sized experiment only. It is not the corrected OpenHI Lens C print-fit task. For the actual Lens C holder adjustment, use `openhi_lens_c_holder_receiver_30p0_30p4_print_fit`, which keeps the OpenHI 30 mm thread family and changes the positive-X receiver to a 30.0 mm pilot plus 30.4 mm groove cutter.
+
 ## Thread Definition
 
 - Nominal female major/max diameter: `25.4 mm`
