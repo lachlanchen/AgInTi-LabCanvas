@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="916" height="486" viewBox="0 0 916 486">
+<rect width="100%" height="100%" fill="white"/>
+<rect x="54.00" y="54.00" width="378.00" height="378.00" rx="7.20" fill="#f7fafc" stroke="#1a202c" stroke-width="2"/>
+<line x1="54.00" y1="243.00" x2="432.00" y2="243.00" stroke="#cbd5e0" stroke-width="1"/>
+<line x1="243.00" y1="54.00" x2="243.00" y2="432.00" stroke="#cbd5e0" stroke-width="1"/>
+<circle cx="243.00" cy="243.00" r="109.80" fill="#e6fffa" stroke="#319795" stroke-width="2" stroke-dasharray="8 5"/>
+<circle cx="243.00" cy="243.00" r="108.00" fill="none" stroke="#38a169" stroke-width="2" stroke-dasharray="5 4"/>
+<circle cx="108.00" cy="378.00" r="28.80" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="108.00" cy="108.00" r="28.80" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="378.00" cy="378.00" r="28.80" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="378.00" cy="108.00" r="28.80" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="243.00" cy="243.00" r="45.00" fill="#fffaf0" stroke="#dd6b20" stroke-width="2"/>
+<circle cx="189.00" cy="297.00" r="10.80" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
+<circle cx="297.00" cy="297.00" r="10.80" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
+<circle cx="189.00" cy="189.00" r="10.80" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
+<circle cx="297.00" cy="189.00" r="10.80" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
+<circle cx="333.00" cy="234.00" r="7.20" fill="#fed7d7" stroke="#c53030" stroke-width="2"/>
+<circle cx="333.00" cy="256.86" r="7.20" fill="#fed7d7" stroke="#c53030" stroke-width="2"/>
+<text x="466.00" y="54.00" font-family="Arial" font-size="17" font-weight="700" fill="#1a202c">Lumileds aligned holder with PCB sink</text>
+<text x="466.00" y="79.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Body: 42.0 x 42.0 x 8.0 mm</text>
+<text x="466.00" y="104.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">PCB: dia 24.0 mm, thickness 1.6 mm</text>
+<text x="466.00" y="129.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Rear sink: dia 24.4 mm, depth 1.6 mm</text>
+<text x="466.00" y="154.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">PCB M2 holes: copied from KiCad, +/-6 mm</text>
+<text x="466.00" y="179.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Cage rods: 30 mm pitch, dia 6.4 mm</text>
+<text x="466.00" y="204.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Only change from clean base: simple PCB-thickness sink</text>
+</svg>
