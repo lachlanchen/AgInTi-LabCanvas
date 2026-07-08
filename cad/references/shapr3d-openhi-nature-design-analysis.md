@@ -8,6 +8,9 @@ This note records what was found in the synced Shapr3D and STEP sources, how to
 read them, and what design rules should be reused for future OpenHI/Nature
 optical, PCB, sensor, and cage parts.
 
+For the larger synced Shapr3D backup library and operation-history analysis, see
+`cad/references/shapr3d-batch-design-history-analysis.md`.
+
 The native Shapr3D source found in this workspace is:
 
 - `cad/extracted/Nature.shapr`
