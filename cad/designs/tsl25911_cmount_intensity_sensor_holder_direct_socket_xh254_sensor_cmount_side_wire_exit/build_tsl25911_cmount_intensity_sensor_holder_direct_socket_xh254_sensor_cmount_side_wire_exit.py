@@ -36,7 +36,7 @@ PARAMS = {
     "socket_outer_diameter_mm": 34.0,
     "optical_bore_diameter_mm": 8.0,
     "omitted_middle_connector_length_mm": 0.0,
-    "sensor_plate_thickness_mm": 7.0,
+    "sensor_plate_thickness_mm": 8.75,
     "sensor_plate_width_y_mm": 50.0,
     "sensor_plate_height_z_mm": 36.0,
     "sensor_plate_center_z_mm": 0.0,
@@ -47,7 +47,7 @@ PARAMS = {
     "component_side": "c_mount_facing_negative_x_side_of_board",
     "module_board_size_source": "User-corrected TSL25911 module geometry: PCB is 20 x 27 mm; TSL25911 sensing window is centered across the 20 mm short edge and 7.5 mm from the sensor-side short edge opposite the connector/socket edge. The TSL25911 package is on the C-mount-facing side of the PCB.",
     "board_pocket_clearance_total_mm": 1.0,
-    "board_pocket_depth_mm": 2.2,
+    "board_pocket_depth_mm": 2.25,
     "board_thickness_mm": 1.6,
     "tsl25911_package_width_y_mm": 3.0,
     "tsl25911_package_height_z_mm": 3.6,
@@ -60,6 +60,7 @@ PARAMS = {
     "xh254_5p_socket_width_z_mm": 14.0,
     "xh254_5p_socket_depth_y_mm": 6.0,
     "xh254_5p_socket_height_x_mm": 5.5,
+    "xh254_socket_net_relief_height_from_pcb_sink_floor_x_mm": 6.5,
     "xh254_socket_clearance_total_mm": 1.0,
     "xh254_socket_relief_extra_y_mm": 1.0,
     "wire_exit_relief_to_holder_edge_mm": 0.6,
@@ -177,6 +178,8 @@ def board_reference_geometry() -> dict[str, object]:
         "z_min": round(-socket_half_z - socket_clearance, 4),
         "z_max": round(socket_half_z + socket_clearance, 4),
         "height_x_mm": PARAMS["xh254_5p_socket_height_x_mm"],
+        "net_relief_height_from_pcb_sink_floor_x_mm": PARAMS["xh254_socket_net_relief_height_from_pcb_sink_floor_x_mm"],
+        "total_relief_depth_from_holder_rear_x_mm": round(xh254_socket_total_relief_depth_x(), 4),
         "nominal_body_mm": {
             "parallel_to_short_edge_z": PARAMS["xh254_5p_socket_width_z_mm"],
             "height_x": PARAMS["xh254_5p_socket_height_x_mm"],
@@ -189,6 +192,8 @@ def board_reference_geometry() -> dict[str, object]:
         "y_max": round(PARAMS["sensor_plate_width_y_mm"] / 2.0 + PARAMS["wire_exit_relief_to_holder_edge_mm"], 4),
         "z_min": socket["z_min"],
         "z_max": socket["z_max"],
+        "net_relief_height_from_pcb_sink_floor_x_mm": PARAMS["xh254_socket_net_relief_height_from_pcb_sink_floor_x_mm"],
+        "total_relief_depth_from_holder_rear_x_mm": round(xh254_socket_total_relief_depth_x(), 4),
         "note": "This relief extends the socket cutout to the positive-Y holder edge, leaving the XH2.54/Dupont wire side fully open.",
     }
     return {
@@ -219,6 +224,10 @@ def female_bore_cutter() -> cq.Workplane:
         PARAMS["female_socket_length_mm"],
         0.0,
     )
+
+
+def xh254_socket_total_relief_depth_x() -> float:
+    return PARAMS["board_pocket_depth_mm"] + PARAMS["xh254_socket_net_relief_height_from_pcb_sink_floor_x_mm"]
 
 
 def board_pocket_cutter() -> cq.Workplane:
@@ -252,10 +261,11 @@ def xh254_socket_relief_cutter() -> cq.Workplane:
     height_z = exit_relief["z_max"] - exit_relief["z_min"]
     center_y = (exit_relief["y_min"] + exit_relief["y_max"]) / 2.0
     center_z = (exit_relief["z_min"] + exit_relief["z_max"]) / 2.0
+    relief_depth_x = xh254_socket_total_relief_depth_x()
     return x_box(
-        (total_length() - PARAMS["board_pocket_depth_mm"] / 2.0 + 0.25, center_y, 0.0),
-        (PARAMS["board_pocket_depth_mm"] + PARAMS["xh254_5p_socket_height_x_mm"] + 1.0, width_y, height_z),
-    ).translate((0, 0, center_z))
+        (total_length() - relief_depth_x / 2.0 + 0.05, center_y, center_z),
+        (relief_depth_x + 0.2, width_y, height_z),
+    )
 
 
 def xh254_socket_proxy() -> cq.Workplane:
@@ -444,6 +454,7 @@ def write_alignment_svg(path: Path) -> None:
         "Gray holes: two M2 holes from the sensor-side short edge",
         "Red dashed slot: XH2.54 5P socket body clearance on connector edge",
         "Orange slot: same connector zone opened fully to holder edge for wires",
+        f"Socket X-depth: {PARAMS['board_pocket_depth_mm']} mm PCB sink + {PARAMS['xh254_socket_net_relief_height_from_pcb_sink_floor_x_mm']} mm net = {xh254_socket_total_relief_depth_x()} mm",
         "C-mount side: OpenHI 24.8 mm female receiver, 0.8 mm pitch thread",
     ]
     for index, text in enumerate(legend):
@@ -540,6 +551,11 @@ side visualization is flipped so the sensor package faces the C-mount.
 - Add an XH2.54-style 5-pin socket relief, nominal body
   `14 mm` along Z x `6 mm` along Y x `5.5 mm` high along X, on the connector
   edge.
+- Cut the socket relief as a net clearance measured from the PCB sink floor:
+  `{PARAMS['xh254_socket_net_relief_height_from_pcb_sink_floor_x_mm']} mm`
+  beyond the `{PARAMS['board_pocket_depth_mm']} mm` PCB sink, for
+  `{xh254_socket_total_relief_depth_x()} mm` total depth from the holder rear
+  surface.
 - Extend the connector relief to the positive-Y holder edge so a Dupont jumper,
   matching male header, or cable can exit without hitting the printed wall.
 - Add two M2 clearance holes matching the published board-hole pattern.

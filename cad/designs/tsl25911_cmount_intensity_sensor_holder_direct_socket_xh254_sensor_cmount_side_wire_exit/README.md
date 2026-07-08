@@ -39,6 +39,11 @@ side visualization is flipped so the sensor package faces the C-mount.
 - Add an XH2.54-style 5-pin socket relief, nominal body
   `14 mm` along Z x `6 mm` along Y x `5.5 mm` high along X, on the connector
   edge.
+- Cut the socket relief as a net clearance measured from the PCB sink floor:
+  `6.5 mm`
+  beyond the `2.25 mm` PCB sink, for
+  `8.75 mm` total depth from the holder rear
+  surface.
 - Extend the connector relief to the positive-Y holder edge so a Dupont jumper,
   matching male header, or cable can exit without hitting the printed wall.
 - Add two M2 clearance holes matching the published board-hole pattern.
@@ -83,6 +88,8 @@ XH2.54 5P socket relief:
   "z_min": -7.5,
   "z_max": 7.5,
   "height_x_mm": 5.5,
+  "net_relief_height_from_pcb_sink_floor_x_mm": 6.5,
+  "total_relief_depth_from_holder_rear_x_mm": 8.75,
   "nominal_body_mm": {
     "parallel_to_short_edge_z": 14.0,
     "height_x": 5.5,
@@ -100,6 +107,8 @@ Wire/header exit relief:
   "y_max": 25.6,
   "z_min": -7.5,
   "z_max": 7.5,
+  "net_relief_height_from_pcb_sink_floor_x_mm": 6.5,
+  "total_relief_depth_from_holder_rear_x_mm": 8.75,
   "note": "This relief extends the socket cutout to the positive-Y holder edge, leaving the XH2.54/Dupont wire side fully open."
 }
 ```
@@ -155,7 +164,7 @@ M2 mounting holes:
 | `socket_outer_diameter_mm` | `34.0` |
 | `optical_bore_diameter_mm` | `8.0` |
 | `omitted_middle_connector_length_mm` | `0.0` |
-| `sensor_plate_thickness_mm` | `7.0` |
+| `sensor_plate_thickness_mm` | `8.75` |
 | `sensor_plate_width_y_mm` | `50.0` |
 | `sensor_plate_height_z_mm` | `36.0` |
 | `sensor_plate_center_z_mm` | `0.0` |
@@ -166,7 +175,7 @@ M2 mounting holes:
 | `component_side` | `c_mount_facing_negative_x_side_of_board` |
 | `module_board_size_source` | `User-corrected TSL25911 module geometry: PCB is 20 x 27 mm; TSL25911 sensing window is centered across the 20 mm short edge and 7.5 mm from the sensor-side short edge opposite the connector/socket edge. The TSL25911 package is on the C-mount-facing side of the PCB.` |
 | `board_pocket_clearance_total_mm` | `1.0` |
-| `board_pocket_depth_mm` | `2.2` |
+| `board_pocket_depth_mm` | `2.25` |
 | `board_thickness_mm` | `1.6` |
 | `tsl25911_package_width_y_mm` | `3.0` |
 | `tsl25911_package_height_z_mm` | `3.6` |
@@ -179,6 +188,7 @@ M2 mounting holes:
 | `xh254_5p_socket_width_z_mm` | `14.0` |
 | `xh254_5p_socket_depth_y_mm` | `6.0` |
 | `xh254_5p_socket_height_x_mm` | `5.5` |
+| `xh254_socket_net_relief_height_from_pcb_sink_floor_x_mm` | `6.5` |
 | `xh254_socket_clearance_total_mm` | `1.0` |
 | `xh254_socket_relief_extra_y_mm` | `1.0` |
 | `wire_exit_relief_to_holder_edge_mm` | `0.6` |

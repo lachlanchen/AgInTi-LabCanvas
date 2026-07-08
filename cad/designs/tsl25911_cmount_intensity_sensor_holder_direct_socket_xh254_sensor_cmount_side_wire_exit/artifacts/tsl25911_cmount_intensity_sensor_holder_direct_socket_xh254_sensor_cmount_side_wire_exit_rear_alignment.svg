@@ -17,5 +17,6 @@
 <text x="544.00" y="158.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Gray holes: two M2 holes from the sensor-side short edge</text>
 <text x="544.00" y="183.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Red dashed slot: XH2.54 5P socket body clearance on connector edge</text>
 <text x="544.00" y="208.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Orange slot: same connector zone opened fully to holder edge for wires</text>
-<text x="544.00" y="233.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">C-mount side: OpenHI 24.8 mm female receiver, 0.8 mm pitch thread</text>
+<text x="544.00" y="233.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Socket X-depth: 2.25 mm PCB sink + 6.5 mm net = 8.75 mm</text>
+<text x="544.00" y="258.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">C-mount side: OpenHI 24.8 mm female receiver, 0.8 mm pitch thread</text>
 </svg>
