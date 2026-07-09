@@ -16,6 +16,8 @@ The earlier edited STEP was OCCT-valid, but Shapr3D spent a long time repairing 
 
 This version does not approximate the whole BS body. It preserves the original outer body, BS slope/slot area, lens seat, pin holes, and chamfers, then heals only the two 30 mm receiver zones. The default file uses simple ring-groove thread previews. The smooth file has no thread preview and is the safest one for Shapr editing or physical tapping.
 
+Detailed repair notes: [openhi-shapr3d-step-import-repair.md](../../../references/openhi-shapr3d-step-import-repair.md).
+
 ## Geometry Basis
 
 - Original source bbox: `40.0000002 x 40.0000002 x 84.900000204 mm`
