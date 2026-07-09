@@ -42,6 +42,10 @@ For web changes, keep tests focused on API behavior, artifact registration, and 
 
 Paper figure generation must stay editable and atomic. Do not treat a generated bitmap as the final source of truth. Use image generation for overview concepts, then split figures into named parts with their own prompts, source files, tool settings, previews, and edit history. Prefer BioRender for academic assets, OpenSCAD for device geometry, Blender for rendered setups, LabVIEW for instrument/control workflows, and TeX for clipping and final assembly. Preserve part IDs and rebuild exports from manifests.
 
+## CAD Artifact Sync
+
+For CAD designs, "Nutstore sync" means `/home/lachlan/Nutstore Files/Projects/LabCanvas`. After generating or revising a serious CAD design, copy the final `*_assembly.step` file to that folder by default, keeping the filename descriptive. Continue preserving the full source/artifact set in the design folder; the Nutstore copy is for Shapr3D/LabCanvas handoff.
+
 ## WeChat Worker Tool Routing
 
 Research chat messages that mention LabCanvas, AgInTi image generation, KiCad, Gerber, STEP/STL, CAD, PCB, Blender, figures, icons, or renders should be routed to the worker queue. The fast monitor should only ACK and enqueue. The worker may run `studio figure-grid`, `studio lab-task`, `render-scene`, AgInTi image generation, KiCad, OpenSCAD, and Blender commands, then return generated PNG/PDF/SVG/MP4/MOV/audio/STEP/STL/ZIP/KiCad artifacts in the `files` array so the GUI sender can deliver them to WeChat.
