@@ -399,7 +399,7 @@ def click_upload_success_order_button(page: Page) -> bool:
 
 
 def select_material_modal_fr4(page: Page) -> None:
-    text = page.locator("body").inner_text(timeout=10000)
+    text = page.evaluate("() => document.body ? (document.body.innerText || document.body.textContent || '') : ''")
     if "请选择板材类别" not in text:
         return
     rows = page.evaluate(
@@ -1141,6 +1141,7 @@ def fill_settings(args: argparse.Namespace) -> None:
     shipping = config.get("shipping", {})
     page = connect_page(config)
     page.set_viewport_size({"width": 1800, "height": 1000})
+    select_material_modal_fr4(page)
     for attempt in range(45):
         ready = page.evaluate(
             """() => {
@@ -1152,6 +1153,8 @@ def fill_settings(args: argparse.Namespace) -> None:
         )
         if ready:
             break
+        if (attempt + 1) % 5 == 0:
+            select_material_modal_fr4(page)
         page.wait_for_timeout(1000)
         if (attempt + 1) % 5 == 0:
             print(f"wait_order_controls={attempt + 1}")
@@ -1919,6 +1922,204 @@ def post_submit_log(args: argparse.Namespace) -> None:
     print(f"wrote private completion log: {out}")
 
 
+def parse_yuan_amount(text: str) -> float:
+    match = re.search(r"￥\s*([0-9]+(?:\.[0-9]+)?)", text)
+    return float(match.group(1)) if match else 0.0
+
+
+def unpaid_summary_rows(page: Page) -> list[dict[str, Any]]:
+    return page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            return [...document.querySelectorAll('.unpaidBox label.checkboxFileBox')]
+                .filter((el) => visible(el))
+                .map((el, idx) => {
+                    const r = el.getBoundingClientRect();
+                    return {
+                        idx,
+                        text: text(el),
+                        checked: String(el.className || '').includes('is-checked'),
+                        x: r.x,
+                        y: r.y,
+                        w: r.width,
+                        h: r.height,
+                    };
+                });
+        }"""
+    )
+
+
+def selected_unpaid_summary(page: Page) -> str:
+    return page.evaluate(
+        """() => {
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const box = document.querySelector('.unpaidBox .totalWrap');
+            return box ? text(box) : '';
+        }"""
+    )
+
+
+def click_unpaid_payment_button(page: Page) -> str:
+    target = page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const candidates = [...document.querySelectorAll('.unpaidBox button.payBtn,.unpaidBox button,.unpaidBox .bottom,.unpaidBox .bottom *')]
+                .filter((el) => visible(el) && text(el).includes('支付'))
+                .sort((a, b) => {
+                    const aButton = a.tagName === 'BUTTON' ? 0 : 1;
+                    const bButton = b.tagName === 'BUTTON' ? 0 : 1;
+                    const aPay = String(a.className || '').includes('payBtn') ? 0 : 1;
+                    const bPay = String(b.className || '').includes('payBtn') ? 0 : 1;
+                    return aButton - bButton || aPay - bPay || a.getBoundingClientRect().width - b.getBoundingClientRect().width;
+                });
+            const target = candidates[0];
+            if (!target) return null;
+            const r = target.getBoundingClientRect();
+            return {text: text(target), x: r.x, y: r.y, w: r.width, h: r.height};
+        }"""
+    )
+    if not target:
+        raise SystemExit("payment button not found in unpaid order summary")
+    page.mouse.click(target["x"] + target["w"] / 2, target["y"] + target["h"] / 2)
+    print(f"clicked unpaid payment button: {target['text']}")
+    return str(target["text"])
+
+
+def click_visible_button_text(page: Page, label: str) -> bool:
+    target = page.evaluate(
+        """(label) => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+                    && Number(style.opacity || 1) > 0;
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const target = [...document.querySelectorAll('button,.btn,.el-button')]
+                .filter((el) => visible(el) && text(el) === label)
+                .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
+            if (!target) return null;
+            const r = target.getBoundingClientRect();
+            return {text: text(target), x: r.x, y: r.y, w: r.width, h: r.height};
+        }""",
+        label,
+    )
+    if not target:
+        return False
+    page.mouse.click(target["x"] + target["w"] / 2, target["y"] + target["h"] / 2)
+    print(f"clicked visible button: {label}")
+    return True
+
+
+def open_payment(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    stems = list(args.include_stem or [])
+    if not stems:
+        stem = gerber_zip_stem(config)
+        if stem:
+            stems = [stem]
+    if not stems:
+        raise SystemExit("open-payment requires --include-stem or a config with gerber_zip")
+
+    page = connect_page(config, prefer_order=False)
+    page.set_viewport_size({"width": 1800, "height": 1000})
+
+    def find_order_list_with_rows(preferred: Page) -> tuple[Page, list[dict[str, Any]]]:
+        candidates = [preferred]
+        if _BROWSER is not None and _BROWSER.contexts:
+            for candidate in _BROWSER.contexts[0].pages:
+                if candidate not in candidates and "jlc.com/newOrder" in candidate.url:
+                    candidates.append(candidate)
+        for candidate in candidates:
+            if "pcbOrderList" not in candidate.url:
+                continue
+            try:
+                candidate_rows = unpaid_summary_rows(candidate)
+            except Exception:
+                continue
+            if candidate_rows:
+                return candidate, candidate_rows
+        return preferred, []
+
+    page, rows = find_order_list_with_rows(page)
+    if not rows:
+        page.goto("https://www.jlc.com/newOrder/#/pcb/pcbOrderList", wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(5000)
+        page.wait_for_selector(".unpaidBox", timeout=30000)
+        rows = unpaid_summary_rows(page)
+    if not rows:
+        page, rows = find_order_list_with_rows(page)
+    if not rows:
+        raise SystemExit("no pay-ready unpaid PCB rows found in top unpaid summary")
+    page.bring_to_front()
+    page.wait_for_timeout(500)
+
+    desired: set[int] = set()
+    for stem in stems:
+        matches = [row for row in rows if stem in row["text"]]
+        if not matches:
+            raise SystemExit(f"no pay-ready unpaid row matched stem: {stem}")
+        matches.sort(key=lambda row: (parse_yuan_amount(row["text"]), row["y"]))
+        for row in matches[: args.max_per_stem]:
+            desired.add(int(row["idx"]))
+
+    for row in rows:
+        want = int(row["idx"]) in desired
+        if bool(row["checked"]) != want:
+            page.mouse.click(row["x"] + 10, row["y"] + row["h"] / 2)
+            page.wait_for_timeout(500)
+
+    page.wait_for_timeout(1000)
+    rows = unpaid_summary_rows(page)
+    selected = [row for row in rows if row["checked"]]
+    summary = selected_unpaid_summary(page)
+    print("selected_unpaid_rows=")
+    for row in selected:
+        print(f"- {row['text']}")
+    print(f"summary={summary}")
+
+    if args.expected_total is not None:
+        expected = f"￥ {args.expected_total:.2f}"
+        compact_expected = f"￥{args.expected_total:.2f}"
+        if expected not in summary and compact_expected not in summary:
+            page.screenshot(path=args.screenshot, full_page=False)
+            raise SystemExit(f"selected unpaid total does not match expected {expected}: {summary}")
+
+    page.screenshot(path=args.screenshot, full_page=False)
+    print(f"screenshot={args.screenshot}")
+    if not args.allow_pay_page:
+        print("dry stop before cashier; pass --allow-pay-page to open payment page")
+        return
+
+    click_unpaid_payment_button(page)
+    page.wait_for_timeout(1500)
+    if click_visible_button_text(page, "我已知晓，继续支付"):
+        page.wait_for_timeout(3000)
+    page.wait_for_load_state("domcontentloaded", timeout=30000)
+    page.wait_for_timeout(5000)
+    if "trade.jlc.com/pay" not in page.url:
+        body_text = page.evaluate("() => document.body ? (document.body.innerText || document.body.textContent || '') : ''")
+        remaining_rows = unpaid_summary_rows(page)
+        if not remaining_rows and ("已提交厂方" in body_text or "待发货" in body_text):
+            page.screenshot(path=args.screenshot, full_page=False)
+            print("pay-ready rows cleared; JLC order list now shows factory-submitted state")
+            print(f"current_url={page.url}")
+            return
+        raise SystemExit(f"payment page did not open; current URL: {page.url}")
+    page.screenshot(path=args.screenshot, full_page=False)
+    print(f"payment_url={page.url}")
+
+
 def snapshot_cmd(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     page = connect_page(config, prefer_order=False)
@@ -1984,6 +2185,12 @@ def main() -> None:
     p_log = sub.add_parser("post-submit-log")
     p_log.add_argument("--output-dir", type=Path, default=DEFAULT_LOG_DIR)
     p_log.set_defaults(func=post_submit_log)
+    p_payment = sub.add_parser("open-payment")
+    p_payment.add_argument("--include-stem", action="append", default=[])
+    p_payment.add_argument("--max-per-stem", type=int, default=1)
+    p_payment.add_argument("--expected-total", type=float)
+    p_payment.add_argument("--allow-pay-page", action="store_true")
+    p_payment.set_defaults(func=open_payment)
     p_dump = sub.add_parser("dump-dom")
     p_dump.add_argument("--output", type=Path)
     p_dump.add_argument("--url-contains")

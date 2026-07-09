@@ -43,6 +43,24 @@ python3 -u agentic_tools/jlcpcb_order_agent/scripts/submit_board_order.py \
   --site china --allow-submit place
 ```
 
+When JLC has already approved submitted PCB orders and the notification lands on
+the order list instead of the cashier, open the payment page by selecting exact
+Gerber stems from the unpaid-order summary:
+
+```bash
+JLCPCB_CDP_PORT=49237 python3 -u agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py \
+  --screenshot /tmp/jlc-open-payment.png \
+  open-payment \
+  --include-stem ws2812b-5050-rgb-led-jlcpcb-gerber \
+  --include-stem sk6812rgbw-5050-rgbw-led-jlcpcb-gerber \
+  --expected-total 60 \
+  --allow-pay-page
+```
+
+Omit `--allow-pay-page` for a dry run. The command selects at most one cheapest
+pay-ready row per stem by default, so a duplicate retry does not get included in
+the payment bundle.
+
 Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600` and never commit it.
 
 ## Script Map
@@ -58,6 +76,7 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 - `jlc_order_cdp.py dump-dom --url-contains www.jlc.com --output ~/.config/jlcpcb-order/dom/current-page.json`: saves selectors/buttons/inputs.
 - `jlc_order_cdp.py record-order`: writes a private SQLite snapshot to `~/.config/jlcpcb-order/orders.sqlite3`.
 - `jlc_order_cdp.py post-submit-log`: writes a private completion log after success.
+- `jlc_order_cdp.py open-payment`: selects approved unpaid order rows by Gerber stem, verifies the expected total, and optionally opens the cashier page.
 
 ## Code Methods To Reuse
 
@@ -96,8 +115,11 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 | Confirmation/shipping still show `去填写` | Drawer reports `确认订单方式 去填写` or `发货方式 去填写` even after generic clicks | Select by row label: `确认订单方式 -> 手动确认订单`, `发货方式 -> 不同交期订单不一起发货`. |
 | Duplicate JLC tabs cause false guards | Submit helper reads a stale form or the whole page body and sees wrong material names | Match order tabs by the current Gerber ZIP stem, then close submitted success tabs before starting the next board. |
 | SPA order page not hydrated | URL changes to `pcbPlaceOrder` but `板材类别`/quantity controls are absent | Wait for the real controls before filling; do not treat the upload page or half-loaded page as an order form. |
+| Material category modal blocks hydration | A modal says `请选择板材类别` while the underlying page already has the form | Select `FR-4` in the modal before deciding the order form failed to load. |
 | Quantity text value ignored | Directly setting `input[placeholder='数量']` leaves JLC saying `请先填写板子数量` | Open the quantity dropdown and click the visible `5` option; verify the row changes to `样板订单`. |
 | `确认并提交` no-op | Drawer button click does not transition to success | If no success page appears and `提交订单` is visible, click the side-summary `提交订单` button. |
+| Approved duplicate appears after a retry | Order list shows the same Gerber stem twice with different prices or times | Use `open-payment --include-stem ... --max-per-stem 1 --expected-total ...`; pay the intended cheapest/current row and leave duplicates unselected. |
+| Payment warning appears | Modal says cancellation after payment may charge `10元工程费` | Click `我已知晓，继续支付` only when the selected rows are correct. If JLC clears the pay-ready rows and shows `已提交厂方`, stop and report the final order state instead of retrying payment. |
 
 ## China DOM Elements
 
