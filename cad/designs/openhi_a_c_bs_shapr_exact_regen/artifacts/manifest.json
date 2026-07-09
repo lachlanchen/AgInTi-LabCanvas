@@ -1,0 +1,1719 @@
+{
+  "name": "openhi_a_c_bs_shapr_exact_regen",
+  "units": "mm",
+  "design_date": "2026-07-09",
+  "source_step": "cad/extracted/OpenHI_STEP/A+ C + BS.step",
+  "source_shapr": "cad/extracted/OpenHI.shapr",
+  "shapr_evidence": {
+    "source_shapr": "cad/extracted/OpenHI.shapr",
+    "available": true,
+    "package_note": "OpenHI.shapr is a zip package containing a SQLite workspace and metadata.",
+    "native_feature_tree_note": "The relevant OpenHI optical bodies are stored as imported Parasolid/STEP-derived bodies. The workspace contains history/import nodes and names, but not a simple editable Shapr feature tree that can be replayed directly on Ubuntu.",
+    "zip_entries": [
+      "workspace",
+      ".metadata"
+    ],
+    "raw_string_hits": [
+      "A+ C + BS",
+      "Lens A + BS holder",
+      "Import \"BS lateral.step\"",
+      "Thread BS",
+      "Thread top",
+      "BS cap",
+      "T branch head"
+    ],
+    "table_counts": {
+      "HistoryTreeNodes": 102,
+      "PersistedCalls": 25,
+      "BodyRevisionBlocks": 244,
+      "BodyRevisionDeltas": 244,
+      "HistoryImportedBodies": 77,
+      "HistoryImportedPrototypes": 77,
+      "SketchControllers": 3,
+      "SketchCurves": 239
+    },
+    "history_nodes_with_strings": [
+      {
+        "id": 1019214,
+        "type": 2,
+        "strings": [
+          "Extrusion 01",
+          "Extrude"
+        ],
+        "title": "Extrusion 01"
+      },
+      {
+        "id": 1019215,
+        "type": 2,
+        "strings": [
+          "Extrusion 02",
+          "Extrude"
+        ],
+        "title": "Extrusion 02"
+      },
+      {
+        "id": 1019216,
+        "type": 2,
+        "strings": [
+          "&Import \"Microscope yx umot large.step\"",
+          "MaterializeImportedBodies"
+        ],
+        "title": "&Import \"Microscope yx umot large.step\""
+      },
+      {
+        "id": 1019217,
+        "type": 2,
+        "strings": [
+          "Import \"42 stepper FH PLP.step\"",
+          "MaterializeImportedBodies"
+        ],
+        "title": "Import \"42 stepper FH PLP.step\""
+      },
+      {
+        "id": 1019218,
+        "type": 2,
+        "strings": [
+          "Import \"BS lateral.step\"",
+          "MaterializeImportedBodies"
+        ],
+        "title": "Import \"BS lateral.step\""
+      },
+      {
+        "id": 1019219,
+        "type": 2,
+        "strings": [
+          "Movement/Rotation 04",
+          "Transform"
+        ],
+        "title": "Movement/Rotation 04"
+      },
+      {
+        "id": 1019220,
+        "type": 2,
+        "strings": [
+          "Movement/Rotation 05",
+          "Transform"
+        ],
+        "title": "Movement/Rotation 05"
+      },
+      {
+        "id": 1019225,
+        "type": 2,
+        "strings": [
+          "Sketch 01",
+          "MaterializeSketchPlane"
+        ],
+        "title": "Sketch 01"
+      },
+      {
+        "id": 1019244,
+        "type": 2,
+        "strings": [
+          "Sketch 02",
+          "MaterializeSketchPlane"
+        ],
+        "title": "Sketch 02"
+      },
+      {
+        "id": 1019263,
+        "type": 3,
+        "strings": [
+          "axis",
+          "coordinates",
+          "type",
+          "center",
+          "topologiesArray",
+          "type",
+          "referenceDirection",
+          "coordinates",
+          "type"
+        ],
+        "title": "axis"
+      },
+      {
+        "id": 1019264,
+        "type": 3,
+        "strings": [
+          "axis",
+          "coordinates",
+          "type",
+          "center",
+          "position",
+          "333333",
+          "type",
+          "referenceDirection",
+          "coordinates",
+          "type"
+        ],
+        "title": "axis"
+      },
+      {
+        "id": 1019266,
+        "type": 2,
+        "strings": [
+          "Movement/Rotation 01",
+          "Transform"
+        ],
+        "title": "Movement/Rotation 01"
+      },
+      {
+        "id": 1019271,
+        "type": 3,
+        "strings": [
+          "axis",
+          "coordinates",
+          "type",
+          "center",
+          "topologiesArray",
+          "type",
+          "referenceDirection",
+          "coordinates",
+          "type"
+        ],
+        "title": "axis"
+      },
+      {
+        "id": 1019272,
+        "type": 3,
+        "strings": [
+          "axis",
+          "coordinates",
+          "type",
+          "center",
+          "position",
+          "type",
+          "referenceDirection",
+          "coordinates",
+          "type"
+        ],
+        "title": "axis"
+      },
+      {
+        "id": 1019274,
+        "type": 2,
+        "strings": [
+          "Movement/Rotation 02",
+          "Transform"
+        ],
+        "title": "Movement/Rotation 02"
+      },
+      {
+        "id": 1019278,
+        "type": 3,
+        "strings": [
+          "axis",
+          "coordinates",
+          "type",
+          "center",
+          "topologiesArray",
+          "type",
+          "referenceDirection",
+          "coordinates",
+          "type"
+        ],
+        "title": "axis"
+      },
+      {
+        "id": 1019279,
+        "type": 3,
+        "strings": [
+          "axis",
+          "coordinates",
+          "type",
+          "center",
+          "position",
+          "type",
+          "referenceDirection",
+          "coordinates",
+          "type"
+        ],
+        "title": "axis"
+      },
+      {
+        "id": 1019281,
+        "type": 2,
+        "strings": [
+          "Movement/Rotation 03",
+          "Transform"
+        ],
+        "title": "Movement/Rotation 03"
+      },
+      {
+        "id": 1019286,
+        "type": 3,
+        "strings": [
+          "axis",
+          "coordinates",
+          "type",
+          "center",
+          "topologiesArray",
+          "type",
+          "referenceDirection",
+          "coordinates",
+          "type"
+        ],
+        "title": "axis"
+      },
+      {
+        "id": 1019287,
+        "type": 3,
+        "strings": [
+          "axis",
+          "coordinates",
+          "type",
+          "center",
+          "position",
+          "333333",
+          "type",
+          "referenceDirection",
+          "coordinates",
+          "type"
+        ],
+        "title": "axis"
+      },
+      {
+        "id": 1019292,
+        "type": 3,
+        "strings": [
+          "axis",
+          "coordinates",
+          "type",
+          "center",
+          "topologiesArray",
+          "type",
+          "referenceDirection",
+          "coordinates",
+          "type"
+        ],
+        "title": "axis"
+      },
+      {
+        "id": 1019293,
+        "type": 3,
+        "strings": [
+          "axis",
+          "coordinates",
+          "type",
+          "center",
+          "position",
+          "type",
+          "referenceDirection",
+          "coordinates",
+          "type"
+        ],
+        "title": "axis"
+      },
+      {
+        "id": 1020047,
+        "type": 2,
+        "strings": [
+          "Sketch 03",
+          "MaterializeSketchPlane"
+        ],
+        "title": "Sketch 03"
+      },
+      {
+        "id": 1020136,
+        "type": 2,
+        "strings": [
+          "Extrusion 03",
+          "Extrude"
+        ],
+        "title": "Extrusion 03"
+      }
+    ]
+  },
+  "reference_geometry": {
+    "bbox": {
+      "xlen": 40.0000002,
+      "ylen": 40.0000002,
+      "zlen": 84.900000204,
+      "min": [
+        234.9999999,
+        189.9999999,
+        535.099999896
+      ],
+      "max": [
+        275.0000001,
+        230.0000001,
+        620.0000001
+      ],
+      "center": [
+        255.0,
+        210.0,
+        577.549999998
+      ]
+    },
+    "solid_count": 1,
+    "face_count": 52,
+    "edge_count": 119,
+    "volume_mm3": 46328.645325239,
+    "area_mm2": 17260.682874304
+  },
+  "regenerated_geometry": {
+    "bbox": {
+      "xlen": 40.0000002,
+      "ylen": 40.0000002,
+      "zlen": 84.900000204,
+      "min": [
+        234.9999999,
+        189.9999999,
+        535.099999896
+      ],
+      "max": [
+        275.0000001,
+        230.0000001,
+        620.0000001
+      ],
+      "center": [
+        255.0,
+        210.0,
+        577.549999998
+      ]
+    },
+    "solid_count": 1,
+    "face_count": 52,
+    "edge_count": 119,
+    "volume_mm3": 46328.645278587,
+    "area_mm2": 17260.68583122
+  },
+  "verification": {
+    "bbox_abs_diff_mm": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "volume_abs_diff_mm3": 4.6652e-05,
+    "area_abs_diff_mm2": 0.002956916,
+    "face_count_same": true,
+    "solid_count_same": true,
+    "surface_type_counts_same": true
+  },
+  "face_scan": {
+    "face_count": 52,
+    "surface_type_counts": {
+      "GeomAbs_SurfaceType.GeomAbs_OffsetSurface": 1,
+      "bspline": 6,
+      "cone": 3,
+      "cylinder": 15,
+      "plane": 27
+    },
+    "cylinders": [
+      {
+        "face": 0,
+        "radius_mm": 15.1,
+        "diameter_mm": 30.2,
+        "axis_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          545.0
+        ],
+        "bbox": {
+          "min": [
+            267.735210718,
+            209.9999999,
+            547.578075062
+          ],
+          "max": [
+            270.1000001,
+            218.113224207,
+            547.6500001
+          ],
+          "size": [
+            2.364789382,
+            8.113224307,
+            0.071925038
+          ]
+        }
+      },
+      {
+        "face": 2,
+        "radius_mm": 12.0,
+        "diameter_mm": 24.0,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          650.0
+        ],
+        "bbox": {
+          "min": [
+            242.9999999,
+            197.9999999,
+            551.1499999
+          ],
+          "max": [
+            267.0000001,
+            222.0000001,
+            590.83573355
+          ],
+          "size": [
+            24.0000002,
+            24.0000002,
+            39.68573365
+          ]
+        }
+      },
+      {
+        "face": 14,
+        "radius_mm": 20.0,
+        "diameter_mm": 40.0,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          650.0
+        ],
+        "bbox": {
+          "min": [
+            234.9999999,
+            189.9999999,
+            535.099999898
+          ],
+          "max": [
+            275.0000001,
+            230.0000001,
+            600.0000001
+          ],
+          "size": [
+            40.0000002,
+            40.0000002,
+            64.900000202
+          ]
+        }
+      },
+      {
+        "face": 16,
+        "radius_mm": 20.0,
+        "diameter_mm": 40.0,
+        "axis_direction": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "axis_location": [
+          305.0,
+          210.0,
+          600.0
+        ],
+        "bbox": {
+          "min": [
+            254.9999999,
+            209.9999999,
+            579.9999999
+          ],
+          "max": [
+            275.000043231,
+            230.0000001,
+            620.0000001
+          ],
+          "size": [
+            20.000043331,
+            20.0000002,
+            40.0000002
+          ]
+        }
+      },
+      {
+        "face": 17,
+        "radius_mm": 15.1,
+        "diameter_mm": 30.2,
+        "axis_direction": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "axis_location": [
+          305.0,
+          210.0,
+          600.0
+        ],
+        "bbox": {
+          "min": [
+            247.220647425,
+            194.8999999,
+            584.8999999
+          ],
+          "max": [
+            270.796460275,
+            225.1000001,
+            615.1000001
+          ],
+          "size": [
+            23.57581285,
+            30.2000002,
+            30.2000002
+          ]
+        }
+      },
+      {
+        "face": 18,
+        "radius_mm": 20.0,
+        "diameter_mm": 40.0,
+        "axis_direction": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "axis_location": [
+          305.0,
+          210.0,
+          600.0
+        ],
+        "bbox": {
+          "min": [
+            254.9999999,
+            189.9999999,
+            579.9999999
+          ],
+          "max": [
+            275.000043231,
+            210.0000001,
+            620.0000001
+          ],
+          "size": [
+            20.000043331,
+            20.0000002,
+            40.0000002
+          ]
+        }
+      },
+      {
+        "face": 20,
+        "radius_mm": 1.0,
+        "diameter_mm": 2.0,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          244.094814544,
+          209.928019843,
+          574.95267892
+        ],
+        "bbox": {
+          "min": [
+            236.316639851,
+            208.928019743,
+            574.632822382
+          ],
+          "max": [
+            244.414671082,
+            210.928019943,
+            582.730853613
+          ],
+          "size": [
+            8.098031231,
+            2.0000002,
+            8.098031231
+          ]
+        }
+      },
+      {
+        "face": 21,
+        "radius_mm": 0.8,
+        "diameter_mm": 1.6,
+        "axis_direction": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "axis_location": [
+          255.0,
+          225.0,
+          595.0
+        ],
+        "bbox": {
+          "min": [
+            254.1999999,
+            224.9999999,
+            594.1999999
+          ],
+          "max": [
+            255.8000001,
+            230.000018207,
+            595.8000001
+          ],
+          "size": [
+            1.6000002,
+            5.000018307,
+            1.6000002
+          ]
+        }
+      },
+      {
+        "face": 23,
+        "radius_mm": 0.8,
+        "diameter_mm": 1.6,
+        "axis_direction": [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        "axis_location": [
+          255.0,
+          195.0,
+          595.0
+        ],
+        "bbox": {
+          "min": [
+            254.1999999,
+            189.999981793,
+            594.1999999
+          ],
+          "max": [
+            255.8000001,
+            195.0000001,
+            595.8000001
+          ],
+          "size": [
+            1.6000002,
+            5.000018307,
+            1.6000002
+          ]
+        }
+      },
+      {
+        "face": 31,
+        "radius_mm": 0.7,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          248.512295283,
+          221.375,
+          590.401025445
+        ],
+        "bbox": {
+          "min": [
+            246.072776788,
+            220.6749999,
+            589.906050598
+          ],
+          "max": [
+            249.00727013,
+            222.0750001,
+            592.84054394
+          ],
+          "size": [
+            2.934493342,
+            1.4000002,
+            2.934493342
+          ]
+        }
+      },
+      {
+        "face": 33,
+        "radius_mm": 0.7,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          264.598974555,
+          221.375,
+          606.487704717
+        ],
+        "bbox": {
+          "min": [
+            262.159456059,
+            220.6749999,
+            605.992729871
+          ],
+          "max": [
+            265.093949401,
+            222.0750001,
+            608.927223213
+          ],
+          "size": [
+            2.934493342,
+            1.4000002,
+            2.934493342
+          ]
+        }
+      },
+      {
+        "face": 35,
+        "radius_mm": 0.7,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          248.512295283,
+          198.625,
+          590.401025445
+        ],
+        "bbox": {
+          "min": [
+            246.072776788,
+            197.9249999,
+            589.906050598
+          ],
+          "max": [
+            249.00727013,
+            199.3250001,
+            592.84054394
+          ],
+          "size": [
+            2.934493342,
+            1.4000002,
+            2.934493342
+          ]
+        }
+      },
+      {
+        "face": 37,
+        "radius_mm": 0.7,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          264.598974555,
+          198.625,
+          606.487704717
+        ],
+        "bbox": {
+          "min": [
+            262.159456059,
+            197.9249999,
+            605.992729871
+          ],
+          "max": [
+            265.093949401,
+            199.3250001,
+            608.927223213
+          ],
+          "size": [
+            2.934493342,
+            1.4000002,
+            2.934493342
+          ]
+        }
+      },
+      {
+        "face": 40,
+        "radius_mm": 12.75,
+        "diameter_mm": 25.5,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          550.4
+        ],
+        "bbox": {
+          "min": [
+            242.2499999,
+            197.2499999,
+            549.9999999
+          ],
+          "max": [
+            267.7500001,
+            222.7500001,
+            550.4000001
+          ],
+          "size": [
+            25.5000002,
+            25.5000002,
+            0.4000002
+          ]
+        }
+      },
+      {
+        "face": 51,
+        "radius_mm": 15.1,
+        "diameter_mm": 30.2,
+        "axis_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          545.0
+        ],
+        "bbox": {
+          "min": [
+            239.8999999,
+            194.8999999,
+            546.852304339
+          ],
+          "max": [
+            270.1000001,
+            225.1000001,
+            547.6500001
+          ],
+          "size": [
+            30.2000002,
+            30.2000002,
+            0.797695761
+          ]
+        }
+      }
+    ],
+    "cones": [
+      {
+        "face": 1,
+        "ref_radius_mm": 15.1,
+        "ref_diameter_mm": 30.2,
+        "semi_angle_rad": 0.785398162,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          540.0
+        ],
+        "bbox": {
+          "min": [
+            234.999999909,
+            189.999999909,
+            535.099999891
+          ],
+          "max": [
+            275.000000091,
+            230.000000091,
+            539.998841519
+          ],
+          "size": [
+            40.000000182,
+            40.000000182,
+            4.898841628
+          ]
+        }
+      },
+      {
+        "face": 41,
+        "ref_radius_mm": 12.75,
+        "ref_diameter_mm": 25.5,
+        "semi_angle_rad": 0.785398162,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          550.4
+        ],
+        "bbox": {
+          "min": [
+            242.2499999,
+            197.2499999,
+            550.3999999
+          ],
+          "max": [
+            267.7500001,
+            222.7500001,
+            551.150000101
+          ],
+          "size": [
+            25.5000002,
+            25.5000002,
+            0.750000201
+          ]
+        }
+      },
+      {
+        "face": 42,
+        "ref_radius_mm": 12.75,
+        "ref_diameter_mm": 25.5,
+        "semi_angle_rad": 0.785398162,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          550.0
+        ],
+        "bbox": {
+          "min": [
+            239.899999904,
+            194.899999904,
+            547.649999896
+          ],
+          "max": [
+            270.100000096,
+            225.100000096,
+            550.0000001
+          ],
+          "size": [
+            30.200000192,
+            30.200000192,
+            2.350000204
+          ]
+        }
+      }
+    ],
+    "bsplines": [
+      {
+        "face": 44,
+        "bbox": {
+          "min": [
+            239.499999902,
+            194.368258764,
+            539.201158488
+          ],
+          "max": [
+            270.500000098,
+            225.631741236,
+            547.249911906
+          ],
+          "size": [
+            31.000000196,
+            31.263482472,
+            8.048753418
+          ]
+        }
+      },
+      {
+        "face": 45,
+        "bbox": {
+          "min": [
+            239.735389103,
+            194.742538621,
+            546.851114386
+          ],
+          "max": [
+            270.264610897,
+            225.257461379,
+            547.650212232
+          ],
+          "size": [
+            30.529221794,
+            30.514922758,
+            0.799097846
+          ]
+        }
+      },
+      {
+        "face": 46,
+        "bbox": {
+          "min": [
+            239.4999999,
+            194.368258763,
+            539.5999999
+          ],
+          "max": [
+            270.5000001,
+            225.631741237,
+            547.648757624
+          ],
+          "size": [
+            31.0000002,
+            31.263482474,
+            8.048757724
+          ]
+        }
+      },
+      {
+        "face": 48,
+        "bbox": {
+          "min": [
+            270.399921392,
+            194.368253884,
+            584.499995062
+          ],
+          "max": [
+            275.398230172,
+            225.631746116,
+            615.500004938
+          ],
+          "size": [
+            4.99830878,
+            31.263492232,
+            31.000009876
+          ]
+        }
+      },
+      {
+        "face": 49,
+        "bbox": {
+          "min": [
+            269.999990254,
+            194.732057634,
+            584.803475966
+          ],
+          "max": [
+            270.798200528,
+            225.267942366,
+            615.196524034
+          ],
+          "size": [
+            0.798210274,
+            30.535884732,
+            30.393048068
+          ]
+        }
+      },
+      {
+        "face": 50,
+        "bbox": {
+          "min": [
+            270.001696137,
+            194.50308875,
+            584.501552447
+          ],
+          "max": [
+            275.398235783,
+            225.474390902,
+            615.473789875
+          ],
+          "size": [
+            5.396539646,
+            30.971302152,
+            30.972237428
+          ]
+        }
+      }
+    ],
+    "vertical_receiver_cylinder_faces": [
+      {
+        "face": 0,
+        "radius_mm": 15.1,
+        "diameter_mm": 30.2,
+        "axis_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          545.0
+        ],
+        "bbox": {
+          "min": [
+            267.735210718,
+            209.9999999,
+            547.578075062
+          ],
+          "max": [
+            270.1000001,
+            218.113224207,
+            547.6500001
+          ],
+          "size": [
+            2.364789382,
+            8.113224307,
+            0.071925038
+          ]
+        }
+      },
+      {
+        "face": 51,
+        "radius_mm": 15.1,
+        "diameter_mm": 30.2,
+        "axis_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          545.0
+        ],
+        "bbox": {
+          "min": [
+            239.8999999,
+            194.8999999,
+            546.852304339
+          ],
+          "max": [
+            270.1000001,
+            225.1000001,
+            547.6500001
+          ],
+          "size": [
+            30.2000002,
+            30.2000002,
+            0.797695761
+          ]
+        }
+      }
+    ],
+    "horizontal_receiver_cylinder_faces": [
+      {
+        "face": 17,
+        "radius_mm": 15.1,
+        "diameter_mm": 30.2,
+        "axis_direction": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "axis_location": [
+          305.0,
+          210.0,
+          600.0
+        ],
+        "bbox": {
+          "min": [
+            247.220647425,
+            194.8999999,
+            584.8999999
+          ],
+          "max": [
+            270.796460275,
+            225.1000001,
+            615.1000001
+          ],
+          "size": [
+            23.57581285,
+            30.2000002,
+            30.2000002
+          ]
+        }
+      }
+    ],
+    "vertical_thread_bspline_faces": [
+      {
+        "face": 44,
+        "bbox": {
+          "min": [
+            239.499999902,
+            194.368258764,
+            539.201158488
+          ],
+          "max": [
+            270.500000098,
+            225.631741236,
+            547.249911906
+          ],
+          "size": [
+            31.000000196,
+            31.263482472,
+            8.048753418
+          ]
+        }
+      },
+      {
+        "face": 45,
+        "bbox": {
+          "min": [
+            239.735389103,
+            194.742538621,
+            546.851114386
+          ],
+          "max": [
+            270.264610897,
+            225.257461379,
+            547.650212232
+          ],
+          "size": [
+            30.529221794,
+            30.514922758,
+            0.799097846
+          ]
+        }
+      },
+      {
+        "face": 46,
+        "bbox": {
+          "min": [
+            239.4999999,
+            194.368258763,
+            539.5999999
+          ],
+          "max": [
+            270.5000001,
+            225.631741237,
+            547.648757624
+          ],
+          "size": [
+            31.0000002,
+            31.263482474,
+            8.048757724
+          ]
+        }
+      }
+    ],
+    "horizontal_thread_bspline_faces": [
+      {
+        "face": 48,
+        "bbox": {
+          "min": [
+            270.399921392,
+            194.368253884,
+            584.499995062
+          ],
+          "max": [
+            275.398230172,
+            225.631746116,
+            615.500004938
+          ],
+          "size": [
+            4.99830878,
+            31.263492232,
+            31.000009876
+          ]
+        }
+      },
+      {
+        "face": 50,
+        "bbox": {
+          "min": [
+            270.001696137,
+            194.50308875,
+            584.501552447
+          ],
+          "max": [
+            275.398235783,
+            225.474390902,
+            615.473789875
+          ],
+          "size": [
+            5.396539646,
+            30.971302152,
+            30.972237428
+          ]
+        }
+      }
+    ],
+    "center_bore_cylinder_faces": [
+      {
+        "face": 2,
+        "radius_mm": 12.0,
+        "diameter_mm": 24.0,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          650.0
+        ],
+        "bbox": {
+          "min": [
+            242.9999999,
+            197.9999999,
+            551.1499999
+          ],
+          "max": [
+            267.0000001,
+            222.0000001,
+            590.83573355
+          ],
+          "size": [
+            24.0000002,
+            24.0000002,
+            39.68573365
+          ]
+        }
+      }
+    ],
+    "lens_seat_cylinder_faces": [
+      {
+        "face": 40,
+        "radius_mm": 12.75,
+        "diameter_mm": 25.5,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          550.4
+        ],
+        "bbox": {
+          "min": [
+            242.2499999,
+            197.2499999,
+            549.9999999
+          ],
+          "max": [
+            267.7500001,
+            222.7500001,
+            550.4000001
+          ],
+          "size": [
+            25.5000002,
+            25.5000002,
+            0.4000002
+          ]
+        }
+      }
+    ],
+    "side_pin_hole_cylinder_faces": [
+      {
+        "face": 21,
+        "radius_mm": 0.8,
+        "diameter_mm": 1.6,
+        "axis_direction": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "axis_location": [
+          255.0,
+          225.0,
+          595.0
+        ],
+        "bbox": {
+          "min": [
+            254.1999999,
+            224.9999999,
+            594.1999999
+          ],
+          "max": [
+            255.8000001,
+            230.000018207,
+            595.8000001
+          ],
+          "size": [
+            1.6000002,
+            5.000018307,
+            1.6000002
+          ]
+        }
+      },
+      {
+        "face": 23,
+        "radius_mm": 0.8,
+        "diameter_mm": 1.6,
+        "axis_direction": [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        "axis_location": [
+          255.0,
+          195.0,
+          595.0
+        ],
+        "bbox": {
+          "min": [
+            254.1999999,
+            189.999981793,
+            594.1999999
+          ],
+          "max": [
+            255.8000001,
+            195.0000001,
+            595.8000001
+          ],
+          "size": [
+            1.6000002,
+            5.000018307,
+            1.6000002
+          ]
+        }
+      }
+    ],
+    "oblique_hole_cylinder_faces": [
+      {
+        "face": 20,
+        "radius_mm": 1.0,
+        "diameter_mm": 2.0,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          244.094814544,
+          209.928019843,
+          574.95267892
+        ],
+        "bbox": {
+          "min": [
+            236.316639851,
+            208.928019743,
+            574.632822382
+          ],
+          "max": [
+            244.414671082,
+            210.928019943,
+            582.730853613
+          ],
+          "size": [
+            8.098031231,
+            2.0000002,
+            8.098031231
+          ]
+        }
+      },
+      {
+        "face": 31,
+        "radius_mm": 0.7,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          248.512295283,
+          221.375,
+          590.401025445
+        ],
+        "bbox": {
+          "min": [
+            246.072776788,
+            220.6749999,
+            589.906050598
+          ],
+          "max": [
+            249.00727013,
+            222.0750001,
+            592.84054394
+          ],
+          "size": [
+            2.934493342,
+            1.4000002,
+            2.934493342
+          ]
+        }
+      },
+      {
+        "face": 33,
+        "radius_mm": 0.7,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          264.598974555,
+          221.375,
+          606.487704717
+        ],
+        "bbox": {
+          "min": [
+            262.159456059,
+            220.6749999,
+            605.992729871
+          ],
+          "max": [
+            265.093949401,
+            222.0750001,
+            608.927223213
+          ],
+          "size": [
+            2.934493342,
+            1.4000002,
+            2.934493342
+          ]
+        }
+      },
+      {
+        "face": 35,
+        "radius_mm": 0.7,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          248.512295283,
+          198.625,
+          590.401025445
+        ],
+        "bbox": {
+          "min": [
+            246.072776788,
+            197.9249999,
+            589.906050598
+          ],
+          "max": [
+            249.00727013,
+            199.3250001,
+            592.84054394
+          ],
+          "size": [
+            2.934493342,
+            1.4000002,
+            2.934493342
+          ]
+        }
+      },
+      {
+        "face": 37,
+        "radius_mm": 0.7,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          264.598974555,
+          198.625,
+          606.487704717
+        ],
+        "bbox": {
+          "min": [
+            262.159456059,
+            197.9249999,
+            605.992729871
+          ],
+          "max": [
+            265.093949401,
+            199.3250001,
+            608.927223213
+          ],
+          "size": [
+            2.934493342,
+            1.4000002,
+            2.934493342
+          ]
+        }
+      }
+    ],
+    "chamfer_cone_faces": [
+      {
+        "face": 1,
+        "ref_radius_mm": 15.1,
+        "ref_diameter_mm": 30.2,
+        "semi_angle_rad": 0.785398162,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          540.0
+        ],
+        "bbox": {
+          "min": [
+            234.999999909,
+            189.999999909,
+            535.099999891
+          ],
+          "max": [
+            275.000000091,
+            230.000000091,
+            539.998841519
+          ],
+          "size": [
+            40.000000182,
+            40.000000182,
+            4.898841628
+          ]
+        }
+      },
+      {
+        "face": 41,
+        "ref_radius_mm": 12.75,
+        "ref_diameter_mm": 25.5,
+        "semi_angle_rad": 0.785398162,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          550.4
+        ],
+        "bbox": {
+          "min": [
+            242.2499999,
+            197.2499999,
+            550.3999999
+          ],
+          "max": [
+            267.7500001,
+            222.7500001,
+            551.150000101
+          ],
+          "size": [
+            25.5000002,
+            25.5000002,
+            0.750000201
+          ]
+        }
+      },
+      {
+        "face": 42,
+        "ref_radius_mm": 12.75,
+        "ref_diameter_mm": 25.5,
+        "semi_angle_rad": 0.785398162,
+        "axis_direction": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "axis_location": [
+          255.0,
+          210.0,
+          550.0
+        ],
+        "bbox": {
+          "min": [
+            239.899999904,
+            194.899999904,
+            547.649999896
+          ],
+          "max": [
+            270.100000096,
+            225.100000096,
+            550.0000001
+          ],
+          "size": [
+            30.200000192,
+            30.200000192,
+            2.350000204
+          ]
+        }
+      }
+    ]
+  },
+  "outputs": {
+    "regenerated_step": "cad/designs/openhi_a_c_bs_shapr_exact_regen/artifacts/openhi_a_c_bs_shapr_exact_regen.step",
+    "regenerated_stl": "cad/designs/openhi_a_c_bs_shapr_exact_regen/artifacts/openhi_a_c_bs_shapr_exact_regen.stl",
+    "inspection_cutaway_step": "cad/designs/openhi_a_c_bs_shapr_exact_regen/artifacts/openhi_a_c_bs_shapr_exact_regen_inspection_cutaway.step",
+    "inspection_cutaway_stl": "cad/designs/openhi_a_c_bs_shapr_exact_regen/artifacts/openhi_a_c_bs_shapr_exact_regen_inspection_cutaway.stl",
+    "render_png": "cad/designs/openhi_a_c_bs_shapr_exact_regen/artifacts/openhi_a_c_bs_shapr_exact_regen_render.png",
+    "thread_detail_render_png": "cad/designs/openhi_a_c_bs_shapr_exact_regen/artifacts/openhi_a_c_bs_shapr_exact_regen_thread_detail_render.png",
+    "inspection_cutaway_render_png": "cad/designs/openhi_a_c_bs_shapr_exact_regen/artifacts/openhi_a_c_bs_shapr_exact_regen_inspection_cutaway_render.png",
+    "blend": "cad/designs/openhi_a_c_bs_shapr_exact_regen/artifacts/openhi_a_c_bs_shapr_exact_regen.blend",
+    "manifest_json": "cad/designs/openhi_a_c_bs_shapr_exact_regen/artifacts/manifest.json"
+  }
+}
