@@ -12,6 +12,19 @@ agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
 agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh path/to/gerber.zip
 ```
 
+If the noVNC desktop already has a browser such as Xiaoyunque open and you want
+JLC as a tab in that same window instead of a side-by-side Chrome window, target
+that browser's CDP port:
+
+```bash
+JLCPCB_TAB_CDP_PORT=9222 \
+  agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
+```
+
+Chrome tabs share one profile. Use this tab mode for a clean VNC workspace; keep
+the normal JLC profile on port `49237` when preserving a logged-in JLC order
+session matters more than a single tab strip.
+
 For generated board folders with a public order config, prefer the config-driven
 wrapper:
 
@@ -34,7 +47,7 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 
 ## Script Map
 
-- `launch_shared_chrome.sh`: opens the persistent logged-in Chrome profile on CDP port `49237`.
+- `launch_shared_chrome.sh`: opens the persistent logged-in Chrome profile on CDP port `49237`; set `JLCPCB_TAB_CDP_PORT=9222` to open JLC as a tab in an existing noVNC Chrome session.
 - `quick_order_china.sh`: wraps upload, setting fill, address/courier fill, order check, private DB record, optional submit.
 - `submit_board_order.py`: board-config wrapper that packages Gerbers, validates ERC/DRC, chooses size-aware finish, merges public board config with private recipient config, and delegates to the quick China/global flow.
 - `quick_order_global.sh`: opens global quote/cart flow, snapshots DOM, optionally submits selected cart item for review.
