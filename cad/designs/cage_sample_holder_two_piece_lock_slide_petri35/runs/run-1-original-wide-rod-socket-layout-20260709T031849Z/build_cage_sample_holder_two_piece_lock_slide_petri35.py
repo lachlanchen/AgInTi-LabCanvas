@@ -2,9 +2,8 @@
 """Build a two-piece locking sample holder for slide and 33 mm petri use.
 
 The previous `cage_sample_holder_openhi_slide_petri35` design is intentionally
-left untouched. This design keeps the wide sample access geometry but places the
-rod sockets on the standard 30 mm cage square used by the QYH1123, Lumileds, and
-Hengyang reference holders.
+left untouched. This design uses a wider cage-derived frame so the rod sockets
+stay outside an 80 x 40 mm central sample zone.
 """
 
 from __future__ import annotations
@@ -43,14 +42,11 @@ PARAMS = {
     "rod_diameter_nominal_mm": 6.0,
     "rod_socket_diameter_mm": 6.4,
     "rod_socket_depth_mm": 6.0,
-    "rod_socket_back_wall_mm": 2.0,
     "m3_thread_pilot_diameter_mm": 2.6,
-    "cage_rod_pitch_mm": 30.0,
-    "rod_socket_x_pitch_mm": 30.0,
-    "rod_socket_y_pitch_mm": 30.0,
-    "top_rod_socket_centers_mm": [[-15.0, -15.0], [15.0, -15.0], [-15.0, 15.0], [15.0, 15.0]],
-    "bottom_rod_socket_centers_mm": [[-15.0, -15.0], [15.0, -15.0], [-15.0, 15.0], [15.0, 15.0]],
-    "top_rod_boss_diameter_mm": 18.0,
+    "rod_socket_x_pitch_mm": 60.0,
+    "rod_socket_y_pitch_mm": 56.0,
+    "top_rod_socket_centers_mm": [[-30.0, -28.0], [30.0, -28.0], [-30.0, 28.0], [30.0, 28.0]],
+    "bottom_rod_socket_centers_mm": [[-30.0, -28.0], [30.0, -28.0], [-30.0, 28.0], [30.0, 28.0]],
     "openhi_strip_nominal_mm": [72.96, 20.0],
     "openhi_strip_seat_mm": [75.0, 22.0],
     "openhi_strip_sink_depth_mm": 1.2,
@@ -61,7 +57,7 @@ PARAMS = {
     "finger_notch_width_mm": 18.0,
     "finger_notch_height_mm": 28.0,
     "finger_notch_depth_mm": 3.0,
-    "print_fit_note": "Male lock feet are nominal -0.2 mm, matching holes are nominal +0.2 mm. Rod sockets use 6.4 mm clearance on a 30 mm cage square; M3 pilot/thread places use 2.6 mm.",
+    "print_fit_note": "Male lock feet are nominal -0.2 mm, matching holes are nominal +0.2 mm. Rod sockets use 6.4 mm clearance; M3 pilot/thread places use 2.6 mm.",
     "orientation_note": "Bottom part owns four lower rod sockets and sample seats. Top part owns four upper rod sockets and the open viewing/access window.",
 }
 
@@ -108,20 +104,11 @@ def cut_bottom_rod_sockets(part: cq.Workplane) -> cq.Workplane:
 
 def cut_top_rod_sockets(part: cq.Workplane) -> cq.Workplane:
     p = PARAMS
-    z_min = p["rod_socket_back_wall_mm"]
+    z_min = p["plate_thickness_mm"] - p["rod_socket_depth_mm"]
     socket_h = p["rod_socket_depth_mm"] + 0.2
     for x, y in p["top_rod_socket_centers_mm"]:
         part = part.cut(z_cylinder(p["rod_socket_diameter_mm"], socket_h, z_min).translate((x, y, 0)))
     return cut_m3_pilot(part, p["top_rod_socket_centers_mm"], -0.1, p["plate_thickness_mm"] + 0.2)
-
-
-def add_top_rod_socket_bosses(part: cq.Workplane) -> cq.Workplane:
-    """Add local material around cage rod sockets after the large top window cut."""
-    p = PARAMS
-    for x, y in p["top_rod_socket_centers_mm"]:
-        boss = z_cylinder(p["top_rod_boss_diameter_mm"], p["plate_thickness_mm"], 0.0).translate((x, y, 0))
-        part = part.union(boss)
-    return part
 
 
 def cut_lock_holes_from_bottom(part: cq.Workplane) -> cq.Workplane:
@@ -179,7 +166,6 @@ def build_top_part() -> cq.Workplane:
     part = base_plate()
     win_x, win_y = p["top_inner_window_mm"]
     part = part.cut(z_box((win_x, win_y, p["plate_thickness_mm"] + 1.2), (0, 0, p["plate_thickness_mm"] / 2.0)))
-    part = add_top_rod_socket_bosses(part)
     part = cut_top_rod_sockets(part)
     part = cut_lock_holes_from_bottom(part)
     return part
@@ -307,11 +293,9 @@ def write_alignment_svg(path: Path) -> None:
         "Two-piece locking sample holder",
         "Outer: 110 x 70 mm; sample zone: 80 x 40 mm",
         "Bottom: slide sink + 35.4 mm petri sink + four lower rod sockets",
-        "Top: open window + four upper 30 mm cage rod sockets + lock holes",
+        "Top: open window + four upper rod sockets + lock holes",
         "Four lock feet: 5.8 mm; matching holes: 6.2 mm",
-        "Rod sockets: 6.4 mm blind pockets at x/y = +/-15 mm",
-        "Top socket bosses: 18 mm islands joined to the top frame",
-        "M3 pilot/thread axis: 2.6 mm through the rod socket center",
+        "Rod sockets: 6.4 mm blind pockets; M3 pilot/thread axis: 2.6 mm",
         "Slide and petri seats overlap at the center by design",
         "18 mm chamber gap leaves finger room for placing/removing samples",
     ]
@@ -335,7 +319,7 @@ def write_manifest(path: Path, outputs: dict[str, str]) -> None:
     manifest = {
         "name": STEM,
         "created_by": Path(__file__).name,
-        "design_intent": "Two-piece wide sample holder with lock feet, 30 mm cage-aligned 6 mm rod sockets, M3 pilot/thread places, overlapping slide and 35 mm petri seats, and finger access.",
+        "design_intent": "Two-piece wide sample holder with lock feet, 6 mm rod sockets, M3 pilot/thread places, overlapping slide and 35 mm petri seats, and finger access.",
         "parameters": PARAMS,
         "outputs": outputs,
     }
@@ -346,8 +330,6 @@ def write_readme(path: Path, outputs: dict[str, str]) -> None:
     p = PARAMS
     output_rows = "\n".join(f"| {name} | `{value}` |" for name, value in outputs.items())
     param_rows = "\n".join(f"| `{key}` | `{value}` |" for key, value in p.items())
-    run_dir = DESIGN_DIR / "runs"
-    run_rows = "\n".join(f"- `{repo_path(run)}/`" for run in sorted(run_dir.glob("run-*"))) if run_dir.exists() else "- None yet."
     path.write_text(
         f"""# Two-Piece Locking Cage Sample Holder
 
@@ -371,8 +353,7 @@ there is room to place and remove the slide or dish with fingers.
 
 - Lock feet: `{p['lock_foot_diameter_mm']} mm`, from nominal 6 mm minus 0.2 mm.
 - Lock holes: `{p['lock_hole_diameter_mm']} mm`, from nominal 6 mm plus 0.2 mm.
-- Rod sockets: `{p['rod_socket_diameter_mm']} mm` blind pockets for nominal 6 mm rods on a `{p['cage_rod_pitch_mm']} mm cage square, centered at ±{p['cage_rod_pitch_mm'] / 2.0} mm from the optical/sample center.
-- Top rod bosses: `{p['top_rod_boss_diameter_mm']} mm` local islands reconnect the corrected cage sockets to the top frame after the large access window is cut.
+- Rod sockets: `{p['rod_socket_diameter_mm']} mm` blind pockets for nominal 6 mm rods.
 - M3 pilot/thread places: `{p['m3_thread_pilot_diameter_mm']} mm`, intended as a tight printed/tapped pilot rather than a loose clearance hole.
 
 ## Sample Seats
@@ -381,18 +362,6 @@ there is room to place and remove the slide or dish with fingers.
 - Printed slide sink: `{p['openhi_strip_seat_mm'][0]} x {p['openhi_strip_seat_mm'][1]} mm`, `{p['openhi_strip_sink_depth_mm']} mm` deep.
 - Petri seat: `{p['petri_clearance_diameter_mm']} mm` for a nominal `{p['petri_nominal_diameter_mm']} mm` dish, `{p['petri_sink_depth_mm']} mm` deep.
 - The slide sink and petri sink overlap at the center by design.
-
-## Run Convention
-
-This project keeps one design folder and archives each major generation as:
-
-```text
-runs/run-N-human-readable-info-YYYYMMDDTHHMMSSZ/
-```
-
-The root `artifacts/` directory is the latest checked output. Previous runs:
-
-{run_rows}
 
 ## Outputs
 

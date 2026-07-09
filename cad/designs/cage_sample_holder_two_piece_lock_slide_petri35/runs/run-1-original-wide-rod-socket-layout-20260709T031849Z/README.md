@@ -20,8 +20,7 @@ there is room to place and remove the slide or dish with fingers.
 
 - Lock feet: `5.8 mm`, from nominal 6 mm minus 0.2 mm.
 - Lock holes: `6.2 mm`, from nominal 6 mm plus 0.2 mm.
-- Rod sockets: `6.4 mm` blind pockets for nominal 6 mm rods on a `30.0 mm cage square, centered at ±15.0 mm from the optical/sample center.
-- Top rod bosses: `18.0 mm` local islands reconnect the corrected cage sockets to the top frame after the large access window is cut.
+- Rod sockets: `6.4 mm` blind pockets for nominal 6 mm rods.
 - M3 pilot/thread places: `2.6 mm`, intended as a tight printed/tapped pilot rather than a loose clearance hole.
 
 ## Sample Seats
@@ -30,19 +29,6 @@ there is room to place and remove the slide or dish with fingers.
 - Printed slide sink: `75.0 x 22.0 mm`, `1.2 mm` deep.
 - Petri seat: `35.4 mm` for a nominal `33.0 mm` dish, `1.8 mm` deep.
 - The slide sink and petri sink overlap at the center by design.
-
-## Run Convention
-
-This project keeps one design folder and archives each major generation as:
-
-```text
-runs/run-N-human-readable-info-YYYYMMDDTHHMMSSZ/
-```
-
-The root `artifacts/` directory is the latest checked output. Previous runs:
-
-- `cad/designs/cage_sample_holder_two_piece_lock_slide_petri35/runs/run-1-original-wide-rod-socket-layout-20260709T031849Z/`
-- `cad/designs/cage_sample_holder_two_piece_lock_slide_petri35/runs/run-2-correct-30mm-cage-rod-sockets-20260709T032257Z/`
 
 ## Outputs
 
@@ -91,14 +77,11 @@ The root `artifacts/` directory is the latest checked output. Previous runs:
 | `rod_diameter_nominal_mm` | `6.0` |
 | `rod_socket_diameter_mm` | `6.4` |
 | `rod_socket_depth_mm` | `6.0` |
-| `rod_socket_back_wall_mm` | `2.0` |
 | `m3_thread_pilot_diameter_mm` | `2.6` |
-| `cage_rod_pitch_mm` | `30.0` |
-| `rod_socket_x_pitch_mm` | `30.0` |
-| `rod_socket_y_pitch_mm` | `30.0` |
-| `top_rod_socket_centers_mm` | `[[-15.0, -15.0], [15.0, -15.0], [-15.0, 15.0], [15.0, 15.0]]` |
-| `bottom_rod_socket_centers_mm` | `[[-15.0, -15.0], [15.0, -15.0], [-15.0, 15.0], [15.0, 15.0]]` |
-| `top_rod_boss_diameter_mm` | `18.0` |
+| `rod_socket_x_pitch_mm` | `60.0` |
+| `rod_socket_y_pitch_mm` | `56.0` |
+| `top_rod_socket_centers_mm` | `[[-30.0, -28.0], [30.0, -28.0], [-30.0, 28.0], [30.0, 28.0]]` |
+| `bottom_rod_socket_centers_mm` | `[[-30.0, -28.0], [30.0, -28.0], [-30.0, 28.0], [30.0, 28.0]]` |
 | `openhi_strip_nominal_mm` | `[72.96, 20.0]` |
 | `openhi_strip_seat_mm` | `[75.0, 22.0]` |
 | `openhi_strip_sink_depth_mm` | `1.2` |
@@ -109,7 +92,7 @@ The root `artifacts/` directory is the latest checked output. Previous runs:
 | `finger_notch_width_mm` | `18.0` |
 | `finger_notch_height_mm` | `28.0` |
 | `finger_notch_depth_mm` | `3.0` |
-| `print_fit_note` | `Male lock feet are nominal -0.2 mm, matching holes are nominal +0.2 mm. Rod sockets use 6.4 mm clearance on a 30 mm cage square; M3 pilot/thread places use 2.6 mm.` |
+| `print_fit_note` | `Male lock feet are nominal -0.2 mm, matching holes are nominal +0.2 mm. Rod sockets use 6.4 mm clearance; M3 pilot/thread places use 2.6 mm.` |
 | `orientation_note` | `Bottom part owns four lower rod sockets and sample seats. Top part owns four upper rod sockets and the open viewing/access window.` |
 
 ## Print Notes

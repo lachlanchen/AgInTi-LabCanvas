@@ -44,7 +44,8 @@ Paper figure generation must stay editable and atomic. Do not treat a generated 
 
 ## CAD Artifact Sync
 
-For CAD designs, "Nutstore sync" means `/home/lachlan/Nutstore Files/Projects/LabCanvas`. After generating or revising a serious CAD design, copy the final `*_assembly.step` file to that folder by default, keeping the filename descriptive. Continue preserving the full source/artifact set in the design folder; the Nutstore copy is for Shapr3D/LabCanvas handoff.
+For CAD designs, "Nutstore sync" means `/home/lachlan/Nutstore Files/Projects/LabCanvas`. After generating or revising a serious CAD design, copy the final `*_assembly.step` or `*_assembled.step` file to that folder by default, keeping the filename descriptive. Continue preserving the full source/artifact set in the design folder; the Nutstore copy is for Shapr3D/LabCanvas handoff.
+Keep each CAD project in one design folder. For major regeneration runs, archive the previous root files under `runs/run-N-human-readable-info-YYYYMMDDTHHMMSSZ/` and keep the root `artifacts/` as the latest checked output. Do not create a sibling design folder for a small geometry fix unless the user explicitly asks for a separate variant.
 
 ## WeChat Worker Tool Routing
 
