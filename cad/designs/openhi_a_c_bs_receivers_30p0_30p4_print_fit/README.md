@@ -1,5 +1,13 @@
 # OpenHI A+C+BS Shapr-Friendly 30.0/30.4 Print Fit
 
+## Use This File
+
+Import this root-level STEP first:
+
+`USE_THIS_openhi_a_c_bs_receivers_30p0_30p4_print_fit.step`
+
+It is the final directly usable assembly with the repaired 30.0/30.4 receiver ring-groove preview. The other STEP files in `artifacts/` are references, smooth/editable variants, or cutter/sleeve parts.
+
 This folder contains a Shapr-friendly print-fit variant of the OpenHI A+C+BS receiver body. It keeps the original exported STEP body and replaces only the fragile receiver/thread zones with clean analytic sleeves.
 
 ## Why This Rebuild Exists
