@@ -48,15 +48,15 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 
 ## Code Methods To Reuse
 
-- `connect_page()`: attaches to existing Chrome over CDP, scores duplicate JLC tabs, prefers a visible clean order-check drawer for form work, and can prefer `pcbPlaceSuccess` for post-submit logging.
+- `connect_page()`: attaches to existing Chrome over CDP, scores duplicate JLC tabs, and only reuses order tabs whose body contains the current Gerber ZIP stem.
 - `click_button()` / `click_first_button_text()`: click visible buttons by exact text.
 - `click_option_near_label()`: safest way to choose a field option; it finds an exact label and clicks the matching option on the same row.
 - `select_standard_compensation()`: selects `按标准合同常规处理` and handles the comparison modal.
 - `select_courier()`: selects configured courier text, default `顺丰电商标快`.
 - `selected_order_check_text()`: reads only the visible order-check drawer instead of the whole page.
 - `visible_price_text()`: reads the right price panel for fee blockers.
-- `assert_clean_for_submit()`: requires an open order-check drawer and blocks submit on missing fields, payment/recharge blockers, OSP incompatibility, or paid quality fee.
-- `fill_settings()`: fills board defaults and uses row-label selection for SMT/stencil.
+- `assert_clean_for_submit()`: validates the clean order-check drawer plus the checked form state and right-side price summary. It blocks submit on missing fields, zero price, wrong material/layers/quantity, payment/recharge blockers, OSP incompatibility, or paid quality fee.
+- `fill_settings()`: waits for the SPA order controls before filling board defaults and uses row-label selection for SMT/stencil.
 - `fill_address()`: fills private address/contact and then selects courier.
 - `global_submit_current_cart()`: global checkout path through `Review Before Payment`.
 - `handle_customer_code_modal()`: handles the `加客编` modal by selecting `每个单片内增加` and confirming after the free customer-code mark is selected.
@@ -81,7 +81,10 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 | Legacy upload already exists | User wants the old row submitted and no new upload | Use the row-specific `立即下单` for the matching Gerber stem or an existing `pcbFileId`; do not run upload again unless the row is absent or invalid. |
 | SMT confirmation modal blocks order check | `检查订单` opens `请选择本单是否需要SMT贴片` instead of the drawer | Click `确定，不需要SMT`, then click `检查订单` again. |
 | Confirmation/shipping still show `去填写` | Drawer reports `确认订单方式 去填写` or `发货方式 去填写` even after generic clicks | Select by row label: `确认订单方式 -> 手动确认订单`, `发货方式 -> 不同交期订单不一起发货`. |
-| Duplicate JLC tabs cause false guards | Submit helper reads a stale form or the whole page body and sees wrong material names | Prefer the tab with a visible clean order-check drawer; after success, prefer `pcbPlaceSuccess` for record/log commands. |
+| Duplicate JLC tabs cause false guards | Submit helper reads a stale form or the whole page body and sees wrong material names | Match order tabs by the current Gerber ZIP stem, then close submitted success tabs before starting the next board. |
+| SPA order page not hydrated | URL changes to `pcbPlaceOrder` but `板材类别`/quantity controls are absent | Wait for the real controls before filling; do not treat the upload page or half-loaded page as an order form. |
+| Quantity text value ignored | Directly setting `input[placeholder='数量']` leaves JLC saying `请先填写板子数量` | Open the quantity dropdown and click the visible `5` option; verify the row changes to `样板订单`. |
+| `确认并提交` no-op | Drawer button click does not transition to success | If no success page appears and `提交订单` is visible, click the side-summary `提交订单` button. |
 
 ## China DOM Elements
 
@@ -104,11 +107,11 @@ Stable page markers:
 
 Important labels/buttons:
 
-- Quantity: `input[placeholder='数量'], input.listInput`, then visible quantity `5`.
+- Quantity: click the `input[placeholder='数量'], input.listInput` dropdown and choose the visible `5` option. Do not rely on direct DOM value assignment.
 - Production proof: `确认生产稿 -> 不需要`.
 - Board size: fill `长` and `宽` in centimeters from the board config when JLC does not parse dimensions.
 - Delivery format: `出货方式 -> 单片` for single-board Gerbers.
-- Finish: `焊盘喷镀 -> OSP 免费 / 有铅喷锡 / 无铅喷锡 / 沉金`.
+- Finish: `焊盘喷镀 -> OSP 免费 / 有铅喷锡 / 无铅喷锡 / 沉金`. For China `auto-china-size-aware`, use `OSP` only when valid; use `有铅喷锡` for small no-extra-fee prototypes unless the user requires lead-free.
 - OSP modal buttons: `选择沉金`, `选择有铅喷锡`, `选择无铅喷锡`, `取消`.
 - Compensation: `品质赔付服务 -> 按标准合同常规处理【仅赔偿PCB，但不负责PCBA移植及元器件赔偿】`.
 - Edge polish: `是否需要磨边 -> 不需要`.
@@ -120,7 +123,7 @@ Important labels/buttons:
 - Shipping mode: `不同交期订单不一起发货`.
 - Courier: `顺丰电商标快`.
 - Check: `检查订单`.
-- Submit from clean drawer: `确认并提交`.
+- Submit from clean drawer: `确认并提交`. If that does not transition and the side summary still shows a clean `提交订单`, click `提交订单`.
 - SMT modal after check: `请选择本单是否需要SMT贴片` -> `确定，不需要SMT`, then rerun `检查订单`.
 
 ## Submit Gate
@@ -140,11 +143,12 @@ The selected drawer should contain:
 - `是否需要钢网 不需要` or `是否开钢网 不需要`
 - `快递方式 顺丰电商标快`
 
-The price panel must not contain `品质赔付费`. After success, record the page and stop before payment.
+The price panel must not contain `品质赔付费`, unexpected `喷镀费`, or `¥ 0`. After success, record the page and stop before payment.
 
-Do not submit from the plain form body. The submit guard should read the visible
-order-check drawer only. If the drawer is closed or another JLC tab is active,
-reopen `检查订单` on the correct row and verify the drawer again.
+Do not submit from stale tabs or whole-page text. The submit guard should read
+the visible drawer plus checked form state and the right price panel. If another
+JLC tab is active, return to the tab whose body contains the current Gerber ZIP
+stem.
 
 ## Desktop Assistant Path
 

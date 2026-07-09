@@ -102,7 +102,7 @@ The current script opens the assistant and records an `assistant_handoff` snapsh
 ## Terms Observed
 
 - `特价`: promotional PCB base price.
-- `喷镀费`: surface-finish/plating fee. `无铅喷锡` charged this; `OSP 免费` avoids it for typical prototype orders.
+- `喷镀费`: surface-finish/plating fee. `无铅喷锡` charged this on small prototype boards; `有铅喷锡` avoided it for the 24 mm LED PCB orders. `OSP 免费` avoids it only when JLC allows OSP for the board size.
 - `品质赔付费`: paid quality-compensation fee; select `按标准合同常规处理` to avoid it for bare PCB.
 - `OSP` limit: the China site rejected OSP for the `2.4 cm x 2.4 cm` board because any side under `7 cm` is unsupported.
 - `并单发货`: combined shipment. If SF rejects it, choose `不同交期订单不一起发货`.

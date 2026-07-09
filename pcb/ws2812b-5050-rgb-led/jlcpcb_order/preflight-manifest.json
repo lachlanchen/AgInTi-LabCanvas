@@ -1,0 +1,64 @@
+{
+  "created_at": "2026-07-09T07:38:42.591118+00:00",
+  "project_name": "ws2812b-5050-rgb-led",
+  "upload_file": "ws2812b-5050-rgb-led-jlcpcb-gerber.zip",
+  "sha256": "cebc9d29b4c674e4cae980440e33333e9dd599e28c0c12ecf810bd77a43ad6e9",
+  "size_bytes": 7404,
+  "files": [
+    {
+      "name": "ws2812b-5050-rgb-led-B_Cu.gbl",
+      "size_bytes": 1878,
+      "crc32": "a2f5b402"
+    },
+    {
+      "name": "ws2812b-5050-rgb-led-B_Mask.gbs",
+      "size_bytes": 1708,
+      "crc32": "32a53c2b"
+    },
+    {
+      "name": "ws2812b-5050-rgb-led-B_Silkscreen.gbo",
+      "size_bytes": 5225,
+      "crc32": "d758c929"
+    },
+    {
+      "name": "ws2812b-5050-rgb-led-Edge_Cuts.gm1",
+      "size_bytes": 694,
+      "crc32": "9933428c"
+    },
+    {
+      "name": "ws2812b-5050-rgb-led-F_Cu.gtl",
+      "size_bytes": 2191,
+      "crc32": "0b4aed55"
+    },
+    {
+      "name": "ws2812b-5050-rgb-led-F_Mask.gts",
+      "size_bytes": 1760,
+      "crc32": "017e4d2c"
+    },
+    {
+      "name": "ws2812b-5050-rgb-led-F_Silkscreen.gto",
+      "size_bytes": 5780,
+      "crc32": "ceee9d11"
+    },
+    {
+      "name": "ws2812b-5050-rgb-led.drl",
+      "size_bytes": 540,
+      "crc32": "1e97390a"
+    }
+  ],
+  "excluded_review_files": [
+    "../gerber/ws2812b-5050-rgb-led-B_Fab.gbr",
+    "../gerber/ws2812b-5050-rgb-led-F_Fab.gbr",
+    "../gerber/ws2812b-5050-rgb-led-drl_map.svg",
+    "../gerber/ws2812b-5050-rgb-led-job.gbrjob"
+  ],
+  "validation_reports": {
+    "erc": "../artifacts/erc.json",
+    "drc": "../artifacts/drc.json",
+    "drill_report": "../artifacts/drill-report.txt"
+  },
+  "renders": {
+    "close": "../artifacts/ws2812b-5050-rgb-led-render.png",
+    "full": "../artifacts/ws2812b-5050-rgb-led-render-full.png"
+  }
+}

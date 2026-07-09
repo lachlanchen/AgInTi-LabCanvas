@@ -74,15 +74,15 @@ Current live state: `嘉立创-下单成功`, submitted and pending JLC review/p
 ## Price and Shipping Terms
 
 - `特价`: promotional base PCB manufacturing price.
-- `喷镀费`: surface-finish/plating fee for the selected pad finish. In the HYBEC order this was charged for `无铅喷锡`. Selecting `OSP 免费` can remove the fee, but OSP is less durable for storage/handling.
-- `OSP`: blocked by the China order form for the current `2.4 cm x 2.4 cm` board because JLC states that OSP cannot be used when any side is under `7 cm`.
+- `喷镀费`: surface-finish/plating fee for the selected pad finish. `无铅喷锡` charged this on small prototype orders; `有铅喷锡` avoided it for the 24 mm LED PCBs. Selecting `OSP 免费` can remove the fee only when JLC allows OSP for the board size.
+- `OSP`: blocked by the China order form for `2.4 cm x 2.4 cm` boards because JLC states that OSP cannot be used when any side is under `7 cm`.
 - `品质赔付费`: paid quality-compensation fee. For bare PCB orders, keep `按标准合同常规处理`; do not use `元器件移植全额赔付` unless PCBA/component-transfer compensation is intentionally required.
 - `快递费 包邮`: shipping is free for the selected prepaid courier.
 - `顺丰电商标快`: default prepaid courier for China web orders.
 - `并单发货`: combined shipment, meaning multiple orders wait and ship together. If SF says it does not support this, use `不同交期订单不一起发货`.
 - `下单助手(优惠10.00元)`: cheaper assistant workflow. It changes the page action to downloading/opening the desktop assistant, so keep `网页版下单` unless intentionally using the assistant app.
 
-Observed web price before submission:
+Observed historical HYBEC web price before submission with `无铅喷锡`:
 
 ```text
 特价: ￥30.00

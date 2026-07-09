@@ -122,8 +122,10 @@ Do not commit those screenshots; they can include personal or account state.
 
 - `submit_board_order.py package`: creates a clean JLC ZIP and manifest.
 - `submit_board_order.py validate`: blocks ordering on ERC/DRC failures.
-- `choose_surface_finish()`: chooses `无铅喷锡` for small China-site boards
-  when OSP is not valid.
+- `choose_surface_finish()`: for current China `auto-china-size-aware` orders,
+  uses `OSP` only when JLC allows it and otherwise uses no-extra-fee
+  `有铅喷锡` for small prototype boards. Override explicitly when lead-free is
+  required.
 - `connect_page()`: attaches to the persistent Chrome CDP session and now
   scores duplicate JLC tabs.
 - `click_option_near_label()`: selects row-local options such as
@@ -143,7 +145,7 @@ Do not commit those screenshots; they can include personal or account state.
 | Chrome died after launch | The launcher returned while Chrome was still tied to the shell. | `launch_shared_chrome.sh` now starts Chrome with `setsid`/`nohup` and checks the CDP endpoint before returning. |
 | Wrong/stale JLC tab | Duplicate order tabs made the helper inspect a stale form. | `connect_page()` now scores tabs and can prefer a clean drawer or success page. |
 | Quantity was blank | JLC parsed dimensions but not board quantity. | Select quantity `5` from the custom JLC grid, then verify the input and drawer. |
-| Surface finish mismatch | The form initially selected leaded HASL. | Explicitly select `焊盘喷镀 -> 无铅喷锡`. |
+| Surface finish mismatch | The form can default to a different valid HASL finish after quantity recalculation. | Select the configured `焊盘喷镀` after quantity is accepted; use `有铅喷锡` for no-extra-fee small prototypes unless lead-free is required. |
 | SMT modal blocked check | `检查订单` opened `请选择本单是否需要SMT贴片`. | Click `确定，不需要SMT`, then run `检查订单` again. |
 | Two missing fields | Drawer showed `确认订单方式 去填写` and `发货方式 去填写`. | Use label-local clicks for `手动确认订单` and `不同交期订单不一起发货`. |
 | False material blocker | Whole form text includes unselected `铜基板`, `铝基板`, and `FPC`. | Submit guard now reads only the visible clean drawer, not the whole page body. |

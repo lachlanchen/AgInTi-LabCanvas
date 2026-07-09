@@ -87,7 +87,7 @@ def choose_surface_finish(config: dict[str, Any], site: str, override: str | Non
     if not finish or str(finish).lower().startswith("auto"):
         x_mm, y_mm = board_size_mm(config)
         if x_mm and y_mm and min(x_mm, y_mm) < CHINA_OSP_MIN_SIDE_MM:
-            return "无铅喷锡"
+            return "有铅喷锡"
         return "OSP"
     return str(finish)
 

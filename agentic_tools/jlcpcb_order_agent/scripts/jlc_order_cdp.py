@@ -100,6 +100,25 @@ def page_score(page: Page, config: dict[str, Any], prefer_success: bool = False)
     return score
 
 
+def gerber_zip_stem(config: dict[str, Any]) -> str:
+    zip_path = resolve_path(config.get("gerber_zip"))
+    return zip_path.stem if zip_path else ""
+
+
+def page_contains_text(page: Page, needle: str) -> bool:
+    if not needle:
+        return False
+    try:
+        return bool(
+            page.evaluate(
+                """(needle) => ((document.body && (document.body.innerText || document.body.textContent)) || '').includes(needle)""",
+                needle,
+            )
+        )
+    except Exception:
+        return False
+
+
 def connect_page(config: dict[str, Any], prefer_order: bool = True, prefer_success: bool = False) -> Page:
     global _PLAYWRIGHT, _BROWSER
     port = port_from_config(config)
@@ -113,9 +132,17 @@ def connect_page(config: dict[str, Any], prefer_order: bool = True, prefer_succe
     if prefer_order:
         order_pages = [page for page in pages if "pcbPlaceOrder" in page.url or "pcbPlaceSuccess" in page.url]
         if order_pages:
-            page = max(order_pages, key=lambda item: page_score(item, config, prefer_success=prefer_success))
-            page.bring_to_front()
-            return page
+            stem = gerber_zip_stem(config)
+            if stem:
+                matching_pages = [page for page in order_pages if page_contains_text(page, stem)]
+                if matching_pages:
+                    page = max(matching_pages, key=lambda item: page_score(item, config, prefer_success=prefer_success))
+                    page.bring_to_front()
+                    return page
+            else:
+                page = max(order_pages, key=lambda item: page_score(item, config, prefer_success=prefer_success))
+                page.bring_to_front()
+                return page
     for page in pages:
         if "jlc.com/newOrder" in page.url:
             page.bring_to_front()
@@ -389,6 +416,40 @@ def select_material_modal_fr4(page: Page) -> None:
         page.mouse.click(target["x"] + target["w"] / 2, target["y"] + target["h"] / 2)
         page.wait_for_timeout(1500)
         print("selected material modal: FR-4")
+    close_material_modal(page)
+
+
+def close_material_modal(page: Page) -> bool:
+    closed = page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const dialogs = [...document.querySelectorAll('.el-dialog,.el-dialog__wrapper,.el-message-box,.modal,.modal-dialog')]
+                .filter((el) => visible(el) && text(el).includes('请选择板材类别'));
+            for (const dialog of dialogs) {
+                const close = dialog.querySelector('.el-dialog__headerbtn,.el-dialog__close,button[aria-label="Close"],.el-message-box__headerbtn,.close');
+                if (close && visible(close)) {
+                    close.click();
+                    return true;
+                }
+                const buttons = [...dialog.querySelectorAll('button')]
+                    .filter((el) => visible(el) && ['确认', '确定', '关闭'].includes(text(el)));
+                if (buttons.length) {
+                    buttons[buttons.length - 1].click();
+                    return true;
+                }
+            }
+            return false;
+        }"""
+    )
+    if closed:
+        page.wait_for_timeout(1000)
+        print("closed material modal")
+    return bool(closed)
 
 
 def select_standard_compensation(page: Page) -> None:
@@ -439,14 +500,68 @@ def visible_price_text(page: Page) -> str:
     )
 
 
+def visible_form_selection_text(page: Page) -> str:
+    return page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const selectedNear = (label) => {
+                const labelEl = [...document.querySelectorAll('label,span,div')]
+                    .find((el) => visible(el) && text(el) === label);
+                if (!labelEl) return '';
+                const labelRect = labelEl.getBoundingClientRect();
+                const rows = [...document.querySelectorAll('button,div,span,label')]
+                    .map((el) => ({el, label: text(el), cls: String(el.className), rect: el.getBoundingClientRect()}))
+                    .filter((row) => visible(row.el)
+                        && row.label
+                        && row.cls.includes('checked')
+                        && row.rect.x > labelRect.x
+                        && Math.abs((row.rect.y + row.rect.height / 2) - (labelRect.y + labelRect.height / 2)) < 90)
+                    .sort((a, b) => {
+                        const ac = a.rect.y + a.rect.height / 2;
+                        const bc = b.rect.y + b.rect.height / 2;
+                        const lc = labelRect.y + labelRect.height / 2;
+                        return Math.abs(ac - lc) - Math.abs(bc - lc) || a.rect.x - b.rect.x;
+                    });
+                return rows[0] ? rows[0].label : '';
+            };
+            const q = document.querySelector("input[placeholder='数量']");
+            const price = document.querySelector('#rightcontent') || document.querySelector('.rightcontentBox');
+            const checked = [...document.querySelectorAll('button,div,span,label')]
+                .filter((el) => visible(el) && String(el.className).includes('checked'))
+                .map((el) => text(el))
+                .filter(Boolean)
+                .join(' ');
+            return [
+                `板材类别 ${selectedNear('板材类别')}`,
+                `板子层数 ${selectedNear('板子层数')}`,
+                `板子数量 ${q ? q.value || '' : ''}`,
+                `成品板厚 ${selectedNear('成品板厚')}`,
+                `焊盘喷镀 ${selectedNear('焊盘喷镀')}`,
+                `品质赔付服务 ${selectedNear('品质赔付服务')}`,
+                checked,
+                price ? text(price) : '',
+            ].join(' ').replace(/\\s+/g, ' ').trim();
+        }"""
+    )
+
+
 def assert_clean_for_submit(page: Page, order: dict[str, Any]) -> None:
     text = page.locator("body").inner_text(timeout=10000)
-    check_text = selected_order_check_text(page)
+    drawer_text = selected_order_check_text(page)
+    form_text = visible_form_selection_text(page)
+    check_text = f"{drawer_text} {form_text}".strip()
     if not check_text:
-        raise SystemExit("submit blocked: order-check drawer is not open; run check-order before submit")
+        raise SystemExit("submit blocked: order-check drawer or clean form summary is not available; run check-order first")
     blockers = ["去填写", "系统未检测到", "充值", "余额不足", "检测到您的订单还有"]
     if any(blocker in check_text for blocker in blockers):
         raise SystemExit("submit blocked: order check still shows missing fields or payment/wallet blocker")
+    if not drawer_text and "请先填写" in text:
+        raise SystemExit("submit blocked: visible form still shows missing required fields")
     expected_material = str(order.get("material") or "").upper()
     if expected_material == "FR-4":
         if "FR-4" not in check_text and "FR4" not in check_text:
@@ -455,14 +570,16 @@ def assert_clean_for_submit(page: Page, order: dict[str, Any]) -> None:
         if any(material in check_text for material in wrong_materials):
             raise SystemExit("submit blocked: order check shows wrong board material/type")
     expected_layers = str(order.get("layers") or "")
-    if expected_layers and not re.search(rf"(板子层数|板子层|层数)\\s*{re.escape(expected_layers)}", check_text):
+    if expected_layers and not re.search(rf"(板子层数|板子层|层数)\s*{re.escape(expected_layers)}", check_text):
         raise SystemExit(f"submit blocked: order check does not show expected layer count {expected_layers}")
     expected_quantity = str(order.get("quantity") or "")
-    if expected_quantity and not re.search(rf"(板子数量|数量)\\s*{re.escape(expected_quantity)}", check_text):
+    if expected_quantity and not re.search(rf"(板子数量|数量)\s*{re.escape(expected_quantity)}", check_text):
         raise SystemExit(f"submit blocked: order check does not show expected quantity {expected_quantity}")
     price_text = visible_price_text(page)
     if "品质赔付费" in price_text:
         raise SystemExit("submit blocked: paid quality compensation is still selected")
+    if re.search(r"总价\s*[¥￥]\s*0(?:\D|$)", price_text):
+        raise SystemExit("submit blocked: visible price is still zero; JLC has not calculated the order")
     if "品质赔付服务" in check_text and "品质赔付服务 按标准合同常规处理" not in check_text:
         raise SystemExit("submit blocked: order check does not confirm standard quality compensation")
     require_surface_finish = order.get("surface_finish")
@@ -537,6 +654,9 @@ def click_option_near_label(page: Page, label: str, option: str) -> bool:
 def select_courier(page: Page, courier: str | None) -> bool:
     if not courier:
         return False
+    if click_option_near_any_label(page, ["快递方式", "选择快递"], courier):
+        print(f"selected courier near label: {courier}")
+        return True
     row = page.evaluate(
         """(courier) => {
             const visible = (el) => {
@@ -545,12 +665,24 @@ def select_courier(page: Page, courier: str | None) -> bool:
                 return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
             };
             const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
-            const label = [...document.querySelectorAll('*')]
-                .find((el) => visible(el) && text(el) === '选择快递');
-            if (label) label.scrollIntoView({block: 'center', inline: 'nearest'});
-            const matches = [...document.querySelectorAll('div,span,label,tr')]
+            const labels = [...document.querySelectorAll('*')]
+                .filter((el) => visible(el) && /^(快递方式|选择快递)$/.test(text(el)));
+            for (const label of labels) {
+                label.scrollIntoView({block: 'center', inline: 'nearest'});
+                label.click();
+            }
+            const triggers = [...document.querySelectorAll('input,div,span,button')]
+                .map((el, i) => ({el, i, text: text(el), placeholder: el.getAttribute('placeholder') || '', rect: el.getBoundingClientRect()}))
+                .filter((row) => visible(row.el) && (
+                    row.text.includes('请选择快递') ||
+                    row.text.includes('快递方式') ||
+                    row.placeholder.includes('请选择')
+                ))
+                .sort((a, b) => b.rect.y - a.rect.y);
+            if (triggers.length) triggers[0].el.click();
+            const matches = [...document.querySelectorAll('div,span,label,tr,li')]
                 .map((el, i) => ({el, i, text: text(el), rect: el.getBoundingClientRect()}))
-                .filter((row) => visible(row.el) && row.text === courier)
+                .filter((row) => visible(row.el) && (row.text === courier || row.text.includes(courier)))
                 .sort((a, b) => (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height));
             if (!matches.length) return null;
             const target = matches[0];
@@ -627,6 +759,22 @@ def close_order_check_drawer(page: Page) -> None:
                     count += 1;
                 }
             }
+            for (const drawer of drawers) {
+                if (!visible(drawer)) continue;
+                drawer.style.display = 'none';
+                drawer.style.visibility = 'hidden';
+                drawer.style.pointerEvents = 'none';
+                count += 1;
+            }
+            for (const overlay of [...document.querySelectorAll('.v-modal,.el-overlay,.el-drawer__wrapper')]) {
+                const label = overlay.innerText || overlay.textContent || '';
+                if (label.includes('订单检查') || overlay.className.toString().includes('v-modal')) {
+                    overlay.style.display = 'none';
+                    overlay.style.visibility = 'hidden';
+                    overlay.style.pointerEvents = 'none';
+                    count += 1;
+                }
+            }
             return count;
         }"""
     )
@@ -675,7 +823,11 @@ def status(args: argparse.Namespace) -> None:
 
 def has_order_tab(config: dict[str, Any]) -> bool:
     page = connect_page(config, prefer_order=False)
-    return any("pcbPlaceOrder" in p.url for p in page.context.pages)
+    stem = gerber_zip_stem(config)
+    order_pages = [p for p in page.context.pages if "pcbPlaceOrder" in p.url or "pcbPlaceSuccess" in p.url]
+    if not stem:
+        return bool(order_pages)
+    return any(page_contains_text(p, stem) for p in order_pages)
 
 
 def upload(args: argparse.Namespace) -> None:
@@ -733,6 +885,9 @@ def open_order_form(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     page = connect_page(config, prefer_order=False)
     zip_path = resolve_path(getattr(args, "zip", None) or config.get("gerber_zip"))
+    context = page.context
+    before_pages = set(context.pages)
+    before_urls = {item.url for item in context.pages}
     if zip_path and zip_path.exists():
         stem = zip_path.stem
         for attempt in range(30):
@@ -748,7 +903,26 @@ def open_order_form(args: argparse.Namespace) -> None:
     else:
         button = page.locator("button:has-text('立即下单')").last
         button.click(timeout=15000)
-    page.wait_for_timeout(3000)
+    order_page = None
+    stem = zip_path.stem if zip_path else ""
+    for _ in range(30):
+        page.wait_for_timeout(1000)
+        order_pages = [item for item in context.pages if "pcbPlaceOrder" in item.url or "pcbPlaceSuccess" in item.url]
+        new_order_pages = [item for item in order_pages if item not in before_pages or item.url not in before_urls]
+        matching_pages = [item for item in order_pages if stem and page_contains_text(item, stem)]
+        candidates = new_order_pages or matching_pages or order_pages
+        if candidates:
+            order_page = candidates[-1]
+            break
+    if order_page is None:
+        raise SystemExit("JLC did not open an order form after clicking the uploaded-file order button")
+    page = order_page
+    page.bring_to_front()
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=15000)
+    except PlaywrightTimeoutError:
+        pass
+    page.wait_for_timeout(1000)
     page.screenshot(path=args.screenshot, full_page=False)
     print(f"url={page.url}")
     print(f"screenshot={args.screenshot}")
@@ -766,6 +940,90 @@ def set_quantity(page: Page, quantity: int) -> None:
     if current == str(quantity):
         print(f"quantity={current} (already selected)")
         return
+    try:
+        box = q.bounding_box()
+    except PlaywrightTimeoutError:
+        box = None
+    if box:
+        page.mouse.click(box["x"] + box["width"] - 18, box["y"] + box["height"] / 2)
+        page.wait_for_timeout(500)
+        picked = page.evaluate(
+            """(quantity) => {
+                const visible = (el) => {
+                    const r = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+                const target = [...document.querySelectorAll('button,li')]
+                    .map((el) => ({el, label: text(el), cls: String(el.className), rect: el.getBoundingClientRect()}))
+                    .filter((row) => visible(row.el)
+                        && row.label === String(quantity)
+                        && (row.cls.includes('numItem') || row.el.tagName === 'BUTTON'))
+                    .sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x)[0];
+                if (!target) return null;
+                target.el.click();
+                return {label: target.label, cls: target.cls, x: target.rect.x, y: target.rect.y};
+            }""",
+            quantity,
+        )
+        page.wait_for_timeout(1200)
+        try:
+            current = q.input_value(timeout=2000).strip()
+        except PlaywrightTimeoutError:
+            current = ""
+        if current == str(quantity):
+            print(f"quantity={quantity} (selected from dropdown)")
+            return
+        if picked:
+            print(f"quantity dropdown pick did not stick: {picked}")
+    direct = page.evaluate(
+        """(quantity) => {
+            const visible = (el) => {
+                const r = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            const inputs = [...document.querySelectorAll('input')]
+                .map((el, i) => ({el, i, value: el.value || '', placeholder: el.getAttribute('placeholder') || '', cls: String(el.className), rect: el.getBoundingClientRect()}))
+                .filter((row) => visible(row.el));
+            let target = inputs.find((row) => row.placeholder.includes('数量'));
+            if (!target) target = inputs.find((row) => row.cls.includes('listInput'));
+            if (!target) {
+                const label = [...document.querySelectorAll('*')]
+                    .map((el) => ({el, label: text(el), rect: el.getBoundingClientRect()}))
+                    .filter((row) => visible(row.el) && row.label === '板子数量')
+                    .sort((a, b) => a.rect.y - b.rect.y)[0];
+                if (label) {
+                    target = inputs
+                        .filter((row) => Math.abs((row.rect.y + row.rect.height / 2) - (label.rect.y + label.rect.height / 2)) < 80 && row.rect.x > label.rect.x)
+                        .sort((a, b) => Math.abs(a.rect.x - label.rect.x) - Math.abs(b.rect.x - label.rect.x))[0];
+                }
+            }
+            if (!target) return {ok: false, reason: 'quantity input not found'};
+            target.el.scrollIntoView({block: 'center', inline: 'nearest'});
+            target.el.focus();
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            setter.call(target.el, String(quantity));
+            target.el.dispatchEvent(new InputEvent('input', {bubbles: true, data: String(quantity), inputType: 'insertText'}));
+            target.el.dispatchEvent(new Event('change', {bubbles: true}));
+            target.el.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true, key: String(quantity)}));
+            target.el.blur();
+            return {ok: true, value: target.el.value, index: target.i, placeholder: target.placeholder, cls: target.cls};
+        }""",
+        quantity,
+    )
+    page.wait_for_timeout(900)
+    try:
+        current = q.input_value(timeout=2000).strip()
+    except PlaywrightTimeoutError:
+        current = str(direct.get("value") or "").strip() if isinstance(direct, dict) else ""
+    if current == str(quantity) or (isinstance(direct, dict) and str(direct.get("value") or "").strip() == str(quantity)):
+        print(f"quantity={quantity} (set directly)")
+        return
+    if direct:
+        print(f"quantity direct set did not stick: {direct}")
     try:
         q.click(timeout=5000)
     except PlaywrightTimeoutError:
@@ -883,6 +1141,23 @@ def fill_settings(args: argparse.Namespace) -> None:
     shipping = config.get("shipping", {})
     page = connect_page(config)
     page.set_viewport_size({"width": 1800, "height": 1000})
+    for attempt in range(45):
+        ready = page.evaluate(
+            """() => {
+                const body = document.body ? (document.body.innerText || document.body.textContent || '') : '';
+                return body.includes('板材类别')
+                    && body.includes('板子层数')
+                    && !!document.querySelector("input[placeholder='数量'], input.listInput");
+            }"""
+        )
+        if ready:
+            break
+        page.wait_for_timeout(1000)
+        if (attempt + 1) % 5 == 0:
+            print(f"wait_order_controls={attempt + 1}")
+    else:
+        page.screenshot(path=args.screenshot, full_page=False)
+        raise SystemExit("order form controls did not load; refusing to fill the upload page or a half-loaded order page")
     dismiss_guides(page)
     close_order_check_drawer(page)
     close_blocking_address_dialogs(page)
@@ -1034,6 +1309,7 @@ def fill_labeled_input(frame, label: str, value: str) -> None:
 def check_order(args: argparse.Namespace) -> None:
     config = load_config(args.config)
     page = connect_page(config)
+    close_material_modal(page)
     click_button(page, "检查订单", 0)
     page.wait_for_timeout(1500)
     if handle_smt_required_modal(page):
@@ -1060,7 +1336,15 @@ def submit(args: argparse.Namespace) -> None:
         return
     order = config.get("order", {})
     assert_clean_for_submit(page, order)
-    click_button(page, "确认并提交", 0)
+    clicked = click_button(page, "确认并提交", 0)
+    if clicked:
+        page.wait_for_timeout(2500)
+        interim_text = page.locator("body").inner_text(timeout=10000)
+        if "pcbPlaceSuccess" not in page.url and "订单提交成功" not in interim_text and visible_exact_button(page, "提交订单"):
+            clicked = click_button(page, "提交订单", 0)
+    if not clicked:
+        if not click_button(page, "提交订单", 0):
+            raise SystemExit("submit blocked: no final submit button is visible")
     success = False
     for _ in range(20):
         page.wait_for_timeout(1000)

@@ -1,0 +1,64 @@
+{
+  "created_at": "2026-07-09T07:46:11.796381+00:00",
+  "project_name": "sk6812rgbw-5050-rgbw-led",
+  "upload_file": "sk6812rgbw-5050-rgbw-led-jlcpcb-gerber.zip",
+  "sha256": "58c869f908bdefd25833c3ff4f4093b90f3d52199eb0e3b2d3c5d15049a50ab3",
+  "size_bytes": 7479,
+  "files": [
+    {
+      "name": "sk6812rgbw-5050-rgbw-led-B_Cu.gbl",
+      "size_bytes": 1882,
+      "crc32": "b1fdc026"
+    },
+    {
+      "name": "sk6812rgbw-5050-rgbw-led-B_Mask.gbs",
+      "size_bytes": 1712,
+      "crc32": "c6f10660"
+    },
+    {
+      "name": "sk6812rgbw-5050-rgbw-led-B_Silkscreen.gbo",
+      "size_bytes": 5229,
+      "crc32": "1dacda13"
+    },
+    {
+      "name": "sk6812rgbw-5050-rgbw-led-Edge_Cuts.gm1",
+      "size_bytes": 698,
+      "crc32": "de84b550"
+    },
+    {
+      "name": "sk6812rgbw-5050-rgbw-led-F_Cu.gtl",
+      "size_bytes": 2195,
+      "crc32": "f79037df"
+    },
+    {
+      "name": "sk6812rgbw-5050-rgbw-led-F_Mask.gts",
+      "size_bytes": 1764,
+      "crc32": "e9821225"
+    },
+    {
+      "name": "sk6812rgbw-5050-rgbw-led-F_Silkscreen.gto",
+      "size_bytes": 5784,
+      "crc32": "dd727ce8"
+    },
+    {
+      "name": "sk6812rgbw-5050-rgbw-led.drl",
+      "size_bytes": 540,
+      "crc32": "1e97390a"
+    }
+  ],
+  "excluded_review_files": [
+    "../gerber/sk6812rgbw-5050-rgbw-led-B_Fab.gbr",
+    "../gerber/sk6812rgbw-5050-rgbw-led-F_Fab.gbr",
+    "../gerber/sk6812rgbw-5050-rgbw-led-drl_map.svg",
+    "../gerber/sk6812rgbw-5050-rgbw-led-job.gbrjob"
+  ],
+  "validation_reports": {
+    "erc": "../artifacts/erc.json",
+    "drc": "../artifacts/drc.json",
+    "drill_report": "../artifacts/drill-report.txt"
+  },
+  "renders": {
+    "close": "../artifacts/sk6812rgbw-5050-rgbw-led-render.png",
+    "full": "../artifacts/sk6812rgbw-5050-rgbw-led-render-full.png"
+  }
+}

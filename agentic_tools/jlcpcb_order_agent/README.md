@@ -99,7 +99,7 @@ It records a private SQLite snapshot and stops before final submit. To submit on
 JLCPCB_ALLOW_SUBMIT=1 agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh
 ```
 
-Important: JLC's China form rejected `OSP` for the current `2.4 cm x 2.4 cm` HYBEC board because any side is under `7 cm`. The script now blocks submit when JLC shows this warning. Use a larger board for OSP or explicitly choose another valid finish after review.
+Important: JLC's China form can reject `OSP` for small boards because any side under `7 cm` is unsupported. With `surface_finish: auto-china-size-aware`, the China flow now uses `OSP` only when the board size supports it; otherwise it uses `有铅喷锡` to avoid both the OSP blocker and the extra `无铅喷锡` spray/plating fee. Override the finish explicitly when lead-free fabrication is required.
 
 The China flow defaults to `顺丰电商标快` through `shipping.courier` in the private config and reselects it before `检查订单`.
 
@@ -183,8 +183,8 @@ For the shared manufacturing-order automation index covering both JLCPCB PCB ord
 ## Price and Shipping Notes
 
 - `特价` is JLC's promotional base PCB fabrication price.
-- `喷镀费` is the pad surface-finish/plating fee. For this order it came from `无铅喷锡`; switching to `OSP 免费` usually removes this fee, but OSP is less robust for storage and repeated handling.
-- `OSP` can be invalid on very small China-site boards. The HYBEC `2.4 cm x 2.4 cm` board triggered JLC's warning that OSP is unsupported when any side is under `7 cm`.
+- `喷镀费` is the pad surface-finish/plating fee. It appears with finishes such as `无铅喷锡`; `有铅喷锡` was the no-extra-fee China choice for the 24 mm LED PCBs.
+- `OSP` can be invalid on very small China-site boards. A `2.4 cm x 2.4 cm` board triggered JLC's warning that OSP is unsupported when any side is under `7 cm`.
 - `品质赔付费` is caused by paid quality-compensation options such as `元器件移植全额赔付`. Bare PCB orders should use `按标准合同常规处理` unless component-transfer compensation is intentionally needed.
 - `并单发货` means combining multiple orders into one shipment. If the chosen SF service says it does not support combined shipment, choose `不同交期订单不一起发货`.
 - `顺丰电商标快` is the default prepaid courier for China web orders.
