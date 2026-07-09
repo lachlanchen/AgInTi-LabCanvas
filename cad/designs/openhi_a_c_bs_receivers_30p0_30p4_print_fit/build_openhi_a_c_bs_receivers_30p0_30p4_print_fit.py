@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Build OpenHI A+C+BS with both 30 mm receivers tightened for printing.
+"""Build OpenHI A+C+BS with the stable 30 mm receiver tightened for printing.
 
 This is a surgical sibling of `openhi_a_c_bs_shapr_exact_regen`. It keeps the
-imported A+C+BS body envelope and changes only the two OpenHI 30 mm female
-receiver starts from the measured old 30.2 mm to a 30.0 mm pilot/start with a
-30.4 mm groove cutter, matching the Lens B/C print-fit convention.
+imported A+C+BS body envelope and changes only the lower OpenHI 30 mm female
+receiver start from the measured old 30.2 mm to a 30.0 mm pilot/start with a
+30.4 mm groove cutter, matching the Lens B/C print-fit convention. The
+beam-splitter-side receiver is preserved exactly because local fill/re-cut
+booleans in that pocket produced foreign B-rep faces in the optical opening.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ PARAMS: dict[str, Any] = {
     "units": "mm",
     "source_step": "cad/extracted/OpenHI_STEP/A+ C + BS.step",
     "exact_baseline": "cad/designs/openhi_a_c_bs_shapr_exact_regen",
-    "design_variant": "both OpenHI 30 mm female receivers changed from old 30.2 mm start/root to 30.0 mm pilot plus 30.4 mm groove cutter",
+    "design_variant": "lower OpenHI 30 mm female receiver changed from old 30.2 mm start/root to 30.0 mm pilot plus 30.4 mm groove cutter; BS-side receiver preserved exact",
     "old_receiver_start_diameter_mm": 30.2,
     "female_pilot_bore_diameter_mm": 30.0,
     "female_thread_cutter_max_diameter_mm": 30.4,
@@ -67,23 +69,12 @@ PARAMS: dict[str, Any] = {
     "vertical_transition_chamfer_length_mm": 2.25,
     "vertical_transition_chamfer_start_diameter_mm": 30.0,
     "vertical_transition_chamfer_end_diameter_mm": 25.5,
-    "horizontal_axis_y_mm": 210.0,
-    "horizontal_axis_z_mm": 600.0,
-    "horizontal_pilot_fill_x0_mm": 247.0,
-    "horizontal_pilot_fill_length_mm": 23.0,
-    "horizontal_pilot_fill_diameter_mm": 30.4,
-    "horizontal_thread_fill_x0_mm": 270.0,
-    "horizontal_thread_fill_length_mm": 5.0,
-    "horizontal_thread_fill_diameter_mm": 31.0,
-    "horizontal_pilot_bore_x0_mm": 247.0,
-    "horizontal_pilot_bore_length_mm": 28.0,
-    "horizontal_thread_x0_mm": 270.0,
-    "horizontal_thread_length_mm": 5.0,
+    "horizontal_bs_receiver_mode": "preserve_exact_source_geometry",
     "method_note": (
         "The vertical receiver is rebuilt with fill bodies shaped close to the old mouth/thread void, "
-        "not a broad oversized tube. The horizontal BS/B-side receiver uses a 30.2 mm pilot fill and "
-        "a short 31.0 mm thread-zone fill before re-cutting the 30.0 mm pilot and bounded 30.4 mm "
-        "thread. This avoids exposed 32 mm fill-tube faces."
+        "not a broad oversized tube. The horizontal BS/B-side receiver is left untouched because both "
+        "full-cylinder fill and annular wall-fill approaches created unstable or visible foreign B-rep "
+        "surfaces in the beam-splitter opening. Preserving that side keeps the optical pocket clean."
     ),
 }
 
@@ -145,47 +136,8 @@ def z_frustum(start_diameter: float, end_diameter: float, length: float, z0: flo
     )
 
 
-def x_cylinder(diameter: float, length: float, x0: float) -> cq.Workplane:
-    return (
-        cq.Workplane("YZ")
-        .workplane(offset=x0)
-        .circle(diameter / 2.0)
-        .extrude(length)
-        .translate((0, PARAMS["horizontal_axis_y_mm"], PARAMS["horizontal_axis_z_mm"]))
-    )
-
-
 def x_thread_clip_box(x0: float, length: float, span: float) -> cq.Workplane:
     return cq.Workplane("XY").box(length, span, span, centered=(False, True, True)).translate((x0, 0, 0))
-
-
-def x_thread_cutter(x0: float, length: float) -> cq.Workplane:
-    pitch = PARAMS["thread_pitch_mm"]
-    height = PARAMS["thread_tooth_height_mm"]
-    base = PARAMS["thread_tooth_base_mm"]
-    extra = PARAMS["thread_runout_extra_length_each_end_mm"]
-    cutter_max = PARAMS["female_thread_cutter_max_diameter_mm"]
-    root_d = cutter_max - 2.0 * height
-    sweep_x0 = x0 - extra
-    sweep_length = length + 2.0 * extra
-    root_r = root_d / 2.0 - THREAD_OVERLAP
-    path = cq.Wire.makeHelix(
-        pitch,
-        sweep_length,
-        root_r,
-        center=(sweep_x0, 0, 0),
-        dir=(1, 0, 0),
-        lefthand=True,
-    )
-    profile = (
-        cq.Workplane("XY")
-        .center(sweep_x0, root_r)
-        .polyline([(0, 0), (base / 2.0, height + THREAD_OVERLAP), (base, 0)])
-        .close()
-    )
-    thread = profile.sweep(path, isFrenet=True, combine=False)
-    thread = thread.intersect(x_thread_clip_box(x0, length, cutter_max + 4.0))
-    return thread.translate((0, PARAMS["horizontal_axis_y_mm"], PARAMS["horizontal_axis_z_mm"]))
 
 
 def z_thread_cutter(z0: float, length: float) -> cq.Workplane:
@@ -325,7 +277,10 @@ def make_cutaway(shape: cq.Shape) -> cq.Workplane:
     )
     pieces = []
     for solid in shape.Solids():
-        cut = solid.intersect(keep_box.val())
+        try:
+            cut = solid.intersect(keep_box.val())
+        except ValueError:
+            continue
         if cut.Volume() > 1e-6:
             pieces.append(cut)
     if pieces:
@@ -368,36 +323,15 @@ def build_variant() -> dict[str, cq.Workplane]:
     )
     vertical_thread = z_thread_cutter(PARAMS["vertical_thread_z0_mm"], PARAMS["vertical_thread_length_mm"])
 
-    horizontal_pilot_fill = x_cylinder(
-        PARAMS["horizontal_pilot_fill_diameter_mm"],
-        PARAMS["horizontal_pilot_fill_length_mm"],
-        PARAMS["horizontal_pilot_fill_x0_mm"],
-    )
-    horizontal_thread_fill = x_cylinder(
-        PARAMS["horizontal_thread_fill_diameter_mm"],
-        PARAMS["horizontal_thread_fill_length_mm"],
-        PARAMS["horizontal_thread_fill_x0_mm"],
-    )
-    horizontal_pilot = x_cylinder(
-        PARAMS["female_pilot_bore_diameter_mm"],
-        PARAMS["horizontal_pilot_bore_length_mm"],
-        PARAMS["horizontal_pilot_bore_x0_mm"],
-    )
-    horizontal_thread = x_thread_cutter(PARAMS["horizontal_thread_x0_mm"], PARAMS["horizontal_thread_length_mm"])
-
     body = (
         cq.Workplane()
         .add(source_shape)
         .union(vertical_front_mouth_fill)
         .union(vertical_internal_fill)
-        .union(horizontal_pilot_fill)
-        .union(horizontal_thread_fill)
         .cut(vertical_mouth)
         .cut(vertical_pilot)
         .cut(vertical_thread)
         .cut(vertical_chamfer)
-        .cut(horizontal_pilot)
-        .cut(horizontal_thread)
     )
     return {
         "source": cq.Workplane().add(source_shape),
@@ -408,10 +342,6 @@ def build_variant() -> dict[str, cq.Workplane]:
         "vertical_pilot_bore_cutter": vertical_pilot,
         "vertical_thread_cutter": vertical_thread,
         "vertical_transition_chamfer_cutter": vertical_chamfer,
-        "horizontal_pilot_fill": horizontal_pilot_fill,
-        "horizontal_thread_fill": horizontal_thread_fill,
-        "horizontal_pilot_bore_cutter": horizontal_pilot,
-        "horizontal_thread_cutter": horizontal_thread,
         "inspection_cutaway": make_cutaway(body.val()),
     }
 
@@ -443,9 +373,9 @@ def write_readme(manifest: dict[str, Any]) -> None:
     verification = manifest["verification"]
     outputs = manifest["outputs"]
     lines = [
-        "# OpenHI A+C+BS Receivers 30.0/30.4 Print Fit",
+        "# OpenHI A+C+BS Lower Receiver 30.0/30.4 Print Fit",
         "",
-        "This sibling design tightens both OpenHI 30 mm female receiver starts in `A+ C + BS.step` while preserving the exact source body envelope.",
+        "This sibling design tightens the lower OpenHI 30 mm female receiver start in `A+ C + BS.step` while preserving the exact source body envelope and the original beam-splitter-side receiver.",
         "",
         "## Thread Definition",
         "",
@@ -457,7 +387,7 @@ def write_readme(manifest: dict[str, Any]) -> None:
         "## Changed Regions",
         "",
         "- Bottom/away-from-BS receiver: rebuilt from the 40 mm mouth to the preserved 25.5 mm lens-seat transition.",
-        "- BS/B-side receiver: old internal receiver is filled inside the existing envelope, then re-cut as a 30.0 mm pilot with a bounded 30.4 mm thread at the outer end.",
+        "- BS/B-side receiver: preserved exactly from the OpenHI source STEP to avoid adding foreign surfaces inside the beam-splitter pocket.",
         "",
         params["method_note"],
         "",
@@ -468,11 +398,11 @@ def write_readme(manifest: dict[str, Any]) -> None:
         f"- Overall bbox size difference: `{verification['overall_bbox_size_abs_diff_mm']} mm`",
         f"- Source solids: `{source['solid_count']}`; variant solids: `{variant['solid_count']}`",
         f"- Old 30.2 mm vertical faces remaining in modified scan: `{len(manifest['variant_face_scan']['old_30p2_vertical_faces_remaining'])}`",
-        f"- Old 30.2 mm horizontal faces remaining in modified scan: `{len(manifest['variant_face_scan']['old_30p2_horizontal_faces_remaining'])}`",
+        f"- Old 30.2 mm horizontal faces preserved in modified scan: `{len(manifest['variant_face_scan']['old_30p2_horizontal_faces_remaining'])}`",
         f"- Exposed mid-diameter fill candidate faces: `{len(manifest['variant_face_scan']['exposed_mid_diameter_fill_candidate_faces'])}`",
         f"- New 30.0 mm cylinder faces found: `{[(item['face'], item['diameter_mm'], item['bbox']) for item in manifest['variant_face_scan']['new_30p0_cylinder_faces']]}`",
         "",
-    "This is still a surgical B-rep variant. Inspect the exported cutter files and renders before printing; if the BS/B-side receiver feels too tight, create a sibling with 30.1 mm pilot or 30.5 mm cutter. A previous broad-fill attempt exposed 32 mm fill surfaces; this build intentionally avoids those faces.",
+        "This is still a surgical B-rep variant. Inspect the exported cutter files and renders before printing. A previous full-cylinder horizontal fill left a visible foreign strip in the beam-splitter opening, and the annular retry was unstable in OCCT; this build intentionally does not edit that BS-side receiver.",
         "",
         "## Artifacts",
         "",
@@ -500,6 +430,8 @@ def main() -> None:
     if not SOURCE_STEP.exists():
         raise FileNotFoundError(f"missing STEP source: {SOURCE_STEP}")
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    for stale in ARTIFACT_DIR.glob(f"{STEM}_horizontal_*.step"):
+        stale.unlink()
     parts = build_variant()
     outputs = export_all(parts)
 

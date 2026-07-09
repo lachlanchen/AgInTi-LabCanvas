@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render OpenHI A+C+BS 30.0/30.4 print-fit receiver variant."""
+"""Render OpenHI A+C+BS lower receiver 30.0/30.4 print-fit variant."""
 
 from __future__ import annotations
 
@@ -74,18 +74,14 @@ def setup_scene(stl_path: Path, cutaway: bool = False) -> dict:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     center = Vector(manifest["variant_geometry"]["bbox"]["center"])
 
-    mat_holder = material("warm gray OpenHI A+C+BS 30.0/30.4 print fit", (0.64, 0.65, 0.60, 1.0), 0.64)
-    mat_axis = material("gold optical axes", (1.0, 0.72, 0.08, 0.9), 0.28)
-    mat_thread = material("transparent teal new 30.0/30.4 receiver zones", (0.0, 0.55, 0.65, 0.26), 0.48)
+    mat_holder = material("warm gray OpenHI A+C+BS lower receiver print fit", (0.64, 0.65, 0.60, 1.0), 0.64)
+    mat_thread = material("transparent teal lower 30.0/30.4 receiver zone", (0.0, 0.55, 0.65, 0.26), 0.48)
 
     bpy.ops.import_mesh.stl(filepath=str(stl_path))
     holder = bpy.context.object
-    holder.name = "OpenHI A+C+BS 30.0/30.4 print-fit receiver variant"
+    holder.name = "OpenHI A+C+BS lower receiver 30.0/30.4 print-fit variant"
     holder.data.materials.append(mat_holder)
     holder.location = -center
-
-    add_z_cylinder("bottom receiver axis", 0.36, 92.0, (255.0 - center.x, 210.0 - center.y, 577.0 - center.z), mat_axis)
-    add_x_cylinder("BS side receiver axis", 0.36, 48.0, (262.0 - center.x, 210.0 - center.y, 600.0 - center.z), mat_axis)
 
     if not cutaway:
         add_z_cylinder(
@@ -93,13 +89,6 @@ def setup_scene(stl_path: Path, cutaway: bool = False) -> dict:
             15.2,
             7.75,
             (255.0 - center.x, 210.0 - center.y, 543.875 - center.z),
-            mat_thread,
-        )
-        add_x_cylinder(
-            "BS/B-side new 30.0/30.4 receiver zone",
-            15.2,
-            5.0,
-            (272.5 - center.x, 210.0 - center.y, 600.0 - center.z),
             mat_thread,
         )
 
