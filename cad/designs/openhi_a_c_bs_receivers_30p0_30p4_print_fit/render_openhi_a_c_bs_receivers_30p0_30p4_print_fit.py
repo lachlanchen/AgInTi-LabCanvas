@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render OpenHI A+C+BS lower receiver 30.0/30.4 print-fit variant."""
+"""Render OpenHI A+C+BS Shapr-friendly 30.0/30.4 print-fit repair."""
 
 from __future__ import annotations
 
@@ -16,10 +16,8 @@ ARTIFACT_DIR = DESIGN_DIR / "artifacts"
 STEM = "openhi_a_c_bs_receivers_30p0_30p4_print_fit"
 MANIFEST_PATH = ARTIFACT_DIR / "manifest.json"
 STL_PATH = ARTIFACT_DIR / f"{STEM}.stl"
-CUTAWAY_STL_PATH = ARTIFACT_DIR / f"{STEM}_inspection_cutaway.stl"
 RENDER_PATH = ARTIFACT_DIR / f"{STEM}_render.png"
 DETAIL_RENDER_PATH = ARTIFACT_DIR / f"{STEM}_receiver_detail_render.png"
-CUTAWAY_RENDER_PATH = ARTIFACT_DIR / f"{STEM}_inspection_cutaway_render.png"
 BLEND_PATH = ARTIFACT_DIR / f"{STEM}.blend"
 
 
@@ -68,29 +66,35 @@ def base_render_settings() -> None:
     bpy.context.scene.world.color = (1, 1, 1)
 
 
-def setup_scene(stl_path: Path, cutaway: bool = False) -> dict:
+def setup_scene(stl_path: Path) -> dict:
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete()
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    center = Vector(manifest["variant_geometry"]["bbox"]["center"])
+    center = Vector(manifest["assembly_geometry"]["bbox"]["center"])
 
-    mat_holder = material("warm gray OpenHI A+C+BS lower receiver print fit", (0.64, 0.65, 0.60, 1.0), 0.64)
-    mat_thread = material("transparent teal lower 30.0/30.4 receiver zone", (0.0, 0.55, 0.65, 0.26), 0.48)
+    mat_holder = material("warm gray OpenHI A+C+BS Shapr-friendly repair", (0.64, 0.65, 0.60, 1.0), 0.64)
+    mat_thread = material("transparent teal 30.0/30.4 receiver zones", (0.0, 0.55, 0.65, 0.22), 0.48)
 
     bpy.ops.import_mesh.stl(filepath=str(stl_path))
     holder = bpy.context.object
-    holder.name = "OpenHI A+C+BS lower receiver 30.0/30.4 print-fit variant"
+    holder.name = "OpenHI A+C+BS original body with 30.0/30.4 receiver repair"
     holder.data.materials.append(mat_holder)
     holder.location = -center
 
-    if not cutaway:
-        add_z_cylinder(
-            "bottom new 30.0/30.4 receiver zone",
-            15.2,
-            7.75,
-            (255.0 - center.x, 210.0 - center.y, 543.875 - center.z),
-            mat_thread,
-        )
+    add_z_cylinder(
+        "bottom 30.0/30.4 receiver preview zone",
+        15.2,
+        7.75,
+        (255.0 - center.x, 210.0 - center.y, 543.875 - center.z),
+        mat_thread,
+    )
+    add_x_cylinder(
+        "BS-side 30.0/30.4 receiver preview zone",
+        15.2,
+        5.0,
+        (272.5 - center.x, 210.0 - center.y, 600.0 - center.z),
+        mat_thread,
+    )
 
     bpy.ops.object.light_add(type="AREA", location=(50, -70, 70))
     key = bpy.context.object
@@ -122,8 +126,6 @@ def main() -> None:
     setup_scene(STL_PATH)
     render(RENDER_PATH, (105, -135, 86), (0, 0, 0), 112)
     render(DETAIL_RENDER_PATH, (68, -34, 68), (4, 0, 0), 58)
-    setup_scene(CUTAWAY_STL_PATH, cutaway=True)
-    render(CUTAWAY_RENDER_PATH, (90, -110, 70), (0, -4, -4), 96)
     bpy.ops.wm.save_as_mainfile(filepath=str(BLEND_PATH))
 
 
