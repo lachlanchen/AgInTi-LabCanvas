@@ -19,9 +19,13 @@
     "thread_runout_extra_length_each_end_mm": 0.4,
     "vertical_axis_x_mm": 255.0,
     "vertical_axis_y_mm": 210.0,
-    "vertical_fill_diameter_mm": 32.0,
-    "vertical_fill_z0_mm": 535.1,
-    "vertical_fill_length_mm": 14.9,
+    "vertical_internal_fill_diameter_mm": 31.0,
+    "vertical_internal_fill_z0_mm": 539.6,
+    "vertical_internal_fill_length_mm": 10.4,
+    "vertical_front_mouth_fill_start_diameter_mm": 40.0,
+    "vertical_front_mouth_fill_end_diameter_mm": 30.2,
+    "vertical_front_mouth_fill_z0_mm": 535.1,
+    "vertical_front_mouth_fill_length_mm": 4.9,
     "vertical_front_mouth_z0_mm": 535.1,
     "vertical_front_mouth_length_mm": 4.9,
     "vertical_front_mouth_diameter_outer_mm": 40.0,
@@ -36,14 +40,17 @@
     "vertical_transition_chamfer_end_diameter_mm": 25.5,
     "horizontal_axis_y_mm": 210.0,
     "horizontal_axis_z_mm": 600.0,
-    "horizontal_fill_x0_mm": 247.0,
-    "horizontal_fill_length_mm": 28.0,
-    "horizontal_fill_diameter_mm": 32.0,
+    "horizontal_pilot_fill_x0_mm": 247.0,
+    "horizontal_pilot_fill_length_mm": 23.0,
+    "horizontal_pilot_fill_diameter_mm": 30.4,
+    "horizontal_thread_fill_x0_mm": 270.0,
+    "horizontal_thread_fill_length_mm": 5.0,
+    "horizontal_thread_fill_diameter_mm": 31.0,
     "horizontal_pilot_bore_x0_mm": 247.0,
     "horizontal_pilot_bore_length_mm": 28.0,
     "horizontal_thread_x0_mm": 270.0,
     "horizontal_thread_length_mm": 5.0,
-    "method_note": "The vertical receiver is rebuilt from the mouth to the preserved 25.5 mm lens-seat plane. The horizontal BS/B-side receiver is treated surgically: the old internal cavity is filled inside the existing 40 mm envelope and re-cut as a 30.0 mm pilot with a bounded 30.4 mm thread cutter at the outer end."
+    "method_note": "The vertical receiver is rebuilt with fill bodies shaped close to the old mouth/thread void, not a broad oversized tube. The horizontal BS/B-side receiver uses a 30.2 mm pilot fill and a short 31.0 mm thread-zone fill before re-cutting the 30.0 mm pilot and bounded 30.4 mm thread. This avoids exposed 32 mm fill-tube faces."
   },
   "source_step": "cad/extracted/OpenHI_STEP/A+ C + BS.step",
   "exact_baseline": "cad/designs/openhi_a_c_bs_shapr_exact_regen/artifacts/manifest.json",
@@ -96,37 +103,37 @@
       ]
     },
     "solid_count": 1,
-    "face_count": 50,
-    "edge_count": 134,
-    "volume_mm3": 45784.363987565,
-    "area_mm2": 18259.820651564
+    "face_count": 53,
+    "edge_count": 133,
+    "volume_mm3": 44891.730701152,
+    "area_mm2": 18277.20328928
   },
   "in_memory_variant_geometry": {
     "bbox": {
-      "xlen": 40.08012339,
-      "ylen": 40.067690672,
-      "zlen": 84.948414757,
+      "xlen": 40.093779864,
+      "ylen": 40.081347146,
+      "zlen": 84.955242994,
       "min": [
-        234.959938306,
-        189.966154664,
-        535.059938302
+        234.953110069,
+        189.959326427,
+        535.053110065
       ],
       "max": [
-        275.040061696,
-        230.033845336,
+        275.046889933,
+        230.040673573,
         620.008353059
       ],
       "center": [
         255.000000001,
         210.0,
-        577.534145681
+        577.530731562
       ]
     },
     "solid_count": 1,
-    "face_count": 50,
-    "edge_count": 134,
-    "volume_mm3": 45784.345429118,
-    "area_mm2": 18259.81874069
+    "face_count": 53,
+    "edge_count": 133,
+    "volume_mm3": 44891.753253942,
+    "area_mm2": 18277.21245724
   },
   "exported_variant_geometry": {
     "bbox": {
@@ -150,10 +157,10 @@
       ]
     },
     "solid_count": 1,
-    "face_count": 50,
-    "edge_count": 134,
-    "volume_mm3": 45784.363987565,
-    "area_mm2": 18259.820651564
+    "face_count": 53,
+    "edge_count": 133,
+    "volume_mm3": 44891.730701152,
+    "area_mm2": 18277.20328928
   },
   "verification": {
     "overall_bbox_size_abs_diff_mm": [
@@ -162,9 +169,9 @@
       2e-09
     ],
     "in_memory_bbox_size_abs_diff_mm": [
-      0.08012319,
-      0.067690472,
-      0.048414553
+      0.093779664,
+      0.081346946,
+      0.05524279
     ],
     "solid_count": 1,
     "exported_solid_count": 1
@@ -857,6 +864,7 @@
       }
     ],
     "new_30p0_cylinder_faces": [],
+    "exposed_mid_diameter_fill_candidate_faces": [],
     "thread_bspline_faces": [
       {
         "face": 44,
@@ -1024,14 +1032,14 @@
             551.1499999
           ],
           "max": [
-            267.000000106,
+            267.000000105,
             222.0000001,
-            589.416994856
+            590.670477068
           ],
           "size": [
-            24.000000206,
+            24.000000205,
             24.0000002,
-            38.266994956
+            39.520477168
           ]
         }
       },
@@ -1068,7 +1076,7 @@
       },
       {
         "face": 9,
-        "diameter_mm": 32.0,
+        "diameter_mm": 30.4,
         "axis_direction": [
           -1.0,
           -0.0,
@@ -1083,48 +1091,48 @@
           "min": [
             246.9999999,
             197.9999999,
-            583.999999895
+            584.799999895
           ],
           "max": [
-            267.000000106,
+            267.000000105,
             222.0000001,
-            589.416994856
+            590.670477068
           ],
           "size": [
-            20.000000206,
+            20.000000205,
             24.0000002,
-            5.416994961
+            5.870477173
           ]
         }
       },
       {
         "face": 10,
-        "diameter_mm": 32.0,
+        "diameter_mm": 40.0,
         "axis_direction": [
-          -0.0,
-          -0.0,
+          0.0,
+          0.0,
           -1.0
         ],
         "axis_location": [
           255.0,
           210.0,
-          535.1
+          650.0
         ],
         "bbox": {
           "min": [
-            239.0,
-            194.0,
-            539.02
+            234.9999999,
+            189.9999999,
+            535.099999898
           ],
           "max": [
-            271.0,
-            226.0,
-            539.099999997
+            275.0000001,
+            230.0000001,
+            600.0000001
           ],
           "size": [
-            32.0,
-            32.0,
-            0.079999997
+            40.0000002,
+            40.0000002,
+            64.900000202
           ]
         }
       },
@@ -1160,131 +1168,7 @@
         }
       },
       {
-        "face": 18,
-        "diameter_mm": 1.4,
-        "axis_direction": [
-          -0.707106781,
-          0.0,
-          0.707106781
-        ],
-        "axis_location": [
-          248.512295283,
-          198.625,
-          590.401025445
-        ],
-        "bbox": {
-          "min": [
-            246.072776888,
-            197.925,
-            590.923371234
-          ],
-          "max": [
-            247.0,
-            199.325,
-            592.777817458
-          ],
-          "size": [
-            0.927223112,
-            1.4,
-            1.854446224
-          ]
-        }
-      },
-      {
-        "face": 19,
-        "diameter_mm": 1.4,
-        "axis_direction": [
-          -0.707106781,
-          0.0,
-          0.707106781
-        ],
-        "axis_location": [
-          248.512295283,
-          221.375,
-          590.401025445
-        ],
-        "bbox": {
-          "min": [
-            246.072776888,
-            220.675,
-            590.923371234
-          ],
-          "max": [
-            247.0,
-            222.075,
-            592.777817458
-          ],
-          "size": [
-            0.927223112,
-            1.4,
-            1.854446224
-          ]
-        }
-      },
-      {
-        "face": 21,
-        "diameter_mm": 40.0,
-        "axis_direction": [
-          0.0,
-          0.0,
-          -1.0
-        ],
-        "axis_location": [
-          255.0,
-          210.0,
-          650.0
-        ],
-        "bbox": {
-          "min": [
-            234.9999999,
-            189.9999999,
-            535.099999898
-          ],
-          "max": [
-            275.0000001,
-            230.0000001,
-            600.0000001
-          ],
-          "size": [
-            40.0000002,
-            40.0000002,
-            64.900000202
-          ]
-        }
-      },
-      {
-        "face": 22,
-        "diameter_mm": 40.0,
-        "axis_direction": [
-          -1.0,
-          0.0,
-          0.0
-        ],
-        "axis_location": [
-          305.0,
-          210.0,
-          600.0
-        ],
-        "bbox": {
-          "min": [
-            255.0,
-            210.0,
-            580.0
-          ],
-          "max": [
-            275.0,
-            230.0,
-            620.0
-          ],
-          "size": [
-            20.0,
-            20.0,
-            40.0
-          ]
-        }
-      },
-      {
-        "face": 23,
+        "face": 14,
         "diameter_mm": 40.0,
         "axis_direction": [
           -1.0,
@@ -1315,38 +1199,162 @@
         }
       },
       {
-        "face": 24,
-        "diameter_mm": 32.0,
+        "face": 15,
+        "diameter_mm": 40.0,
         "axis_direction": [
           -1.0,
-          -0.0,
-          -0.0
+          0.0,
+          0.0
         ],
         "axis_location": [
-          247.0,
+          305.0,
           210.0,
           600.0
         ],
         "bbox": {
           "min": [
-            270.717554517,
-            207.012332321,
-            615.717598774
+            255.0,
+            210.0,
+            580.0
           ],
           "max": [
-            271.0000001,
-            212.992839161,
-            616.0000001
+            275.0,
+            230.0,
+            620.0
           ],
           "size": [
-            0.282445583,
-            5.98050684,
-            0.282401326
+            20.0,
+            20.0,
+            40.0
           ]
         }
       },
       {
-        "face": 28,
+        "face": 16,
+        "diameter_mm": 1.6,
+        "axis_direction": [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        "axis_location": [
+          255.0,
+          195.0,
+          595.0
+        ],
+        "bbox": {
+          "min": [
+            254.199999898,
+            189.9999999,
+            594.1999999
+          ],
+          "max": [
+            255.8000001,
+            195.0000001,
+            595.8000001
+          ],
+          "size": [
+            1.600000202,
+            5.0000002,
+            1.6000002
+          ]
+        }
+      },
+      {
+        "face": 17,
+        "diameter_mm": 1.6,
+        "axis_direction": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "axis_location": [
+          255.0,
+          225.0,
+          595.0
+        ],
+        "bbox": {
+          "min": [
+            254.199999898,
+            224.9999999,
+            594.1999999
+          ],
+          "max": [
+            255.8000001,
+            230.0000001,
+            595.8000001
+          ],
+          "size": [
+            1.600000202,
+            5.0000002,
+            1.6000002
+          ]
+        }
+      },
+      {
+        "face": 21,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          248.512295283,
+          198.625,
+          590.401025445
+        ],
+        "bbox": {
+          "min": [
+            246.072776888,
+            197.925,
+            590.923371234
+          ],
+          "max": [
+            247.0,
+            199.325,
+            592.777817458
+          ],
+          "size": [
+            0.927223112,
+            1.4,
+            1.854446224
+          ]
+        }
+      },
+      {
+        "face": 22,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          248.512295283,
+          221.375,
+          590.401025445
+        ],
+        "bbox": {
+          "min": [
+            246.072776888,
+            220.675,
+            590.923371234
+          ],
+          "max": [
+            247.0,
+            222.075,
+            592.777817458
+          ],
+          "size": [
+            0.927223112,
+            1.4,
+            1.854446224
+          ]
+        }
+      },
+      {
+        "face": 27,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1377,8 +1385,8 @@
         }
       },
       {
-        "face": 32,
-        "diameter_mm": 32.0,
+        "face": 34,
+        "diameter_mm": 30.4,
         "axis_direction": [
           -1.0,
           -0.0,
@@ -1392,85 +1400,23 @@
         "bbox": {
           "min": [
             247.0,
-            194.0,
+            194.8,
             596.242640688
           ],
           "max": [
-            266.757359312,
-            226.0,
-            616.0
+            265.957359312,
+            225.2,
+            615.2
           ],
           "size": [
-            19.757359312,
-            32.0,
-            19.757359312
+            18.957359312,
+            30.4,
+            18.957359312
           ]
         }
       },
       {
-        "face": 38,
-        "diameter_mm": 1.6,
-        "axis_direction": [
-          0.0,
-          -1.0,
-          0.0
-        ],
-        "axis_location": [
-          255.0,
-          195.0,
-          595.0
-        ],
-        "bbox": {
-          "min": [
-            254.199999897,
-            189.9999999,
-            594.1999999
-          ],
-          "max": [
-            255.800000103,
-            195.0000001,
-            595.8000001
-          ],
-          "size": [
-            1.600000206,
-            5.0000002,
-            1.6000002
-          ]
-        }
-      },
-      {
-        "face": 39,
-        "diameter_mm": 1.6,
-        "axis_direction": [
-          0.0,
-          1.0,
-          0.0
-        ],
-        "axis_location": [
-          255.0,
-          225.0,
-          595.0
-        ],
-        "bbox": {
-          "min": [
-            254.199999897,
-            224.9999999,
-            594.1999999
-          ],
-          "max": [
-            255.800000103,
-            230.0000001,
-            595.8000001
-          ],
-          "size": [
-            1.600000206,
-            5.0000002,
-            1.6000002
-          ]
-        }
-      },
-      {
-        "face": 41,
+        "face": 40,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1501,7 +1447,7 @@
         }
       },
       {
-        "face": 42,
+        "face": 41,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1532,7 +1478,7 @@
         }
       },
       {
-        "face": 43,
+        "face": 42,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1563,7 +1509,7 @@
         }
       },
       {
-        "face": 44,
+        "face": 43,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1594,7 +1540,7 @@
         }
       },
       {
-        "face": 45,
+        "face": 44,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1626,38 +1572,38 @@
       },
       {
         "face": 47,
-        "diameter_mm": 32.0,
+        "diameter_mm": 1.4,
         "axis_direction": [
-          -1.0,
-          -0.0,
-          -0.0
+          -0.707106781,
+          0.0,
+          0.707106781
         ],
         "axis_location": [
-          247.0,
-          210.0,
-          600.0
+          248.512295283,
+          221.375,
+          590.401025445
         ],
         "bbox": {
           "min": [
-            254.199999897,
-            194.561088021,
-            594.432235537
+            247.705088245,
+            221.364563165,
+            589.906050598
           ],
           "max": [
-            255.800000103,
-            195.0000001,
-            595.8000001
+            248.758733215,
+            222.075000101,
+            590.767753619
           ],
           "size": [
-            1.600000206,
-            0.438912079,
-            1.367764563
+            1.05364497,
+            0.710436936,
+            0.861703021
           ]
         }
       },
       {
-        "face": 49,
-        "diameter_mm": 32.0,
+        "face": 48,
+        "diameter_mm": 30.4,
         "axis_direction": [
           -1.0,
           -0.0,
@@ -1670,26 +1616,88 @@
         ],
         "bbox": {
           "min": [
-            254.199999897,
-            224.9999999,
-            594.432235537
+            247.705088245,
+            221.364563165,
+            589.906105617
           ],
           "max": [
-            255.800000103,
-            225.438911979,
-            595.8000001
+            248.758733215,
+            222.075000101,
+            590.767753619
           ],
           "size": [
-            1.600000206,
-            0.438912079,
-            1.367764563
+            1.05364497,
+            0.710436936,
+            0.861648002
+          ]
+        }
+      },
+      {
+        "face": 50,
+        "diameter_mm": 1.4,
+        "axis_direction": [
+          -0.707106781,
+          0.0,
+          0.707106781
+        ],
+        "axis_location": [
+          248.512295283,
+          198.625,
+          590.401025445
+        ],
+        "bbox": {
+          "min": [
+            247.705088236,
+            197.924999893,
+            589.906050598
+          ],
+          "max": [
+            248.758733215,
+            198.635436835,
+            590.76775364
+          ],
+          "size": [
+            1.053644979,
+            0.710436942,
+            0.861703042
+          ]
+        }
+      },
+      {
+        "face": 51,
+        "diameter_mm": 30.4,
+        "axis_direction": [
+          -1.0,
+          -0.0,
+          -0.0
+        ],
+        "axis_location": [
+          247.0,
+          210.0,
+          600.0
+        ],
+        "bbox": {
+          "min": [
+            247.705088236,
+            197.924999893,
+            589.906105617
+          ],
+          "max": [
+            248.758733215,
+            198.635436835,
+            590.76775364
+          ],
+          "size": [
+            1.053644979,
+            0.710436942,
+            0.861648023
           ]
         }
       }
     ],
     "bsplines": [
       {
-        "face": 27,
+        "face": 26,
         "bbox": {
           "min": [
             269.9999999,
@@ -1709,7 +1717,7 @@
         }
       },
       {
-        "face": 29,
+        "face": 28,
         "bbox": {
           "min": [
             269.9999999,
@@ -1795,7 +1803,7 @@
         }
       },
       {
-        "face": 28,
+        "face": 27,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1826,7 +1834,7 @@
         }
       },
       {
-        "face": 41,
+        "face": 40,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1857,7 +1865,7 @@
         }
       },
       {
-        "face": 42,
+        "face": 41,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1888,7 +1896,7 @@
         }
       },
       {
-        "face": 43,
+        "face": 42,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1919,7 +1927,7 @@
         }
       },
       {
-        "face": 44,
+        "face": 43,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1950,7 +1958,7 @@
         }
       },
       {
-        "face": 45,
+        "face": 44,
         "diameter_mm": 30.0,
         "axis_direction": [
           -1.0,
@@ -1981,9 +1989,10 @@
         }
       }
     ],
+    "exposed_mid_diameter_fill_candidate_faces": [],
     "thread_bspline_faces": [
       {
-        "face": 27,
+        "face": 26,
         "bbox": {
           "min": [
             269.9999999,
@@ -2003,7 +2012,7 @@
         }
       },
       {
-        "face": 29,
+        "face": 28,
         "bbox": {
           "min": [
             269.9999999,
@@ -2027,12 +2036,14 @@
   "outputs": {
     "assembly_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit.step",
     "assembly_stl": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit.stl",
-    "vertical_fill_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_vertical_fill.step",
+    "vertical_front_mouth_fill_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_vertical_front_mouth_fill.step",
+    "vertical_internal_fill_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_vertical_internal_fill.step",
     "vertical_front_mouth_cutter_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_vertical_front_mouth_cutter.step",
     "vertical_pilot_bore_cutter_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_vertical_pilot_bore_cutter.step",
     "vertical_thread_cutter_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_vertical_thread_cutter.step",
     "vertical_transition_chamfer_cutter_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_vertical_transition_chamfer_cutter.step",
-    "horizontal_fill_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_horizontal_fill.step",
+    "horizontal_pilot_fill_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_horizontal_pilot_fill.step",
+    "horizontal_thread_fill_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_horizontal_thread_fill.step",
     "horizontal_pilot_bore_cutter_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_horizontal_pilot_bore_cutter.step",
     "horizontal_thread_cutter_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_horizontal_thread_cutter.step",
     "inspection_cutaway_step": "cad/designs/openhi_a_c_bs_receivers_30p0_30p4_print_fit/artifacts/openhi_a_c_bs_receivers_30p0_30p4_print_fit_inspection_cutaway.step",

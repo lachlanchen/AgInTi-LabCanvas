@@ -48,9 +48,13 @@ PARAMS: dict[str, Any] = {
     "thread_runout_extra_length_each_end_mm": 0.4,
     "vertical_axis_x_mm": 255.0,
     "vertical_axis_y_mm": 210.0,
-    "vertical_fill_diameter_mm": 32.0,
-    "vertical_fill_z0_mm": 535.1,
-    "vertical_fill_length_mm": 14.9,
+    "vertical_internal_fill_diameter_mm": 31.0,
+    "vertical_internal_fill_z0_mm": 539.6,
+    "vertical_internal_fill_length_mm": 10.4,
+    "vertical_front_mouth_fill_start_diameter_mm": 40.0,
+    "vertical_front_mouth_fill_end_diameter_mm": 30.2,
+    "vertical_front_mouth_fill_z0_mm": 535.1,
+    "vertical_front_mouth_fill_length_mm": 4.9,
     "vertical_front_mouth_z0_mm": 535.1,
     "vertical_front_mouth_length_mm": 4.9,
     "vertical_front_mouth_diameter_outer_mm": 40.0,
@@ -65,18 +69,21 @@ PARAMS: dict[str, Any] = {
     "vertical_transition_chamfer_end_diameter_mm": 25.5,
     "horizontal_axis_y_mm": 210.0,
     "horizontal_axis_z_mm": 600.0,
-    "horizontal_fill_x0_mm": 247.0,
-    "horizontal_fill_length_mm": 28.0,
-    "horizontal_fill_diameter_mm": 32.0,
+    "horizontal_pilot_fill_x0_mm": 247.0,
+    "horizontal_pilot_fill_length_mm": 23.0,
+    "horizontal_pilot_fill_diameter_mm": 30.4,
+    "horizontal_thread_fill_x0_mm": 270.0,
+    "horizontal_thread_fill_length_mm": 5.0,
+    "horizontal_thread_fill_diameter_mm": 31.0,
     "horizontal_pilot_bore_x0_mm": 247.0,
     "horizontal_pilot_bore_length_mm": 28.0,
     "horizontal_thread_x0_mm": 270.0,
     "horizontal_thread_length_mm": 5.0,
     "method_note": (
-        "The vertical receiver is rebuilt from the mouth to the preserved 25.5 mm lens-seat plane. "
-        "The horizontal BS/B-side receiver is treated surgically: the old internal cavity is filled "
-        "inside the existing 40 mm envelope and re-cut as a 30.0 mm pilot with a bounded 30.4 mm "
-        "thread cutter at the outer end."
+        "The vertical receiver is rebuilt with fill bodies shaped close to the old mouth/thread void, "
+        "not a broad oversized tube. The horizontal BS/B-side receiver uses a 30.2 mm pilot fill and "
+        "a short 31.0 mm thread-zone fill before re-cutting the 30.0 mm pilot and bounded 30.4 mm "
+        "thread. This avoids exposed 32 mm fill-tube faces."
     ),
 }
 
@@ -273,6 +280,11 @@ def face_scan(shape: cq.Shape) -> dict[str, Any]:
         for item in cylinders
         if 29.95 <= item["diameter_mm"] <= 30.05
     ]
+    exposed_fill_candidate_faces = [
+        item
+        for item in cylinders
+        if 30.5 <= item["diameter_mm"] <= 39.5
+    ]
     thread_bsplines = [
         item
         for item in bsplines
@@ -293,6 +305,7 @@ def face_scan(shape: cq.Shape) -> dict[str, Any]:
         "old_30p2_vertical_faces_remaining": vertical_old_30p2,
         "old_30p2_horizontal_faces_remaining": horizontal_old_30p2,
         "new_30p0_cylinder_faces": new_30p0,
+        "exposed_mid_diameter_fill_candidate_faces": exposed_fill_candidate_faces,
         "thread_bspline_faces": thread_bsplines,
     }
 
@@ -325,10 +338,16 @@ def build_variant() -> dict[str, cq.Workplane]:
     if len(source_shape.Solids()) != 1:
         raise ValueError(f"expected 1 source solid, got {len(source_shape.Solids())}")
 
-    vertical_fill = z_cylinder(
-        PARAMS["vertical_fill_diameter_mm"],
-        PARAMS["vertical_fill_length_mm"],
-        PARAMS["vertical_fill_z0_mm"],
+    vertical_internal_fill = z_cylinder(
+        PARAMS["vertical_internal_fill_diameter_mm"],
+        PARAMS["vertical_internal_fill_length_mm"],
+        PARAMS["vertical_internal_fill_z0_mm"],
+    )
+    vertical_front_mouth_fill = z_frustum(
+        PARAMS["vertical_front_mouth_fill_start_diameter_mm"],
+        PARAMS["vertical_front_mouth_fill_end_diameter_mm"],
+        PARAMS["vertical_front_mouth_fill_length_mm"],
+        PARAMS["vertical_front_mouth_fill_z0_mm"],
     )
     vertical_mouth = z_frustum(
         PARAMS["vertical_front_mouth_diameter_outer_mm"],
@@ -349,10 +368,15 @@ def build_variant() -> dict[str, cq.Workplane]:
     )
     vertical_thread = z_thread_cutter(PARAMS["vertical_thread_z0_mm"], PARAMS["vertical_thread_length_mm"])
 
-    horizontal_fill = x_cylinder(
-        PARAMS["horizontal_fill_diameter_mm"],
-        PARAMS["horizontal_fill_length_mm"],
-        PARAMS["horizontal_fill_x0_mm"],
+    horizontal_pilot_fill = x_cylinder(
+        PARAMS["horizontal_pilot_fill_diameter_mm"],
+        PARAMS["horizontal_pilot_fill_length_mm"],
+        PARAMS["horizontal_pilot_fill_x0_mm"],
+    )
+    horizontal_thread_fill = x_cylinder(
+        PARAMS["horizontal_thread_fill_diameter_mm"],
+        PARAMS["horizontal_thread_fill_length_mm"],
+        PARAMS["horizontal_thread_fill_x0_mm"],
     )
     horizontal_pilot = x_cylinder(
         PARAMS["female_pilot_bore_diameter_mm"],
@@ -364,8 +388,10 @@ def build_variant() -> dict[str, cq.Workplane]:
     body = (
         cq.Workplane()
         .add(source_shape)
-        .union(vertical_fill)
-        .union(horizontal_fill)
+        .union(vertical_front_mouth_fill)
+        .union(vertical_internal_fill)
+        .union(horizontal_pilot_fill)
+        .union(horizontal_thread_fill)
         .cut(vertical_mouth)
         .cut(vertical_pilot)
         .cut(vertical_thread)
@@ -376,12 +402,14 @@ def build_variant() -> dict[str, cq.Workplane]:
     return {
         "source": cq.Workplane().add(source_shape),
         "modified": body,
-        "vertical_fill": vertical_fill,
+        "vertical_front_mouth_fill": vertical_front_mouth_fill,
+        "vertical_internal_fill": vertical_internal_fill,
         "vertical_front_mouth_cutter": vertical_mouth,
         "vertical_pilot_bore_cutter": vertical_pilot,
         "vertical_thread_cutter": vertical_thread,
         "vertical_transition_chamfer_cutter": vertical_chamfer,
-        "horizontal_fill": horizontal_fill,
+        "horizontal_pilot_fill": horizontal_pilot_fill,
+        "horizontal_thread_fill": horizontal_thread_fill,
         "horizontal_pilot_bore_cutter": horizontal_pilot,
         "horizontal_thread_cutter": horizontal_thread,
         "inspection_cutaway": make_cutaway(body.val()),
@@ -441,9 +469,10 @@ def write_readme(manifest: dict[str, Any]) -> None:
         f"- Source solids: `{source['solid_count']}`; variant solids: `{variant['solid_count']}`",
         f"- Old 30.2 mm vertical faces remaining in modified scan: `{len(manifest['variant_face_scan']['old_30p2_vertical_faces_remaining'])}`",
         f"- Old 30.2 mm horizontal faces remaining in modified scan: `{len(manifest['variant_face_scan']['old_30p2_horizontal_faces_remaining'])}`",
+        f"- Exposed mid-diameter fill candidate faces: `{len(manifest['variant_face_scan']['exposed_mid_diameter_fill_candidate_faces'])}`",
         f"- New 30.0 mm cylinder faces found: `{[(item['face'], item['diameter_mm'], item['bbox']) for item in manifest['variant_face_scan']['new_30p0_cylinder_faces']]}`",
         "",
-        "This is still a surgical B-rep variant. Inspect the exported cutter files and renders before printing; if the BS/B-side receiver feels too tight, create a sibling with 30.1 mm pilot or 30.5 mm cutter.",
+    "This is still a surgical B-rep variant. Inspect the exported cutter files and renders before printing; if the BS/B-side receiver feels too tight, create a sibling with 30.1 mm pilot or 30.5 mm cutter. A previous broad-fill attempt exposed 32 mm fill surfaces; this build intentionally avoids those faces.",
         "",
         "## Artifacts",
         "",
