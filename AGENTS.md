@@ -46,7 +46,7 @@ Paper figure generation must stay editable and atomic. Do not treat a generated 
 
 For CAD designs, "Nutstore sync" means `/home/lachlan/Nutstore Files/Projects/LabCanvas`. After generating or revising a serious CAD design, copy the final `*_assembly.step` or `*_assembled.step` file to that folder by default, keeping the filename descriptive. Continue preserving the full source/artifact set in the design folder; the Nutstore copy is for Shapr3D/LabCanvas handoff.
 Keep each CAD project in one design folder. For major regeneration runs, archive the previous root files under `runs/run-N-human-readable-info-YYYYMMDDTHHMMSSZ/` and keep the root `artifacts/` as the latest checked output. Do not create a sibling design folder for a small geometry fix unless the user explicitly asks for a separate variant.
-When a CAD run is ready for 3D printing, also create a clean Nutstore subfolder named like `<design>/run-N-short-name-print-ready/`. Include `PRINT_THIS_*.stl`, `PRINT_THIS_*.step`, separate part STEP files such as `bottom_part.step` and `top_part_180deg_print.step` when relevant, and a render PNG. For large flat parts, default to removable anti-warp ears; prefer thin 0.5 mm sacrificial ears with side pulls plus diagonal full-corner pull tabs.
+When a CAD run is ready for 3D printing, also create a clean Nutstore subfolder named like `<design>/run-N-short-name-print-ready/`. Include `PRINT_THIS_*.stl`, `PRINT_THIS_*.step`, `PRINT_THIS_*.3mf`, separate part STEP files such as `bottom_part.step` and `top_part_180deg_print.step` when relevant, and a render PNG. For large flat parts, default to removable anti-warp ears; prefer thin 0.5 mm sacrificial ears with side pulls plus diagonal full-corner pull tabs.
 
 ## WeChat Worker Tool Routing
 

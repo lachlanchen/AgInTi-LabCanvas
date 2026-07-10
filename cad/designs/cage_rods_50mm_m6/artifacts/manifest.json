@@ -31,6 +31,10 @@
     "m3_pilot_depth_each_end_mm": 8.0,
     "end_chamfer_mm": 0.35,
     "print_spacing_mm": 12.0,
+    "print_grid_rows": 5,
+    "print_grid_cols": 5,
+    "print_grid_x_gap_mm": 8.0,
+    "print_grid_y_pitch_mm": 12.0,
     "shapr_friendly_note": "No helical threads or B-spline faces. The M6 wording here is treated as a 6 mm cage rod diameter. Use real metal M6 threaded rod if a true screw thread is required."
   },
   "outputs": {
@@ -42,6 +46,9 @@
     "assembly_stl": "cad/designs/cage_rods_50mm_m6/artifacts/cage_rods_50mm_m6_four_rod_cage_assembly.stl",
     "print_layout_step": "cad/designs/cage_rods_50mm_m6/artifacts/cage_rods_50mm_m6_four_rod_print_layout.step",
     "print_layout_stl": "cad/designs/cage_rods_50mm_m6/artifacts/cage_rods_50mm_m6_four_rod_print_layout.stl",
+    "print_grid_step": "cad/designs/cage_rods_50mm_m6/artifacts/cage_rods_50mm_m6_25rod_print_grid.step",
+    "print_grid_stl": "cad/designs/cage_rods_50mm_m6/artifacts/cage_rods_50mm_m6_25rod_print_grid.stl",
+    "print_grid_3mf": "cad/designs/cage_rods_50mm_m6/artifacts/cage_rods_50mm_m6_25rod_print_grid.3mf",
     "diagram_svg": "cad/designs/cage_rods_50mm_m6/artifacts/cage_rods_50mm_m6_diagram.svg",
     "diagram_png": "cad/designs/cage_rods_50mm_m6/artifacts/cage_rods_50mm_m6_diagram.png",
     "render_png": "cad/designs/cage_rods_50mm_m6/artifacts/cage_rods_50mm_m6_render.png",
@@ -49,6 +56,9 @@
     "blender_scene": "cad/designs/cage_rods_50mm_m6/artifacts/cage_rods_50mm_m6.blend",
     "use_this_smooth_rod_step": "cad/designs/cage_rods_50mm_m6/USE_THIS_cage_rods_50mm_m6_smooth_rod.step",
     "use_this_four_rod_assembly_step": "cad/designs/cage_rods_50mm_m6/USE_THIS_cage_rods_50mm_m6_four_rod_cage_assembly.step",
+    "print_this_25rod_step": "cad/designs/cage_rods_50mm_m6/PRINT_THIS_cage_rods_50mm_m6_25rod_print_grid.step",
+    "print_this_25rod_stl": "cad/designs/cage_rods_50mm_m6/PRINT_THIS_cage_rods_50mm_m6_25rod_print_grid.stl",
+    "print_this_25rod_3mf": "cad/designs/cage_rods_50mm_m6/PRINT_THIS_cage_rods_50mm_m6_25rod_print_grid.3mf",
     "manifest": "cad/designs/cage_rods_50mm_m6/artifacts/manifest.json"
   }
 }

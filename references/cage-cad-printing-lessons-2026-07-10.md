@@ -48,6 +48,10 @@ If a screw connection is needed, use the separate M3 pilot variant or a real
 metal M6 threaded rod. Avoid modeled helical threads in Shapr-target files unless
 the thread itself is the experiment.
 
+For batch printing, output a clean 5x5 grid of 25 rods in the current print
+orientation. The grid should have no dock, no visual rod proxies, and no extra
+reference bodies. Provide STEP, STL, and 3MF forms with `PRINT_THIS_` prefixes.
+
 ## Anti-Warp Ears
 
 Broad, flat printed parts should get removable ears by default. Run-4 and run-5
@@ -89,8 +93,13 @@ Include at minimum:
 
 - `PRINT_THIS_*.stl`
 - `PRINT_THIS_*.step`
+- `PRINT_THIS_*.3mf`
 - separate `bottom_part.step` and `top_part_180deg_print.step` when applicable
 - a render PNG for quick visual confirmation
+
+The 3MF can be generated from the validated STL when the CAD kernel cannot write
+3MF directly. Keep millimeter units and verify that the 3MF zip contains
+`3D/3dmodel.model`.
 
 ## Shapr3D Safety
 
@@ -115,9 +124,10 @@ Recent validation targets:
 Before reporting a CAD print design as ready:
 
 1. Generate STEP, STL, manifest, README, and render PNG.
-2. Validate STEP import, BRep validity, solid count, bbox, STL watertightness,
-   and B-spline face count.
-3. View at least one render or top-view image.
-4. Sync direct-use STEP files and print-ready folders to Nutstore.
-5. Commit only the relevant design files; do not stage unrelated CAD archives.
-6. Push and confirm GitHub Actions status when the repo workflow runs.
+2. Generate 3MF for the direct print file when a slicer-ready handoff is useful.
+3. Validate STEP import, BRep validity, solid count, bbox, STL watertightness,
+   3MF zip structure, and B-spline face count.
+4. View at least one render or top-view image.
+5. Sync direct-use STEP files and print-ready folders to Nutstore.
+6. Commit only the relevant design files; do not stage unrelated CAD archives.
+7. Push and confirm GitHub Actions status when the repo workflow runs.

@@ -28,6 +28,11 @@ face. Each corner has two side pulls plus one diagonal full-corner pull, so a
 large flat print is held down from the actual corner direction as well as along
 the two edges. Trim the ears away after printing.
 
+Use the root `PRINT_THIS_*` STEP/STL/3MF files for direct printing. Those files
+contain only the dock body with anti-warp ears. Rod proxies stay in the assembly
+artifacts for geometry checking and are intentionally excluded from the direct
+print layout.
+
 The previous no-ear version is archived under
 `cad/designs/cage_rod_dock_100mm_base_10mm_holes/runs/run-1-original-no-ears-20260710T130229Z/`.
 
@@ -41,12 +46,16 @@ The previous no-ear version is archived under
 | assembly_stl | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/artifacts/cage_rod_dock_100mm_base_10mm_holes_assembly.stl` |
 | print_layout_step | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/artifacts/cage_rod_dock_100mm_base_10mm_holes_print_layout.step` |
 | print_layout_stl | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/artifacts/cage_rod_dock_100mm_base_10mm_holes_print_layout.stl` |
+| print_layout_3mf | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/artifacts/cage_rod_dock_100mm_base_10mm_holes_print_layout.3mf` |
 | top_view_svg | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/artifacts/cage_rod_dock_100mm_base_10mm_holes_top_view.svg` |
 | top_view_png | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/artifacts/cage_rod_dock_100mm_base_10mm_holes_top_view.png` |
 | render_png | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/artifacts/cage_rod_dock_100mm_base_10mm_holes_render.png` |
 | assembly_render_png | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/artifacts/cage_rod_dock_100mm_base_10mm_holes_assembly_render.png` |
 | blender_scene | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/artifacts/cage_rod_dock_100mm_base_10mm_holes.blend` |
 | use_this_step | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/USE_THIS_cage_rod_dock_100mm_base_10mm_holes.step` |
+| print_this_step | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/PRINT_THIS_cage_rod_dock_100mm_base_10mm_holes_with_ears.step` |
+| print_this_stl | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/PRINT_THIS_cage_rod_dock_100mm_base_10mm_holes_with_ears.stl` |
+| print_this_3mf | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/PRINT_THIS_cage_rod_dock_100mm_base_10mm_holes_with_ears.3mf` |
 | manifest | `cad/designs/cage_rod_dock_100mm_base_10mm_holes/artifacts/manifest.json` |
 
 ## Parameters

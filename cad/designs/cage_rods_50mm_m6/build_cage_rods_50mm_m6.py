@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import cadquery as cq
@@ -15,6 +16,10 @@ ROOT = Path(__file__).resolve().parents[3]
 DESIGN_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = DESIGN_DIR / "artifacts"
 STEM = "cage_rods_50mm_m6"
+TOOLS_DIR = ROOT / "cad" / "tools"
+sys.path.insert(0, str(TOOLS_DIR))
+
+from simple_3mf import export_stl_as_3mf
 
 
 PARAMS = {
@@ -29,6 +34,10 @@ PARAMS = {
     "m3_pilot_depth_each_end_mm": 8.0,
     "end_chamfer_mm": 0.35,
     "print_spacing_mm": 12.0,
+    "print_grid_rows": 5,
+    "print_grid_cols": 5,
+    "print_grid_x_gap_mm": 8.0,
+    "print_grid_y_pitch_mm": 12.0,
     "shapr_friendly_note": "No helical threads or B-spline faces. The M6 wording here is treated as a 6 mm cage rod diameter. Use real metal M6 threaded rod if a true screw thread is required.",
 }
 
@@ -74,6 +83,27 @@ def print_layout() -> cq.Assembly:
     for index in range(4):
         body = horizontal_rod(False).translate((0, (index - 1.5) * spacing, PARAMS["rod_diameter_mm"] / 2.0))
         assembly.add(body, name=f"smooth_m6_cage_rod_{index + 1}_horizontal", color=cq.Color(0.72, 0.72, 0.68, 1.0))
+    return assembly
+
+
+def print_grid_layout() -> cq.Assembly:
+    p = PARAMS
+    assembly = cq.Assembly(name=f"{STEM}_25rod_print_grid")
+    x_pitch = p["rod_length_mm"] + p["print_grid_x_gap_mm"]
+    y_pitch = p["print_grid_y_pitch_mm"]
+    cols = int(p["print_grid_cols"])
+    rows = int(p["print_grid_rows"])
+    for row in range(rows):
+        for col in range(cols):
+            index = row * cols + col + 1
+            x = (col - (cols - 1) / 2.0) * x_pitch
+            y = (row - (rows - 1) / 2.0) * y_pitch
+            body = horizontal_rod(False).translate((x, y, p["rod_diameter_mm"] / 2.0))
+            assembly.add(
+                body,
+                name=f"smooth_m6_cage_rod_{index:02d}_horizontal_print",
+                color=cq.Color(0.72, 0.72, 0.68, 1.0),
+            )
     return assembly
 
 
@@ -181,6 +211,9 @@ the 6 mm rod pockets used in the current cage holders and dock.
 - Cage placement: four rods at `x/y = ±{p['cage_pitch_mm'] / 2.0} mm`.
 - Optional M3 pilot variant: `{p['m3_pilot_diameter_mm']} mm` diameter pilot,
   `{p['m3_pilot_depth_each_end_mm']} mm` deep from each end.
+- Direct print grid: `{p['print_grid_rows']} x {p['print_grid_cols']}` smooth rods,
+  printed horizontally with `{p['print_grid_x_gap_mm']} mm` X gap and
+  `{p['print_grid_y_pitch_mm']} mm` Y pitch.
 
 ## Shapr3D Import Notes
 
@@ -188,6 +221,13 @@ The direct-use STEP is a smooth rod with analytic cylinder and chamfer faces.
 There are no helical threads, no fragile boolean thread cutters, and no B-spline
 surfaces. If you need true M6 threads, use a bought metal M6 threaded rod or add
 native threads in Shapr3D after import.
+
+## Print Notes
+
+Use the root `PRINT_THIS_*_25rod_print_grid` files for direct slicing. The rods
+are already laid flat with their axes along X. The 3MF file is generated from
+the validated STL as a slicer-friendly handoff; the STEP remains the editable
+geometry source.
 
 ## Outputs
 
@@ -216,6 +256,9 @@ def main() -> None:
         "assembly_stl": ARTIFACT_DIR / f"{STEM}_four_rod_cage_assembly.stl",
         "print_layout_step": ARTIFACT_DIR / f"{STEM}_four_rod_print_layout.step",
         "print_layout_stl": ARTIFACT_DIR / f"{STEM}_four_rod_print_layout.stl",
+        "print_grid_step": ARTIFACT_DIR / f"{STEM}_25rod_print_grid.step",
+        "print_grid_stl": ARTIFACT_DIR / f"{STEM}_25rod_print_grid.stl",
+        "print_grid_3mf": ARTIFACT_DIR / f"{STEM}_25rod_print_grid.3mf",
         "diagram_svg": ARTIFACT_DIR / f"{STEM}_diagram.svg",
         "diagram_png": ARTIFACT_DIR / f"{STEM}_diagram.png",
         "render_png": ARTIFACT_DIR / f"{STEM}_render.png",
@@ -227,17 +270,28 @@ def main() -> None:
     export_part(rod_body(True), paths["m3_pilot_rod_step"], paths["m3_pilot_rod_stl"])
     export_assembly(cage_assembly(), paths["assembly_step"], paths["assembly_stl"])
     export_assembly(print_layout(), paths["print_layout_step"], paths["print_layout_stl"])
+    export_assembly(print_grid_layout(), paths["print_grid_step"], paths["print_grid_stl"])
+    export_stl_as_3mf(paths["print_grid_stl"], paths["print_grid_3mf"], title=f"{STEM} 25 rod print grid")
     write_svg(paths["diagram_svg"])
     svg_to_png(paths["diagram_svg"], paths["diagram_png"])
 
     use_this_rod = DESIGN_DIR / f"USE_THIS_{STEM}_smooth_rod.step"
     use_this_pack = DESIGN_DIR / f"USE_THIS_{STEM}_four_rod_cage_assembly.step"
+    print_this_step = DESIGN_DIR / f"PRINT_THIS_{STEM}_25rod_print_grid.step"
+    print_this_stl = DESIGN_DIR / f"PRINT_THIS_{STEM}_25rod_print_grid.stl"
+    print_this_3mf = DESIGN_DIR / f"PRINT_THIS_{STEM}_25rod_print_grid.3mf"
     use_this_rod.write_bytes(paths["smooth_rod_step"].read_bytes())
     use_this_pack.write_bytes(paths["assembly_step"].read_bytes())
+    print_this_step.write_bytes(paths["print_grid_step"].read_bytes())
+    print_this_stl.write_bytes(paths["print_grid_stl"].read_bytes())
+    print_this_3mf.write_bytes(paths["print_grid_3mf"].read_bytes())
 
     outputs = {name: repo_path(path) for name, path in paths.items() if name != "manifest"}
     outputs["use_this_smooth_rod_step"] = repo_path(use_this_rod)
     outputs["use_this_four_rod_assembly_step"] = repo_path(use_this_pack)
+    outputs["print_this_25rod_step"] = repo_path(print_this_step)
+    outputs["print_this_25rod_stl"] = repo_path(print_this_stl)
+    outputs["print_this_25rod_3mf"] = repo_path(print_this_3mf)
     outputs["manifest"] = repo_path(paths["manifest"])
     write_manifest(paths["manifest"], outputs)
     write_readme(DESIGN_DIR / "README.md", outputs)

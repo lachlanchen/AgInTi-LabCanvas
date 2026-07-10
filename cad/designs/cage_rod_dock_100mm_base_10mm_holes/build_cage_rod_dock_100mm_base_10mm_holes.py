@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import cadquery as cq
@@ -15,6 +16,10 @@ ROOT = Path(__file__).resolve().parents[3]
 DESIGN_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = DESIGN_DIR / "artifacts"
 STEM = "cage_rod_dock_100mm_base_10mm_holes"
+TOOLS_DIR = ROOT / "cad" / "tools"
+sys.path.insert(0, str(TOOLS_DIR))
+
+from simple_3mf import export_stl_as_3mf
 
 
 PARAMS = {
@@ -291,6 +296,11 @@ face. Each corner has two side pulls plus one diagonal full-corner pull, so a
 large flat print is held down from the actual corner direction as well as along
 the two edges. Trim the ears away after printing.
 
+Use the root `PRINT_THIS_*` STEP/STL/3MF files for direct printing. Those files
+contain only the dock body with anti-warp ears. Rod proxies stay in the assembly
+artifacts for geometry checking and are intentionally excluded from the direct
+print layout.
+
 The previous no-ear version is archived under
 `cad/designs/cage_rod_dock_100mm_base_10mm_holes/runs/run-1-original-no-ears-20260710T130229Z/`.
 
@@ -319,6 +329,7 @@ def main() -> None:
         "assembly_stl": ARTIFACT_DIR / f"{STEM}_assembly.stl",
         "print_layout_step": ARTIFACT_DIR / f"{STEM}_print_layout.step",
         "print_layout_stl": ARTIFACT_DIR / f"{STEM}_print_layout.stl",
+        "print_layout_3mf": ARTIFACT_DIR / f"{STEM}_print_layout.3mf",
         "top_view_svg": ARTIFACT_DIR / f"{STEM}_top_view.svg",
         "top_view_png": ARTIFACT_DIR / f"{STEM}_top_view.png",
         "render_png": ARTIFACT_DIR / f"{STEM}_render.png",
@@ -329,14 +340,24 @@ def main() -> None:
     export_part(build_dock(), paths["dock_step"], paths["dock_stl"])
     export_assembly(build_assembly(), paths["assembly_step"], paths["assembly_stl"])
     export_assembly(build_print_layout(), paths["print_layout_step"], paths["print_layout_stl"])
+    export_stl_as_3mf(paths["print_layout_stl"], paths["print_layout_3mf"], title=f"{STEM} print layout")
     write_top_svg(paths["top_view_svg"])
     svg_to_png(paths["top_view_svg"], paths["top_view_png"])
 
     use_this = DESIGN_DIR / f"USE_THIS_{STEM}.step"
+    print_this_step = DESIGN_DIR / f"PRINT_THIS_{STEM}_with_ears.step"
+    print_this_stl = DESIGN_DIR / f"PRINT_THIS_{STEM}_with_ears.stl"
+    print_this_3mf = DESIGN_DIR / f"PRINT_THIS_{STEM}_with_ears.3mf"
     use_this.write_bytes(paths["dock_step"].read_bytes())
+    print_this_step.write_bytes(paths["print_layout_step"].read_bytes())
+    print_this_stl.write_bytes(paths["print_layout_stl"].read_bytes())
+    print_this_3mf.write_bytes(paths["print_layout_3mf"].read_bytes())
 
     outputs = {name: repo_path(path) for name, path in paths.items() if name != "manifest"}
     outputs["use_this_step"] = repo_path(use_this)
+    outputs["print_this_step"] = repo_path(print_this_step)
+    outputs["print_this_stl"] = repo_path(print_this_stl)
+    outputs["print_this_3mf"] = repo_path(print_this_3mf)
     outputs["manifest"] = repo_path(paths["manifest"])
     write_manifest(paths["manifest"], outputs)
     write_readme(DESIGN_DIR / "README.md", outputs)
