@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import cadquery as cq
@@ -15,6 +16,10 @@ ROOT = Path(__file__).resolve().parents[3]
 DESIGN_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = DESIGN_DIR / "artifacts"
 STEM = "cage_rod_connector_13mm_diaphragm"
+TOOLS_DIR = ROOT / "cad" / "tools"
+sys.path.insert(0, str(TOOLS_DIR))
+
+from simple_3mf import export_stl_as_3mf
 
 
 PARAMS = {
@@ -32,6 +37,9 @@ PARAMS = {
     "wall_note": "13.0 mm OD with a 6.4 mm rod socket gives 3.3 mm radial wall. A strict 2.0 mm wall would imply 10.4 mm OD.",
     "end_edge_chamfer_mm": 0.35,
     "print_orientation": "Print upright on either flat end. Both ends are symmetric.",
+    "print_grid_rows": 3,
+    "print_grid_cols": 3,
+    "print_grid_pitch_mm": 20.0,
 }
 
 
@@ -83,6 +91,25 @@ def build_assembly() -> cq.Assembly:
 def build_print_layout() -> cq.Assembly:
     assembly = cq.Assembly(name=f"{STEM}_print_layout")
     assembly.add(build_connector(), name="upright_connector_print_body", color=cq.Color(0.16, 0.16, 0.15, 1.0))
+    return assembly
+
+
+def build_3x3_print_grid() -> cq.Assembly:
+    p = PARAMS
+    assembly = cq.Assembly(name=f"{STEM}_3x3_print_grid")
+    rows = int(p["print_grid_rows"])
+    cols = int(p["print_grid_cols"])
+    pitch = p["print_grid_pitch_mm"]
+    for row in range(rows):
+        for col in range(cols):
+            index = row * cols + col + 1
+            x = (col - (cols - 1) / 2.0) * pitch
+            y = (row - (rows - 1) / 2.0) * pitch
+            assembly.add(
+                build_connector().translate((x, y, 0)),
+                name=f"upright_connector_{index:02d}_print_body",
+                color=cq.Color(0.16, 0.16, 0.15, 1.0),
+            )
     return assembly
 
 
@@ -199,6 +226,10 @@ Print the connector upright on either flat end. The part is symmetric. The
 `assembly` files include transparent rod proxies for checking only; print the
 single connector STEP/STL.
 
+For batch printing, use the root `PRINT_THIS_*_3x3_print_grid` files. They
+contain nine upright connectors on a `{p['print_grid_pitch_mm']} mm` center
+pitch, with no rod proxy geometry.
+
 ## Outputs
 
 | Output | Path |
@@ -224,6 +255,9 @@ def main() -> None:
         "assembly_stl": ARTIFACT_DIR / f"{STEM}_assembly.stl",
         "print_layout_step": ARTIFACT_DIR / f"{STEM}_print_layout.step",
         "print_layout_stl": ARTIFACT_DIR / f"{STEM}_print_layout.stl",
+        "print_grid_step": ARTIFACT_DIR / f"{STEM}_3x3_print_grid.step",
+        "print_grid_stl": ARTIFACT_DIR / f"{STEM}_3x3_print_grid.stl",
+        "print_grid_3mf": ARTIFACT_DIR / f"{STEM}_3x3_print_grid.3mf",
         "section_svg": ARTIFACT_DIR / f"{STEM}_section.svg",
         "section_png": ARTIFACT_DIR / f"{STEM}_section.png",
         "render_png": ARTIFACT_DIR / f"{STEM}_render.png",
@@ -235,14 +269,25 @@ def main() -> None:
     export_part(build_connector(), paths["connector_step"], paths["connector_stl"])
     export_assembly(build_assembly(), paths["assembly_step"], paths["assembly_stl"])
     export_assembly(build_print_layout(), paths["print_layout_step"], paths["print_layout_stl"])
+    export_assembly(build_3x3_print_grid(), paths["print_grid_step"], paths["print_grid_stl"])
+    export_stl_as_3mf(paths["print_grid_stl"], paths["print_grid_3mf"], title=f"{STEM} 3x3 print grid")
     write_section_svg(paths["section_svg"])
     svg_to_png(paths["section_svg"], paths["section_png"])
 
     use_this = DESIGN_DIR / f"USE_THIS_{STEM}.step"
+    print_this_step = DESIGN_DIR / f"PRINT_THIS_{STEM}_3x3_print_grid.step"
+    print_this_stl = DESIGN_DIR / f"PRINT_THIS_{STEM}_3x3_print_grid.stl"
+    print_this_3mf = DESIGN_DIR / f"PRINT_THIS_{STEM}_3x3_print_grid.3mf"
     use_this.write_bytes(paths["connector_step"].read_bytes())
+    print_this_step.write_bytes(paths["print_grid_step"].read_bytes())
+    print_this_stl.write_bytes(paths["print_grid_stl"].read_bytes())
+    print_this_3mf.write_bytes(paths["print_grid_3mf"].read_bytes())
 
     outputs = {name: repo_path(path) for name, path in paths.items() if name != "manifest"}
     outputs["use_this_step"] = repo_path(use_this)
+    outputs["print_this_3x3_step"] = repo_path(print_this_step)
+    outputs["print_this_3x3_stl"] = repo_path(print_this_stl)
+    outputs["print_this_3x3_3mf"] = repo_path(print_this_3mf)
     outputs["manifest"] = repo_path(paths["manifest"])
     write_manifest(paths["manifest"], outputs)
     write_readme(DESIGN_DIR / "README.md", outputs)

@@ -23,6 +23,10 @@ Print the connector upright on either flat end. The part is symmetric. The
 `assembly` files include transparent rod proxies for checking only; print the
 single connector STEP/STL.
 
+For batch printing, use the root `PRINT_THIS_*_3x3_print_grid` files. They
+contain nine upright connectors on a `20.0 mm` center
+pitch, with no rod proxy geometry.
+
 ## Outputs
 
 | Output | Path |
@@ -33,12 +37,18 @@ single connector STEP/STL.
 | assembly_stl | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm_assembly.stl` |
 | print_layout_step | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm_print_layout.step` |
 | print_layout_stl | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm_print_layout.stl` |
+| print_grid_step | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm_3x3_print_grid.step` |
+| print_grid_stl | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm_3x3_print_grid.stl` |
+| print_grid_3mf | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm_3x3_print_grid.3mf` |
 | section_svg | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm_section.svg` |
 | section_png | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm_section.png` |
 | render_png | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm_render.png` |
 | assembly_render_png | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm_assembly_render.png` |
 | blender_scene | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/cage_rod_connector_13mm_diaphragm.blend` |
 | use_this_step | `cad/designs/cage_rod_connector_13mm_diaphragm/USE_THIS_cage_rod_connector_13mm_diaphragm.step` |
+| print_this_3x3_step | `cad/designs/cage_rod_connector_13mm_diaphragm/PRINT_THIS_cage_rod_connector_13mm_diaphragm_3x3_print_grid.step` |
+| print_this_3x3_stl | `cad/designs/cage_rod_connector_13mm_diaphragm/PRINT_THIS_cage_rod_connector_13mm_diaphragm_3x3_print_grid.stl` |
+| print_this_3x3_3mf | `cad/designs/cage_rod_connector_13mm_diaphragm/PRINT_THIS_cage_rod_connector_13mm_diaphragm_3x3_print_grid.3mf` |
 | manifest | `cad/designs/cage_rod_connector_13mm_diaphragm/artifacts/manifest.json` |
 
 ## Parameters
@@ -59,3 +69,6 @@ single connector STEP/STL.
 | `wall_note` | `13.0 mm OD with a 6.4 mm rod socket gives 3.3 mm radial wall. A strict 2.0 mm wall would imply 10.4 mm OD.` |
 | `end_edge_chamfer_mm` | `0.35` |
 | `print_orientation` | `Print upright on either flat end. Both ends are symmetric.` |
+| `print_grid_rows` | `3` |
+| `print_grid_cols` | `3` |
+| `print_grid_pitch_mm` | `20.0` |
