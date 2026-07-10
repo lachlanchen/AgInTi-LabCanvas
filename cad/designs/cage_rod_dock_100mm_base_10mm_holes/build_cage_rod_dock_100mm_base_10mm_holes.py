@@ -32,7 +32,18 @@ PARAMS = {
     "rod_proxy_visible_height_mm": 72.0,
     "edge_chamfer_mm": 1.0,
     "hole_mouth_chamfer_mm": 0.5,
-    "shapr_friendly_note": "No threads, no helix, no B-spline surfaces, and no fragile fill-recut operations. Geometry is a simple box minus four vertical cylinders with small chamfers.",
+    "anti_warp_ears_enabled": True,
+    "anti_warp_ear_style": "four removable 0.5 mm bottom ears with two side pulls plus one diagonal full-corner pull",
+    "anti_warp_ear_thickness_mm": 0.5,
+    "anti_warp_ear_breakaway_overlap_mm": 0.35,
+    "anti_warp_ear_side_contact_width_mm": 4.5,
+    "anti_warp_ear_arm_width_mm": 4.0,
+    "anti_warp_ear_junction_offset_mm": 9.0,
+    "anti_warp_ear_tail_reach_mm": 24.0,
+    "anti_warp_ear_tail_width_mm": 16.0,
+    "anti_warp_ear_diagonal_neck_width_mm": 5.0,
+    "anti_warp_ear_note": "Run-2 adds full-corner anti-warp ears for the broad 100 x 100 mm flat base. Each corner has side pulls plus a diagonal pull so the actual corner is dragged down toward the build plate.",
+    "shapr_friendly_note": "No threads, no helix, no B-spline surfaces, and no fragile fill-recut operations. Geometry is a simple box minus four vertical cylinders plus simple 0.5 mm anti-warp tabs.",
     "print_orientation": "Print flat on the 100 x 100 mm base. The four 10 mm blind holes open upward.",
 }
 
@@ -45,8 +56,70 @@ def z_box(size: tuple[float, float, float], center: tuple[float, float, float]) 
     return cq.Workplane("XY").box(*size).translate(center)
 
 
+def z_poly(points: list[tuple[float, float]], height: float, z_min: float) -> cq.Workplane:
+    return cq.Workplane("XY", origin=(0, 0, z_min)).polyline(points).close().extrude(height)
+
+
 def z_cylinder(diameter: float, height: float, z_min: float, vertices: int = 128) -> cq.Workplane:
     return cq.Workplane("XY", origin=(0, 0, z_min)).circle(diameter / 2.0).extrude(height)
+
+
+def anti_warp_corner_ear(sx: int, sy: int) -> cq.Workplane:
+    """Build one detachable anti-warp ear at a bottom corner."""
+    p = PARAMS
+    half_w = p["base_width_mm"] / 2.0
+    half_h = p["base_height_mm"] / 2.0
+    thickness = p["anti_warp_ear_thickness_mm"]
+    overlap = p["anti_warp_ear_breakaway_overlap_mm"]
+    contact = p["anti_warp_ear_side_contact_width_mm"]
+    arm = p["anti_warp_ear_arm_width_mm"]
+    junction = p["anti_warp_ear_junction_offset_mm"]
+    reach = p["anti_warp_ear_tail_reach_mm"]
+    tail = p["anti_warp_ear_tail_width_mm"]
+    neck = p["anti_warp_ear_diagonal_neck_width_mm"]
+
+    def local_box(u_center: float, v_center: float, u_size: float, v_size: float) -> cq.Workplane:
+        return z_box(
+            (u_size, v_size, thickness),
+            (sx * (half_w + u_center), sy * (half_h + v_center), thickness / 2.0),
+        )
+
+    def local_poly(local_points: list[tuple[float, float]]) -> cq.Workplane:
+        points = [(sx * (half_w + u), sy * (half_h + v)) for u, v in local_points]
+        return z_poly(points, thickness, 0.0)
+
+    # Two side tabs grip the adjacent edges. The slight overlap fuses to the
+    # dock, while the 0.5 mm Z thickness keeps the ears easy to trim away.
+    ear = local_box((junction - overlap) / 2.0, -contact / 2.0, junction + overlap, contact)
+    ear = ear.union(local_box(-contact / 2.0, (junction - overlap) / 2.0, contact, junction + overlap))
+
+    # Short Y arms route both side tabs into the diagonal corner pull.
+    ear = ear.union(local_box(junction, junction / 2.0, arm, junction + arm))
+    ear = ear.union(local_box(junction / 2.0, junction, junction + arm, arm))
+    ear = ear.union(local_box(junction, junction, arm * 2.0, arm * 2.0))
+
+    # Diagonal neck and square pad pull the true corner outward on the diagonal.
+    ear = ear.union(
+        local_poly(
+            [
+                (junction - neck / 2.0, junction + neck / 2.0),
+                (junction + neck / 2.0, junction - neck / 2.0),
+                (reach + neck / 2.0, reach - neck / 2.0),
+                (reach - neck / 2.0, reach + neck / 2.0),
+            ]
+        )
+    )
+    ear = ear.union(local_box(reach, reach, tail, tail))
+    return ear
+
+
+def add_anti_warp_ears(part: cq.Workplane) -> cq.Workplane:
+    if not PARAMS["anti_warp_ears_enabled"]:
+        return part
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            part = part.union(anti_warp_corner_ear(sx, sy))
+    return part
 
 
 def build_dock() -> cq.Workplane:
@@ -70,6 +143,7 @@ def build_dock() -> cq.Workplane:
     mouth_chamfer = p["hole_mouth_chamfer_mm"]
     if mouth_chamfer > 0:
         part = part.faces(">Z").edges().chamfer(mouth_chamfer)
+    part = add_anti_warp_ears(part)
     return part
 
 
@@ -151,6 +225,7 @@ def write_top_svg(path: Path) -> None:
         "Hole centers: +/-15 mm, standard 30 mm cage square",
         "Dock holes: 10 mm diameter, 25 mm deep",
         "Bottom floor: 5 mm",
+        "Run-2: bottom anti-warp ears add side + diagonal corner pull",
         "Blue inner circles show nominal 6 mm rods",
         "Simple analytic STEP, designed for fast Shapr3D import",
     ]
@@ -210,6 +285,14 @@ Shapr3D without a long repair pass.
 
 Print flat on the 100 x 100 mm base. The holes open upward. The assembly files
 include blue 6 mm rod proxies only for checking placement.
+
+The latest root output includes four removable anti-warp ears on the bottom
+face. Each corner has two side pulls plus one diagonal full-corner pull, so a
+large flat print is held down from the actual corner direction as well as along
+the two edges. Trim the ears away after printing.
+
+The previous no-ear version is archived under
+`cad/designs/cage_rod_dock_100mm_base_10mm_holes/runs/run-1-original-no-ears-20260710T130229Z/`.
 
 ## Outputs
 

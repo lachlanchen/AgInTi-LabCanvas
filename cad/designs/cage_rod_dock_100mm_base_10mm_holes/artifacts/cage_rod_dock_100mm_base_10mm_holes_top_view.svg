@@ -16,6 +16,7 @@
 <text x="682.00" y="123.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Hole centers: +/-15 mm, standard 30 mm cage square</text>
 <text x="682.00" y="148.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Dock holes: 10 mm diameter, 25 mm deep</text>
 <text x="682.00" y="173.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Bottom floor: 5 mm</text>
-<text x="682.00" y="198.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Blue inner circles show nominal 6 mm rods</text>
-<text x="682.00" y="223.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Simple analytic STEP, designed for fast Shapr3D import</text>
+<text x="682.00" y="198.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Run-2: bottom anti-warp ears add side + diagonal corner pull</text>
+<text x="682.00" y="223.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Blue inner circles show nominal 6 mm rods</text>
+<text x="682.00" y="248.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Simple analytic STEP, designed for fast Shapr3D import</text>
 </svg>

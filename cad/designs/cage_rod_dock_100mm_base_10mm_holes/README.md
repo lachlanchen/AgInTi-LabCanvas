@@ -23,6 +23,14 @@ Shapr3D without a long repair pass.
 Print flat on the 100 x 100 mm base. The holes open upward. The assembly files
 include blue 6 mm rod proxies only for checking placement.
 
+The latest root output includes four removable anti-warp ears on the bottom
+face. Each corner has two side pulls plus one diagonal full-corner pull, so a
+large flat print is held down from the actual corner direction as well as along
+the two edges. Trim the ears away after printing.
+
+The previous no-ear version is archived under
+`cad/designs/cage_rod_dock_100mm_base_10mm_holes/runs/run-1-original-no-ears-20260710T130229Z/`.
+
 ## Outputs
 
 | Output | Path |
@@ -59,5 +67,16 @@ include blue 6 mm rod proxies only for checking placement.
 | `rod_proxy_visible_height_mm` | `72.0` |
 | `edge_chamfer_mm` | `1.0` |
 | `hole_mouth_chamfer_mm` | `0.5` |
-| `shapr_friendly_note` | `No threads, no helix, no B-spline surfaces, and no fragile fill-recut operations. Geometry is a simple box minus four vertical cylinders with small chamfers.` |
+| `anti_warp_ears_enabled` | `True` |
+| `anti_warp_ear_style` | `four removable 0.5 mm bottom ears with two side pulls plus one diagonal full-corner pull` |
+| `anti_warp_ear_thickness_mm` | `0.5` |
+| `anti_warp_ear_breakaway_overlap_mm` | `0.35` |
+| `anti_warp_ear_side_contact_width_mm` | `4.5` |
+| `anti_warp_ear_arm_width_mm` | `4.0` |
+| `anti_warp_ear_junction_offset_mm` | `9.0` |
+| `anti_warp_ear_tail_reach_mm` | `24.0` |
+| `anti_warp_ear_tail_width_mm` | `16.0` |
+| `anti_warp_ear_diagonal_neck_width_mm` | `5.0` |
+| `anti_warp_ear_note` | `Run-2 adds full-corner anti-warp ears for the broad 100 x 100 mm flat base. Each corner has side pulls plus a diagonal pull so the actual corner is dragged down toward the build plate.` |
+| `shapr_friendly_note` | `No threads, no helix, no B-spline surfaces, and no fragile fill-recut operations. Geometry is a simple box minus four vertical cylinders plus simple 0.5 mm anti-warp tabs.` |
 | `print_orientation` | `Print flat on the 100 x 100 mm base. The four 10 mm blind holes open upward.` |

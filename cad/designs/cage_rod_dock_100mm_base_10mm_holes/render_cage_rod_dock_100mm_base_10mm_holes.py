@@ -119,7 +119,7 @@ def render(path: Path, camera_location: tuple[float, float, float], target: tupl
 def render_single() -> None:
     materials = setup_common()
     import_stl(DOCK_STL, "100 mm cage rod dock", materials["dock"])
-    render(RENDER, (118, -142, 92), (0, 0, 15), ortho_scale=132)
+    render(RENDER, (130, -156, 96), (0, 0, 12), ortho_scale=170)
 
 
 def render_assembly() -> None:
@@ -129,7 +129,7 @@ def render_assembly() -> None:
     rod_center_z = P["base_thickness"] - P["rod_depth"] + rod_depth / 2.0
     for x, y in P["rod_centers"]:
         add_cylinder_z("6 mm cage rod proxy", P["rod_diameter"] / 2.0, rod_depth, (x, y, rod_center_z), materials["rod"])
-    render(ASSEMBLY_RENDER, (118, -142, 102), (0, 0, 34), ortho_scale=140)
+    render(ASSEMBLY_RENDER, (130, -156, 108), (0, 0, 32), ortho_scale=178)
 
 
 def main() -> None:
