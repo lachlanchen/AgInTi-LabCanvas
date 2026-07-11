@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="758" height="738" viewBox="0 0 758 738">
+<rect width="100%" height="100%" fill="white"/>
+<rect x="54.90" y="504.00" width="88.20" height="180.00" fill="#edf2f7" stroke="#1a202c" stroke-width="2"/>
+<rect x="72.00" y="54.00" width="54.00" height="450.00" fill="#f7fafc" stroke="#1a202c" stroke-width="2"/>
+<line x1="99.00" y1="684.00" x2="99.00" y2="54.00" stroke="#718096" stroke-width="1" stroke-dasharray="5 4"/>
+<line x1="54.90" y1="504.00" x2="143.10" y2="504.00" stroke="#dd6b20" stroke-width="2"/>
+<text x="186.00" y="54.00" font-family="Arial" font-size="17" font-weight="700" fill="#1a202c">M10-hole to M6-rod dock adapter</text>
+<text x="186.00" y="79.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Lower insert: 9.8 mm diameter x 20.0 mm long</text>
+<text x="186.00" y="104.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Nominal target hole: 10.0 mm printed dock hole</text>
+<text x="186.00" y="129.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Upper rod: 6.0 mm diameter x 50.0 mm tall</text>
+<text x="186.00" y="154.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Total height: 70.0 mm</text>
+<text x="186.00" y="179.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">M10/M6 labels mean smooth diameter class here, not screw threads.</text>
+<text x="186.00" y="204.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Print upright on the wider lower insert end.</text>
+</svg>

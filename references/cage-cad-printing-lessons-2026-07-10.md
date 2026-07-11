@@ -62,16 +62,21 @@ showed the difference:
 - Run-5: side pulls plus a direct diagonal bridge from the true corner to the
   outer tail pad. This also pulls the actual corner outward along the diagonal.
 
-Preferred ear pattern:
+Preferred ear pattern after the first dock/sample-holder print feedback:
 
-- Use thin sacrificial Z thickness, usually `0.5 mm`.
+- Use stronger sacrificial Z thickness by default, usually `0.8-1.0 mm`.
+  Use `0.5 mm` only when the user explicitly prioritizes easy removal.
 - Use a small breakaway overlap into the part edge, around `0.35 mm`.
 - Add two side contacts for edge hold-down.
 - Add one diagonal neck/tail from the real corner for diagonal corner hold-down.
-- Make the outer tail pad wider than the neck so it grips the print bed.
+- Make the outer tail pad wider and larger than the neck so it grips the print
+  bed more strongly.
 - Keep ears in a print-specific export; the assembled/reference files can keep
   the same geometry for checking, but the print layout should be the file to
   slice.
+
+The 2026-07 dock print showed that the ear concept works, but the earlier thin
+ears should be made stronger, thicker, and larger in future broad flat prints.
 
 ## Run and Sync Convention
 
