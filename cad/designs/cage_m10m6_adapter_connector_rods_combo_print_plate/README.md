@@ -20,6 +20,11 @@ watertight as an STL mesh. Its bounding box is
 around that footprint. The tall parts are the M10-to-M6 adapters, which remain
 upright exactly like their source 2x2 print grid.
 
+## Runs
+
+- Root / run 1: 5x5 horizontal rods, 3x3 connectors, 2x2 M10-to-M6 adapters.
+- `runs/run-2-3x3-rods-3x3-connectors-2x2-adapters-20260711T112746Z/`: smaller print plate with 3x3 horizontal rods, 3x3 connectors, and 2x2 M10-to-M6 adapters. Use this run when the 25-rod plate is too large or unnecessary.
+
 ## Packed Groups
 
 | Group | Bodies | Size mm | Placed min XYZ mm |
