@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="1020" viewBox="0 0 1640 1020">
+<rect width="100%" height="100%" fill="white"/>
+<polygon points="312.80,707.20 166.00,707.20 166.00,782.00 54.00,838.00 54.00,966.00 182.00,966.00 238.00,854.00 312.80,854.00" fill="#fef5e7" stroke="#dd6b20" stroke-width="1.5"/>
+<polygon points="312.80,312.80 166.00,312.80 166.00,238.00 54.00,182.00 54.00,54.00 182.00,54.00 238.00,166.00 312.80,166.00" fill="#fef5e7" stroke="#dd6b20" stroke-width="1.5"/>
+<polygon points="707.20,707.20 854.00,707.20 854.00,782.00 966.00,838.00 966.00,966.00 838.00,966.00 782.00,854.00 707.20,854.00" fill="#fef5e7" stroke="#dd6b20" stroke-width="1.5"/>
+<polygon points="707.20,312.80 854.00,312.80 854.00,238.00 966.00,182.00 966.00,54.00 838.00,54.00 782.00,166.00 707.20,166.00" fill="#fef5e7" stroke="#dd6b20" stroke-width="1.5"/>
+<rect x="310.00" y="310.00" width="400.00" height="400.00" fill="#f7fafc" stroke="#1a202c" stroke-width="2"/>
+<rect x="450.00" y="450.00" width="120.00" height="120.00" fill="none" stroke="#805ad5" stroke-width="2" stroke-dasharray="7 5"/>
+<circle cx="450.00" cy="570.00" r="12.80" fill="#ffffff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="570.00" cy="570.00" r="12.80" fill="#ffffff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="450.00" cy="450.00" r="12.80" fill="#ffffff" stroke="#3182ce" stroke-width="2"/>
+<circle cx="570.00" cy="450.00" r="12.80" fill="#ffffff" stroke="#3182ce" stroke-width="2"/>
+<text x="1000.00" y="54.00" font-family="Arial" font-size="17" font-weight="700" fill="#1a202c">Run 3 M6 dock with stronger ears</text>
+<text x="1000.00" y="79.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Base: 100 x 100 x 30 mm</text>
+<text x="1000.00" y="104.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Rod holes: 6.4 mm diameter, 25 mm deep</text>
+<text x="1000.00" y="129.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Cage square: 30 mm, centers at +/-15 mm</text>
+<text x="1000.00" y="154.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Ears: 1.0 mm thick, filled full-corner polygon</text>
+<text x="1000.00" y="179.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Side reach: 36 mm; diagonal reach: 48 mm</text>
+<text x="1000.00" y="204.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Print flat. Trim stronger ears after print.</text>
+</svg>

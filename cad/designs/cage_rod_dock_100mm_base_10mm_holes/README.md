@@ -4,6 +4,20 @@ This is a clean parametric dock for the cage-system rods. It follows the
 standard 30 mm cage square, with four vertical blind holes centered at `x/y =
 ±15 mm`.
 
+## Latest M6 Print Run
+
+Use
+`runs/run-3-m6-strong-full-corner-ears-20260711T114557Z/PRINT_THIS_cage_rod_dock_100mm_base_m6_strong_full_corner_ears.*`
+for the updated M6 dock. That run keeps the same `100 x 100 x 30 mm` dock and
+30 mm cage square, changes the blind rod sockets to `6.4 mm` diameter for 6 mm
+rods, and uses stronger filled full-corner anti-warp ears. The ears are `1.0 mm`
+thick, with roughly doubled side pull and diagonal pull footprint compared with
+the previous thin-ear dock.
+
+The print-ready copy is synced to:
+
+`/home/lachlan/Nutstore Files/Projects/LabCanvas/cage_rod_dock_100mm_base_10mm_holes/run-3-m6-strong-full-corner-ears-print-ready/`
+
 ## Geometry
 
 - Base: `100.0 x 100.0 x 30.0 mm`.
