@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import bpy
@@ -13,9 +14,16 @@ DESIGN_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = DESIGN_DIR / "artifacts"
 STEM = "lumileds_pcb_aligned_sink_cage_holder"
 HOLDER_STL = ARTIFACT_DIR / f"{STEM}.stl"
+PRINT_STL = DESIGN_DIR / f"PRINT_THIS_{STEM}.stl"
 RENDER_PATH = ARTIFACT_DIR / f"{STEM}_rear_sink_render.png"
 TOP_RENDER_PATH = ARTIFACT_DIR / f"{STEM}_front_alignment_render.png"
+PRINT_RENDER_PATH = ARTIFACT_DIR / f"{STEM}_print_layout_render.png"
 BLEND_PATH = ARTIFACT_DIR / f"{STEM}.blend"
+NUTSTORE_DIR = (
+    Path("/home/lachlan/Nutstore Files/Projects/LabCanvas")
+    / "lumileds_pcb_aligned_sink_cage_holder"
+    / "pin-header-3mm-relief-print-ready"
+)
 
 
 P = {
@@ -151,11 +159,55 @@ def render(path: Path, camera_location: tuple[float, float, float], target: tupl
     bpy.ops.render.render(write_still=True)
 
 
+def setup_print_scene() -> None:
+    bpy.ops.object.select_all(action="SELECT")
+    bpy.ops.object.delete()
+    holder_mat = make_material("matte graphite print layout", (0.34, 0.34, 0.31, 1.0), roughness=0.66)
+    bed_mat = make_material("matte print bed", (0.86, 0.88, 0.89, 1.0), roughness=0.72)
+
+    bpy.ops.import_mesh.stl(filepath=str(PRINT_STL))
+    holder = bpy.context.object
+    holder.name = "PRINT_THIS_holder_with_four_small_ears"
+    holder.data.materials.clear()
+    holder.data.materials.append(holder_mat)
+
+    bpy.ops.mesh.primitive_plane_add(size=86, location=(0, 0, -0.03))
+    bed = bpy.context.object
+    bed.name = "print bed"
+    bed.data.materials.append(bed_mat)
+
+    bpy.ops.object.light_add(type="AREA", location=(-36, -42, 52))
+    key = bpy.context.object
+    key.name = "print softbox"
+    key.data.energy = 600
+    key.data.size = 16.0
+
+    bpy.ops.object.camera_add(location=(52, -58, 38), rotation=(0, 0, 0))
+    cam = bpy.context.object
+    look_at(cam, (0, 0, 4.0))
+    cam.data.type = "ORTHO"
+    cam.data.ortho_scale = 72
+    bpy.context.scene.camera = cam
+    bpy.context.scene.render.engine = "BLENDER_WORKBENCH"
+    bpy.context.scene.display.shading.light = "STUDIO"
+    bpy.context.scene.display.shading.color_type = "MATERIAL"
+    bpy.context.scene.display.shading.show_cavity = True
+    bpy.context.scene.display.shading.show_shadows = True
+    bpy.context.scene.render.resolution_x = 1600
+    bpy.context.scene.render.resolution_y = 1200
+    bpy.context.scene.world.color = (1, 1, 1)
+
+
 def main() -> None:
     setup_scene()
     render(RENDER_PATH, (40, -50, -34), (0, 0, -2.0), 58)
     render(TOP_RENDER_PATH, (0, 0, 70), (0, 0, 0), 58, ortho=True, ortho_scale=48)
     bpy.ops.wm.save_as_mainfile(filepath=str(BLEND_PATH))
+    if PRINT_STL.exists():
+        setup_print_scene()
+        render(PRINT_RENDER_PATH, (52, -58, 38), (0, 0, 4.0), 58, ortho=True, ortho_scale=72)
+        NUTSTORE_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(PRINT_RENDER_PATH, NUTSTORE_DIR / PRINT_RENDER_PATH.name)
 
 
 if __name__ == "__main__":

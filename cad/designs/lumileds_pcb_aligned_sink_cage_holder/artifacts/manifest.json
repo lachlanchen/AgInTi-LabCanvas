@@ -1,11 +1,11 @@
 {
   "name": "lumileds_pcb_aligned_sink_cage_holder",
   "created_by": "build_lumileds_pcb_aligned_sink_cage_holder.py",
-  "design_intent": "Clean Lumileds holder with one rear PCB-thickness sink.",
+  "design_intent": "Clean Lumileds holder with rear PCB-thickness sink, 1.8 mm self-tapping pilot holes, and a connected 3.0 mm pin-header relief slot.",
   "parameters": {
     "name": "lumileds_pcb_aligned_sink_cage_holder",
     "source_pcb": "pcb/lumileds-no-resistor/lumileds-no-resistor.kicad_pcb",
-    "base_design": "cad/designs/lumileds_pcb_aligned_simple_cage_holder",
+    "base_design": "self-contained rebuild of cad/designs/lumileds_pcb_aligned_simple_cage_holder geometry",
     "body_width_mm": 42.0,
     "body_height_mm": 42.0,
     "body_thickness_mm": 8.0,
@@ -16,9 +16,20 @@
     "pcb_sink_diameter_mm": 24.4,
     "pcb_thickness_mm": 1.6,
     "pcb_sink_depth_mm": 1.6,
-    "pcb_mount_clearance_diameter_mm": 2.4,
-    "header_pin_relief_diameter_mm": 1.6,
+    "pcb_mount_clearance_diameter_mm": 1.8,
+    "pcb_mount_hole_note": "Four PCB fixation holes are 1.8 mm pilot holes for roughly 2 mm self-tapping screws in printed plastic.",
+    "header_pin_relief_diameter_mm": 3.0,
+    "header_pin_relief_style": "two overlapping 3.0 mm holes plus a rectangular bridge, forming one fully cleared capsule slot for pin overflow",
     "led_aperture_diameter_mm": 10.0,
+    "print_ears_enabled": true,
+    "print_ear_thickness_mm": 1.0,
+    "print_ear_side_contact_mm": 5.0,
+    "print_ear_breakaway_overlap_mm": 0.5,
+    "print_ear_side_reach_mm": 10.0,
+    "print_ear_side_width_mm": 5.0,
+    "print_ear_diagonal_reach_mm": 12.0,
+    "print_ear_tail_width_mm": 10.0,
+    "print_orientation": "PRINT_THIS files are rotated so the PCB sink faces upward; four 1.0 mm sacrificial ears sit on the build-plate side.",
     "coordinate_rule": "PCB center is translated to holder origin. The rear PCB sink is concentric with the KiCad board outline."
   },
   "pcb_geometry": {
@@ -80,6 +91,9 @@
   "outputs": {
     "holder_step": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder.step",
     "holder_stl": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder.stl",
+    "print_layout_step": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_print_layout.step",
+    "print_layout_stl": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_print_layout.stl",
+    "print_layout_3mf": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_print_layout.3mf",
     "pcb_proxy_step": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_pcb_proxy.step",
     "pcb_proxy_stl": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_pcb_proxy.stl",
     "assembly_step": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_assembly.step",
@@ -87,6 +101,58 @@
     "top_alignment_svg": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_top_alignment.svg",
     "top_alignment_png": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_top_alignment.png",
     "pcb_geometry_json": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/lumileds_pcb_aligned_sink_cage_holder_pcb_geometry.json",
-    "manifest": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/manifest.json"
+    "use_this_step": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/USE_THIS_lumileds_pcb_aligned_sink_cage_holder.step",
+    "print_this_step": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/PRINT_THIS_lumileds_pcb_aligned_sink_cage_holder.step",
+    "print_this_stl": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/PRINT_THIS_lumileds_pcb_aligned_sink_cage_holder.stl",
+    "print_this_3mf": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/PRINT_THIS_lumileds_pcb_aligned_sink_cage_holder.3mf",
+    "manifest": "cad/designs/lumileds_pcb_aligned_sink_cage_holder/artifacts/manifest.json",
+    "nutstore_print_ready_folder": "/home/lachlan/Nutstore Files/Projects/LabCanvas/lumileds_pcb_aligned_sink_cage_holder/pin-header-3mm-relief-print-ready"
+  },
+  "validation": {
+    "holder_stl": {
+      "watertight": true,
+      "bounds_mm": {
+        "min": [
+          -21.0,
+          -21.0,
+          -4.0
+        ],
+        "max": [
+          21.0,
+          21.0,
+          4.0
+        ],
+        "size": [
+          42.0,
+          42.0,
+          8.0
+        ]
+      }
+    },
+    "print_layout_stl": {
+      "watertight": true,
+      "bounds_mm": {
+        "min": [
+          -38.0,
+          -38.0,
+          -0.0
+        ],
+        "max": [
+          38.0,
+          38.0,
+          8.0
+        ],
+        "size": [
+          76.0,
+          76.0,
+          8.0
+        ]
+      }
+    },
+    "print_layout_3mf_entries": [
+      "3D/3dmodel.model",
+      "[Content_Types].xml",
+      "_rels/.rels"
+    ]
   }
 }

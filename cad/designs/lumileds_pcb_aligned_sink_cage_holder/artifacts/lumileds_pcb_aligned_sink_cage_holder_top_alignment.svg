@@ -10,17 +10,19 @@
 <circle cx="378.00" cy="378.00" r="28.80" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
 <circle cx="378.00" cy="108.00" r="28.80" fill="#ebf8ff" stroke="#3182ce" stroke-width="2"/>
 <circle cx="243.00" cy="243.00" r="45.00" fill="#fffaf0" stroke="#dd6b20" stroke-width="2"/>
-<circle cx="189.00" cy="297.00" r="10.80" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
-<circle cx="297.00" cy="297.00" r="10.80" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
-<circle cx="189.00" cy="189.00" r="10.80" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
-<circle cx="297.00" cy="189.00" r="10.80" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
-<circle cx="333.00" cy="234.00" r="7.20" fill="#fed7d7" stroke="#c53030" stroke-width="2"/>
-<circle cx="333.00" cy="256.86" r="7.20" fill="#fed7d7" stroke="#c53030" stroke-width="2"/>
+<circle cx="189.00" cy="297.00" r="8.10" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
+<circle cx="297.00" cy="297.00" r="8.10" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
+<circle cx="189.00" cy="189.00" r="8.10" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
+<circle cx="297.00" cy="189.00" r="8.10" fill="#fefcbf" stroke="#b7791f" stroke-width="2"/>
+<rect x="319.50" y="234.00" width="27.00" height="22.86" fill="#fed7d7" stroke="#c53030" stroke-width="2"/>
+<circle cx="333.00" cy="234.00" r="13.50" fill="#fed7d7" stroke="#c53030" stroke-width="2"/>
+<circle cx="333.00" cy="256.86" r="13.50" fill="#fed7d7" stroke="#c53030" stroke-width="2"/>
 <text x="466.00" y="54.00" font-family="Arial" font-size="17" font-weight="700" fill="#1a202c">Lumileds aligned holder with PCB sink</text>
 <text x="466.00" y="79.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Body: 42.0 x 42.0 x 8.0 mm</text>
 <text x="466.00" y="104.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">PCB: dia 24.0 mm, thickness 1.6 mm</text>
 <text x="466.00" y="129.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Rear sink: dia 24.4 mm, depth 1.6 mm</text>
-<text x="466.00" y="154.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">PCB M2 holes: copied from KiCad, +/-6 mm</text>
-<text x="466.00" y="179.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Cage rods: 30 mm pitch, dia 6.4 mm</text>
-<text x="466.00" y="204.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Only change from clean base: simple PCB-thickness sink</text>
+<text x="466.00" y="154.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">PCB fixation holes: 1.8 mm pilot, +/-6 mm</text>
+<text x="466.00" y="179.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Header relief: connected 3.0 mm two-hole slot</text>
+<text x="466.00" y="204.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Cage rods: 30 mm pitch, dia 6.4 mm</text>
+<text x="466.00" y="229.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Rear PCB sink stays concentric with the board outline</text>
 </svg>
