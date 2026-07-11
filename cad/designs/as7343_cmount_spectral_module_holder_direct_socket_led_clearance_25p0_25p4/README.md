@@ -9,8 +9,10 @@ x=`12.0`.
 The C-mount socket and the sensor plate are exported as adjacent independent
 bodies so Shapr3D can select and edit them separately. Older CAD designs are
 not modified. This variant fixes the pin-header placeholder: the five pin holes
-are reserved on the PCB placeholder itself, not next to the PCB. It also clears
-the AS7343 module LED with a through-slot connected to the optical bore.
+are reserved on the PCB placeholder itself, not next to the PCB. The pin-header
+holes are now `3.0 mm` on a `2.54 mm` pitch and are joined into one continuous
+slot so the material between adjacent holes is cleared. It also clears the
+AS7343 module LED with a through-slot connected to the optical bore.
 
 ## Source References
 
@@ -52,8 +54,11 @@ therefore `5.5 mm` toward the pin sockets relative to the optical axis.
   The LED reference body is
   `3.3 mm` parallel to the short edge and
   `2.6 mm` parallel to the long edge.
-- Add a five-hole pin-header clearance row on the PCB placeholder, 2.5 mm
-  inside the negative-Y board edge.
+- Add a five-hole `3.0 mm` pin-header clearance row on the PCB placeholder,
+  2.5 mm inside the negative-Y board edge.
+- Because `3.0 mm` is larger than the `2.54 mm` pitch, join the holes with a
+  rectangular bridge cutter so the space between adjacent pin reservations is
+  completely clear.
 - Cut the same five-hole row through the printed holder plate, so the visual
   PCB placeholder and physical clearance match.
 - Add four optional M2 clamp/lid holes outside the corrected module footprint.
@@ -134,11 +139,11 @@ PCB pin-header reserved holes:
 
 | Hole | y mm | z mm | holder/PCB cut dia mm |
 | --- | ---: | ---: | ---: |
-| pcb_pin_header_1 | `-14.5` | `-5.08` | `1.4` |
-| pcb_pin_header_2 | `-14.5` | `-2.54` | `1.4` |
-| pcb_pin_header_3 | `-14.5` | `0.0` | `1.4` |
-| pcb_pin_header_4 | `-14.5` | `2.54` | `1.4` |
-| pcb_pin_header_5 | `-14.5` | `5.08` | `1.4` |
+| pcb_pin_header_1 | `-14.5` | `-5.08` | `3.0` |
+| pcb_pin_header_2 | `-14.5` | `-2.54` | `3.0` |
+| pcb_pin_header_3 | `-14.5` | `0.0` | `3.0` |
+| pcb_pin_header_4 | `-14.5` | `2.54` | `3.0` |
+| pcb_pin_header_5 | `-14.5` | `5.08` | `3.0` |
 
 Optional clamp holes:
 
@@ -178,7 +183,7 @@ Optional clamp holes:
 | Parameter | Value |
 | --- | --- |
 | `name` | `as7343_cmount_spectral_module_holder_direct_socket_led_clearance_25p0_25p4` |
-| `design_variant` | `direct C-mount socket to sensor holder plate; five pin-header reserved holes placed on the PCB placeholder; 4 mm AS7343 board-LED clearance channel connected to the optical bore; nominal 25.4 mm female C-mount thread with 25.0 mm pilot/root; half-pitch thread runout cutter for fully developed end threads` |
+| `design_variant` | `direct C-mount socket to sensor holder plate; five 3.0 mm overlapping pin-header reserved holes placed on the PCB placeholder and joined into one continuous slot; 4 mm AS7343 board-LED clearance channel connected to the optical bore; nominal 25.4 mm female C-mount thread with 25.0 mm pilot/root; half-pitch thread runout cutter for fully developed end threads` |
 | `design_date` | `2026-07-08` |
 | `units` | `mm` |
 | `cmount_standard_note` | `Industrial C-mount is 1-32 UNS, 25.4 mm nominal major diameter and 0.79375 mm pitch. This print-fit variant treats 25.4 mm as the nominal internal groove/cutter maximum, not the smooth pilot bore, so the female pilot/root is 25.0 mm.` |
@@ -219,7 +224,10 @@ Optional clamp holes:
 | `pin_header_hole_side` | `negative_y_short_edge_on_pcb` |
 | `pin_header_hole_count` | `5` |
 | `pin_header_hole_pitch_z_mm` | `2.54` |
-| `pin_header_hole_diameter_mm` | `1.4` |
+| `pin_header_hole_diameter_mm` | `3.0` |
+| `pin_header_connected_slot_enabled` | `True` |
+| `pin_header_slot_bridge_overlap_mm` | `0.04` |
+| `pin_header_slot_note` | `The 3.0 mm pin-header reservation holes are larger than the 2.54 mm pitch, so the row is intentionally joined by a rectangular bridge cutter to clear the material between adjacent holes.` |
 | `pin_header_hole_y_offset_inside_board_from_negative_y_edge_mm` | `2.5` |
 | `optional_clamp_hole_diameter_mm` | `2.4` |
 | `optional_clamp_hole_margin_y_mm` | `4.0` |

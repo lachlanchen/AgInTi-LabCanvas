@@ -21,7 +21,7 @@ REFERENCE_DIR = ROOT / "cad/references/as7343-spectral-analysis-module"
 
 PARAMS = {
     "name": STEM,
-    "design_variant": "direct C-mount socket to sensor holder plate; five pin-header reserved holes placed on the PCB placeholder; 4 mm AS7343 board-LED clearance channel connected to the optical bore; nominal 25.4 mm female C-mount thread with 25.0 mm pilot/root; half-pitch thread runout cutter for fully developed end threads",
+    "design_variant": "direct C-mount socket to sensor holder plate; five 3.0 mm overlapping pin-header reserved holes placed on the PCB placeholder and joined into one continuous slot; 4 mm AS7343 board-LED clearance channel connected to the optical bore; nominal 25.4 mm female C-mount thread with 25.0 mm pilot/root; half-pitch thread runout cutter for fully developed end threads",
     "design_date": "2026-07-08",
     "units": "mm",
     "cmount_standard_note": "Industrial C-mount is 1-32 UNS, 25.4 mm nominal major diameter and 0.79375 mm pitch. This print-fit variant treats 25.4 mm as the nominal internal groove/cutter maximum, not the smooth pilot bore, so the female pilot/root is 25.0 mm.",
@@ -62,7 +62,10 @@ PARAMS = {
     "pin_header_hole_side": "negative_y_short_edge_on_pcb",
     "pin_header_hole_count": 5,
     "pin_header_hole_pitch_z_mm": 2.54,
-    "pin_header_hole_diameter_mm": 1.4,
+    "pin_header_hole_diameter_mm": 3.0,
+    "pin_header_connected_slot_enabled": True,
+    "pin_header_slot_bridge_overlap_mm": 0.04,
+    "pin_header_slot_note": "The 3.0 mm pin-header reservation holes are larger than the 2.54 mm pitch, so the row is intentionally joined by a rectangular bridge cutter to clear the material between adjacent holes.",
     "pin_header_hole_y_offset_inside_board_from_negative_y_edge_mm": 2.5,
     "optional_clamp_hole_diameter_mm": 2.4,
     "optional_clamp_hole_margin_y_mm": 4.0,
@@ -179,6 +182,15 @@ def board_reference_geometry() -> dict[str, object]:
         }
         for index in range(pin_count)
     ]
+    pin_slot = {
+        "name": "pcb_pin_header_connected_slot",
+        "y": round(pin_y, 4),
+        "z_min": round(min(hole["z"] for hole in pin_holes), 4),
+        "z_max": round(max(hole["z"] for hole in pin_holes), 4),
+        "bridge_width_y_mm": PARAMS["pin_header_hole_diameter_mm"],
+        "hole_diameter_mm": PARAMS["pin_header_hole_diameter_mm"],
+        "note": PARAMS["pin_header_slot_note"],
+    }
     led_clearance_width_z = PARAMS["as7343_led_clearance_width_z_mm"]
     led_clearance = {
         "name": "as7343_board_led_connected_clearance",
@@ -209,6 +221,7 @@ def board_reference_geometry() -> dict[str, object]:
         "as7343_led_clearance_relative_to_sensor_mm": led_clearance,
         "as7343_led_body_relative_to_sensor_mm": led_body,
         "pin_header_holes_relative_to_sensor_mm": pin_holes,
+        "pin_header_connected_slot_relative_to_sensor_mm": pin_slot,
         "optional_clamp_holes_relative_to_sensor_mm": [
             {
                 **hole,
@@ -220,6 +233,7 @@ def board_reference_geometry() -> dict[str, object]:
             PARAMS["module_board_size_source"],
             "Coordinate convention: Y is the 23 mm board length from pin-socket edge to sensor-side edge; Z is the 15 mm short-edge width. Sensor datum is on the optical axis at Y=0, Z=0; board center is 5.5 mm toward the pin sockets.",
             "The five pin-header reserved holes are on the PCB placeholder itself, 2.5 mm inside the negative-Y board edge; they are no longer drawn next to the board.",
+            "The pin-header reservations use 3.0 mm holes on a 2.54 mm pitch, so the row is joined into one clean continuous slot and the material between adjacent holes is cleared.",
             "The AS7343 module LED is treated as a 3.3 x 2.6 mm reference body near the sensor-side short edge; the printed holder clears it with a 4 mm wide channel connected to the optical bore.",
         ],
     }
@@ -260,36 +274,46 @@ def clamp_hole_cutter(y: float, z: float) -> cq.Workplane:
     return x_cylinder(PARAMS["optional_clamp_hole_diameter_mm"], PARAMS["sensor_plate_thickness_mm"] + 2.5, x0).translate((0, y, z))
 
 
-def pin_header_hole_clearance_cutter() -> cq.Workplane:
+def pin_header_connected_slot_cutter(x0: float, length: float) -> cq.Workplane:
     ref = board_reference_geometry()
     pin_holes = ref["pin_header_holes_relative_to_sensor_mm"]  # type: ignore[index]
+    slot = ref["pin_header_connected_slot_relative_to_sensor_mm"]  # type: ignore[index]
     cutters: list[cq.Workplane] = []
-    x0 = sensor_plate_x0() - 0.6
-    length = PARAMS["sensor_plate_thickness_mm"] + 1.2
     for hole in pin_holes:
         cutters.append(
             x_cylinder(PARAMS["pin_header_hole_diameter_mm"], length, x0).translate((0, hole["y"], hole["z"]))
         )
+    bridge_span = slot["z_max"] - slot["z_min"] + PARAMS["pin_header_slot_bridge_overlap_mm"]
+    cutters.append(
+        x_box(
+            (
+                x0 + length / 2.0,
+                slot["y"],
+                (slot["z_min"] + slot["z_max"]) / 2.0,
+            ),
+            (
+                length,
+                PARAMS["pin_header_hole_diameter_mm"],
+                bridge_span,
+            ),
+        )
+    )
     result = cutters[0]
     for cutter in cutters[1:]:
         result = result.union(cutter)
     return result
+
+
+def pin_header_hole_clearance_cutter() -> cq.Workplane:
+    x0 = sensor_plate_x0() - 0.6
+    length = PARAMS["sensor_plate_thickness_mm"] + 1.2
+    return pin_header_connected_slot_cutter(x0, length)
 
 
 def board_pin_header_hole_cutter() -> cq.Workplane:
-    ref = board_reference_geometry()
-    pin_holes = ref["pin_header_holes_relative_to_sensor_mm"]  # type: ignore[index]
-    cutters: list[cq.Workplane] = []
     x0 = total_length() - 0.15
     length = PARAMS["board_thickness_mm"] + 0.4
-    for hole in pin_holes:
-        cutters.append(
-            x_cylinder(PARAMS["pin_header_hole_diameter_mm"], length, x0).translate((0, hole["y"], hole["z"]))
-        )
-    result = cutters[0]
-    for cutter in cutters[1:]:
-        result = result.union(cutter)
-    return result
+    return pin_header_connected_slot_cutter(x0, length)
 
 
 def led_clearance_cutter() -> cq.Workplane:
@@ -446,6 +470,7 @@ def write_alignment_svg(path: Path) -> None:
     led_clearance = ref["as7343_led_clearance_relative_to_sensor_mm"]  # type: ignore[index]
     led_body = ref["as7343_led_body_relative_to_sensor_mm"]  # type: ignore[index]
     pin_holes = ref["pin_header_holes_relative_to_sensor_mm"]  # type: ignore[index]
+    pin_slot = ref["pin_header_connected_slot_relative_to_sensor_mm"]  # type: ignore[index]
     scale = 9.0
     pad = 58.0
     legend_w = 600.0
@@ -474,6 +499,7 @@ def write_alignment_svg(path: Path) -> None:
         f'<rect x="{sx(bounds["y_min"]):.2f}" y="{sy(bounds["z_max"]):.2f}" width="{(bounds["y_max"]-bounds["y_min"])*scale:.2f}" height="{(bounds["z_max"]-bounds["z_min"])*scale:.2f}" fill="#e6f0ff" stroke="#2b6cb0" stroke-width="2" stroke-dasharray="8 5"/>',
         f'<rect x="{sx(led_clearance["y_min"]):.2f}" y="{sy(led_clearance["z_max"]):.2f}" width="{(led_clearance["y_max"]-led_clearance["y_min"])*scale:.2f}" height="{(led_clearance["z_max"]-led_clearance["z_min"])*scale:.2f}" fill="#e6fffb" stroke="#00a3c4" stroke-width="2" stroke-dasharray="6 4"/>',
         f'<rect x="{sx(led_body["y_min"]):.2f}" y="{sy(led_body["z_max"]):.2f}" width="{(led_body["y_max"]-led_body["y_min"])*scale:.2f}" height="{(led_body["z_max"]-led_body["z_min"])*scale:.2f}" fill="#9ae6b4" stroke="#276749" stroke-width="1.5"/>',
+        f'<rect x="{sx(pin_slot["y"] - pin_slot["bridge_width_y_mm"]/2):.2f}" y="{sy(pin_slot["z_max"]):.2f}" width="{pin_slot["bridge_width_y_mm"]*scale:.2f}" height="{(pin_slot["z_max"]-pin_slot["z_min"])*scale:.2f}" fill="#fff5f5" stroke="#c53030" stroke-width="1.2" stroke-dasharray="4 3"/>',
         f'<line x1="{sx(-view_w/2):.2f}" y1="{sy(0):.2f}" x2="{sx(view_w/2):.2f}" y2="{sy(0):.2f}" stroke="#cbd5e0" stroke-width="1"/>',
         f'<line x1="{sx(0):.2f}" y1="{sy(view_h/2):.2f}" x2="{sx(0):.2f}" y2="{sy(-view_h/2):.2f}" stroke="#cbd5e0" stroke-width="1"/>',
         circle(0.0, 0.0, PARAMS["optical_bore_diameter_mm"], "#fff7d6", "#d69e2e", "optical axis / AS7343"),
@@ -492,7 +518,7 @@ def write_alignment_svg(path: Path) -> None:
         "Blue dashed rectangle: 15 x 23 mm AS7343 module tray",
         "Cyan slot: 4 mm LED clearance connected to the optical bore",
         "Green rectangle: 3.3 x 2.6 mm AS7343 board LED reference",
-        "Red circles: 5 pin-header reserved holes on the PCB placeholder",
+        "Red slot/circles: 5 x 3.0 mm pin-header reliefs joined together",
         "Gray holes: optional M2 clamp/lid holes outside the module area",
         "C-mount side: nominal 25.4 mm female thread, 25.0 mm pilot/root",
     ]
@@ -564,8 +590,10 @@ x=`{sensor_plate_x0()}`.
 The C-mount socket and the sensor plate are exported as adjacent independent
 bodies so Shapr3D can select and edit them separately. Older CAD designs are
 not modified. This variant fixes the pin-header placeholder: the five pin holes
-are reserved on the PCB placeholder itself, not next to the PCB. It also clears
-the AS7343 module LED with a through-slot connected to the optical bore.
+are reserved on the PCB placeholder itself, not next to the PCB. The pin-header
+holes are now `3.0 mm` on a `2.54 mm` pitch and are joined into one continuous
+slot so the material between adjacent holes is cleared. It also clears the
+AS7343 module LED with a through-slot connected to the optical bore.
 
 ## Source References
 
@@ -607,8 +635,11 @@ therefore `5.5 mm` toward the pin sockets relative to the optical axis.
   The LED reference body is
   `{PARAMS['as7343_led_body_width_z_mm']} mm` parallel to the short edge and
   `{PARAMS['as7343_led_body_length_y_mm']} mm` parallel to the long edge.
-- Add a five-hole pin-header clearance row on the PCB placeholder, 2.5 mm
-  inside the negative-Y board edge.
+- Add a five-hole `3.0 mm` pin-header clearance row on the PCB placeholder,
+  2.5 mm inside the negative-Y board edge.
+- Because `3.0 mm` is larger than the `2.54 mm` pitch, join the holes with a
+  rectangular bridge cutter so the space between adjacent pin reservations is
+  completely clear.
 - Cut the same five-hole row through the printed holder plate, so the visual
   PCB placeholder and physical clearance match.
 - Add four optional M2 clamp/lid holes outside the corrected module footprint.
