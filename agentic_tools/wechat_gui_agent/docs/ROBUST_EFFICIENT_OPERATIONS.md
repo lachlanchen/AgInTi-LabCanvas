@@ -243,17 +243,25 @@ should speed the agent up, not replace agent reasoning.
   `agentic_tools/wechat_gui_agent/scripts/wechat_agent_backend.py`. If the
   selected Codex model is Spark and the live attempt fails with quota/rate-limit
   text, the same chat/role turn retries once with `gpt-5.5` and low reasoning.
-  If the Codex/Claude attempt is still quota-limited or the selected backend is
-  unavailable, the turn falls back to AgInTi using the configured
-  `aginti.command`, `aginti.args`, and `aginti.workspace`. Timeouts and normal
-  weak agent answers do not trigger backend fallback; those stay under the
-  worker effort-escalation policy.
+  If the Codex/Claude attempt is still quota-limited, unavailable, or times out
+  for the agent turn, the turn falls back to AgInTi using the configured
+  `aginti.command`, `aginti.args`, and `aginti.workspace` when
+  `agent_fallbacks.fallback_to_aginti=true`. Timeout fallback is on by default
+  and can be disabled with `agent_fallbacks.fallback_on_timeout=false` for a
+  deployment that prefers terminal timeouts. Normal weak agent answers do not
+  trigger backend fallback; those stay under the worker effort-escalation
+  policy.
 - Keep fallback configuration system-level through `agent_fallbacks` and the
   per-backend `codex`/`claude`/`aginti` config blocks. Do not implement a
   one-off Spark quota workaround inside EchoMind, link inbox, video generation,
   LazyEdit, or another individual routine. Every call to
   `wechat_agent_backend.run_agent_session` should get the same fallback
   behavior and should record `backend_attempts` plus `backend_fallback_used`.
+- Do not confuse agent-turn timeout fallback with long browser or generation
+  monitoring. Xiaoyunque, LazyEdit, AutoPublish, CAD, PCB, and file-download
+  jobs should persist queue/probe state, status, and artifacts, then continue or
+  requeue from evidence. They should not restart or switch tools just because a
+  generation browser page is still running.
 - Keep `immediate_route_enabled=true` for monitored chats that should enqueue
   backend work. `immediate_ack_enabled=false` only suppresses the visible ack;
   it must not be used as the routing kill switch.

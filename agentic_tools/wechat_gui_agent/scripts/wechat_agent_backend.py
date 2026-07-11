@@ -112,6 +112,7 @@ def run_agent_session(
         "reasoning_effort": str(reasoning_effort or ""),
         "sandbox": sandbox,
         "timeout_seconds": int(timeout_seconds),
+        "role": role,
     }
     attempt_summaries: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -225,6 +226,9 @@ def backend_specific_config(config: dict[str, Any], backend: str, *, primary_bac
             raw = container.get(selected)
             if isinstance(raw, dict):
                 merged.update(raw)
+    raw_top_level = config.get(selected)
+    if isinstance(raw_top_level, dict):
+        merged.update(raw_top_level)
     if selected == normalize_backend(primary_backend):
         meta_keys = {
             "_backends",
@@ -233,6 +237,9 @@ def backend_specific_config(config: dict[str, Any], backend: str, *, primary_bac
             "fallbacks",
             "agent_fallbacks",
             "backend_fallbacks",
+            "codex",
+            "claude",
+            "aginti",
         }
         merged.update({key: value for key, value in config.items() if key not in meta_keys})
     for key in ("fallbacks", "agent_fallbacks", "backend_fallbacks"):
@@ -250,7 +257,7 @@ def next_backend_attempt(
     if not backend_fallbacks_enabled(backend_config):
         return None
     failure_kind = classify_backend_failure(result)
-    if failure_kind not in {"quota", "unavailable"}:
+    if failure_kind not in {"quota", "unavailable", "timeout"}:
         return None
     backend = normalize_backend(str(attempt.get("backend") or "codex"))
     if backend == "codex" and is_spark_model(str(attempt.get("model") or "")) and failure_kind == "quota":
@@ -261,6 +268,8 @@ def next_backend_attempt(
             "reasoning_effort": fallback_reasoning_effort(backend_config),
             "fallback_reason": "spark_quota",
         }
+    if backend != "aginti" and failure_kind == "timeout" and not fallback_on_timeout_enabled(backend_config):
+        return None
     if backend != "aginti" and fallback_to_aginti_enabled(backend_config):
         aginti_config = backend_specific_config(backend_config, "aginti", primary_backend=backend)
         return {
@@ -291,6 +300,16 @@ def fallback_to_aginti_enabled(config: dict[str, Any]) -> bool:
         fallback_config.get(
             "aginti_enabled",
             fallback_config.get("fallback_to_aginti", True),
+        )
+    )
+
+
+def fallback_on_timeout_enabled(config: dict[str, Any]) -> bool:
+    fallback_config = fallback_config_dict(config)
+    return bool(
+        fallback_config.get(
+            "timeout_enabled",
+            fallback_config.get("fallback_on_timeout", True),
         )
     )
 

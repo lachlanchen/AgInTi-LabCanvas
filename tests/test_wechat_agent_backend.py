@@ -154,7 +154,58 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(len(aginti_calls), 1)
         self.assertEqual(result["backend_attempts"][-1]["backend"], "aginti")
 
-    def test_timeout_does_not_trigger_backend_fallback(self) -> None:
+    def test_codex_timeout_falls_back_to_aginti_when_enabled(self) -> None:
+        backend = load_backend()
+        codex_calls: list[dict[str, object]] = []
+        aginti_calls: list[dict[str, object]] = []
+        original_codex = backend.run_codex_session
+        original_aginti = backend.run_aginti_session
+        try:
+            def fake_run_codex_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                codex_calls.append({"prompt": prompt, **kwargs})
+                return {
+                    "ok": False,
+                    "message": "Codex failed: timed out before completing the turn.",
+                    "thread_id": "",
+                    "returncode": 124,
+                    "stderr_tail": "timeout",
+                }
+
+            def fake_run_aginti_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                aginti_calls.append({"prompt": prompt, **kwargs})
+                return {"ok": True, "message": "CHAT: handled after timeout", "thread_id": "", "returncode": 0}
+
+            backend.run_codex_session = fake_run_codex_session
+            backend.run_aginti_session = fake_run_aginti_session
+            result = backend.run_agent_session(
+                "hello",
+                backend="codex",
+                chat_name="EchoMind",
+                role="fast",
+                model="gpt-5.3-codex-spark",
+                reasoning_effort="high",
+                sandbox="read-only",
+                timeout_seconds=30,
+                workdir=ROOT,
+                backend_config={
+                    "_backends": {"aginti": {"model": "aginti-auto", "reasoning_effort": "low"}},
+                    "agent_fallbacks": {"fallback_to_aginti": True},
+                },
+            )
+        finally:
+            backend.run_codex_session = original_codex
+            backend.run_aginti_session = original_aginti
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["backend"], "aginti")
+        self.assertEqual(result["message"], "CHAT: handled after timeout")
+        self.assertTrue(result["backend_fallback_used"])
+        self.assertEqual(len(codex_calls), 1)
+        self.assertEqual(len(aginti_calls), 1)
+        self.assertEqual(result["backend_attempts"][0]["failure_kind"], "timeout")
+        self.assertEqual(result["backend_attempts"][-1]["backend"], "aginti")
+
+    def test_timeout_fallback_can_be_disabled(self) -> None:
         backend = load_backend()
         calls: list[dict[str, object]] = []
         original = backend.run_codex_session
@@ -180,6 +231,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 sandbox="read-only",
                 timeout_seconds=30,
                 workdir=ROOT,
+                backend_config={"agent_fallbacks": {"fallback_to_aginti": True, "fallback_on_timeout": False}},
             )
         finally:
             backend.run_codex_session = original
@@ -188,6 +240,52 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertFalse(result["backend_fallback_used"])
         self.assertEqual(result["backend_attempts"][0]["failure_kind"], "timeout")
+
+    def test_fallback_reads_top_level_aginti_config(self) -> None:
+        backend = load_backend()
+        aginti_calls: list[dict[str, object]] = []
+        original_codex = backend.run_codex_session
+        original_aginti = backend.run_aginti_session
+        try:
+            def fake_run_codex_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                return {
+                    "ok": False,
+                    "message": "Codex failed: timed out before completing the turn.",
+                    "thread_id": "",
+                    "returncode": 124,
+                    "stderr_tail": "timeout",
+                }
+
+            def fake_run_aginti_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                aginti_calls.append({"prompt": prompt, **kwargs})
+                return {"ok": True, "message": "CHAT: top-level aginti config", "thread_id": "", "returncode": 0}
+
+            backend.run_codex_session = fake_run_codex_session
+            backend.run_aginti_session = fake_run_aginti_session
+            result = backend.run_agent_session(
+                "hello",
+                backend="codex",
+                chat_name="懒人科研",
+                role="worker",
+                model="gpt-5.5",
+                reasoning_effort="medium",
+                sandbox="read-only",
+                timeout_seconds=30,
+                workdir=ROOT,
+                backend_config={
+                    "aginti": {"model": "aginti-fast", "reasoning_effort": "low", "timeout_seconds": 88},
+                    "agent_fallbacks": {"fallback_to_aginti": True},
+                },
+            )
+        finally:
+            backend.run_codex_session = original_codex
+            backend.run_aginti_session = original_aginti
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["backend"], "aginti")
+        self.assertEqual(result["message"], "CHAT: top-level aginti config")
+        self.assertEqual(result["model"], "aginti-fast")
+        self.assertEqual(aginti_calls[0]["timeout_seconds"], 88)
 
     def test_claude_backend_uses_stdin_and_readonly_tool_block(self) -> None:
         backend = load_backend()

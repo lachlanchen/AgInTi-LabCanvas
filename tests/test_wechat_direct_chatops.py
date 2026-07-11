@@ -2852,6 +2852,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(config["agent_fallbacks"]["enabled"])
         self.assertEqual(config["agent_fallbacks"]["quota_fallback_model"], "gpt-5.5")
         self.assertTrue(config["agent_fallbacks"]["fallback_to_aginti"])
+        self.assertTrue(config["agent_fallbacks"]["fallback_on_timeout"])
         self.assertEqual(config["aginti"]["command"], "aginti")
         self.assertEqual(config["poll_seconds"], 0.8)
         self.assertEqual(config["catchup_poll_seconds"], 0.1)

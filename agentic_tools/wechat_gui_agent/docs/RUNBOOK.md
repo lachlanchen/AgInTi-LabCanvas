@@ -95,6 +95,13 @@ or empty answer retries upward through allowed effort levels up to xhigh.
 Missing exact source files, login/CAPTCHA, and approval blockers do not trigger
 blind retries.
 
+Agent-turn timeouts use the centralized backend fallback path. If Codex times
+out and `agent_fallbacks.fallback_to_aginti=true`, the same chat/role prompt may
+retry through AgInTi instead of returning no reply. This is separate from
+browser/job monitoring: a Xiaoyunque, LazyEdit, or AutoPublish run that is still
+busy should remain a queued state with probes and artifacts, not a fresh
+submission.
+
 For ambiguous media tasks, the fast monitor writes an agent route decision into
 the queue item. The worker must check that route against the current request
 before executing. Publishing to LazyEdit/AutoPublish, Shipinhao, YouTube,
