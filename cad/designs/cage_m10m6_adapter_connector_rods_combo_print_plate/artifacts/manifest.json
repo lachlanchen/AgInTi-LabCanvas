@@ -1,0 +1,226 @@
+{
+  "name": "cage_m10m6_adapter_connector_rods_combo_print_plate",
+  "created_by": "build_cage_m10m6_adapter_connector_rods_combo_print_plate.py",
+  "design_intent": "Single build-plate packing of the existing 2x2 M10-to-M6 adapters, 3x3 rod connectors, and 5x5 horizontal rods.",
+  "parameters": {
+    "name": "cage_m10m6_adapter_connector_rods_combo_print_plate",
+    "design_intent": "Single build-plate packing of the existing 2x2 M10-to-M6 adapters, 3x3 rod connectors, and 5x5 horizontal rods.",
+    "clearance_between_groups_mm": 8.0,
+    "packing_rule": "Preserve each source print orientation, normalize every source group to the build plate, place rods first, then use the upper-left free space for connectors and adapters.",
+    "source_groups": {
+      "rods_5x5": "5x5 grid of 50 mm M6 / 6 mm cage rods",
+      "connectors_3x3": "3x3 grid of 13 mm rod connectors",
+      "adapters_2x2": "2x2 grid of M10 dock to M6 rod adapters"
+    },
+    "print_plate_note": "The 25-rod source grid is already long, so the combined plate needs a roughly 290 x 125 mm usable bed after slicer margin."
+  },
+  "sources": {
+    "rods_5x5": {
+      "label": "5x5 grid of 50 mm M6 / 6 mm cage rods",
+      "step": "cad/designs/cage_rods_50mm_m6/PRINT_THIS_cage_rods_50mm_m6_25rod_print_grid.step",
+      "stl": "cad/designs/cage_rods_50mm_m6/PRINT_THIS_cage_rods_50mm_m6_25rod_print_grid.stl"
+    },
+    "connectors_3x3": {
+      "label": "3x3 grid of 13 mm rod connectors",
+      "step": "cad/designs/cage_rod_connector_13mm_diaphragm/PRINT_THIS_cage_rod_connector_13mm_diaphragm_3x3_print_grid.step",
+      "stl": "cad/designs/cage_rod_connector_13mm_diaphragm/PRINT_THIS_cage_rod_connector_13mm_diaphragm_3x3_print_grid.stl"
+    },
+    "adapters_2x2": {
+      "label": "2x2 grid of M10 dock to M6 rod adapters",
+      "step": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.step",
+      "stl": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.stl"
+    }
+  },
+  "layout": {
+    "rods_5x5": {
+      "placement_min_xyz_mm": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "source_bounds_mm": {
+        "min": [
+          -116.0,
+          -26.999,
+          0.0
+        ],
+        "max": [
+          166.0,
+          26.999,
+          6.0
+        ],
+        "size": [
+          282.0,
+          53.998,
+          6.0
+        ]
+      },
+      "placed_bounds_mm": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          282.0,
+          53.998,
+          6.0
+        ],
+        "size": [
+          282.0,
+          53.998,
+          6.0
+        ]
+      },
+      "component_count": 25,
+      "source_stl": "cad/designs/cage_rods_50mm_m6/PRINT_THIS_cage_rods_50mm_m6_25rod_print_grid.stl",
+      "source_step": "cad/designs/cage_rods_50mm_m6/PRINT_THIS_cage_rods_50mm_m6_25rod_print_grid.step"
+    },
+    "connectors_3x3": {
+      "placement_min_xyz_mm": [
+        0.0,
+        61.998,
+        0.0
+      ],
+      "source_bounds_mm": {
+        "min": [
+          -26.5,
+          -26.498,
+          0.0
+        ],
+        "max": [
+          26.5,
+          26.498,
+          13.0
+        ],
+        "size": [
+          53.0,
+          52.996,
+          13.0
+        ]
+      },
+      "placed_bounds_mm": {
+        "min": [
+          0.0,
+          61.998,
+          0.0
+        ],
+        "max": [
+          53.0,
+          114.994,
+          13.0
+        ],
+        "size": [
+          53.0,
+          52.996,
+          13.0
+        ]
+      },
+      "component_count": 9,
+      "source_stl": "cad/designs/cage_rod_connector_13mm_diaphragm/PRINT_THIS_cage_rod_connector_13mm_diaphragm_3x3_print_grid.stl",
+      "source_step": "cad/designs/cage_rod_connector_13mm_diaphragm/PRINT_THIS_cage_rod_connector_13mm_diaphragm_3x3_print_grid.step"
+    },
+    "adapters_2x2": {
+      "placement_min_xyz_mm": [
+        61.0,
+        61.998,
+        0.0
+      ],
+      "source_bounds_mm": {
+        "min": [
+          -16.9,
+          -16.898,
+          0.0
+        ],
+        "max": [
+          16.9,
+          16.898,
+          70.0
+        ],
+        "size": [
+          33.8,
+          33.797,
+          70.0
+        ]
+      },
+      "placed_bounds_mm": {
+        "min": [
+          61.0,
+          61.998,
+          0.0
+        ],
+        "max": [
+          94.8,
+          95.795,
+          70.0
+        ],
+        "size": [
+          33.8,
+          33.797,
+          70.0
+        ]
+      },
+      "component_count": 4,
+      "source_stl": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.stl",
+      "source_step": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.step"
+    },
+    "combined": {
+      "placed_bounds_mm": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          282.0,
+          114.994,
+          70.0
+        ],
+        "size": [
+          282.0,
+          114.994,
+          70.0
+        ]
+      },
+      "component_count": 38,
+      "watertight": true
+    },
+    "validation": {
+      "stl_watertight": true,
+      "stl_component_count": 38,
+      "stl_bounds_mm": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          282.0,
+          114.994,
+          70.0
+        ],
+        "size": [
+          282.0,
+          114.994,
+          70.0
+        ]
+      },
+      "threemf_entries": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ]
+    }
+  },
+  "outputs": {
+    "print_step": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/artifacts/cage_m10m6_adapter_connector_rods_combo_print_plate.step",
+    "print_stl": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/artifacts/cage_m10m6_adapter_connector_rods_combo_print_plate.stl",
+    "print_3mf": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/artifacts/cage_m10m6_adapter_connector_rods_combo_print_plate.3mf",
+    "root_print_step": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/PRINT_THIS_cage_m10m6_adapter_connector_rods_combo_print_plate.step",
+    "root_print_stl": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/PRINT_THIS_cage_m10m6_adapter_connector_rods_combo_print_plate.stl",
+    "root_print_3mf": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/PRINT_THIS_cage_m10m6_adapter_connector_rods_combo_print_plate.3mf",
+    "render_png": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/artifacts/cage_m10m6_adapter_connector_rods_combo_print_plate_render.png",
+    "root_render_png": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/PRINT_THIS_cage_m10m6_adapter_connector_rods_combo_print_plate_render.png",
+    "nutstore_print_ready_folder": "/home/lachlan/Nutstore Files/Projects/LabCanvas/cage_m10m6_adapter_connector_rods_combo_print_plate/run-1-combo-print-ready"
+  }
+}
