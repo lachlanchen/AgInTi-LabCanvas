@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,11 @@ from cadquery import exporters
 ROOT = Path(__file__).resolve().parents[3]
 DESIGN_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = DESIGN_DIR / "artifacts"
+NUTSTORE_PRINT_DIR = (
+    Path("/home/lachlan/Nutstore Files/Projects/LabCanvas")
+    / "cage_dock_m10_to_m6_adapter_20_50"
+    / "run-1-2x2-grid-print-ready"
+)
 STEM = "cage_dock_m10_to_m6_adapter_20_50"
 TOOLS_DIR = ROOT / "cad" / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
@@ -154,6 +160,34 @@ def svg_to_png(svg: Path, png: Path) -> None:
     subprocess.run(["convert", str(svg), str(png)], check=True)
 
 
+def render_with_blender() -> None:
+    blender = shutil.which("blender")
+    if not blender:
+        raise RuntimeError("Blender is required so CAD print-ready runs always include render PNGs.")
+    subprocess.run(
+        [blender, "--background", "--python", str(DESIGN_DIR / f"render_{STEM}.py")],
+        check=True,
+    )
+
+
+def sync_print_ready_folder(paths: dict[str, Path], root_outputs: dict[str, Path]) -> None:
+    NUTSTORE_PRINT_DIR.mkdir(parents=True, exist_ok=True)
+    copies = {
+        "PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.step": root_outputs["print_this_step"],
+        "PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.stl": root_outputs["print_this_stl"],
+        "PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.3mf": root_outputs["print_this_3mf"],
+        "cage_dock_m10_to_m6_adapter_20_50_single_adapter.step": root_outputs["use_this"],
+        "cage_dock_m10_to_m6_adapter_20_50_section.png": paths["section_png"],
+        "USE_THIS_cage_dock_m10_to_m6_adapter_20_50_render.png": root_outputs["use_this_render"],
+        "PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid_render.png": root_outputs["print_this_render"],
+        "README.md": DESIGN_DIR / "README.md",
+        "manifest.json": paths["manifest"],
+    }
+    for name, source in copies.items():
+        if source.exists():
+            shutil.copy2(source, NUTSTORE_PRINT_DIR / name)
+
+
 def write_manifest(path: Path, outputs: dict[str, str]) -> None:
     manifest = {
         "name": STEM,
@@ -222,6 +256,8 @@ def main() -> None:
         "print_grid_3mf": ARTIFACT_DIR / f"{STEM}_2x2_print_grid.3mf",
         "section_svg": ARTIFACT_DIR / f"{STEM}_section.svg",
         "section_png": ARTIFACT_DIR / f"{STEM}_section.png",
+        "adapter_render": ARTIFACT_DIR / f"{STEM}_render.png",
+        "print_grid_render": ARTIFACT_DIR / f"{STEM}_2x2_print_grid_render.png",
         "manifest": ARTIFACT_DIR / "manifest.json",
     }
 
@@ -230,24 +266,41 @@ def main() -> None:
     export_stl_as_3mf(paths["print_grid_stl"], paths["print_grid_3mf"], title=f"{STEM} 2x2 print grid")
     write_section_svg(paths["section_svg"])
     svg_to_png(paths["section_svg"], paths["section_png"])
+    render_with_blender()
 
     use_this = DESIGN_DIR / f"USE_THIS_{STEM}.step"
+    use_this_render = DESIGN_DIR / f"USE_THIS_{STEM}_render.png"
     print_this_step = DESIGN_DIR / f"PRINT_THIS_{STEM}_2x2_print_grid.step"
     print_this_stl = DESIGN_DIR / f"PRINT_THIS_{STEM}_2x2_print_grid.stl"
     print_this_3mf = DESIGN_DIR / f"PRINT_THIS_{STEM}_2x2_print_grid.3mf"
+    print_this_render = DESIGN_DIR / f"PRINT_THIS_{STEM}_2x2_print_grid_render.png"
     use_this.write_bytes(paths["adapter_step"].read_bytes())
+    use_this_render.write_bytes(paths["adapter_render"].read_bytes())
     print_this_step.write_bytes(paths["print_grid_step"].read_bytes())
     print_this_stl.write_bytes(paths["print_grid_stl"].read_bytes())
     print_this_3mf.write_bytes(paths["print_grid_3mf"].read_bytes())
+    print_this_render.write_bytes(paths["print_grid_render"].read_bytes())
+    root_outputs = {
+        "use_this": use_this,
+        "use_this_render": use_this_render,
+        "print_this_step": print_this_step,
+        "print_this_stl": print_this_stl,
+        "print_this_3mf": print_this_3mf,
+        "print_this_render": print_this_render,
+    }
 
     outputs = {name: repo_path(path) for name, path in paths.items() if name != "manifest"}
     outputs["use_this_step"] = repo_path(use_this)
     outputs["print_this_2x2_step"] = repo_path(print_this_step)
     outputs["print_this_2x2_stl"] = repo_path(print_this_stl)
     outputs["print_this_2x2_3mf"] = repo_path(print_this_3mf)
+    outputs["use_this_render"] = repo_path(use_this_render)
+    outputs["print_this_2x2_render"] = repo_path(print_this_render)
+    outputs["nutstore_print_ready_folder"] = str(NUTSTORE_PRINT_DIR)
     outputs["manifest"] = repo_path(paths["manifest"])
     write_manifest(paths["manifest"], outputs)
     write_readme(DESIGN_DIR / "README.md", outputs)
+    sync_print_ready_folder(paths, root_outputs)
     print(json.dumps({"parameters": PARAMS, "outputs": outputs}, ensure_ascii=False, indent=2))
 
 

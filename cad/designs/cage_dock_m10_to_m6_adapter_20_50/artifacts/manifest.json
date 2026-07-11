@@ -28,10 +28,15 @@
     "print_grid_3mf": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/artifacts/cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.3mf",
     "section_svg": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/artifacts/cage_dock_m10_to_m6_adapter_20_50_section.svg",
     "section_png": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/artifacts/cage_dock_m10_to_m6_adapter_20_50_section.png",
+    "adapter_render": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/artifacts/cage_dock_m10_to_m6_adapter_20_50_render.png",
+    "print_grid_render": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/artifacts/cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid_render.png",
     "use_this_step": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/USE_THIS_cage_dock_m10_to_m6_adapter_20_50.step",
     "print_this_2x2_step": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.step",
     "print_this_2x2_stl": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.stl",
     "print_this_2x2_3mf": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid.3mf",
+    "use_this_render": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/USE_THIS_cage_dock_m10_to_m6_adapter_20_50_render.png",
+    "print_this_2x2_render": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/PRINT_THIS_cage_dock_m10_to_m6_adapter_20_50_2x2_print_grid_render.png",
+    "nutstore_print_ready_folder": "/home/lachlan/Nutstore Files/Projects/LabCanvas/cage_dock_m10_to_m6_adapter_20_50/run-1-2x2-grid-print-ready",
     "manifest": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/artifacts/manifest.json"
   }
 }
