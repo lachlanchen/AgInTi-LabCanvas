@@ -3090,7 +3090,16 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         generated_status = inspect_generated_video_status(task)
         if generated_status:
             preflight["generated_video_status"] = generated_status
-    if should_prepare_media_resolution(task) and not file_intake_has_explicit_non_image_request_files(task):
+    if should_resolve_recent_video_artifact(task):
+        artifact_resolution = resolve_recent_video_artifact_preflight(task)
+        if bool(artifact_resolution.get("ok")):
+            preflight["resolved_video_artifact"] = artifact_resolution
+            task["preflight"] = preflight
+    if (
+        "resolved_video_artifact" not in preflight
+        and should_prepare_media_resolution(task)
+        and not file_intake_has_explicit_non_image_request_files(task)
+    ):
         media_task = source_scoped_file_intake_task(task) if is_file_intake_task(task) else task
         preflight["media_resolution"] = prepare_media_resolution_preflight(media_task, artifact_dir)
         task["preflight"] = preflight
@@ -3108,10 +3117,6 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         "metadata_prompt_file": str(metadata_path),
         "rule": "Pass correction_prompt_file to --correction-prompt-file and metadata_prompt_file to --metadata-prompt-file.",
     }
-    if should_resolve_recent_video_artifact(task):
-        artifact_resolution = resolve_recent_video_artifact_preflight(task)
-        if bool(artifact_resolution.get("ok")):
-            preflight["resolved_video_artifact"] = artifact_resolution
     if not generate_video_task and should_preflight_autopublish(task):
         if "resolved_video_artifact" not in preflight:
             autopub = run_autopublish_video_preflight(task)
@@ -5939,15 +5944,28 @@ def related_lalachan_material_files(path: Path) -> list[Path]:
     lalachan = Path(os.environ.get("LALACHAN_ROOT", "/home/lachlan/ProjectsLFS/LALACHAN")).expanduser()
     if not lalachan.is_dir():
         return []
+    try:
+        resolved_path = path.expanduser().resolve()
+        resolved_lalachan = lalachan.resolve()
+        is_lalachan_path = resolved_path == resolved_lalachan or resolved_lalachan in resolved_path.parents
+    except OSError:
+        is_lalachan_path = False
+    if not is_lalachan_path and os.environ.get("WECHAT_WORKER_ALLOW_GLOBAL_LALACHAN_CONTEXT_SCAN") != "1":
+        return []
     stem_tokens = video_stem_tokens(path)
     if not stem_tokens:
         return []
     candidates: list[tuple[int, float, Path]] = []
     roots = [lalachan / "references", lalachan / "outputs"]
+    max_seen = int(os.environ.get("WECHAT_WORKER_LALACHAN_CONTEXT_SCAN_MAX_FILES", "4000"))
+    seen = 0
     for root in roots:
         if not root.is_dir():
             continue
         for candidate in root.rglob("*"):
+            seen += 1
+            if max_seen > 0 and seen > max_seen:
+                break
             if candidate.suffix.lower() not in {".md", ".txt", ".json"}:
                 continue
             name_tokens = video_stem_tokens(candidate)
@@ -5961,6 +5979,8 @@ def related_lalachan_material_files(path: Path) -> list[Path]:
             except OSError:
                 mtime = 0.0
             candidates.append((score, mtime, candidate))
+        if max_seen > 0 and seen > max_seen:
+            break
     candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return [item[2] for item in candidates[:12]]
 
@@ -8701,20 +8721,12 @@ def worker_result_is_terminal_blocker(text: str) -> bool:
 
 
 def parse_worker_result(text: str) -> dict[str, Any]:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = stripped.strip("`").strip()
-        if stripped.lower().startswith("json"):
-            stripped = stripped[4:].strip()
-    try:
-        data = json.loads(stripped)
-        if isinstance(data, dict):
-            message = str(data.get("message") or "").strip()
-            confirmation = str(data.get("confirmation") or data.get("confirm") or "").strip()
-            files = [] if json_payload_is_file_intake_receipt(data) else file_entries_from_json(data)
-            return {"message": message, "confirmation": confirmation, "files": files, "raw": text, "data": data}
-    except Exception:
-        pass
+    data = extract_worker_json_payload(text)
+    if isinstance(data, dict):
+        message = str(data.get("message") or "").strip()
+        confirmation = str(data.get("confirmation") or data.get("confirm") or "").strip()
+        files = [] if json_payload_is_file_intake_receipt(data) else file_entries_from_json(data)
+        return {"message": message, "confirmation": confirmation, "files": files, "raw": text, "data": data}
     message_lines = []
     files = []
     for line in text.splitlines():
@@ -8722,7 +8734,76 @@ def parse_worker_result(text: str) -> dict[str, Any]:
             files.append(str(Path(line.split(":", 1)[1].strip()).expanduser()))
         else:
             message_lines.append(line)
-    return {"message": "\n".join(message_lines).strip(), "confirmation": "", "files": files, "raw": text}
+    return {"message": sanitize_worker_chat_message("\n".join(message_lines)), "confirmation": "", "files": files, "raw": text}
+
+
+def extract_worker_json_payload(text: str) -> dict[str, Any] | None:
+    """Extract a worker JSON object even when a backend wraps it in logs.
+
+    AgInTi and other fallback backends may print startup/progress logs before or
+    after the real JSON result. The chat should receive only the structured
+    `message`, `confirmation`, and `files`, not raw backend stdout.
+    """
+    stripped = text.strip()
+    candidates = [stripped]
+    for match in re.finditer(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, flags=re.I | re.S):
+        candidates.append(match.group(1).strip())
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        for index, char in enumerate(candidate):
+            if char != "{":
+                continue
+            try:
+                data, _end = decoder.raw_decode(candidate[index:])
+            except Exception:
+                continue
+            if isinstance(data, dict) and any(key in data for key in ("message", "confirmation", "confirm", "files", "artifacts")):
+                return data
+    return None
+
+
+NOISY_BACKEND_LINE_PATTERNS = (
+    re.compile(r"^\s*(?:\[.*?\]\s*)?(?:debug|trace|info|warn|warning|error)\b[:\s-]", re.I),
+    re.compile(r"^\s*(?:running|executing|command|stdout|stderr|returncode|exit code)\b[:\s-]", re.I),
+    re.compile(r"^\s*(?:aginti|codex|claude|backend|model|reasoning_effort|sandbox)\b[:\s-]", re.I),
+    re.compile(r"^\s*[\w.-]+(?:\.py|\.sh)(?:\s|:)", re.I),
+)
+
+
+def sanitize_worker_chat_message(text: str, *, max_chars: int = 1200) -> str:
+    """Return a compact human-facing message from unstructured backend text."""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    kept: list[str] = []
+    dropped = 0
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if kept and kept[-1]:
+                kept.append("")
+            continue
+        if any(pattern.search(stripped) for pattern in NOISY_BACKEND_LINE_PATTERNS):
+            dropped += 1
+            continue
+        if stripped.startswith(("{", "}", '"backend"', '"stdout_tail"', '"stderr_tail"', '"returncode"')):
+            dropped += 1
+            continue
+        kept.append(stripped)
+    message = "\n".join(kept).strip()
+    if not message and dropped:
+        message = "后台任务已结束，但输出主要是工具日志。我已保存结果记录，没有把原始日志发到群里。"
+    if len(message) > max_chars:
+        message = message[: max_chars - 18].rstrip() + "\n...[已截断]"
+    return message
 
 
 def json_payload_is_file_intake_receipt(data: dict[str, Any]) -> bool:

@@ -222,6 +222,40 @@ should speed the agent up, not replace agent reasoning.
 | Android text fallback | Worker outbox | `send_result_with_retries()` | For verified publish-completion text only, if desktop GUI send fails with a deferable guard/timeout, ADB may send a sanitized ASCII completion after screenshot OCR proves the phone is already open to the exact target chat. |
 | Browser assist | Human + worker | `wechat_browser_assist.py` | Use only for login/CAPTCHA/download confirmation or blocked web UI. |
 
+## Target-Scoped Send API
+
+Use the LabCanvas send API for direct text sends from the CLI, web app, or
+other local tools. Do not call `wechat_gui_send.py` ad hoc unless debugging the
+sender itself.
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat send \
+  --chat EchoMind \
+  --message "收到，我会按这个上下文继续。" \
+  --json
+```
+
+HTTP callers use:
+
+```text
+POST /api/wechat/send
+{"chat":"EchoMind","message":"...","dry_run":false}
+```
+
+The API resolves targets from the ignored private registry
+`agentic_tools/wechat_gui_agent/.private/wechat_send_targets.local.json`, then
+falls back to the direct chat config's `send_target`. Every target must include
+`name`/`query` plus `expected_title` or `expected_title_aliases`; this keeps the
+OCR title guard mandatory. Search is disabled by default. Use `--dry-run` or
+`"dry_run": true` to open/compose without pressing Enter.
+
+Before sending, the API removes obvious backend log lines such as `AgInTi:`,
+`stdout:`, `stderr:`, `backend:`, `model:`, command traces, and script paths.
+Workers should still return structured JSON with `message`, `confirmation`,
+and `files`; `parse_worker_result()` extracts that JSON even when AgInTi,
+Codex, Claude, or a wrapper prints progress logs around it. Raw agent stdout is
+evidence for local artifacts, not chat-facing content.
+
 ## Token And Latency Policy
 
 - Idle polling is local-only and should not spend model tokens.

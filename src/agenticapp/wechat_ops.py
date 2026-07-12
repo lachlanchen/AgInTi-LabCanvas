@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
 
@@ -21,6 +22,7 @@ PRIVATE = TOOL_ROOT / ".private"
 DEFAULT_DIRECT_CONFIG = PRIVATE / "lazy-research-direct-chatops.local.json"
 DEFAULT_CHAT_CONFIG = PRIVATE / "lazy-research-chatops.local.json"
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
+DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 DEFAULT_DISPLAY = ":97"
 DEFAULT_VNC_PORT = 5917
 DEFAULT_NOVNC_PORT = 6107
@@ -138,10 +140,17 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     stack.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     stack.set_defaults(func=cmd_stack)
 
-    send = nested.add_parser("send", help="Send a message or file to the currently visible chat.")
+    send = nested.add_parser("send", help="Send a message to a guarded WeChat group/contact target.")
     send.add_argument("--config", type=Path, default=DEFAULT_CHAT_CONFIG)
+    send.add_argument("--chat", default="", help="Chat key in the private send-target registry.")
+    send.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS)
+    send.add_argument("--target", default="", help="Explicit target name/query. Prefer private registry for normal use.")
+    send.add_argument("--display", default="")
     send.add_argument("--message")
     send.add_argument("--file", type=Path)
+    send.add_argument("--dry-run", action="store_true", help="Open/check target without pressing Enter.")
+    send.add_argument("--allow-search", action="store_true", help="Allow WeChat search fallback for this send.")
+    send.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     send.set_defaults(func=cmd_send)
 
     worker = nested.add_parser("worker", help="Enqueue or process slower backend tasks.")
@@ -399,11 +408,32 @@ def run_wechat_action(action: str, payload: dict[str, Any] | None = None) -> dic
         message = str(payload.get("message") or "").strip()
         if not message:
             raise ValueError("message is required")
-        proc = run_command(
-            [sys.executable, str(SCRIPTS / "wechat_chatops_bridge.py"), "--config", str(DEFAULT_CHAT_CONFIG), "--message", message],
-            capture=True,
+        return send_wechat_message_api(
+            message=message,
+            chat=str(payload.get("chat") or ""),
+            target=payload.get("target") if isinstance(payload.get("target"), dict) else None,
+            target_name=str(payload.get("target") or ""),
+            send_targets=Path(str(payload.get("send_targets") or DEFAULT_SEND_TARGETS)),
+            config=Path(str(payload.get("config") or DEFAULT_CHAT_CONFIG)),
+            display=str(payload.get("display") or ""),
+            dry_run=bool(payload.get("dry_run", False)),
+            allow_search=bool(payload.get("allow_search", False)) if "allow_search" in payload else None,
         )
-        return {"ok": proc.returncode == 0, "action": action, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()}
+    if action == "send-api":
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            raise ValueError("message is required")
+        return send_wechat_message_api(
+            message=message,
+            chat=str(payload.get("chat") or ""),
+            target=payload.get("target") if isinstance(payload.get("target"), dict) else None,
+            target_name=str(payload.get("target") or ""),
+            send_targets=Path(str(payload.get("send_targets") or DEFAULT_SEND_TARGETS)),
+            config=Path(str(payload.get("config") or DEFAULT_CHAT_CONFIG)),
+            display=str(payload.get("display") or ""),
+            dry_run=bool(payload.get("dry_run", False)),
+            allow_search=bool(payload.get("allow_search", False)) if "allow_search" in payload else None,
+        )
     if action == "worker-once":
         proc = run_command([sys.executable, str(SCRIPTS / "wechat_task_worker.py"), "--queue", str(DEFAULT_QUEUE), "--once", "--send"], capture=True)
         result = status_payload()
@@ -417,6 +447,193 @@ def run_wechat_action(action: str, payload: dict[str, Any] | None = None) -> dic
         result.update({"action": action, "task": task})
         return result
     return {"ok": False, "error": f"Unsupported WeChat action: {action}"}
+
+
+def send_wechat_message_api(
+    *,
+    message: str,
+    chat: str = "",
+    target: dict[str, Any] | None = None,
+    target_name: str = "",
+    send_targets: Path = DEFAULT_SEND_TARGETS,
+    config: Path = DEFAULT_CHAT_CONFIG,
+    display: str = "",
+    dry_run: bool = False,
+    allow_search: bool | None = None,
+) -> dict[str, Any]:
+    """Send a target-scoped WeChat message through the guarded GUI sender.
+
+    This is the reusable API boundary for CLI, web, and future local callers.
+    It keeps target resolution, title-guard requirements, dry-run behavior, and
+    stdout parsing in one place instead of sending through ad hoc GUI commands.
+    """
+    clean_message = sanitize_outbound_wechat_message(message)
+    if not clean_message:
+        raise ValueError("message is empty after sanitization")
+    selected_target = resolve_wechat_send_target(chat, target=target, target_name=target_name, send_targets=send_targets, config=config)
+    if allow_search is not None:
+        selected_target["allow_search"] = bool(allow_search)
+        if not allow_search:
+            selected_target["no_search"] = True
+    validate_wechat_send_target(selected_target)
+    config_data = load_json_file(config)
+    display_value = display or str(config_data.get("display") or DEFAULT_DISPLAY)
+    with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
+        target_file = Path(handle.name)
+        json.dump({"message": clean_message, "targets": [selected_target]}, handle, ensure_ascii=False)
+    command = [
+        sys.executable,
+        str(SCRIPTS / "wechat_gui_send.py"),
+        "--display",
+        display_value,
+        "--targets-file",
+        str(target_file),
+        "--prefer-current",
+        "--pause",
+        str(selected_target.get("pause_seconds") or os.environ.get("WECHAT_API_SEND_PAUSE", "0.35")),
+        "--mirror-db",
+        str(configured_runtime_paths()["mirror_db"]),
+    ]
+    if dry_run:
+        command.append("--compose-dry-run")
+    else:
+        command.append("--send")
+    if bool(selected_target.get("allow_search")) and not bool(selected_target.get("no_search")):
+        command.append("--allow-search")
+    else:
+        command.append("--no-search")
+    try:
+        proc = run_command(command, capture=True, env=wechat_api_send_env())
+    finally:
+        target_file.unlink(missing_ok=True)
+    parsed = parse_json_object(proc.stdout)
+    result = {
+        "ok": proc.returncode == 0,
+        "action": "send-api",
+        "dry_run": dry_run,
+        "chat": chat or str(selected_target.get("name") or selected_target.get("target") or ""),
+        "target": public_send_target(selected_target),
+        "message_chars": len(clean_message),
+        "returncode": proc.returncode,
+        "stdout_tail": (proc.stdout or "")[-1200:].strip(),
+        "stderr_tail": (proc.stderr or "")[-1200:].strip(),
+        "manifest": parsed if isinstance(parsed, dict) else None,
+    }
+    if proc.returncode != 0:
+        result["error"] = result["stderr_tail"] or result["stdout_tail"] or f"send failed with exit {proc.returncode}"
+    return result
+
+
+def wechat_api_send_env() -> dict[str, str]:
+    env = os.environ.copy()
+    timeout = int(os.environ.get("WECHAT_API_SEND_TIMEOUT_SECONDS", os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120")))
+    env.setdefault("WECHAT_GUI_SEND_MAX_SECONDS", str(max(45, timeout - 5)))
+    env.setdefault("WECHAT_INITIAL_TITLE_WAIT", os.environ.get("WECHAT_API_INITIAL_TITLE_WAIT", "0.8"))
+    env.setdefault("WECHAT_TITLE_RETRY_SECONDS", os.environ.get("WECHAT_API_TITLE_RETRY_SECONDS", "8.0"))
+    return env
+
+
+def sanitize_outbound_wechat_message(message: str, *, max_chars: int = 1800) -> str:
+    raw = str(message or "").strip()
+    if not raw:
+        return ""
+    lines: list[str] = []
+    dropped = 0
+    noisy = (
+        re.compile(r"^\s*(?:debug|trace|stdout|stderr|returncode|command|executing|running)\b[:\s-]", re.I),
+        re.compile(r"^\s*(?:aginti|codex|claude|backend|model|reasoning_effort|sandbox)\b[:\s-]", re.I),
+        re.compile(r"^\s*[\w./-]+(?:\.py|\.sh)(?:\s|:)", re.I),
+    )
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if any(pattern.search(stripped) for pattern in noisy):
+            dropped += 1
+            continue
+        lines.append(line.rstrip())
+    cleaned = "\n".join(lines).strip()
+    if not cleaned and dropped:
+        cleaned = "后台任务已结束，但输出主要是工具日志；原始日志已过滤。"
+    if len(cleaned) > max_chars:
+        cleaned = cleaned[: max_chars - 18].rstrip() + "\n...[已截断]"
+    return cleaned
+
+
+def resolve_wechat_send_target(
+    chat: str,
+    *,
+    target: dict[str, Any] | None,
+    target_name: str,
+    send_targets: Path,
+    config: Path,
+) -> dict[str, Any]:
+    if target:
+        return dict(target)
+    explicit = target_name.strip()
+    if explicit:
+        return {"name": explicit, "query": explicit, "expected_title": explicit}
+    chat_key = chat.strip()
+    config_data = load_json_file(config)
+    if not chat_key:
+        chat_key = str(config_data.get("chat_name") or "").strip()
+    direct_target = config_data.get("send_target") if isinstance(config_data.get("send_target"), dict) else None
+    registry = load_json_file(send_targets)
+    registry_target = registry.get(chat_key) if isinstance(registry, dict) else None
+    if isinstance(direct_target, dict) and (not chat_key or str(config_data.get("chat_name") or "") == chat_key):
+        if isinstance(registry_target, dict):
+            return {**direct_target, **registry_target}
+        return dict(direct_target)
+    if isinstance(registry_target, dict):
+        return dict(registry_target)
+    for direct_config in PRIVATE.glob("*direct-chatops.local.json"):
+        data = load_json_file(direct_config)
+        if str(data.get("chat_name") or "") != chat_key:
+            continue
+        raw = data.get("send_target")
+        if isinstance(raw, dict):
+            if isinstance(registry_target, dict):
+                return {**raw, **registry_target}
+            return dict(raw)
+    raise ValueError(f"No guarded WeChat send target configured for chat {chat_key!r}")
+
+
+def validate_wechat_send_target(target: dict[str, Any]) -> None:
+    name = str(target.get("name") or target.get("target") or target.get("query") or "").strip()
+    query = str(target.get("query") or name).strip()
+    expected = str(target.get("expected_title") or target.get("title") or name).strip()
+    aliases = target.get("expected_title_aliases") or target.get("title_aliases") or []
+    if not name or not query:
+        raise ValueError("WeChat send target requires name/query")
+    if not expected and not aliases:
+        raise ValueError(f"WeChat send target {name!r} requires expected_title or expected_title_aliases")
+    target.setdefault("name", name)
+    target.setdefault("query", query)
+    target.setdefault("expected_title", expected or name)
+
+
+def public_send_target(target: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": str(target.get("name") or target.get("target") or ""),
+        "query": str(target.get("query") or ""),
+        "expected_title": str(target.get("expected_title") or target.get("title") or ""),
+        "expected_title_aliases": [str(item) for item in target.get("expected_title_aliases", []) or []],
+        "allow_search": bool(target.get("allow_search")) and not bool(target.get("no_search")),
+    }
+
+
+def load_json_file(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def parse_json_object(text: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(text)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -953,12 +1170,30 @@ def cmd_stack(args: argparse.Namespace) -> int:
 def cmd_send(args: argparse.Namespace) -> int:
     if not args.message and not args.file:
         raise SystemExit("Use --message or --file")
-    command = [sys.executable, str(SCRIPTS / "wechat_chatops_bridge.py"), "--config", str(args.config)]
-    if args.message:
-        command += ["--message", args.message]
     if args.file:
-        command += ["--file", str(args.file)]
-    return run_command(command, capture=False).returncode
+        if args.chat or args.target or args.dry_run or getattr(args, "json", False):
+            raise SystemExit("Target-scoped file send is not exposed by this API yet; use worker artifact delivery or current-chat bridge.")
+        command = [sys.executable, str(SCRIPTS / "wechat_chatops_bridge.py"), "--config", str(args.config), "--file", str(args.file)]
+        return run_command(command, capture=False).returncode
+    payload = send_wechat_message_api(
+        message=str(args.message or ""),
+        chat=args.chat,
+        target_name=args.target,
+        send_targets=args.send_targets,
+        config=args.config,
+        display=args.display,
+        dry_run=args.dry_run,
+        allow_search=True if args.allow_search else None,
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        if payload.get("ok"):
+            status = "dry-run" if payload.get("dry_run") else "sent"
+            print(f"wechat send: {status} to {payload.get('chat') or (payload.get('target') or {}).get('name')}")
+        else:
+            print(f"wechat send failed: {payload.get('error') or payload.get('stderr_tail')}", file=sys.stderr)
+    return 0 if payload.get("ok") else 1
 
 
 def cmd_worker(args: argparse.Namespace) -> int:

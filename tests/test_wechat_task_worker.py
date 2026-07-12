@@ -31,6 +31,30 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_parse_worker_result_extracts_json_from_aginti_logs(self) -> None:
+        worker = load_worker()
+        raw = """AgInTi: starting fallback backend
+stdout: preparing tool context
+```json
+{"message": "完成：我已经把结果整理好了。", "files": ["/tmp/result.pdf"], "confirmation": ""}
+```
+stderr: noisy internal trace
+"""
+
+        result = worker.parse_worker_result(raw)
+
+        self.assertEqual(result["message"], "完成：我已经把结果整理好了。")
+        self.assertEqual(result["files"], ["/tmp/result.pdf"])
+        self.assertNotIn("AgInTi: starting", result["message"])
+
+    def test_parse_worker_result_sanitizes_unstructured_backend_logs(self) -> None:
+        worker = load_worker()
+        raw = "aginti: startup\nstdout: hidden details\nUseful result line\nbackend: aginti"
+
+        result = worker.parse_worker_result(raw)
+
+        self.assertEqual(result["message"], "Useful result line")
+
     def test_supervisor_worker_uses_guarded_selftest_entrypoint(self) -> None:
         supervisor = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_supervisor_tmux.sh"
         wrapper = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_worker_guarded_loop.sh"

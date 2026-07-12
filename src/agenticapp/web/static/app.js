@@ -894,7 +894,7 @@ document.getElementById("wechatStackBtn").addEventListener("click", () => runWeC
 document.getElementById("wechatStartBtn").addEventListener("click", () => runWeChatAction("start-hold"));
 document.getElementById("wechatStopBtn").addEventListener("click", () => runWeChatAction("stop-hold"));
 document.getElementById("wechatWorkerBtn").addEventListener("click", () => runWeChatAction("worker-once"));
-document.getElementById("wechatSendBtn").addEventListener("click", () => runWeChatAction("send-message", { message: wechatMessage.value.trim() }));
+document.getElementById("wechatSendBtn").addEventListener("click", () => sendWeChatMessage({ message: wechatMessage.value.trim() }));
 document.getElementById("wechatApproveBtn").addEventListener("click", () => runWeChatAction("approve-next", { note: wechatConfirmNote.value.trim() }));
 document.getElementById("wechatRejectBtn").addEventListener("click", () => runWeChatAction("reject-next", { note: wechatConfirmNote.value.trim() }));
 themeButton.addEventListener("click", toggleTheme);
@@ -1079,6 +1079,26 @@ async function runWeChatAction(action, extra = {}) {
     }
     if (action === "approve-next" || action === "reject-next") {
       wechatConfirmNote.value = "";
+    }
+  } catch (error) {
+    wechatStatus.textContent = t("status.error");
+    wechatOutput.textContent = error.message;
+  }
+}
+
+async function sendWeChatMessage(extra = {}) {
+  if (!extra.message) {
+    wechatOutput.textContent = "Message is empty.";
+    return;
+  }
+  wechatStatus.textContent = t("status.thinking");
+  try {
+    const data = await postJson("/api/wechat/send", extra);
+    renderWeChatStatus(data.status || data);
+    wechatOutput.textContent = summarizeWeChatResult(data);
+    addMessage("assistant", interpolate(t("message.wechatAction"), { action: "send-api", status: data.ok === false ? "error" : "ok" }));
+    if (data.ok !== false) {
+      wechatMessage.value = "";
     }
   } catch (error) {
     wechatStatus.textContent = t("status.error");

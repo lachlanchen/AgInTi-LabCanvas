@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -43,6 +44,59 @@ class WeChatOpsHealthTests(unittest.TestCase):
         self.assertEqual(payload["ready_groups"], 0)
         self.assertEqual(payload["stale_source_groups"], 1)
         self.assertIn("ready also requires", payload["notes"][-1])
+
+
+class WeChatOpsSendApiTests(unittest.TestCase):
+    def test_send_api_uses_guarded_target_registry_and_filters_logs(self) -> None:
+        original_run = wechat_ops.run_command
+        original_runtime_paths = wechat_ops.configured_runtime_paths
+        calls: list[list[str]] = []
+        try:
+            def fake_run(command, *, capture, env=None):
+                calls.append(command)
+                target_file = Path(command[command.index("--targets-file") + 1])
+                payload = json.loads(target_file.read_text(encoding="utf-8"))
+                self.assertEqual(payload["message"], "hello\nuseful line")
+                self.assertEqual(payload["targets"][0]["name"], "EchoMind")
+                return subprocess.CompletedProcess(command, 0, json.dumps({"results": [{"status": "sent"}]}), "")
+
+            wechat_ops.run_command = fake_run  # type: ignore[assignment]
+            wechat_ops.configured_runtime_paths = lambda: {"mirror_db": Path("/tmp/mirror.sqlite"), "queue": Path("/tmp/q.jsonl")}  # type: ignore[assignment]
+            with tempfile.TemporaryDirectory() as tmp:
+                target_file = Path(tmp) / "targets.json"
+                target_file.write_text(
+                    json.dumps({"EchoMind": {"name": "EchoMind", "query": "EchoMind", "expected_title": "EchoMind"}}),
+                    encoding="utf-8",
+                )
+                config = Path(tmp) / "chat.json"
+                config.write_text(json.dumps({"display": ":99"}), encoding="utf-8")
+
+                payload = wechat_ops.send_wechat_message_api(
+                    message="aginti: noisy startup\nhello\nstdout: internal trace\nuseful line",
+                    chat="EchoMind",
+                    send_targets=target_file,
+                    config=config,
+                    dry_run=False,
+                )
+        finally:
+            wechat_ops.run_command = original_run  # type: ignore[assignment]
+            wechat_ops.configured_runtime_paths = original_runtime_paths  # type: ignore[assignment]
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"]["expected_title"], "EchoMind")
+        self.assertIn("--send", calls[0])
+        self.assertIn("--no-search", calls[0])
+
+    def test_send_api_rejects_target_without_title_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                wechat_ops.send_wechat_message_api(
+                    message="hello",
+                    target={"expected_title": ""},
+                    send_targets=Path(tmp) / "missing-targets.json",
+                    config=Path(tmp) / "missing.json",
+                    dry_run=True,
+                )
 
 
 class WeChatOpsApprovalTests(unittest.TestCase):

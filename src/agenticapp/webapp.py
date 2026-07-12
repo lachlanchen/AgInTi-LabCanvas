@@ -141,6 +141,20 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
                 payload = self.read_json()
                 action = str(payload.get("action") or "status")
                 self.send_json(run_wechat_action(action, payload))
+            elif route == "/api/wechat/send":
+                from .wechat_ops import send_wechat_message_api
+
+                payload = self.read_json()
+                self.send_json(
+                    send_wechat_message_api(
+                        message=str(payload.get("message") or ""),
+                        chat=str(payload.get("chat") or ""),
+                        target=payload.get("target") if isinstance(payload.get("target"), dict) else None,
+                        target_name=str(payload.get("target") or ""),
+                        dry_run=bool(payload.get("dry_run", False)),
+                        allow_search=bool(payload.get("allow_search", False)) if "allow_search" in payload else None,
+                    )
+                )
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except (BlenderRenderError, DispatchError, ValueError, KeyError) as exc:
