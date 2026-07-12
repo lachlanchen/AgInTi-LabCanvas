@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="838" height="738" viewBox="0 0 838 738">
+<rect width="100%" height="100%" fill="white"/>
+<rect x="54.00" y="504.00" width="90.00" height="180.00" fill="#edf2f7" stroke="#1a202c" stroke-width="2"/>
+<rect x="72.00" y="54.00" width="54.00" height="450.00" fill="#f7fafc" stroke="#1a202c" stroke-width="2"/>
+<text x="186.0" y="54" font-family="Arial" font-size="17" font-weight="700" fill="#1a202c">Exact M10-to-M6 smooth adapter</text>
+<text x="186.0" y="79" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Lower insert: 10.0 mm diameter x 20.0 mm</text>
+<text x="186.0" y="104" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Upper rod: 6.0 mm diameter x 50.0 mm</text>
+<text x="186.0" y="129" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Total height: 70.0 mm</text>
+<text x="186.0" y="154" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Diameter clearance: 0.0 mm</text>
+<text x="186.0" y="179" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Previous version: 9.8 mm insert for 10.0 mm hole</text>
+<text x="186.0" y="204" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">M10/M6 are smooth diameter classes, not screw threads.</text>
+</svg>

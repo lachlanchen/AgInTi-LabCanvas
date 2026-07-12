@@ -1,0 +1,177 @@
+{
+  "name": "cage_combo_run3_exact_vertical_rods_tight_connectors_exact_adapters",
+  "created_by": "build_run3_exact_vertical_rods_tight_connectors_exact_adapters.py",
+  "parameters": {
+    "name": "cage_combo_run3_exact_vertical_rods_tight_connectors_exact_adapters",
+    "design_intent": "Combined exact print plate: 3x3 vertical rods, 3x3 tight 21 mm connectors, and 2x2 exact M10-to-M6 adapters.",
+    "rod_diameter_mm": 6.0,
+    "rod_length_mm": 50.0,
+    "connector_outer_diameter_mm": 8.0,
+    "connector_socket_diameter_mm": 6.0,
+    "connector_socket_depth_each_end_mm": 10.0,
+    "connector_center_diaphragm_mm": 1.0,
+    "adapter_lower_insert_diameter_mm": 10.0,
+    "adapter_lower_insert_length_mm": 20.0,
+    "adapter_upper_rod_diameter_mm": 6.0,
+    "adapter_upper_rod_length_mm": 50.0,
+    "clearance_between_groups_mm": 10.0,
+    "print_orientation": "All components stand upright exactly as requested."
+  },
+  "sources": {
+    "vertical_rods_3x3": {
+      "step": "cad/designs/cage_rods_50mm_m6/runs/run-1-exact-6mm-vertical-3x3-print-grid-20260712T025438Z/PRINT_THIS_cage_rods_run1_exact_6mm_vertical_3x3_vertical_3x3_print_grid.step",
+      "stl": "cad/designs/cage_rods_50mm_m6/runs/run-1-exact-6mm-vertical-3x3-print-grid-20260712T025438Z/PRINT_THIS_cage_rods_run1_exact_6mm_vertical_3x3_vertical_3x3_print_grid.stl"
+    },
+    "tight_connectors_3x3": {
+      "step": "cad/designs/cage_rod_connector_13mm_diaphragm/runs/run-1-tight-m6-zero-clearance-21mm-20260712T024508Z/PRINT_THIS_cage_rod_connector_run1_tight_m6_zero_clearance_21mm_3x3_print_grid.step",
+      "stl": "cad/designs/cage_rod_connector_13mm_diaphragm/runs/run-1-tight-m6-zero-clearance-21mm-20260712T024508Z/PRINT_THIS_cage_rod_connector_run1_tight_m6_zero_clearance_21mm_3x3_print_grid.stl"
+    },
+    "exact_adapters_2x2": {
+      "step": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-1-exact-m10-to-m6-zero-clearance-20260712T030120Z/PRINT_THIS_cage_dock_adapter_run1_exact_m10_to_m6_zero_clearance_2x2_print_grid.step",
+      "stl": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-1-exact-m10-to-m6-zero-clearance-20260712T030120Z/PRINT_THIS_cage_dock_adapter_run1_exact_m10_to_m6_zero_clearance_2x2_print_grid.stl"
+    }
+  },
+  "layout": {
+    "vertical_rods_3x3": {
+      "component_count": 9,
+      "placed_bounds_mm": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          38.0,
+          37.998,
+          50.0
+        ],
+        "size": [
+          38.0,
+          37.998,
+          50.0
+        ]
+      },
+      "source_stl": "cad/designs/cage_rods_50mm_m6/runs/run-1-exact-6mm-vertical-3x3-print-grid-20260712T025438Z/PRINT_THIS_cage_rods_run1_exact_6mm_vertical_3x3_vertical_3x3_print_grid.stl",
+      "source_step": "cad/designs/cage_rods_50mm_m6/runs/run-1-exact-6mm-vertical-3x3-print-grid-20260712T025438Z/PRINT_THIS_cage_rods_run1_exact_6mm_vertical_3x3_vertical_3x3_print_grid.step"
+    },
+    "tight_connectors_3x3": {
+      "component_count": 9,
+      "placed_bounds_mm": {
+        "min": [
+          48.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          88.0,
+          39.998,
+          21.0
+        ],
+        "size": [
+          40.0,
+          39.998,
+          21.0
+        ]
+      },
+      "source_stl": "cad/designs/cage_rod_connector_13mm_diaphragm/runs/run-1-tight-m6-zero-clearance-21mm-20260712T024508Z/PRINT_THIS_cage_rod_connector_run1_tight_m6_zero_clearance_21mm_3x3_print_grid.stl",
+      "source_step": "cad/designs/cage_rod_connector_13mm_diaphragm/runs/run-1-tight-m6-zero-clearance-21mm-20260712T024508Z/PRINT_THIS_cage_rod_connector_run1_tight_m6_zero_clearance_21mm_3x3_print_grid.step"
+    },
+    "exact_adapters_2x2": {
+      "component_count": 4,
+      "placed_bounds_mm": {
+        "min": [
+          98.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          133.0,
+          34.997,
+          70.0
+        ],
+        "size": [
+          35.0,
+          34.997,
+          70.0
+        ]
+      },
+      "source_stl": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-1-exact-m10-to-m6-zero-clearance-20260712T030120Z/PRINT_THIS_cage_dock_adapter_run1_exact_m10_to_m6_zero_clearance_2x2_print_grid.stl",
+      "source_step": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-1-exact-m10-to-m6-zero-clearance-20260712T030120Z/PRINT_THIS_cage_dock_adapter_run1_exact_m10_to_m6_zero_clearance_2x2_print_grid.step"
+    },
+    "combined": {
+      "component_count": 22,
+      "watertight": true,
+      "placed_bounds_mm": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          133.0,
+          39.998,
+          70.0
+        ],
+        "size": [
+          133.0,
+          39.998,
+          70.0
+        ]
+      }
+    }
+  },
+  "validation": {
+    "step": {
+      "valid": true,
+      "solids": 22,
+      "bbox_mm": [
+        133.0,
+        40.0,
+        70.0
+      ]
+    },
+    "stl": {
+      "watertight": true,
+      "component_count": 22,
+      "bounds": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          133.0,
+          39.998,
+          70.0
+        ],
+        "size": [
+          133.0,
+          39.998,
+          70.0
+        ]
+      },
+      "vertices": 19152,
+      "faces": 38216
+    },
+    "threemf": {
+      "entries": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ],
+      "has_model": true
+    }
+  },
+  "outputs": {
+    "print_step": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-3-exact-vertical-rods-tight-connectors-exact-adapters-20260712T030120Z/artifacts/cage_combo_run3_exact_vertical_rods_tight_connectors_exact_adapters.step",
+    "print_stl": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-3-exact-vertical-rods-tight-connectors-exact-adapters-20260712T030120Z/artifacts/cage_combo_run3_exact_vertical_rods_tight_connectors_exact_adapters.stl",
+    "print_3mf": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-3-exact-vertical-rods-tight-connectors-exact-adapters-20260712T030120Z/artifacts/cage_combo_run3_exact_vertical_rods_tight_connectors_exact_adapters.3mf",
+    "print_this_step": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-3-exact-vertical-rods-tight-connectors-exact-adapters-20260712T030120Z/PRINT_THIS_cage_combo_run3_exact_vertical_rods_tight_connectors_exact_adapters.step",
+    "print_this_stl": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-3-exact-vertical-rods-tight-connectors-exact-adapters-20260712T030120Z/PRINT_THIS_cage_combo_run3_exact_vertical_rods_tight_connectors_exact_adapters.stl",
+    "print_this_3mf": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-3-exact-vertical-rods-tight-connectors-exact-adapters-20260712T030120Z/PRINT_THIS_cage_combo_run3_exact_vertical_rods_tight_connectors_exact_adapters.3mf",
+    "print_this_render": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-3-exact-vertical-rods-tight-connectors-exact-adapters-20260712T030120Z/PRINT_THIS_cage_combo_run3_exact_vertical_rods_tight_connectors_exact_adapters_render.png",
+    "readme": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-3-exact-vertical-rods-tight-connectors-exact-adapters-20260712T030120Z/README.md",
+    "manifest": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-3-exact-vertical-rods-tight-connectors-exact-adapters-20260712T030120Z/artifacts/manifest.json",
+    "nutstore_print_ready_folder": "/home/lachlan/Nutstore Files/Projects/LabCanvas/cage_m10m6_adapter_connector_rods_combo_print_plate/run-3-exact-vertical-rods-tight-connectors-exact-adapters-20260712T030120Z"
+  }
+}
