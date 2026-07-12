@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="874" height="570" viewBox="0 0 874 570">
+<rect width="100%" height="100%" fill="white"/>
+<rect x="54.00" y="54.00" width="176.00" height="462.00" fill="#f7fafc" stroke="#1a202c" stroke-width="2"/>
+<rect x="76.00" y="296.00" width="132.00" height="220.00" fill="#ffffff" stroke="#3182ce" stroke-width="2"/>
+<rect x="76.00" y="54.00" width="132.00" height="220.00" fill="#ffffff" stroke="#3182ce" stroke-width="2"/>
+<rect x="76.00" y="274.00" width="132.00" height="22.00" fill="rgba(221,107,32,0.22)" stroke="#dd6b20" stroke-width="2"/>
+<line x1="142.00" y1="516.00" x2="142.00" y2="54.00" stroke="#718096" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="270.00" y="54.00" font-family="Arial" font-size="17" font-weight="700" fill="#1a202c">Tight cage rod connector section</text>
+<text x="270.00" y="79.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Outer cylinder: OD 8.0 mm x H 21.0 mm</text>
+<text x="270.00" y="104.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Rod pockets: 6.0 mm diameter x 10.0 mm deep</text>
+<text x="270.00" y="129.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Center diaphragm: 1.0 mm solid web</text>
+<text x="270.00" y="154.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Radial wall: 1.0 mm</text>
+<text x="270.00" y="179.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Diameter clearance: 0.0 mm, exact nominal M6/6.0 mm socket</text>
+<text x="270.00" y="204.00" font-family="Arial" font-size="13" font-weight="400" fill="#1a202c">Previous loose run used 6.4 mm sockets.</text>
+</svg>
