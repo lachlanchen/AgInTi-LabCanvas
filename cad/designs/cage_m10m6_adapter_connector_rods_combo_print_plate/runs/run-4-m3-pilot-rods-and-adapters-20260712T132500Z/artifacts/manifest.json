@@ -1,0 +1,149 @@
+{
+  "name": "cage_combo_run4_m3_pilot_rods_and_adapters",
+  "created_by": "build_run4_m3_pilot_rods_and_adapters.py",
+  "parameters": {
+    "name": "cage_combo_run4_m3_pilot_rods_and_adapters",
+    "design_intent": "Single print plate with 3x3 vertical 6 mm rods and 2x2 M10-to-M6 adapters, all carrying 2.8 mm x 6 mm M3 pilot holes.",
+    "rod_diameter_mm": 6.0,
+    "rod_length_mm": 50.0,
+    "adapter_lower_insert_diameter_mm": 10.0,
+    "adapter_lower_insert_length_mm": 20.0,
+    "adapter_upper_rod_diameter_mm": 6.0,
+    "adapter_upper_rod_length_mm": 50.0,
+    "m3_pilot_hole_diameter_mm": 2.8,
+    "m3_pilot_hole_depth_mm": 6.0,
+    "clearance_between_groups_mm": 12.0,
+    "print_orientation": "All parts stand upright. Rods are a 3x3 grid; adapters are a 2x2 grid."
+  },
+  "sources": {
+    "m3_pilot_rods_3x3": {
+      "step": "cad/designs/cage_rods_50mm_m6/runs/run-2-2p8mm-m3-pilot-both-ends-vertical-3x3-20260712T132500Z/PRINT_THIS_cage_rods_run2_2p8mm_m3_pilot_both_ends_vertical_3x3_print_grid.step",
+      "stl": "cad/designs/cage_rods_50mm_m6/runs/run-2-2p8mm-m3-pilot-both-ends-vertical-3x3-20260712T132500Z/PRINT_THIS_cage_rods_run2_2p8mm_m3_pilot_both_ends_vertical_3x3_print_grid.stl"
+    },
+    "m3_pilot_adapters_2x2": {
+      "step": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-2-2p8mm-m3-pilot-m6-end-20260712T132500Z/PRINT_THIS_cage_dock_adapter_run2_2p8mm_m3_pilot_m6_end_2x2_print_grid.step",
+      "stl": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-2-2p8mm-m3-pilot-m6-end-20260712T132500Z/PRINT_THIS_cage_dock_adapter_run2_2p8mm_m3_pilot_m6_end_2x2_print_grid.stl"
+    }
+  },
+  "layout": {
+    "m3_pilot_rods_3x3": {
+      "component_count": 9,
+      "placed_bounds_mm": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          38.0,
+          37.998,
+          50.0
+        ],
+        "size": [
+          38.0,
+          37.998,
+          50.0
+        ]
+      },
+      "source_stl": "cad/designs/cage_rods_50mm_m6/runs/run-2-2p8mm-m3-pilot-both-ends-vertical-3x3-20260712T132500Z/PRINT_THIS_cage_rods_run2_2p8mm_m3_pilot_both_ends_vertical_3x3_print_grid.stl",
+      "source_step": "cad/designs/cage_rods_50mm_m6/runs/run-2-2p8mm-m3-pilot-both-ends-vertical-3x3-20260712T132500Z/PRINT_THIS_cage_rods_run2_2p8mm_m3_pilot_both_ends_vertical_3x3_print_grid.step"
+    },
+    "m3_pilot_adapters_2x2": {
+      "component_count": 4,
+      "placed_bounds_mm": {
+        "min": [
+          50.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          85.0,
+          34.997,
+          70.0
+        ],
+        "size": [
+          35.0,
+          34.997,
+          70.0
+        ]
+      },
+      "source_stl": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-2-2p8mm-m3-pilot-m6-end-20260712T132500Z/PRINT_THIS_cage_dock_adapter_run2_2p8mm_m3_pilot_m6_end_2x2_print_grid.stl",
+      "source_step": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-2-2p8mm-m3-pilot-m6-end-20260712T132500Z/PRINT_THIS_cage_dock_adapter_run2_2p8mm_m3_pilot_m6_end_2x2_print_grid.step"
+    },
+    "combined": {
+      "component_count": 13,
+      "watertight": true,
+      "placed_bounds_mm": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          85.0,
+          37.998,
+          70.0
+        ],
+        "size": [
+          85.0,
+          37.998,
+          70.0
+        ]
+      }
+    }
+  },
+  "validation": {
+    "step": {
+      "valid": true,
+      "solids": 13,
+      "bbox_mm": [
+        85.0,
+        38.0,
+        70.0
+      ]
+    },
+    "stl": {
+      "watertight": true,
+      "component_count": 13,
+      "bounds": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          85.0,
+          37.998,
+          70.0
+        ],
+        "size": [
+          85.0,
+          37.998,
+          70.0
+        ]
+      },
+      "vertices": 17262,
+      "faces": 34472
+    },
+    "threemf": {
+      "entries": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ],
+      "has_model": true
+    }
+  },
+  "outputs": {
+    "print_step": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-4-m3-pilot-rods-and-adapters-20260712T132500Z/artifacts/cage_combo_run4_m3_pilot_rods_and_adapters.step",
+    "print_stl": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-4-m3-pilot-rods-and-adapters-20260712T132500Z/artifacts/cage_combo_run4_m3_pilot_rods_and_adapters.stl",
+    "print_3mf": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-4-m3-pilot-rods-and-adapters-20260712T132500Z/artifacts/cage_combo_run4_m3_pilot_rods_and_adapters.3mf",
+    "print_this_step": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-4-m3-pilot-rods-and-adapters-20260712T132500Z/PRINT_THIS_cage_combo_run4_m3_pilot_rods_and_adapters.step",
+    "print_this_stl": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-4-m3-pilot-rods-and-adapters-20260712T132500Z/PRINT_THIS_cage_combo_run4_m3_pilot_rods_and_adapters.stl",
+    "print_this_3mf": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-4-m3-pilot-rods-and-adapters-20260712T132500Z/PRINT_THIS_cage_combo_run4_m3_pilot_rods_and_adapters.3mf",
+    "print_this_render": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-4-m3-pilot-rods-and-adapters-20260712T132500Z/PRINT_THIS_cage_combo_run4_m3_pilot_rods_and_adapters_render.png",
+    "readme": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-4-m3-pilot-rods-and-adapters-20260712T132500Z/README.md",
+    "manifest": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-4-m3-pilot-rods-and-adapters-20260712T132500Z/artifacts/manifest.json",
+    "nutstore_print_ready_folder": "/home/lachlan/Nutstore Files/Projects/LabCanvas/cage_m10m6_adapter_connector_rods_combo_print_plate/run-4-m3-pilot-rods-and-adapters-20260712T132500Z"
+  }
+}
