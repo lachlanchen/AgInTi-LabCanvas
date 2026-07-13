@@ -4584,6 +4584,7 @@ stderr: noisy internal trace
         original_transient_max = worker.os.environ.get("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES")
         original_recovery = worker.os.environ.get("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES")
         original_stale = worker.os.environ.get("WECHAT_WORKER_FAILED_SEND_STALE_RECOVERY_SECONDS")
+        original_allow_stale = worker.os.environ.get("WECHAT_WORKER_ALLOW_STALE_SEND_RECOVERY")
         original_lock_busy = worker.gui_send_lock_busy
         try:
             worker.os.environ["WECHAT_WORKER_BUSY_SEND_BACKOFF_SECONDS"] = "0"
@@ -4591,6 +4592,7 @@ stderr: noisy internal trace
             worker.os.environ["WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES"] = "5"
             worker.os.environ["WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES"] = "1"
             worker.os.environ["WECHAT_WORKER_FAILED_SEND_STALE_RECOVERY_SECONDS"] = "60"
+            worker.os.environ["WECHAT_WORKER_ALLOW_STALE_SEND_RECOVERY"] = "1"
             worker.gui_send_lock_busy = lambda: False
             with tempfile.TemporaryDirectory() as tmp:
                 queue = Path(tmp) / "queue.jsonl"
@@ -4644,6 +4646,10 @@ stderr: noisy internal trace
                 worker.os.environ.pop("WECHAT_WORKER_FAILED_SEND_STALE_RECOVERY_SECONDS", None)
             else:
                 worker.os.environ["WECHAT_WORKER_FAILED_SEND_STALE_RECOVERY_SECONDS"] = original_stale
+            if original_allow_stale is None:
+                worker.os.environ.pop("WECHAT_WORKER_ALLOW_STALE_SEND_RECOVERY", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_ALLOW_STALE_SEND_RECOVERY"] = original_allow_stale
 
     def test_claim_next_deferred_send_stops_transient_retry_loop(self) -> None:
         worker = load_worker()
@@ -5583,6 +5589,107 @@ stderr: noisy internal trace
         self.assertIsNone(second)
         self.assertEqual(rows[0]["status"], "in_progress")
 
+    def test_claim_next_pending_expires_old_backlog_without_running_it(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            worker.os.environ,
+            {"WECHAT_WORKER_PENDING_TASK_TTL_SECONDS": "60"},
+            clear=False,
+        ):
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "old-task",
+                        "chat": "EchoMind",
+                        "request": "old request",
+                        "status": "pending",
+                        "created_at": "2000-01-01T00:00:00",
+                        "expires_at": "2000-01-01T00:01:00",
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertIsNone(claimed)
+        self.assertEqual(stored["status"], "expired_stale")
+        self.assertEqual(stored["expire_reason"], "pending_task_ttl_exceeded")
+
+    def test_claim_next_deferred_send_expires_old_outbox_without_sending(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            worker.os.environ,
+            {
+                "WECHAT_WORKER_DEFERRED_SEND_TTL_SECONDS": "60",
+                "WECHAT_WORKER_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS": "0",
+            },
+            clear=False,
+        ):
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "old-send",
+                        "chat": "EchoMind",
+                        "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                        "created_at": "2000-01-01T00:00:00",
+                        "last_send_attempt_at": "2000-01-01T00:00:00",
+                        "send_expires_at": "2000-01-01T00:01:00",
+                        "send_deferred_reason": "gui_send_timeout",
+                        "result": {"message": "old reply", "confirmation": "", "files": []},
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_deferred_send(queue)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertIsNone(claimed)
+        self.assertEqual(stored["status"], "send_expired")
+        self.assertEqual(stored["expire_reason"], "deferred_send_ttl_exceeded")
+
+    def test_deferred_send_global_cooldown_prevents_restart_burst(self) -> None:
+        worker = load_worker()
+        now_text = datetime.now().isoformat(timespec="seconds")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            worker.os.environ,
+            {
+                "WECHAT_WORKER_DEFERRED_SEND_TTL_SECONDS": "3600",
+                "WECHAT_WORKER_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS": "30",
+                "WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS": "0",
+            },
+            clear=False,
+        ), mock.patch.object(worker, "gui_send_lock_busy", return_value=False):
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "just-flushed",
+                        "chat": "懒人科研",
+                        "status": "done",
+                        "send_retry_claimed_at": now_text,
+                    },
+                    {
+                        "id": "recent-send",
+                        "chat": "EchoMind",
+                        "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                        "created_at": now_text,
+                        "last_send_attempt_at": now_text,
+                        "send_deferred_reason": "gui_send_timeout",
+                        "result": {"message": "reply", "confirmation": "", "files": []},
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_deferred_send(queue)
+
+        self.assertIsNone(claimed)
+
     def test_claim_next_pending_recovers_stale_in_progress_task(self) -> None:
         worker = load_worker()
         original = worker.os.environ.get("WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS")
@@ -5621,7 +5728,7 @@ stderr: noisy internal trace
         self.assertEqual(claimed["claim_history"][0]["worker_id"], "pid:old")
         self.assertEqual(rows[0]["claim_history"][0]["worker_id"], "pid:old")
 
-    def test_claim_next_pending_recovers_dead_worker_pid_immediately(self) -> None:
+    def test_claim_next_pending_abandons_dead_worker_pid_without_replay(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "queue.jsonl"
@@ -5645,12 +5752,9 @@ stderr: noisy internal trace
                 claimed = worker.claim_next_pending(queue)
             rows = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
 
-        self.assertIsNotNone(claimed)
-        assert claimed is not None
-        self.assertEqual(claimed["id"], "task-1")
-        self.assertEqual(claimed["status"], "in_progress")
-        self.assertEqual(claimed["claim_history"][0]["worker_id"], "pid:999999")
-        self.assertEqual(rows[0]["claim_history"][0]["worker_id"], "pid:999999")
+        self.assertIsNone(claimed)
+        self.assertEqual(rows[0]["status"], "worker_abandoned")
+        self.assertEqual(rows[0]["abandoned_reason"], "claiming_worker_process_ended")
 
     def test_worker_sandbox_can_be_downgraded_by_env(self) -> None:
         worker = load_worker()

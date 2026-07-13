@@ -15,9 +15,11 @@ fi
 
 if [[ "${WECHAT_WORKER_SKIP_SELFTEST:-0}" != "1" ]]; then
   echo "[$(date -Is)] running worker selftest suite=all" >> "$LOG_DIR/supervisor-worker-selftest.log"
-  PYTHONPATH="$ROOT/src:${PYTHONPATH:-}" python3 -m agenticapp wechat selftest --suite all --json \
+  WECHAT_WORKER_EXPIRE_LEGACY_QUEUE=0 \
+    PYTHONPATH="$ROOT/src:${PYTHONPATH:-}" python3 -m agenticapp wechat selftest --suite all --json \
     >> "$LOG_DIR/supervisor-worker-selftest.log" 2>&1
   echo "[$(date -Is)] worker selftest suite=all passed" >> "$LOG_DIR/supervisor-worker-selftest.log"
 fi
 
+export WECHAT_WORKER_EXPIRE_LEGACY_QUEUE="${WECHAT_WORKER_EXPIRE_LEGACY_QUEUE:-1}"
 exec python3 -u "$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py" "$@"

@@ -31,6 +31,7 @@ CHAT_SYNC_MAX_TARGETS_PER_CYCLE="${WECHAT_CHAT_SYNC_MAX_TARGETS_PER_CYCLE:-0}"
 WORKER_COUNT="${WECHAT_WORKER_COUNT:-2}"
 export WECHAT_DECRYPT_REFRESH_INTERVAL="${WECHAT_DECRYPT_REFRESH_INTERVAL:-1}"
 export WECHAT_RESTART_DELAY="${WECHAT_RESTART_DELAY:-2}"
+export WECHAT_WORKER_EXPIRE_LEGACY_QUEUE="${WECHAT_WORKER_EXPIRE_LEGACY_QUEUE:-1}"
 mkdir -p "$LOG_DIR"
 
 if [[ ! -x "$PY" ]]; then
@@ -113,6 +114,9 @@ Environment:
   WECHAT_CHAT_SYNC_PRIORITY   optional comma-separated chat names to dry-open first
   WECHAT_CHAT_SYNC_MAX_TARGETS_PER_CYCLE  max chats to dry-open per pass, 0 for all
   WECHAT_WORKER_COUNT         parallel queue workers, default 2
+  WECHAT_WORKER_PENDING_TASK_TTL_SECONDS  expire ordinary task backlog, default 900
+  WECHAT_WORKER_DEFERRED_SEND_TTL_SECONDS expire outbound backlog, default 600
+  WECHAT_WORKER_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS deferred-send spacing, default 30
 EOF
 }
 

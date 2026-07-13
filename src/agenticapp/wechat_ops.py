@@ -822,8 +822,8 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": worker_prefix + "test_orchestrator_resumes_codex_session_for_nontrivial_stage",
         },
         {
-            "id": "dead_worker_claim_reclaimed",
-            "test": worker_prefix + "test_claim_next_pending_recovers_dead_worker_pid_immediately",
+            "id": "dead_worker_claim_abandoned",
+            "test": worker_prefix + "test_claim_next_pending_abandons_dead_worker_pid_without_replay",
         },
         {
             "id": "gui_send_alarm_aligned",

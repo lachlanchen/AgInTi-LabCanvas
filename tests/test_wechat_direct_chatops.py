@@ -82,6 +82,26 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             )
         )
 
+    def test_monitor_checkpoints_inbound_cursor_before_agent_failure(self) -> None:
+        config = self.base_config()
+        state_path = Path(self._tmpdir.name) / "direct.state.json"
+        config["_runtime_state_path"] = str(state_path)
+        row = self.row("Please summarize this", local_id=42, server_id="srv-42")
+        state: dict[str, object] = {"last_local_id": 41}
+
+        with (
+            mock.patch.object(direct_chatops, "read_new_messages", return_value=[row]),
+            mock.patch.object(direct_chatops, "sync_row_to_mirror"),
+            mock.patch.object(direct_chatops, "read_recent_history", return_value=[row]),
+            mock.patch.object(direct_chatops, "run_codex", side_effect=TimeoutError("network stalled")),
+        ):
+            with self.assertRaises(TimeoutError):
+                direct_chatops.run_once(config, state, send=False, no_decrypt=True)
+
+        saved = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["last_local_id"], 42)
+        self.assertEqual(saved["inbound_checkpoint_count"], 1)
+
     def test_echomind_routes_explicit_backend_requests(self) -> None:
         config = self.base_config()
         config["agent_route_enabled"] = True

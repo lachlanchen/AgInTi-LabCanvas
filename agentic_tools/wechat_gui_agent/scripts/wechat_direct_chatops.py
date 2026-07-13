@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import html
 import json
 import os
@@ -42,6 +42,8 @@ BACKEND_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wech
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_POLL_SECONDS = 0.8
 DEFAULT_CATCHUP_POLL_SECONDS = 0.1
+DEFAULT_WORKER_PENDING_TTL_SECONDS = 15 * 60
+DEFAULT_WORKER_DEFERRED_SEND_TTL_SECONDS = 10 * 60
 GUI_SEND_LOCK = PRIVATE / "wechat_gui_send.lock"
 INTERRUPTIBLE_TASK_STATUSES = {
     "pending",
@@ -90,6 +92,7 @@ def main() -> int:
     poll_seconds = max(0.05, float(config.get("poll_seconds", DEFAULT_POLL_SECONDS)))
     catchup_poll_seconds = max(0.01, float(config.get("catchup_poll_seconds", DEFAULT_CATCHUP_POLL_SECONDS)))
     state_path = args.state or Path(config.get("state_path") or DEFAULT_STATE)
+    config["_runtime_state_path"] = str(state_path)
     while True:
         state = load_state(state_path)
         if args.force_latest_user_burst:
@@ -144,6 +147,9 @@ def load_config(path: Path) -> dict[str, Any]:
         },
         "poll_seconds": float(os.environ.get("WECHAT_DIRECT_POLL_SECONDS", DEFAULT_POLL_SECONDS)),
         "catchup_poll_seconds": float(os.environ.get("WECHAT_DIRECT_CATCHUP_POLL_SECONDS", DEFAULT_CATCHUP_POLL_SECONDS)),
+        "checkpoint_inbound_before_route": True,
+        "worker_pending_ttl_seconds": DEFAULT_WORKER_PENDING_TTL_SECONDS,
+        "worker_deferred_send_ttl_seconds": DEFAULT_WORKER_DEFERRED_SEND_TTL_SECONDS,
         "send_pause_seconds": 0.35,
         "send_initial_title_wait_seconds": 0.45,
         "send_title_retry_seconds": 3.2,
@@ -371,6 +377,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         metrics["voice_enrich_ms"] = elapsed_ms(started)
     for row in new_rows:
         sync_row_to_mirror(config, row)
+    checkpoint_inbound_before_route(config, state, new_rows, metrics)
     organizer_result: dict[str, Any] = {}
     if new_rows and organizer_enabled(config):
         started = time.monotonic()
@@ -547,7 +554,10 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
     if new_rows:
         current_last_local_id = int(state.get("last_local_id") or 0)
         proposed_last_local_id = max(current_last_local_id, int(processed_local_id or 0), max(row["local_id"] for row in new_rows))
-        state["last_local_id"] = retain_pending_voice_cursor(config, state, new_rows, proposed_last_local_id, metrics)
+        if metrics.get("inbound_checkpointed"):
+            state["last_local_id"] = proposed_last_local_id
+        else:
+            state["last_local_id"] = retain_pending_voice_cursor(config, state, new_rows, proposed_last_local_id, metrics)
         state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
     state["last_loop_at"] = datetime.now().isoformat(timespec="seconds")
     metrics["total_ms"] = elapsed_ms(loop_started)
@@ -594,6 +604,32 @@ def retain_pending_voice_cursor(
 
     remember_pending_voice_rows(config, state, pending, metrics)
     return int(proposed_last_local_id)
+
+
+def checkpoint_inbound_before_route(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    rows: list[dict[str, Any]],
+    metrics: dict[str, Any],
+) -> None:
+    """Consume inbound rows before agent or GUI network work begins.
+
+    Explicit replay remains available, but a monitor restart must not replay an
+    old burst and enqueue or send it again.
+    """
+    if not rows or not bool(config.get("checkpoint_inbound_before_route", True)):
+        return
+    current = int(state.get("last_local_id") or 0)
+    proposed = max(current, max(int(row.get("local_id") or 0) for row in rows))
+    state["last_local_id"] = retain_pending_voice_cursor(config, state, rows, proposed, metrics)
+    state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
+    state["inbound_checkpoint_at"] = state["last_seen_at"]
+    state["inbound_checkpoint_count"] = len(rows)
+    metrics["inbound_checkpointed"] = 1
+    raw_path = str(config.get("_runtime_state_path") or "").strip()
+    if raw_path:
+        save_state(Path(raw_path), state)
+        metrics["inbound_checkpoint_saved"] = 1
 
 
 def retry_pending_voice_backlog(
@@ -2465,6 +2501,10 @@ def update_third_party_publish_task(
                 if approved:
                     route["reason"] = (str(route.get("reason") or "") + " | third-party confirmation received").strip()
                     task["status"] = "pending"
+                    task["expires_at"] = (
+                        datetime.now()
+                        + timedelta(seconds=int(config.get("worker_pending_ttl_seconds", DEFAULT_WORKER_PENDING_TTL_SECONDS)))
+                    ).isoformat(timespec="seconds")
                     task["activated_at"] = now_text
                     task.pop("completed_at", None)
                     task.pop("claimed_at", None)
@@ -5159,6 +5199,10 @@ def enqueue_worker_task(
         "request": task_text,
         "status": "pending",
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "expires_at": (
+            datetime.now()
+            + timedelta(seconds=int(config.get("worker_pending_ttl_seconds", DEFAULT_WORKER_PENDING_TTL_SECONDS)))
+        ).isoformat(timespec="seconds"),
         "agent_backend": backend,
         "agent_backend_config": agent_backend_config(config, backend),
         "agent_bridge_mode": agent_bridge_mode(config),
@@ -5278,6 +5322,9 @@ def append_same_chat_task_interruption(tasks: list[dict[str, Any]], incoming: di
         status = str(candidate.get("status") or "")
         if status in REQUEUE_ON_INTERRUPT_STATUSES:
             candidate["status"] = "pending"
+            candidate["expires_at"] = (
+                datetime.now() + timedelta(seconds=DEFAULT_WORKER_PENDING_TTL_SECONDS)
+            ).isoformat(timespec="seconds")
             candidate["reprocess_requested_at"] = interruption["at"]
             candidate["reprocess_reason"] = "same_chat_interruption"
             candidate.pop("completed_at", None)
@@ -5740,6 +5787,12 @@ def enqueue_deferred_reply(
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "completed_at": datetime.now().isoformat(timespec="seconds"),
         "last_send_attempt_at": datetime.now().isoformat(timespec="seconds"),
+        "send_expires_at": (
+            datetime.now()
+            + timedelta(
+                seconds=int(config.get("worker_deferred_send_ttl_seconds", DEFAULT_WORKER_DEFERRED_SEND_TTL_SECONDS))
+            )
+        ).isoformat(timespec="seconds"),
         "send_deferred_reason": reason,
         "route": build_route_contract(config),
         "route_decision": route_decision or {"route_kind": "other_worker", "reason": reason},

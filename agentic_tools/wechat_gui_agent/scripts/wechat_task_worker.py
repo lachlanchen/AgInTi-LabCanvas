@@ -53,6 +53,11 @@ GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS = "generation_poststage_pending"
 EXISTING_VIDEO_PUBLISH_PENDING_STATUS = "publish_poststage_pending"
 DEFAULT_STALE_IN_PROGRESS_SECONDS = 60 * 60
 DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS = 5 * 60
+DEFAULT_PENDING_TASK_TTL_SECONDS = 15 * 60
+DEFAULT_DEFERRED_SEND_TTL_SECONDS = 10 * 60
+DEFAULT_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS = 30
+DEFAULT_TRANSIENT_SEND_MAX_RETRIES = 2
+DEFAULT_VERIFIED_PUBLISH_SEND_MAX_RETRIES = 3
 DEFAULT_GENERATED_VIDEO_POLL_BACKOFF_SECONDS = 5 * 60
 DEFAULT_GENERATED_VIDEO_WATCH_POLLS_PER_CYCLE = 1
 DEFAULT_GENERATED_VIDEO_LAZYEDIT_TIMEOUT_SECONDS = 6 * 60 * 60
@@ -222,6 +227,7 @@ def main() -> int:
             "request": args.enqueue,
             "status": "pending",
             "created_at": datetime.now().isoformat(timespec="seconds"),
+            "expires_at": queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS),
         }
         append_jsonl(args.queue, task)
         print(json.dumps(task, ensure_ascii=False, indent=2))
@@ -308,6 +314,8 @@ def reprocess_task(queue: Path, task_id: str, *, reason: str = "") -> dict[str, 
         "publish_poststage_last_outcome",
         "send_suppressed_reason",
         "send_suppressed_at",
+        "expires_at",
+        "send_expires_at",
     ]
     with lock_path.open("w", encoding="utf-8") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -329,6 +337,7 @@ def reprocess_task(queue: Path, task_id: str, *, reason: str = "") -> dict[str, 
             for field in stale_fields:
                 task.pop(field, None)
             task["status"] = "pending"
+            task["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
             task["reprocess_requested_at"] = now_text
             task["reprocess_reason"] = reason or "manual_reprocess"
             task["queue_path"] = str(queue)
@@ -532,6 +541,7 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
     if errors:
         task["send_errors"] = errors
         task["last_send_attempt_at"] = datetime.now().isoformat(timespec="seconds")
+        task["send_expires_at"] = queue_deadline_iso(DEFAULT_DEFERRED_SEND_TTL_SECONDS)
         if result_requires_file_delivery(task, result) and required_file_delivery_complete(task, result):
             task["post_artifact_send_errors"] = errors
             if send_errors_indicate_deferable(errors):
@@ -550,6 +560,7 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
             task["status"] = "send_failed"
         return
     poststage = generated_video_poststage_from_result(result)
+    task.pop("send_expires_at", None)
     if poststage:
         if generated_video_poststage_delivery_complete(task, poststage):
             task["status"] = GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS
@@ -560,9 +571,11 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
         else:
             task["status"] = SEND_DEFERRED_ARTIFACT_STATUS
             task["send_deferred_reason"] = "required_artifact_delivery_before_poststage"
+            task["send_expires_at"] = queue_deadline_iso(DEFAULT_DEFERRED_SEND_TTL_SECONDS)
         return
     if result_requires_file_delivery(task, result) and not required_file_delivery_complete(task, result):
         task["status"] = SEND_DEFERRED_ARTIFACT_STATUS
+        task["send_expires_at"] = queue_deadline_iso(DEFAULT_DEFERRED_SEND_TTL_SECONDS)
         task["send_deferred_reason"] = "required_artifact_delivery"
         task["last_send_attempt_at"] = datetime.now().isoformat(timespec="seconds")
         return
@@ -1618,6 +1631,7 @@ def merge_existing_pending_interruptions(path: Path) -> int:
             status = str(target.get("status") or "")
             if status in REQUEUE_ON_INTERRUPT_STATUSES:
                 target["status"] = "pending"
+                target["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
                 target["reprocess_requested_at"] = interruption["at"]
                 target["reprocess_reason"] = "same_chat_interruption"
                 for field in (
@@ -2067,6 +2081,7 @@ def requeue_if_task_interrupted_during_run(queue: Path, task: dict[str, Any]) ->
                 task["interruption_handled_count"] = int(current.get("interruption_count") or len(task_interruptions(current)))
                 return False
             current["status"] = "pending"
+            current["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
             current["reprocess_requested_at"] = now_text
             current["reprocess_reason"] = "interruption_arrived_during_worker_turn"
             current["stale_result_suppressed_at"] = now_text
@@ -2098,9 +2113,22 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
         now = datetime.now()
         now_text = now.isoformat(timespec="seconds")
         candidates: list[tuple[tuple[int, float, int], int, str]] = []
-        changed = False
+        changed = expire_stale_queue_entries(tasks, now)
         for index, task in enumerate(tasks):
             status = str(task.get("status") or "")
+            if (
+                status == CLAIMED_STATUS
+                and claimed_worker_process_dead(task)
+                and os.environ.get("WECHAT_WORKER_RECLAIM_DEAD_TASKS", "0") != "1"
+            ):
+                task["status"] = "worker_abandoned"
+                task["abandoned_at"] = now_text
+                task["abandoned_reason"] = "claiming_worker_process_ended"
+                task.pop("worker_id", None)
+                task.pop("claimed_at", None)
+                tasks[index] = task
+                changed = True
+                continue
             if generated_video_stale_pause_due(task, now):
                 task.setdefault("generation_pause_history", []).append(
                     {
@@ -2337,7 +2365,7 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
         tasks = read_tasks(path)
         now = datetime.now()
         now_text = now.isoformat(timespec="seconds")
-        changed = False
+        changed = expire_stale_queue_entries(tasks, now)
         candidates: list[int] = []
         for index, task in enumerate(tasks):
             if chat_filter and str(task.get("chat") or "") != chat_filter:
@@ -2369,6 +2397,10 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
                 continue
             candidates.append(index)
         if candidates:
+            if not deferred_send_global_cooldown_elapsed(tasks, now):
+                if changed:
+                    write_tasks(path, tasks)
+                return None
             candidates.sort(key=lambda idx: (deferred_send_priority(tasks[idx]), -deferred_send_sort_timestamp(tasks[idx])))
             index = candidates[0]
             task = tasks[index]
@@ -2390,6 +2422,78 @@ def deferred_send_priority(task: dict[str, Any]) -> int:
     if result_requires_file_delivery(task, task.get("result") if isinstance(task.get("result"), dict) else {}):
         return 2
     return 1
+
+
+def expire_stale_queue_entries(tasks: list[dict[str, Any]], now: datetime) -> bool:
+    """Expire ordinary backlog while preserving explicit long-running states."""
+    pending_ttl = int(os.environ.get("WECHAT_WORKER_PENDING_TASK_TTL_SECONDS", DEFAULT_PENDING_TASK_TTL_SECONDS))
+    deferred_ttl = int(os.environ.get("WECHAT_WORKER_DEFERRED_SEND_TTL_SECONDS", DEFAULT_DEFERRED_SEND_TTL_SECONDS))
+    deferred_statuses = {
+        "send_failed",
+        SEND_DEFERRED_LOCKED_STATUS,
+        SEND_DEFERRED_ARTIFACT_STATUS,
+        SEND_RETRYING_STATUS,
+    }
+    changed = False
+    for index, task in enumerate(tasks):
+        status = str(task.get("status") or "")
+        if status == "pending":
+            ttl = pending_ttl
+            expired_status = "expired_stale"
+            reason = "pending_task_ttl_exceeded"
+            deadline = parse_iso_datetime(str(task.get("expires_at") or ""))
+        elif status in deferred_statuses:
+            ttl = deferred_ttl
+            expired_status = "send_expired"
+            reason = "deferred_send_ttl_exceeded"
+            deadline = parse_iso_datetime(str(task.get("send_expires_at") or ""))
+        else:
+            continue
+        if deadline is None and os.environ.get("WECHAT_WORKER_EXPIRE_LEGACY_QUEUE", "0") == "1":
+            created = queue_entry_created_at(task)
+            if created and ttl >= 0:
+                deadline = created + timedelta(seconds=ttl)
+        if ttl < 0 or deadline is None or now <= deadline:
+            continue
+        task["status"] = expired_status
+        task["expired_at"] = now.isoformat(timespec="seconds")
+        task["expired_from_status"] = status
+        task["expire_reason"] = reason
+        task.pop("worker_id", None)
+        task.pop("claimed_at", None)
+        task.pop("send_retry_claimed_at", None)
+        tasks[index] = task
+        changed = True
+    return changed
+
+
+def queue_entry_created_at(task: dict[str, Any]) -> datetime | None:
+    for key in ("created_at", "claimed_at", "completed_at", "last_send_attempt_at"):
+        value = parse_iso_datetime(str(task.get(key) or ""))
+        if value:
+            return value
+    return None
+
+
+def queue_deadline_iso(ttl_seconds: int) -> str:
+    return (datetime.now() + timedelta(seconds=max(0, int(ttl_seconds)))).isoformat(timespec="seconds")
+
+
+def deferred_send_global_cooldown_elapsed(tasks: list[dict[str, Any]], now: datetime) -> bool:
+    cooldown = int(
+        os.environ.get(
+            "WECHAT_WORKER_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS",
+            DEFAULT_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS,
+        )
+    )
+    if cooldown <= 0:
+        return True
+    latest: datetime | None = None
+    for task in tasks:
+        value = parse_iso_datetime(str(task.get("send_retry_claimed_at") or ""))
+        if value and (latest is None or value > latest):
+            latest = value
+    return latest is None or (now - latest).total_seconds() >= cooldown
 
 
 def deferred_send_sort_timestamp(task: dict[str, Any]) -> float:
@@ -2460,6 +2564,7 @@ def repair_missing_artifact_deliveries(path: Path) -> dict[str, Any]:
             task["status"] = SEND_DEFERRED_ARTIFACT_STATUS
             task["send_deferred_reason"] = "required_artifact_delivery"
             task["last_send_attempt_at"] = "1970-01-01T00:00:00"
+            task["send_expires_at"] = queue_deadline_iso(DEFAULT_DEFERRED_SEND_TTL_SECONDS)
             task.pop("completed_at", None)
             tasks[index] = task
             repaired.append({"id": task.get("id"), "chat": task.get("chat"), "from_status": status, "files": missing_existing})
@@ -2539,13 +2644,18 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
         return False
     reason = send_deferred_reason_from_errors(errors)
     if verified_publish_send_completion(task):
-        max_retries = int(os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", "12"))
+        max_retries = int(
+            os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", str(DEFAULT_VERIFIED_PUBLISH_SEND_MAX_RETRIES))
+        )
     else:
         max_retries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", "0"))
     if max_retries >= 0 and int(task.get("send_retry_count") or 0) >= max_retries:
-        max_recoveries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES", "10"))
+        max_recoveries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES", "0"))
         recoveries = int(task.get("send_failed_recovery_count") or 0)
-        if max_recoveries < 0 or recoveries < max_recoveries or stale_transport_send_failure_recoverable(task, now, reason):
+        allow_stale_recovery = os.environ.get("WECHAT_WORKER_ALLOW_STALE_SEND_RECOVERY", "0") == "1"
+        if max_recoveries < 0 or recoveries < max_recoveries or (
+            allow_stale_recovery and stale_transport_send_failure_recoverable(task, now, reason)
+        ):
             task["send_retry_count"] = 0
             task["send_failed_recovery_count"] = recoveries + 1
             task["send_failed_recovered_at"] = now.isoformat(timespec="seconds")
@@ -2584,9 +2694,11 @@ def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
     if reason not in {"gui_send_busy", "gui_send_timeout", "wechat_entry_required", "title_guard_blank"}:
         return False
     if verified_publish_send_completion(task):
-        max_retries = int(os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", "12"))
+        max_retries = int(
+            os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", str(DEFAULT_VERIFIED_PUBLISH_SEND_MAX_RETRIES))
+        )
     else:
-        max_retries = int(os.environ.get("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES", "5"))
+        max_retries = int(os.environ.get("WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES", str(DEFAULT_TRANSIENT_SEND_MAX_RETRIES)))
     if max_retries < 0:
         return False
     return int(task.get("send_retry_count") or 0) >= max_retries

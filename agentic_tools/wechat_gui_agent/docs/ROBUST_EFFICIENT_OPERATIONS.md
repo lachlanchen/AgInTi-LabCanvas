@@ -184,12 +184,13 @@ should speed the agent up, not replace agent reasoning.
   that file-picker flow, the worker releases the serialized send lock, runs the
   Android-backed unlock watchdog, and retries the same file send within the
   bounded `WECHAT_WORKER_FILE_SEND_UNLOCK_RETRIES` budget.
-- Fast chat replies and organizer acknowledgements must also be durable. If the
-  GUI is locked, the serialized sender is busy, or the sender times out while a
-  file/video is being delivered, enqueue them as `send_deferred_locked`
-  worker-outbox tasks instead of dropping them. Preserve
+- Fast chat replies and organizer acknowledgements use bounded durability. If
+  the GUI is locked, the serialized sender is busy, or the sender times out,
+  enqueue at most a short-lived `send_deferred_locked` outbox item. Preserve
   `send_deferred_reason` as `wechat_locked`, `gui_send_busy`,
-  `gui_send_timeout`, `wechat_entry_required`, or `title_guard_blank`.
+  `gui_send_timeout`, `wechat_entry_required`, or `title_guard_blank`. Ordinary
+  deferred sends expire after 10 minutes by default and retries are globally
+  spaced by 30 seconds, so a restart cannot dump a stale burst into WeChat.
 - Duplicate-response guards must not use placeholder WeChat `server_id` values
   such as `0`, empty, `null`, or `-1` as globally unique ids. Store a per-row
   response key and fall back to `local_id` for placeholder server ids so
@@ -199,8 +200,10 @@ should speed the agent up, not replace agent reasoning.
   orphaned `wechat_gui_send.py` processes older than
   `WECHAT_WORKER_STALE_GUI_SEND_SECONDS` while leaving non-orphaned active sends
   under the normal timeout.
-- Direct monitor state writes must be atomic. A restart or concurrent stop
-  cannot leave a half-written JSON state file.
+- Direct monitor state writes must be atomic. The monitor checkpoints the
+  inbound cursor before route-agent or GUI network work. A failed turn may be
+  replayed only through the explicit replay command; restart must not consume
+  the same historical burst again.
 - Login, CAPTCHA, QR, payment, lock screen, and irreversible decisions wait for
   normal human approval.
 - Do not use packet interception, private-protocol replay, credential/session
@@ -388,6 +391,9 @@ evidence for local artifacts, not chat-facing content.
 | `publish_poststage_pending` | Existing-video LazyEdit/public publish has no terminal platform proof yet. | Worker claims poststage after `next_publish_poststage_at`; deterministic probes run first, then the same chat’s Codex worker session repairs if needed. |
 | `waiting_confirmation` | Human approval required. | Approve/reject through CLI or web panel. |
 | `send_failed` | Non-deferred send failure. | Inspect evidence, fix target/title guard, then explicitly resend or set `WECHAT_WORKER_FAILED_SEND_MAX_RETRIES` for a repair run. Default workers do not auto-flush terminal failed rows. |
+| `expired_stale` | An ordinary pending task exceeded the 15-minute backlog TTL. | Leave terminal; explicitly replay the current request only if it is still wanted. |
+| `send_expired` | An outbound retry exceeded the 10-minute outbox TTL. | Leave terminal; use explicit resend only after confirming the message is still useful. |
+| `worker_abandoned` | The process owning an ordinary `in_progress` task ended. | Leave terminal by default; explicitly reprocess only if the request is still wanted. |
 | `worker_failed` | Backend failed before a useful result. | Fix source/tool issue; rerun only if safe. |
 | `done` | Requested stages completed. | No action. |
 
@@ -696,8 +702,10 @@ Blank title guard:
 - If a stale click point opens a wrong popup, `wechat_gui_send.py` closes that
   non-target WeChat window before trying the next configured fallback click.
 - Transient GUI send retries are bounded by
-  `WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES` so one broken outbox item cannot
-  monopolize the worker.
+  `WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES` (default 2), old automatic recovery
+  cycles are disabled, and deferred sends share a 30-second global cooldown.
+  This prevents a recovered network or restarted desktop from bombarding chat
+  windows with accumulated replies.
 
 Stuck GUI sender:
 
