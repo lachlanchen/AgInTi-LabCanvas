@@ -75,6 +75,20 @@ should speed the agent up, not replace agent reasoning.
   `self_messages_text_only=true`, and `ignore_probable_bot_self_replies=true`.
   This lets same-account mobile text commands control the system while blocking
   the bot's own acknowledgements and returned files from looping.
+- Self-message ownership is evidence-first. Before applying prose heuristics,
+  compare a same-account DB row with recent successful outbound mirror records
+  (`sent`, `done-sent`, or `waiting-confirmation-sent`) for the same chat and a
+  bounded time window. An exact match is `self_outbound_echo` and must never be
+  routed. Do not accept the monitor's own `synced` record as send evidence,
+  because doing so would suppress legitimate same-account mobile commands.
+- `NO_REPLY` is an internal control signal, never chat content. Treat case,
+  whitespace, underscore/hyphen, Markdown fences, `CHAT:`/`ACK:` wrappers, and
+  appended explanations such as `NO_REPLY: this is an echo` equivalently.
+  Suppress it at fast-response parsing, worker-result parsing, the send API, and
+  the final GUI sender. A worker that returns this signal without explicit
+  artifacts finishes silently as `done-no-reply`; it must not create a deferred
+  outbox item or another task. Explicit files still follow the normal artifact
+  delivery gate, but the control text itself is never sent.
 - Completion/status messages from the bot, including `Published OK: ...`, must
   never become new backend tasks. If the route agent says a message is bot
   completion/status with no new backend work, do not let keyword fallback
@@ -579,6 +593,9 @@ Expected signs:
   the same logged-in mobile account;
 - `self_messages_text_only` and `ignore_probable_bot_self_replies` are true to
   prevent self-file and bot-reply loops;
+- recent bot text appears as `self_outbound_echo` rather than a new queued task,
+  and control variants such as `noreply` or `NO_REPLY: reason` produce no GUI
+  send;
 - send targets have title guards;
 - direct monitors report `ready=true`; `caught_up=true` only means state reached
   the latest decrypted row, while `source_stale=true` means the Linux WeChat

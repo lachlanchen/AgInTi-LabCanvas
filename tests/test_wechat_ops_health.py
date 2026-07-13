@@ -47,6 +47,19 @@ class WeChatOpsHealthTests(unittest.TestCase):
 
 
 class WeChatOpsSendApiTests(unittest.TestCase):
+    def test_send_api_rejects_internal_no_reply_control(self) -> None:
+        variants = [
+            "CHAT: NO_REPLY：internal explanation",
+            "aginti: startup log\nNO-REPLY: internal explanation",
+        ]
+        for message in variants:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, "empty after sanitization"):
+                wechat_ops.send_wechat_message_api(
+                    message=message,
+                    target={"name": "EchoMind", "expected_title": "EchoMind"},
+                    dry_run=True,
+                )
+
     def test_send_api_uses_guarded_target_registry_and_filters_logs(self) -> None:
         original_run = wechat_ops.run_command
         original_runtime_paths = wechat_ops.configured_runtime_paths

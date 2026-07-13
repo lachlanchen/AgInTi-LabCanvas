@@ -18,6 +18,7 @@ import time
 from typing import Any
 
 from wechat_gui_send import detect_wechat_locked, find_wechat_window, focus, paste_text, run as run_gui
+from wechat_message_policy import is_no_reply_control
 from wechat_mirror import DEFAULT_DB, record_event
 
 
@@ -250,7 +251,7 @@ def poll_once(config: ChatOpsConfig, env: dict[str, str], state: dict[str, Any])
     response = clean_response(response, config.max_reply_chars)
     state["last_codex_response"] = response
     state["last_codex_at"] = datetime.now().isoformat(timespec="seconds")
-    if not response or response == "NO_REPLY":
+    if not response or is_no_reply_control(response):
         record_event(
             chat_name=config.chat_name,
             action="codex_reply",
@@ -359,6 +360,8 @@ def clean_response(response: str, max_chars: int) -> str:
     text = response.strip()
     if text.startswith("```") and text.endswith("```"):
         text = text.strip("`").strip()
+    if is_no_reply_control(text):
+        return ""
     if len(text) > max_chars:
         text = text[: max_chars - 20].rstrip() + "\n...[truncated]"
     return text

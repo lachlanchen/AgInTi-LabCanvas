@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -994,6 +995,60 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(
             direct_chatops.should_respond(config, {}, self.row("Show me the story here full story explicit story", sender="self"))
         )
+
+    def test_no_reply_control_variants_are_never_routed_or_rendered(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        variants = [
+            "NO_REPLY",
+            "noreply",
+            "NO-REPLY: internal explanation",
+            "NO_REPLY：这是内部状态，不应发到群里。",
+            "```text\nNO_REPLY: no new request\n```",
+            "CHAT: NO_REPLY because this is an echo",
+        ]
+        for index, text in enumerate(variants, start=1):
+            with self.subTest(text=text):
+                row = self.row(text, sender="self", local_id=100 + index)
+                self.assertEqual(direct_chatops.response_skip_reason(config, {}, row), "self_no_reply_control")
+                self.assertEqual(direct_chatops.parse_fast_response(text), {"chat": "", "ack": "", "task": ""})
+                self.assertEqual(direct_chatops.sanitize_agent_ack(config, text), "")
+
+    def test_recorded_successful_outbound_is_transport_evidence_for_self_echo(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        content = "这个摘要没有固定机器人前缀，但它确实由本地发送器发出。"
+        now = int(time.time())
+        direct_chatops.record_event(
+            chat_name="EchoMind",
+            action="worker_task",
+            direction="outbound",
+            message=content,
+            status="done-sent",
+            db_path=Path(self.mirror_db),
+        )
+        row = self.row(content, sender="self", local_id=151, create_time=now)
+
+        self.assertEqual(direct_chatops.response_skip_reason(config, {}, row), "self_outbound_echo")
+
+    def test_synced_self_row_is_not_mistaken_for_successful_outbound_send(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        content = "could you summarize this new command"
+        direct_chatops.record_event(
+            chat_name="EchoMind",
+            action="direct_message",
+            direction="outbound",
+            message=content,
+            status="synced",
+            db_path=Path(self.mirror_db),
+        )
+        row = self.row(content, sender="self", local_id=152, create_time=int(time.time()))
+
+        self.assertEqual(direct_chatops.response_skip_reason(config, {}, row), "")
 
     def test_human_self_policy_can_route_own_image_when_text_only_disabled(self) -> None:
         config = self.base_config()

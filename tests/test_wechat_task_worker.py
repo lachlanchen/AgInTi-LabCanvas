@@ -31,6 +31,35 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_no_reply_worker_output_is_silent_even_with_explanation(self) -> None:
+        worker = load_worker()
+        result = worker.parse_worker_result(
+            '{"message":"NO_REPLY：这是机器人上一轮消息的回声，不要再次发送。","files":[]}'
+        )
+
+        self.assertTrue(result["no_reply"])
+        self.assertEqual(result["message"], "")
+        self.assertFalse(worker.should_send_worker_result({}, result))
+
+    def test_worker_send_boundary_drops_no_reply_text(self) -> None:
+        worker = load_worker()
+        sent: list[str] = []
+        original_guard = worker.guarded_send_target
+        original_send = worker.send_message
+        try:
+            worker.guarded_send_target = lambda *_args, **_kwargs: {"name": "EchoMind"}
+            worker.send_message = lambda message, *_args, **_kwargs: sent.append(message)
+            worker.send_result_once(
+                {"message": "noreply: internal", "confirmation": "", "files": [], "no_reply": True},
+                "EchoMind",
+                Path("/tmp/no-targets.json"),
+            )
+        finally:
+            worker.guarded_send_target = original_guard
+            worker.send_message = original_send
+
+        self.assertEqual(sent, [])
+
     def test_parse_worker_result_extracts_json_from_aginti_logs(self) -> None:
         worker = load_worker()
         raw = """AgInTi: starting fallback backend

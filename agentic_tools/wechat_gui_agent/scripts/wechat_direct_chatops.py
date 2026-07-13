@@ -28,6 +28,7 @@ except ModuleNotFoundError:  # Tests and dry policy checks should not require th
 from file_lock import exclusive_lock, fcntl_compat as fcntl
 from wechat_agent_backend import run_agent_session as run_codex_session, select_agent_backend
 from wechat_memory import organize_messages
+from wechat_message_policy import is_no_reply_control, recorded_outbound_echo
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_routines import ROUTINES, build_routine_contract, ensure_task_routine_contract
 
@@ -449,7 +450,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                         task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=context_rows)
                         task_enqueued = task["id"]
                     reply_text = routed["chat"] or routed["ack"]
-        if reply_text and reply_text != "NO_REPLY":
+        if reply_text and not is_no_reply_control(reply_text):
             status = "dry-run-response"
             screenshot = None
             send_ok = True
@@ -1314,6 +1315,10 @@ def response_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dic
 
 
 def self_message_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dict[str, Any]) -> str:
+    if is_no_reply_control(visible_message_text(row)):
+        return "self_no_reply_control"
+    if is_recorded_outbound_echo(config, row):
+        return "self_outbound_echo"
     if is_remembered_sent_reply(state, row["content"]):
         return "self_loop_guard"
     if looks_like_bot_self_reply(config, visible_message_text(row)):
@@ -1336,12 +1341,25 @@ def allow_human_self_messages(config: dict[str, Any]) -> bool:
     }
 
 
+def is_recorded_outbound_echo(config: dict[str, Any], row: dict[str, Any]) -> bool:
+    return recorded_outbound_echo(
+        Path(config.get("mirror_db", DEFAULT_DB)),
+        str(config.get("chat_name") or ""),
+        str(row.get("content") or ""),
+        source_epoch=float(row.get("create_time") or 0),
+        window_seconds=int(config.get("self_outbound_echo_window_seconds", 1800)),
+        limit=int(config.get("self_outbound_echo_lookup_limit", 240)),
+    )
+
+
 def looks_like_bot_self_reply(config: dict[str, Any], text: str) -> bool:
     if not bool(config.get("ignore_probable_bot_self_replies", True)):
         return False
     collapsed = collapse_text(text)
     if not collapsed:
         return False
+    if is_no_reply_control(collapsed):
+        return True
     lowered = collapsed.lower()
     configured_prefixes = [
         str(config.get("immediate_ack_text") or ""),
@@ -2686,7 +2704,7 @@ def sanitize_agent_ack(config: dict[str, Any], text: str) -> str:
     if not ack:
         return ""
     ack = re.sub(r"^(ACK|CHAT)\s*[:：]\s*", "", ack, flags=re.IGNORECASE).strip()
-    if not ack or ack.upper() == "NO_REPLY":
+    if not ack or is_no_reply_control(ack):
         return ""
     lowered = ack.lower()
     blocked_fragments = [
@@ -5157,8 +5175,8 @@ Do not mention database, OCR, decrypted messages, or automation internals.
 
 def parse_fast_response(response: str) -> dict[str, str]:
     text = response.strip()
-    if not text or text == "NO_REPLY":
-        return {"chat": "NO_REPLY", "ack": "", "task": ""}
+    if not text or is_no_reply_control(text):
+        return {"chat": "", "ack": "", "task": ""}
     routed = {"chat": "", "ack": "", "task": ""}
     current = None
     for line in text.splitlines():
@@ -5853,6 +5871,8 @@ def build_route_contract(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def send_gui_message(config: dict[str, Any], message: str) -> str:
+    if is_no_reply_control(message):
+        return ""
     attempts = max(1, int(os.environ.get("WECHAT_DIRECT_SEND_RETRIES", str(config.get("send_retries", 2)))))
     delay = max(0.0, float(os.environ.get("WECHAT_DIRECT_SEND_RETRY_DELAY", str(config.get("send_retry_delay_seconds", 1.0)))))
     errors: list[str] = []

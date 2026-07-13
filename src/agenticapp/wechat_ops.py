@@ -537,6 +537,8 @@ def sanitize_outbound_wechat_message(message: str, *, max_chars: int = 1800) -> 
     raw = str(message or "").strip()
     if not raw:
         return ""
+    if is_no_reply_control_text(raw):
+        return ""
     lines: list[str] = []
     dropped = 0
     noisy = (
@@ -551,11 +553,19 @@ def sanitize_outbound_wechat_message(message: str, *, max_chars: int = 1800) -> 
             continue
         lines.append(line.rstrip())
     cleaned = "\n".join(lines).strip()
+    if is_no_reply_control_text(cleaned):
+        return ""
     if not cleaned and dropped:
         cleaned = "后台任务已结束，但输出主要是工具日志；原始日志已过滤。"
     if len(cleaned) > max_chars:
         cleaned = cleaned[: max_chars - 18].rstrip() + "\n...[已截断]"
     return cleaned
+
+
+def is_no_reply_control_text(text: str) -> bool:
+    control = str(text or "").strip().lstrip("`*_#>•- ")
+    control = re.sub(r"^(?:chat|ack)\s*[:：]\s*", "", control, count=1, flags=re.I)
+    return bool(re.match(r"^no[\s_-]*reply(?:\b|_)", control, flags=re.I))
 
 
 def resolve_wechat_send_target(

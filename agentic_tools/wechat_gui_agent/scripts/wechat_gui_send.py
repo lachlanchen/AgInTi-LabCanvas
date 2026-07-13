@@ -24,6 +24,7 @@ import time
 from typing import Any
 
 from file_lock import fcntl_compat as fcntl
+from wechat_message_policy import is_no_reply_control
 from wechat_mirror import DEFAULT_DB, record_event
 
 
@@ -83,6 +84,9 @@ def main() -> int:
     targets, message = load_targets(args.target, args.targets_file, args.message)
     if not targets:
         raise SystemExit("No targets supplied. Use --target or --targets-file.")
+    if is_no_reply_control(message):
+        print(json.dumps({"status": "suppressed-control", "sent": False}, ensure_ascii=False))
+        return 0
     args.message = message
 
     required = ["xdotool", "xclip", "import"]

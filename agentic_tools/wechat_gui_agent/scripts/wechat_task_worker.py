@@ -25,6 +25,7 @@ import urllib.request
 
 from file_lock import fcntl_compat as fcntl
 from wechat_agent_backend import run_agent_session as run_codex_session, select_agent_backend
+from wechat_message_policy import is_no_reply_control
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_routines import ensure_task_routine_contract, routine_prompt_context, write_routine_contract
 
@@ -381,7 +382,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     target_chat = str(task.get("chat") or chat)
     send_now = send and should_send_worker_result(task, result)
     if send and not send_now:
-        task["send_suppressed_reason"] = "nonterminal_routine_status"
+        task["send_suppressed_reason"] = "agent_no_reply" if result_is_no_reply(result) else "nonterminal_routine_status"
         task["send_suppressed_at"] = datetime.now().isoformat(timespec="seconds")
     send_errors = send_result_with_retries(result, target_chat, send_targets, task=task) if send_now else []
     if result.get("skipped_files"):
@@ -412,6 +413,8 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         event_status = "generation-waiting"
     elif task.get("status") == GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS:
         event_status = "generation-poststage-pending"
+    elif result_is_no_reply(result):
+        event_status = "done-no-reply"
     elif result["confirmation"]:
         event_status = "waiting-confirmation-sent" if send else "waiting-confirmation"
     else:
@@ -420,7 +423,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         chat_name=task.get("chat", chat),
         action="worker_task",
         direction="outbound",
-        message=result["confirmation"] or result["message"] or result_text,
+        message="" if result_is_no_reply(result) else result["confirmation"] or result["message"] or result_text,
         status=event_status,
         db_path=DEFAULT_DB,
         metadata=task,
@@ -1028,6 +1031,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
 
 
 def should_send_worker_result(task: dict[str, Any], result: dict[str, Any]) -> bool:
+    if result_is_no_reply(result) and not result.get("files"):
+        return False
     if result.get("confirmation"):
         return True
     if existing_video_publish_result_is_nonterminal(task, result):
@@ -1035,6 +1040,14 @@ def should_send_worker_result(task: dict[str, Any], result: dict[str, Any]) -> b
     if not generated_video_result_is_nonterminal(task, result):
         return True
     return os.environ.get("WECHAT_WORKER_SEND_GENERATION_PROGRESS", "0") == "1"
+
+
+def result_is_no_reply(result: dict[str, Any]) -> bool:
+    if bool(result.get("no_reply")):
+        return True
+    return is_no_reply_control(str(result.get("message") or "")) or is_no_reply_control(
+        str(result.get("confirmation") or "")
+    )
 
 
 def send_result_with_retries(
@@ -1087,7 +1100,10 @@ def send_result_once(
     if task is not None and files_to_note:
         task["unsent_saved_files"] = [str(path) for path in files_to_note]
     note_files = [] if task_is_research_summary(task or {}) else files_to_note
-    message = message_with_saved_file_note(str(result.get("message") or ""), note_files)
+    raw_message = str(result.get("message") or "")
+    raw_confirmation = str(result.get("confirmation") or "")
+    message = "" if is_no_reply_control(raw_message) else message_with_saved_file_note(raw_message, note_files)
+    confirmation = "" if is_no_reply_control(raw_confirmation) else raw_confirmation
     require_file_delivery = result_requires_file_delivery(task, result)
     file_errors = []
     sent_files = {str(path) for path in (task or {}).get("sent_file_paths", [])}
@@ -1124,8 +1140,8 @@ def send_result_once(
         send_files()
     if message:
         send_message(message, target_chat, send_targets, target=target)
-    if result["confirmation"]:
-        send_message(result["confirmation"], target_chat, send_targets, target=target)
+    if confirmation:
+        send_message(confirmation, target_chat, send_targets, target=target)
     if not require_file_delivery:
         send_files()
 
@@ -5356,6 +5372,8 @@ def format_generated_video_contract_markdown(contract: dict[str, Any]) -> str:
 
 
 def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any], raw_text: str) -> dict[str, Any]:
+    if result_is_no_reply(result):
+        return result
     if not is_generate_video_task(task):
         return result
     stages = generated_video_stage_permissions(task)
@@ -8838,7 +8856,15 @@ def parse_worker_result(text: str) -> dict[str, Any]:
         message = str(data.get("message") or "").strip()
         confirmation = str(data.get("confirmation") or data.get("confirm") or "").strip()
         files = [] if json_payload_is_file_intake_receipt(data) else file_entries_from_json(data)
-        return {"message": message, "confirmation": confirmation, "files": files, "raw": text, "data": data}
+        no_reply = is_no_reply_control(message) or is_no_reply_control(confirmation)
+        return {
+            "message": "" if is_no_reply_control(message) else message,
+            "confirmation": "" if is_no_reply_control(confirmation) else confirmation,
+            "files": files,
+            "raw": text,
+            "data": data,
+            "no_reply": no_reply,
+        }
     message_lines = []
     files = []
     for line in text.splitlines():
@@ -8846,7 +8872,9 @@ def parse_worker_result(text: str) -> dict[str, Any]:
             files.append(str(Path(line.split(":", 1)[1].strip()).expanduser()))
         else:
             message_lines.append(line)
-    return {"message": sanitize_worker_chat_message("\n".join(message_lines)), "confirmation": "", "files": files, "raw": text}
+    message = sanitize_worker_chat_message("\n".join(message_lines))
+    no_reply = is_no_reply_control(message)
+    return {"message": "" if no_reply else message, "confirmation": "", "files": files, "raw": text, "no_reply": no_reply}
 
 
 def extract_worker_json_payload(text: str) -> dict[str, Any] | None:
@@ -8895,6 +8923,8 @@ def sanitize_worker_chat_message(text: str, *, max_chars: int = 1200) -> str:
     raw = str(text or "").strip()
     if not raw:
         return ""
+    if is_no_reply_control(raw):
+        return ""
     kept: list[str] = []
     dropped = 0
     for line in raw.splitlines():
@@ -8911,6 +8941,8 @@ def sanitize_worker_chat_message(text: str, *, max_chars: int = 1200) -> str:
             continue
         kept.append(stripped)
     message = "\n".join(kept).strip()
+    if is_no_reply_control(message):
+        return ""
     if not message and dropped:
         message = "后台任务已结束，但输出主要是工具日志。我已保存结果记录，没有把原始日志发到群里。"
     if len(message) > max_chars:
