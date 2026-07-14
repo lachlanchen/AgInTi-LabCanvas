@@ -4,6 +4,17 @@ This adapter compensates for the already-printed dock that has `10 mm` rod
 holes. It is a smooth stepped cylinder: a short lower insert for the dock hole
 and a longer upper 6 mm cage rod.
 
+## Current Requested Run
+
+Use `runs/run-3-10p0-to-6p3-m3-pilot-20260714T074753Z/` for the new version:
+
+- exact `10.00 mm` lower insert x `20 mm`;
+- `6.30 mm` upper post x `50 mm`;
+- `2.8 mm` diameter, `6 mm` deep M3 pilot in the upper end;
+- upright `2 x 2` direct-print STEP, STL, and 3MF files.
+
+The root artifacts documented below remain the earlier `9.8 / 6.0 mm` design.
+
 ## Geometry
 
 - Lower insert: `9.8 mm` diameter x `20.0 mm` long.

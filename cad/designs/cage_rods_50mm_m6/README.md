@@ -4,6 +4,17 @@ This is a new clean parametric rod set for the 30 mm cage geometry. The rods are
 `50.0 mm` long and `6.0 mm` diameter, matching
 the 6 mm rod pockets used in the current cage holders and dock.
 
+## Current Requested Run
+
+Use `runs/run-3-6p3mm-m3-pilot-both-ends-vertical-3x3-20260714T074753Z/` for
+the new version:
+
+- `6.30 mm` diameter x `50 mm` length;
+- `2.8 mm` diameter, `6 mm` deep M3 pilot at both ends;
+- upright `3 x 3` direct-print STEP, STL, and 3MF files.
+
+The root artifacts documented below remain the earlier `6.0 mm` rod set.
+
 ## Geometry
 
 - Rod diameter: `6.0 mm`.

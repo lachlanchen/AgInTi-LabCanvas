@@ -1,0 +1,179 @@
+{
+  "name": "cage_combo_run5_6p3_adapters_rods_id6p4_od7p4_spacers",
+  "created_by": "build_run5_6p3_adapters_rods_spacers.py",
+  "parameters": {
+    "name": "cage_combo_run5_6p3_adapters_rods_id6p4_od7p4_spacers",
+    "design_intent": "Single print plate with 3x3 vertical 6.30 mm rods, 4x4 ID 6.4 / OD 7.4 spacer rings, and 2x2 exact 10.00-to-6.30 mm adapters.",
+    "rod_diameter_mm": 6.3,
+    "rod_length_mm": 50.0,
+    "adapter_lower_insert_diameter_mm": 10.0,
+    "adapter_lower_insert_length_mm": 20.0,
+    "adapter_upper_rod_diameter_mm": 6.3,
+    "adapter_upper_rod_length_mm": 50.0,
+    "m3_pilot_hole_diameter_mm": 2.8,
+    "m3_pilot_hole_depth_mm": 6.0,
+    "spacer_inner_diameter_mm": 6.4,
+    "spacer_outer_diameter_mm": 7.4,
+    "spacer_height_mm": 5.0,
+    "spacer_radial_wall_mm": 0.5,
+    "clearance_between_groups_mm": 12.0,
+    "print_orientation": "Rods and adapters stand upright; spacer rings lie flat. All 29 parts remain independent."
+  },
+  "sources": {
+    "rods_6p3_3x3": {
+      "step": "cad/designs/cage_rods_50mm_m6/runs/run-3-6p3mm-m3-pilot-both-ends-vertical-3x3-20260714T074753Z/PRINT_THIS_cage_rods_run3_6p3mm_m3_pilot_both_ends_vertical_3x3_print_grid.step",
+      "stl": "cad/designs/cage_rods_50mm_m6/runs/run-3-6p3mm-m3-pilot-both-ends-vertical-3x3-20260714T074753Z/PRINT_THIS_cage_rods_run3_6p3mm_m3_pilot_both_ends_vertical_3x3_print_grid.stl"
+    },
+    "spacers_id6p4_od7p4_4x4": {
+      "step": "cad/designs/cage_spacer_ring_id6p4_od7p4_h5/runs/run-1-id6p4-od7p4-h5-4x4-20260714T074753Z/PRINT_THIS_cage_spacer_ring_run1_id6p4_od7p4_h5_4x4_print_grid.step",
+      "stl": "cad/designs/cage_spacer_ring_id6p4_od7p4_h5/runs/run-1-id6p4-od7p4-h5-4x4-20260714T074753Z/PRINT_THIS_cage_spacer_ring_run1_id6p4_od7p4_h5_4x4_print_grid.stl"
+    },
+    "adapters_10p0_to_6p3_2x2": {
+      "step": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-3-10p0-to-6p3-m3-pilot-20260714T074753Z/PRINT_THIS_cage_dock_adapter_run3_10p0_to_6p3_m3_pilot_2x2_print_grid.step",
+      "stl": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-3-10p0-to-6p3-m3-pilot-20260714T074753Z/PRINT_THIS_cage_dock_adapter_run3_10p0_to_6p3_m3_pilot_2x2_print_grid.stl"
+    }
+  },
+  "layout": {
+    "rods_6p3_3x3": {
+      "component_count": 9,
+      "placed_bounds_mm": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          38.3,
+          38.298,
+          50.0
+        ],
+        "size": [
+          38.3,
+          38.298,
+          50.0
+        ]
+      },
+      "source_stl": "cad/designs/cage_rods_50mm_m6/runs/run-3-6p3mm-m3-pilot-both-ends-vertical-3x3-20260714T074753Z/PRINT_THIS_cage_rods_run3_6p3mm_m3_pilot_both_ends_vertical_3x3_print_grid.stl",
+      "source_step": "cad/designs/cage_rods_50mm_m6/runs/run-3-6p3mm-m3-pilot-both-ends-vertical-3x3-20260714T074753Z/PRINT_THIS_cage_rods_run3_6p3mm_m3_pilot_both_ends_vertical_3x3_print_grid.step"
+    },
+    "spacers_id6p4_od7p4_4x4": {
+      "component_count": 16,
+      "placed_bounds_mm": {
+        "min": [
+          50.3,
+          0.0,
+          0.0
+        ],
+        "max": [
+          93.7,
+          43.398,
+          5.0
+        ],
+        "size": [
+          43.4,
+          43.398,
+          5.0
+        ]
+      },
+      "source_stl": "cad/designs/cage_spacer_ring_id6p4_od7p4_h5/runs/run-1-id6p4-od7p4-h5-4x4-20260714T074753Z/PRINT_THIS_cage_spacer_ring_run1_id6p4_od7p4_h5_4x4_print_grid.stl",
+      "source_step": "cad/designs/cage_spacer_ring_id6p4_od7p4_h5/runs/run-1-id6p4-od7p4-h5-4x4-20260714T074753Z/PRINT_THIS_cage_spacer_ring_run1_id6p4_od7p4_h5_4x4_print_grid.step"
+    },
+    "adapters_10p0_to_6p3_2x2": {
+      "component_count": 4,
+      "placed_bounds_mm": {
+        "min": [
+          105.7,
+          0.0,
+          0.0
+        ],
+        "max": [
+          140.7,
+          34.997,
+          70.0
+        ],
+        "size": [
+          35.0,
+          34.997,
+          70.0
+        ]
+      },
+      "source_stl": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-3-10p0-to-6p3-m3-pilot-20260714T074753Z/PRINT_THIS_cage_dock_adapter_run3_10p0_to_6p3_m3_pilot_2x2_print_grid.stl",
+      "source_step": "cad/designs/cage_dock_m10_to_m6_adapter_20_50/runs/run-3-10p0-to-6p3-m3-pilot-20260714T074753Z/PRINT_THIS_cage_dock_adapter_run3_10p0_to_6p3_m3_pilot_2x2_print_grid.step"
+    },
+    "combined": {
+      "component_count": 29,
+      "watertight": true,
+      "placed_bounds_mm": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          140.7,
+          43.398,
+          70.0
+        ],
+        "size": [
+          140.7,
+          43.398,
+          70.0
+        ]
+      }
+    }
+  },
+  "validation": {
+    "step": {
+      "valid": true,
+      "solids": 29,
+      "bbox_mm": [
+        140.7,
+        43.4,
+        70.0
+      ]
+    },
+    "stl": {
+      "watertight": true,
+      "component_count": 29,
+      "bounds": {
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          140.7,
+          43.398,
+          70.0
+        ],
+        "size": [
+          140.7,
+          43.398,
+          70.0
+        ]
+      },
+      "vertices": 25326,
+      "faces": 50600
+    },
+    "threemf": {
+      "entries": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ],
+      "has_model": true
+    }
+  },
+  "outputs": {
+    "print_step": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-5-6p3-adapters-rods-id6p4-od7p4-spacers-20260714T074753Z/artifacts/cage_combo_run5_6p3_adapters_rods_id6p4_od7p4_spacers.step",
+    "print_stl": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-5-6p3-adapters-rods-id6p4-od7p4-spacers-20260714T074753Z/artifacts/cage_combo_run5_6p3_adapters_rods_id6p4_od7p4_spacers.stl",
+    "print_3mf": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-5-6p3-adapters-rods-id6p4-od7p4-spacers-20260714T074753Z/artifacts/cage_combo_run5_6p3_adapters_rods_id6p4_od7p4_spacers.3mf",
+    "print_this_step": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-5-6p3-adapters-rods-id6p4-od7p4-spacers-20260714T074753Z/PRINT_THIS_cage_combo_run5_6p3_adapters_rods_id6p4_od7p4_spacers.step",
+    "print_this_stl": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-5-6p3-adapters-rods-id6p4-od7p4-spacers-20260714T074753Z/PRINT_THIS_cage_combo_run5_6p3_adapters_rods_id6p4_od7p4_spacers.stl",
+    "print_this_3mf": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-5-6p3-adapters-rods-id6p4-od7p4-spacers-20260714T074753Z/PRINT_THIS_cage_combo_run5_6p3_adapters_rods_id6p4_od7p4_spacers.3mf",
+    "print_this_render": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-5-6p3-adapters-rods-id6p4-od7p4-spacers-20260714T074753Z/PRINT_THIS_cage_combo_run5_6p3_adapters_rods_id6p4_od7p4_spacers_render.png",
+    "readme": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-5-6p3-adapters-rods-id6p4-od7p4-spacers-20260714T074753Z/README.md",
+    "manifest": "cad/designs/cage_m10m6_adapter_connector_rods_combo_print_plate/runs/run-5-6p3-adapters-rods-id6p4-od7p4-spacers-20260714T074753Z/artifacts/manifest.json",
+    "nutstore_print_ready_folder": "/home/lachlan/Nutstore Files/Projects/LabCanvas/cage_m10m6_adapter_connector_rods_combo_print_plate/run-5-6p3-adapters-rods-id6p4-od7p4-spacers-20260714T074753Z"
+  }
+}
