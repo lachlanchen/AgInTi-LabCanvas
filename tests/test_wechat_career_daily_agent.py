@@ -84,6 +84,25 @@ Other text?
         self.assertIn("one more tool", questions[1])
         self.assertIn("real identity", questions[2])
 
+    def test_extract_self_discovery_questions_without_section_heading(self):
+        module = load_wechat_career_daily_agent()
+        report = """
+## 今天做什么
+先完成一个可验证的作品。
+
+Q1: 今天我要留下什么可以给别人看的证据?
+为什么重要：它把想法变成资产。
+Q2: 哪一个项目值得我拒绝其他机会?
+为什么重要：它迫使我选择。
+Q3: 今天谁可以给我一个真实反馈?
+为什么重要：它防止闭门造车。
+"""
+
+        questions = module.extract_self_discovery_questions(report)
+
+        self.assertEqual(len(questions), 3)
+        self.assertIn("什么可以给别人看的证据", questions[0])
+
     def test_send_daily_result_includes_self_discovery_questions(self):
         module = load_wechat_career_daily_agent()
         sent_messages = []
@@ -103,6 +122,8 @@ Other text?
 ## 1. Today’s thesis
 A precise thesis for the day.
 
+微信摘要：今天最强的新证据是用户已经连续完成了三个可复用工具。主赌注是把其中一个包装成可购买的服务，今天先写清楚报价并找一个真实用户验证。
+
 ## 9. Today’s 3 self-discovery questions
 Q1: What desire am I protecting by not choosing one public offer?
 Why it matters: It names avoidance.
@@ -116,14 +137,15 @@ Why it matters: It turns reflection into evidence.
 
         self.assertTrue(status["message_sent"])
         self.assertTrue(status["file_sent"])
-        self.assertIn("今日3个自我发现问题", sent_messages[0][0])
+        self.assertTrue(status["complete"])
+        self.assertIn("今天最强的新证据", sent_messages[0][0])
+        self.assertIn("今天值得认真回答的三个问题", sent_messages[0][0])
         self.assertIn("not choosing one public offer", sent_messages[0][0])
         self.assertIn("small proof today", sent_messages[0][0])
         self.assertEqual(sent_messages[0][1], "lachlanchan")
-        self.assertEqual(sent_files[0][0], Path("/tmp/report.md"))
-        self.assertEqual(sent_files[1][0], Path("/tmp/report.zh.pdf"))
-        self.assertEqual(sent_files[2][0], Path("/tmp/report.en.pdf"))
-        self.assertEqual(status["files_sent"], ["/tmp/report.md", "/tmp/report.zh.pdf", "/tmp/report.en.pdf"])
+        self.assertEqual(sent_files[0][0], Path("/tmp/report.zh.pdf"))
+        self.assertEqual(sent_files[1][0], Path("/tmp/report.en.pdf"))
+        self.assertEqual(status["files_sent"], ["/tmp/report.zh.pdf", "/tmp/report.en.pdf"])
         self.assertEqual(status["pdf_companion"], "/tmp/report.zh.pdf")
         self.assertEqual(status["pdf_companions"], ["/tmp/report.zh.pdf", "/tmp/report.en.pdf"])
 
@@ -142,12 +164,60 @@ Why it matters: It turns reflection into evidence.
 
         status = module.send_daily_result(args, Path("/tmp/report.md"), "## Today")
 
-        self.assertTrue(status["message_sent"])
+        self.assertFalse(status["message_sent"])
         self.assertFalse(status["file_sent"])
-        self.assertEqual(sent_files[0][0], Path("/tmp/report.md"))
+        self.assertEqual(sent_files, [])
+        self.assertEqual(sent_messages, [])
         self.assertEqual(status["pdf_companions"], [])
         self.assertTrue(status["pdf_required"])
-        self.assertTrue(any("no Markdown PDF companions" in error for error in status["errors"]))
+        self.assertTrue(any("required bilingual companions" in error for error in status["errors"]))
+
+    def test_send_daily_result_reserves_gui_lane_and_releases_it(self):
+        module = load_wechat_career_daily_agent()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        module.GUI_SEND_PRIORITY = Path(temp_dir.name) / "send-priority.json"
+        observed = []
+
+        def fake_send(message, chat, send_targets):
+            payload = json.loads(module.GUI_SEND_PRIORITY.read_text(encoding="utf-8"))
+            observed.append((message, chat, send_targets, payload))
+
+        module.send_message = fake_send
+        args = argparse.Namespace(
+            send_chat="lachlanchan",
+            send_targets=Path("/tmp/send-targets.json"),
+            attach_report=False,
+        )
+
+        status = module.send_daily_result(
+            args,
+            Path("/tmp/report.md"),
+            "微信摘要：今天聚焦一个可验证的客户问题，并交付一个可购买的结果。",
+        )
+
+        self.assertTrue(status["complete"])
+        self.assertEqual(observed[0][3]["owner"], "career_daily")
+        self.assertEqual(observed[0][3]["chat"], "lachlanchan")
+        self.assertFalse(module.GUI_SEND_PRIORITY.exists())
+
+    def test_send_daily_result_releases_gui_lane_after_send_failure(self):
+        module = load_wechat_career_daily_agent()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        module.GUI_SEND_PRIORITY = Path(temp_dir.name) / "send-priority.json"
+        module.send_message = lambda *_args: (_ for _ in ()).throw(RuntimeError("send failed"))
+        args = argparse.Namespace(
+            send_chat="lachlanchan",
+            send_targets=Path("/tmp/send-targets.json"),
+            attach_report=False,
+        )
+
+        status = module.send_daily_result(args, Path("/tmp/report.md"), "微信摘要：发送测试。")
+
+        self.assertFalse(status["complete"])
+        self.assertTrue(any("send failed" in error for error in status["errors"]))
+        self.assertFalse(module.GUI_SEND_PRIORITY.exists())
 
     def test_run_daily_writes_trace_bundle_and_sanitized_share_report(self):
         module = load_wechat_career_daily_agent()

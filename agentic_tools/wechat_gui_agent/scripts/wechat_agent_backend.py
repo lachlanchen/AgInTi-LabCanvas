@@ -24,7 +24,7 @@ PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 CLAUDE_SESSION_DIR = PRIVATE / "claude_sessions"
 CLAUDE_REGISTRY = CLAUDE_SESSION_DIR / "sessions.local.json"
 CLAUDE_READONLY_BLOCK = "Bash,Edit,Write,MultiEdit,NotebookEdit"
-DEFAULT_FALLBACK_MODEL = "gpt-5.5"
+DEFAULT_FALLBACK_MODEL = "gpt-5.6-sol"
 DEFAULT_FALLBACK_REASONING_EFFORT = "low"
 QUOTA_FAILURE_MARKERS = (
     "429",
@@ -146,9 +146,18 @@ def run_agent_session(
             registry_path=registry_path,
             backend_config=config,
         )
-        attempt_summaries.append(summarize_attempt(attempt, result))
-        if result.get("ok"):
+        if result.get("ok") and backend_result_has_content(result):
+            attempt_summaries.append(summarize_attempt(attempt, result))
             return attach_attempt_summary(result, attempt_summaries)
+        if result.get("ok"):
+            result = {
+                **result,
+                "ok": False,
+                "returncode": int(result.get("returncode") or 1),
+                "reason": "empty_response",
+                "stderr_tail": str(result.get("stderr_tail") or "Agent backend returned an empty response."),
+            }
+        attempt_summaries.append(summarize_attempt(attempt, result))
         next_attempt = next_backend_attempt(attempt, result, backend_config=config)
         if next_attempt is None:
             return attach_attempt_summary(result, attempt_summaries)
@@ -257,16 +266,16 @@ def next_backend_attempt(
     if not backend_fallbacks_enabled(backend_config):
         return None
     failure_kind = classify_backend_failure(result)
-    if failure_kind not in {"quota", "unavailable", "timeout"}:
+    if failure_kind not in {"quota", "unavailable", "timeout", "empty"}:
         return None
     backend = normalize_backend(str(attempt.get("backend") or "codex"))
-    if backend == "codex" and is_spark_model(str(attempt.get("model") or "")) and failure_kind == "quota":
+    if backend == "codex" and is_spark_model(str(attempt.get("model") or "")) and failure_kind in {"quota", "empty"}:
         return {
             **attempt,
             "backend": "codex",
             "model": fallback_model(backend_config),
             "reasoning_effort": fallback_reasoning_effort(backend_config),
-            "fallback_reason": "spark_quota",
+            "fallback_reason": f"spark_{failure_kind}",
         }
     if backend != "aginti" and failure_kind == "timeout" and not fallback_on_timeout_enabled(backend_config):
         return None
@@ -347,6 +356,8 @@ def is_spark_model(model: str) -> bool:
 
 
 def classify_backend_failure(result: dict[str, Any]) -> str:
+    if str(result.get("reason") or "") == "empty_response":
+        return "empty"
     if result.get("ok"):
         return ""
     if int(result.get("returncode") or 0) == 124:
@@ -360,6 +371,10 @@ def classify_backend_failure(result: dict[str, Any]) -> str:
     if int(result.get("returncode") or 0) == 127 or any(marker in text for marker in UNAVAILABLE_FAILURE_MARKERS):
         return "unavailable"
     return "other"
+
+
+def backend_result_has_content(result: dict[str, Any]) -> bool:
+    return bool(str(result.get("message") or "").strip())
 
 
 def summarize_attempt(attempt: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:

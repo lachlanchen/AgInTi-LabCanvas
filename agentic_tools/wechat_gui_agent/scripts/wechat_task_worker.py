@@ -380,7 +380,18 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         log_worker_event("stale-result-suppressed-for-interruption", task)
         return True
     target_chat = str(task.get("chat") or chat)
-    send_now = send and should_send_worker_result(task, result)
+    has_delivery_content = worker_result_has_delivery_content(result)
+    if task.get("worker_result_exhausted"):
+        task["worker_error"] = {
+            "type": "WorkerAttemptsExhausted",
+            "message": "All allowed effort attempts ended in an explicit failure or weak delivery payload.",
+        }
+    elif not has_delivery_content:
+        task["worker_error"] = {
+            "type": "EmptyWorkerResult",
+            "message": "All backend attempts returned an empty delivery payload.",
+        }
+    send_now = send and has_delivery_content and should_send_worker_result(task, result)
     if send and not send_now:
         task["send_suppressed_reason"] = "agent_no_reply" if result_is_no_reply(result) else "nonterminal_routine_status"
         task["send_suppressed_at"] = datetime.now().isoformat(timespec="seconds")
@@ -1050,6 +1061,16 @@ def result_is_no_reply(result: dict[str, Any]) -> bool:
     )
 
 
+def worker_result_has_delivery_content(result: dict[str, Any]) -> bool:
+    if result_is_no_reply(result):
+        return True
+    return bool(
+        str(result.get("message") or "").strip()
+        or str(result.get("confirmation") or "").strip()
+        or result.get("files")
+    )
+
+
 def send_result_with_retries(
     result: dict[str, Any],
     target_chat: str,
@@ -1525,7 +1546,13 @@ def strip_markdown_fence(text: str) -> str:
 
 
 def render_markdown_pdf(source: Path, output: Path) -> Path | None:
-    pandoc = shutil.which(os.environ.get("WECHAT_MARKDOWN_PDF_PANDOC", "pandoc"))
+    pandoc = resolve_markdown_pdf_tool(
+        "WECHAT_MARKDOWN_PDF_PANDOC",
+        "pandoc",
+        Path.home() / "miniconda3" / "bin" / "pandoc",
+        Path.home() / ".local" / "bin" / "pandoc",
+        Path("/usr/local/bin/pandoc"),
+    )
     if not pandoc:
         return None
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1555,6 +1582,21 @@ def render_markdown_pdf(source: Path, output: Path) -> Path | None:
         return None
     tmp_output.replace(output)
     return output
+
+
+def resolve_markdown_pdf_tool(env_name: str, default: str, *fallbacks: Path) -> str:
+    configured = os.environ.get(env_name, default).strip() or default
+    expanded = Path(configured).expanduser()
+    if ("/" in configured or configured.startswith("~")) and expanded.is_file() and os.access(expanded, os.X_OK):
+        return str(expanded)
+    found = shutil.which(configured)
+    if found:
+        return found
+    for candidate in fallbacks:
+        path = candidate.expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return ""
 
 
 def message_with_saved_file_note(message: str, files: list[Path]) -> str:
@@ -2821,10 +2863,20 @@ def log_worker_event(status: str, task: dict[str, Any]) -> None:
 def run_worker_codex(task: dict[str, Any]) -> str:
     policy = choose_worker_policy(task)
     attempts: list[dict[str, Any]] = []
+    best_result = ""
+    best_policy = dict(policy)
+    best_score = -10_000
+    best_attempt = 0
     max_attempts = max(1, int(os.environ.get("WECHAT_WORKER_MAX_CODEX_ATTEMPTS", str(len(EFFORT_ORDER)))))
     for attempt_index in range(max_attempts):
         task["worker_policy"] = policy
         result = run_worker_codex_once(task, policy)
+        score = worker_result_quality(result)
+        if score > best_score:
+            best_result = result
+            best_policy = dict(policy)
+            best_score = score
+            best_attempt = attempt_index + 1
         attempts.append(
             {
                 "attempt": attempt_index + 1,
@@ -2832,6 +2884,7 @@ def run_worker_codex(task: dict[str, Any]) -> str:
                 "reasoning_effort": policy.get("reasoning_effort"),
                 "timeout_seconds": policy.get("timeout_seconds"),
                 "escalated_from": policy.get("escalated_from"),
+                "result_quality": score,
                 "result_excerpt": collapse_context_text(result, max_len=280),
             }
         )
@@ -2839,9 +2892,13 @@ def run_worker_codex(task: dict[str, Any]) -> str:
         if not next_policy:
             break
         policy = next_policy
-    task["worker_policy"] = policy
+    for attempt in attempts:
+        attempt["selected"] = attempt.get("attempt") == best_attempt
+    task["worker_policy"] = best_policy
+    task["worker_policy_selected_attempt"] = best_attempt
     task["worker_policy_attempts"] = attempts
-    return result
+    task["worker_result_exhausted"] = worker_result_needs_escalation(best_result)
+    return best_result
 
 
 def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
@@ -3030,7 +3087,7 @@ def default_worker_execution_contract(task: dict[str, Any], instruction: dict[st
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
         "agent_backend": select_agent_backend(task),
         "agent_entrypoint": "wechat_agent_backend.run_agent_session",
-        "agent_backend_fallback": "codex Spark quota -> codex gpt-5.5 low -> AgInTi; unavailable primary backend -> AgInTi",
+        "agent_backend_fallback": "codex Spark quota/empty -> codex gpt-5.6-sol low -> AgInTi; unavailable primary backend -> AgInTi",
         "codex_entrypoint": "wechat_codex_sessions.run_codex_session",
         "codex_exec_mode": "resume_per_chat_worker_session",
         "claude_exec_mode": "stable_per_chat_role_session_id",
@@ -8781,33 +8838,82 @@ def generated_video_result_has_progress(result: str) -> bool:
 
 
 def worker_result_needs_escalation(result: str) -> bool:
-    text = str(result or "").strip().lower()
+    raw = str(result or "").strip()
+    if not raw:
+        return True
+    payload = extract_worker_json_payload(raw)
+    if isinstance(payload, dict):
+        message = str(payload.get("message") or "").strip()
+        confirmation = str(payload.get("confirmation") or payload.get("confirm") or "").strip()
+        files = file_entries_from_json(payload)
+        if is_no_reply_control(message) or is_no_reply_control(confirmation):
+            return False
+        if confirmation or files:
+            return False
+        if not message:
+            return True
+        text = message.lower()
+    else:
+        text = raw.lower()
     if not text:
         return True
     if worker_result_is_terminal_blocker(text):
         return False
     if worker_result_is_infrastructure_failure(text):
         return False
-    failure_markers = [
+    if worker_result_is_explicit_failure(text):
+        return True
+    return len(text) < 80
+
+
+def worker_result_is_explicit_failure(text: str) -> bool:
+    normalized = str(text or "").strip().lower()
+    prefixes = (
         "worker failed",
         "codex failed",
-        "timed out",
-        "timeout",
+        "agent backend failed",
+        "failed before completion",
+        "timed out before",
+        "timeout before",
         "cannot complete",
         "can't complete",
         "unable to complete",
-        "i cannot",
-        "i can't",
-        "failed before completion",
+        "i cannot complete",
+        "i can't complete",
         "无法完成",
         "不能完成",
         "没有完成",
-        "失败",
-        "超时",
-    ]
-    if any(marker in text for marker in failure_markers):
-        return True
-    return len(text) < 80
+        "任务失败",
+        "处理失败",
+    )
+    return normalized.startswith(prefixes)
+
+
+def worker_result_quality(result: str) -> int:
+    """Score a worker turn without mistaking source limitations for failure.
+
+    A later retry must never erase an earlier useful answer. Structured files or
+    confirmation are strongest, followed by substantive chat text. Explicit
+    execution failures rank below even a short partial answer.
+    """
+    raw = str(result or "").strip()
+    if not raw:
+        return 0
+    payload = extract_worker_json_payload(raw)
+    if isinstance(payload, dict):
+        message = str(payload.get("message") or "").strip()
+        confirmation = str(payload.get("confirmation") or payload.get("confirm") or "").strip()
+        files = file_entries_from_json(payload)
+        if is_no_reply_control(message) or is_no_reply_control(confirmation):
+            return 1000
+        if worker_result_is_explicit_failure(message):
+            return -100 + min(len(message), 80)
+        return (600 if files else 0) + (400 if confirmation else 0) + min(len(message), 300)
+    if is_no_reply_control(raw):
+        return 1000
+    if worker_result_is_explicit_failure(raw):
+        return -100 + min(len(raw), 80)
+    return min(len(raw), 300)
 
 
 def worker_result_is_infrastructure_failure(text: str) -> bool:

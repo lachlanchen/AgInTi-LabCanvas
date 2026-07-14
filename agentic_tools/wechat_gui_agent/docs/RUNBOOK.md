@@ -81,7 +81,8 @@ labcanvas wechat health --json
 
 The fast monitor is tuned for immediate responses: idle polling is 0.8 seconds,
 catch-up polling is 0.1 seconds when rows are waiting, the decrypt refresh loop
-runs every 1 second, and the fast agent should use `gpt-5.5` with medium reasoning.
+runs every 1 second, and the fast agent should use `gpt-5.6-sol` with low
+reasoning. `gpt-5.5` remains the deeper worker model.
 Polling itself is local DB/file work; it only spends Codex tokens when a new
 message needs a route decision or reply.
 

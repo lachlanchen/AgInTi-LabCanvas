@@ -143,7 +143,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIsNotNone(route)
         assert route is not None
         self.assertEqual(route["route_decision"]["route_kind"], "cad_pcb_labcanvas")
-        self.assertEqual(route["route_decision"]["route_agent_model"], "gpt-5.3-codex-spark")
+        self.assertEqual(route["route_decision"]["route_agent_model"], "gpt-5.6-sol")
         self.assertIn("message forwarded from WeChat into the backend Codex session", route["task"])
         self.assertIn("plus files only when the user requested files/artifacts", route["task"])
 
@@ -206,7 +206,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                         self.assertEqual(route["route_decision"]["route_kind"], expected_kind)
                         self.assertTrue(route["route_decision"]["worker_needed"])
                         self.assertIn(f"Chat: {chat_name}", route["task"])
-                        expected_model = "gpt-5.5" if direct_chatops.route_needs_stronger_model(message) else "gpt-5.3-codex-spark"
+                        expected_model = "gpt-5.5" if direct_chatops.route_needs_stronger_model(message) else "gpt-5.6-sol"
                         self.assertEqual(route["route_decision"]["route_agent_model"], expected_model)
         finally:
             direct_chatops.run_codex_session = original  # type: ignore[assignment]
@@ -2912,7 +2912,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             queued = [json.loads(line) for line in Path(config["worker_queue"]).read_text(encoding="utf-8").splitlines()]
             self.assertEqual(queued[0]["route"], task["route"])
 
-    def test_default_direct_config_uses_medium_reasoning_fast_polling(self) -> None:
+    def test_default_direct_config_uses_sol_low_fast_polling(self) -> None:
         with self.subTest("defaults"):
             import json
 
@@ -2921,11 +2921,11 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 handle.flush()
                 config = direct_chatops.load_config(Path(handle.name))
 
-        self.assertEqual(config["codex"]["model"], "gpt-5.5")
-        self.assertEqual(config["codex"]["reasoning_effort"], "medium")
-        self.assertEqual(config["codex"]["timeout_seconds"], 60)
+        self.assertEqual(config["codex"]["model"], "gpt-5.6-sol")
+        self.assertEqual(config["codex"]["reasoning_effort"], "low")
+        self.assertEqual(config["codex"]["timeout_seconds"], 25)
         self.assertTrue(config["agent_fallbacks"]["enabled"])
-        self.assertEqual(config["agent_fallbacks"]["quota_fallback_model"], "gpt-5.5")
+        self.assertEqual(config["agent_fallbacks"]["quota_fallback_model"], "gpt-5.6-sol")
         self.assertTrue(config["agent_fallbacks"]["fallback_to_aginti"])
         self.assertTrue(config["agent_fallbacks"]["fallback_on_timeout"])
         self.assertEqual(config["aginti"]["command"], "aginti")

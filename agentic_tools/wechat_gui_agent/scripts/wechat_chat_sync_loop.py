@@ -27,6 +27,7 @@ PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 SUPERVISOR_ENV = PRIVATE / "wechat_supervisor.local.env"
 GUI_SEND = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
+GUI_SEND_PRIORITY = Path(os.environ.get("WECHAT_GUI_SEND_PRIORITY_PATH", str(PRIVATE / "wechat_gui_send_priority.json")))
 SEND_LANE_ACTIVE_STATUSES = {
     "pending",
     "in_progress",
@@ -226,6 +227,9 @@ def send_lane_reserved_result(args: argparse.Namespace, send_lane: dict[str, Any
 
 def queue_send_lane_busy(queue_path: Path) -> dict[str, Any]:
     """Return active queue rows that should get first use of the GUI sender."""
+    priority = gui_send_priority_lane()
+    if priority:
+        return {"busy": True, "active": [priority]}
     if not queue_path.exists():
         return {"busy": False, "active": []}
     active: list[dict[str, Any]] = []
@@ -255,6 +259,53 @@ def queue_send_lane_busy(queue_path: Path) -> dict[str, Any]:
             }
         )
     return {"busy": bool(active), "active": active[:12]}
+
+
+def gui_send_priority_lane(path: Path | None = None) -> dict[str, Any] | None:
+    marker = path or GUI_SEND_PRIORITY
+    if not marker.exists():
+        return None
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        discard_gui_send_priority(marker)
+        return None
+    try:
+        expires_at = float(payload.get("expires_at") or 0)
+    except (TypeError, ValueError):
+        expires_at = 0
+    try:
+        owner_pid = int(payload.get("pid") or 0)
+    except (TypeError, ValueError):
+        owner_pid = 0
+    if expires_at <= 0 or expires_at <= time.time() or (owner_pid > 0 and not process_is_alive(owner_pid)):
+        discard_gui_send_priority(marker)
+        return None
+    return {
+        "id": str(payload.get("token") or "gui-priority"),
+        "chat": str(payload.get("chat") or ""),
+        "status": "send_priority",
+        "reason": str(payload.get("owner") or "external_sender"),
+    }
+
+
+def discard_gui_send_priority(marker: Path) -> None:
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def process_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
 
 
 def discover_configs(raw_configs: str) -> list[Path]:

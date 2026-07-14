@@ -293,9 +293,10 @@ evidence for local artifacts, not chat-facing content.
 - Backend fallback is centralized in
   `agentic_tools/wechat_gui_agent/scripts/wechat_agent_backend.py`. If the
   selected Codex model is Spark and the live attempt fails with quota/rate-limit
-  text, the same chat/role turn retries once with `gpt-5.5` and low reasoning.
-  If the Codex/Claude attempt is still quota-limited, unavailable, or times out
-  for the agent turn, the turn falls back to AgInTi using the configured
+  text or returns an empty payload, the same chat/role turn retries once with
+  `gpt-5.6-sol` and low reasoning. If the Codex/Claude attempt is still
+  quota-limited, unavailable, empty, or times out for the agent turn, the turn
+  falls back to AgInTi using the configured
   `aginti.command`, `aginti.args`, and `aginti.workspace` when
   `agent_fallbacks.fallback_to_aginti=true`. Timeout fallback is on by default
   and can be disabled with `agent_fallbacks.fallback_on_timeout=false` for a
@@ -308,11 +309,21 @@ evidence for local artifacts, not chat-facing content.
   LazyEdit, or another individual routine. Every call to
   `wechat_agent_backend.run_agent_session` should get the same fallback
   behavior and should record `backend_attempts` plus `backend_fallback_used`.
+- Keep fast route/chat timeouts bounded (25 seconds by default). A slow primary
+  must yield to the centralized fallback instead of holding the monitor lane for
+  minutes. Worker and long-job probe timeouts remain separate and longer.
 - Do not confuse agent-turn timeout fallback with long browser or generation
   monitoring. Xiaoyunque, LazyEdit, AutoPublish, CAD, PCB, and file-download
   jobs should persist queue/probe state, status, and artifacts, then continue or
   requeue from evidence. They should not restart or switch tools just because a
   generation browser page is still running.
+- Treat structured worker output as the delivery contract. A non-empty
+  `message`, `confirmation`, `files`, or explicit `NO_REPLY` is a usable result.
+  A useful answer may mention that one source request timed out; that sentence
+  is evidence about the source, not proof that the worker failed. Escalation
+  only follows an explicit execution-failure result or an empty/too-short turn.
+  Across effort retries, retain the highest-quality earlier result so a later
+  empty JSON payload can never erase a substantive answer.
 - Keep `immediate_route_enabled=true` for monitored chats that should enqueue
   backend work. `immediate_ack_enabled=false` only suppresses the visible ack;
   it must not be used as the routing kill switch.
@@ -388,6 +399,17 @@ evidence for local artifacts, not chat-facing content.
   polls must be short probes so one old generation cannot starve new requests.
 - LazyEdit/public publish poststages wait through
   `generation_poststage_pending`; timeouts requeue instead of completing.
+- The direct DB monitors still poll locally at sub-second intervals. On Linux
+  clients that materialize inactive chats only after opening them, rotate a
+  small number of chats every few seconds with `wechat_chat_sync_loop.py` and
+  always yield its GUI lane while a reply/artifact send is active. This bounds
+  inactive-chat pickup latency without sending messages or fighting the sender.
+  Non-queue senders such as the daily report reserve
+  `.private/wechat_gui_send_priority.json`; chat sync yields until that bounded
+  reservation is released or expires, preventing background dry-open scans from
+  starving real file/message delivery. The sync loop removes malformed,
+  expired, or dead-owner reservations immediately so a crashed sender cannot
+  stall chat materialization.
 - Use `gpt-5.5` medium for normal research, PDF, figure, and generated-video
   browser work. Use high for CAD/PCB/Blender/install/tool execution. Use xhigh
   only for full autonomous end-to-end tasks.
@@ -408,7 +430,7 @@ evidence for local artifacts, not chat-facing content.
 | `expired_stale` | An ordinary pending task exceeded the 15-minute backlog TTL. | Leave terminal; explicitly replay the current request only if it is still wanted. |
 | `send_expired` | An outbound retry exceeded the 10-minute outbox TTL. | Leave terminal; use explicit resend only after confirming the message is still useful. |
 | `worker_abandoned` | The process owning an ordinary `in_progress` task ended. | Leave terminal by default; explicitly reprocess only if the request is still wanted. |
-| `worker_failed` | Backend failed before a useful result. | Fix source/tool issue; rerun only if safe. |
+| `worker_failed` | Backend failed or every fallback returned an empty delivery payload. | Fix source/tool issue; rerun only if safe. Never mark an empty payload `done`. |
 | `done` | Requested stages completed. | No action. |
 
 Returned video/audio files are required delivery artifacts for every route, not

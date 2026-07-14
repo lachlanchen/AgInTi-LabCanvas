@@ -31,6 +31,14 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_unique_paths_keeps_each_delivery_artifact_once(self) -> None:
+        worker = load_worker()
+        paths = [Path("/tmp/report.zh.pdf"), Path("/tmp/report.en.pdf"), Path("/tmp/report.zh.pdf")]
+
+        result = worker.unique_paths(paths)
+
+        self.assertEqual(result, [Path("/tmp/report.zh.pdf"), Path("/tmp/report.en.pdf")])
+
     def test_no_reply_worker_output_is_silent_even_with_explanation(self) -> None:
         worker = load_worker()
         result = worker.parse_worker_result(
@@ -472,6 +480,42 @@ stderr: noisy internal trace
                 "This needs login/CAPTCHA, waiting for approval.",
             )
         )
+
+    def test_worker_policy_does_not_misread_source_timeout_inside_useful_json(self) -> None:
+        worker = load_worker()
+        result = json.dumps(
+            {
+                "message": (
+                    "原始公众号页面读取超时，但卡片标题、作者和同一聊天中的正文摘录足以确认主题。"
+                    "文章主张先验证用户是否愿意为重复劳动的自动化付费，再决定是否扩展产品；"
+                    "当前最值得保留的是这个验证顺序，而不是页面中的宣传措辞。"
+                ),
+                "files": [],
+            },
+            ensure_ascii=False,
+        )
+
+        self.assertFalse(worker.worker_result_needs_escalation(result))
+
+    def test_run_worker_codex_keeps_best_earlier_result_when_retries_are_empty(self) -> None:
+        worker = load_worker()
+        responses = [
+            "Partial answer with the source title.",
+            "",
+            "Worker failed: cannot complete with current effort.",
+        ]
+        original = worker.run_worker_codex_once
+        try:
+            worker.run_worker_codex_once = lambda _task, _policy: responses.pop(0)
+            task = {"chat": "demo", "request": "summarize this PDF paper"}
+            result = worker.run_worker_codex(task)
+        finally:
+            worker.run_worker_codex_once = original
+
+        self.assertIn("Partial answer", result)
+        self.assertEqual(task["worker_policy_selected_attempt"], 1)
+        self.assertTrue(task["worker_policy_attempts"][0]["selected"])
+        self.assertFalse(task["worker_policy_attempts"][1]["selected"])
 
     def test_run_worker_codex_retries_until_xhigh_success(self) -> None:
         worker = load_worker()

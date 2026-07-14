@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -70,6 +71,91 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
         result = module.queue_send_lane_busy(queue)
 
         self.assertFalse(result["busy"])
+
+    def test_queue_send_lane_busy_honors_external_sender_reservation(self):
+        module = load_wechat_chat_sync_loop()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        marker = Path(temp_dir.name) / "send-priority.json"
+        marker.write_text(
+            json.dumps(
+                {
+                    "token": "daily-1",
+                    "owner": "career_daily",
+                    "chat": "lachlanchan",
+                    "expires_at": time.time() + 60,
+                }
+            ),
+            encoding="utf-8",
+        )
+        module.GUI_SEND_PRIORITY = marker
+
+        result = module.queue_send_lane_busy(Path(temp_dir.name) / "missing-queue.jsonl")
+
+        self.assertTrue(result["busy"])
+        self.assertEqual(result["active"][0]["id"], "daily-1")
+        self.assertEqual(result["active"][0]["chat"], "lachlanchan")
+        self.assertEqual(result["active"][0]["reason"], "career_daily")
+
+    def test_queue_send_lane_busy_removes_expired_sender_reservation(self):
+        module = load_wechat_chat_sync_loop()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        marker = Path(temp_dir.name) / "send-priority.json"
+        marker.write_text(
+            json.dumps(
+                {
+                    "token": "expired-1",
+                    "owner": "career_daily",
+                    "chat": "lachlanchan",
+                    "expires_at": time.time() - 1,
+                }
+            ),
+            encoding="utf-8",
+        )
+        module.GUI_SEND_PRIORITY = marker
+
+        result = module.queue_send_lane_busy(Path(temp_dir.name) / "missing-queue.jsonl")
+
+        self.assertFalse(result["busy"])
+        self.assertFalse(marker.exists())
+
+    def test_queue_send_lane_busy_removes_corrupt_sender_reservation(self):
+        module = load_wechat_chat_sync_loop()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        marker = Path(temp_dir.name) / "send-priority.json"
+        marker.write_text("{not-json", encoding="utf-8")
+        module.GUI_SEND_PRIORITY = marker
+
+        result = module.queue_send_lane_busy(Path(temp_dir.name) / "missing-queue.jsonl")
+
+        self.assertFalse(result["busy"])
+        self.assertFalse(marker.exists())
+
+    def test_queue_send_lane_busy_removes_dead_sender_reservation(self):
+        module = load_wechat_chat_sync_loop()
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        marker = Path(temp_dir.name) / "send-priority.json"
+        marker.write_text(
+            json.dumps(
+                {
+                    "token": "dead-1",
+                    "owner": "career_daily",
+                    "chat": "lachlanchan",
+                    "pid": 2_000_000_000,
+                    "expires_at": time.time() + 600,
+                }
+            ),
+            encoding="utf-8",
+        )
+        module.GUI_SEND_PRIORITY = marker
+
+        result = module.queue_send_lane_busy(Path(temp_dir.name) / "missing-queue.jsonl")
+
+        self.assertFalse(result["busy"])
+        self.assertFalse(marker.exists())
 
     def test_sync_once_yields_to_queue_before_opening_chats(self):
         module = load_wechat_chat_sync_loop()

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 import json
 import os
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import time
 from typing import Any
+import uuid
 
 from wechat_agent_backend import run_agent_session, select_agent_backend
 from wechat_task_worker import ensure_markdown_pdf_companions, send_file, send_message
@@ -24,6 +26,7 @@ PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 OUTPUT = ROOT / "output" / "wechat_strategy"
 DEFAULT_MEMORY_DB = PRIVATE / "wechat_memory.sqlite"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
+GUI_SEND_PRIORITY = Path(os.environ.get("WECHAT_GUI_SEND_PRIORITY_PATH", str(PRIVATE / "wechat_gui_send_priority.json")))
 DEFAULT_CHATS = ["写作 外语 挣钱", "lachlanchan"]
 
 
@@ -106,7 +109,8 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
         reuse=True,
     )
     body = str(result.get("message") or "").strip()
-    if not result.get("ok") or not body:
+    agent_ok = bool(result.get("ok")) and bool(body)
+    if not agent_ok:
         body = (
             "# Daily Career Strategy Agent Failed\n\n"
             f"- ok: {result.get('ok')}\n"
@@ -128,7 +132,7 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
         encoding="utf-8",
     )
     send_status: dict[str, Any] = {"attempted": False}
-    if args.send:
+    if args.send and agent_ok:
         send_status = send_daily_result(args, share_report, body)
     manifest = build_trace_manifest(
         args=args,
@@ -146,16 +150,17 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    delivery_ok = not args.send or bool(send_status.get("complete"))
     return {
-        "ok": bool(result.get("ok")) and bool(body),
-        "status": "done",
+        "ok": agent_ok and delivery_ok,
+        "status": "done" if agent_ok and delivery_ok else ("delivery_failed" if agent_ok else "agent_failed"),
         "run_id": run_id,
         "trace_dir": str(trace_dir),
         "manifest": str(trace_dir / "manifest.json"),
         "private_report": str(private_report),
         "share_report": str(share_report),
         "send": send_status,
-        "summary": one_line_summary(body),
+        "summary": extract_daily_chat_summary(body),
         "agent": {
             "backend": result.get("backend", "codex"),
             "thread_id": result.get("thread_id"),
@@ -206,6 +211,12 @@ The report should answer, in a natural order:
 - What to ignore or stop doing because it dilutes the signal.
 - What one primary bet deserves today's energy.
 - What to do today.
+
+Before the final questions, include one compact paragraph beginning exactly
+with `微信摘要：`. Write 2-4 natural Chinese sentences that name the strongest
+new evidence, the primary bet, and the concrete action for today. This paragraph
+is sent directly to WeChat, so make it independently useful and avoid generic
+completion language.
 
 End with exactly three self-discovery questions. They must be specific to
 today's evidence, not generic journaling prompts. Each question should be
@@ -446,38 +457,101 @@ def sanitize_shareable_report(text: str) -> str:
 
 
 def send_daily_result(args: argparse.Namespace, report: Path, body: str) -> dict[str, Any]:
-    summary = one_line_summary(body)
-    message = "今日方向简报已完成。\n" + summary
+    with reserve_gui_send_priority("career_daily", args.send_chat):
+        return send_daily_result_reserved(args, report, body)
+
+
+def send_daily_result_reserved(args: argparse.Namespace, report: Path, body: str) -> dict[str, Any]:
+    summary = extract_daily_chat_summary(body)
+    message = summary
     questions = extract_self_discovery_questions(body)
     if questions:
         question_lines = [f"{index}. {question}" for index, question in enumerate(questions, start=1)]
-        message += "\n\n今日3个自我发现问题:\n" + "\n".join(question_lines)
-    status: dict[str, Any] = {"attempted": True, "message_sent": False, "file_sent": False, "files_sent": [], "errors": []}
-    try:
-        send_message(message, args.send_chat, args.send_targets)
-        status["message_sent"] = True
-    except Exception as exc:  # noqa: BLE001 - preserve send blocker for operator.
-        status["errors"].append(f"message: {exc}")
+        message += "\n\n今天值得认真回答的三个问题：\n" + "\n".join(question_lines)
+    status: dict[str, Any] = {
+        "attempted": True,
+        "complete": False,
+        "message_sent": False,
+        "file_sent": False,
+        "files_sent": [],
+        "errors": [],
+    }
     if args.attach_report:
-        report_files = [report]
         companions = ensure_markdown_pdf_companions(report)
         status["pdf_companions"] = [str(path) for path in companions]
         status["pdf_required"] = True
-        if companions:
-            status["pdf_companion"] = str(companions[0])
-            report_files.extend(companions)
-        else:
+        required_languages = {"zh", "en"}
+        available_languages = {
+            path.name.rsplit(".", 2)[-2]
+            for path in companions
+            if path.name.count(".") >= 2 and path.suffix.lower() == ".pdf"
+        }
+        missing_languages = sorted(required_languages - available_languages)
+        if missing_languages:
             status["errors"].append(
-                "pdf: no Markdown PDF companions were generated; check pandoc/xelatex/PATH and WECHAT_MARKDOWN_PDF_* settings"
+                "pdf: required bilingual companions were not generated: " + ", ".join(missing_languages)
             )
-        for report_file in report_files:
+            return status
+        status["pdf_companion"] = str(companions[0])
+        for report_file in companions:
             try:
-                send_file(report_file, args.send_chat, args.send_targets)
+                send_daily_with_busy_retry(send_file, report_file, args.send_chat, args.send_targets)
                 status["files_sent"].append(str(report_file))
             except Exception as exc:  # noqa: BLE001
                 status["errors"].append(f"file {report_file}: {exc}")
-        status["file_sent"] = bool(companions) and len(status["files_sent"]) == len(report_files)
+                return status
+        status["file_sent"] = len(status["files_sent"]) == len(companions)
+    try:
+        send_daily_with_busy_retry(send_message, message, args.send_chat, args.send_targets)
+        status["message_sent"] = True
+    except Exception as exc:  # noqa: BLE001 - preserve send blocker for operator.
+        status["errors"].append(f"message: {exc}")
+        return status
+    status["complete"] = status["message_sent"] and (not args.attach_report or status["file_sent"])
     return status
+
+
+@contextmanager
+def reserve_gui_send_priority(owner: str, chat: str):
+    token = f"{owner}-{os.getpid()}-{uuid.uuid4().hex[:10]}"
+    ttl = max(60.0, float(os.environ.get("WECHAT_GUI_SEND_PRIORITY_TTL", "600")))
+    payload = {
+        "token": token,
+        "owner": owner,
+        "chat": chat,
+        "pid": os.getpid(),
+        "created_at": time.time(),
+        "expires_at": time.time() + ttl,
+    }
+    GUI_SEND_PRIORITY.parent.mkdir(parents=True, exist_ok=True)
+    temporary = GUI_SEND_PRIORITY.with_name(f"{GUI_SEND_PRIORITY.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(GUI_SEND_PRIORITY)
+    try:
+        yield
+    finally:
+        try:
+            current = json.loads(GUI_SEND_PRIORITY.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current = {}
+        if current.get("token") == token:
+            GUI_SEND_PRIORITY.unlink(missing_ok=True)
+
+
+def send_daily_with_busy_retry(sender: Any, *args: Any) -> None:
+    attempts = max(1, int(os.environ.get("WECHAT_DAILY_SEND_ATTEMPTS", "6")))
+    delay = max(0.0, float(os.environ.get("WECHAT_DAILY_SEND_RETRY_DELAY", "5")))
+    for attempt in range(1, attempts + 1):
+        try:
+            sender(*args)
+            return
+        except Exception as exc:
+            text = str(exc).lower()
+            retryable = "wechat_send_busy" in text or "serialized gui sender is already sending" in text
+            if not retryable or attempt >= attempts:
+                raise
+            if delay:
+                time.sleep(delay)
 
 
 def extract_self_discovery_questions(text: str, *, limit: int = 3) -> list[str]:
@@ -494,6 +568,11 @@ def extract_self_discovery_questions(text: str, *, limit: int = 3) -> list[str]:
         if "自我" in line and ("问题" in line or "提问" in line or "发现" in line):
             start = index + 1
             break
+    if start < 0:
+        for index, line in enumerate(lines):
+            if re.match(r"^\s*(?:[-*]\s*)?(?:Q|Question|问题)\s*1\s*[:：.)、]", line, flags=re.I):
+                start = index
+                break
     if start < 0:
         return []
     questions: list[str] = []
@@ -531,6 +610,24 @@ def one_line_summary(text: str) -> str:
         if len(clean) >= 12:
             return compact(clean, 240)
     return "已生成今日方向、写作、职业和机会分析。"
+
+
+def extract_daily_chat_summary(text: str) -> str:
+    for line in str(text or "").splitlines():
+        match = re.match(r"^\s*(?:[-*]\s*)?微信摘要\s*[:：]\s*(.+?)\s*$", line)
+        if match:
+            return sanitize_shareable_report(compact(match.group(1), 520))
+    before_questions = re.split(
+        r"(?im)^\s*#{1,6}\s+.*(?:self[- ]discovery|自我.*(?:问题|提问|发现)).*$",
+        str(text or ""),
+        maxsplit=1,
+    )[0]
+    for paragraph in re.split(r"\n\s*\n", before_questions):
+        lines = [line.strip() for line in paragraph.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+        clean = re.sub(r"[*_`]", "", " ".join(lines)).strip()
+        if len(clean) >= 40:
+            return sanitize_shareable_report(compact(clean, 520))
+    return sanitize_shareable_report(one_line_summary(text))
 
 
 def compact(value: Any, limit: int) -> str:

@@ -107,9 +107,10 @@ decrypt refresh pane; direct monitors use `--no-decrypt` and read the shared
 refreshed cache, which avoids concurrent decrypt stalls. The fast path should
 run with `WECHAT_DIRECT_POLL_SECONDS=0.8`,
 `WECHAT_DIRECT_CATCHUP_POLL_SECONDS=0.1`, and
-`WECHAT_DECRYPT_REFRESH_INTERVAL=1`; each group config should use `gpt-5.5`
-with medium reasoning for immediate replies and leave heavier work to the worker
-queue.
+`WECHAT_DECRYPT_REFRESH_INTERVAL=1`; each group config should use
+`gpt-5.6-sol` with low reasoning for immediate replies and leave heavier work
+to the worker queue. Keep `gpt-5.5` medium/high/xhigh for worker execution that
+needs deeper reasoning or tools.
 The same supervisor also runs `wechat_chat_sync_loop.py` by default. That loop
 uses the guarded GUI opener in dry-run mode to visit configured chats without
 sending anything. This is necessary on Linux WeChat when inactive groups do not
@@ -185,6 +186,9 @@ generated previews or source files to be returned in its JSON `files` array.
 If a worker result is clearly failed, timed out, or too weak, the worker retries
 once at the next effort level. GUI send failures are saved as `send_failed` so
 the loop does not crash or resend duplicates indefinitely.
+Source summaries that accurately report a webpage timeout are valid answers,
+not worker failures. Structured result scoring preserves the best earlier turn
+when a later effort retry is empty.
 
 ## Files And PDFs
 

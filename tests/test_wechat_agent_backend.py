@@ -62,7 +62,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(calls[0]["chat_name"], "EchoMind")
         self.assertEqual(calls[0]["role"], "fast")
 
-    def test_spark_quota_falls_back_to_codex_55_low(self) -> None:
+    def test_spark_quota_falls_back_to_codex_56_sol_low(self) -> None:
         backend = load_backend()
         calls: list[dict[str, object]] = []
         original = backend.run_codex_session
@@ -77,7 +77,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
                         "returncode": 1,
                         "stderr_tail": "quota exceeded",
                     }
-                return {"ok": True, "message": "CHAT: recovered", "thread_id": "codex-55"}
+                return {"ok": True, "message": "CHAT: recovered", "thread_id": "codex-56-sol"}
 
             backend.run_codex_session = fake_run_codex_session
             result = backend.run_agent_session(
@@ -97,14 +97,14 @@ class WeChatAgentBackendTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["backend"], "codex")
-        self.assertEqual(result["model"], "gpt-5.5")
+        self.assertEqual(result["model"], "gpt-5.6-sol")
         self.assertTrue(result["backend_fallback_used"])
         self.assertEqual(calls[0]["model"], "gpt-5.3-codex-spark")
         self.assertEqual(calls[0]["reasoning_effort"], "high")
-        self.assertEqual(calls[1]["model"], "gpt-5.5")
+        self.assertEqual(calls[1]["model"], "gpt-5.6-sol")
         self.assertEqual(calls[1]["reasoning_effort"], "low")
 
-    def test_codex_quota_falls_back_to_aginti_after_55_low(self) -> None:
+    def test_codex_quota_falls_back_to_aginti_after_56_sol_low(self) -> None:
         backend = load_backend()
         codex_calls: list[dict[str, object]] = []
         aginti_calls: list[dict[str, object]] = []
@@ -150,9 +150,40 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(result["backend"], "aginti")
         self.assertEqual(result["message"], "CHAT: handled by aginti")
         self.assertTrue(result["backend_fallback_used"])
-        self.assertEqual([call["model"] for call in codex_calls], ["gpt-5.3-codex-spark", "gpt-5.5"])
+        self.assertEqual([call["model"] for call in codex_calls], ["gpt-5.3-codex-spark", "gpt-5.6-sol"])
         self.assertEqual(len(aginti_calls), 1)
         self.assertEqual(result["backend_attempts"][-1]["backend"], "aginti")
+
+    def test_empty_spark_response_falls_back_to_codex_56_sol_low(self) -> None:
+        backend = load_backend()
+        calls: list[dict[str, object]] = []
+        original = backend.run_codex_session
+        try:
+            def fake_run_codex_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                calls.append({"prompt": prompt, **kwargs})
+                if len(calls) == 1:
+                    return {"ok": True, "message": "", "thread_id": "spark-thread", "returncode": 0}
+                return {"ok": True, "message": "CHAT: recovered from empty output", "thread_id": "sol-thread"}
+
+            backend.run_codex_session = fake_run_codex_session
+            result = backend.run_agent_session(
+                "hello",
+                backend="codex",
+                chat_name="EchoMind",
+                role="route",
+                model="gpt-5.3-codex-spark",
+                reasoning_effort="high",
+                sandbox="read-only",
+                timeout_seconds=30,
+                workdir=ROOT,
+                backend_config={"agent_fallbacks": {"fallback_to_aginti": False}},
+            )
+        finally:
+            backend.run_codex_session = original
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([call["model"] for call in calls], ["gpt-5.3-codex-spark", "gpt-5.6-sol"])
+        self.assertEqual(result["backend_attempts"][0]["failure_kind"], "empty")
 
     def test_codex_timeout_falls_back_to_aginti_when_enabled(self) -> None:
         backend = load_backend()

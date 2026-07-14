@@ -58,12 +58,15 @@ Reusable user script:
 ~/scripts/create-labcanvas-career-daily-tmux.sh
 ```
 
-When `--attach-report` is enabled, the sender attaches the sanitized Markdown
-report plus Chinese and English PDF companions, for example
-`2026-06-26-career-strategy.md`, `2026-06-26-career-strategy.zh.pdf`, and
+When `--attach-report` is enabled, the sender keeps the sanitized Markdown
+locally and sends Chinese and English PDF companions to WeChat, for example
+`2026-06-26-career-strategy.zh.pdf` and
 `2026-06-26-career-strategy.en.pdf`. Missing language Markdown is generated
 through the existing agent backend, then rendered with pandoc/XeLaTeX so the
-report is easier to read on mobile WeChat.
+report is easier to read on mobile WeChat. The two PDFs are sent before the
+agent-written `微信摘要` and three questions. If either PDF cannot be generated
+or delivered, the sender records a delivery failure and does not claim the
+daily report was completed in chat.
 
 The launch wrappers set:
 
@@ -73,9 +76,12 @@ WECHAT_MARKDOWN_PDF_PANDOC=$HOME/miniconda3/bin/pandoc
 WECHAT_MARKDOWN_PDF_ENGINE=xelatex
 ```
 
-If PDF generation fails, the daily sender now records a `pdf:` error and marks
-`file_sent` false instead of silently treating Markdown-only delivery as
-complete.
+If `pandoc` is absent from the tmux process PATH, the renderer also probes
+`~/miniconda3/bin/pandoc`, `~/.local/bin/pandoc`, and
+`/usr/local/bin/pandoc`. Busy GUI sends use a bounded pre-send retry; other
+errors fail closed to avoid duplicate attachments. A PDF failure records a
+`pdf:` error and marks the run `delivery_failed` instead of silently treating
+Markdown-only delivery as complete.
 
 ## Code Surfaces
 
