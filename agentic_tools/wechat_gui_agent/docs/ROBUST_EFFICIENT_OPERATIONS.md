@@ -644,6 +644,31 @@ Expected signs:
 - no unexpected `pending`, stale `in_progress`, stale `send_retrying`, or
   wrong-chat send errors.
 
+### Black noVNC Canvas
+
+The WeChat desktop is `DISPLAY=:97`, VNC `5917`, and noVNC `6107`. The shared
+Xiaoyunque/JLC browser is a separate `DISPLAY=:98` desktop on noVNC `6099`.
+Do not diagnose one through the other URL.
+
+If noVNC `6107` connects but shows a completely black canvas, check:
+
+```bash
+DISPLAY=:97 XAUTHORITY= xwininfo -root -tree
+DISPLAY=:97 XAUTHORITY= xdotool search --onlyvisible --class wechat getwindowgeometry --shell
+```
+
+Healthy WeChat has a mapped window substantially larger than a helper window,
+normally around `1020 x 739`. A `1 x 1` unmapped `wechat` window or an unmapped
+`200 x 200` `WeChatAppEx` window is only a background/helper surface; x11vnc
+will correctly transmit the black X root because there is no chat UI to show.
+
+`wechat_virtual_desktop.sh` now treats this as a stale background-only client.
+It first invokes WeChat normally to request activation. If no large mapped
+window appears within the bounded startup wait, it gracefully restarts only the
+`/usr/bin/wechat` process whose environment matches `DISPLAY=:97`, preserving
+Xvfb, x11vnc, websockify, the profile, queue, and monitors. Set
+`WECHAT_AUTO_RECOVER_UNMAPPED=0` to disable this fallback while debugging.
+
 ## Recovery Playbooks
 
 No reply:

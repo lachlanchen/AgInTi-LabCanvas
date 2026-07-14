@@ -7,8 +7,80 @@ VNC_PORT="${WECHAT_VNC_PORT:-5917}"
 NOVNC_PORT="${WECHAT_NOVNC_PORT:-6107}"
 LOG_DIR="$ROOT/output/virtual_desktop/$(date +%F)"
 KEEP_AWAKE_INTERVAL="${WECHAT_KEEP_AWAKE_INTERVAL:-55}"
+MIN_WINDOW_WIDTH="${WECHAT_MIN_WINDOW_WIDTH:-640}"
+MIN_WINDOW_HEIGHT="${WECHAT_MIN_WINDOW_HEIGHT:-480}"
+START_WAIT_SECONDS="${WECHAT_START_WAIT_SECONDS:-12}"
+RESTART_WAIT_SECONDS="${WECHAT_RESTART_WAIT_SECONDS:-12}"
+AUTO_RECOVER_UNMAPPED="${WECHAT_AUTO_RECOVER_UNMAPPED:-1}"
 mkdir -p "$LOG_DIR"
 LAUNCH_LOG="$LOG_DIR/wechat_virtual_desktop_launch.log"
+APP_LOG="$LOG_DIR/wechat_app.log"
+
+wechat_main_window() {
+  local window_id geometry width height
+  while IFS= read -r window_id; do
+    [[ -n "$window_id" ]] || continue
+    geometry="$(DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool getwindowgeometry --shell "$window_id" 2>/dev/null || true)"
+    width="$(awk -F= '$1 == "WIDTH" {print $2}' <<<"$geometry")"
+    height="$(awk -F= '$1 == "HEIGHT" {print $2}' <<<"$geometry")"
+    if [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] \
+      && (( width >= MIN_WINDOW_WIDTH && height >= MIN_WINDOW_HEIGHT )); then
+      printf '%s\n' "$window_id"
+      return 0
+    fi
+  done < <(DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible --class wechat 2>/dev/null || true)
+  return 1
+}
+
+wechat_pids_on_display() {
+  local pid
+  while IFS= read -r pid; do
+    [[ -r "/proc/$pid/environ" ]] || continue
+    if tr '\0' '\n' <"/proc/$pid/environ" | grep -Fxq "DISPLAY=$DISPLAY_ID"; then
+      printf '%s\n' "$pid"
+    fi
+  done < <(pgrep -f '^/usr/bin/wechat([[:space:]]|$)' 2>/dev/null || true)
+}
+
+launch_wechat() {
+  env -u WAYLAND_DISPLAY \
+    -u QT_PLUGIN_PATH \
+    -u QT_QPA_PLATFORM_PLUGIN_PATH \
+    -u QT_QPA_FONTDIR \
+    -u QT_STYLE_OVERRIDE \
+    DISPLAY="$DISPLAY_ID" XAUTHORITY= NO_AT_BRIDGE=1 QT_QPA_PLATFORM=xcb \
+    setsid -f /usr/bin/wechat >>"$APP_LOG" 2>&1
+}
+
+wait_for_main_window() {
+  local timeout="$1" deadline window_id
+  deadline=$((SECONDS + timeout))
+  while (( SECONDS < deadline )); do
+    if window_id="$(wechat_main_window)"; then
+      printf '%s\n' "$window_id"
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+stop_stale_wechat() {
+  local deadline pid
+  local -a pids=()
+  mapfile -t pids < <(wechat_pids_on_display)
+  ((${#pids[@]} > 0)) || return 0
+  for pid in "${pids[@]}"; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  deadline=$((SECONDS + RESTART_WAIT_SECONDS))
+  while (( SECONDS < deadline )); do
+    mapfile -t pids < <(wechat_pids_on_display)
+    ((${#pids[@]} == 0)) && return 0
+    sleep 1
+  done
+  return 1
+}
 
 "$ROOT/agentic_tools/virtual_desktop/launch_virtual_desktop.sh" \
   --name wechat \
@@ -20,15 +92,30 @@ LAUNCH_LOG="$LOG_DIR/wechat_virtual_desktop_launch.log"
   --log-dir "$LOG_DIR" \
   -- /bin/true >"$LAUNCH_LOG"
 
-if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible --class wechat >/dev/null 2>&1; then
-  env -u WAYLAND_DISPLAY \
-    -u QT_PLUGIN_PATH \
-    -u QT_QPA_PLATFORM_PLUGIN_PATH \
-    -u QT_QPA_FONTDIR \
-    -u QT_STYLE_OVERRIDE \
-    DISPLAY="$DISPLAY_ID" XAUTHORITY= NO_AT_BRIDGE=1 QT_QPA_PLATFORM=xcb \
-    setsid -f /usr/bin/wechat >"$LOG_DIR/wechat_app.log" 2>&1
-  sleep 5
+main_window="$(wechat_main_window || true)"
+if [[ -z "$main_window" ]]; then
+  echo "No large mapped WeChat window on $DISPLAY_ID; requesting normal activation." >>"$APP_LOG"
+  launch_wechat
+  main_window="$(wait_for_main_window "$START_WAIT_SECONDS" || true)"
+fi
+
+if [[ -z "$main_window" && "$AUTO_RECOVER_UNMAPPED" == "1" ]]; then
+  mapfile -t stale_pids < <(wechat_pids_on_display)
+  if ((${#stale_pids[@]} > 0)); then
+    echo "WeChat stayed background-only on $DISPLAY_ID; gracefully restarting stale PID(s): ${stale_pids[*]}" >>"$APP_LOG"
+    if stop_stale_wechat; then
+      launch_wechat
+      main_window="$(wait_for_main_window "$START_WAIT_SECONDS" || true)"
+    else
+      echo "Stale WeChat process did not exit within ${RESTART_WAIT_SECONDS}s; leaving it untouched." >>"$APP_LOG"
+    fi
+  fi
+fi
+
+if [[ -n "$main_window" ]]; then
+  echo "WeChat main window healthy on $DISPLAY_ID: $main_window" >>"$APP_LOG"
+else
+  echo "WARNING: no large mapped WeChat window on $DISPLAY_ID; noVNC will show only the X root background." >>"$APP_LOG"
 fi
 
 cat "$LAUNCH_LOG"
