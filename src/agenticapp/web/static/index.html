@@ -19,7 +19,7 @@
           <img class="brand-logo" src="/static/labcanvas-logo.svg" alt="AgInTi LabCanvas logo">
           <div>
             <div class="eyebrow">AgInTi LabCanvas</div>
-            <h1 data-i18n="app.title">Paper Figure Studio</h1>
+            <h1 data-i18n="app.title">Lab Workspace</h1>
           </div>
         </div>
         <div class="top-actions">
@@ -49,22 +49,87 @@
         <aside class="panel chat-panel">
           <header class="panel-head">
             <h2 data-i18n="section.chat">Chat</h2>
-            <span id="chatStatus" class="status" data-i18n="status.ready">Ready</span>
+            <div class="chat-head-status">
+              <span id="chatStatus" class="status" data-i18n="status.ready">Ready</span>
+              <button id="cancelAgentBtn" class="icon-command" type="button" title="Cancel the active agent task" aria-label="Cancel the active agent task" hidden>×</button>
+            </div>
           </header>
           <div id="messages" class="messages"></div>
+          <div id="capabilityStrip" class="capability-strip" aria-label="Available LabCanvas tools"></div>
           <div class="chips">
-            <button data-prompt="Make it a V-SPICE experiment setup">V-SPICE</button>
-            <button data-prompt="Prepare the Lumileds no-resistor PCB and C-mount reflector CAD task" data-i18n="chip.boardCad">Board/CAD task</button>
-            <button data-prompt="Generate a 2x3 paper figure grid for optical experiment icons" data-i18n="chip.figure2x3">Figure 2x3</button>
-            <button data-prompt="Export this setup to OpenSCAD">OpenSCAD</button>
-            <button data-prompt="Use BioRender settings for academic drawings">BioRender</button>
-            <button data-prompt="Make it brighter and vivid" data-i18n="chip.vivid">Vivid</button>
-            <button data-prompt="Add lens" data-i18n="chip.addLens">Add lens</button>
-            <button data-prompt="Add filter" data-i18n="chip.addFilter">Add filter</button>
+            <button data-prompt="Design a clean parametric C-mount sensor holder, validate STEP/STL/3MF, and render it">CAD</button>
+            <button data-prompt="Design and validate a KiCad PCB, export Gerbers and a full-board render">KiCad</button>
+            <button data-prompt="Build and render an editable Blender experiment scene">Blender</button>
+            <button data-prompt="Write and compile a TeX report with editable figures">TeX</button>
+            <button data-prompt="Check the WeChat automation stack and handle the requested chat operation">WeChat</button>
+            <button data-prompt="Probe LabVIEW and prepare the requested instrument-control workflow">LabVIEW</button>
           </div>
+          <details class="writing-tool">
+            <summary class="writing-tool-head">
+              <strong data-i18n="section.nextParagraph">Next Paragraph</strong>
+              <span id="writingStatus" class="status" data-i18n="status.ready">Ready</span>
+            </summary>
+            <div class="writing-tool-body">
+              <label>
+                <span data-i18n="label.writingFullText">Full text</span>
+                <textarea id="writingFullText" rows="5" data-i18n-placeholder="placeholder.writingFullText" placeholder="Current manuscript text. Accepted paragraphs are appended here."></textarea>
+              </label>
+              <div class="writing-grid">
+                <label>
+                  <span data-i18n="label.writingSetting">Setting</span>
+                  <textarea id="writingSetting" rows="2"></textarea>
+                </label>
+                <label>
+                  <span data-i18n="label.writingCharacters">Characters</span>
+                  <textarea id="writingCharacters" rows="2"></textarea>
+                </label>
+              </div>
+              <label>
+                <span data-i18n="label.writingMaterials">Materials</span>
+                <textarea id="writingMaterials" rows="2"></textarea>
+              </label>
+              <label>
+                <span data-i18n="label.writingGoal">Writing goal</span>
+                <input id="writingGoal" type="text" autocomplete="off">
+              </label>
+              <label>
+                <span data-i18n="label.writingDirection">This round</span>
+                <input id="writingDirection" type="text" autocomplete="off" data-i18n-placeholder="placeholder.writingDirection" placeholder="Tone, plot move, argument, example, or local adjustment.">
+              </label>
+              <label>
+                <span data-i18n="label.writingDraft">Draft paragraph</span>
+                <textarea id="writingDraft" rows="4" readonly></textarea>
+              </label>
+              <div class="writing-actions">
+                <button id="writeNextBtn" class="primary" type="button" data-i18n="button.writeNext">Write Next</button>
+                <button id="rewriteParagraphBtn" class="ghost" type="button" data-i18n="button.rewriteParagraph">Rewrite</button>
+                <button id="adjustParagraphBtn" class="ghost" type="button" data-i18n="button.adjustParagraph">Adjust</button>
+                <button id="acceptParagraphBtn" class="ghost" type="button" data-i18n="button.acceptParagraph">Accept</button>
+                <button id="undoParagraphBtn" class="ghost" type="button" data-i18n="button.undoParagraph">Undo</button>
+              </div>
+            </div>
+          </details>
           <form id="chatForm" class="composer">
-            <textarea id="messageInput" rows="3" placeholder="Ask for a paper setup, board, CAD device, optical bench, labels, colors, or generated figure panels." data-i18n-placeholder="placeholder.message"></textarea>
-            <button type="submit" data-i18n="button.send">Send</button>
+            <div class="agent-controls">
+              <select id="agentModelSelect" aria-label="Agent model" title="Agent model">
+                <option value="auto">Model: Auto</option>
+                <option value="gpt-5.6-sol">GPT-5.6 SOL</option>
+                <option value="gpt-5.5">GPT-5.5</option>
+              </select>
+              <select id="agentEffortSelect" aria-label="Reasoning effort" title="Reasoning effort">
+                <option value="auto">Effort: Auto</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="ultra">Ultra</option>
+              </select>
+              <select id="agentModeSelect" aria-label="Agent mode" title="Agent mode">
+                <option value="execute">Execute</option>
+                <option value="plan">Plan only</option>
+              </select>
+            </div>
+            <textarea id="messageInput" rows="3" placeholder="Ask LabCanvas to design, build, render, validate, document, or control a lab tool." data-i18n-placeholder="placeholder.message"></textarea>
+            <button class="primary" type="submit" data-i18n="button.send">Send</button>
           </form>
         </aside>
 
@@ -107,6 +172,7 @@
                 </div>
               </div>
               <div class="artifact-row">
+                <a id="artifactOpenLink" href="#" hidden data-i18n="link.open">Open</a>
                 <a id="pngLink" href="#" hidden data-i18n="link.image">Image</a>
                 <a id="blendLink" href="#" hidden data-i18n="link.blend">Blend</a>
                 <a id="specLink" href="#" hidden data-i18n="link.spec">Spec</a>
@@ -167,8 +233,13 @@
                 <label><input id="agintiDryRun" type="checkbox"> <span data-i18n="label.agintiDryRun">AgInTi dry run</span></label>
               </div>
               <div class="toolchain-grid">
+                <label><input id="toolCad" type="checkbox"> <span>CAD / Shapr3D</span></label>
+                <label><input id="toolKiCad" type="checkbox"> <span>KiCad PCB</span></label>
                 <label><input id="toolBlender" type="checkbox"> <span data-i18n="label.blenderRender">Blender render</span></label>
                 <label><input id="toolOpenScad" type="checkbox"> <span data-i18n="label.openscadExport">OpenSCAD export</span></label>
+                <label><input id="toolTex" type="checkbox"> <span>TeX / PDF</span></label>
+                <label><input id="toolWeChat" type="checkbox"> <span>WeChat</span></label>
+                <label><input id="toolLabView" type="checkbox"> <span>LabVIEW</span></label>
                 <label><input id="toolAgintiImage" type="checkbox"> <span data-i18n="label.agintiImage">AgInTi image</span></label>
                 <label><input id="toolBioRender" type="checkbox"> <span data-i18n="label.biorenderMcp">BioRender MCP</span></label>
                 <label><input id="toolTargetRegistry" type="checkbox"> <span data-i18n="label.targetRegistry">Target registry</span></label>

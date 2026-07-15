@@ -6,7 +6,20 @@ import threading
 import unittest
 from urllib import request
 
-from agenticapp.webapp import chat_update, create_server, default_scene_spec, dispatch_web_target, plan_web_scene, run_web_lab_task, target_list_response
+from agenticapp.backends import default_backend_settings
+from agenticapp.webapp import (
+    build_next_paragraph_messages,
+    chat_update,
+    create_server,
+    default_scene_spec,
+    dispatch_web_target,
+    plan_web_scene,
+    run_web_agent_chat,
+    run_web_lab_task,
+    run_web_next_paragraph,
+    sanitize_next_paragraph,
+    target_list_response,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -84,6 +97,13 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('src="/static/labcanvas-logo.svg"', html)
         self.assertIn("Powered by", html)
         self.assertIn("LazyingArt LLC", html)
+        self.assertIn('id="agentModelSelect"', html)
+        self.assertIn('id="agentEffortSelect"', html)
+        self.assertIn('id="agentModeSelect"', html)
+        self.assertIn('id="artifactOpenLink"', html)
+        self.assertIn('id="writingFullText"', html)
+        self.assertIn('id="writeNextBtn"', html)
+        self.assertIn("GPT-5.6 SOL", html)
         for locale in expected:
             self.assertIn(f'value="{locale}"', html)
         for key in set(re.findall(r'data-i18n(?:-[a-z]+)?="([^"]+)"', html)):
@@ -132,6 +152,59 @@ class WebAppTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("reusable", result["reply"])
         self.assertIn("artifacts", result)
+
+    def test_web_agent_chat_dry_run_uses_workspace_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_web_agent_chat(
+                {
+                    "message": "Design and render a KiCad PCB and a C-mount holder",
+                    "conversation_id": "web-test",
+                    "dry_run": True,
+                },
+                Path(tmp),
+                settings=default_backend_settings(),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(result["policy"]["model"], "gpt-5.6-sol")
+        self.assertEqual(result["policy"]["reasoning_effort"], "high")
+        self.assertIn("WeChat", result["prompt"])
+
+    def test_next_paragraph_prompt_contains_complete_context(self):
+        messages = build_next_paragraph_messages(
+            {
+                "full_text": "第一段。",
+                "setting": "近未来城市",
+                "characters": "阿青，工程师",
+                "materials": "参考资料 A",
+                "goal": "写出压迫感",
+                "direction": "转到钱的问题",
+                "previous_draft": "旧草稿。",
+                "action": "adjust",
+            }
+        )
+        prompt = messages[-1]["content"]
+
+        self.assertIn("只输出一个自然段", messages[0]["content"])
+        self.assertIn("【全文】\n第一段。", prompt)
+        self.assertIn("【设定】\n近未来城市", prompt)
+        self.assertIn("【人物】\n阿青，工程师", prompt)
+        self.assertIn("【资料】\n参考资料 A", prompt)
+        self.assertIn("【写作目标】\n写出压迫感", prompt)
+        self.assertIn("【本轮方向】\n转到钱的问题", prompt)
+        self.assertIn("【上一版草稿】\n旧草稿。", prompt)
+
+    def test_next_paragraph_response_is_clamped_to_one_paragraph(self):
+        result = run_web_next_paragraph(
+            {"full_text": "前文。", "goal": "继续", "action": "next"},
+            settings=default_backend_settings(),
+            deepseek_runner=lambda messages, settings: "下一段：他终于意识到，钱不是远方的问题，而是今天晚饭前就会敲门的问题。\n\n第二段不应出现。",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["paragraph"], "他终于意识到，钱不是远方的问题，而是今天晚饭前就会敲门的问题。")
+        self.assertEqual(sanitize_next_paragraph("草稿：只留这一段。\n\n不要这段。"), "只留这一段。")
 
 
 if __name__ == "__main__":

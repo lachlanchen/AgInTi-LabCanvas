@@ -10,6 +10,33 @@ from agenticapp.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_agent_chat_dry_run_selects_dynamic_tool_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "agent",
+                        "chat",
+                        "Design",
+                        "and",
+                        "render",
+                        "a",
+                        "C-mount",
+                        "holder",
+                        "--storage-dir",
+                        tmp,
+                        "--dry-run",
+                        "--json",
+                    ]
+                )
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["policy"]["model"], "gpt-5.6-sol")
+        self.assertEqual(payload["policy"]["reasoning_effort"], "high")
+        self.assertIn("Shapr3D", payload["prompt"])
+
     def test_list_reads_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "targets.json"

@@ -10,17 +10,28 @@ from typing import Any
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 MIME_BY_SUFFIX = {
+    ".3mf": "model/3mf",
     ".blend": "application/octet-stream",
+    ".csv": "text/csv; charset=utf-8",
+    ".dxf": "image/vnd.dxf",
+    ".gbr": "application/vnd.gerber",
     ".json": "application/json; charset=utf-8",
     ".kicad_pcb": "text/plain; charset=utf-8",
+    ".kicad_pro": "application/json; charset=utf-8",
     ".kicad_sch": "text/plain; charset=utf-8",
     ".md": "text/markdown; charset=utf-8",
+    ".mp4": "video/mp4",
+    ".obj": "model/obj",
+    ".pdf": "application/pdf",
     ".png": "image/png",
     ".scad": "text/plain; charset=utf-8",
     ".step": "model/step",
     ".stl": "model/stl",
     ".svg": "image/svg+xml; charset=utf-8",
+    ".tex": "text/x-tex; charset=utf-8",
     ".txt": "text/plain; charset=utf-8",
+    ".webm": "video/webm",
+    ".webp": "image/webp",
     ".zip": "application/zip",
 }
 
@@ -49,7 +60,7 @@ def artifact_kind_for_path(path: str | Path, kind: str = "") -> str:
         return "json"
     if suffix == ".scad":
         return "openscad"
-    if suffix == ".blend":
+    if suffix in {".3mf", ".blend", ".obj", ".step", ".stl"}:
         return "model"
     return "file"
 

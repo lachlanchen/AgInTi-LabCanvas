@@ -132,6 +132,50 @@ def build_parser() -> argparse.ArgumentParser:
     studio_dispatch.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     studio_dispatch.set_defaults(func=cmd_studio_dispatch)
 
+    agent_parser = subparsers.add_parser("agent", help="Chat with the persistent tool-capable LabCanvas workspace agent.")
+    agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
+    agent_common = argparse.ArgumentParser(add_help=False)
+    agent_common.add_argument("--storage-dir", default="output/webapp", help="Agent task and artifact storage. Default: output/webapp.")
+
+    agent_chat = agent_subparsers.add_parser("chat", parents=[agent_common], help="Send one turn to a persistent LabCanvas agent session.")
+    agent_chat.add_argument("prompt", nargs="+", help="Natural-language task or follow-up message.")
+    agent_chat.add_argument("--conversation", default="cli-default", help="Stable conversation id used to resume one Codex session.")
+    agent_chat.add_argument("--backend", choices=["auto", "codex", "aginti"], default="auto", help="Agent backend. Default: auto.")
+    agent_chat.add_argument("--model", default="auto", help="Model id or auto. 'sol' aliases gpt-5.6-sol.")
+    agent_chat.add_argument("--effort", choices=["auto", "low", "medium", "high", "ultra", "xhigh"], default="auto", help="Reasoning effort. Ultra aliases xhigh.")
+    agent_chat.add_argument("--mode", choices=["execute", "plan"], default="execute", help="Execute tools or inspect and plan only.")
+    agent_chat.add_argument("--timeout", type=int, help="Override the dynamic task timeout in seconds.")
+    agent_chat.add_argument("--no-aginti-fallback", action="store_true", help="Do not fall back to AgInTi if Codex is unavailable or times out.")
+    agent_chat.add_argument("--detach", action="store_true", help="Return the task id immediately instead of waiting.")
+    agent_chat.add_argument("--dry-run", action="store_true", help="Show selected policy and prompt contract without launching an agent.")
+    agent_chat.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    agent_chat.set_defaults(func=cmd_agent_chat)
+
+    agent_capabilities = agent_subparsers.add_parser("capabilities", parents=[agent_common], help="Show available integrated tool families.")
+    agent_capabilities.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    agent_capabilities.set_defaults(func=cmd_agent_capabilities)
+
+    agent_tasks = agent_subparsers.add_parser("tasks", parents=[agent_common], help="List recent durable agent tasks.")
+    agent_tasks.add_argument("--limit", type=int, default=30, help="Maximum task count. Default: 30.")
+    agent_tasks.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    agent_tasks.set_defaults(func=cmd_agent_tasks)
+
+    agent_status = agent_subparsers.add_parser("status", parents=[agent_common], help="Show one agent task.")
+    agent_status.add_argument("task_id", help="Agent task id.")
+    agent_status.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    agent_status.set_defaults(func=cmd_agent_status)
+
+    agent_cancel = agent_subparsers.add_parser("cancel", parents=[agent_common], help="Cancel one running agent task.")
+    agent_cancel.add_argument("task_id", help="Agent task id.")
+    agent_cancel.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    agent_cancel.set_defaults(func=cmd_agent_cancel)
+
+    worker_parser = subparsers.add_parser("_agent-worker", help=argparse.SUPPRESS)
+    worker_parser.add_argument("--task-id", required=True)
+    worker_parser.add_argument("--storage-dir", required=True)
+    worker_parser.add_argument("--root", required=True)
+    worker_parser.set_defaults(func=cmd_agent_worker)
+
     from .wechat_ops import add_wechat_parser
 
     add_wechat_parser(subparsers)
@@ -360,6 +404,108 @@ def cmd_studio_dispatch(args: argparse.Namespace) -> int:
         Path(args.storage_dir),
     )
     _print_payload(result, args.json, f"dispatch: {result['dispatch']['target']} {result['dispatch']['status']} -> {result['artifact']['url']}")
+    return 0 if result.get("ok") else 1
+
+
+def cmd_agent_chat(args: argparse.Namespace) -> int:
+    from .workspace_agent import build_agent_prompt, create_agent_task, select_agent_policy, wait_for_task
+
+    message = " ".join(args.prompt).strip()
+    storage_dir = Path(args.storage_dir)
+    payload = {
+        "message": message,
+        "conversation_id": args.conversation,
+        "backend": args.backend,
+        "model": args.model,
+        "effort": args.effort,
+        "mode": args.mode,
+        "fallback_to_aginti": not args.no_aginti_fallback,
+    }
+    if args.timeout:
+        payload["timeout_seconds"] = args.timeout
+    if args.dry_run:
+        policy = select_agent_policy(message, model=args.model, effort=args.effort, mode=args.mode, backend=args.backend)
+        result = {
+            "ok": True,
+            "dry_run": True,
+            "policy": policy,
+            "prompt": build_agent_prompt(
+                message,
+                root=Path.cwd(),
+                task_dir=storage_dir / "agent" / "dry-run",
+                policy=policy,
+                conversation_id=args.conversation,
+            ),
+        }
+    else:
+        result = create_agent_task(payload, storage_dir, root=Path.cwd(), launch=True)
+        if not args.detach:
+            policy_timeout = float(result["task"]["policy"]["timeout_seconds"])
+            attempts = 2 if result["task"]["policy"].get("fallback_to_aginti", True) else 1
+            timeout = policy_timeout * attempts + 60
+            result = wait_for_task(result["task"]["id"], storage_dir, timeout=timeout)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    elif args.dry_run:
+        policy = result["policy"]
+        print(f"agent: {policy['backend']} {policy['model']} {policy['effort_label']} ({policy['mode']})")
+    elif args.detach:
+        print(f"agent task: {result['task']['id']} ({result['task']['status']})")
+    else:
+        print(result["task"].get("reply") or result["task"].get("error") or result["task"]["status"])
+    return 0 if result.get("ok") else 1
+
+
+def cmd_agent_capabilities(args: argparse.Namespace) -> int:
+    from .workspace_agent import capability_response
+
+    storage_dir = Path(args.storage_dir)
+    result = capability_response(Path.cwd(), storage_dir / "settings.json")
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        rows = [("READY", "CAPABILITY", "OUTPUTS")]
+        for item in result["capabilities"]:
+            rows.append(("yes" if item["ready"] else "no", item["title"], ", ".join(item["outputs"])))
+        _print_table(rows)
+    return 0
+
+
+def cmd_agent_tasks(args: argparse.Namespace) -> int:
+    from .workspace_agent import task_list_response
+
+    result = task_list_response(args.storage_dir, args.limit)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        rows = [("STATUS", "MODEL", "EFFORT", "TASK", "MESSAGE")]
+        for task in result["tasks"]:
+            policy = task.get("policy", {})
+            rows.append((task["status"], str(policy.get("model") or ""), str(policy.get("effort_label") or ""), task["id"], task["message"][:72]))
+        _print_table(rows)
+    return 0
+
+
+def cmd_agent_status(args: argparse.Namespace) -> int:
+    from .workspace_agent import task_response
+
+    result = task_response(args.task_id, args.storage_dir)
+    _print_payload(result, args.json, f"agent task: {result['task']['status']} {result['task'].get('reply') or result['task'].get('error') or ''}")
+    return 0 if result.get("ok") else 1
+
+
+def cmd_agent_cancel(args: argparse.Namespace) -> int:
+    from .workspace_agent import cancel_agent_task
+
+    result = cancel_agent_task(args.task_id, args.storage_dir)
+    _print_payload(result, args.json, f"agent task: {result['task']['id']} canceled")
+    return 0
+
+
+def cmd_agent_worker(args: argparse.Namespace) -> int:
+    from .workspace_agent import run_agent_task
+
+    result = run_agent_task(args.task_id, args.storage_dir, root=args.root)
     return 0 if result.get("ok") else 1
 
 

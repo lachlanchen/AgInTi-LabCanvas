@@ -12,10 +12,19 @@ from typing import Any
 BIORENDER_MCP_URL = "https://mcp.services.biorender.com/mcp"
 
 DEFAULT_BACKEND_SETTINGS: dict[str, Any] = {
+    "agent": {
+        "enabled": True,
+        "backend": "auto",
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "auto",
+        "mode": "execute",
+        "dynamic_routing": True,
+        "fallback_to_aginti": True,
+    },
     "aginti": {
         "enabled": True,
         "command": "aginti",
-        "workspace": "../Agent/AgInTiFlow",
+        "workspace": ".",
         "image_provider": "grsai",
         "image_model": "nano-banana-2",
         "image_size": "1K",
@@ -27,9 +36,24 @@ DEFAULT_BACKEND_SETTINGS: dict[str, Any] = {
         "auth_env": "BIORENDER_API_KEY",
         "open_url": "https://app.biorender.com/",
     },
+    "writing": {
+        "enabled": True,
+        "provider": "deepseek",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-v4-flash",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "temperature": 0.75,
+        "max_tokens": 480,
+        "timeout_seconds": 60,
+    },
     "toolchain": {
         "blender": True,
         "openscad": True,
+        "cad": True,
+        "kicad": True,
+        "tex": True,
+        "wechat": True,
+        "labview": True,
         "aginti_image": True,
         "biorender": False,
         "target_registry": True,
@@ -77,13 +101,25 @@ def merge_settings(base: dict[str, Any], update: dict[str, Any]) -> dict[str, An
 
 def backend_status(settings: dict[str, Any], project_root: str | Path) -> dict[str, Any]:
     root = Path(project_root)
+    agent = settings.get("agent", {}) if isinstance(settings.get("agent"), dict) else {}
     aginti = settings.get("aginti", {}) if isinstance(settings.get("aginti"), dict) else {}
     biorender = settings.get("biorender", {}) if isinstance(settings.get("biorender"), dict) else {}
+    writing = settings.get("writing", {}) if isinstance(settings.get("writing"), dict) else {}
     aginti_command = str(aginti.get("command") or "aginti")
-    workspace = _resolve_from_root(root, str(aginti.get("workspace") or "../Agent/AgInTiFlow"))
+    workspace = _resolve_from_root(root, str(aginti.get("workspace") or "."))
     biorender_env = str(biorender.get("auth_env") or "BIORENDER_API_KEY")
+    writing_key_env = str(writing.get("api_key_env") or "DEEPSEEK_API_KEY")
     return {
         "ok": True,
+        "agent": {
+            "enabled": bool(agent.get("enabled", True)),
+            "backend": str(agent.get("backend") or "auto"),
+            "model": str(agent.get("model") or "gpt-5.6-sol"),
+            "reasoning_effort": str(agent.get("reasoning_effort") or "auto"),
+            "mode": str(agent.get("mode") or "execute"),
+            "dynamic_routing": bool(agent.get("dynamic_routing", True)),
+            "codex_path": _resolve_codex_binary(),
+        },
         "aginti": {
             "enabled": bool(aginti.get("enabled", True)),
             "command": aginti_command,
@@ -100,6 +136,14 @@ def backend_status(settings: dict[str, Any], project_root: str | Path) -> dict[s
             "auth_env": biorender_env,
             "auth_env_present": bool(os.environ.get(biorender_env)),
             "open_url": str(biorender.get("open_url") or "https://app.biorender.com/"),
+        },
+        "writing": {
+            "enabled": bool(writing.get("enabled", True)),
+            "provider": str(writing.get("provider") or "deepseek"),
+            "base_url": str(writing.get("base_url") or "https://api.deepseek.com"),
+            "model": str(writing.get("model") or "deepseek-v4-flash"),
+            "api_key_env": writing_key_env,
+            "api_key_env_present": bool(os.environ.get(writing_key_env)),
         },
         "toolchain": settings.get("toolchain", {}),
     }
@@ -173,3 +217,22 @@ def redact_command(args: list[str]) -> list[str]:
 def _resolve_from_root(root: Path, value: str) -> Path:
     path = Path(value)
     return path if path.is_absolute() else (root / path).resolve()
+
+
+def _resolve_codex_binary() -> str:
+    configured = os.environ.get("LABCANVAS_CODEX_BIN") or os.environ.get("CODEX_BIN") or ""
+    if configured:
+        found = shutil.which(configured)
+        if found:
+            return found
+        path = Path(configured).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    candidates = sorted((Path.home() / ".nvm" / "versions" / "node").glob("*/bin/codex"), reverse=True)
+    found = shutil.which("codex")
+    if found:
+        candidates.append(Path(found))
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return ""

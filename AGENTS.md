@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-AgInTi LabCanvas is a small Python CLI and web package. Production code lives in `src/agenticapp/`: `cli.py` handles commands, `config.py` loads target registries, `adapters.py` dispatches instructions, `webapp.py` serves the local studio, `artifacts.py` tracks generated files, `paper_figures.py` builds SVG grids, `openscad_export.py` writes CAD proxies, and `backends.py` stores AgInTi/BioRender settings. Tests live in `tests/`. Static web assets live in `src/agenticapp/web/static/`.
+AgInTi LabCanvas is a small Python CLI and web package. Production code lives in `src/agenticapp/`: `cli.py` handles commands, `workspace_agent.py` runs persistent tool-capable chat sessions and durable tasks, `knowledge/workspace_agent.md` packages cross-tool engineering knowledge, `config.py` loads target registries, `adapters.py` dispatches instructions, `webapp.py` serves the local studio, and `artifacts.py` tracks generated files. Tests live in `tests/`. Static web assets live in `src/agenticapp/web/static/`.
 
 ## Build, Test, and Development Commands
 
@@ -15,6 +15,10 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m agenticapp render-scene examples/paper-optics-setup.scene.json --dry-run`: validate a scene spec and output paths.
 - `PYTHONPATH=src python -m agenticapp web --port 8787`: start the local chat, canvas, and preview web app.
 - `PYTHONPATH=src python -m agenticapp webapp start --port 19473`: start the studio in tmux.
+- `PYTHONPATH=src python -m agenticapp agent capabilities`: inspect integrated CAD, KiCad, Blender, TeX, WeChat, LabVIEW, figure, and bridge readiness.
+- `PYTHONPATH=src python -m agenticapp agent chat "Design and render a C-mount holder"`: run a persistent direct agent turn with dynamic model/effort selection.
+- `PYTHONPATH=src python -m agenticapp agent chat "Rebuild the exact Shapr part" --model gpt-5.6-sol --effort ultra`: explicitly use GPT-5.6 SOL with `xhigh` reasoning.
+- `PYTHONPATH=src python -m agenticapp agent tasks`: list durable agent work and artifact status.
 - `PYTHONPATH=src python -m agenticapp studio figure-grid "optical icons 2x3" --rows 2 --cols 3`: run the same artifact action as the web canvas.
 - `PYTHONPATH=src python -m agenticapp studio dispatch blender "Prepare an editable paper figure setup"`: dry-run a configured target and register the envelope as an artifact.
 - `PYTHONPATH=src python -m agenticapp wechat worker --chat "懒人科研" enqueue "Use LabCanvas to render a PCB and CAD preview"`: enqueue slower WeChat backend work that can call CAD, PCB, Blender, and LabCanvas tools.
@@ -37,6 +41,11 @@ Use Python 3.10+ and the standard library unless a dependency clearly improves t
 Use `unittest` for now. Name test files `test_*.py` and keep tests focused on behavior: config validation, dispatch envelope shape, transport behavior, and CLI return codes. Add regression tests when changing adapter semantics or target config parsing.
 For scene rendering, test JSON validation and dry-run plans without requiring Blender; use a manual render check when changing `src/agenticapp/blender/scene_renderer.py`.
 For web changes, keep tests focused on API behavior, artifact registration, and static startup; manually verify the browser layout with the local server.
+For workspace-agent changes, mock the backend in unit tests. Test model selection, prompt contracts, task transitions, session isolation, cancellation, and artifact registration without spending live model quota; then run one small live smoke task when backend invocation changes.
+
+## Workspace Agent Rules
+
+The web and CLI must use the same `workspace_agent.py` runtime. Keep the web chat a direct transport to a persistent agent session; do not replace it with keyword-specific response branches. Domain-specific code remains useful as callable routines. Auto routing uses GPT-5.6 SOL for normal turns and maps the UI's Ultra setting to Codex `xhigh`. Preserve durable task records under ignored `output/`, return real artifacts to the canvas, and require explicit authorization for payment, manufacturing submission, public publication, credential changes, destructive deletion, or another irreversible external action.
 
 ## Figure Pipeline Rules
 

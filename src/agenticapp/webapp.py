@@ -6,10 +6,12 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import os
 import re
 import socket
 import threading
 from typing import Any
+from urllib import error as urlerror, request as urlrequest
 import webbrowser
 
 from .adapters import DispatchError, dispatch_target
@@ -21,6 +23,15 @@ from .lab_tasks import looks_like_lab_task_prompt, run_lab_task
 from .openscad_export import export_scene_to_openscad
 from .paper_figures import generate_icon_grid, parse_grid_size
 from .scene_spec import built_in_scene_template, slugify, validate_scene_spec
+from .workspace_agent import (
+    build_agent_prompt,
+    cancel_agent_task,
+    capability_response,
+    create_agent_task,
+    select_agent_policy,
+    task_list_response,
+    task_response,
+)
 
 
 ROOT = Path.cwd()
@@ -84,6 +95,13 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
             from .wechat_ops import status_payload
 
             self.send_json(status_payload())
+        elif route == "/api/agent/capabilities":
+            self.send_json(capability_response(ROOT, self.settings_path()))
+        elif route == "/api/agent/tasks":
+            self.send_json(task_list_response(self.storage_dir))
+        elif route.startswith("/api/agent/tasks/"):
+            task_id = route.removeprefix("/api/agent/tasks/").strip("/")
+            self.send_json(task_response(task_id, self.storage_dir))
         elif route == "/example-render":
             self.send_example_render()
         elif route.startswith("/artifacts/"):
@@ -108,6 +126,14 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
                 message = str(payload.get("message", ""))
                 settings = load_backend_settings(self.settings_path())
                 self.send_json(chat_update(spec, message, storage_dir=self.storage_dir, settings=settings))
+            elif route == "/api/agent/chat":
+                payload = self.read_json()
+                settings = load_backend_settings(self.settings_path())
+                self.send_json(run_web_agent_chat(payload, self.storage_dir, settings=settings))
+            elif route == "/api/writing/next-paragraph":
+                payload = self.read_json()
+                settings = load_backend_settings(self.settings_path())
+                self.send_json(run_web_next_paragraph(payload, settings=settings))
             elif route == "/api/render":
                 payload = self.read_json()
                 spec = payload.get("spec") or default_scene_spec()
@@ -155,9 +181,12 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
                         allow_search=bool(payload.get("allow_search", False)) if "allow_search" in payload else None,
                     )
                 )
+            elif route.startswith("/api/agent/tasks/") and route.endswith("/cancel"):
+                task_id = route.removeprefix("/api/agent/tasks/").removesuffix("/cancel").strip("/")
+                self.send_json(cancel_agent_task(task_id, self.storage_dir))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
-        except (BlenderRenderError, DispatchError, ValueError, KeyError) as exc:
+        except (BlenderRenderError, DispatchError, ValueError, KeyError, OSError) as exc:
             self.send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 
     def read_json(self) -> dict[str, Any]:
@@ -514,6 +543,185 @@ def export_web_openscad(spec: dict[str, Any], storage_dir: Path) -> dict[str, An
 
 def run_web_lab_task(payload: dict[str, Any], storage_dir: Path) -> dict[str, Any]:
     return run_lab_task(payload, storage_dir, root=ROOT)
+
+
+def run_web_agent_chat(payload: dict[str, Any], storage_dir: Path, *, settings: dict[str, Any]) -> dict[str, Any]:
+    message = str(payload.get("message") or payload.get("prompt") or "").strip()
+    if not message:
+        raise ValueError("Agent chat message cannot be empty")
+    agent_settings = settings.get("agent", {}) if isinstance(settings.get("agent"), dict) else {}
+    prepared = dict(payload)
+    if str(prepared.get("model") or "auto") == "auto" and not bool(agent_settings.get("dynamic_routing", True)):
+        prepared["model"] = str(agent_settings.get("model") or "auto")
+    if str(prepared.get("backend") or "auto") == "auto":
+        prepared["backend"] = str(agent_settings.get("backend") or "auto")
+    if not prepared.get("mode"):
+        prepared["mode"] = str(agent_settings.get("mode") or "execute")
+    prepared.setdefault("fallback_to_aginti", bool(agent_settings.get("fallback_to_aginti", True)))
+    if bool(payload.get("dry_run", False)):
+        policy = select_agent_policy(
+            message,
+            model=str(prepared.get("model") or "auto"),
+            effort=str(prepared.get("effort") or "auto"),
+            mode=str(prepared.get("mode") or "execute"),
+            backend=str(prepared.get("backend") or "auto"),
+        )
+        return {
+            "ok": True,
+            "dry_run": True,
+            "policy": policy,
+            "prompt": build_agent_prompt(
+                message,
+                root=ROOT,
+                task_dir=storage_dir / "agent" / "dry-run",
+                policy=policy,
+                conversation_id=str(prepared.get("conversation_id") or "web-default"),
+                context=prepared.get("context") if isinstance(prepared.get("context"), dict) else {},
+            ),
+        }
+    return create_agent_task(prepared, storage_dir, root=ROOT, launch=True)
+
+
+def run_web_next_paragraph(
+    payload: dict[str, Any],
+    *,
+    settings: dict[str, Any],
+    deepseek_runner: Any | None = None,
+) -> dict[str, Any]:
+    messages = build_next_paragraph_messages(payload)
+    if bool(payload.get("dry_run", False)):
+        return {"ok": True, "dry_run": True, "messages": messages, "paragraph": ""}
+    runner = deepseek_runner or run_deepseek_chat_completion
+    raw = str(runner(messages, settings=settings) or "")
+    paragraph = sanitize_next_paragraph(raw)
+    if not paragraph:
+        raise ValueError("DeepSeek returned no usable paragraph.")
+    writing = settings.get("writing", {}) if isinstance(settings.get("writing"), dict) else {}
+    return {
+        "ok": True,
+        "paragraph": paragraph,
+        "model": str(writing.get("model") or "deepseek-v4-flash"),
+    }
+
+
+def build_next_paragraph_messages(payload: dict[str, Any]) -> list[dict[str, str]]:
+    action = str(payload.get("action") or "next").strip().lower()
+    action_text = {
+        "next": "写全文自然延续的下一段。",
+        "rewrite": "重写上一版草稿，但仍然只输出这一段。",
+        "adjust": "按本轮方向调整上一版草稿，但仍然只输出这一段。",
+    }.get(action, "写全文自然延续的下一段。")
+    previous = str(payload.get("previous_draft") or "").strip()
+    user_prompt = f"""请根据下面的完整上下文工作。
+
+【全文】
+{_context_value(payload, "full_text", "（正文为空，从第一段开始。）")}
+
+【设定】
+{_context_value(payload, "setting", "（未提供。）")}
+
+【人物】
+{_context_value(payload, "characters", "（未提供。）")}
+
+【资料】
+{_context_value(payload, "materials", "（未提供。）")}
+
+【写作目标】
+{_context_value(payload, "goal", "（未提供。）")}
+
+【本轮方向】
+{_context_value(payload, "direction", "（自然延续。）")}
+
+【上一版草稿】
+{previous or "（无。）"}
+
+【本轮动作】
+{action_text}
+
+只输出最终段落本身。"""
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是一个专用“下一段写作器”。每轮都会收到全文、设定、人物、资料、写作目标和本轮方向。"
+                "你的唯一任务是写出下一个自然段。强制规则：只输出一个自然段；不要标题、列表、编号、提纲、解释、"
+                "总结、Markdown、引号包装或多个候选；不要改写全文；不要提前跳到后续章节。"
+            ),
+        },
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def run_deepseek_chat_completion(messages: list[dict[str, str]], *, settings: dict[str, Any]) -> str:
+    writing = settings.get("writing", {}) if isinstance(settings.get("writing"), dict) else {}
+    if not bool(writing.get("enabled", True)):
+        raise ValueError("Writing backend is disabled.")
+    provider = str(writing.get("provider") or "deepseek").strip().lower()
+    if provider != "deepseek":
+        raise ValueError(f"Unsupported writing backend: {provider}")
+    api_key_env = str(writing.get("api_key_env") or "DEEPSEEK_API_KEY")
+    api_key = os.environ.get(api_key_env)
+    if not api_key:
+        raise ValueError(f"DeepSeek API key is missing. Set {api_key_env} in the server environment.")
+    base_url = str(writing.get("base_url") or "https://api.deepseek.com").rstrip("/")
+    endpoint = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
+    body = json.dumps(
+        {
+            "model": str(writing.get("model") or "deepseek-v4-flash"),
+            "messages": messages,
+            "stream": False,
+            "temperature": float(writing.get("temperature") or 0.75),
+            "max_tokens": int(writing.get("max_tokens") or 480),
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = urlrequest.Request(
+        endpoint,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    timeout = int(writing.get("timeout_seconds") or 60)
+    try:
+        with urlrequest.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urlerror.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:600]
+        raise ValueError(f"DeepSeek API request failed: HTTP {exc.code} {detail}") from exc
+    except urlerror.URLError as exc:
+        raise ValueError(f"DeepSeek API request failed: {exc.reason}") from exc
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not choices:
+        raise ValueError("DeepSeek API response did not include choices.")
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    return str(message.get("content") or first.get("text") or "")
+
+
+def sanitize_next_paragraph(text: str) -> str:
+    cleaned = str(text or "").strip()
+    cleaned = re.sub(r"^```(?:\w+)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+    for block in re.split(r"\n\s*\n+", cleaned):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines:
+            continue
+        candidate = " ".join(lines)
+        candidate = re.sub(r"^(?:下一段|正文|草稿|输出|段落)\s*[:：]\s*", "", candidate).strip()
+        candidate = re.sub(r"^(?:[-*•]|\d+[.)、])\s*", "", candidate).strip()
+        candidate = candidate.strip(" \t\"'“”‘’")
+        if candidate:
+            return candidate
+    return ""
+
+
+def _context_value(payload: dict[str, Any], key: str, fallback: str) -> str:
+    value = str(payload.get(key) or "").strip()
+    return value or fallback
 
 
 def register_aginti_outputs(store: ArtifactStore, result: dict[str, Any]) -> None:

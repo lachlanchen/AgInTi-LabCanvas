@@ -1,6 +1,6 @@
 const TRANSLATIONS = {
   en: {
-    "app.title": "Paper Figure Studio",
+    "app.title": "Lab Workspace",
     "button.reset": "Reset",
     "button.openscad": "OpenSCAD",
     "button.figureGrid": "Figure Grid",
@@ -9,6 +9,11 @@ const TRANSLATIONS = {
     "button.dark": "Dark",
     "button.light": "Light",
     "button.send": "Send",
+    "button.writeNext": "Write Next",
+    "button.rewriteParagraph": "Rewrite",
+    "button.adjustParagraph": "Adjust",
+    "button.acceptParagraph": "Accept",
+    "button.undoParagraph": "Undo",
     "button.dispatchTarget": "Dispatch Target",
     "button.saveSettings": "Save Settings",
     "button.openBioRender": "Open BioRender",
@@ -28,8 +33,13 @@ const TRANSLATIONS = {
     "section.scene": "Scene",
     "section.backends": "Backends",
     "section.wechat": "WeChat Ops",
+    "section.nextParagraph": "Next Paragraph",
     "status.ready": "Ready",
     "status.thinking": "Thinking",
+    "status.queued": "Queued",
+    "status.runningAgent": "Agent working",
+    "status.waitingConfirmation": "Needs confirmation",
+    "status.canceled": "Canceled",
     "status.idle": "Idle",
     "status.rendering": "Rendering",
     "status.rendered": "Rendered",
@@ -49,15 +59,21 @@ const TRANSLATIONS = {
     "status.dispatchReady": "Dispatch ready",
     "status.dispatchError": "Dispatch error",
     "status.loading": "Loading",
+    "status.writing": "Writing",
+    "status.draftReady": "Draft ready",
+    "status.accepted": "Accepted",
+    "status.undone": "Undone",
     "chip.figure2x3": "Figure 2x3",
     "chip.boardCad": "Board/CAD task",
     "chip.vivid": "Vivid",
     "chip.addLens": "Add lens",
     "chip.addFilter": "Add filter",
-    "placeholder.message": "Ask for a paper setup, board, CAD device, optical bench, labels, colors, or generated figure panels.",
+    "placeholder.message": "Ask LabCanvas to design, build, render, validate, document, or control a lab tool.",
     "placeholder.targetInstruction": "Dry-run an instruction for any configured target.",
     "placeholder.wechatMessage": "Send a short message to the currently visible chat.",
     "placeholder.confirmationNote": "Optional approval/rejection note.",
+    "placeholder.writingFullText": "Current manuscript text. Accepted paragraphs are appended here.",
+    "placeholder.writingDirection": "Tone, plot move, argument, example, or local adjustment.",
     "label.prompt": "Prompt",
     "label.rows": "Rows",
     "label.cols": "Cols",
@@ -80,6 +96,13 @@ const TRANSLATIONS = {
     "label.wechatMessage": "WeChat message",
     "label.confirmationNote": "Confirmation note",
     "label.dryRun": "Dry run",
+    "label.writingFullText": "Full text",
+    "label.writingSetting": "Setting",
+    "label.writingCharacters": "Characters",
+    "label.writingMaterials": "Materials",
+    "label.writingGoal": "Writing goal",
+    "label.writingDirection": "This round",
+    "label.writingDraft": "Draft paragraph",
     "artifact.noneSelected": "Nothing selected",
     "artifact.metaEmpty": "Generated artifacts appear here.",
     "artifact.previewAlt": "Selected artifact preview",
@@ -90,7 +113,8 @@ const TRANSLATIONS = {
     "link.image": "Image",
     "link.blend": "Blend",
     "link.spec": "Spec",
-    "message.sceneLoaded": "Scene loaded. Ask for components, paper figure grids, OpenSCAD exports, or BioRender setup.",
+    "link.open": "Open",
+    "message.sceneLoaded": "Workspace ready. Chat directly with the persistent agent, or use a focused tool button.",
     "message.sceneJsonApplied": "Scene JSON applied.",
     "message.backendSettingsSaved": "Backend settings saved.",
     "message.chooseTargetFirst": "Choose a target and enter an instruction first.",
@@ -101,6 +125,9 @@ const TRANSLATIONS = {
     "message.labTaskReady": "Prepared {kind} task with {steps} command steps.",
     "message.targetDispatch": "Target dispatch {status}: {target}.",
     "message.wechatAction": "WeChat {action}: {status}.",
+    "message.paragraphReady": "Draft paragraph ready.",
+    "message.paragraphAccepted": "Accepted paragraph into the full text.",
+    "message.paragraphUndone": "Reverted the last accepted paragraph.",
     "backend.agintiReady": "AgInTi ready",
     "backend.agintiMissing": "AgInTi missing",
     "backend.bioPresent": "BioRender key present",
@@ -111,7 +138,7 @@ const TRANSLATIONS = {
     "footer.poweredBy": "Powered by",
   },
   ar: {
-    "app.title": "استوديو أشكال الأوراق",
+    "app.title": "مساحة عمل المختبر",
     "button.reset": "إعادة ضبط",
     "button.figureGrid": "شبكة الأشكال",
     "button.render": "رندر",
@@ -138,7 +165,7 @@ const TRANSLATIONS = {
     "chip.vivid": "حيوي",
     "chip.addLens": "إضافة عدسة",
     "chip.addFilter": "إضافة مرشح",
-    "placeholder.message": "اطلب إعداد ورقة أو منصة بصرية أو مفهوم جهاز أو تسميات أو ألوان أو لوحات شكل.",
+    "placeholder.message": "اطلب من LabCanvas التصميم أو البناء أو العرض أو التحقق أو التحكم في أداة مختبرية.",
     "placeholder.targetInstruction": "نفذ تعليمات تجريبية لأي هدف مضبوط.",
     "label.prompt": "الموجه",
     "label.rows": "الصفوف",
@@ -169,6 +196,7 @@ const TRANSLATIONS = {
     "link.image": "صورة",
     "link.blend": "Blend",
     "link.spec": "المواصفة",
+    "link.open": "فتح",
     "message.sceneLoaded": "تم تحميل المشهد. اطلب مكونات أو شبكات أشكال أو تصدير OpenSCAD أو إعداد BioRender.",
     "message.sceneJsonApplied": "تم تطبيق JSON للمشهد.",
     "message.backendSettingsSaved": "تم حفظ إعدادات الخلفية.",
@@ -181,7 +209,7 @@ const TRANSLATIONS = {
     "footer.poweredBy": "مدعوم من",
   },
   es: {
-    "app.title": "Estudio de Figuras",
+    "app.title": "Espacio de Laboratorio",
     "button.reset": "Restablecer",
     "button.figureGrid": "Cuadrícula",
     "button.render": "Renderizar",
@@ -208,7 +236,7 @@ const TRANSLATIONS = {
     "chip.vivid": "Vívido",
     "chip.addLens": "Añadir lente",
     "chip.addFilter": "Añadir filtro",
-    "placeholder.message": "Pide una figura, banco óptico, concepto de dispositivo, etiquetas, colores o paneles generados.",
+    "placeholder.message": "Pide a LabCanvas diseñar, construir, renderizar, validar, documentar o controlar una herramienta de laboratorio.",
     "placeholder.targetInstruction": "Prueba una instrucción para cualquier objetivo configurado.",
     "label.prompt": "Prompt",
     "label.rows": "Filas",
@@ -239,6 +267,7 @@ const TRANSLATIONS = {
     "link.image": "Imagen",
     "link.blend": "Blend",
     "link.spec": "Spec",
+    "link.open": "Abrir",
     "message.sceneLoaded": "Escena cargada. Pide componentes, cuadrículas, exportes OpenSCAD o ajustes BioRender.",
     "message.sceneJsonApplied": "JSON de escena aplicado.",
     "message.backendSettingsSaved": "Ajustes guardados.",
@@ -251,7 +280,7 @@ const TRANSLATIONS = {
     "footer.poweredBy": "Con tecnología de",
   },
   fr: {
-    "app.title": "Studio de Figures",
+    "app.title": "Espace de Laboratoire",
     "button.reset": "Réinitialiser",
     "button.figureGrid": "Grille",
     "button.render": "Rendre",
@@ -278,7 +307,7 @@ const TRANSLATIONS = {
     "chip.vivid": "Vif",
     "chip.addLens": "Ajouter lentille",
     "chip.addFilter": "Ajouter filtre",
-    "placeholder.message": "Demandez une figure, un banc optique, un concept, des libellés, couleurs ou panneaux.",
+    "placeholder.message": "Demandez à LabCanvas de concevoir, construire, rendre, valider, documenter ou piloter un outil de laboratoire.",
     "placeholder.targetInstruction": "Tester une instruction pour une cible configurée.",
     "label.prompt": "Prompt",
     "label.rows": "Lignes",
@@ -319,7 +348,7 @@ const TRANSLATIONS = {
     "footer.poweredBy": "Propulsé par",
   },
   ja: {
-    "app.title": "論文図版スタジオ",
+    "app.title": "ラボワークスペース",
     "button.reset": "リセット",
     "button.figureGrid": "図版グリッド",
     "button.render": "レンダー",
@@ -346,7 +375,7 @@ const TRANSLATIONS = {
     "chip.vivid": "鮮やか",
     "chip.addLens": "レンズ追加",
     "chip.addFilter": "フィルター追加",
-    "placeholder.message": "論文図、光学ベンチ、デバイス概念、ラベル、色、生成パネルを依頼します。",
+    "placeholder.message": "LabCanvas に設計、構築、レンダー、検証、文書化、ラボ機器の操作を依頼します。",
     "placeholder.targetInstruction": "設定済みターゲットへの命令をドライランします。",
     "label.prompt": "プロンプト",
     "label.rows": "行",
@@ -387,7 +416,7 @@ const TRANSLATIONS = {
     "footer.poweredBy": "Powered by",
   },
   ko: {
-    "app.title": "논문 그림 스튜디오",
+    "app.title": "랩 워크스페이스",
     "button.reset": "초기화",
     "button.figureGrid": "그림 그리드",
     "button.render": "렌더",
@@ -414,7 +443,7 @@ const TRANSLATIONS = {
     "chip.vivid": "선명하게",
     "chip.addLens": "렌즈 추가",
     "chip.addFilter": "필터 추가",
-    "placeholder.message": "논문 설정, 광학 벤치, 장치 개념, 라벨, 색상 또는 그림 패널을 요청하세요.",
+    "placeholder.message": "LabCanvas에 설계, 구축, 렌더링, 검증, 문서화 또는 실험실 도구 제어를 요청하세요.",
     "placeholder.targetInstruction": "설정된 대상에 대한 명령을 드라이런합니다.",
     "label.prompt": "프롬프트",
     "label.rows": "행",
@@ -455,7 +484,7 @@ const TRANSLATIONS = {
     "footer.poweredBy": "Powered by",
   },
   vi: {
-    "app.title": "Studio Hình Bài Báo",
+    "app.title": "Không Gian Lab",
     "button.reset": "Đặt lại",
     "button.figureGrid": "Lưới hình",
     "button.render": "Render",
@@ -482,7 +511,7 @@ const TRANSLATIONS = {
     "chip.vivid": "Rực rỡ",
     "chip.addLens": "Thêm lens",
     "chip.addFilter": "Thêm filter",
-    "placeholder.message": "Yêu cầu setup bài báo, bench quang học, ý tưởng thiết bị, nhãn, màu hoặc panel hình.",
+    "placeholder.message": "Yêu cầu LabCanvas thiết kế, xây dựng, kết xuất, kiểm tra, lập tài liệu hoặc điều khiển công cụ phòng thí nghiệm.",
     "placeholder.targetInstruction": "Dry-run một chỉ dẫn cho target đã cấu hình.",
     "label.prompt": "Prompt",
     "label.rows": "Hàng",
@@ -523,13 +552,18 @@ const TRANSLATIONS = {
     "footer.poweredBy": "Powered by",
   },
   "zh-Hans": {
-    "app.title": "论文图形工作室",
+    "app.title": "实验室工作台",
     "button.reset": "重置",
     "button.figureGrid": "图形网格",
     "button.render": "渲染",
     "button.dark": "深色",
     "button.light": "浅色",
     "button.send": "发送",
+    "button.writeNext": "写下一段",
+    "button.rewriteParagraph": "重写",
+    "button.adjustParagraph": "调整",
+    "button.acceptParagraph": "接受",
+    "button.undoParagraph": "撤回",
     "button.dispatchTarget": "分发目标",
     "button.saveSettings": "保存设置",
     "button.openBioRender": "打开 BioRender",
@@ -539,6 +573,7 @@ const TRANSLATIONS = {
     "section.canvas": "画布",
     "section.scene": "场景",
     "section.backends": "后端",
+    "section.nextParagraph": "下一段",
     "status.ready": "就绪",
     "status.thinking": "思考中",
     "status.idle": "空闲",
@@ -546,12 +581,18 @@ const TRANSLATIONS = {
     "status.rendered": "已渲染",
     "status.error": "错误",
     "status.loading": "加载中",
+    "status.writing": "写作中",
+    "status.draftReady": "草稿已生成",
+    "status.accepted": "已接受",
+    "status.undone": "已撤回",
     "chip.figure2x3": "图 2x3",
     "chip.vivid": "鲜明",
     "chip.addLens": "添加透镜",
     "chip.addFilter": "添加滤光片",
-    "placeholder.message": "请求论文装置、光学平台、设备概念、标签、颜色或生成图形面板。",
+    "placeholder.message": "让 LabCanvas 设计、构建、渲染、验证、记录或控制实验室工具。",
     "placeholder.targetInstruction": "对任意已配置目标进行试运行指令。",
+    "placeholder.writingFullText": "当前全文。接受后的段落会追加在这里。",
+    "placeholder.writingDirection": "语气、情节、论点、例子或局部调整。",
     "label.prompt": "提示词",
     "label.rows": "行",
     "label.cols": "列",
@@ -572,6 +613,13 @@ const TRANSLATIONS = {
     "label.registryTarget": "注册目标",
     "label.targetInstruction": "目标指令",
     "label.dryRun": "试运行",
+    "label.writingFullText": "全文",
+    "label.writingSetting": "设定",
+    "label.writingCharacters": "人物",
+    "label.writingMaterials": "资料",
+    "label.writingGoal": "写作目标",
+    "label.writingDirection": "本轮方向",
+    "label.writingDraft": "草稿段落",
     "artifact.noneSelected": "未选择",
     "artifact.metaEmpty": "生成的产物会显示在这里。",
     "artifact.previewAlt": "所选产物预览",
@@ -583,6 +631,9 @@ const TRANSLATIONS = {
     "message.sceneJsonApplied": "场景 JSON 已应用。",
     "message.backendSettingsSaved": "后端设置已保存。",
     "message.chooseTargetFirst": "请先选择目标并输入指令。",
+    "message.paragraphReady": "下一段草稿已生成。",
+    "message.paragraphAccepted": "已接受并入全文。",
+    "message.paragraphUndone": "已撤回上次接受的段落。",
     "backend.agintiReady": "AgInTi 就绪",
     "backend.agintiMissing": "缺少 AgInTi",
     "backend.bioPresent": "BioRender 密钥存在",
@@ -591,13 +642,18 @@ const TRANSLATIONS = {
     "footer.poweredBy": "由以下驱动：",
   },
   "zh-Hant": {
-    "app.title": "論文圖形工作室",
+    "app.title": "實驗室工作台",
     "button.reset": "重置",
     "button.figureGrid": "圖形網格",
     "button.render": "渲染",
     "button.dark": "深色",
     "button.light": "淺色",
     "button.send": "發送",
+    "button.writeNext": "寫下一段",
+    "button.rewriteParagraph": "重寫",
+    "button.adjustParagraph": "調整",
+    "button.acceptParagraph": "接受",
+    "button.undoParagraph": "撤回",
     "button.dispatchTarget": "分發目標",
     "button.saveSettings": "保存設定",
     "button.openBioRender": "打開 BioRender",
@@ -607,6 +663,7 @@ const TRANSLATIONS = {
     "section.canvas": "畫布",
     "section.scene": "場景",
     "section.backends": "後端",
+    "section.nextParagraph": "下一段",
     "status.ready": "就緒",
     "status.thinking": "思考中",
     "status.idle": "空閒",
@@ -614,12 +671,18 @@ const TRANSLATIONS = {
     "status.rendered": "已渲染",
     "status.error": "錯誤",
     "status.loading": "載入中",
+    "status.writing": "寫作中",
+    "status.draftReady": "草稿已生成",
+    "status.accepted": "已接受",
+    "status.undone": "已撤回",
     "chip.figure2x3": "圖 2x3",
     "chip.vivid": "鮮明",
     "chip.addLens": "添加透鏡",
     "chip.addFilter": "添加濾光片",
-    "placeholder.message": "請求論文裝置、光學平台、設備概念、標籤、顏色或生成圖形面板。",
+    "placeholder.message": "讓 LabCanvas 設計、建構、渲染、驗證、記錄或控制實驗室工具。",
     "placeholder.targetInstruction": "對任意已配置目標進行試運行指令。",
+    "placeholder.writingFullText": "當前全文。接受後的段落會追加在這裡。",
+    "placeholder.writingDirection": "語氣、情節、論點、例子或局部調整。",
     "label.prompt": "提示詞",
     "label.rows": "行",
     "label.cols": "列",
@@ -640,6 +703,13 @@ const TRANSLATIONS = {
     "label.registryTarget": "註冊目標",
     "label.targetInstruction": "目標指令",
     "label.dryRun": "試運行",
+    "label.writingFullText": "全文",
+    "label.writingSetting": "設定",
+    "label.writingCharacters": "人物",
+    "label.writingMaterials": "資料",
+    "label.writingGoal": "寫作目標",
+    "label.writingDirection": "本輪方向",
+    "label.writingDraft": "草稿段落",
     "artifact.noneSelected": "未選擇",
     "artifact.metaEmpty": "生成的產物會顯示在這裡。",
     "artifact.previewAlt": "所選產物預覽",
@@ -651,6 +721,9 @@ const TRANSLATIONS = {
     "message.sceneJsonApplied": "場景 JSON 已套用。",
     "message.backendSettingsSaved": "後端設定已保存。",
     "message.chooseTargetFirst": "請先選擇目標並輸入指令。",
+    "message.paragraphReady": "下一段草稿已生成。",
+    "message.paragraphAccepted": "已接受併入全文。",
+    "message.paragraphUndone": "已撤回上次接受的段落。",
     "backend.agintiReady": "AgInTi 就緒",
     "backend.agintiMissing": "缺少 AgInTi",
     "backend.bioPresent": "BioRender 密鑰存在",
@@ -659,7 +732,7 @@ const TRANSLATIONS = {
     "footer.poweredBy": "由以下驅動：",
   },
   de: {
-    "app.title": "Paper Figure Studio",
+    "app.title": "Labor-Arbeitsbereich",
     "button.reset": "Zurücksetzen",
     "button.figureGrid": "Figurenraster",
     "button.render": "Rendern",
@@ -686,7 +759,7 @@ const TRANSLATIONS = {
     "chip.vivid": "Lebendig",
     "chip.addLens": "Linse hinzufügen",
     "chip.addFilter": "Filter hinzufügen",
-    "placeholder.message": "Frage nach Paper-Setup, optischer Bank, Gerätekonzept, Labels, Farben oder Figurenpanels.",
+    "placeholder.message": "Bitten Sie LabCanvas, ein Laborwerkzeug zu entwerfen, zu bauen, zu rendern, zu prüfen, zu dokumentieren oder zu steuern.",
     "placeholder.targetInstruction": "Testlauf-Anweisung für ein konfiguriertes Ziel.",
     "label.prompt": "Prompt",
     "label.rows": "Zeilen",
@@ -727,7 +800,7 @@ const TRANSLATIONS = {
     "footer.poweredBy": "Bereitgestellt von",
   },
   ru: {
-    "app.title": "Студия Фигур",
+    "app.title": "Лабораторное Пространство",
     "button.reset": "Сброс",
     "button.figureGrid": "Сетка фигур",
     "button.render": "Рендер",
@@ -754,7 +827,7 @@ const TRANSLATIONS = {
     "chip.vivid": "Ярче",
     "chip.addLens": "Добавить линзу",
     "chip.addFilter": "Добавить фильтр",
-    "placeholder.message": "Запросите установку, оптический стенд, концепт устройства, подписи, цвета или панели.",
+    "placeholder.message": "Попросите LabCanvas спроектировать, собрать, визуализировать, проверить, документировать или управлять лабораторным инструментом.",
     "placeholder.targetInstruction": "Пробный запуск инструкции для настроенной цели.",
     "label.prompt": "Промпт",
     "label.rows": "Строки",
@@ -807,6 +880,11 @@ let targets = [];
 let selectedArtifactId = "";
 let rendering = false;
 let wechatStatusTimer = null;
+let activeAgentTaskId = "";
+let writingBusy = false;
+let writingHistory = [];
+const agentTaskTimers = new Map();
+const agentConversationId = getAgentConversationId();
 
 const messages = document.getElementById("messages");
 const chatStatus = document.getElementById("chatStatus");
@@ -825,6 +903,7 @@ const slugInput = document.getElementById("slugInput");
 const pngLink = document.getElementById("pngLink");
 const blendLink = document.getElementById("blendLink");
 const specLink = document.getElementById("specLink");
+const artifactOpenLink = document.getElementById("artifactOpenLink");
 const backendStatus = document.getElementById("backendStatus");
 const themeButton = document.getElementById("themeBtn");
 const localeSelect = document.getElementById("localeSelect");
@@ -835,12 +914,33 @@ const wechatOutput = document.getElementById("wechatOutput");
 const wechatMessage = document.getElementById("wechatMessage");
 const wechatConfirmNote = document.getElementById("wechatConfirmNote");
 const wechatDesktopLink = document.getElementById("wechatDesktopLink");
+const capabilityStrip = document.getElementById("capabilityStrip");
+const cancelAgentButton = document.getElementById("cancelAgentBtn");
+const agentModelSelect = document.getElementById("agentModelSelect");
+const agentEffortSelect = document.getElementById("agentEffortSelect");
+const agentModeSelect = document.getElementById("agentModeSelect");
+const writingStatus = document.getElementById("writingStatus");
+const writingFullText = document.getElementById("writingFullText");
+const writingSetting = document.getElementById("writingSetting");
+const writingCharacters = document.getElementById("writingCharacters");
+const writingMaterials = document.getElementById("writingMaterials");
+const writingGoal = document.getElementById("writingGoal");
+const writingDirection = document.getElementById("writingDirection");
+const writingDraft = document.getElementById("writingDraft");
 
 setupLocale();
 init();
 
 async function init() {
-  const [specResponse] = await Promise.all([fetch("/api/spec"), loadSettings(), loadTargets(), loadArtifacts(), loadWeChatStatus()]);
+  restoreAgentControls();
+  const [specResponse] = await Promise.all([
+    fetch("/api/spec"),
+    loadSettings(),
+    loadTargets(),
+    loadArtifacts(),
+    loadWeChatStatus(),
+    loadAgentCapabilities(),
+  ]);
   const data = await specResponse.json();
   spec = data.spec;
   syncSpecView();
@@ -860,17 +960,22 @@ document.getElementById("chatForm").addEventListener("submit", async (event) => 
   addMessage("user", text);
   chatStatus.textContent = t("status.thinking");
   try {
-    const data = await postJson("/api/chat", { message: text, spec });
-    if (!data.ok) throw new Error(data.error || "Chat failed");
-    spec = data.spec;
-    syncSpecView();
-    if (data.artifacts) {
-      setArtifacts(data.artifacts);
-    }
-    addMessage("assistant", data.reply);
+    const data = await postJson("/api/agent/chat", {
+      message: text,
+      conversation_id: agentConversationId,
+      model: agentModelSelect.value,
+      effort: agentEffortSelect.value,
+      mode: agentModeSelect.value,
+      context: {
+        scene_title: spec?.title || "",
+        scene_slug: spec?.slug || "",
+        selected_artifact_id: selectedArtifactId,
+      },
+    });
+    if (!data.ok || !data.task) throw new Error(data.error || "Agent task failed to start");
+    trackAgentTask(data.task);
   } catch (error) {
     addMessage("assistant", error.message);
-  } finally {
     chatStatus.textContent = t("status.ready");
   }
 });
@@ -897,6 +1002,15 @@ document.getElementById("wechatWorkerBtn").addEventListener("click", () => runWe
 document.getElementById("wechatSendBtn").addEventListener("click", () => sendWeChatMessage({ message: wechatMessage.value.trim() }));
 document.getElementById("wechatApproveBtn").addEventListener("click", () => runWeChatAction("approve-next", { note: wechatConfirmNote.value.trim() }));
 document.getElementById("wechatRejectBtn").addEventListener("click", () => runWeChatAction("reject-next", { note: wechatConfirmNote.value.trim() }));
+document.getElementById("writeNextBtn").addEventListener("click", () => requestNextParagraph("next"));
+document.getElementById("rewriteParagraphBtn").addEventListener("click", () => requestNextParagraph("rewrite"));
+document.getElementById("adjustParagraphBtn").addEventListener("click", () => requestNextParagraph("adjust"));
+document.getElementById("acceptParagraphBtn").addEventListener("click", acceptDraftParagraph);
+document.getElementById("undoParagraphBtn").addEventListener("click", undoAcceptedParagraph);
+cancelAgentButton.addEventListener("click", cancelActiveAgentTask);
+agentModelSelect.addEventListener("change", persistAgentControls);
+agentEffortSelect.addEventListener("change", persistAgentControls);
+agentModeSelect.addEventListener("change", persistAgentControls);
 themeButton.addEventListener("click", toggleTheme);
 localeSelect.addEventListener("change", () => applyLocale(localeSelect.value, true));
 document.getElementById("openBioRenderBtn").addEventListener("click", () => {
@@ -944,10 +1058,10 @@ async function renderScene() {
   try {
     const data = await postJson("/api/render", { spec });
     if (!data.ok) throw new Error(data.error || "Render failed");
+    setArtifacts(data.artifacts);
     setLink(pngLink, data.image_url);
     setLink(blendLink, data.blend_url);
     setLink(specLink, data.spec_url);
-    setArtifacts(data.artifacts);
     renderStatus.textContent = t("status.rendered");
     addMessage("assistant", interpolate(t("message.rendered"), { title: data.plan.title }));
   } catch (error) {
@@ -1030,6 +1144,174 @@ async function runLabTask() {
     renderStatus.textContent = t("status.labTaskError");
     addMessage("assistant", error.message);
   }
+}
+
+async function requestNextParagraph(action) {
+  if (writingBusy) return;
+  writingBusy = true;
+  setWritingBusy(true, t("status.writing"));
+  try {
+    const data = await postJson("/api/writing/next-paragraph", collectWritingPayload(action));
+    if (!data.ok || !data.paragraph) throw new Error(data.error || "No paragraph returned");
+    writingDraft.value = data.paragraph;
+    writingStatus.textContent = t("status.draftReady");
+    addMessage("assistant", t("message.paragraphReady"));
+  } catch (error) {
+    writingStatus.textContent = t("status.error");
+    addMessage("assistant", error.message);
+  } finally {
+    writingBusy = false;
+    setWritingBusy(false);
+  }
+}
+
+function collectWritingPayload(action) {
+  return {
+    action,
+    full_text: writingFullText.value.trim(),
+    setting: writingSetting.value.trim(),
+    characters: writingCharacters.value.trim(),
+    materials: writingMaterials.value.trim(),
+    goal: writingGoal.value.trim(),
+    direction: writingDirection.value.trim(),
+    previous_draft: writingDraft.value.trim(),
+  };
+}
+
+function acceptDraftParagraph() {
+  const paragraph = writingDraft.value.trim();
+  if (!paragraph) return;
+  writingHistory.push(writingFullText.value);
+  writingFullText.value = [writingFullText.value.trim(), paragraph].filter(Boolean).join("\n\n");
+  writingDraft.value = "";
+  writingStatus.textContent = t("status.accepted");
+  addMessage("assistant", t("message.paragraphAccepted"));
+}
+
+function undoAcceptedParagraph() {
+  if (!writingHistory.length) return;
+  writingFullText.value = writingHistory.pop();
+  writingDraft.value = "";
+  writingStatus.textContent = t("status.undone");
+  addMessage("assistant", t("message.paragraphUndone"));
+}
+
+async function loadAgentCapabilities() {
+  try {
+    const response = await fetch("/api/agent/capabilities");
+    const data = await response.json();
+    if (!data.ok) throw new Error(data.error || "Capability discovery failed");
+    capabilityStrip.replaceChildren();
+    data.capabilities.forEach((item) => {
+      const badge = document.createElement("span");
+      badge.className = "capability-badge";
+      badge.dataset.ready = String(Boolean(item.ready));
+      badge.textContent = item.id
+        .replace("cad-shapr3d", "CAD")
+        .replace("kicad-pcb", "KiCad")
+        .replace("blender-3d", "Blender")
+        .replace("tex-paper", "TeX")
+        .replace("wechat-chatops", "WeChat")
+        .replace("labview-control", "LabVIEW")
+        .replace("paper-figures", "Figures")
+        .replace("target-bridges", "MCP");
+      badge.title = `${item.title}: ${item.ready ? "ready" : "not detected"}`;
+      capabilityStrip.appendChild(badge);
+    });
+  } catch (error) {
+    capabilityStrip.textContent = error.message;
+  }
+}
+
+function trackAgentTask(task) {
+  activeAgentTaskId = task.id;
+  cancelAgentButton.hidden = false;
+  const policy = task.policy || {};
+  chatStatus.textContent = `${t("status.queued")} · ${policy.model || "agent"} · ${policy.effort_label || policy.reasoning_effort || "auto"}`;
+  const timer = window.setInterval(() => pollAgentTask(task.id), 900);
+  agentTaskTimers.set(task.id, timer);
+  pollAgentTask(task.id);
+}
+
+async function pollAgentTask(taskId) {
+  try {
+    const response = await fetch(`/api/agent/tasks/${encodeURIComponent(taskId)}`);
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Agent task status failed");
+    const task = data.task;
+    if (task.status === "queued") {
+      chatStatus.textContent = t("status.queued");
+      return;
+    }
+    if (task.status === "running") {
+      const policy = task.policy || {};
+      chatStatus.textContent = `${t("status.runningAgent")} · ${policy.model || "agent"} · ${policy.effort_label || policy.reasoning_effort || "auto"}`;
+      return;
+    }
+    stopAgentTaskTimer(taskId);
+    if (data.artifacts) setArtifacts(data.artifacts);
+    if (task.reply) addMessage("assistant", task.reply);
+    if (task.status === "waiting_confirmation") {
+      if (task.confirmation) addMessage("assistant", task.confirmation);
+      chatStatus.textContent = t("status.waitingConfirmation");
+    } else if (task.status === "completed") {
+      chatStatus.textContent = t("status.ready");
+    } else if (task.status === "canceled") {
+      chatStatus.textContent = t("status.canceled");
+    } else {
+      addMessage("assistant", task.error || "Agent task failed.");
+      chatStatus.textContent = t("status.error");
+    }
+  } catch (error) {
+    stopAgentTaskTimer(taskId);
+    chatStatus.textContent = t("status.error");
+    addMessage("assistant", error.message);
+  }
+}
+
+function stopAgentTaskTimer(taskId) {
+  const timer = agentTaskTimers.get(taskId);
+  if (timer) window.clearInterval(timer);
+  agentTaskTimers.delete(taskId);
+  if (activeAgentTaskId === taskId) {
+    activeAgentTaskId = "";
+    cancelAgentButton.hidden = agentTaskTimers.size === 0;
+  }
+}
+
+async function cancelActiveAgentTask() {
+  if (!activeAgentTaskId) return;
+  const taskId = activeAgentTaskId;
+  try {
+    const data = await postJson(`/api/agent/tasks/${encodeURIComponent(taskId)}/cancel`, {});
+    if (!data.ok) throw new Error(data.error || "Cancel failed");
+    stopAgentTaskTimer(taskId);
+    chatStatus.textContent = t("status.canceled");
+  } catch (error) {
+    addMessage("assistant", error.message);
+  }
+}
+
+function getAgentConversationId() {
+  const key = "labcanvas-agent-conversation";
+  let value = localStorage.getItem(key);
+  if (!value) {
+    value = globalThis.crypto?.randomUUID?.() || `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(key, value);
+  }
+  return value;
+}
+
+function restoreAgentControls() {
+  agentModelSelect.value = localStorage.getItem("labcanvas-agent-model") || "auto";
+  agentEffortSelect.value = localStorage.getItem("labcanvas-agent-effort") || "auto";
+  agentModeSelect.value = localStorage.getItem("labcanvas-agent-mode") || "execute";
+}
+
+function persistAgentControls() {
+  localStorage.setItem("labcanvas-agent-model", agentModelSelect.value);
+  localStorage.setItem("labcanvas-agent-effort", agentEffortSelect.value);
+  localStorage.setItem("labcanvas-agent-mode", agentModeSelect.value);
 }
 
 async function loadSettings() {
@@ -1239,13 +1521,13 @@ async function selectArtifact(id) {
   artifactTitle.textContent = item.title;
   artifactMeta.textContent = item.path;
   artifactKind.textContent = item.kind;
+  resetViewer();
+  setLink(artifactOpenLink, item.url);
   if (item.kind === "image") {
-    resetViewer();
     showPreview(item.url);
     setLink(pngLink, item.url);
     return;
   }
-  resetViewer();
   previewImage.hidden = true;
   emptyPreview.hidden = true;
   const body = document.createElement("pre");
@@ -1270,7 +1552,7 @@ function syncSpecView() {
 function syncSettingsView(status = {}) {
   if (!settings) return;
   document.getElementById("agintiCommand").value = settings.aginti?.command || "aginti";
-  document.getElementById("agintiWorkspace").value = settings.aginti?.workspace || "../Agent/AgInTiFlow";
+  document.getElementById("agintiWorkspace").value = settings.aginti?.workspace || ".";
   document.getElementById("agintiProvider").value = settings.aginti?.image_provider || "grsai";
   document.getElementById("agintiModel").value = settings.aginti?.image_model || "nano-banana-2";
   document.getElementById("agintiDryRun").checked = Boolean(settings.aginti?.dry_run);
@@ -1278,22 +1560,36 @@ function syncSettingsView(status = {}) {
   document.getElementById("biorenderEnv").value = settings.biorender?.auth_env || "BIORENDER_API_KEY";
   document.getElementById("toolBlender").checked = settings.toolchain?.blender !== false;
   document.getElementById("toolOpenScad").checked = settings.toolchain?.openscad !== false;
+  document.getElementById("toolCad").checked = settings.toolchain?.cad !== false;
+  document.getElementById("toolKiCad").checked = settings.toolchain?.kicad !== false;
+  document.getElementById("toolTex").checked = settings.toolchain?.tex !== false;
+  document.getElementById("toolWeChat").checked = settings.toolchain?.wechat !== false;
+  document.getElementById("toolLabView").checked = settings.toolchain?.labview !== false;
   document.getElementById("toolAgintiImage").checked = settings.toolchain?.aginti_image !== false;
   document.getElementById("toolBioRender").checked = Boolean(settings.toolchain?.biorender);
   document.getElementById("toolTargetRegistry").checked = settings.toolchain?.target_registry !== false;
   const agintiReady = status.aginti?.command_path ? t("backend.agintiReady") : t("backend.agintiMissing");
   const bioReady = status.biorender?.auth_env_present ? t("backend.bioPresent") : t("backend.bioEnv");
-  backendStatus.textContent = `${agintiReady} · ${bioReady}`;
+  const agentReady = status.agent?.codex_path ? `${status.agent.model || "GPT"} ready` : "Agent fallback";
+  backendStatus.textContent = `${agentReady} · ${agintiReady} · ${bioReady}`;
   syncThemeButton();
 }
 
 function collectSettings() {
   return {
     ...settings,
+    agent: {
+      ...settings.agent,
+      backend: "auto",
+      model: agentModelSelect.value === "auto" ? "gpt-5.6-sol" : agentModelSelect.value,
+      reasoning_effort: agentEffortSelect.value,
+      mode: agentModeSelect.value,
+      dynamic_routing: agentEffortSelect.value === "auto",
+    },
     aginti: {
       ...settings.aginti,
       command: document.getElementById("agintiCommand").value.trim() || "aginti",
-      workspace: document.getElementById("agintiWorkspace").value.trim() || "../Agent/AgInTiFlow",
+      workspace: document.getElementById("agintiWorkspace").value.trim() || ".",
       image_provider: document.getElementById("agintiProvider").value.trim() || "grsai",
       image_model: document.getElementById("agintiModel").value.trim() || "nano-banana-2",
       dry_run: document.getElementById("agintiDryRun").checked,
@@ -1305,8 +1601,13 @@ function collectSettings() {
     },
     toolchain: {
       ...settings.toolchain,
+      cad: document.getElementById("toolCad").checked,
+      kicad: document.getElementById("toolKiCad").checked,
       blender: document.getElementById("toolBlender").checked,
       openscad: document.getElementById("toolOpenScad").checked,
+      tex: document.getElementById("toolTex").checked,
+      wechat: document.getElementById("toolWeChat").checked,
+      labview: document.getElementById("toolLabView").checked,
       aginti_image: document.getElementById("toolAgintiImage").checked,
       biorender: document.getElementById("toolBioRender").checked,
       target_registry: document.getElementById("toolTargetRegistry").checked,
@@ -1400,6 +1701,10 @@ function showPreview(url) {
 
 function resetViewer() {
   [...artifactViewer.querySelectorAll(".text-artifact")].forEach((node) => node.remove());
+  for (const link of [artifactOpenLink, pngLink, blendLink, specLink]) {
+    link.hidden = true;
+    link.removeAttribute("href");
+  }
   emptyPreview.hidden = false;
 }
 
@@ -1412,5 +1717,14 @@ function setRenderBusy(isBusy, label = t("status.idle")) {
   document.getElementById("renderBtn").disabled = isBusy;
   if (isBusy || label !== t("status.idle")) {
     renderStatus.textContent = label;
+  }
+}
+
+function setWritingBusy(isBusy, label = t("status.ready")) {
+  for (const id of ["writeNextBtn", "rewriteParagraphBtn", "adjustParagraphBtn"]) {
+    document.getElementById(id).disabled = isBusy;
+  }
+  if (isBusy || label !== t("status.ready")) {
+    writingStatus.textContent = label;
   }
 }

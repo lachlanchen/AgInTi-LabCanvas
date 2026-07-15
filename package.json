@@ -28,6 +28,7 @@
     "agentic_tools/wechat_gui_agent/scripts/*.sh",
     "scripts/",
     "src/agenticapp/**/*.py",
+    "src/agenticapp/knowledge/*.md",
     "src/agenticapp/web/static/*",
     "pyproject.toml"
   ],

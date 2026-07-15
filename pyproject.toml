@@ -20,3 +20,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "agenticapp.web" = ["static/*"]
+"agenticapp" = ["knowledge/*.md"]

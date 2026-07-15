@@ -9,10 +9,19 @@ class BackendSettingsTests(unittest.TestCase):
     def test_default_toolchain_exposes_studio_tools(self):
         settings = default_backend_settings()
 
+        self.assertEqual(settings["agent"]["model"], "gpt-5.6-sol")
+        self.assertTrue(settings["agent"]["dynamic_routing"])
+        self.assertTrue(settings["toolchain"]["cad"])
+        self.assertTrue(settings["toolchain"]["kicad"])
+        self.assertTrue(settings["toolchain"]["tex"])
+        self.assertTrue(settings["toolchain"]["wechat"])
+        self.assertTrue(settings["toolchain"]["labview"])
         self.assertTrue(settings["toolchain"]["blender"])
         self.assertTrue(settings["toolchain"]["openscad"])
         self.assertTrue(settings["toolchain"]["aginti_image"])
         self.assertTrue(settings["toolchain"]["target_registry"])
+        self.assertEqual(settings["writing"]["provider"], "deepseek")
+        self.assertEqual(settings["writing"]["api_key_env"], "DEEPSEEK_API_KEY")
 
     def test_saved_settings_merge_new_toolchain_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -22,6 +31,7 @@ class BackendSettingsTests(unittest.TestCase):
 
         self.assertTrue(settings["toolchain"]["biorender"])
         self.assertTrue(settings["toolchain"]["aginti_image"])
+        self.assertEqual(settings["writing"]["model"], "deepseek-v4-flash")
 
 
 if __name__ == "__main__":

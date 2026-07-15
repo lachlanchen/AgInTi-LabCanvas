@@ -254,6 +254,23 @@ h3 {
   font-size: 12px;
 }
 
+.chat-head-status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-command {
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-color: rgba(180, 35, 24, 0.45);
+  color: var(--red);
+  font-size: 21px;
+  line-height: 1;
+}
+
 .messages {
   flex: 1;
   min-height: 0;
@@ -285,6 +302,115 @@ h3 {
   padding: 0 14px 12px;
 }
 
+.writing-tool {
+  flex: none;
+  max-height: 46vh;
+  overflow: auto;
+  border-top: 1px solid var(--line-soft);
+}
+
+.writing-tool-head {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.writing-tool-head::-webkit-details-marker {
+  display: none;
+}
+
+.writing-tool-head::after {
+  content: "+";
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.writing-tool[open] .writing-tool-head::after {
+  content: "−";
+}
+
+.writing-tool-body {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line-soft);
+  padding: 12px 14px;
+}
+
+.writing-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.writing-tool-head strong {
+  margin-right: auto;
+  font-size: 13px;
+}
+
+.writing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.writing-tool textarea {
+  min-height: 62px;
+  resize: vertical;
+}
+
+.writing-tool #writingFullText {
+  min-height: 128px;
+}
+
+.writing-tool #writingDraft {
+  background: var(--panel-2);
+}
+
+.writing-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.writing-actions button {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.capability-strip {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  border-top: 1px solid var(--line-soft);
+  padding: 7px 14px;
+  scrollbar-width: thin;
+}
+
+.capability-badge {
+  flex: none;
+  border: 1px solid rgba(8, 127, 120, 0.34);
+  border-radius: 999px;
+  background: rgba(8, 127, 120, 0.08);
+  color: var(--teal);
+  font-size: 10px;
+  font-weight: 850;
+  padding: 3px 7px;
+}
+
+.capability-badge[data-ready="false"] {
+  border-color: var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
 .chips button {
   min-height: 30px;
   padding: 0 10px;
@@ -296,6 +422,19 @@ h3 {
   gap: 10px;
   border-top: 1px solid var(--line);
   padding: 14px;
+}
+
+.agent-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  gap: 7px;
+}
+
+.agent-controls select {
+  min-width: 0;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 750;
 }
 
 textarea,
@@ -664,6 +803,12 @@ label input[type="checkbox"] {
 }
 
 @media (max-width: 920px) {
+  .app-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   .topbar {
     align-items: flex-start;
     flex-direction: column;
@@ -675,8 +820,50 @@ label input[type="checkbox"] {
     grid-template-columns: 1fr;
   }
 
+  .workspace {
+    min-height: 0;
+  }
+
+  .chat-panel {
+    height: 640px;
+  }
+
+  .preview-panel,
+  .spec-panel {
+    height: auto;
+  }
+
+  .artifact-canvas {
+    flex: none;
+  }
+
+  .artifact-list {
+    max-height: 320px;
+  }
+
+  .artifact-viewer {
+    min-height: 540px;
+  }
+
   .preview-frame,
   .preview-frame img {
     min-height: 300px;
+  }
+
+  .spec-editor {
+    min-height: 360px;
+    flex: none;
+  }
+
+  .settings-form {
+    max-height: none;
+  }
+
+  .agent-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .writing-grid {
+    grid-template-columns: 1fr;
   }
 }

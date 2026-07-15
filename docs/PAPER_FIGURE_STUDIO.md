@@ -38,7 +38,7 @@ AgInTi is configured in the Backends panel. Defaults:
 ```json
 {
   "command": "aginti",
-  "workspace": "../Agent/AgInTiFlow",
+  "workspace": ".",
   "image_provider": "grsai",
   "image_model": "nano-banana-2",
   "dry_run": true

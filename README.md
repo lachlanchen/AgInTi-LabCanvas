@@ -33,7 +33,8 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 
 | Area | What is ready | Entry point |
 | --- | --- | --- |
-| Web studio | Chat, bright UI, artifact canvas, backend settings, multilingual UI | `labcanvas web --port 8787 --open` |
+| Workspace agent | Persistent direct chat, dynamic GPT-5.6 SOL/Ultra routing, durable tasks, cancellation, and artifact return across all lab tools | [docs/WORKSPACE_AGENT.md](docs/WORKSPACE_AGENT.md) |
+| Web studio | Agent chat, bright UI, artifact canvas, backend settings, multilingual UI | `labcanvas web --port 8787 --open` |
 | Paper figures | Exact `NxM` SVG grids, AgInTi image dry-run payloads, editable artifact manifest | [docs/EDITABLE_FIGURE_PIPELINE.md](docs/EDITABLE_FIGURE_PIPELINE.md) |
 | 3D setup renders | JSON scene specs to Blender PNG and `.blend` output | [docs/SCENE_SPEC.md](docs/SCENE_SPEC.md) |
 | CAD devices | OpenSCAD exports and C-mount reflector adapter CAD | [cad/README.md](cad/README.md) |
@@ -54,6 +55,8 @@ Run from a source checkout:
 PYTHONPATH=src python -m agenticapp list
 PYTHONPATH=src python -m agenticapp doctor
 PYTHONPATH=src python -m agenticapp web --port 8787 --open
+PYTHONPATH=src python -m agenticapp agent capabilities
+PYTHONPATH=src python -m agenticapp agent chat "Design and render a C-mount sensor holder"
 PYTHONPATH=src python -m agenticapp studio figure-grid "optical device icons 2x3" --rows 2 --cols 3
 PYTHONPATH=src python -m agenticapp studio lab-task "prepare Lumileds no-resistor PCB and C-mount reflector CAD"
 PYTHONPATH=src python -m unittest discover -s tests
@@ -80,6 +83,9 @@ labcanvas webapp start --port 19473
 
 ```bash
 labcanvas scene-template experiment-setup --output my-setup.scene.json
+labcanvas agent chat "Create a clean Shapr3D-compatible optical holder" --model gpt-5.6-sol --effort ultra
+labcanvas agent chat "Inspect the current KiCad board and report problems" --mode plan
+labcanvas agent tasks
 labcanvas render-scene my-setup.scene.json --dry-run
 labcanvas render-scene my-setup.scene.json --output-dir output/scenes
 labcanvas studio openscad examples/paper-optics-setup.scene.json
@@ -106,13 +112,13 @@ labcanvas --config configs/blender-local-command.example.json dispatch blender "
 ## Architecture
 
 ```text
-Agent / MCP client / CLI / web chat
+Agent / MCP client / CLI / persistent web chat
         |
-        | dry-run, render, export, dispatch
+        | resumed session + dynamic policy + durable task
         v
 AgInTi LabCanvas
         |
-        | target registry + artifact manifest
+        | callable routines + target registry + artifact manifest
         v
 Blender · OpenSCAD · BioRender · AgInTi · KiCad · LabVIEW · Unity · Unreal
 ```
