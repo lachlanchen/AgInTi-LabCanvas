@@ -250,15 +250,25 @@ labcanvas wechat voice-transcribe \
 
 Raw `aeskey` and `voiceurl` fields are intentionally stripped from prompts.
 
-For 视频号/Shipinhao/Finder shares, the worker also treats comments as optional
-summary evidence when accessible. It should look for viewer prompts such as
+For 视频号/Shipinhao/Finder shares, the worker first tries the exact card media
+URL, validates it with `ffprobe`, and transcribes its audio. If that signed URL
+has expired, the worker automatically scans the bounded recent history of the
+same guarded chat, binds a play control to nearby title/author OCR, opens the
+native player, captures its `WeChatAppEx` PipeWire stream, and retries the same
+transcription. Card duration is a bounded completion signal, so a player that
+stays on its final frame does not fail merely because its identity remains
+visible. The worker also treats comments as optional summary evidence when
+accessible. It should look for viewer prompts such as
 `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`, `转写`,
 `transcript`, and `summary`, plus other comments with quoted lines, timestamps,
 corrections, names, or links. Reading comments is acceptable; posting a comment
-or asking Yuanbao from the account requires explicit user confirmation. If the
-actual video, comments, transcript, or a reliable public mirror are unavailable,
-the worker should not produce a deep analysis; it should report the limitation
-and ask for the source material or manual browser access.
+or asking Yuanbao from the account requires explicit user confirmation. Only a
+readable media probe with zero audio streams is `no_audio`. An HTTP 400, missing
+card, unsupported native player, or missing PipeWire stream is a separate
+failure stage and must never be described as a silent video. If the actual
+video, comments, transcript, or a reliable public mirror are unavailable, the
+worker should not produce a deep analysis; it reports a concise evidence
+limitation without opening an external browser or asking for read-only verification.
 For the concrete logged-in page/API approach and the local analyzer helper, see
 `docs/SHIPINHAO_COMMENT_RESEARCH.md` and
 `scripts/shipinhao_comment_intel.py`.

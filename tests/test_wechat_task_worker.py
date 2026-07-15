@@ -464,6 +464,90 @@ stderr: noisy internal trace
         self.assertNotIn(wrong_url, str(captured["source_text"]))
         self.assertEqual(captured["profile"]["object_id"], "exact-object-123")
 
+    def test_shipinhao_media_preflight_automatically_captures_after_signed_url_failure(self) -> None:
+        worker = load_worker()
+        exact_card = (
+            "<finderFeed><objectId><![CDATA[exact-object-123]]></objectId>"
+            "<nickname><![CDATA[Exact Creator]]></nickname><desc><![CDATA[Exact subject]]></desc>"
+            "<mediaList><media><videoPlayDuration><![CDATA[42]]></videoPlayDuration>"
+            "<url><![CDATA[http://wxapp.tc.qq.com/video?id=expired]]></url></media></mediaList></finderFeed>"
+        )
+        task = {
+            "id": "shipinhao-native-fallback",
+            "chat": "鏈接",
+            "source": {"local_id": 77, "kind": "file/link", "local_type": 219043332145},
+            "routine": {"id": "research_summary"},
+            "request": f"Current coalesced request:\nsummarize this video\n\nRecent history:\n{exact_card}",
+            "context": [{"local_id": 77, "content": exact_card}],
+        }
+        calls: list[list[str]] = []
+
+        def fake_transcriber(command, *, output_dir, timeout, profile):
+            calls.append(list(command))
+            if len(calls) == 1:
+                return {
+                    "status": "failed",
+                    "failure_stage": "download",
+                    "read_only": True,
+                    "profile": profile,
+                }
+            return {
+                "status": "transcribed",
+                "agent_context_path": str(output_dir / "shipinhao-audio-transcript.md"),
+                "read_only": True,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_manifest = Path(tmp) / "verified-capture.json"
+            with mock.patch.object(worker, "run_shipinhao_media_transcriber", side_effect=fake_transcriber), mock.patch.object(
+                worker,
+                "run_automatic_shipinhao_gui_capture",
+                return_value={"status": "verified", "visual_identity_verified": True, "source_chat": "鏈接"},
+            ) as capture, mock.patch.object(
+                worker,
+                "discover_verified_shipinhao_capture",
+                side_effect=[None, capture_manifest],
+            ):
+                result = worker.prepare_shipinhao_media_transcript_preflight(task, Path(tmp))
+
+        self.assertEqual(result["status"], "transcribed")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("--capture-manifest", calls[1])
+        self.assertEqual(calls[1][calls[1].index("--capture-manifest") + 1], str(capture_manifest))
+        capture.assert_called_once()
+        self.assertTrue(result["native_capture_fallback"]["visual_identity_verified"])
+
+    def test_automatic_shipinhao_capture_passes_card_duration(self) -> None:
+        worker = load_worker()
+        task = {"chat": "鏈接"}
+        profile = {
+            "object_id": "exact-object-123",
+            "title": "Exact subject",
+            "author": "Exact Creator",
+            "duration_seconds": 42.5,
+        }
+        completed = mock.Mock(
+            returncode=2,
+            stdout=json.dumps(
+                {
+                    "status": "failed",
+                    "error_code": "finder_player_unavailable",
+                    "failure_stage": "player_open",
+                    "source_card_found": True,
+                }
+            ),
+            stderr="",
+        )
+
+        with mock.patch.object(worker.subprocess, "run", return_value=completed) as run:
+            result = worker.run_automatic_shipinhao_gui_capture(task, profile)
+
+        command = run.call_args.args[0]
+        self.assertIn("--expected-duration-seconds", command)
+        self.assertEqual(command[command.index("--expected-duration-seconds") + 1], "42.500")
+        self.assertEqual(result["error_code"], "finder_player_unavailable")
+        self.assertTrue(result["source_card_found"])
+
     def test_shipinhao_preflight_prefers_matching_verified_capture_manifest(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

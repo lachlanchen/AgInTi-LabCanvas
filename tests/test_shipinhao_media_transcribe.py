@@ -108,6 +108,52 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
         self.assertNotIn("private-signed-token", manifest)
         self.assertNotIn("private-signed-token", context)
 
+    def test_download_failure_is_not_reported_as_no_audio(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(module, "download_media", side_effect=RuntimeError("HTTP 400")):
+                result = module.run_pipeline(
+                    card_xml(),
+                    root / "output",
+                    cache_root=root / "cache",
+                    model="turbo",
+                )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["failure_stage"], "download")
+        self.assertNotEqual(result["status"], "no_audio")
+
+    def test_no_audio_requires_verified_readable_media(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_download(_url, target, **_kwargs):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"verified-silent-video")
+                return {"bytes": 21, "sha256": "a" * 64, "source_url_sha256": "b" * 64}
+
+            with mock.patch.object(module, "download_media", side_effect=fake_download), mock.patch.object(
+                module,
+                "probe_media",
+                return_value={
+                    "duration_seconds": 3.2,
+                    "audio_stream_count": 0,
+                    "video_stream_count": 1,
+                },
+            ):
+                result = module.run_pipeline(
+                    card_xml(),
+                    root / "output",
+                    cache_root=root / "cache",
+                    model="turbo",
+                )
+
+        self.assertEqual(result["status"], "no_audio")
+        self.assertTrue(result["verified_silent_media"])
+        self.assertNotIn("failure_stage", result)
+
     def test_verified_capture_manifest_is_source_scoped_and_hash_checked(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as tmp:

@@ -790,6 +790,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "mp.weixin read-only recovery extracts article content and reuses the private cache without GUI verification",
             "Shipinhao comment discovery accepts only the exact current card export",
             "Shipinhao media transcription uses only the exact current card, allowlisted Tencent hosts, or a matching visual-identity/audio-hash manifest",
+            "Shipinhao download failure is never mislabeled as verified silent media",
+            "Shipinhao native fallback binds a play control only to source identity in the same card",
             "read-only source tasks cannot enter waiting_confirmation for a verification page",
             "ZIP, Word, PDF, and text attachments are safely extracted into agent-readable task context",
             "the tmux worker starts through the guarded self-test entrypoint",
@@ -907,6 +909,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "shipinhao_pipewire_stream_scope",
             "test": "tests.test_shipinhao_gui_audio_capture.ShipinhaoGuiAudioCaptureTests.test_pipewire_stream_is_limited_to_wechat_and_display",
+        },
+        {
+            "id": "shipinhao_download_failure_not_silent",
+            "test": "tests.test_shipinhao_media_transcribe.ShipinhaoMediaTranscribeTests.test_download_failure_is_not_reported_as_no_audio",
+        },
+        {
+            "id": "shipinhao_card_local_identity_binding",
+            "test": "tests.test_shipinhao_gui_audio_capture.ShipinhaoGuiAudioCaptureTests.test_play_control_is_bound_only_to_nearby_card_identity",
         },
         {
             "id": "read_only_source_never_waits_for_verification",

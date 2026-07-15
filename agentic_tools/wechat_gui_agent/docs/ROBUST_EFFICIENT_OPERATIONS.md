@@ -199,13 +199,22 @@ should speed the agent up, not replace agent reasoning.
 - Shipinhao/Finder/视频号 research tasks should run the read-only source
   recovery, exact-media transcription, and comment-intelligence preflights.
   Try the card's allowlisted Tencent media URL first. If it expired, use
-  `shipinhao_gui_audio_capture.py` only after the exact card is visible: bind the
-  current `WeChatAppEx` PipeWire stream, require OCR title/author identity, stop
-  on consecutive identity loss, trim feed auto-advance, and register a private
-  object-ID/hash manifest. The worker must validate and transcribe that manifest
-  before claiming video-level understanding. Do not reload the player after
-  binding its stream, trust nominal duration alone, reuse a capture from a
-  different object ID, or expose private audio/screenshots. Automatically discover
+  `shipinhao_gui_audio_capture.py` automatically against the exact guarded source
+  chat. Normalize to the latest message, scan only bounded recent history, and
+  bind each detected play control to title/author OCR in that same card's local
+  neighborhood. Never authorize a click from matching text in a later bot reply.
+  After the exact card opens, bind the current `WeChatAppEx` PipeWire stream,
+  start playback once if the stream has not appeared, require player title/author
+  identity, and stop on consecutive identity loss or the source card's bounded
+  expected duration. Trim feed auto-advance and register a private object-ID/hash
+  manifest. The worker must validate and transcribe that manifest before claiming
+  video-level understanding. Do not reload the player after binding its stream,
+  trust nominal duration without continuing visual identity checks, reuse a
+  capture from a different object ID, or expose private audio/screenshots.
+  Failure semantics are strict: `no_audio` is valid only after `ffprobe` reads
+  media and reports zero audio streams; HTTP/download failure, card not found,
+  source card found but player unavailable, and PipeWire stream unavailable are
+  separate `failure_stage`/`error_code` values. Automatically discover
   exact matching `comment_data` JSON under configured/private download roots and
   probe a local `wx_channel` API on `127.0.0.1:2026` when object IDs are known.
   The worker writes

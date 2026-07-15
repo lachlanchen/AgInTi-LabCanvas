@@ -402,6 +402,7 @@ def run_pipeline(
     captured_audio = captured_audio.expanduser().resolve() if captured_audio else None
     if captured_audio and not captured_audio.is_file():
         result["status"] = "failed"
+        result["failure_stage"] = "capture_validation"
         result["error"] = f"captured audio does not exist: {captured_audio}"
         return write_result(result, output_dir)
     if not safe_urls and not captured_audio:
@@ -437,6 +438,7 @@ def run_pipeline(
             )
     except Exception as exc:
         result["status"] = "failed"
+        result["failure_stage"] = str(result.pop("pipeline_stage", "pipeline"))
         result["error"] = f"{type(exc).__name__}: {str(exc)[:700]}"
     return write_result(result, output_dir)
 
@@ -464,16 +466,19 @@ def process_locked(
     if cached:
         result.update(cached_result(cached, cache_dir, output_dir))
         result["status"] = "cached"
+        result.pop("pipeline_stage", None)
         return result
 
     capture_key = capture_sha256[:12]
     media_path = cache_dir / (f"captured-source-{capture_key}.wav" if captured_audio else "source.mp4")
     download: dict[str, Any] = {}
     if captured_audio:
+        result["pipeline_stage"] = "capture_probe"
         if media_path.resolve() != captured_audio.resolve():
             shutil.copy2(captured_audio, media_path)
         media_probe = probe_media(media_path)
     elif media_path.is_file() and media_path.stat().st_size > 0:
+        result["pipeline_stage"] = "cached_media_probe"
         try:
             media_probe = probe_media(media_path)
         except Exception:
@@ -482,16 +487,21 @@ def process_locked(
     else:
         media_probe = {}
     if not media_probe and source_url:
+        result["pipeline_stage"] = "download"
         download = download_media(source_url, media_path, max_bytes=max_bytes, timeout=download_timeout)
+        result["pipeline_stage"] = "downloaded_media_probe"
         media_probe = probe_media(media_path)
     if not media_probe:
+        result["pipeline_stage"] = "media_resolution"
         raise RuntimeError("no verified Shipinhao media was available")
     duration = safe_float(media_probe.get("duration_seconds")) or safe_float(profile.get("duration_seconds")) or 0
     if duration > max_duration_seconds:
         raise RuntimeError(f"Shipinhao video duration {duration:.1f}s exceeds configured limit {max_duration_seconds:.1f}s")
     if int(media_probe.get("audio_stream_count") or 0) < 1:
+        result.pop("pipeline_stage", None)
         result.update(
             status="no_audio",
+            verified_silent_media=True,
             media_probe=media_probe,
             media_path=str(media_path),
             error="the verified Shipinhao video has no audio stream",
@@ -504,7 +514,9 @@ def process_locked(
     if captured_audio:
         effective_duration = trailing_silence_start(media_path, duration, timeout=min(command_timeout, 180)) or duration
     if not audio_path.is_file() or audio_path.stat().st_size <= 44:
+        result["pipeline_stage"] = "audio_extraction"
         extract_audio(media_path, audio_path, timeout=command_timeout, end_seconds=effective_duration)
+    result["pipeline_stage"] = "transcription"
     transcript = transcribe_audio(audio_path, model=requested_model, device=device, language=language)
     input_kind = "card_media_url"
     if captured_audio:
@@ -556,6 +568,7 @@ def process_locked(
             "download": {key: value for key, value in download.items() if key != "source_url"},
         }
     )
+    result.pop("pipeline_stage", None)
     return result
 
 
