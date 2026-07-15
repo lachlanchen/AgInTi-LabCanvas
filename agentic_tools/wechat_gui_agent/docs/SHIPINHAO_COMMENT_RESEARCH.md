@@ -43,7 +43,8 @@ useful for media retrieval, but it is not a comment-export solution.
 Use this order for Shipinhao links/cards:
 
 1. Parse the WeChat shared card and save metadata from the message row.
-2. Try cached local media or downloaded video first.
+2. Try the exact card media URL or a matching verified native audio capture
+   first, then transcribe it with `shipinhao_media_transcribe.py`.
 3. If a logged-in Channels page/runtime is available, use a `wx_channel`-style
    comment export.
 4. Run `shipinhao_comment_intel.py` on the exported JSON.
@@ -53,6 +54,29 @@ Use this order for Shipinhao links/cards:
    explicitly requests it.
 7. If the page, video, comments, and transcript are unavailable, say that
    plainly and avoid a fake deep analysis.
+
+Audio/video evidence and comment evidence stay separate. A transcript JSON or
+`verified-capture.json` is never passed to `shipinhao_comment_intel.py` as if it
+were a comment export.
+
+## Source-Scoped Audio Fallback
+
+When a Tencent card URL has expired, open the exact native card and run:
+
+```bash
+agentic_tools/wechat_gui_agent/scripts/shipinhao_gui_audio_capture.py \
+  --object-id '<OBJECT_ID>' \
+  --title '<CARD_TITLE>' \
+  --author '<AUTHOR>' \
+  --identity-term '<DISTINCTIVE_TERM>' \
+  --display :97 \
+  --json
+```
+
+The helper records only while expected identity remains visible and trims the
+feed's next item. The worker discovers `verified-capture.json` by object ID and
+adds a timestamped transcript to preflight. Full operating details are in
+`references/wechat-shipinhao-audio-transcription-workflow.md`.
 
 ## Local Utility
 

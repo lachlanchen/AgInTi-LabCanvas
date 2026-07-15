@@ -130,6 +130,8 @@ target, so a worker send that appears mid-cycle stops further dry-open actions.
 | `wechat_media_sync_loop.sh` | Repeat `media-sync` for configured chats. |
 | `wechat_autopublish_video.py` | Resolve exact WeChat video rows and copy MP4 to Nutstore AutoPublish. |
 | `shipinhao_comment_intel.py` | Read-only analyzer for exported Shipinhao/Finder comment JSON or compatible `wx_channel` API exports. |
+| `shipinhao_media_transcribe.py` | Download or consume a verified exact-card capture, run Whisper, and write source-scoped transcript evidence. |
+| `shipinhao_gui_audio_capture.py` | Record the visible native Channels player's `WeChatAppEx` stream while OCR identity remains matched; trim auto-advance and register a private hash manifest. |
 | `wechat_memory.py` | Structured local inbox/memory tables for notes, todos, links, and summaries. |
 | `wechat_mirror.py` | SQLite evidence log for GUI sends, reads, screenshots, and direct messages. |
 | `wechat_codex_sessions.py` | Per-chat fast/worker Codex session registry. |
@@ -431,6 +433,14 @@ labcanvas wechat autopublish-video --chat "<CHAT_NAME>" --message-local-id 14 --
 
 `--fetch-gui` opens the official client and clicks the visible video so WeChat
 caches the MP4 before the tool copies it to Nutstore AutoPublish.
+
+For read-only Shipinhao summaries where the shared media URL expired, keep the
+exact card visible and run `shipinhao_gui_audio_capture.py` with object ID,
+title, author, and distinctive identity terms. The helper uses the same GUI
+serialization lane, records only the matching native player stream, and stops
+when the feed advances. Its private `verified-capture.json` is automatically
+consumed by the next worker preflight; do not send or commit the audio, full
+transcript, signed URL, or identity screenshots.
 
 For bot-sent/generated videos, `wechat_task_worker.py` runs the exact
 message-local-id cache path first. If that fails, it checks the same-chat

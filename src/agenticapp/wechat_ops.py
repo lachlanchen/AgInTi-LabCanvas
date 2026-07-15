@@ -789,6 +789,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "generated-video LazyEdit context appends generated story/script and prompt material before publish",
             "mp.weixin read-only recovery extracts article content and reuses the private cache without GUI verification",
             "Shipinhao comment discovery accepts only the exact current card export",
+            "Shipinhao media transcription uses only the exact current card, allowlisted Tencent hosts, or a matching visual-identity/audio-hash manifest",
             "read-only source tasks cannot enter waiting_confirmation for a verification page",
             "ZIP, Word, PDF, and text attachments are safely extracted into agent-readable task context",
             "the tmux worker starts through the guarded self-test entrypoint",
@@ -894,6 +895,18 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "shipinhao_exact_comment_discovery",
             "test": worker_prefix + "test_shipinhao_comment_preflight_auto_discovers_only_exact_export",
+        },
+        {
+            "id": "shipinhao_exact_media_transcript",
+            "test": worker_prefix + "test_shipinhao_media_transcript_preflight_uses_exact_card_context",
+        },
+        {
+            "id": "shipinhao_capture_manifest_identity",
+            "test": "tests.test_shipinhao_media_transcribe.ShipinhaoMediaTranscribeTests.test_verified_capture_manifest_is_source_scoped_and_hash_checked",
+        },
+        {
+            "id": "shipinhao_pipewire_stream_scope",
+            "test": "tests.test_shipinhao_gui_audio_capture.ShipinhaoGuiAudioCaptureTests.test_pipewire_stream_is_limited_to_wechat_and_display",
         },
         {
             "id": "read_only_source_never_waits_for_verification",

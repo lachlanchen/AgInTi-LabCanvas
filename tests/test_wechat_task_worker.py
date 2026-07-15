@@ -251,6 +251,24 @@ stderr: noisy internal trace
         self.assertEqual(summary["comment_count"], 1)
         self.assertIn("@元宝", json.dumps(summary["keyword_hits"], ensure_ascii=False))
 
+    def test_shipinhao_media_manifest_is_not_treated_as_comment_export(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "verified-capture.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "object_id": "oid-123",
+                        "title": "demo video",
+                        "author": "demo author",
+                        "status": "verified",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertFalse(worker.shipinhao_comment_json_looks_relevant(manifest))
+
     def test_mp_weixin_research_runs_read_only_source_recovery_preflight(self) -> None:
         worker = load_worker()
         task = {
@@ -400,6 +418,86 @@ stderr: noisy internal trace
             profile["nonce_id"],
             "7860797635834206573_4_20_13_1_1782694936919416_bd6fb930-7364-11f1-bc60-fb1d69ad351a",
         )
+
+    def test_shipinhao_media_transcript_preflight_uses_exact_card_context(self) -> None:
+        worker = load_worker()
+        exact_url = "http://wxapp.tc.qq.com/video?id=exact-source"
+        wrong_url = "http://wxapp.tc.qq.com/video?id=old-history"
+        exact_card = (
+            "<finderFeed><objectId><![CDATA[exact-object-123]]></objectId>"
+            "<nickname><![CDATA[Exact Creator]]></nickname><desc><![CDATA[Exact subject]]></desc>"
+            "<mediaList><media><videoPlayDuration><![CDATA[42]]></videoPlayDuration>"
+            f"<url><![CDATA[{exact_url}]]></url></media></mediaList></finderFeed>"
+        )
+        task = {
+            "id": "shipinhao-exact-media",
+            "chat": "鏈接",
+            "source": {"local_id": 77, "kind": "file/link", "local_type": 219043332145},
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary", "needs_recent_media": True},
+            "request": f"Current coalesced request:\nsummarize this video\n\nRecent history:\n{wrong_url}",
+            "context": [
+                {"local_id": 76, "content": wrong_url},
+                {"local_id": 77, "content": exact_card},
+            ],
+        }
+        captured: dict[str, object] = {}
+
+        def fake_transcriber(command, *, output_dir, timeout, profile):
+            source_path = Path(command[command.index("--source-text-file") + 1])
+            captured["source_text"] = source_path.read_text(encoding="utf-8")
+            captured["profile"] = profile
+            return {
+                "status": "transcribed",
+                "agent_context_path": str(output_dir / "shipinhao-audio-transcript.md"),
+                "read_only": True,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(worker, "run_shipinhao_media_transcriber", side_effect=fake_transcriber), mock.patch.object(
+                worker, "prepare_shipinhao_comment_intel_preflight", return_value={"status": "not_available"}
+            ):
+                preflight = worker.prepare_worker_preflight(task, Path(tmp))
+
+        self.assertEqual(preflight["shipinhao_media_transcript"]["status"], "transcribed")
+        self.assertIn(exact_url, str(captured["source_text"]))
+        self.assertNotIn(wrong_url, str(captured["source_text"]))
+        self.assertEqual(captured["profile"]["object_id"], "exact-object-123")
+
+    def test_shipinhao_preflight_prefers_matching_verified_capture_manifest(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_root = Path(tmp) / "cache"
+            object_dir = cache_root / "exact-object-123"
+            object_dir.mkdir(parents=True)
+            audio = object_dir / "source.wav"
+            audio.write_bytes(b"source-scoped-audio")
+            manifest = object_dir / "verified-capture.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "status": "verified",
+                        "visual_identity_verified": True,
+                        "object_id": "exact-object-123",
+                        "title": "Exact subject",
+                        "author": "Exact Creator",
+                        "identity_terms": ["Exact subject"],
+                        "audio_path": str(audio),
+                        "audio_sha256": worker.sha256_file(audio),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            profile = {
+                "object_id": "exact-object-123",
+                "title": "Exact subject",
+                "author": "Exact Creator",
+            }
+
+            with mock.patch.object(worker, "SHIPINHAO_MEDIA_CACHE_ROOT", cache_root):
+                discovered = worker.discover_verified_shipinhao_capture(profile)
+
+        self.assertEqual(discovered, manifest)
 
     def test_matching_lazyedit_publish_jobs_deduplicates_numeric_string_ids(self) -> None:
         worker = load_worker()

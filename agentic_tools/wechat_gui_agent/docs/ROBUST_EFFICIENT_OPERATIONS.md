@@ -196,8 +196,16 @@ should speed the agent up, not replace agent reasoning.
   a human-confirmation state. Never open/focus a browser or ask the owner to
   verify for read-only research; return an evidence-limited answer if recovery
   remains incomplete.
-- Shipinhao/Finder/视频号 research tasks should run the read-only comment
-  source-recovery and comment-intelligence preflights. Automatically discover
+- Shipinhao/Finder/视频号 research tasks should run the read-only source
+  recovery, exact-media transcription, and comment-intelligence preflights.
+  Try the card's allowlisted Tencent media URL first. If it expired, use
+  `shipinhao_gui_audio_capture.py` only after the exact card is visible: bind the
+  current `WeChatAppEx` PipeWire stream, require OCR title/author identity, stop
+  on consecutive identity loss, trim feed auto-advance, and register a private
+  object-ID/hash manifest. The worker must validate and transcribe that manifest
+  before claiming video-level understanding. Do not reload the player after
+  binding its stream, trust nominal duration alone, reuse a capture from a
+  different object ID, or expose private audio/screenshots. Automatically discover
   exact matching `comment_data` JSON under configured/private download roots and
   probe a local `wx_channel` API on `127.0.0.1:2026` when object IDs are known.
   The worker writes

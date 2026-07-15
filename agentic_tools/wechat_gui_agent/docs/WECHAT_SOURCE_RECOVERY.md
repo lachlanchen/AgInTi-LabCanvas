@@ -38,7 +38,19 @@ python agentic_tools/wechat_gui_agent/scripts/wechat_source_recovery.py \
 ## Shipinhao Pipeline
 
 The source-recovery packet isolates title, author, object ID, and nonce ID from
-the current Finder card. Comment intelligence then checks:
+the current Finder card. Media evidence runs before comment intelligence:
+
+1. `shipinhao_media_transcribe.py` tries the exact card's allowlisted Tencent
+   media URL with bounded download and SSRF checks.
+2. If the signed URL expired, the agent opens the exact card in native WeChat
+   and runs `shipinhao_gui_audio_capture.py` with distinctive title/author terms.
+3. The capture helper binds to the active `WeChatAppEx` PipeWire stream, verifies
+   visible identity, stops on feed auto-advance, and writes a private
+   object-ID/hash manifest.
+4. The worker discovers that manifest, validates it, transcribes the source-only
+   audio, and writes `task.preflight.shipinhao_media_transcript`.
+
+Comment intelligence then checks:
 
 1. explicit exact comment JSON paths;
 2. exact matching exports discovered under private/configured `comment_data`
@@ -59,6 +71,11 @@ transcript, summary, quoted-line, timestamp, and correction comments. Comments
 alone are not proof that the complete video was watched. Posting a new comment
 or Yuanbao prompt remains an explicit per-video write action.
 
+The native audio capture is also read-only. It must not reload the page after
+selecting a PipeWire stream, and it must not accept nominal duration as proof of
+source boundaries. Visual title/author identity loss is the auto-advance stop
+gate. See `references/wechat-shipinhao-audio-transcription-workflow.md`.
+
 The API adapter reads `/api/channels/feed/comment/list` directly, paginates
 top-level comments and replies, and saves a local raw snapshot before analysis.
 It falls back to `/api/channels/feed/comment/export` when the list endpoint is
@@ -69,6 +86,8 @@ not available.
 - `full_article`: the extracted article body was read.
 - `reconstructed`: claims were rebuilt from identified public sources.
 - `comment_hits` or `comments_available`: comments are auxiliary evidence.
+- `transcribed` with `visual_identity_verified=true`: actual source-scoped
+  audio was transcribed.
 - `blocked` or evidence-limited: answer only from verified metadata and say so.
 
 Read gates never become `waiting_confirmation`. Authentication, CAPTCHA,
