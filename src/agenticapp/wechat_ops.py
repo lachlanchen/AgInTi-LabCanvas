@@ -790,6 +790,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "mp.weixin read-only recovery extracts article content and reuses the private cache without GUI verification",
             "Shipinhao comment discovery accepts only the exact current card export",
             "read-only source tasks cannot enter waiting_confirmation for a verification page",
+            "ZIP, Word, PDF, and text attachments are safely extracted into agent-readable task context",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -897,6 +898,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "read_only_source_never_waits_for_verification",
             "test": worker_prefix + "test_read_only_source_recovery_drops_verification_confirmation",
+        },
+        {
+            "id": "document_intake_reaches_agent_context",
+            "test": worker_prefix + "test_file_intake_docx_falls_through_to_resumed_agent_with_readable_context",
         },
         {
             "id": "legacy_task_instruction_contract_backfill",

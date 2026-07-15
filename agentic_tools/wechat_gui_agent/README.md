@@ -640,12 +640,15 @@ Research configs can enable attachment triggers for image/video/file rows, and
 long or obviously multi-step research messages route directly to the worker
 even without a known keyword. EchoMind keeps attachment triggers disabled so it
 only responds to language-learning text.
-Bare file uploads with no explicit instruction route to the lightweight
-`file_intake` routine first: the worker syncs/saves the exact attachment,
-copies it into `output/wechat_worker/<task-id>/intake/`, records filename,
-type, size, checksum, and manifest files, then sends a short receipt. It does
-not deep-read, summarize, translate, publish, or resend the uploaded file unless
-the current message asks for that deeper work.
+Bare file uploads route to the source-scoped `file_intake` routine. The worker
+copies the exact attachment into `output/wechat_worker/<task-id>/intake/`, then
+uses `wechat_document_reader.py` for ZIP, Word, PDF, and text files. Readable
+documents reach the resumed per-chat agent as an `agent_context_path`, so a
+bare upload receives a concise natural identification and preliminary summary
+instead of a checksum receipt. Explicit requests can summarize, extract,
+compare, or translate the same context. Unsupported, encrypted, oversized, or
+missing files still fail closed with a receipt. See
+[`docs/WECHAT_DOCUMENT_INTAKE.md`](docs/WECHAT_DOCUMENT_INTAKE.md).
 Each group can keep two private Codex sessions, `fast` and `worker`, in
 `.private/codex_sessions/`. Session keys include a short hash of the exact chat
 title, so non-ASCII groups such as `懒人科研` and `鏈接` cannot collapse into the

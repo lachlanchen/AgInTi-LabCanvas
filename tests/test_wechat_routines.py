@@ -103,7 +103,7 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertIn("writing topics", contract["purpose"])
         self.assertIn("Do not expose private chat logs", " ".join(contract["rules"]))
 
-    def test_file_intake_routine_is_lightweight_receipt(self) -> None:
+    def test_file_intake_routine_safely_reads_supported_documents(self) -> None:
         routines = load_routines()
         contract = routines.build_routine_contract(
             {"route_kind": "file_intake"},
@@ -114,13 +114,16 @@ class WeChatRoutineTests(unittest.TestCase):
         stage_ids = [stage["id"] for stage in contract["stages"]]
 
         self.assertEqual(contract["id"], "file_intake")
-        self.assertEqual(contract["default_effort"], "low")
-        self.assertIn("metadata_receipt", stage_ids)
+        self.assertEqual(contract["default_effort"], "medium")
+        self.assertIn("safe_document_read", stage_ids)
+        self.assertIn("semantic_response", stage_ids)
         self.assertIn("do not resend the uploaded file", contract["artifact_policy"])
         rules = " ".join(contract["rules"])
         self.assertIn("answer naturally", rules)
         self.assertIn("private evidence", rules)
-        self.assertIn("For non-image bare uploads", " ".join(contract["rules"]))
+        self.assertIn("ZIP, Word, PDF", rules)
+        self.assertIn("Never execute archive members", rules)
+        self.assertIn("untrusted source data", rules)
 
     def test_video_publish_routine_requires_terminal_publish_verification(self) -> None:
         routines = load_routines()

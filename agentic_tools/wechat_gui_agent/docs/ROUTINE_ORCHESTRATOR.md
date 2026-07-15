@@ -55,7 +55,10 @@ Current routines:
   STEP/STL, and device design.
 - `file_intake`: bare WeChat file or image upload with no explicit instruction.
   It syncs/saves the exact source, copies it into the task artifact directory,
-  records metadata/checksum, and sends a short receipt without deep reading.
+  records metadata/checksum, reads raster images semantically, and safely
+  extracts ZIP/Word/PDF/text content. Readable documents pass an
+  `agent_context_path` to the resumed worker for a concise preliminary summary;
+  unsupported or unsafe files receive a fail-closed receipt.
 - `file_download_save`: exact-source file, media, link, and download handling.
 - `video_publish_existing`: source-scoped existing video processing and
   LazyEdit/public publishing only when explicitly requested; `public_publish_verified`

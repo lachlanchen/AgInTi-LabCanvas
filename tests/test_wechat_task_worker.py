@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1370,6 +1371,43 @@ stderr: noisy internal trace
         self.assertEqual(payload["files"], [])
         self.assertEqual(payload["data"]["status"], "saved")
         self.assertFalse(payload["data"]["require_file_delivery"])
+
+    def test_file_intake_docx_falls_through_to_resumed_agent_with_readable_context(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "downloads" / "experiment_notes.docx"
+            source.parent.mkdir(parents=True)
+            with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("[Content_Types].xml", "<Types/>")
+                archive.writestr(
+                    "word/document.xml",
+                    """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                    <w:body><w:p><w:r><w:t>The lamp requires a regulated 5 V supply.</w:t></w:r></w:p></w:body>
+                    </w:document>""",
+                )
+            task = {
+                "id": "file-docx-read",
+                "chat": "懒人科研",
+                "source": {"local_id": 72, "kind": "file", "local_type": 49},
+                "route_decision": {"route_kind": "file_intake", "needs_recent_media": True},
+                "request": (
+                    "Current coalesced request:\n"
+                    "New WeChat file upload received with no explicit instruction.\n\n"
+                    "Recent synced WeChat files:\n"
+                    f"- {source} ({source.stat().st_size} bytes)"
+                ),
+            }
+
+            preflight = worker.prepare_worker_preflight(task, tmp_path / "artifact")
+            task["preflight"] = preflight
+            document = preflight["file_intake"]["copied"][0]["document_read"]
+            deterministic = worker.deterministic_preflight_result(task)
+            content = Path(document["agent_context_path"]).read_text(encoding="utf-8")
+
+        self.assertEqual(document["status"], "readable")
+        self.assertIn("regulated 5 V supply", content)
+        self.assertIsNone(deterministic)
 
     def test_file_intake_preflight_uses_current_file_not_old_recent_files(self) -> None:
         worker = load_worker()

@@ -1273,8 +1273,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         assert route is not None
         self.assertEqual(route["route_decision"]["route_kind"], "file_intake")
         self.assertTrue(route["route_decision"]["needs_recent_media"])
-        self.assertIn("lightweight file intake", route["task"])
-        self.assertIn("Do not do a deep read/summary", route["task"])
+        self.assertIn("source-scoped file intake", route["task"])
+        self.assertIn("safely inspect ZIP/Word/PDF/text content", route["task"])
 
     def test_bare_image_upload_routes_to_lightweight_intake(self) -> None:
         config = self.backend_chat_config("🍓我的设备", "personal_organizer")
@@ -1322,10 +1322,10 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         assert route is not None
         self.assertEqual(route["route_decision"]["route_kind"], "file_intake")
         self.assertTrue(route["route_decision"]["needs_recent_media"])
-        self.assertIn("Bare File Intake", route["task"])
+        self.assertIn("Safe File Intake and Preliminary Read", route["task"])
         self.assertIn("answer naturally", route["task"])
         self.assertIn("private evidence", route["task"])
-        self.assertIn("For non-image bare uploads", route["task"])
+        self.assertIn("For ZIP, Word, PDF, and text uploads", route["task"])
         self.assertIn("local_id=61", route["task"])
 
     def test_transcribed_voice_is_treated_as_text_in_echomind(self) -> None:
