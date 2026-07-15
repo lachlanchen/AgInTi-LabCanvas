@@ -1399,11 +1399,8 @@ stderr: noisy internal trace
                                 "status": "ok",
                                 "model": "gpt-5.5",
                                 "reasoning_effort": "low",
-                                "text_preview": (
-                                    "Visible text: BIG TITLE\\n"
-                                    "Image caption: a cropped web article screenshot with dense Chinese text\\n"
-                                    "Notes: none"
-                                ),
+                                "response_style": "natural_semantic",
+                                "text_preview": "这是一张中文文章截图，核心在讨论如何把零散记录整理成可以持续复用的知识。标题强调先理解内容，再决定保存形式。",
                             },
                             "ocr": {"status": "ok", "text_preview": "BIG TITLE"},
                         }
@@ -1414,12 +1411,54 @@ stderr: noisy internal trace
 
         payload = json.loads(worker.deterministic_file_intake_result(task) or "{}")
 
-        self.assertIn("我已自动读取这张图片", payload["message"])
-        self.assertIn("gpt-5.5 low", payload["message"])
-        self.assertIn("Image caption", payload["message"])
-        self.assertIn("BIG TITLE", payload["message"])
-        self.assertNotIn("没有深度阅读", payload["message"])
+        self.assertIn("这是一张中文文章截图", payload["message"])
+        self.assertIn("先理解内容", payload["message"])
+        self.assertNotIn("gpt-5.5", payload["message"])
+        self.assertNotIn("OCR", payload["message"])
+        self.assertNotIn("BIG TITLE", payload["message"])
+        self.assertNotIn("Image caption", payload["message"])
+        self.assertNotIn("sha256", payload["message"].lower())
         self.assertEqual(payload["data"]["status"], "image_read")
+
+    def test_file_intake_naturalizes_legacy_labeled_image_read(self) -> None:
+        worker = load_worker()
+        message = worker.image_intake_description_message(
+            {
+                "vision": {
+                    "status": "ok",
+                    "text_preview": (
+                        "Visible text: BIG TITLE\\n"
+                        "Image caption: 这是一张带有大标题的文章截图。\\n"
+                        "Notes: None"
+                    ),
+                },
+                "ocr": {"status": "ok", "text_preview": "BIG TITLE"},
+            }
+        )
+
+        self.assertIn("这是一张带有大标题的文章截图", message)
+        self.assertIn("BIG TITLE", message)
+        self.assertNotIn("Visible text", message)
+        self.assertNotIn("Image caption", message)
+        self.assertNotIn("Notes", message)
+        self.assertNotIn("OCR", message)
+
+    def test_image_read_prompt_context_uses_request_and_same_chat_text(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "Current coalesced request:\n请告诉我这张图在讲什么。\n\nRecent history:\nignored",
+            "source": {"local_id": 12},
+            "context": [
+                {"local_id": 10, "local_type": 1, "kind": "text", "content": "这是论文里的系统图。"},
+                {"local_id": 12, "local_type": 3, "kind": "image", "content": "<img/>"},
+            ],
+        }
+
+        context = worker.image_read_prompt_context(task)
+
+        self.assertIn("请告诉我这张图在讲什么", context)
+        self.assertIn("这是论文里的系统图", context)
+        self.assertNotIn("<img", context)
 
     def test_media_resolution_preflight_prefers_decoded_image_and_exposes_task_copy(self) -> None:
         worker = load_worker()

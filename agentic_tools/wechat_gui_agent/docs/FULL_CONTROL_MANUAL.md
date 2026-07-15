@@ -414,9 +414,12 @@ local Tesseract when available. OCR output goes to:
 output/wechat_worker/<task-id>/image_text/
 ```
 
-The manifest and worker prompt include the OCR transcript path and preview. Use
-that transcript first for "read/transcribe this image" requests, then inspect
-the copied image itself or visible fallback crop if the OCR is empty. If the
+The manifest and worker prompt include the OCR transcript path and preview as
+private evidence. The user-facing answer comes from semantic Codex vision and
+should read like a normal explanation of the image, without OCR labels,
+reader/model diagnostics, or a fixed caption template. For an explicit exact
+transcription request, use the transcript as supporting evidence, then inspect
+the copied image itself or visible fallback crop if OCR is empty. If the
 manifest remains empty after sync plus GUI cache probe, stop with a
 source-limited missing-media response instead of choosing a nearby old download.
 

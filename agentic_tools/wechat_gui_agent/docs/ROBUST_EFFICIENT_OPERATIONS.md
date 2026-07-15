@@ -127,7 +127,7 @@ should speed the agent up, not replace agent reasoning.
   caching when the source is an image, then run media sync a second time before
   declaring the source missing. Raster images copied to `source_media/` are
   probed with Pillow and OCRed with local Tesseract (`eng+chi_sim+chi_tra+jpn`
-  when available). The OCR transcript is written under
+  when available). OCR is private supporting evidence, not a reply template. The transcript is written under
   `output/wechat_worker/<task-id>/image_text/`, added to the manifest, and
   injected into the worker prompt as evidence for image-reading tasks. If WeChat
   exposes only a broken or tiny cached image, the GUI probe also saves visible
@@ -138,7 +138,11 @@ should speed the agent up, not replace agent reasoning.
   `local_id`/media tokens/time window, selects one best non-thumbnail candidate,
   and runs the same Codex image reader (`WECHAT_IMAGE_READ_MODEL=gpt-5.5`,
   `WECHAT_IMAGE_READ_EFFORT=low`) plus OCR before optionally sending one
-  concise report back to the originating chat with `--send`. Prefer decoded
+  natural content-aware reply back to the originating chat with `--send`. A
+  one-image backfill sends the semantic answer directly; a multi-image backfill
+  uses only simple image numbering and never exposes local IDs, dimensions,
+  model names, checksums, or `Visible text / Image caption / Notes` labels.
+  Prefer decoded
   `msg/attach/.../Img/<md5>.jpg` originals over `cache/.../Bubble/*_b` previews;
   Bubble previews can be gray placeholders and must not win when a readable
   source attachment or thumbnail exists. GUI screenshot crop fallback is opt-in
@@ -148,8 +152,12 @@ should speed the agent up, not replace agent reasoning.
   `file_intake`, sync/copy the exact source into
   `output/wechat_worker/<task-id>/intake/`, and record metadata plus checksum.
   Raster images are automatically read with Codex vision
-  (`WECHAT_IMAGE_READ_MODEL=gpt-5.5`, `WECHAT_IMAGE_READ_EFFORT=low`) and OCR,
-  then described back to the originating chat. For non-image files, send a
+  (`WECHAT_IMAGE_READ_MODEL=gpt-5.5`, `WECHAT_IMAGE_READ_EFFORT=low`) and OCR.
+  The vision turn must respond like a normal multimodal Codex conversation:
+  explain what the image shows or means, using nearby same-chat context when
+  useful. Do not send raw OCR blocks, reader/model diagnostics, dimensions,
+  checksums, or a fixed caption schema unless the user explicitly asks for
+  exact transcription or diagnostics. For non-image files, send a
   short saved-file receipt and wait for an explicit summary/extraction request.
   The file-intake preflight must prefer `media_resolution.copied[*].task_copy_path`
   over broad "Recent synced files" appendices so old images/files cannot be
@@ -729,10 +737,12 @@ Missing image/video/file:
 - if the media row exists but no file is cached, let the preflight dry-open the
   exact chat and, for images, click the visible bubble once so WeChat caches the
   preview/original before rerunning sync;
-- for image transcription, use the manifest `OCR text` path and preview first;
-  if OCR is empty, inspect the copied image itself before saying no readable
-  text was found; visible GUI crops are valid fallback source media when the
-  original WeChat cache file is broken;
+- for image understanding, inspect the copied image with Codex vision first and
+  use the manifest `OCR text` only as supporting evidence. The user-facing reply
+  should naturally explain the image, not reproduce the internal evidence
+  schema. If both vision and OCR are empty, inspect the copied image itself
+  before saying no readable content was found; visible GUI crops are valid
+  fallback source media when the original WeChat cache file is broken;
 - fail source-limited instead of borrowing nearby files.
 
 WeChat locked:

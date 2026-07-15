@@ -142,7 +142,8 @@ def build_image_task(config: dict[str, Any], row: dict[str, Any], rows: list[dic
     request = (
         "Current coalesced request:\n"
         f"Backfill image reading for WeChat image local_id={local_id}. "
-        "Read the exact image with Codex vision using gpt-5.5 low. Return visible text and an image caption.\n"
+        "Read the exact image with Codex vision and respond naturally with what the image means or shows. "
+        "Use visible text as evidence, not as a mechanical OCR dump.\n"
         f"Resource MD5: {resource_md5 or '(missing)'}\n\n"
         "Same-chat reference media/context rows:\n"
         + direct.reference_row_context([row])
@@ -274,7 +275,7 @@ def process_image_row(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any
     copied: dict[str, Any] = {}
     skipped: list[dict[str, str]] = []
     if best:
-        copied = copy_and_read_candidate(best, artifact_dir)
+        copied = copy_and_read_candidate(best, artifact_dir, task=task)
     else:
         skipped.append({"reason": "no_source_scoped_image_candidate"})
     manifest = {
@@ -421,7 +422,12 @@ def image_looks_like_placeholder(path: Path) -> bool:
     return avg_std < 45.0 and gray_spread < 8.0 and 80.0 <= gray_mean <= 180.0
 
 
-def copy_and_read_candidate(candidate: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+def copy_and_read_candidate(
+    candidate: dict[str, Any],
+    artifact_dir: Path,
+    *,
+    task: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     source = Path(str(candidate.get("mirror_path") or "")).expanduser()
     source_dir = artifact_dir / "source_media"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -439,7 +445,11 @@ def copy_and_read_candidate(candidate: dict[str, Any], artifact_dir: Path) -> di
     selected["image_metadata"] = metadata
     selected["quality_flags"] = {"placeholder_like": image_looks_like_placeholder(target)}
     if metadata.get("status") in {"ok", "metadata_unavailable"}:
-        selected["vision"] = worker.codex_read_image_file(target, artifact_dir / "image_text")
+        selected["vision"] = worker.codex_read_image_file(
+            target,
+            artifact_dir / "image_text",
+            prompt_context=worker.image_read_prompt_context(task or {}),
+        )
         selected["ocr"] = worker.ocr_image_file(target, artifact_dir / "image_text")
     else:
         selected["vision"] = {"status": "skipped", "reason": metadata.get("status") or "image_unreadable"}
@@ -460,26 +470,21 @@ def row_public_snapshot(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_report(config: dict[str, Any], results: list[dict[str, Any]]) -> str:
-    chat = str(config.get("chat_name") or "chat")
-    lines = [f"已回填读取 {chat} 最近 {len(results)} 张图片："]
+    replies: list[str] = []
     for index, result in enumerate(results, start=1):
-        row = result.get("row") if isinstance(result.get("row"), dict) else {}
         selected = result.get("selected") if isinstance(result.get("selected"), dict) else {}
-        local_id = row.get("local_id") or "?"
-        metadata = selected.get("image_metadata") if isinstance(selected.get("image_metadata"), dict) else {}
-        dims = ""
-        if metadata.get("width") and metadata.get("height"):
-            dims = f"{metadata.get('width')}x{metadata.get('height')}"
         vision = selected.get("vision") if isinstance(selected.get("vision"), dict) else {}
         ocr = selected.get("ocr") if isinstance(selected.get("ocr"), dict) else {}
         text = str(vision.get("text_preview") or "").strip()
         if not text:
             text = str(ocr.get("text_preview") or "").strip()
-        if not text:
-            text = "未读到清晰文字或图像说明。"
-        lines.append(f"{index}. local_id={local_id} {dims}".rstrip())
-        lines.append(truncate_for_chat(text, 650))
-    return "\n\n".join(lines).strip()
+        reply = worker.image_intake_description_message({"vision": vision, "ocr": ocr}) if text else (
+            "这张图目前不够清晰，我还不能可靠判断内容。"
+        )
+        replies.append(truncate_for_chat(reply, 900))
+    if len(replies) == 1:
+        return replies[0]
+    return "\n\n".join(f"第{index}张：{reply}" for index, reply in enumerate(replies, start=1)).strip()
 
 
 def image_manifest_markdown(manifest: dict[str, Any]) -> str:

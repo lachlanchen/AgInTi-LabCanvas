@@ -1323,7 +1323,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(route["route_decision"]["route_kind"], "file_intake")
         self.assertTrue(route["route_decision"]["needs_recent_media"])
         self.assertIn("Bare File Intake", route["task"])
-        self.assertIn("automatically read/describe", route["task"])
+        self.assertIn("answer naturally", route["task"])
+        self.assertIn("private evidence", route["task"])
         self.assertIn("For non-image bare uploads", route["task"])
         self.assertIn("local_id=61", route["task"])
 

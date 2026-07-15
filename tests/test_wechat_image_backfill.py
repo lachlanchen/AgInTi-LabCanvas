@@ -90,6 +90,46 @@ class WeChatImageBackfillTests(unittest.TestCase):
 
         self.assertEqual(Path(candidate["mirror_path"]).name, "abc123.jpg")
 
+    def test_single_image_report_is_a_natural_answer_without_diagnostics(self) -> None:
+        backfill = load_backfill()
+        report = backfill.build_report(
+            {"chat_name": "鏈接"},
+            [
+                {
+                    "row": {"local_id": 42},
+                    "selected": {
+                        "image_metadata": {"width": 1200, "height": 800},
+                        "vision": {
+                            "status": "ok",
+                            "model": "gpt-5.5",
+                            "text_preview": "这是一张活动海报，主题是开放硬件工作坊，报名截止日期是本周五。",
+                        },
+                        "ocr": {"status": "ok", "text_preview": "OPEN HARDWARE"},
+                    },
+                }
+            ],
+        )
+
+        self.assertEqual(report, "这是一张活动海报，主题是开放硬件工作坊，报名截止日期是本周五。")
+        self.assertNotIn("local_id", report)
+        self.assertNotIn("1200x800", report)
+        self.assertNotIn("OCR", report)
+        self.assertNotIn("gpt-5.5", report)
+
+    def test_multiple_image_report_only_uses_simple_image_numbering(self) -> None:
+        backfill = load_backfill()
+        report = backfill.build_report(
+            {"chat_name": "鏈接"},
+            [
+                {"selected": {"vision": {"text_preview": "第一张是一本书的封面。"}, "ocr": {}}},
+                {"selected": {"vision": {"text_preview": "第二张是书中的章节目录。"}, "ocr": {}}},
+            ],
+        )
+
+        self.assertIn("第1张：第一张是一本书的封面。", report)
+        self.assertIn("第2张：第二张是书中的章节目录。", report)
+        self.assertNotIn("已回填读取", report)
+
 
 if __name__ == "__main__":
     unittest.main()

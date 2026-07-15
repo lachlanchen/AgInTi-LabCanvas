@@ -293,7 +293,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
                 "id": "metadata_receipt",
                 "owner": "queue_orchestrator",
                 "entrypoint": "prepare_worker_preflight -> deterministic_file_intake_result",
-                "success": "file type, size, checksum, and task-scoped saved copy are recorded",
+                "success": "private file evidence is recorded and raster images have a natural semantic reply",
             },
             {
                 "id": "receipt_delivery",
@@ -308,7 +308,8 @@ ROUTINES: dict[str, RoutineDefinition] = {
         ),
         rules=COMMON_RULES
         + (
-            "For raster image uploads, automatically read/describe the exact source image with Codex vision plus OCR.",
+            "For raster image uploads, inspect the exact source with Codex vision and answer naturally according to its content and same-chat context.",
+            "Keep OCR, model identity, dimensions, checksums, and fixed vision labels in private evidence; do not expose them in the chat reply unless explicitly requested.",
             "For non-image bare uploads, do not deep-read, summarize, translate, convert, or publish unless the current message explicitly asks.",
             "The copied file and manifest are for follow-up tasks from the same source chat.",
         ),
