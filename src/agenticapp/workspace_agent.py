@@ -274,6 +274,14 @@ def capability_catalog(root: str | Path) -> list[dict[str, Any]]:
             "paths": ["configs/targets.example.json", "src/agenticapp/adapters.py"],
             "outputs": ["dispatch envelope", "MCP config"],
         },
+        {
+            "id": "social-content",
+            "title": "Open-source social campaigns and approval-gated publishing",
+            "ready": (project_root / "agentic_tools" / "social_content_agent").exists(),
+            "commands": ["labcanvas social project add", "labcanvas social campaign create", "labcanvas social draft generate"],
+            "paths": ["agentic_tools/social_content_agent", "output/social"],
+            "outputs": ["campaign drafts", "review exports", "approval ledger", "publication records"],
+        },
     ]
     for item in capabilities:
         item["existing_paths"] = [
@@ -311,6 +319,8 @@ def reference_paths(root: Path) -> list[Path]:
         root / "docs" / "WECHAT_AUTOMATION.md",
         root / "agentic_tools" / "wechat_gui_agent" / "docs" / "ROBUST_EFFICIENT_OPERATIONS.md",
         root / "agentic_tools" / "labview_mcp_agent" / "README.md",
+        root / "agentic_tools" / "social_content_agent" / "README.md",
+        root / "agentic_tools" / "social_content_agent" / "docs" / "PLATFORM_RESEARCH.md",
     ]
     return [path for path in candidates if path.exists()]
 
@@ -405,6 +415,10 @@ def selected_packaged_knowledge(message: str) -> str:
         "TeX, Papers, and Figures": ("tex", "latex", "paper", "figure", "pdf", "report", "论文", "图"),
         "WeChat": ("wechat", "微信", "group chat", "chatops"),
         "LabVIEW and Instrument Control": ("labview", "instrument", "camera", "vi ", "仪器"),
+        "Social Content Management": (
+            "social media", "reddit", "hacker news", "hackernews", "postiz", "mastodon", "bluesky", "linkedin",
+            "x.com", "twitter", "campaign", "promote", "publicize", "社交媒体", "推广",
+        ),
     }
     for title, keywords in groups.items():
         if any(keyword in lowered for keyword in keywords):

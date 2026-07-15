@@ -1,0 +1,23 @@
+{
+  "id": "pocketpolyglot",
+  "name": "PocketPolyglot",
+  "local_repo": "../ZhJpBook",
+  "repository": "https://github.com/lachlanchen/PocketPolyglot",
+  "homepage": "https://learn.lazying.art",
+  "audiences": [
+    "language learners",
+    "Japanese and Chinese learners",
+    "teachers and curriculum designers",
+    "open-source publishing and TeX developers"
+  ],
+  "preferred_media": [
+    "studio/docs/images/pocketpolyglot-studio-queue.png",
+    "assets/edition-comparisons/kokoro-four-editions-page-20.png"
+  ],
+  "claims_must_come_from": [
+    "README.md",
+    "CITATION.cff",
+    "current source and tests"
+  ],
+  "rights_note": "Promote the toolkit and rights-cleared samples; do not imply that copyrighted source texts are redistributed with publication rights."
+}

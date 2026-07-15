@@ -45,6 +45,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | WeChat chatops | Isolated Linux GUI, direct local message mirror, fast ACK agent, strict per-chat media isolation, AgInTi figure generation plus CAD/PCB/Blender worker queue, file/PDF/render return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md), [full control manual](agentic_tools/wechat_gui_agent/docs/FULL_CONTROL_MANUAL.md), [robust operations](agentic_tools/wechat_gui_agent/docs/ROBUST_EFFICIENT_OPERATIONS.md) |
 | LALACHAN video handoff | Story drafting, Xiaoyunque browser generation, MP4 download, repo/Nutstore copy, and LazyEdit permission gates for WeChat workers | [references/lalachan-story-video-handoff-for-wechat.md](references/lalachan-story-video-handoff-for-wechat.md) |
 | Video publish handoff | Agents resolve exact videos and context, then delegate subtitle correction, metadata, logo/subtitle burn, packaging, and public posting to LazyEdit/AutoPublish | [references/lazyedit-agent-integration-handoff.md](references/lazyedit-agent-integration-handoff.md) |
+| Social content agent | Persistent Codex campaigns, source-grounded platform drafts, SQLite history, Postiz/X MCP adapters, and exact-content publication approvals | [agentic_tools/social_content_agent](agentic_tools/social_content_agent) |
 | App routing | Blender, BioRender, Unity, Unreal, and custom target dispatch | [docs/RESEARCH.md](docs/RESEARCH.md) |
 
 ## Quick Start
@@ -106,6 +107,9 @@ labcanvas wechat worker --chat "懒人科研" enqueue "Use LabCanvas to render t
 labcanvas wechat status
 labcanvas wechat hold start
 labcanvas wechat stack start --web-port 19474
+labcanvas social project add --repo ../ZhJpBook --id pocketpolyglot
+labcanvas social campaign create --project pocketpolyglot --name introduction --objective "Introduce the usable open-source Studio" --platform x --platform reddit:r/languagelearning --platform hackernews
+labcanvas social draft generate CAMPAIGN_ID --dry-run --json
 agentic_tools/android_device_agent/scripts/android_device_desktop.sh start --serial <MIX2S_SERIAL>
 agentic_tools/android_device_agent/scripts/android_control.py status --serial <MIX2S_SERIAL>
 ```

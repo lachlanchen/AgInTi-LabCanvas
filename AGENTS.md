@@ -19,6 +19,10 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m agenticapp agent chat "Design and render a C-mount holder"`: run a persistent direct agent turn with dynamic model/effort selection.
 - `PYTHONPATH=src python -m agenticapp agent chat "Rebuild the exact Shapr part" --model gpt-5.6-sol --effort ultra`: explicitly use GPT-5.6 SOL with `xhigh` reasoning.
 - `PYTHONPATH=src python -m agenticapp agent tasks`: list durable agent work and artifact status.
+- `PYTHONPATH=src python -m agenticapp social project add --repo ../ZhJpBook --id pocketpolyglot`: register repository evidence for social campaigns.
+- `PYTHONPATH=src python -m agenticapp social campaign create --project pocketpolyglot --name introduction --objective "Introduce the usable open-source Studio" --platform x --platform reddit:r/languagelearning --platform hackernews`: create a platform-specific campaign brief.
+- `PYTHONPATH=src python -m agenticapp social draft generate CAMPAIGN_ID --dry-run --json`: inspect the Codex Ultra drafting contract without quota use or external writes.
+- `PYTHONPATH=src python -m agenticapp social maintain CAMPAIGN_ID --integration x=POSTIZ_X_ID --days 30 --dry-run`: inspect the source-grounded analytics and follow-up contract without provider reads or model quota.
 - `PYTHONPATH=src python -m agenticapp studio figure-grid "optical icons 2x3" --rows 2 --cols 3`: run the same artifact action as the web canvas.
 - `PYTHONPATH=src python -m agenticapp studio dispatch blender "Prepare an editable paper figure setup"`: dry-run a configured target and register the envelope as an artifact.
 - `PYTHONPATH=src python -m agenticapp wechat worker --chat "懒人科研" enqueue "Use LabCanvas to render a PCB and CAD preview"`: enqueue slower WeChat backend work that can call CAD, PCB, Blender, and LabCanvas tools.
@@ -50,6 +54,10 @@ The web and CLI must use the same `workspace_agent.py` runtime. Keep the web cha
 ## Figure Pipeline Rules
 
 Paper figure generation must stay editable and atomic. Do not treat a generated bitmap as the final source of truth. Use image generation for overview concepts, then split figures into named parts with their own prompts, source files, tool settings, previews, and edit history. Prefer BioRender for academic assets, OpenSCAD for device geometry, Blender for rendered setups, LabVIEW for instrument/control workflows, and TeX for clipping and final assembly. Preserve part IDs and rebuild exports from manifests.
+
+## Social Content Rules
+
+Use `labcanvas social` for open-source project campaigns. Keep one persistent Codex session per project and store local campaign state under ignored `output/social/`. Ground drafts in registered repository evidence and adapt them independently for each platform; do not copy one advertisement everywhere or invent users, benchmarks, endorsements, or traction. Reddit requires a fresh review of the exact community rules. Hacker News is manual-only because its guidelines reject generated or AI-edited submission text: the agent may prepare verified facts and a human-author worksheet, but not final HN copy. Every external provider write requires both `--live` and a non-expired approval token bound to the exact title, body, target, media, settings, and publication metadata hash. Keep OAuth tokens in the provider-managed user store (Postiz uses `~/.postiz/credentials.json`) and API keys in `agentic_tools/social_content_agent/.private/` or environment variables; never put credentials in campaign exports or git.
 
 ## CAD Artifact Sync
 

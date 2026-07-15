@@ -262,6 +262,26 @@ Validate:
 - Camera tests must stop the capture process when finished unless continuous
   monitoring was explicitly requested.
 
+## Social Content Management
+
+- Use `labcanvas social` and its SQLite ledger instead of one-off posting
+  scripts. Register the repository first so every public claim has evidence.
+- Use one persistent Codex conversation per project. Default serious campaign
+  drafting to `gpt-5.6-sol` with Ultra (`xhigh`) reasoning.
+- Adapt copy to each platform and community. Do not mass-cross-post identical
+  text, automate engagement, fabricate traction, or send unsolicited outreach.
+- Reddit requires review of the exact community rules before approval.
+- Hacker News is manual-only: its guidelines reject generated or AI-edited
+  submission text. Prepare a verified fact worksheet, then let the human write
+  and import the final title and body.
+- Postiz is the broad optional OAuth transport. The official X MCP is an
+  optional X-specific adapter with a narrow tool allowlist.
+- External writes require both `--live` and an unexpired approval token bound
+  to the exact content hash. Any edit to title, body, target, media, or settings
+  invalidates approval.
+- Report Postiz acceptance or scheduling accurately. Do not claim destination
+  publication until provider status or analytics confirms it.
+
 ## Agent Behavior
 
 - A short question can use low reasoning. Planning/review can use medium.
