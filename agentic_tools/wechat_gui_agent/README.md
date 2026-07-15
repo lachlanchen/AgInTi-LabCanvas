@@ -677,14 +677,13 @@ For login/CAPTCHA/download blocks, open a browser in the same isolated noVNC
 desktop with `labcanvas wechat browser-assist --url "<url>" --json`; the user
 handles the manual step and the worker continues after approval.
 For WeChat official-account links, `mp.weixin.qq.com` often returns `环境异常` or
-`完成验证后继续访问` to direct fetches. Treat that as a WeChat-native verification
-state, not a failed read. Do not open an external Chrome/browser by default for
-mp.weixin because it can steal focus from the official WeChat client and make
-the desktop appear locked. Prefer the native WeChat article/webview session or
-an already verified capture; use external browser-assist only if the user
-explicitly asks for it or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1` is set.
-The helper refuses `mp.weixin.qq.com` URLs before launch unless
-`--allow-mp-weixin` or that environment override is present.
+`完成验证后继续访问` to desktop fetches. Research tasks now run
+`wechat_source_recovery.py`: it retries with a mobile WeChat user agent, extracts
+`#js_content`, and stores successful Markdown/HTML in ignored private/task
+artifacts. If extraction still fails, the worker receives exact title/account
+and identity queries for public-source reconstruction. Read-only recovery never
+opens/focuses a browser and never asks the user to verify; it returns a concise
+evidence-limited answer when neither extraction nor reconstruction succeeds.
 Private send targets should include `expected_title`; before composing, the GUI
 sender OCR-checks the opened chat header and fails closed if the wrong group is
 visible. All GUI sends use `.private/wechat_gui_send.lock`; do not run parallel

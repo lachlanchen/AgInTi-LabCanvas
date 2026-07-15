@@ -177,23 +177,28 @@ should speed the agent up, not replace agent reasoning.
 - In link/read-later chats such as `鏈接`, forwarded Gongzhonghao/mp.weixin
   article cards are `research_summary` tasks by default. Source-card routing
   must happen before CAD/PCB/3D keyword fallback because URL hashes can contain
-  misleading substrings such as `3d`. If the mp.weixin URL itself returns
-  `环境异常` or a verification page, the worker should still reply: use the
-  card title/source, any WeChat-native capture, and safe same-title public
-  mirrors when available; otherwise state the verification blocker concisely.
-  Do not open an external browser by default.
+  misleading substrings such as `3d`. Run `wechat_source_recovery.py` before the
+  agent: mobile-WeChat HTTP extraction and private cache first, followed by the
+  manifest's exact-title/account/identity reconstruction queries. A gate is not
+  a human-confirmation state. Never open/focus a browser or ask the owner to
+  verify for read-only research; return an evidence-limited answer if recovery
+  remains incomplete.
 - Shipinhao/Finder/视频号 research tasks should run the read-only comment
-  intelligence preflight when an exported `comment_data` JSON or compatible
-  local `wx_channel` API profile is available. The worker writes
+  source-recovery and comment-intelligence preflights. Automatically discover
+  exact matching `comment_data` JSON under configured/private download roots and
+  probe a local `wx_channel` API on `127.0.0.1:2026` when object IDs are known.
+  The worker writes
   `task.preflight.shipinhao_comment_intel` and
   `output/wechat_worker/<task-id>/shipinhao_comment_intel/manifest.*`; agents
   must use that as auxiliary evidence and stay source-limited when no video,
   transcript, comment export, or reliable mirror is available. If JSON/API
-  export is missing but the official WeChat/Channels detail page is visible, use
+  export is missing but the matching official WeChat/Channels detail page is already visible, use
   `agentic_tools/wechat_gui_agent/scripts/shipinhao_native_capture.py` to capture
   screenshots and OCR visible title/comments as read-only evidence. Never post
   comments or ask Yuanbao from the account without explicit current per-video
-  permission.
+  permission. Otherwise execute exact title/author/object-ID reconstruction
+  queries and answer with explicit evidence quality rather than requesting
+  verification.
 - Chat behavior by purpose:
   `鏈接` reads shared links/cards/videos/files and replies with a short useful
   summary or a clear limitation; `🍓我的设备`, `懒人科研`, and `lachlanchan` can run

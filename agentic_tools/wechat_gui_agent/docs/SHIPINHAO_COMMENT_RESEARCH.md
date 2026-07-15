@@ -18,6 +18,9 @@ the page method `finderGetCommentList` to a local API key
 
 Relevant behavior:
 
+- `GET /api/channels/feed/comment/list`
+- fields: `object_id`, `nonce_id`, optional `comment_id` and `next_marker`
+- returns comment/reply pages directly over HTTP, avoiding Windows-only saved paths
 - `POST /api/channels/feed/comment/export`
 - request fields: `object_id`, `nonce_id`, `title`, `author`
 - output: JSON under `comment_data/YYYY-MM-DD/`
@@ -76,6 +79,11 @@ agentic_tools/wechat_gui_agent/scripts/shipinhao_comment_intel.py \
 The script highlights Yuanbao/transcript/summary comments and high-like
 comments, then returns Markdown or JSON for the WeChat worker.
 
+The helper now prefers the paginated `comment/list` API and follows reply pages.
+It falls back to `comment/export` for older/alternate runtimes. This lets a
+Linux worker consume an API running elsewhere without requiring the returned
+Windows `saved_path` to exist locally.
+
 ## Worker Preflight
 
 `wechat_task_worker.py` now runs comment intelligence before research-summary
@@ -85,9 +93,13 @@ Preflight sources:
 
 - explicit exported JSON paths in the task text/context;
 - `WECHAT_SHIPINHAO_COMMENT_JSON`;
+- exact matching JSON automatically discovered under private/download
+  `comment_data` roots and `WECHAT_SHIPINHAO_COMMENT_DIRS`;
 - a compatible logged-in local API via `WECHAT_WX_CHANNEL_API_URL`,
   `WECHAT_SHIPINHAO_WX_CHANNEL_API_URL`, or `WX_CHANNEL_API_URL`, when
   `object_id` and `nonce_id` are known.
+- an auto-discovered compatible API on `http://127.0.0.1:2026` when no URL is
+  configured and exact object/nonce IDs are available.
 
 The worker writes:
 
@@ -102,6 +114,11 @@ Agents must read `task.preflight.shipinhao_comment_intel` before answering. If
 the status is `ok`, use the comment hits as auxiliary evidence. If the status is
 `not_available`, avoid claiming a deep video analysis unless another reliable
 video, transcript, or article source was actually read.
+
+Agents must also read `task.preflight.wechat_source_recovery`. It supplies the
+current-card title, author, object ID, nonce ID, and exact reconstruction
+queries. If comments/media are unavailable, search those identities and
+corroborate public sources instead of asking the user to verify a page.
 
 ## Practical UI Path
 

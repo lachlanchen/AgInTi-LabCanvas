@@ -69,7 +69,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
             {
                 "id": "research_or_read",
                 "owner": "worker_agent",
-                "entrypoint": "Codex worker with source-limited browsing/files and visible browser-assist for blocked WeChat articles",
+                "entrypoint": "read-only source recovery + Codex worker with source-limited browsing/files and public corroboration",
                 "success": "answer is grounded in accessible same-chat sources, with blockers stated explicitly",
             },
             {
@@ -87,8 +87,8 @@ ROUTINES: dict[str, RoutineDefinition] = {
         + (
             "For link/read-later inbox tasks, treat shared URLs/cards/media as source material to read and summarize by default.",
             "Quality over quantity: if you only saw a card title, metadata, a verification page, or a blocked preview, say that briefly and do not produce a report artifact.",
-            "For mp.weixin/Gongzhonghao links, direct verification pages are not final; use visible browser-assist with reuse-window/readable polling or a WeChat-native/manual-assisted capture before declaring a blocker.",
-            "For Shipinhao/Finder shares, inspect accessible metadata, cached media, comments, Yuanbao/transcript/summary comments, and public mirrors, but do not post comments unless explicitly requested.",
+            "For mp.weixin/Gongzhonghao links, direct verification pages are not final; run read-only mobile-WeChat HTTP extraction/private-cache recovery, then exact-title/account public reconstruction without asking for verification or opening a browser.",
+            "For Shipinhao/Finder shares, inspect exact cached media, auto-discovered wx_channel comments/API, existing visible evidence, Yuanbao/transcript/summary comments, and exact-title/object-ID public sources, but do not post comments unless explicitly requested.",
             "For inaccessible sources, state exactly what was accessible and avoid pretending the source was fully read.",
         ),
     ),

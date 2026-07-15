@@ -59,7 +59,7 @@ def main() -> int:
             "manual_required": True,
             "message": (
                 "Refusing to open mp.weixin.qq.com in an external browser by default. "
-                "Use the native WeChat article/webview path or an already verified capture. "
+                "Use wechat_source_recovery.py for read-only article extraction/reconstruction without GUI verification. "
                 "External browser use for mp.weixin requires --allow-mp-weixin or WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1."
             ),
         }

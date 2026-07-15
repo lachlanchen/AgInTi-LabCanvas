@@ -787,6 +787,9 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "generated-video generation is not public publication; reference-image upload does not authorize publish",
             "generated-video LazyEdit commands prefer worker-created correction context and metadata brief files",
             "generated-video LazyEdit context appends generated story/script and prompt material before publish",
+            "mp.weixin read-only recovery extracts article content and reuses the private cache without GUI verification",
+            "Shipinhao comment discovery accepts only the exact current card export",
+            "read-only source tasks cannot enter waiting_confirmation for a verification page",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -882,6 +885,18 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "generated_video_lazyedit_appends_story_prompt",
             "test": worker_prefix + "test_generated_video_lazyedit_context_appends_generated_story_and_prompt",
+        },
+        {
+            "id": "mp_weixin_read_only_recovery",
+            "test": "tests.test_wechat_source_recovery.WeChatSourceRecoveryTests.test_recover_article_uses_wechat_fetch_and_private_cache",
+        },
+        {
+            "id": "shipinhao_exact_comment_discovery",
+            "test": worker_prefix + "test_shipinhao_comment_preflight_auto_discovers_only_exact_export",
+        },
+        {
+            "id": "read_only_source_never_waits_for_verification",
+            "test": worker_prefix + "test_read_only_source_recovery_drops_verification_confirmation",
         },
         {
             "id": "legacy_task_instruction_contract_backfill",

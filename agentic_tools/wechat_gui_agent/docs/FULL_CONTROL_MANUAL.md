@@ -495,14 +495,13 @@ Do not try to bypass account protections. The worker should return
 `waiting_confirmation` for risky actions.
 
 For WeChat official-account articles, direct HTTP may return `环境异常` or
-`完成验证后继续访问`. Prefer the native WeChat article/webview path and avoid opening
-an external Chrome/browser by default; it can steal focus from the official
-WeChat client and make the desktop appear locked. If verification is needed,
-return `waiting_confirmation`, ask the account owner to verify/open the page in
-WeChat, then resume capture. External browser-assist for mp.weixin requires an
-explicit user request or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1`.
-The helper refuses `mp.weixin.qq.com` URLs before launch unless
-`--allow-mp-weixin` or that environment override is present.
+`完成验证后继续访问`. The research worker must run
+`scripts/wechat_source_recovery.py`, which uses a mobile WeChat user agent,
+extracts `#js_content`, and writes ignored article evidence plus a private cache.
+On a remaining gate, the worker uses exact-title/account/identity reconstruction
+queries and authoritative public sources. It does not open/focus a browser or
+request human verification for this read-only path. Login/CAPTCHA approval rules
+still apply to authenticated or write actions.
 
 ## Group And Alias Operations
 

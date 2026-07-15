@@ -250,6 +250,86 @@ stderr: noisy internal trace
         self.assertEqual(summary["comment_count"], 1)
         self.assertIn("@元宝", json.dumps(summary["keyword_hits"], ensure_ascii=False))
 
+    def test_mp_weixin_research_runs_read_only_source_recovery_preflight(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "article-recovery",
+            "chat": "鏈接",
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Current coalesced request:\nread https://mp.weixin.qq.com/s/demo\n\nRecent history:\n",
+        }
+        recovered = {
+            "status": "ok",
+            "read_only": True,
+            "articles": [{"source_quality": "full_article", "markdown_path": "/tmp/article.md"}],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(worker, "recover_task_sources", return_value=recovered) as recover:
+                preflight = worker.prepare_worker_preflight(task, Path(tmp))
+
+        self.assertEqual(preflight["wechat_source_recovery"], recovered)
+        recover.assert_called_once()
+
+    def test_shipinhao_comment_preflight_auto_discovers_only_exact_export(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            export_dir = root / "comment_data" / "2026-07-15"
+            export_dir.mkdir(parents=True)
+            exact = export_dir / "exact.json"
+            wrong = export_dir / "wrong.json"
+            exact.write_text(
+                json.dumps(
+                    {
+                        "objectId": "1234567890",
+                        "objectNonceId": "nonce-exact-123456",
+                        "title": "Exact video",
+                        "author": "Creator",
+                        "commentInfo": [{"content": "useful summary", "nickname": "Reader"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            wrong.write_text(
+                json.dumps(
+                    {
+                        "objectId": "9999999999",
+                        "objectNonceId": "nonce-wrong-123456",
+                        "title": "Wrong video",
+                        "author": "Other",
+                        "commentInfo": [{"content": "wrong source"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "id": "shipinhao-auto-discovery",
+                "chat": "鏈接",
+                "routine": {"id": "research_summary"},
+                "route_decision": {"route_kind": "research_or_summary"},
+                "request": (
+                    "Current coalesced request:\n<finderFeed>"
+                    "<objectId><![CDATA[1234567890]]></objectId>"
+                    "<objectNonceId><![CDATA[nonce-exact-123456]]></objectNonceId>"
+                    "<nickname><![CDATA[Creator]]></nickname>"
+                    "<desc><![CDATA[Exact video]]></desc></finderFeed>\n\nRecent history:\n"
+                ),
+            }
+            env = {
+                "WECHAT_SHIPINHAO_COMMENT_DIRS": str(root / "comment_data"),
+                "WECHAT_WX_CHANNEL_API_URL": "",
+                "WECHAT_SHIPINHAO_AUTO_DISCOVER_API": "0",
+            }
+            with mock.patch.dict(worker.os.environ, env, clear=False):
+                preflight = worker.prepare_worker_preflight(task, root / "artifact")
+
+        results = preflight["shipinhao_comment_intel"]["results"]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(Path(results[0]["source_path"]).name, "exact.json")
+        self.assertEqual(results[0]["summary"]["title"], "Exact video")
+
     def test_shipinhao_comment_preflight_marks_missing_source(self) -> None:
         worker = load_worker()
         task = {
@@ -267,7 +347,7 @@ stderr: noisy internal trace
         intel = preflight["shipinhao_comment_intel"]
         self.assertEqual(intel["status"], "not_available")
         self.assertIn("No exported Shipinhao comment JSON", intel["reason"])
-        self.assertIn("Do not fabricate", intel["recommended_next"])
+        self.assertIn("Do not ask the user to verify", intel["recommended_next"])
         self.assertIn("access_ladder", intel)
         self.assertIn("native_capture", intel)
         self.assertTrue(intel["native_capture"]["read_only"])
@@ -581,16 +661,16 @@ stderr: noisy internal trace
         self.assertIn("studio lab-task", str(calls[0]["prompt"]))
         self.assertIn("render-scene", str(calls[0]["prompt"]))
         self.assertIn("Shipinhao/Finder", str(calls[0]["prompt"]))
+        self.assertIn("task.preflight.wechat_source_recovery", str(calls[0]["prompt"]))
         self.assertIn("task.preflight.shipinhao_comment_intel", str(calls[0]["prompt"]))
         self.assertIn("shipinhao_comment_intel.py", str(calls[0]["prompt"]))
         self.assertIn("@元宝", str(calls[0]["prompt"]))
         self.assertIn("英文全文", str(calls[0]["prompt"]))
         self.assertIn("Do not post a comment", str(calls[0]["prompt"]))
         self.assertIn("do not produce a \"deep analysis\"", str(calls[0]["prompt"]))
-        self.assertIn("Do not open an external Chrome/browser for mp.weixin by default", str(calls[0]["prompt"]))
-        self.assertIn("native WeChat article/webview", str(calls[0]["prompt"]))
-        self.assertIn("WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1", str(calls[0]["prompt"]))
-        self.assertIn("waiting_confirmation", str(calls[0]["prompt"]))
+        self.assertIn("mobile WeChat user agent", str(calls[0]["prompt"]))
+        self.assertIn("exact-title/account/identity queries", str(calls[0]["prompt"]))
+        self.assertIn("do not return `waiting_confirmation`", str(calls[0]["prompt"]))
         self.assertIn("Link/read-later summary reports", str(calls[0]["prompt"]))
         self.assertIn("return a concise chat message by default", str(calls[0]["prompt"]))
         self.assertIn("Attach a PDF to WeChat only when explicitly requested", str(calls[0]["prompt"]))
@@ -2041,12 +2121,18 @@ stderr: noisy internal trace
 
         self.assertFalse(worker.should_send_worker_result(task, result))
 
-    def test_confirmation_blocker_is_sent_even_when_progress_is_suppressed(self) -> None:
+    def test_read_only_source_recovery_drops_verification_confirmation(self) -> None:
         worker = load_worker()
         task = {
             "routine": {"id": "research_summary"},
             "route_decision": {"route_kind": "research_or_summary"},
             "request": "Current coalesced request:\nread this mp.weixin article",
+            "preflight": {
+                "wechat_source_recovery": {
+                    "status": "reconstruction_required",
+                    "verification_policy": "never_request_user_verification_for_read_only_research",
+                }
+            },
         }
         result = {
             "message": "Only the card title was readable.",
@@ -2054,7 +2140,11 @@ stderr: noisy internal trace
             "confirmation": "Open it in native WeChat webview or provide screenshots.",
         }
 
-        self.assertTrue(worker.should_send_worker_result(task, result))
+        guarded = worker.enforce_worker_result_contract(task, result, json.dumps(result))
+
+        self.assertEqual(guarded["confirmation"], "")
+        self.assertEqual(guarded["contract_guard"], "read_only_source_never_waits_for_verification")
+        self.assertTrue(worker.should_send_worker_result(task, guarded))
 
     def test_unreadable_large_image_candidate_still_requests_gui_probe(self) -> None:
         worker = load_worker()

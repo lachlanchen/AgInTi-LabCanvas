@@ -2987,8 +2987,9 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(route["route_decision"]["route_kind"], "research_or_summary")
         self.assertEqual(route["route_decision"]["source_policy"], "current_plus_explicit_refs")
         self.assertIn("mp.weixin/Gongzhonghao", route["task"])
-        self.assertIn("do not open an external browser by default", route["task"])
-        self.assertIn("native WeChat article/webview", route["task"])
+        self.assertIn("mobile-WeChat HTTP extraction", route["task"])
+        self.assertIn("Do not ask the user to verify", route["task"])
+        self.assertIn("do not open/focus an external browser", route["task"])
         self.assertIn("Markdown and a PDF report", route["task"])
         self.assertIn("local_id=77", route["task"])
 

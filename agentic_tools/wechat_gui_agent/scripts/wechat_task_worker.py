@@ -28,6 +28,7 @@ from wechat_agent_backend import run_agent_session as run_codex_session, select_
 from wechat_message_policy import is_no_reply_control
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_routines import ensure_task_routine_contract, routine_prompt_context, write_routine_contract
+from wechat_source_recovery import recover_task_sources, task_needs_source_recovery, task_source_text as source_recovery_task_text
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -43,6 +44,7 @@ DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 GUI_SEND_LOCK = PRIVATE / "wechat_gui_send.lock"
 SHIPINHAO_COMMENT_INTEL_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_comment_intel.py"
 SHIPINHAO_NATIVE_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_native_capture.py"
+WECHAT_SOURCE_RECOVERY_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_source_recovery.py"
 EFFORT_ORDER = ["low", "medium", "high", "xhigh"]
 CLAIMED_STATUS = "in_progress"
 SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
@@ -3015,7 +3017,7 @@ Return either plain text or this JSON shape:
 }}
 
 Use confirmation when an important choice, purchase, external send, deletion, privacy-sensitive action, or irreversible action needs approval.
-If a download is blocked by login, CAPTCHA, bot check, consent page, or a site that needs human action, do not try to bypass it.
+If an authenticated download, account action, purchase, publication, deletion, or other requested operation is blocked by login, CAPTCHA, bot check, or consent, do not try to bypass it. This human-assist rule does not apply to read-only mp.weixin/Shipinhao research: use `task.preflight.wechat_source_recovery` and finish with extracted, reconstructed, or evidence-limited status without opening/focusing a browser or asking for verification.
 Open a human-assist browser in the isolated virtual desktop with:
 PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --wait-seconds 8 --capture --close-after --json
 Then return a confirmation telling the user to complete the manual step in noVNC and approve continuation.
@@ -3291,6 +3293,9 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         task["preflight"] = preflight
     if is_file_intake_task(task):
         preflight["file_intake"] = prepare_file_intake_preflight(task, artifact_dir)
+    if task_is_research_summary(task) and task_needs_source_recovery(task):
+        preflight["wechat_source_recovery"] = prepare_wechat_source_recovery_preflight(task, artifact_dir)
+        task["preflight"] = preflight
     if should_prepare_shipinhao_comment_intel(task):
         preflight["shipinhao_comment_intel"] = prepare_shipinhao_comment_intel_preflight(task, artifact_dir)
         task["preflight"] = preflight
@@ -3320,10 +3325,34 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     return preflight
 
 
+def prepare_wechat_source_recovery_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+    output_dir = artifact_dir / "wechat_source_recovery"
+    try:
+        timeout = max(4.0, float(os.environ.get("WECHAT_SOURCE_RECOVERY_TIMEOUT_SECONDS", "18") or 18))
+        return recover_task_sources(task, output_dir, timeout=timeout)
+    except Exception as exc:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        result = {
+            "status": "failed",
+            "read_only": True,
+            "verification_policy": "never_request_user_verification_for_read_only_research",
+            "browser_policy": "do_not_open_or_focus_external_browser",
+            "error": f"{type(exc).__name__}: {str(exc)[:500]}",
+            "agent_next_action": (
+                "Continue with exact-title/author/object-id public-source reconstruction. "
+                "Do not ask the user to verify and do not imply the source was fully read."
+            ),
+        }
+        manifest_path = output_dir / "manifest.json"
+        result["manifest_json"] = str(manifest_path)
+        manifest_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return result
+
+
 def should_prepare_shipinhao_comment_intel(task: dict[str, Any]) -> bool:
     if not task_is_research_summary(task):
         return False
-    text = json.dumps(task, ensure_ascii=False).casefold()
+    text = source_recovery_task_text(task).casefold()
     markers = [
         "shipinhao",
         "视频号",
@@ -3379,7 +3408,7 @@ def prepare_shipinhao_comment_intel_preflight(task: dict[str, Any], artifact_dir
 
     if not manifest["results"]:
         profile = extract_shipinhao_comment_profile(task)
-        api_url = shipinhao_comment_api_url()
+        api_url = shipinhao_comment_api_url(discover=bool(profile.get("object_id") and profile.get("nonce_id")))
         if api_url and profile.get("object_id") and profile.get("nonce_id"):
             result = run_shipinhao_comment_intel(
                 [
@@ -3417,9 +3446,8 @@ def prepare_shipinhao_comment_intel_preflight(task: dict[str, Any], artifact_dir
             manifest["reason"] = "No exported Shipinhao comment JSON or complete wx_channel API profile was available."
             manifest["missing"] = missing
             manifest["recommended_next"] = (
-                "Open/export the Shipinhao comments through a logged-in wx_channel/native session, "
-                "run the native visible capture helper, or provide a comment_data JSON path. "
-                "Do not fabricate a deep video analysis."
+                "Do not ask the user to verify. Use the source-recovery exact-title/object-id queries, exact same-chat cached media, "
+                "or an already-running wx_channel/native capture source. If none yields content, return a concise evidence-limited summary."
             )
             manifest["native_capture"] = shipinhao_native_capture_plan(output_dir)
             if shipinhao_public_yuanbao_requested(task):
@@ -3498,7 +3526,7 @@ def write_shipinhao_comment_preflight_manifest(output_dir: Path, manifest: dict[
 
 def shipinhao_content_access_ladder(task: dict[str, Any], output_dir: Path) -> list[dict[str, Any]]:
     profile = extract_shipinhao_comment_profile(task)
-    api_url = shipinhao_comment_api_url()
+    api_url = shipinhao_comment_api_url(discover=bool(profile.get("object_id") and profile.get("nonce_id")))
     return [
         {
             "stage": "wechat_card_metadata",
@@ -3519,9 +3547,15 @@ def shipinhao_content_access_ladder(task: dict[str, Any], output_dir: Path) -> l
         },
         {
             "stage": "native_visible_capture",
-            "action": "Open the card in official WeChat/Channels, capture screenshots and OCR visible title/comments/readable transcript clues.",
+            "action": "Only if the matching detail page is already visible, capture screenshots/OCR without opening a page or changing focus.",
             "available": SHIPINHAO_NATIVE_CAPTURE_SCRIPT.exists(),
             "command": shipinhao_native_capture_command(output_dir),
+        },
+        {
+            "stage": "public_reconstruction",
+            "action": "Search exact title+author and object ID, then corroborate with public canonical pages, quoted comments, transcripts, or mirrors.",
+            "available": bool(profile.get("title") or profile.get("object_id")),
+            "requires_user_verification": False,
         },
         {
             "stage": "yuanbao_public_prompt",
@@ -3626,6 +3660,7 @@ def extract_shipinhao_comment_json_paths(task: dict[str, Any]) -> list[Path]:
         path = Path(token.rstrip(").,，;；]】\"'")).expanduser()
         if path.is_file() and shipinhao_comment_json_looks_relevant(path):
             candidates.append(path.resolve())
+    candidates.extend(discover_shipinhao_comment_json_paths(task))
     seen: set[str] = set()
     unique: list[Path] = []
     for path in candidates:
@@ -3635,6 +3670,92 @@ def extract_shipinhao_comment_json_paths(task: dict[str, Any]) -> list[Path]:
         seen.add(key)
         unique.append(path)
     return unique[:6]
+
+
+def discover_shipinhao_comment_json_paths(task: dict[str, Any]) -> list[Path]:
+    profile = extract_shipinhao_comment_profile(task)
+    roots: list[Path] = [
+        PRIVATE / "shipinhao_comment_data",
+        PRIVATE / "external" / "wx_channel" / "comment_data",
+        Path.home() / "Downloads" / "comment_data",
+        Path.home() / "Downloads" / "wx_channel" / "comment_data",
+    ]
+    for raw in os.environ.get("WECHAT_SHIPINHAO_COMMENT_DIRS", "").split(os.pathsep):
+        if raw.strip():
+            roots.append(Path(raw.strip()).expanduser())
+
+    scored: list[tuple[int, float, Path]] = []
+    visited: set[str] = set()
+    for root in roots:
+        try:
+            resolved_root = root.resolve()
+        except OSError:
+            continue
+        if not resolved_root.is_dir() or str(resolved_root) in visited:
+            continue
+        visited.add(str(resolved_root))
+        try:
+            paths = list(resolved_root.rglob("*.json"))
+        except OSError:
+            continue
+        def path_mtime(item: Path) -> float:
+            try:
+                return item.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        paths.sort(key=path_mtime, reverse=True)
+        for path in paths[:240]:
+            try:
+                if not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
+                    continue
+                score = shipinhao_comment_json_match_score(path, profile)
+                if score > 0:
+                    scored.append((score, path.stat().st_mtime, path.resolve()))
+            except OSError:
+                continue
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [item[2] for item in scored[:6]]
+
+
+def shipinhao_comment_json_match_score(path: Path, profile: dict[str, str]) -> int:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    if not isinstance(payload, dict):
+        return 0
+    payload_object = str(payload.get("objectId") or payload.get("object_id") or "")
+    payload_nonce = str(payload.get("objectNonceId") or payload.get("object_nonce_id") or "")
+    wanted_object = str(profile.get("object_id") or "")
+    wanted_nonce = str(profile.get("nonce_id") or "")
+    if wanted_object and payload_object and wanted_object != payload_object:
+        return 0
+    if wanted_nonce and payload_nonce and wanted_nonce != payload_nonce:
+        return 0
+    score = 0
+    if wanted_object and payload_object == wanted_object:
+        score += 200
+    if wanted_nonce and payload_nonce == wanted_nonce:
+        score += 200
+    wanted_title = normalize_match_text(profile.get("title"))
+    payload_title = normalize_match_text(payload.get("title"))
+    if wanted_title and payload_title:
+        if wanted_title == payload_title:
+            score += 80
+        elif wanted_title in payload_title or payload_title in wanted_title:
+            score += 40
+    wanted_author = normalize_match_text(profile.get("author"))
+    payload_author = normalize_match_text(payload.get("author"))
+    if wanted_author and payload_author and wanted_author == payload_author:
+        score += 30
+    if score == 0 and not any((wanted_object, wanted_nonce, wanted_title, wanted_author)):
+        return 0
+    return score
+
+
+def normalize_match_text(value: Any) -> str:
+    return re.sub(r"[^\w\u3400-\u9fff]+", "", str(value or "").casefold())
 
 
 def shipinhao_comment_json_looks_relevant(path: Path) -> bool:
@@ -3671,7 +3792,7 @@ def extract_shipinhao_comment_profile(task: dict[str, Any]) -> dict[str, str]:
         if value and not profile["nonce_id"]:
             profile["nonce_id"] = str(value)
 
-    text = json.dumps(task, ensure_ascii=False)
+    text = source_recovery_task_text(task)
     if not profile["object_id"]:
         match = re.search(r"(?:object[_-]?id|objectId)\s*[:=]\s*[\"']?([A-Za-z0-9_-]{6,})", text, flags=re.I)
         if match:
@@ -3692,10 +3813,18 @@ def extract_shipinhao_comment_profile(task: dict[str, Any]) -> dict[str, str]:
         match = re.search(r"<title>(.*?)</title>", text, flags=re.I | re.S)
         if match:
             profile["title"] = html.unescape(collapse_context_text(match.group(1), max_len=160))
+    if not profile["title"]:
+        values = extract_xml_text_values(text, "desc")
+        if values:
+            profile["title"] = values[-1]
     if not profile["author"]:
         match = re.search(r"<(?:sourcedisplayname|author)>(.*?)</(?:sourcedisplayname|author)>", text, flags=re.I | re.S)
         if match:
             profile["author"] = html.unescape(collapse_context_text(match.group(1), max_len=120))
+    if not profile["author"]:
+        values = extract_xml_text_values(text, "nickname")
+        if values:
+            profile["author"] = values[-1]
     return profile
 
 
@@ -3710,11 +3839,19 @@ def extract_xml_text_values(text: str, tag: str) -> list[str]:
     return values
 
 
-def shipinhao_comment_api_url() -> str:
+def shipinhao_comment_api_url(*, discover: bool = False) -> str:
     for name in ("WECHAT_WX_CHANNEL_API_URL", "WECHAT_SHIPINHAO_WX_CHANNEL_API_URL", "WX_CHANNEL_API_URL"):
         value = os.environ.get(name, "").strip()
         if value:
             return value.rstrip("/")
+    if discover and os.environ.get("WECHAT_SHIPINHAO_AUTO_DISCOVER_API", "1") != "0":
+        candidate = "http://127.0.0.1:2026"
+        try:
+            with urllib.request.urlopen(f"{candidate}/api/health", timeout=0.6) as response:
+                if int(response.status) == 200:
+                    return candidate
+        except (OSError, urllib.error.URLError, TimeoutError):
+            pass
     return ""
 
 
@@ -5499,6 +5636,27 @@ def format_generated_video_contract_markdown(contract: dict[str, Any]) -> str:
 def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any], raw_text: str) -> dict[str, Any]:
     if result_is_no_reply(result):
         return result
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    source_recovery = preflight.get("wechat_source_recovery") if isinstance(preflight.get("wechat_source_recovery"), dict) else {}
+    if (
+        task_is_research_summary(task)
+        and source_recovery
+        and str(result.get("confirmation") or "").strip()
+        and not shipinhao_public_yuanbao_requested(task)
+    ):
+        guarded = dict(result)
+        message = str(result.get("message") or "").strip()
+        if not message:
+            message = (
+                "这次只恢复到有限证据，尚未取得可核对的完整正文、视频或评论。"
+                "我没有把卡片标题或验证页当成完整内容，也不会要求你为只读研究去验证页面。"
+            )
+        guarded["message"] = message
+        guarded["confirmation"] = ""
+        data = guarded.get("data") if isinstance(guarded.get("data"), dict) else {}
+        guarded["data"] = {**data, "source_read_quality": data.get("source_read_quality") or "evidence_limited"}
+        guarded["contract_guard"] = "read_only_source_never_waits_for_verification"
+        return guarded
     if not is_generate_video_task(task):
         return result
     stages = generated_video_stage_permissions(task)
@@ -8532,7 +8690,8 @@ LazyEdit/AutoPublish video publishing:
 - Final responses should include LazyEdit job id, remote job id if present, platforms, status, whether processing was reused/rerun, and safe output paths.
 
 Shipinhao/Finder and short-video shares:
-- Treat comment sections as useful auxiliary evidence when they are accessible from the local GUI, cached metadata, a browser-assist session, or a public mirrored page.
+- First inspect `task.preflight.wechat_source_recovery`. Its Shipinhao packet contains exact same-message title, author, object ID, nonce ID, and reconstruction queries without mixing older chats.
+- Treat comment sections as useful auxiliary evidence when they are accessible from exact local media/cache, an auto-discovered local `wx_channel` API/export, an already-visible native capture, or a reliable public source.
 - First inspect `task.preflight.shipinhao_comment_intel` when present. If it is `status=ok`, read its manifest and JSON/Markdown summaries before answering. If it is `not_available`, be source-limited unless video media/transcript/another reliable source is available.
 - To analyze an exported comment file yourself, run:
   `agentic_tools/wechat_gui_agent/scripts/shipinhao_comment_intel.py --comments-json <comment_data.json> --markdown-out {artifact_dir}/shipinhao-comments.md --json-out {artifact_dir}/shipinhao-comments.json --json`
@@ -8540,21 +8699,19 @@ Shipinhao/Finder and short-video shares:
   `agentic_tools/wechat_gui_agent/scripts/shipinhao_comment_intel.py --api-url "$WECHAT_WX_CHANNEL_API_URL" --object-id <OBJECT_ID> --nonce-id <NONCE_ID> --markdown-out {artifact_dir}/shipinhao-comments.md --json-out {artifact_dir}/shipinhao-comments.json --json`
 - Search visible or retrieved comments for Tencent Yuanbao-style prompts such as `@元宝`, `腾讯元宝`, `英文全文`, `全文`, `总结`, `摘要`, `字幕`, `转写`, `transcript`, and `summary`; these comments often request or contain transcript/summary material.
 - Also skim other highly visible comments for quoted lines, timestamps, topic summaries, corrections, names, links, or context that helps infer the video content.
-- If comment JSON/API export is unavailable but the official WeChat/Channels page is visible, run the read-only native capture fallback:
+- If comment JSON/API export is unavailable and the matching official WeChat/Channels page is already visible, the read-only native capture fallback may be used without opening another page or changing browser focus:
   `agentic_tools/wechat_gui_agent/scripts/shipinhao_native_capture.py --output-dir {artifact_dir}/shipinhao-native-capture --scrolls 3 --json`
   Then read the OCR Markdown before answering. It is valid evidence for visible title/comments only, not proof that the whole video was watched.
 - Do not post a comment or ask Yuanbao yourself unless the user explicitly requests that action. Reading comments is allowed; writing comments needs confirmation.
-- If the actual video, comments, transcript, or reliable public mirror are not available, do not produce a "deep analysis" or imply you watched/read the source. Return a source-limited note, state what was accessible, and ask the user to provide the video/comments/transcript or approve a manual/browser path if deeper analysis is needed.
+- If local media/comments are unavailable, execute the exact title+author/object-ID reconstruction queries from the source-recovery manifest. Prefer the creator's public page, canonical linked paper/repository, transcript, and independently corroborated quoted material.
+- If the actual video, comments, transcript, or reliable public source are still unavailable, do not produce a "deep analysis" or imply you watched the video. Return a concise evidence-limited answer. Do not ask the user to verify/open a page and do not open/focus an external browser merely to clear a read gate.
 
 WeChat article / `mp.weixin.qq.com` link cards:
-- Direct HTTP fetches commonly return `环境异常`, `完成验证后继续访问`, or another verification gate. Treat that as a browser-required state, not as a finished article read.
-- Do not open an external Chrome/browser for mp.weixin by default. It can steal focus from the official WeChat client and make the desktop appear locked. Treat external browser-assist as opt-in only: use it only if the current user message explicitly asks for browser/noVNC, or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1` is set.
-- Preferred order:
-  1. Use already captured readable article text if present.
-  2. Use the native WeChat article/webview path from the official client when the card is visible or the user has opened it there.
-  3. If verification is required, return `waiting_confirmation` and ask the user to verify/open it in WeChat, then resume capture after confirmation.
-  4. Only with explicit permission/config, use `PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<mp.weixin.qq.com URL>" --reuse-window --wait-seconds 8 --capture --wait-readable-seconds 60 --json`.
-- If the source remains blocked, say exactly what was accessible. Do not claim the card title/description is the full article.
+- First inspect `task.preflight.wechat_source_recovery` and its manifest. The read-only preflight tries the mobile WeChat user agent, extracts `#js_content`, and caches successful article Markdown privately without opening a browser.
+- When an article has `source_quality=full_article`, read its `markdown_path` before answering. Base the summary on the article body, not only its card title or description.
+- When the direct source remains gated, use the manifest's exact-title/account/identity queries with web search. Read canonical linked papers, repositories, author pages, or trustworthy same-title copies; corroborate important claims and label the result `reconstructed` rather than `full_article`.
+- Never treat `环境异常`, `完成验证后继续访问`, or CAPTCHA text as article content. Never claim a card title/description is the full article.
+- For read-only research, do not return `waiting_confirmation`, ask the user to verify/open the page, or launch/focus an external browser. If neither full extraction nor responsible reconstruction succeeds, give a concise evidence-limited answer and stop cleanly.
 
 Link/read-later summary reports:
 - For web_clip_inbox/link_inbox sources, return a concise chat message by default. Save any working Markdown/evidence under the task artifact directory, but do not list it in `files` unless the user asked for a report/file or you truly read substantial content and the PDF would be useful.

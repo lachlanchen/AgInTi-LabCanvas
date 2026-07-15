@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +40,57 @@ def load_shipinhao_native_capture():
 
 
 class ShipinhaoCommentIntelTests(unittest.TestCase):
+    def test_local_api_reads_paginated_comments_and_replies_without_export_path(self) -> None:
+        module = load_shipinhao_comment_intel()
+        top_page = {
+            "code": 0,
+            "data": {
+                "errCode": 0,
+                "data": {
+                    "commentInfo": [
+                        {
+                            "commentId": "c1",
+                            "nickname": "Reader",
+                            "content": "Main comment",
+                            "expandCommentCount": 1,
+                            "levelTwoComment": [],
+                        }
+                    ],
+                    "countInfo": {"commentCount": 1},
+                    "lastBuffer": "",
+                },
+            },
+        }
+        reply_page = {
+            "code": 0,
+            "data": {
+                "data": {
+                    "commentInfo": [{"commentId": "r1", "nickname": "Yuanbao", "content": "summary text"}],
+                    "lastBuffer": "",
+                }
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(
+                api_url="http://127.0.0.1:2026",
+                object_id="object-1",
+                nonce_id="nonce-1",
+                title="Demo",
+                author="Creator",
+                max_pages=4,
+                max_reply_pages=2,
+                json_out=Path(tmp) / "summary.json",
+                markdown_out=None,
+            )
+            with mock.patch.object(module, "api_get_json", side_effect=[top_page, reply_page]) as get_json:
+                path = module.fetch_comments_from_list_api(args)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(get_json.call_count, 2)
+        self.assertEqual(payload["source"], "wx_channel:/api/channels/feed/comment/list")
+        self.assertEqual(payload["commentInfo"][0]["levelTwoComment"][0]["content"], "summary text")
+
     def test_summary_detects_yuanbao_hits_in_comments_and_replies(self) -> None:
         module = load_shipinhao_comment_intel()
         with tempfile.TemporaryDirectory() as tmp:

@@ -181,14 +181,13 @@ Use the printed noVNC URL to complete the manual step. The worker should wait
 for approval before continuing the task.
 
 For `mp.weixin.qq.com` article links that show `环境异常` or `完成验证后继续访问`,
-prefer the native WeChat article/webview path. Do not open an external
-Chrome/browser by default; it can steal focus from the official WeChat client
-and make the desktop appear locked. If verification remains, return
-`waiting_confirmation`, ask the account owner to verify/open the page in WeChat,
-then resume capture. External browser-assist for mp.weixin is opt-in only:
-require an explicit user request or `WECHAT_ALLOW_EXTERNAL_BROWSER_FOR_MP_WEIXIN=1`.
-The helper refuses `mp.weixin.qq.com` URLs before launch unless
-`--allow-mp-weixin` or that environment override is present.
+use the worker's read-only source recovery. It retries with a mobile WeChat user
+agent, extracts `#js_content`, and caches full article Markdown privately. If
+that path is still gated, run the emitted exact-title/account/identity searches
+and corroborate against canonical papers, repositories, author pages, or a
+trustworthy same-title copy. Do not open/focus a browser or return
+`waiting_confirmation` for read-only research. Report the result as
+`full_article`, `reconstructed`, or evidence-limited.
 
 ## 3. Verify Before Sending
 
