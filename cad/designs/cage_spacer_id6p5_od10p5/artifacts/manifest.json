@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "name": "cage_spacer_id6p5_od10p5",
+  "design_kind": "annular_spacer",
+  "design_intent": "Two exact-diameter hollow spacer print jobs: sixteen short rings and one tall tube.",
+  "parameters": {
+    "inner_diameter_mm": 6.5,
+    "outer_diameter_mm": 10.5,
+    "radial_wall_thickness_mm": 2.0,
+    "short_height_mm": 5.0,
+    "tall_height_mm": 50.0,
+    "short_grid_rows": 4,
+    "short_grid_cols": 4,
+    "short_grid_pitch_mm": 15.0,
+    "fit_compensation_mm": 0.0,
+    "print_orientation": "All parts upright on an annular end face; use a slicer brim for the 50 mm tube if needed."
+  },
+  "outputs": {
+    "short_grid_print_step": "cad/designs/cage_spacer_id6p5_od10p5/runs/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z/PRINT_THIS_cage_spacer_id6p5_od10p5_4x4_h5_print_grid.step",
+    "short_grid_print_stl": "cad/designs/cage_spacer_id6p5_od10p5/runs/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z/PRINT_THIS_cage_spacer_id6p5_od10p5_4x4_h5_print_grid.stl",
+    "short_grid_print_3mf": "cad/designs/cage_spacer_id6p5_od10p5/runs/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z/PRINT_THIS_cage_spacer_id6p5_od10p5_4x4_h5_print_grid.3mf",
+    "tall_single_print_step": "cad/designs/cage_spacer_id6p5_od10p5/runs/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z/PRINT_THIS_cage_spacer_id6p5_od10p5_single_h50.step",
+    "tall_single_print_stl": "cad/designs/cage_spacer_id6p5_od10p5/runs/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z/PRINT_THIS_cage_spacer_id6p5_od10p5_single_h50.stl",
+    "tall_single_print_3mf": "cad/designs/cage_spacer_id6p5_od10p5/runs/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z/PRINT_THIS_cage_spacer_id6p5_od10p5_single_h50.3mf",
+    "short_grid_render": "cad/designs/cage_spacer_id6p5_od10p5/runs/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z/PRINT_THIS_cage_spacer_id6p5_od10p5_4x4_h5_print_grid_render.png",
+    "tall_single_render": "cad/designs/cage_spacer_id6p5_od10p5/runs/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z/PRINT_THIS_cage_spacer_id6p5_od10p5_single_h50_render.png",
+    "short_single_step": "cad/designs/cage_spacer_id6p5_od10p5/runs/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z/USE_THIS_cage_spacer_id6p5_od10p5_single_h5.step",
+    "tall_single_step": "cad/designs/cage_spacer_id6p5_od10p5/runs/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z/USE_THIS_cage_spacer_id6p5_od10p5_single_h50.step"
+  },
+  "validation": {
+    "single_short_step": {
+      "valid": true,
+      "solids": 1,
+      "bbox_mm": [
+        10.5,
+        10.5,
+        5.0
+      ],
+      "bspline_faces": 0
+    },
+    "single_short_stl": {
+      "watertight": true,
+      "component_count": 1,
+      "bbox_mm": [
+        10.5,
+        10.496737,
+        5.0
+      ],
+      "vertices": 504,
+      "faces": 1008
+    },
+    "short_grid_step": {
+      "valid": true,
+      "solids": 16,
+      "bbox_mm": [
+        55.5,
+        55.5,
+        5.0
+      ],
+      "bspline_faces": 0
+    },
+    "short_grid_stl": {
+      "watertight": true,
+      "component_count": 16,
+      "bbox_mm": [
+        55.5,
+        55.496735,
+        5.0
+      ],
+      "vertices": 8064,
+      "faces": 16128
+    },
+    "short_grid_3mf": {
+      "entries": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ],
+      "has_model": true,
+      "model_bytes": 1266674
+    },
+    "single_tall_step": {
+      "valid": true,
+      "solids": 1,
+      "bbox_mm": [
+        10.5,
+        10.5,
+        50.0
+      ],
+      "bspline_faces": 0
+    },
+    "single_tall_stl": {
+      "watertight": true,
+      "component_count": 1,
+      "bbox_mm": [
+        10.5,
+        10.496737,
+        50.0
+      ],
+      "vertices": 504,
+      "faces": 1008
+    },
+    "single_tall_3mf": {
+      "entries": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ],
+      "has_model": true,
+      "model_bytes": 75907
+    }
+  },
+  "sync": {
+    "latest_artifacts": "cad/designs/cage_spacer_id6p5_od10p5/artifacts",
+    "nutstore_run": "/home/lachlan/Nutstore Files/Projects/LabCanvas/cage_spacer_id6p5_od10p5/run-1-id6p5-od10p5-h5-grid-and-h50-single-print-ready-20260715T085116Z",
+    "nutstore_root": "/home/lachlan/Nutstore Files/Projects/LabCanvas"
+  }
+}
