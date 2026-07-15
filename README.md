@@ -79,6 +79,15 @@ labcanvas webapp start --port 19473
 4. Use BioRender for academic assets, OpenSCAD for mechanical layout, Blender for 3D setup renders, and KiCad for PCB artifacts.
 5. Keep every artifact in the canvas manifest so later chat edits can target one part instead of flattening the whole figure.
 
+For visible end-to-end Studio control, start the isolated LabCanvas browser and use the reusable chat controller:
+
+```bash
+scripts/launch_labcanvas_studio_novnc.sh start
+scripts/labcanvas_studio_browser.py chat --message "Design and validate a C-mount holder" --effort ultra
+```
+
+This submits through the real composer, monitors the exact durable task, and saves browser evidence without sharing the WeChat or Xiaoyunque profiles. See [LabCanvas Studio Browser Control](references/labcanvas-studio-browser-control.md).
+
 ## Example Commands
 
 ```bash

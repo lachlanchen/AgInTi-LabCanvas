@@ -887,6 +887,7 @@ const agentTaskTimers = new Map();
 const agentConversationId = getAgentConversationId();
 
 const messages = document.getElementById("messages");
+const appRoot = document.querySelector('[data-testid="labcanvas-app"]');
 const chatStatus = document.getElementById("chatStatus");
 const renderStatus = document.getElementById("renderStatus");
 const previewImage = document.getElementById("previewImage");
@@ -959,6 +960,7 @@ document.getElementById("chatForm").addEventListener("submit", async (event) => 
   input.value = "";
   addMessage("user", text);
   chatStatus.textContent = t("status.thinking");
+  appRoot.dataset.agentStatus = "submitting";
   try {
     const data = await postJson("/api/agent/chat", {
       message: text,
@@ -977,6 +979,7 @@ document.getElementById("chatForm").addEventListener("submit", async (event) => 
   } catch (error) {
     addMessage("assistant", error.message);
     chatStatus.textContent = t("status.ready");
+    appRoot.dataset.agentStatus = "failed";
   }
 });
 
@@ -1225,6 +1228,7 @@ async function loadAgentCapabilities() {
 
 function trackAgentTask(task) {
   activeAgentTaskId = task.id;
+  setAgentTaskState(task.id, task.status || "queued", true);
   cancelAgentButton.hidden = false;
   const policy = task.policy || {};
   chatStatus.textContent = `${t("status.queued")} · ${policy.model || "agent"} · ${policy.effort_label || policy.reasoning_effort || "auto"}`;
@@ -1240,14 +1244,17 @@ async function pollAgentTask(taskId) {
     if (!response.ok || !data.ok) throw new Error(data.error || "Agent task status failed");
     const task = data.task;
     if (task.status === "queued") {
+      setAgentTaskState(taskId, "queued", true);
       chatStatus.textContent = t("status.queued");
       return;
     }
     if (task.status === "running") {
+      setAgentTaskState(taskId, "running", true);
       const policy = task.policy || {};
       chatStatus.textContent = `${t("status.runningAgent")} · ${policy.model || "agent"} · ${policy.effort_label || policy.reasoning_effort || "auto"}`;
       return;
     }
+    setAgentTaskState(taskId, task.status || "failed", false);
     stopAgentTaskTimer(taskId);
     if (data.artifacts) setArtifacts(data.artifacts);
     if (task.reply) addMessage("assistant", task.reply);
@@ -1263,6 +1270,7 @@ async function pollAgentTask(taskId) {
       chatStatus.textContent = t("status.error");
     }
   } catch (error) {
+    setAgentTaskState(taskId, "failed", false);
     stopAgentTaskTimer(taskId);
     chatStatus.textContent = t("status.error");
     addMessage("assistant", error.message);
@@ -1285,11 +1293,22 @@ async function cancelActiveAgentTask() {
   try {
     const data = await postJson(`/api/agent/tasks/${encodeURIComponent(taskId)}/cancel`, {});
     if (!data.ok) throw new Error(data.error || "Cancel failed");
+    setAgentTaskState(taskId, data.task?.status || "canceled", false);
     stopAgentTaskTimer(taskId);
     chatStatus.textContent = t("status.canceled");
   } catch (error) {
     addMessage("assistant", error.message);
   }
+}
+
+function setAgentTaskState(taskId, status, active) {
+  const normalizedStatus = String(status || "unknown");
+  appRoot.dataset.agentStatus = normalizedStatus;
+  if (taskId) {
+    appRoot.dataset.lastTaskId = taskId;
+    appRoot.dataset.lastTaskStatus = normalizedStatus;
+  }
+  appRoot.dataset.activeTaskId = active && taskId ? taskId : "";
 }
 
 function getAgentConversationId() {
@@ -1493,6 +1512,8 @@ function renderArtifactList() {
     const button = document.createElement("button");
     button.className = "artifact-item";
     button.type = "button";
+    button.dataset.testid = "artifact-item";
+    button.dataset.artifactId = item.id;
     button.dataset.selected = item.id === selectedArtifactId ? "true" : "false";
     button.addEventListener("click", () => selectArtifact(item.id));
 
@@ -1631,6 +1652,8 @@ function syncThemeButton() {
 function addMessage(role, text) {
   const item = document.createElement("div");
   item.className = `message ${role}`;
+  item.dataset.testid = `chat-message-${role}`;
+  item.dataset.role = role;
   item.textContent = text;
   messages.appendChild(item);
   messages.scrollTop = messages.scrollHeight;
