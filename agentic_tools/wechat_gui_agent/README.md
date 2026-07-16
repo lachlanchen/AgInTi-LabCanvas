@@ -252,10 +252,13 @@ Raw `aeskey` and `voiceurl` fields are intentionally stripped from prompts.
 
 For 视频号/Shipinhao/Finder shares, the worker first tries the exact card media
 URL, validates it with `ffprobe`, and transcribes its audio. If that signed URL
-has expired, the worker automatically scans the bounded recent history of the
-same guarded chat, binds a play control to nearby title/author OCR, opens the
-native player, captures its `WeChatAppEx` PipeWire stream, and retries the same
-transcription. Card duration is a bounded completion signal, so a player that
+has expired, the worker first OCRs the card cover and uses the locally installed
+`yt-dlp` module to inspect a bounded public-mirror candidate set. It accepts a
+candidate only after duration and transcript-to-cover content checks pass. If no
+candidate passes, it scans the bounded recent history of the same guarded chat,
+binds a play control to nearby title/author OCR, opens the native player, captures
+its `WeChatAppEx` PipeWire stream, and retries the same transcription. Card
+duration is a bounded completion signal, so a player that
 stays on its final frame does not fail merely because its identity remains
 visible. The worker also treats comments as optional summary evidence when
 accessible. It should look for viewer prompts such as
@@ -263,8 +266,8 @@ accessible. It should look for viewer prompts such as
 `transcript`, and `summary`, plus other comments with quoted lines, timestamps,
 corrections, names, or links. Reading comments is acceptable; posting a comment
 or asking Yuanbao from the account requires explicit user confirmation. Only a
-readable media probe with zero audio streams is `no_audio`. An HTTP 400, missing
-card, unsupported native player, or missing PipeWire stream is a separate
+readable media probe with zero audio streams is `no_audio`. An HTTP 400, rejected
+mirror, missing card, unsupported native player, or missing PipeWire stream is a separate
 failure stage and must never be described as a silent video. If the actual
 video, comments, transcript, or a reliable public mirror are unavailable, the
 worker should not produce a deep analysis; it reports a concise evidence

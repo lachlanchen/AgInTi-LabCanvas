@@ -198,9 +198,17 @@ should speed the agent up, not replace agent reasoning.
   remains incomplete.
 - Shipinhao/Finder/视频号 research tasks should run the read-only source
   recovery, exact-media transcription, and comment-intelligence preflights.
-  Try the card's allowlisted Tencent media URL first. If it expired, use
-  `shipinhao_gui_audio_capture.py` automatically against the exact guarded source
-  chat. Normalize to the latest message, scan only bounded recent history, and
+  Try the card's allowlisted Tencent media URL first. If it expired, keep the
+  operation read-only and try `shipinhao_media_transcribe.py` public-mirror
+  recovery: OCR the exact card cover, search only bounded public candidates,
+  require a close duration match, transcribe candidate audio, and accept it only
+  when transcript content matches the cover evidence. Record only a public source
+  ID and bounded match metrics; do not persist search logs or signed URLs. A valid
+  result is `input_kind=content_verified_public_mirror` with both
+  `content_identity_verified=true` and `public_mirror_validation.accepted=true`.
+  If no candidate passes, use `shipinhao_gui_audio_capture.py` automatically
+  against the exact guarded source chat. Normalize to the latest message, scan
+  only bounded recent history, and
   bind each detected play control to title/author OCR in that same card's local
   neighborhood. Never authorize a click from matching text in a later bot reply.
   After the exact card opens, bind the current `WeChatAppEx` PipeWire stream,
@@ -212,7 +220,8 @@ should speed the agent up, not replace agent reasoning.
   trust nominal duration without continuing visual identity checks, reuse a
   capture from a different object ID, or expose private audio/screenshots.
   Failure semantics are strict: `no_audio` is valid only after `ffprobe` reads
-  media and reports zero audio streams; HTTP/download failure, card not found,
+  media and reports zero audio streams; HTTP/download failure, public-mirror
+  mismatch, card not found,
   source card found but player unavailable, and PipeWire stream unavailable are
   separate `failure_stage`/`error_code` values. Automatically discover
   exact matching `comment_data` JSON under configured/private download roots and

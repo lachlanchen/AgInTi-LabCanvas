@@ -100,6 +100,38 @@ class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
         self.assertIn("一个人的能力是怎么来的", candidates[0]["matched_terms"])
         self.assertNotIn("TED英语演讲", candidates[0]["text"])
 
+    def test_play_control_preserves_tesseract_reading_order_across_baselines(self) -> None:
+        module = load_module()
+        tsv = (
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            # Deliberately vary the baselines. Sorting by top would scramble
+            # this source title even though TSV order is correct.
+            "5\t1\t1\t1\t1\t1\t200\t18\t20\t25\t95\t昨\n"
+            "5\t1\t1\t1\t1\t2\t224\t12\t20\t25\t95\t天\n"
+            "5\t1\t1\t1\t1\t3\t248\t20\t20\t25\t95\t的\n"
+            "5\t1\t1\t1\t1\t4\t272\t14\t20\t25\t95\t自\n"
+            "5\t1\t1\t1\t1\t5\t296\t10\t20\t25\t95\t己\n"
+        )
+        plays = [
+            {
+                "text": "visible video play control",
+                "matched_terms": [],
+                "center_x": 160.0,
+                "center_y": 96.0,
+                "score": 64,
+            }
+        ]
+
+        candidates = module.associate_play_candidates_with_identity(
+            tsv,
+            plays,
+            ["昨天的自己"],
+            1,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["matched_terms"], ["昨天的自己"])
+
     def test_fuzzy_identity_match_keeps_distinctive_source_chunks(self) -> None:
         module = load_module()
 

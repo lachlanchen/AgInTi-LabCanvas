@@ -3398,7 +3398,7 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
     output_dir.mkdir(parents=True, exist_ok=True)
     source_text = source_recovery_task_text(task)
     profile = extract_shipinhao_media_profile(source_text)
-    public_profile = {key: value for key, value in profile.items() if key != "media_urls"}
+    public_profile = {key: value for key, value in profile.items() if key not in {"media_urls", "cover_urls"}}
     if not SHIPINHAO_MEDIA_TRANSCRIBE_SCRIPT.is_file():
         result = {
             "status": "missing_tool",
@@ -3427,7 +3427,7 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
         command.extend(["--capture-manifest", str(capture_manifest)])
     command.append("--json")
     timeout = max(60, int_or_none(os.environ.get("WECHAT_SHIPINHAO_PIPELINE_TIMEOUT_SECONDS")) or 2100)
-    if profile.get("media_urls") or capture_manifest:
+    if profile.get("media_urls") or profile.get("cover_urls") or capture_manifest:
         result = run_shipinhao_media_transcriber(command, output_dir=output_dir, timeout=timeout, profile=public_profile)
     else:
         result = write_shipinhao_media_transcript_manifest(
@@ -9022,9 +9022,9 @@ LazyEdit/AutoPublish video publishing:
 
 Shipinhao/Finder and short-video shares:
 - First inspect `task.preflight.wechat_source_recovery`. Its Shipinhao packet contains exact same-message title, author, object ID, nonce ID, and reconstruction queries without mixing older chats.
-- Then inspect `task.preflight.shipinhao_media_transcript`. If it is `transcribed` or `cached`, read `agent_context_path` before answering. Treat `visual_identity_verified=true` plus a matching object ID as actual source-audio evidence; do not expose its private audio, capture manifest, signed URL, or screenshots.
+- Then inspect `task.preflight.shipinhao_media_transcript`. If it is `transcribed` or `cached`, read `agent_context_path` before answering. Treat `visual_identity_verified=true` plus a matching object ID as actual source-audio evidence. A `content_verified_public_mirror` is also usable when `content_identity_verified=true` and `public_mirror_validation.accepted=true`; it means the private pipeline matched duration and transcript content against the exact card cover, not that it recovered the original binary. Do not expose private audio, capture manifests, signed URLs, screenshots, or downloader logs.
 - Only call a Finder video silent when the preflight says `status=no_audio` and `verified_silent_media=true`. HTTP 400/download failure, card-scan failure, `finder_player_unavailable`, and `finder_audio_stream_unavailable` mean source audio was not recovered, not that it does not exist.
-- If the exact Tencent card URL expired and no verified capture exists, use the preflight's `capture_tool`/`agent_next_action`: open only the exact native Finder card, run `shipinhao_gui_audio_capture.py` with distinctive title/author terms, and reprocess the same task. Never reload after binding the `WeChatAppEx` stream, trust nominal duration alone, or reuse a different object ID. The helper must trim feed auto-advance before transcription.
+- If the exact Tencent card URL expires, the transcriber first tries cover-OCR plus duration/content-verified public-mirror recovery. Only when that and exact cached media fail should the preflight use its `capture_tool`/`agent_next_action`: open only the exact native Finder card, run `shipinhao_gui_audio_capture.py` with distinctive title/author terms, and reprocess the same task. Never reload after binding the `WeChatAppEx` stream, trust nominal duration alone, or reuse a different object ID. The helper must trim feed auto-advance before transcription.
 - Treat comment sections as useful auxiliary evidence when they are accessible from exact local media/cache, an auto-discovered local `wx_channel` API/export, an already-visible native capture, or a reliable public source.
 - Keep comments separate from media evidence. Transcript JSON and `verified-capture.json` are not comment exports and must not be passed to `shipinhao_comment_intel.py`.
 - First inspect `task.preflight.shipinhao_comment_intel` when present. If it is `status=ok`, read its manifest and JSON/Markdown summaries before answering. If it is `not_available`, be source-limited unless video media/transcript/another reliable source is available.

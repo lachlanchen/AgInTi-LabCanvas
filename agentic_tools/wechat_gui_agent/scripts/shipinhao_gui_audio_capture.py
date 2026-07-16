@@ -565,9 +565,12 @@ def associate_play_candidates_with_identity(
             word_x = (float(word["left"]) + float(word["width"]) / 2.0) / 1.6
             word_y = (float(word["top"]) + float(word["height"]) / 2.0) / 1.6
             if abs(word_x - play_x) <= 185 and play_y - 185 <= word_y <= play_y + 185:
-                nearby.append((word_y, word_x, str(word["text"])))
-        nearby.sort(key=lambda item: (item[0], item[1]))
-        evidence_text = " ".join(item[2] for item in nearby)
+                nearby.append(str(word["text"]))
+        # Tesseract TSV rows are already emitted in reading order. Sorting
+        # individual words by their slightly different baselines can scramble
+        # Chinese text from one line (for example, 昨天的自己), causing the
+        # exact card's visible play control to be rejected.
+        evidence_text = " ".join(nearby)
         matched, match_score = match_identity_terms(evidence_text, identity_terms)
         if len(matched) < max(1, min_term_matches):
             continue

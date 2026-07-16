@@ -29,6 +29,7 @@ def card_xml(url: str = "http://wxapp.tc.qq.com/video?id=exact-token") -> str:
       <objectNonceId><![CDATA[nonce-exact]]></objectNonceId>
       <nickname><![CDATA[Creator]]></nickname>
       <desc><![CDATA[Exact Finder subject]]></desc>
+      <coverUrl><![CDATA[http://wxapp.tc.qq.com/cover?id=cover-token]]></coverUrl>
       <mediaList><media>
         <videoPlayDuration><![CDATA[237]]></videoPlayDuration>
         <url><![CDATA[{url}]]></url>
@@ -50,6 +51,7 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
         self.assertEqual(profile["title"], "Exact Finder subject")
         self.assertEqual(profile["duration_seconds"], 237.0)
         self.assertEqual(profile["media_urls"], ["http://wxapp.tc.qq.com/video?id=exact-token"])
+        self.assertEqual(profile["cover_urls"], ["http://wxapp.tc.qq.com/cover?id=cover-token"])
 
     def test_media_url_requires_allowlisted_tencent_host_and_tls_output(self) -> None:
         module = load_module()
@@ -106,6 +108,7 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
         self.assertIn("speaker explains", context)
         self.assertEqual(transcript_payload["object_id"], "14712921966547245212")
         self.assertNotIn("private-signed-token", manifest)
+        self.assertNotIn("cover-token", manifest)
         self.assertNotIn("private-signed-token", context)
 
     def test_download_failure_is_not_reported_as_no_audio(self) -> None:
@@ -118,11 +121,86 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
                     root / "output",
                     cache_root=root / "cache",
                     model="turbo",
+                    public_mirror_recovery=False,
                 )
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["failure_stage"], "download")
         self.assertNotEqual(result["status"], "no_audio")
+
+    def test_public_mirror_match_requires_duration_and_content_evidence(self) -> None:
+        module = load_module()
+        profile = module.extract_shipinhao_media_profile(card_xml())
+        profile["duration_seconds"] = 38.0
+        candidate = {
+            "id": "video12345",
+            "title": "I Don't Care Who Is Doing Better Than Me",
+            "description": "Denzel Washington motivation",
+            "channel": "Public mirror",
+            "duration": 40.0,
+        }
+        evidence = module.public_mirror_match_evidence(
+            profile,
+            "I don't care who is doing better than me. Because the truth is.",
+            (
+                "I don't care who is doing better than me because the truth is I'm not in competition "
+                "with anyone else. The only person I need to be better than is the person I was yesterday."
+            ),
+            candidate,
+            {"duration_seconds": 40.0, "audio_stream_count": 1},
+        )
+
+        self.assertTrue(evidence["accepted"])
+        self.assertGreaterEqual(evidence["longest_english_word_run"], 6)
+
+        unrelated = module.public_mirror_match_evidence(
+            profile,
+            "I don't care who is doing better than me.",
+            "An unrelated cooking demonstration with no matching speech.",
+            candidate,
+            {"duration_seconds": 40.0, "audio_stream_count": 1},
+        )
+        self.assertFalse(unrelated["accepted"])
+
+    def test_expired_direct_url_can_use_content_verified_public_mirror(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            media = root / "cache" / "public-mirror-video12345.mp4"
+            audio = root / "cache" / "public-mirror-video12345.wav"
+            media.parent.mkdir(parents=True)
+            media.write_bytes(b"verified-public-video")
+            audio.write_bytes(b"RIFF" + b"0" * 100)
+            transcript = {
+                "text": "The only person I need to be better than is the person I was yesterday.",
+                "segments": [{"start": 0.0, "end": 3.2, "text": "The only person I need to be better than is the person I was yesterday."}],
+                "model": "turbo",
+                "backend": "whisper",
+                "language": "en",
+                "duration": 3.2,
+            }
+            recovered = {
+                "status": "verified",
+                "media_path": str(media),
+                "audio_path": str(audio),
+                "media_probe": {"duration_seconds": 237.0, "audio_stream_count": 1, "video_stream_count": 1},
+                "transcript": transcript,
+                "validation": {"accepted": True, "candidate_id": "video12345"},
+            }
+            with mock.patch.object(module, "download_media", side_effect=RuntimeError("HTTP 400")), mock.patch.object(
+                module, "recover_public_mirror", return_value=recovered
+            ), mock.patch.object(module, "resolve_whisper_model", return_value="turbo"):
+                result = module.run_pipeline(
+                    card_xml(),
+                    root / "output",
+                    cache_root=root / "cache",
+                    model="turbo",
+                )
+
+        self.assertEqual(result["status"], "transcribed")
+        self.assertEqual(result["input_kind"], "content_verified_public_mirror")
+        self.assertTrue(result["content_identity_verified"])
+        self.assertEqual(result["public_mirror_validation"]["candidate_id"], "video12345")
 
     def test_no_audio_requires_verified_readable_media(self) -> None:
         module = load_module()

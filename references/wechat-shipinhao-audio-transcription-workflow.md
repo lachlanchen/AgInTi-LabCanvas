@@ -9,12 +9,13 @@ This workflow lets a LabCanvas worker read a WeChat Channels/Shipinhao share as 
 1. Resolve the exact current WeChat row and parse its `<finderFeed>` block.
 2. Bind the task to `objectId`, title, author, nonce ID, duration, and media URL hash.
 3. Try the allowlisted Tencent media URL with bounded download and SSRF guards.
-4. If the signed URL expired, automatically open that exact card in the guarded source chat.
-5. Normalize to the latest message and scan bounded recent history. Associate a play control only with nearby title/author OCR from the same card.
-6. Run an identity-gated local capture. Wait for or start the `WeChatAppEx` PipeWire stream once, then record while visual source identity remains valid.
-7. Stop after consecutive identity loss or the card duration upper bound, trim the source-only audio, and write `verified-capture.json` below the private object-ID cache.
-8. Transcribe with Whisper, write timestamped Markdown, and pass only the source-scoped transcript to the resumed per-chat worker agent.
-9. Send the natural summary through the guarded same-chat sender and verify `sent`, `done-sent`, and `synced` mirror states.
+4. If the signed URL expired, OCR the exact card cover and search a bounded set of public mirrors. Require duration agreement and transcript-to-cover content agreement before accepting one.
+5. If no public mirror passes, automatically open that exact card in the guarded source chat.
+6. Normalize to the latest message and scan bounded recent history. Associate a play control only with nearby title/author OCR from the same card.
+7. Run an identity-gated local capture. Wait for or start the `WeChatAppEx` PipeWire stream once, then record while visual source identity remains valid.
+8. Stop after consecutive identity loss or the card duration upper bound, trim the source-only audio, and write `verified-capture.json` below the private object-ID cache.
+9. Transcribe with Whisper, write timestamped Markdown, and pass only the source-scoped transcript to the resumed per-chat worker agent.
+10. Send the natural summary through the guarded same-chat sender and verify `sent`, `done-sent`, and `synced` mirror states.
 
 ## Native Capture
 
@@ -60,18 +61,34 @@ python agentic_tools/wechat_gui_agent/scripts/shipinhao_media_transcribe.py \
 
 `--captured-audio` remains an operator diagnostic input. Autonomous workers use `--capture-manifest` because it validates object ID, title, author, private path, identity terms, and SHA-256 before trusting audio. Every captured-audio cache name includes the audio hash, preventing one capture from overwriting or silently reusing another.
 
+## Expired-URL Recovery
+
+Public-mirror recovery is automatic and intentionally strict:
+
+- use the exact card title, author, duration, and still-valid cover image;
+- OCR the cover locally with Tesseract;
+- search a small public candidate set through the locally installed `yt-dlp` module;
+- reject candidates outside the duration tolerance;
+- extract and transcribe actual candidate audio;
+- require a long matching English word run, matching Chinese text, or a strong exact-title match;
+- keep media, OCR, and transcripts in the ignored private cache;
+- expose only `content_verified_public_mirror`, a public candidate ID, and bounded match metrics to the worker.
+
+Disable this fallback for diagnostics with `--no-public-mirror-recovery` or `WECHAT_SHIPINHAO_PUBLIC_MIRROR_RECOVERY=0`. A public mirror is equivalent content evidence, not proof that the original WeChat binary was recovered.
+
 ## Failure Contract
 
 These outcomes are intentionally different:
 
 - `no_audio` with `verified_silent_media=true`: readable media was probed and contains zero audio streams.
 - `failure_stage=download`: the signed Tencent URL failed or expired.
+- `input_kind=content_verified_public_mirror`: the signed binary expired, but duration and transcript content matched the exact card evidence.
 - `error_code=finder_card_not_found`: the exact source card was outside bounded history or could not be identified.
 - `error_code=finder_player_unavailable`: the exact card was found, but the Linux client did not open its player.
 - `error_code=finder_audio_stream_unavailable`: the verified player produced no capturable PipeWire stream.
 - `error_code=wechat_gui_busy`: another guarded GUI operation owns the serialized lane; retry later.
 
-Only the first outcome means the video is silent. All other outcomes preserve card, comment, and public reconstruction as weaker evidence and require an evidence-limited answer. They must not be rewritten as “the video has no audio.”
+Only `no_audio` means the video is silent. A content-verified public mirror is usable transcript evidence; the remaining failure outcomes preserve card, comment, and public reconstruction as weaker evidence and require an evidence-limited answer. They must not be rewritten as “the video has no audio.”
 
 ## Worker Reprocessing
 
@@ -100,12 +117,13 @@ The worker writes `task.preflight.shipinhao_media_transcript`, resumes the exact
 
 The 2026-07-15 live validation recovered a roughly three-minute art lecture, detected the following feed item, produced a source-only Whisper transcript, ran the normal resumed worker agent, and verified the reply in the native chat plus SQLite mirror. A deliberately mixed capture was rejected before delivery.
 
-The 2026-07-16 regression test bound the exact TED card by local title terms after its signed URL returned HTTP 400. Linux WeChat did not open that unsupported Finder player, and the tool correctly returned `finder_player_unavailable` rather than `no_audio`.
+The 2026-07-16 regression test bound the exact TED card after its signed URL expired. Its 38-second card duration matched a 39.265-second public mirror; cover OCR and the Whisper transcript shared a 22-word contiguous run with 0.697 token coverage. The tool returned `content_verified_public_mirror` instead of falsely reporting no audio or requiring the unsupported Linux Finder player.
 
 ## Open-Source References
 
 - `nobiyou/wx_channel`: Channels identity/comment API patterns.
 - `qiye45/wechatVideoDownload`: official-client media interception reference.
 - `lecepin/WeChatVideoDownloader`: Channels media download architecture reference.
+- `yt-dlp/yt-dlp`: bounded public-video search and private mirror download fallback.
 
 These projects are references only. LabCanvas keeps its source binding, private cache, transcription, worker routing, and delivery gates local.

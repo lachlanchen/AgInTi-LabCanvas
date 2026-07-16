@@ -70,6 +70,21 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertEqual(contract["autonomy_contract"]["execution_center"], "wechat_task_worker.run_task_orchestrator")
         self.assertIn("WeChat is only the message box", " ".join(contract["autonomy_contract"]["cheat_sheet"]))
 
+    def test_research_contract_accepts_only_content_verified_shipinhao_mirrors(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "research_or_summary"},
+            "summarize this Shipinhao card",
+            task_id="task-shipinhao",
+            chat="links",
+        )
+        rules = " ".join(contract["rules"])
+
+        self.assertEqual(contract["id"], "research_summary")
+        self.assertIn("content_identity_verified=true", rules)
+        self.assertIn("public_mirror_validation.accepted=true", rules)
+        self.assertIn("private native capture manifest", rules)
+
     def test_file_download_routine_requires_verified_artifact_delivery(self) -> None:
         routines = load_routines()
         contract = routines.build_routine_contract(

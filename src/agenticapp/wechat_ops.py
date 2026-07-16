@@ -789,7 +789,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "generated-video LazyEdit context appends generated story/script and prompt material before publish",
             "mp.weixin read-only recovery extracts article content and reuses the private cache without GUI verification",
             "Shipinhao comment discovery accepts only the exact current card export",
-            "Shipinhao media transcription uses only the exact current card, allowlisted Tencent hosts, or a matching visual-identity/audio-hash manifest",
+            "Shipinhao media transcription uses only the exact current card, allowlisted Tencent hosts, a content-verified public mirror, or a matching visual-identity/audio-hash manifest",
+            "Shipinhao public-mirror recovery requires both duration and transcript-content evidence",
             "Shipinhao download failure is never mislabeled as verified silent media",
             "Shipinhao native fallback binds a play control only to source identity in the same card",
             "read-only source tasks cannot enter waiting_confirmation for a verification page",
@@ -913,6 +914,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "shipinhao_download_failure_not_silent",
             "test": "tests.test_shipinhao_media_transcribe.ShipinhaoMediaTranscribeTests.test_download_failure_is_not_reported_as_no_audio",
+        },
+        {
+            "id": "shipinhao_public_mirror_content_identity",
+            "test": "tests.test_shipinhao_media_transcribe.ShipinhaoMediaTranscribeTests.test_public_mirror_match_requires_duration_and_content_evidence",
         },
         {
             "id": "shipinhao_card_local_identity_binding",
