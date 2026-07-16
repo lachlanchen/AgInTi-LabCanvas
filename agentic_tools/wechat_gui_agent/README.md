@@ -253,8 +253,11 @@ Raw `aeskey` and `voiceurl` fields are intentionally stripped from prompts.
 For 视频号/Shipinhao/Finder shares, the worker first tries the exact card media
 URL, validates it with `ffprobe`, and transcribes its audio. If that signed URL
 has expired, the worker first OCRs the card cover and uses the locally installed
-`yt-dlp` module to inspect a bounded public-mirror candidate set. It accepts a
-candidate only after duration and transcript-to-cover content checks pass. If no
+`yt-dlp` module to inspect a bounded public-mirror candidate set. Local
+Tesseract/EasyOCR plus bounded Chinese-to-English evidence improve search, and
+public captions prefilter candidates before media download. It accepts either a
+same-duration content match or an independently corroborated, time-localized
+excerpt from a longer source. If no
 candidate passes, it scans the bounded recent history of the same guarded chat,
 binds a play control to nearby title/author OCR, opens the native player, captures
 its `WeChatAppEx` PipeWire stream, and retries the same transcription. Card
@@ -272,6 +275,18 @@ failure stage and must never be described as a silent video. If the actual
 video, comments, transcript, or a reliable public mirror are unavailable, the
 worker should not produce a deep analysis; it reports a concise evidence
 limitation without opening an external browser or asking for read-only verification.
+Run the same routine directly with:
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat shipinhao-transcribe \
+  --source-text-file output/wechat_worker/TASK/shipinhao_media_transcript/exact-source-card.txt \
+  --output-dir output/wechat_worker/TASK/shipinhao_media_transcript \
+  --json
+```
+
+For an unresolved cover with no useful text, a backend vision turn may add up to
+three repeatable `--search-hint` arguments. The script still performs the final
+identity check; a guessed speaker or related clip is never accepted by itself.
 For the concrete logged-in page/API approach and the local analyzer helper, see
 `docs/SHIPINHAO_COMMENT_RESEARCH.md` and
 `scripts/shipinhao_comment_intel.py`.

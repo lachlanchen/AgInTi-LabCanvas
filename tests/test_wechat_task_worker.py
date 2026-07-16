@@ -340,6 +340,8 @@ stderr: noisy internal trace
                 "WECHAT_SHIPINHAO_COMMENT_DIRS": str(root / "comment_data"),
                 "WECHAT_WX_CHANNEL_API_URL": "",
                 "WECHAT_SHIPINHAO_AUTO_DISCOVER_API": "0",
+                "WECHAT_SHIPINHAO_PUBLIC_MIRROR_RECOVERY": "0",
+                "WECHAT_SHIPINHAO_AUTO_GUI_CAPTURE": "0",
             }
             with mock.patch.dict(worker.os.environ, env, clear=False):
                 preflight = worker.prepare_worker_preflight(task, root / "artifact")
@@ -882,6 +884,71 @@ stderr: noisy internal trace
         self.assertIn("files", str(calls[0]["prompt"]))
         self.assertEqual(worker.task_orchestrator_stage({"routine": {"id": "research_summary"}}), "routine:research_summary")
         self.assertEqual(calls[0]["reuse"], True)
+
+    def test_worker_agent_packet_keeps_context_paths_but_drops_raw_finder_secrets(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+        signed = "https://wxapp.tc.qq.com/video?stodownload=1&encfilekey=private-signed-token"
+        raw_card = (
+            "<finderFeed><objectId><![CDATA[object-private]]></objectId>"
+            "<desc><![CDATA[Exact public talk]]></desc><mediaList><media>"
+            f"<url><![CDATA[{signed}]]></url></media></mediaList></finderFeed>"
+        )
+        task = {
+            "id": "finder-task",
+            "chat": "链接",
+            "request": f"Current coalesced request:\nPlease summarize this video. {raw_card}",
+            "source": {"local_id": 44, "server_id": "server-44", "content": raw_card},
+            "context": [
+                {"local_id": 43, "content": raw_card, "sender_display": "owner"},
+                {"local_id": 44, "content": "Please summarize this video.", "sender_display": "owner"},
+            ],
+            "route_decision": {"route_kind": "research_or_summary"},
+            "preflight": {
+                "shipinhao_media_transcript": {
+                    "status": "transcribed",
+                    "input_kind": "content_verified_public_mirror",
+                    "agent_context_path": "/tmp/private/shipinhao-audio-transcript.md",
+                    "media_path": "/tmp/private/source.mp4",
+                    "source_url": signed,
+                    "source_text_file": "/tmp/private/exact-source-card.txt",
+                    "public_mirror_recovery": {
+                        "status": "not_found",
+                        "cover_path": "/tmp/private/card-cover.jpg",
+                    },
+                    "public_mirror_validation": {
+                        "accepted": True,
+                        "source_excerpt_verified": True,
+                        "excerpt_start_seconds": 20.0,
+                        "excerpt_end_seconds": 58.0,
+                    },
+                }
+            },
+        }
+
+        def fake_run_codex_session(prompt: str, **kwargs: object) -> dict[str, object]:
+            calls.append({"prompt": prompt, **kwargs})
+            return {"ok": True, "message": "done", "thread_id": "thread-worker", "resumed": True}
+
+        with mock.patch.object(worker, "run_codex_session", side_effect=fake_run_codex_session):
+            result = worker.run_worker_agent_session(
+                task,
+                {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "danger-full-access", "timeout_seconds": 300},
+            )
+
+        prompt = str(calls[0]["prompt"])
+        packet = worker.worker_agent_task_view(task)
+        self.assertEqual(result, "done")
+        self.assertIn("/tmp/private/shipinhao-audio-transcript.md", prompt)
+        self.assertIn("/tmp/private/exact-source-card.txt", prompt)
+        self.assertIn("/tmp/private/card-cover.jpg", prompt)
+        self.assertIn("Please summarize this video", prompt)
+        self.assertIn("source_excerpt_verified", prompt)
+        self.assertNotIn("private-signed-token", prompt)
+        self.assertNotIn("<finderFeed>", prompt)
+        self.assertNotIn("stodownload", prompt)
+        self.assertNotIn("source.mp4", json.dumps(packet, ensure_ascii=False))
+        self.assertLess(len(json.dumps(packet, ensure_ascii=False)), len(json.dumps(task, ensure_ascii=False)))
 
     def test_orchestrator_runs_deterministic_stage_without_codex_session(self) -> None:
         worker = load_worker()

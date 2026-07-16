@@ -55,6 +55,13 @@ Routines are callable contracts and cheat sheets for mature work such as
 LazyEdit, Xiaoyunque, CAD/PCB, media sync, PDFs, and artifact sending. They
 should speed the agent up, not replace agent reasoning.
 
+The worker must not dump the whole queue row into the backend prompt. Build a
+bounded task packet containing the current request, exact source IDs, at most 12
+recent same-chat rows, interruptions, route/routine state, and readable context
+paths. Strip raw Finder XML, signed media URLs, cookies, keys, hashes, and unused
+media paths. This keeps the resumed agent focused while deterministic routines
+retain the full private evidence on disk.
+
 ## Non-Negotiable Invariants
 
 - One chat or DM equals one private config, one state file, and one exact send
@@ -200,12 +207,25 @@ should speed the agent up, not replace agent reasoning.
   recovery, exact-media transcription, and comment-intelligence preflights.
   Try the card's allowlisted Tencent media URL first. If it expired, keep the
   operation read-only and try `shipinhao_media_transcribe.py` public-mirror
-  recovery: OCR the exact card cover, search only bounded public candidates,
-  require a close duration match, transcribe candidate audio, and accept it only
-  when transcript content matches the cover evidence. Record only a public source
-  ID and bounded match metrics; do not persist search logs or signed URLs. A valid
+  recovery: OCR the exact card cover with Tesseract and an optional EasyOCR
+  fallback, translate short Chinese evidence when available, search only bounded
+  public candidates, and inspect public captions before downloading media. Accept
+  either a close-duration content match or a bounded excerpt from a longer source.
+  A longer-source excerpt requires independent caption/card agreement, a localized
+  time window, and a corroborating Whisper transcript. Related clips from the same
+  speaker must remain rejected when they do not match the card paraphrase/topic.
+  Version public-mirror cache identity so a superseded match cannot remain cached.
+  Record only a public source ID and bounded match metrics; do not persist search
+  logs or signed URLs. A valid
   result is `input_kind=content_verified_public_mirror` with both
   `content_identity_verified=true` and `public_mirror_validation.accepted=true`.
+  The directly usable entrypoint is:
+  `PYTHONPATH=src python -m agenticapp wechat shipinhao-transcribe --source-text-file <card.txt> --output-dir <task-dir> --json`.
+  If deterministic recovery remains unresolved, it may expose only private
+  `cover_path` and `source_text_file` context paths to the resumed agent. The
+  agent may inspect the cover and supply up to three `--search-hint` values, but
+  the same deterministic identity gate must still accept the result; a visual
+  guess alone is not evidence.
   If no candidate passes, use `shipinhao_gui_audio_capture.py` automatically
   against the exact guarded source chat. Normalize to the latest message, scan
   only bounded recent history, and

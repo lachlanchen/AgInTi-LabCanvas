@@ -162,6 +162,146 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
         )
         self.assertFalse(unrelated["accepted"])
 
+    def test_search_queries_use_chinese_ocr_and_bounded_translation(self) -> None:
+        module = load_module()
+        profile = module.extract_shipinhao_media_profile(card_xml())
+
+        queries = module.public_mirror_search_queries(
+            profile,
+            "乔布斯 1992 年演讲\n我认为你不能真正拥有某样东西",
+            {
+                "title": "Steve Jobs speech in 1992",
+                "cover_lines": ["I think you cannot really own something"],
+            },
+            ["Steve Jobs consulting responsibility recommendations"],
+        )
+
+        self.assertIn("i think you cannot really own something", [query.casefold() for query in queries])
+        self.assertTrue(any("我认为你不能真正拥有某样东西" in query for query in queries))
+        self.assertIn("Steve Jobs speech in 1992", queries)
+        self.assertIn("Steve Jobs consulting responsibility recommendations", queries)
+        self.assertLessEqual(len(queries), module.PUBLIC_MIRROR_QUERY_LIMIT)
+
+    def test_longer_public_source_requires_strong_excerpt_content(self) -> None:
+        module = load_module()
+        profile = module.extract_shipinhao_media_profile(card_xml())
+        profile["duration_seconds"] = 43.0
+        candidate = {
+            "id": "video12345",
+            "title": "Steve Jobs 1992 speech",
+            "description": "A longer interview excerpt",
+            "channel": "Archive",
+            "duration": 147.0,
+        }
+        translated = {
+            "title": "Steve Jobs speech in 1992",
+            "cover_lines": ["I think you cannot really own something"],
+        }
+
+        evidence = module.public_mirror_match_evidence(
+            profile,
+            "我认为你不能真正拥有某样东西",
+            "I think you cannot really own something until you understand how it was made.",
+            candidate,
+            {"duration_seconds": 147.0, "audio_stream_count": 1},
+            translated,
+        )
+        unrelated = module.public_mirror_match_evidence(
+            profile,
+            "我认为你不能真正拥有某样东西",
+            "This is an unrelated product review with no matching statement.",
+            candidate,
+            {"duration_seconds": 147.0, "audio_stream_count": 1},
+            translated,
+        )
+
+        self.assertTrue(evidence["accepted"])
+        self.assertTrue(evidence["source_excerpt_verified"])
+        self.assertFalse(evidence["duration_match"])
+        self.assertFalse(unrelated["accepted"])
+        self.assertFalse(unrelated["source_excerpt_verified"])
+
+    def test_paraphrase_match_rejects_related_but_wrong_speaker_clip(self) -> None:
+        module = load_module()
+        profile = module.extract_shipinhao_media_profile(card_xml())
+        profile["duration_seconds"] = 43.0
+        translated = {
+            "title": (
+                "Steve Jobs stick to ideas and take responsibility for suggestions, "
+                "practice them, and learn from the results"
+            ),
+            "cover_lines": ["I don't think you can really own something"],
+        }
+        candidate = {"id": "consult123", "title": "Steve Jobs on Consulting", "duration": 134.0}
+
+        correct = module.public_mirror_match_evidence(
+            profile,
+            "我认为你不能真正拥有某样东西",
+            (
+                "I don't think there is anything inherently evil in consulting. Without owning something "
+                "over an extended period, taking responsibility for recommendations, seeing them through "
+                "all action stages, you can really own the outcome and learn from mistakes."
+            ),
+            candidate,
+            {"duration_seconds": 134.0, "audio_stream_count": 1},
+            translated,
+        )
+        related_but_wrong = module.public_mirror_match_evidence(
+            profile,
+            "我认为你不能真正拥有某样东西",
+            (
+                "You can influence life and build your own things that other people can use. "
+                "Once you learn that, you will want to change life and make it better."
+            ),
+            {"id": "other123", "title": "Steve Jobs Secrets of Life", "duration": 100.0},
+            {"duration_seconds": 100.0, "audio_stream_count": 1},
+            translated,
+        )
+
+        self.assertTrue(correct["accepted"])
+        self.assertTrue(correct["fuzzy_paraphrase_match"])
+        self.assertFalse(related_but_wrong["accepted"])
+        self.assertFalse(related_but_wrong["fuzzy_paraphrase_match"])
+
+    def test_matching_excerpt_window_is_bounded_to_card_duration(self) -> None:
+        module = load_module()
+        segments = [
+            {"start": 0.0, "end": 10.0, "text": "An unrelated introduction."},
+            {"start": 50.0, "end": 58.0, "text": "I think you cannot really own something"},
+            {"start": 58.0, "end": 68.0, "text": "until you understand how it was made."},
+            {"start": 120.0, "end": 130.0, "text": "An unrelated conclusion."},
+        ]
+
+        window = module.matching_excerpt_window(
+            segments,
+            ["I think you cannot really own something"],
+            expected_duration=43.0,
+            source_duration=147.0,
+        )
+
+        self.assertTrue(window)
+        self.assertAlmostEqual(window["end_seconds"] - window["start_seconds"], 43.0, places=2)
+        self.assertLessEqual(window["start_seconds"], 50.0)
+        self.assertGreaterEqual(window["end_seconds"], 58.0)
+
+    def test_verified_captions_can_corroborate_fuzzy_excerpt_asr(self) -> None:
+        module = load_module()
+        audio_evidence = {
+            "accepted": False,
+            "title_transcript_stem_overlap": 3,
+            "longest_english_word_run": 3,
+            "english_token_coverage": 0.625,
+        }
+        subtitle_evidence = {"accepted": True, "source_excerpt_verified": True}
+        excerpt = {"start_seconds": 20.0, "end_seconds": 63.0}
+
+        accepted = module.reconcile_excerpt_evidence(audio_evidence, subtitle_evidence, excerpt)
+        rejected = module.reconcile_excerpt_evidence(audio_evidence, {"accepted": False}, excerpt)
+
+        self.assertTrue(accepted["accepted"])
+        self.assertTrue(accepted["caption_then_audio_corroborated"])
+        self.assertFalse(rejected["accepted"])
+
     def test_expired_direct_url_can_use_content_verified_public_mirror(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as tmp:

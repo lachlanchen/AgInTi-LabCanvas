@@ -39,8 +39,11 @@ ALLOWED_MEDIA_HOST_SUFFIXES = (
 )
 SUCCESS_STATUSES = {"transcribed", "cached"}
 PUBLIC_MIRROR_RECOVERY_DEFAULT = os.environ.get("WECHAT_SHIPINHAO_PUBLIC_MIRROR_RECOVERY", "1") != "0"
-PUBLIC_MIRROR_SEARCH_LIMIT = 8
-PUBLIC_MIRROR_CANDIDATE_LIMIT = 3
+PUBLIC_MIRROR_SEARCH_LIMIT = 12
+PUBLIC_MIRROR_QUERY_LIMIT = 8
+PUBLIC_MIRROR_CANDIDATE_LIMIT = 16
+PUBLIC_MIRROR_MAX_SOURCE_SECONDS = 900.0
+PUBLIC_MIRROR_RESOLVER_VERSION = 2
 
 
 def extract_shipinhao_media_profile(text: str) -> dict[str, Any]:
@@ -192,20 +195,50 @@ def download_media(url: str, target: Path, *, max_bytes: int, timeout: float) ->
     return {"bytes": written, "sha256": digest.hexdigest(), "source_url_sha256": sha256_text(safe_url)}
 
 
-def public_mirror_search_queries(profile: dict[str, Any], cover_ocr: str) -> list[str]:
+def public_mirror_search_queries(
+    profile: dict[str, Any],
+    cover_ocr: str,
+    translated_evidence: dict[str, Any] | None = None,
+    search_hints: list[str] | None = None,
+) -> list[str]:
     """Build compact public-video searches from card text and cover evidence."""
+    translated_evidence = translated_evidence or {}
     queries: list[str] = []
+    for line in translated_evidence.get("cover_lines") or []:
+        words = english_words(line)
+        if len(words) >= 4:
+            queries.append(" ".join(words[:20]))
+    for hint in search_hints or []:
+        hint = compact_text(hint, 180)
+        if hint:
+            queries.append(hint)
+    translated_title_full = compact_text(translated_evidence.get("title"), 500)
+    translated_title = compact_text(translated_title_full, 160)
+    if translated_title:
+        queries.append(translated_title)
+        title_terms = distinctive_english_query_terms(translated_title_full, limit=20)
+        concise_title = " ".join(title_terms[:10])
+        if concise_title:
+            queries.append(concise_title)
+        tail_title = " ".join(unique_strings([*title_terms[:2], *title_terms[-7:]]))
+        if tail_title and tail_title != concise_title:
+            queries.append(tail_title)
     for line in str(cover_ocr or "").splitlines():
         words = re.findall(r"[A-Za-z]+(?:['’][A-Za-z]+)?", line)
         if len(words) >= 6:
             queries.append(" ".join(words[:18]))
+        han = han_text(line)
+        if len(han) >= 10:
+            queries.append(han[:36])
     title = compact_text(profile.get("title"), 160)
     author = compact_text(profile.get("author"), 80)
     if title:
         queries.append(re.sub(r"[#＃]+", " ", title))
     if title and author:
         queries.append(f"{title} {author}")
-    return unique_strings([compact_text(item, 180) for item in queries if compact_text(item, 180)])[:3]
+    return unique_strings([compact_text(item, 180) for item in queries if compact_text(item, 180)])[
+        :PUBLIC_MIRROR_QUERY_LIMIT
+    ]
 
 
 def public_mirror_match_evidence(
@@ -214,8 +247,10 @@ def public_mirror_match_evidence(
     transcript_text: str,
     candidate: dict[str, Any],
     media_probe: dict[str, Any],
+    translated_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return bounded identity evidence for one public mirror candidate."""
+    translated_evidence = translated_evidence or {}
     expected_duration = safe_float(profile.get("duration_seconds")) or 0.0
     observed_duration = safe_float(media_probe.get("duration_seconds")) or safe_float(candidate.get("duration")) or 0.0
     duration_delta = abs(expected_duration - observed_duration) if expected_duration and observed_duration else None
@@ -224,39 +259,68 @@ def public_mirror_match_evidence(
         observed_duration > 0 and duration_delta is not None and duration_delta <= duration_tolerance
     )
 
-    ocr_words = english_words(cover_ocr)
-    transcript_words = english_words(transcript_text)
-    longest_word_run = 0
-    english_coverage = 0.0
-    if ocr_words and transcript_words:
-        longest_word_run = difflib.SequenceMatcher(None, ocr_words, transcript_words, autojunk=False).find_longest_match().size
-        english_coverage = len(set(ocr_words) & set(transcript_words)) / max(1, len(set(ocr_words)))
+    cover_lines = evidence_lines(cover_ocr)
+    translated_cover_lines = [
+        compact_text(item, 500) for item in translated_evidence.get("cover_lines") or [] if compact_text(item, 500)
+    ]
+    metrics = transcript_evidence_metrics(
+        transcript_text,
+        [*cover_lines, *translated_cover_lines],
+    )
+    longest_word_run = int(metrics["longest_english_word_run"])
+    english_coverage = float(metrics["english_token_coverage"])
+    longest_han_run = int(metrics["longest_han_character_run"])
 
-    ocr_han = han_text(cover_ocr)
-    transcript_han = han_text(transcript_text)
-    longest_han_run = 0
-    if ocr_han and transcript_han:
-        longest_han_run = difflib.SequenceMatcher(None, ocr_han, transcript_han, autojunk=False).find_longest_match().size
-
-    title = normalize_identity(profile.get("title"))
+    title_values = [normalize_identity(profile.get("title")), normalize_identity(translated_evidence.get("title"))]
     candidate_text = normalize_identity(
         " ".join(str(candidate.get(key) or "") for key in ("title", "description", "channel"))
     )
-    title_ratio = difflib.SequenceMatcher(None, title, candidate_text, autojunk=False).ratio() if title and candidate_text else 0.0
-    title_contained = bool(title and (title in candidate_text or candidate_text in title))
-    content_match = (
+    title_ratio = max(
+        (
+            difflib.SequenceMatcher(None, title, candidate_text, autojunk=False).ratio()
+            for title in title_values
+            if title and candidate_text
+        ),
+        default=0.0,
+    )
+    title_contained = any(
+        bool(title and candidate_text and (title in candidate_text or candidate_text in title))
+        for title in title_values
+    )
+    strong_content_match = (
         (longest_word_run >= 6 and english_coverage >= 0.25)
         or longest_han_run >= 8
-        or (title_contained and title_ratio >= 0.45)
+    )
+    metadata_match = bool(title_contained and title_ratio >= 0.45)
+    title_transcript_overlap = len(
+        english_content_stems(translated_evidence.get("title"))
+        & english_content_stems(transcript_text)
+    )
+    fuzzy_paraphrase_match = bool(
+        longest_word_run >= 2
+        and english_coverage >= 0.80
+        and title_transcript_overlap >= 3
+    )
+    strong_content_match = strong_content_match or fuzzy_paraphrase_match
+    content_match = strong_content_match or metadata_match
+    source_excerpt_verified = bool(
+        expected_duration
+        and observed_duration > expected_duration + duration_tolerance
+        and strong_content_match
     )
     return {
-        "accepted": bool(duration_match and content_match),
+        "accepted": bool(content_match and (duration_match or source_excerpt_verified)),
         "duration_match": bool(duration_match),
+        "candidate_duration_seconds": round(observed_duration, 3) if observed_duration else None,
         "duration_delta_seconds": round(duration_delta, 3) if duration_delta is not None else None,
         "duration_tolerance_seconds": round(duration_tolerance, 3) if duration_tolerance else None,
+        "content_match_strong": bool(strong_content_match),
+        "source_excerpt_verified": source_excerpt_verified,
         "longest_english_word_run": longest_word_run,
         "english_token_coverage": round(english_coverage, 3),
         "longest_han_character_run": longest_han_run,
+        "title_transcript_stem_overlap": title_transcript_overlap,
+        "fuzzy_paraphrase_match": fuzzy_paraphrase_match,
         "title_match_ratio": round(title_ratio, 3),
         "title_contained": title_contained,
     }
@@ -270,18 +334,273 @@ def han_text(value: Any) -> str:
     return "".join(re.findall(r"[\u3400-\u9fff]", str(value or "")))
 
 
+def english_content_stems(value: Any) -> set[str]:
+    stop_words = {
+        "about",
+        "after",
+        "again",
+        "also",
+        "and",
+        "are",
+        "because",
+        "before",
+        "but",
+        "can",
+        "could",
+        "entire",
+        "for",
+        "from",
+        "have",
+        "into",
+        "just",
+        "must",
+        "not",
+        "only",
+        "otherwise",
+        "over",
+        "really",
+        "something",
+        "that",
+        "the",
+        "their",
+        "then",
+        "there",
+        "they",
+        "this",
+        "through",
+        "until",
+        "was",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "with",
+        "without",
+        "would",
+        "you",
+        "your",
+    }
+    stems: set[str] = set()
+    for word in english_words(value):
+        if len(word) < 3 or word in stop_words:
+            continue
+        if word.startswith("responsib"):
+            word = "respons"
+        elif word.startswith("recommend"):
+            word = "recommend"
+        elif word.startswith("suggest"):
+            word = "suggest"
+        elif word.startswith("learn"):
+            word = "learn"
+        elif word.startswith("own"):
+            word = "own"
+        else:
+            for suffix in ("ations", "ation", "ments", "ment", "ingly", "edly", "ing", "ed", "ies", "s"):
+                if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+                    word = word[: -len(suffix)]
+                    break
+        stems.add(word)
+    return stems
+
+
+def distinctive_english_query_terms(value: Any, *, limit: int) -> list[str]:
+    generic = {
+        "about",
+        "after",
+        "again",
+        "also",
+        "and",
+        "are",
+        "because",
+        "before",
+        "but",
+        "can",
+        "could",
+        "entire",
+        "for",
+        "from",
+        "have",
+        "into",
+        "just",
+        "must",
+        "not",
+        "only",
+        "otherwise",
+        "over",
+        "really",
+        "something",
+        "that",
+        "the",
+        "their",
+        "then",
+        "there",
+        "they",
+        "this",
+        "through",
+        "until",
+        "was",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "with",
+        "without",
+        "would",
+        "you",
+        "your",
+    }
+    result: list[str] = []
+    seen_stems: set[str] = set()
+    for word in english_words(value):
+        if len(word) < 3 or word in generic:
+            continue
+        stems = english_content_stems(word)
+        stem = next(iter(stems), word)
+        if stem in seen_stems:
+            continue
+        seen_stems.add(stem)
+        result.append(word)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def evidence_lines(value: Any) -> list[str]:
+    lines = [compact_text(line, 500) for line in str(value or "").splitlines()]
+    return unique_strings([line for line in lines if len(english_words(line)) >= 3 or len(han_text(line)) >= 4])
+
+
+def transcript_evidence_metrics(transcript_text: str, evidence: list[str]) -> dict[str, Any]:
+    transcript_words = english_words(transcript_text)
+    transcript_han = han_text(transcript_text)
+    longest_word_run = 0
+    english_coverage = 0.0
+    longest_han_run = 0
+    for item in evidence:
+        words = english_words(item)
+        if words and transcript_words:
+            longest_word_run = max(
+                longest_word_run,
+                difflib.SequenceMatcher(None, words, transcript_words, autojunk=False).find_longest_match().size,
+            )
+            english_coverage = max(
+                english_coverage,
+                len(set(words) & set(transcript_words)) / max(1, len(set(words))),
+            )
+        han = han_text(item)
+        if han and transcript_han:
+            longest_han_run = max(
+                longest_han_run,
+                difflib.SequenceMatcher(None, han, transcript_han, autojunk=False).find_longest_match().size,
+            )
+    return {
+        "longest_english_word_run": longest_word_run,
+        "english_token_coverage": round(english_coverage, 3),
+        "longest_han_character_run": longest_han_run,
+    }
+
+
 def ocr_cover_image(path: Path, *, timeout: int = 60) -> str:
     tesseract = shutil.which("tesseract")
-    if not tesseract:
-        return ""
-    proc = subprocess.run(
-        [tesseract, str(path), "stdout", "-l", "eng+chi_sim", "--psm", "6"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
+    primary = ""
+    if tesseract:
+        proc = subprocess.run(
+            [tesseract, str(path), "stdout", "-l", "eng+chi_sim", "--psm", "6"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+        if proc.returncode == 0:
+            primary = str(proc.stdout or "").strip()[:8000]
+    if not ocr_evidence_is_weak(primary):
+        return primary
+    secondary = easyocr_cover_image(path, timeout=max(30, timeout))
+    return "\n".join(unique_strings([*primary.splitlines(), *secondary.splitlines()])).strip()[:8000]
+
+
+def ocr_evidence_is_weak(value: str) -> bool:
+    return not any(
+        len(english_words(line)) >= 6 or len(han_text(line)) >= 8
+        for line in str(value or "").splitlines()
     )
-    return str(proc.stdout or "").strip()[:8000] if proc.returncode == 0 else ""
+
+
+def easyocr_cover_image(path: Path, *, timeout: int = 90) -> str:
+    if importlib.util.find_spec("easyocr") is None:
+        return ""
+    script = """
+import json
+import sys
+import easyocr
+reader = easyocr.Reader(['ch_sim', 'en'], gpu=False, download_enabled=False, verbose=False)
+items = reader.readtext(sys.argv[1], detail=0, paragraph=False)
+print(json.dumps([str(item) for item in items], ensure_ascii=False))
+"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", script, str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+        values = json.loads(proc.stdout) if proc.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return ""
+    if not isinstance(values, list):
+        return ""
+    return "\n".join(unique_strings([compact_text(item, 500) for item in values if compact_text(item, 500)]))[:8000]
+
+
+def translated_search_evidence(profile: dict[str, Any], cover_ocr: str, *, timeout: int = 35) -> dict[str, Any]:
+    title = compact_text(profile.get("title"), 300)
+    cover_lines = [line for line in evidence_lines(cover_ocr) if len(han_text(line)) >= 10]
+    source = unique_strings([item for item in [title, *cover_lines[:5]] if len(han_text(item)) >= 4])
+    if not source:
+        return {"title": "", "cover_lines": []}
+    translated = translate_evidence_to_english(source, timeout=timeout)
+    mapping = dict(zip(source, translated))
+    return {
+        "title": mapping.get(title, "") if title else "",
+        "cover_lines": [mapping.get(line, "") for line in cover_lines if mapping.get(line, "")],
+    }
+
+
+def translate_evidence_to_english(values: list[str], *, timeout: int = 35) -> list[str]:
+    if importlib.util.find_spec("deep_translator") is None:
+        return []
+    script = """
+import json
+import sys
+from deep_translator import GoogleTranslator
+values = json.loads(sys.stdin.read())
+translator = GoogleTranslator(source='auto', target='en')
+result = []
+for value in values:
+    try:
+        result.append(str(translator.translate(value) or ''))
+    except Exception:
+        result.append('')
+print(json.dumps(result, ensure_ascii=False))
+"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            input=json.dumps(values, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+        translated = json.loads(proc.stdout) if proc.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return []
+    if not isinstance(translated, list) or len(translated) != len(values):
+        return []
+    return [compact_text(item, 500) for item in translated]
 
 
 def yt_dlp_command() -> list[str]:
@@ -295,6 +614,7 @@ def search_public_mirror_candidates(
     *,
     expected_duration: float,
     timeout: int,
+    max_source_seconds: float = PUBLIC_MIRROR_MAX_SOURCE_SECONDS,
 ) -> list[dict[str, Any]]:
     command = yt_dlp_command()
     if not command:
@@ -302,6 +622,10 @@ def search_public_mirror_candidates(
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
     duration_tolerance = max(5.0, expected_duration * 0.20) if expected_duration else 0.0
+    bounded_source_limit = min(
+        max_source_seconds,
+        max(300.0, expected_duration * 8.0) if expected_duration else max_source_seconds,
+    )
     for query in queries:
         proc = subprocess.run(
             [
@@ -332,7 +656,7 @@ def search_public_mirror_candidates(
             if not re.fullmatch(r"[0-9A-Za-z_-]{6,20}", candidate_id) or candidate_id in seen:
                 continue
             duration = safe_float(entry.get("duration")) or 0.0
-            if expected_duration and (not duration or abs(duration - expected_duration) > duration_tolerance):
+            if not duration or duration > bounded_source_limit:
                 continue
             seen.add(candidate_id)
             candidates.append(
@@ -347,11 +671,204 @@ def search_public_mirror_candidates(
             )
     candidates.sort(
         key=lambda item: (
+            0
+            if expected_duration
+            and abs((safe_float(item.get("duration")) or 0.0) - expected_duration) <= duration_tolerance
+            else 1,
             abs((safe_float(item.get("duration")) or 0.0) - expected_duration) if expected_duration else 0.0,
             int(item.get("search_rank") or 0),
         )
     )
     return candidates[:PUBLIC_MIRROR_CANDIDATE_LIMIT]
+
+
+def fetch_public_mirror_subtitles(
+    candidate: dict[str, Any],
+    cache_dir: Path,
+    *,
+    timeout: int,
+) -> dict[str, Any]:
+    """Fetch bounded public captions before downloading/transcribing media."""
+    command = yt_dlp_command()
+    candidate_id = str(candidate.get("id") or "")
+    if not command or not re.fullmatch(r"[0-9A-Za-z_-]{6,20}", candidate_id):
+        return {"status": "unavailable", "segments": [], "text": ""}
+    prefix = cache_dir / f"public-mirror-{candidate_id}-captions"
+    for old in cache_dir.glob(prefix.name + "*.vtt"):
+        old.unlink(missing_ok=True)
+    subprocess.run(
+        [
+            *command,
+            f"https://www.youtube.com/watch?v={candidate_id}",
+            "--no-playlist",
+            "--skip-download",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs",
+            "en.*,zh.*,en,zh-Hans,zh-Hant",
+            "--sub-format",
+            "vtt",
+            "--no-warnings",
+            "--quiet",
+            "-o",
+            str(prefix) + ".%(ext)s",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
+    files = sorted(cache_dir.glob(prefix.name + "*.vtt"))
+    if not files:
+        return {"status": "not_available", "segments": [], "text": ""}
+    segments: list[dict[str, Any]] = []
+    seen: set[tuple[float, float, str]] = set()
+    for path in files[:6]:
+        try:
+            parsed = parse_vtt_segments(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        for item in parsed:
+            key = (float(item["start"]), float(item["end"]), str(item["text"]))
+            if key not in seen:
+                seen.add(key)
+                segments.append(item)
+    segments.sort(key=lambda item: (float(item["start"]), float(item["end"])))
+    text_value = " ".join(str(item["text"]) for item in segments)
+    return {
+        "status": "ok" if text_value.strip() else "not_available",
+        "segments": segments[:4000],
+        "text": compact_text(text_value, 100_000),
+    }
+
+
+def parse_vtt_segments(value: str) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    for block in re.split(r"\n\s*\n", str(value or "").replace("\r\n", "\n")):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        time_index = next((index for index, line in enumerate(lines) if "-->" in line), None)
+        if time_index is None:
+            continue
+        time_match = re.match(r"(?P<start>\S+)\s+-->\s+(?P<end>\S+)", lines[time_index])
+        if not time_match:
+            continue
+        start = parse_vtt_time(time_match.group("start"))
+        end = parse_vtt_time(time_match.group("end"))
+        text_value = html.unescape(
+            re.sub(r"<[^>]+>", " ", " ".join(lines[time_index + 1 :]))
+        )
+        text_value = compact_text(text_value, 1000)
+        if start is None or end is None or end <= start or not text_value:
+            continue
+        segments.append({"start": start, "end": end, "text": text_value})
+    return segments
+
+
+def parse_vtt_time(value: str) -> float | None:
+    match = re.match(r"(?:(\d+):)?(\d{1,2}):(\d{2}(?:[.,]\d+)?)", str(value or ""))
+    if not match:
+        return None
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2))
+    seconds = float(match.group(3).replace(",", "."))
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def matching_excerpt_window(
+    segments: list[dict[str, Any]],
+    evidence: list[str],
+    *,
+    expected_duration: float,
+    source_duration: float,
+) -> dict[str, Any]:
+    if not segments or not evidence or expected_duration <= 0 or source_duration <= expected_duration:
+        return {}
+    best: dict[str, Any] = {}
+    max_match_span = min(max(expected_duration, 15.0), 60.0)
+    evidence_stems = set().union(*(english_content_stems(item) for item in evidence))
+    for start_index in range(len(segments)):
+        nearby: list[dict[str, Any]] = []
+        for end_index in range(start_index, len(segments)):
+            item = segments[end_index]
+            if nearby:
+                previous_end = safe_float(nearby[-1].get("end")) or 0.0
+                current_start = safe_float(item.get("start")) or 0.0
+                if current_start - previous_end > 8.0:
+                    break
+            nearby.append(item)
+            span_start = safe_float(nearby[0].get("start")) or 0.0
+            span_end = safe_float(nearby[-1].get("end")) or span_start
+            span = max(0.0, span_end - span_start)
+            if span > max_match_span:
+                break
+            nearby_text = " ".join(str(segment.get("text") or "") for segment in nearby)
+            metrics = transcript_evidence_metrics(nearby_text, evidence)
+            stem_overlap = len(evidence_stems & english_content_stems(nearby_text))
+            score = (
+                int(metrics["longest_english_word_run"]) * 10
+                + int(metrics["longest_han_character_run"]) * 8
+                + float(metrics["english_token_coverage"]) * 10
+                + stem_overlap * 5
+            )
+            best_score = float(best.get("score") or -1)
+            best_span = float(best.get("matched_span_seconds") or float("inf"))
+            if score < best_score or (score == best_score and span >= best_span):
+                continue
+            center = (span_start + span_end) / 2.0
+            clip_duration = min(expected_duration, source_duration)
+            clip_start = max(0.0, min(source_duration - clip_duration, center - clip_duration / 2.0))
+            best = {
+                "score": round(score, 3),
+                "matched_span_seconds": round(span, 3),
+                "start_seconds": round(clip_start, 3),
+                "end_seconds": round(min(source_duration, clip_start + clip_duration), 3),
+                "content_stem_overlap": stem_overlap,
+                **metrics,
+            }
+    strong = bool(
+        int(best.get("longest_english_word_run") or 0) >= 6
+        or int(best.get("longest_han_character_run") or 0) >= 8
+        or (
+            int(best.get("longest_english_word_run") or 0) >= 2
+            and float(best.get("english_token_coverage") or 0.0) >= 0.65
+        )
+        or int(best.get("content_stem_overlap") or 0) >= 3
+    )
+    return best if strong else {}
+
+
+def reconcile_excerpt_evidence(
+    audio_evidence: dict[str, Any],
+    subtitle_evidence: dict[str, Any],
+    excerpt: dict[str, Any],
+) -> dict[str, Any]:
+    """Require independent caption identity before accepting a fuzzy ASR paraphrase."""
+    result = dict(audio_evidence)
+    if result.get("accepted"):
+        return result
+    caption_verified = bool(
+        subtitle_evidence.get("accepted")
+        and subtitle_evidence.get("source_excerpt_verified")
+        and excerpt
+    )
+    audio_corroborates = bool(
+        int(result.get("title_transcript_stem_overlap") or 0) >= 3
+        and (
+            int(result.get("longest_english_word_run") or 0) >= 2
+            or float(result.get("english_token_coverage") or 0.0) >= 0.50
+            or int(result.get("longest_han_character_run") or 0) >= 6
+        )
+    )
+    if caption_verified and audio_corroborates:
+        result.update(
+            {
+                "accepted": True,
+                "content_match_strong": True,
+                "source_excerpt_verified": True,
+                "caption_then_audio_corroborated": True,
+            }
+        )
+    return result
 
 
 def download_public_mirror_candidate(
@@ -410,6 +927,7 @@ def recover_public_mirror(
     max_duration_seconds: float,
     download_timeout: float,
     command_timeout: int,
+    search_hints: list[str] | None = None,
 ) -> dict[str, Any]:
     """Recover equivalent public media only after duration and content checks."""
     if not yt_dlp_command():
@@ -429,19 +947,54 @@ def recover_public_mirror(
             except Exception:
                 cover_path.unlink(missing_ok=True)
     cover_ocr = ocr_cover_image(cover_path, timeout=min(command_timeout, 90)) if cover_path.is_file() else ""
-    queries = public_mirror_search_queries(profile, cover_ocr)
+    translated_evidence = translated_search_evidence(
+        profile,
+        cover_ocr,
+        timeout=min(command_timeout, 35),
+    )
+    queries = public_mirror_search_queries(profile, cover_ocr, translated_evidence, search_hints)
     if not queries:
-        return {"status": "not_found", "reason": "card identity supplied no searchable public evidence"}
+        return {
+            "status": "not_found",
+            "reason": "card identity supplied no searchable public evidence",
+            "cover_path": str(cover_path) if cover_path.is_file() else "",
+        }
     expected_duration = safe_float(profile.get("duration_seconds")) or 0.0
     candidates = search_public_mirror_candidates(
         queries,
         expected_duration=expected_duration,
         timeout=min(command_timeout, 120),
+        max_source_seconds=min(max_duration_seconds, PUBLIC_MIRROR_MAX_SOURCE_SECONDS),
     )
+    no_caption_downloads = 0
     for candidate in candidates:
         media_path: Path | None = None
         audio_path: Path | None = None
+        full_audio_path: Path | None = None
         try:
+            subtitle_data = fetch_public_mirror_subtitles(
+                candidate,
+                cache_dir,
+                timeout=min(command_timeout, 120),
+            )
+            subtitle_text = str(subtitle_data.get("text") or "")
+            candidate_duration = safe_float(candidate.get("duration")) or 0.0
+            subtitle_evidence: dict[str, Any] = {}
+            if subtitle_text:
+                subtitle_evidence = public_mirror_match_evidence(
+                    profile,
+                    cover_ocr,
+                    subtitle_text,
+                    candidate,
+                    {"duration_seconds": candidate_duration, "audio_stream_count": 1},
+                    translated_evidence,
+                )
+                if not subtitle_evidence.get("accepted"):
+                    raise RuntimeError("public captions did not match the exact Finder card evidence")
+            else:
+                if no_caption_downloads >= 2:
+                    raise RuntimeError("captionless public candidate budget exhausted")
+                no_caption_downloads += 1
             media_path = download_public_mirror_candidate(
                 candidate,
                 cache_dir,
@@ -452,19 +1005,90 @@ def recover_public_mirror(
             duration = safe_float(media_probe.get("duration_seconds")) or 0.0
             if duration > max_duration_seconds or int(media_probe.get("audio_stream_count") or 0) < 1:
                 raise RuntimeError("public mirror media failed duration or audio validation")
-            audio_path = cache_dir / f"public-mirror-{candidate['id']}-16k-mono.wav"
-            if not audio_path.is_file() or audio_path.stat().st_size <= 44:
-                extract_audio(media_path, audio_path, timeout=command_timeout)
-            transcript = transcribe_audio(audio_path, model=model, device=device, language=language)
+            evidence_inputs = [
+                *evidence_lines(cover_ocr),
+                *(translated_evidence.get("cover_lines") or []),
+                *([str(translated_evidence.get("title"))] if translated_evidence.get("title") else []),
+            ]
+            excerpt = {}
+            if subtitle_evidence.get("source_excerpt_verified"):
+                excerpt = matching_excerpt_window(
+                    list(subtitle_data.get("segments") or []),
+                    evidence_inputs,
+                    expected_duration=expected_duration,
+                    source_duration=duration,
+                )
+                if not excerpt:
+                    raise RuntimeError("public source matched but the Finder excerpt could not be isolated")
+
+            if excerpt:
+                audio_path = cache_dir / f"public-mirror-{candidate['id']}-excerpt-16k-mono.wav"
+                extract_audio(
+                    media_path,
+                    audio_path,
+                    timeout=command_timeout,
+                    start_seconds=safe_float(excerpt.get("start_seconds")),
+                    end_seconds=safe_float(excerpt.get("end_seconds")),
+                )
+                transcript = transcribe_audio(audio_path, model=model, device=device, language=language)
+            else:
+                full_audio_path = cache_dir / f"public-mirror-{candidate['id']}-16k-mono.wav"
+                if not full_audio_path.is_file() or full_audio_path.stat().st_size <= 44:
+                    extract_audio(media_path, full_audio_path, timeout=command_timeout)
+                transcript = transcribe_audio(full_audio_path, model=model, device=device, language=language)
+                preliminary = public_mirror_match_evidence(
+                    profile,
+                    cover_ocr,
+                    str(transcript.get("text") or ""),
+                    candidate,
+                    media_probe,
+                    translated_evidence,
+                )
+                if preliminary.get("source_excerpt_verified"):
+                    excerpt = matching_excerpt_window(
+                        list(transcript.get("segments") or []),
+                        evidence_inputs,
+                        expected_duration=expected_duration,
+                        source_duration=duration,
+                    )
+                    if not excerpt:
+                        raise RuntimeError("public source matched but the Finder excerpt could not be isolated")
+                    audio_path = cache_dir / f"public-mirror-{candidate['id']}-excerpt-16k-mono.wav"
+                    extract_audio(
+                        media_path,
+                        audio_path,
+                        timeout=command_timeout,
+                        start_seconds=safe_float(excerpt.get("start_seconds")),
+                        end_seconds=safe_float(excerpt.get("end_seconds")),
+                    )
+                    transcript = transcribe_audio(audio_path, model=model, device=device, language=language)
+                else:
+                    audio_path = full_audio_path
             evidence = public_mirror_match_evidence(
                 profile,
                 cover_ocr,
                 str(transcript.get("text") or ""),
                 candidate,
                 media_probe,
+                translated_evidence,
             )
+            evidence = reconcile_excerpt_evidence(evidence, subtitle_evidence, excerpt)
             if not evidence.get("accepted"):
                 raise RuntimeError("public mirror content did not match the exact Finder card evidence")
+            if evidence.get("source_excerpt_verified") and not excerpt:
+                raise RuntimeError("longer public source was not reduced to a verified Finder excerpt")
+            effective_probe = dict(media_probe)
+            if excerpt:
+                start_seconds = safe_float(excerpt.get("start_seconds")) or 0.0
+                end_seconds = safe_float(excerpt.get("end_seconds")) or start_seconds
+                effective_probe["source_duration_seconds"] = duration
+                effective_probe["duration_seconds"] = max(0.0, end_seconds - start_seconds)
+                evidence.update(
+                    {
+                        "excerpt_start_seconds": round(start_seconds, 3),
+                        "excerpt_end_seconds": round(end_seconds, 3),
+                    }
+                )
             evidence.update(
                 {
                     "source": "youtube_public_mirror",
@@ -476,7 +1100,7 @@ def recover_public_mirror(
                 "status": "verified",
                 "media_path": str(media_path),
                 "audio_path": str(audio_path),
-                "media_probe": media_probe,
+                "media_probe": effective_probe,
                 "transcript": transcript,
                 "validation": evidence,
             }
@@ -485,7 +1109,13 @@ def recover_public_mirror(
                 media_path.unlink(missing_ok=True)
             if audio_path:
                 audio_path.unlink(missing_ok=True)
-    return {"status": "not_found", "reason": "no duration- and content-verified public mirror was found"}
+            if full_audio_path and full_audio_path != audio_path:
+                full_audio_path.unlink(missing_ok=True)
+    return {
+        "status": "not_found",
+        "reason": "no duration- and content-verified public mirror was found",
+        "cover_path": str(cover_path) if cover_path.is_file() else "",
+    }
 
 
 def probe_media(path: Path, *, timeout: int = 60) -> dict[str, Any]:
@@ -529,7 +1159,14 @@ def probe_media(path: Path, *, timeout: int = 60) -> dict[str, Any]:
     }
 
 
-def extract_audio(media: Path, target: Path, *, timeout: int, end_seconds: float | None = None) -> None:
+def extract_audio(
+    media: Path,
+    target: Path,
+    *,
+    timeout: int,
+    start_seconds: float | None = None,
+    end_seconds: float | None = None,
+) -> None:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg is not installed")
@@ -541,11 +1178,14 @@ def extract_audio(media: Path, target: Path, *, timeout: int, end_seconds: float
             "-loglevel",
             "error",
             "-y",
-            "-i",
-            str(media),
     ]
+    if start_seconds and start_seconds > 0:
+        command += ["-ss", f"{start_seconds:.3f}"]
+    command += ["-i", str(media)]
     if end_seconds and end_seconds > 0:
-        command += ["-t", f"{end_seconds:.3f}"]
+        clip_duration = end_seconds - (start_seconds or 0.0)
+        if clip_duration > 0:
+            command += ["-t", f"{clip_duration:.3f}"]
     command += [
             "-map",
             "0:a:0",
@@ -679,6 +1319,7 @@ def run_pipeline(
     download_timeout: float = 120,
     command_timeout: int = 1800,
     public_mirror_recovery: bool = PUBLIC_MIRROR_RECOVERY_DEFAULT,
+    search_hints: list[str] | None = None,
 ) -> dict[str, Any]:
     output_dir = output_dir.expanduser().resolve()
     cache_root = cache_root.expanduser().resolve()
@@ -751,6 +1392,7 @@ def run_pipeline(
                 download_timeout=download_timeout,
                 command_timeout=command_timeout,
                 public_mirror_recovery=public_mirror_recovery,
+                search_hints=search_hints or [],
             )
     except Exception as exc:
         result["status"] = "failed"
@@ -776,6 +1418,7 @@ def process_locked(
     download_timeout: float,
     command_timeout: int,
     public_mirror_recovery: bool,
+    search_hints: list[str],
 ) -> dict[str, Any]:
     requested_model = resolve_whisper_model(model)
     capture_sha256 = sha256_file(captured_audio) if captured_audio else ""
@@ -817,7 +1460,9 @@ def process_locked(
             direct_media_error = f"{type(exc).__name__}: {str(exc)[:300]}"
             media_path.unlink(missing_ok=True)
             media_probe = {}
+    public_mirror_attempted = False
     if not media_probe and public_mirror_recovery:
+        public_mirror_attempted = True
         result["pipeline_stage"] = "public_mirror_recovery"
         public_mirror = recover_public_mirror(
             profile,
@@ -829,6 +1474,7 @@ def process_locked(
             max_duration_seconds=max_duration_seconds,
             download_timeout=download_timeout,
             command_timeout=command_timeout,
+            search_hints=search_hints,
         )
         if public_mirror.get("status") == "verified":
             media_path = Path(str(public_mirror["media_path"]))
@@ -838,12 +1484,17 @@ def process_locked(
             result["public_mirror_validation"] = dict(public_mirror.get("validation") or {})
             result["content_identity_verified"] = True
             result["warnings"].append(
-                "the signed Finder media URL was unavailable; a duration- and content-verified public mirror was used"
+                "the signed Finder media URL was unavailable; a content-verified public mirror or bounded source excerpt was used"
             )
         else:
             result["warnings"].append(str(public_mirror.get("reason") or "public mirror recovery found no verified match"))
+            result["public_mirror_recovery"] = {
+                key: public_mirror.get(key)
+                for key in ("status", "reason", "cover_path")
+                if public_mirror.get(key) not in (None, "")
+            }
     if not media_probe:
-        result["pipeline_stage"] = "download" if direct_media_error else "media_resolution"
+        result["pipeline_stage"] = "media_resolution" if public_mirror_attempted else ("download" if direct_media_error else "media_resolution")
         detail = f" ({direct_media_error})" if direct_media_error else ""
         raise RuntimeError(f"no verified Shipinhao media was available{detail}")
     duration = safe_float(media_probe.get("duration_seconds")) or safe_float(profile.get("duration_seconds")) or 0
@@ -896,6 +1547,9 @@ def process_locked(
             "identity_terms": list(capture_metadata.get("identity_terms") or []),
             "content_identity_verified": bool(public_mirror.get("status") == "verified"),
             "public_mirror_validation": dict(public_mirror.get("validation") or {}),
+            "public_mirror_resolver_version": (
+                PUBLIC_MIRROR_RESOLVER_VERSION if public_mirror.get("status") == "verified" else 0
+            ),
             "media_filename": media_path.name,
             "audio_filename": audio_path.name,
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -985,6 +1639,11 @@ def find_cached_transcript(cache_dir: Path, requested_model: str, *, capture_sha
             continue
         if not capture_sha256 and cached.get("source_capture_sha256"):
             continue
+        if (
+            str(cached.get("input_kind") or "") == "content_verified_public_mirror"
+            and safe_int(cached.get("public_mirror_resolver_version")) != PUBLIC_MIRROR_RESOLVER_VERSION
+        ):
+            continue
         cached["_cache_path"] = str(path)
         return cached
     return {}
@@ -1035,7 +1694,7 @@ def write_transcript_context(transcript: dict[str, Any], path: Path) -> Path:
     input_kind = str(transcript.get("input_kind") or "card_media_url")
     evidence_note = "This is read-only transcript evidence resolved for the exact source-scoped Finder card."
     if input_kind == "content_verified_public_mirror":
-        evidence_note += " The original signed binary had expired, so the audio came from a duration- and content-matched public mirror."
+        evidence_note += " The original signed binary had expired, so the audio came from a content-verified public mirror or bounded excerpt from a longer source."
     lines = [
         "# Shipinhao Audio Transcript",
         "",
@@ -1166,6 +1825,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable cover/OCR and duration-verified public mirror recovery when a signed Finder URL expires.",
     )
+    parser.add_argument(
+        "--search-hint",
+        action="append",
+        default=[],
+        help="Optional bounded public-source search hint from a human or vision agent. Repeatable.",
+    )
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -1188,6 +1853,7 @@ def main() -> int:
             download_timeout=max(1, args.download_timeout),
             command_timeout=max(30, args.command_timeout),
             public_mirror_recovery=not args.no_public_mirror_recovery,
+            search_hints=args.search_hint,
         )
     except Exception as exc:
         result = {"status": "failed", "read_only": True, "error": f"{type(exc).__name__}: {str(exc)[:700]}"}

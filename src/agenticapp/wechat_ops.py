@@ -233,6 +233,23 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     voice.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     voice.set_defaults(func=cmd_voice_transcribe)
 
+    finder = nested.add_parser(
+        "shipinhao-transcribe",
+        help="Resolve and transcribe one exact WeChat Channels/Finder card with source-identity checks.",
+    )
+    finder.add_argument("--source-text-file", type=Path, required=True, help="UTF-8 file containing the exact Finder card XML/message.")
+    finder.add_argument("--output-dir", type=Path, required=True)
+    finder.add_argument("--cache-root", type=Path, default=PRIVATE / "shipinhao_media_transcripts")
+    finder.add_argument("--capture-manifest", type=Path)
+    finder.add_argument("--model", default=os.environ.get("WECHAT_SHIPINHAO_WHISPER_MODEL", "turbo"))
+    finder.add_argument("--device", default=os.environ.get("WECHAT_SHIPINHAO_WHISPER_DEVICE", "auto"))
+    finder.add_argument("--language", default=os.environ.get("WECHAT_SHIPINHAO_LANGUAGE", ""))
+    finder.add_argument("--search-hint", action="append", default=[], help="Optional public-source search hint. Repeatable.")
+    finder.add_argument("--max-duration", type=float, default=float(os.environ.get("WECHAT_SHIPINHAO_MAX_DURATION_SECONDS", "3600")))
+    finder.add_argument("--no-public-mirror-recovery", action="store_true")
+    finder.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    finder.set_defaults(func=cmd_shipinhao_transcribe)
+
     autopub = nested.add_parser("autopublish-video", help="Copy the latest mirrored WeChat video to Nutstore AutoPublish.")
     autopub.add_argument("--chat", action="append", default=[], help="Chat/group name to search. Repeatable. Defaults to all mirrored chats.")
     autopub.add_argument("--source", type=Path, help="Explicit local video path. Bypasses the mirror query.")
@@ -790,7 +807,9 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "mp.weixin read-only recovery extracts article content and reuses the private cache without GUI verification",
             "Shipinhao comment discovery accepts only the exact current card export",
             "Shipinhao media transcription uses only the exact current card, allowlisted Tencent hosts, a content-verified public mirror, or a matching visual-identity/audio-hash manifest",
-            "Shipinhao public-mirror recovery requires both duration and transcript-content evidence",
+            "Shipinhao public-mirror recovery requires exact-duration content evidence or a bounded, independently corroborated longer-source excerpt",
+            "Shipinhao related-speaker clips are rejected when they do not match the card paraphrase and topic evidence",
+            "the backend receives a bounded task packet with readable context paths but no raw Finder XML or signed media tokens",
             "Shipinhao download failure is never mislabeled as verified silent media",
             "Shipinhao native fallback binds a play control only to source identity in the same card",
             "read-only source tasks cannot enter waiting_confirmation for a verification page",
@@ -918,6 +937,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "shipinhao_public_mirror_content_identity",
             "test": "tests.test_shipinhao_media_transcribe.ShipinhaoMediaTranscribeTests.test_public_mirror_match_requires_duration_and_content_evidence",
+        },
+        {
+            "id": "shipinhao_public_excerpt_false_positive_guard",
+            "test": "tests.test_shipinhao_media_transcribe.ShipinhaoMediaTranscribeTests.test_paraphrase_match_rejects_related_but_wrong_speaker_clip",
+        },
+        {
+            "id": "shipinhao_worker_bounded_task_packet",
+            "test": worker_prefix + "test_worker_agent_packet_keeps_context_paths_but_drops_raw_finder_secrets",
         },
         {
             "id": "shipinhao_card_local_identity_binding",
@@ -1414,6 +1441,36 @@ def cmd_voice_transcribe(args: argparse.Namespace) -> int:
     ]
     if args.refresh:
         command.append("--refresh")
+    if getattr(args, "json", False):
+        command.append("--json")
+    return run_command(command, capture=False).returncode
+
+
+def cmd_shipinhao_transcribe(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(SCRIPTS / "shipinhao_media_transcribe.py"),
+        "--source-text-file",
+        str(args.source_text_file),
+        "--output-dir",
+        str(args.output_dir),
+        "--cache-root",
+        str(args.cache_root),
+        "--model",
+        str(args.model),
+        "--device",
+        str(args.device),
+        "--language",
+        str(args.language),
+        "--max-duration",
+        str(max(1.0, float(args.max_duration))),
+    ]
+    if args.capture_manifest:
+        command += ["--capture-manifest", str(args.capture_manifest)]
+    for hint in args.search_hint:
+        command += ["--search-hint", str(hint)]
+    if args.no_public_mirror_recovery:
+        command.append("--no-public-mirror-recovery")
     if getattr(args, "json", False):
         command.append("--json")
     return run_command(command, capture=False).returncode

@@ -107,6 +107,7 @@ labcanvas wechat worker --chat "懒人科研" enqueue "Use LabCanvas to render t
 labcanvas wechat status
 labcanvas wechat hold start
 labcanvas wechat stack start --web-port 19474
+labcanvas wechat shipinhao-transcribe --source-text-file <card.txt> --output-dir output/shipinhao-read --json
 labcanvas social project add --repo ../ZhJpBook --id pocketpolyglot
 labcanvas social campaign create --project pocketpolyglot --name introduction --objective "Introduce the usable open-source Studio" --platform x --platform reddit:r/languagelearning --platform hackernews
 labcanvas social draft generate CAMPAIGN_ID --dry-run --json

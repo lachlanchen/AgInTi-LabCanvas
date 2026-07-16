@@ -9,7 +9,7 @@ This workflow lets a LabCanvas worker read a WeChat Channels/Shipinhao share as 
 1. Resolve the exact current WeChat row and parse its `<finderFeed>` block.
 2. Bind the task to `objectId`, title, author, nonce ID, duration, and media URL hash.
 3. Try the allowlisted Tencent media URL with bounded download and SSRF guards.
-4. If the signed URL expired, OCR the exact card cover and search a bounded set of public mirrors. Require duration agreement and transcript-to-cover content agreement before accepting one.
+4. If the signed URL expired, OCR the exact card cover, translate short Chinese evidence when useful, and search a bounded set of public mirrors. Require transcript-to-cover agreement plus either duration agreement or a time-localized excerpt from a bounded longer source.
 5. If no public mirror passes, automatically open that exact card in the guarded source chat.
 6. Normalize to the latest message and scan bounded recent history. Associate a play control only with nearby title/author OCR from the same card.
 7. Run an identity-gated local capture. Wait for or start the `WeChatAppEx` PipeWire stream once, then record while visual source identity remains valid.
@@ -59,6 +59,15 @@ python agentic_tools/wechat_gui_agent/scripts/shipinhao_media_transcribe.py \
   --json
 ```
 
+The packaged LabCanvas entrypoint is equivalent:
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat shipinhao-transcribe \
+  --source-text-file '<TASK_DIR>/shipinhao_media_transcript/exact-source-card.txt' \
+  --output-dir '<TASK_DIR>/shipinhao_media_transcript' \
+  --json
+```
+
 `--captured-audio` remains an operator diagnostic input. Autonomous workers use `--capture-manifest` because it validates object ID, title, author, private path, identity terms, and SHA-256 before trusting audio. Every captured-audio cache name includes the audio hash, preventing one capture from overwriting or silently reusing another.
 
 ## Expired-URL Recovery
@@ -66,13 +75,21 @@ python agentic_tools/wechat_gui_agent/scripts/shipinhao_media_transcribe.py \
 Public-mirror recovery is automatic and intentionally strict:
 
 - use the exact card title, author, duration, and still-valid cover image;
-- OCR the cover locally with Tesseract;
+- OCR the cover locally with Tesseract and optional EasyOCR fallback;
+- translate only short Chinese title/cover evidence through a bounded helper;
 - search a small public candidate set through the locally installed `yt-dlp` module;
-- reject candidates outside the duration tolerance;
-- extract and transcribe actual candidate audio;
-- require a long matching English word run, matching Chinese text, or a strong exact-title match;
+- prefilter with available public captions before downloading candidate media;
+- prefer candidates inside the duration tolerance;
+- allow a longer public source only when card/caption evidence identifies a bounded excerpt window;
+- transcribe that excerpt with Whisper and require independent audio corroboration;
+- reject related videos from the same speaker when paraphrase/topic evidence does not match;
 - keep media, OCR, and transcripts in the ignored private cache;
 - expose only `content_verified_public_mirror`, a public candidate ID, and bounded match metrics to the worker.
+
+If the automatic query set remains unresolved, the manifest exposes private
+`cover_path` and `source_text_file` paths to the resumed worker. The agent may
+inspect the cover and rerun the same command with at most three repeatable
+`--search-hint` values. The deterministic evidence gate remains authoritative.
 
 Disable this fallback for diagnostics with `--no-public-mirror-recovery` or `WECHAT_SHIPINHAO_PUBLIC_MIRROR_RECOVERY=0`. A public mirror is equivalent content evidence, not proof that the original WeChat binary was recovered.
 
@@ -82,7 +99,7 @@ These outcomes are intentionally different:
 
 - `no_audio` with `verified_silent_media=true`: readable media was probed and contains zero audio streams.
 - `failure_stage=download`: the signed Tencent URL failed or expired.
-- `input_kind=content_verified_public_mirror`: the signed binary expired, but duration and transcript content matched the exact card evidence.
+- `input_kind=content_verified_public_mirror`: the signed binary expired, but transcript content matched the exact card evidence and either duration matched or a longer source was clipped to an independently corroborated excerpt.
 - `error_code=finder_card_not_found`: the exact source card was outside bounded history or could not be identified.
 - `error_code=finder_player_unavailable`: the exact card was found, but the Linux client did not open its player.
 - `error_code=finder_audio_stream_unavailable`: the verified player produced no capturable PipeWire stream.
@@ -102,6 +119,12 @@ labcanvas wechat worker reprocess '<TASK_ID>' \
 
 The worker writes `task.preflight.shipinhao_media_transcript`, resumes the exact chat's agent session, and sends the selected response to the task's original chat. Comments are a separate auxiliary source. Transcript and capture manifests are not comment exports.
 
+The resumed backend receives a bounded task packet rather than the full queue
+row. It includes the current request, source IDs, recent same-chat context,
+interruptions, route/routine state, and readable context paths. Raw Finder XML,
+signed URLs, cookies, keys, hashes, and unused media paths stay out of the model
+prompt.
+
 ## Failure Rules
 
 - Reject a capture if card or player visual identity does not match.
@@ -118,6 +141,12 @@ The worker writes `task.preflight.shipinhao_media_transcript`, resumes the exact
 The 2026-07-15 live validation recovered a roughly three-minute art lecture, detected the following feed item, produced a source-only Whisper transcript, ran the normal resumed worker agent, and verified the reply in the native chat plus SQLite mirror. A deliberately mixed capture was rejected before delivery.
 
 The 2026-07-16 regression test bound the exact TED card after its signed URL expired. Its 38-second card duration matched a 39.265-second public mirror; cover OCR and the Whisper transcript shared a 22-word contiguous run with 0.697 token coverage. The tool returned `content_verified_public_mirror` instead of falsely reporting no audio or requiring the unsupported Linux Finder player.
+
+The later 2026-07-16 live excerpt test recovered a 43-second Steve Jobs card
+from a 133.3-second public talk. It rejected a related “Secrets of Life” clip,
+selected the consulting talk, localized `19.925-62.925`, and corroborated the
+caption match with a Whisper transcript about owning recommendations and
+learning from implementation. A warm-cache rerun completed in about one second.
 
 ## Open-Source References
 

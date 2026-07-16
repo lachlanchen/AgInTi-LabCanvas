@@ -21,6 +21,7 @@ import tempfile
 import time
 from typing import Any
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from file_lock import fcntl_compat as fcntl
@@ -2967,6 +2968,260 @@ def task_orchestrator_stage(task: dict[str, Any]) -> str:
     return "routine:unclassified"
 
 
+def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
+    """Build the bounded task packet consumed by the resumed backend agent."""
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    view: dict[str, Any] = {
+        "id": str(task.get("id") or ""),
+        "chat": str(task.get("chat") or ""),
+        "status": str(task.get("status") or ""),
+        "current_request": sanitize_worker_agent_text(task_focus_text(task), max_len=7000),
+        "source": {
+            key: source.get(key)
+            for key in ("message_table", "local_id", "server_id", "create_time", "local_type", "sender_display")
+            if source.get(key) not in (None, "")
+        },
+        "route_decision": compact_worker_agent_value(task.get("route_decision") or {}, key="route_decision"),
+        "routine": compact_worker_agent_value(task.get("routine") or {}, key="routine"),
+        "routine_contract": str(task.get("routine_contract") or ""),
+        "orchestrator": compact_worker_agent_value(task.get("orchestrator") or {}, key="orchestrator"),
+    }
+    recent_context: list[dict[str, Any]] = []
+    for row in (task.get("context") or [])[-12:]:
+        if not isinstance(row, dict):
+            continue
+        content = sanitize_worker_agent_text(row.get("content"), max_len=1400)
+        recent_context.append(
+            {
+                key: row.get(key)
+                for key in ("local_id", "server_id", "local_type", "create_time", "sender_display", "is_self")
+                if row.get(key) not in (None, "")
+            }
+            | ({"content": content} if content else {})
+        )
+    if recent_context:
+        view["recent_same_chat_context"] = recent_context
+    interruptions = []
+    for item in task_interruptions(task)[-8:]:
+        if not isinstance(item, dict):
+            continue
+        interruption_source = item.get("source") if isinstance(item.get("source"), dict) else {}
+        interruptions.append(
+            {
+                "at": str(item.get("at") or ""),
+                "request": sanitize_worker_agent_text(
+                    item.get("request") or item.get("request_excerpt"),
+                    max_len=2200,
+                ),
+                "source": {
+                    key: interruption_source.get(key)
+                    for key in ("local_id", "server_id", "create_time", "sender_display")
+                    if interruption_source.get(key) not in (None, "")
+                },
+            }
+        )
+    if interruptions:
+        view["interruptions"] = interruptions
+    preflight = compact_worker_preflight_for_agent(task.get("preflight"))
+    if preflight:
+        view["preflight"] = preflight
+    for key in (
+        "generated_video_monitor",
+        "generated_video_submit_probe",
+        "generated_video_poststage",
+        "existing_video_publish_poststage",
+        "story_confirmation_result",
+        "approved_story_message",
+        "approved_story_files",
+        "credit_guard",
+        "monitor_only_no_resubmit",
+    ):
+        if task.get(key) not in (None, "", [], {}):
+            view[key] = compact_worker_agent_value(task.get(key), key=key)
+    return view
+
+
+def compact_worker_preflight_for_agent(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for name, payload in value.items():
+        if not isinstance(payload, dict):
+            continue
+        summary: dict[str, Any] = {}
+        for key in (
+            "status",
+            "ok",
+            "failure_stage",
+            "reason",
+            "error",
+            "input_kind",
+            "visual_identity_verified",
+            "content_identity_verified",
+            "verified_silent_media",
+            "source_quality",
+            "agent_next_action",
+        ):
+            if payload.get(key) not in (None, "", [], {}):
+                summary[key] = compact_worker_agent_value(payload.get(key), key=key)
+        for key in (
+            "agent_context_path",
+            "manifest_json",
+            "manifest_md",
+            "markdown_path",
+            "json_path",
+            "task_copy_path",
+            "saved_path",
+            "target",
+            "contract_path",
+            "source_text_file",
+            "cover_path",
+        ):
+            if payload.get(key):
+                summary[key] = str(payload.get(key))
+        validation = payload.get("public_mirror_validation")
+        if isinstance(validation, dict):
+            summary["public_mirror_validation"] = {
+                key: validation.get(key)
+                for key in (
+                    "accepted",
+                    "duration_match",
+                    "content_match_strong",
+                    "source_excerpt_verified",
+                    "candidate_duration_seconds",
+                    "excerpt_start_seconds",
+                    "excerpt_end_seconds",
+                )
+                if validation.get(key) is not None
+            }
+        copied = payload.get("copied") if isinstance(payload.get("copied"), list) else []
+        if copied:
+            summary["copied"] = [compact_preflight_file_for_agent(item) for item in copied[:8] if isinstance(item, dict)]
+        paths = collect_preflight_agent_paths(payload)
+        if paths:
+            summary["context_paths"] = paths
+        if summary:
+            result[str(name)] = summary
+    return result
+
+
+def compact_preflight_file_for_agent(item: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        key: item.get(key)
+        for key in ("task_copy_path", "saved_path", "suffix", "size_bytes", "status")
+        if item.get(key) not in (None, "")
+    }
+    for section in ("document_read", "vision", "ocr"):
+        payload = item.get(section) if isinstance(item.get(section), dict) else {}
+        paths = collect_preflight_agent_paths(payload)
+        if paths:
+            result[section] = {"status": payload.get("status"), "context_paths": paths}
+    return result
+
+
+def collect_preflight_agent_paths(value: Any, *, limit: int = 20) -> list[str]:
+    allowed_keys = {
+        "agent_context_path",
+        "manifest_json",
+        "manifest_md",
+        "markdown_path",
+        "json_path",
+        "text_path",
+        "task_copy_path",
+        "saved_path",
+        "target",
+        "contract_path",
+        "source_text_file",
+        "cover_path",
+    }
+    paths: list[str] = []
+
+    def visit(item: Any, key: str = "", depth: int = 0) -> None:
+        if depth > 5 or len(paths) >= limit:
+            return
+        if isinstance(item, dict):
+            for child_key, child in item.items():
+                visit(child, str(child_key), depth + 1)
+        elif isinstance(item, list):
+            for child in item[:20]:
+                visit(child, key, depth + 1)
+        elif key in allowed_keys and isinstance(item, str) and item.strip():
+            path = item.strip()
+            if path not in paths:
+                paths.append(path)
+
+    visit(value)
+    return paths
+
+
+def compact_worker_agent_value(value: Any, *, key: str = "", depth: int = 0) -> Any:
+    if depth > 5:
+        return "[bounded]"
+    lowered = key.casefold()
+    if any(marker in lowered for marker in ("cookie", "secret", "password", "encfilekey", "aeskey")):
+        return "[redacted]"
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for child_key, child in list(value.items())[:50]:
+            if any(
+                marker in str(child_key).casefold()
+                for marker in ("media_urls", "cover_urls", "signed_url", "source_url", "raw_xml", "source_text")
+            ):
+                continue
+            result[str(child_key)] = compact_worker_agent_value(child, key=str(child_key), depth=depth + 1)
+        return result
+    if isinstance(value, list):
+        return [compact_worker_agent_value(item, key=key, depth=depth + 1) for item in value[:20]]
+    if isinstance(value, str):
+        if key in {"thread_url", "url"}:
+            return sanitize_worker_operational_url(value)
+        return sanitize_worker_agent_text(value, max_len=2500)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return sanitize_worker_agent_text(value, max_len=1000)
+
+
+def sanitize_worker_operational_url(value: str) -> str:
+    text = str(value or "").strip()
+    try:
+        parsed = urllib.parse.urlsplit(text)
+    except ValueError:
+        return "[invalid URL]"
+    host = (parsed.hostname or "").casefold()
+    if any(host == suffix or host.endswith("." + suffix) for suffix in ("qq.com", "qpic.cn", "gtimg.com", "weixin.qq.com")):
+        return "[private WeChat source URL]"
+    return (
+        urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+        if parsed.scheme
+        else collapse_context_text(text, max_len=1000)
+    )
+
+
+def sanitize_worker_agent_text(value: Any, *, max_len: int) -> str:
+    text = html.unescape(str(value or ""))
+    text = re.sub(
+        r"<finderFeed(?:\s[^>]*)?>.*?</finderFeed>",
+        " [Finder card resolved by deterministic preflight] ",
+        text,
+        flags=re.I | re.S,
+    )
+    text = re.sub(
+        r"https?://[^\s<>\"']+",
+        lambda match: sanitize_worker_operational_url(match.group(0)),
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"\b(?:stodownload|encfilekey|aeskey|cdnthumburl|cdnvideourl|md5|newmd5|rawmd5)\s*=\s*[\"'][^\"']*[\"']",
+        "[private media field]",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", text, flags=re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return collapse_context_text(text, max_len=max_len)
+
+
 def run_worker_agent_session(task: dict[str, Any], policy: dict[str, Any]) -> str:
     routine_context = routine_prompt_context(task)
     tool_context = build_worker_tool_context(task)
@@ -2974,6 +3229,7 @@ def run_worker_agent_session(task: dict[str, Any], policy: dict[str, Any]) -> st
     orchestrator_context = json.dumps(task.get("orchestrator") or {}, ensure_ascii=False, indent=2)
     execution_context = json.dumps(worker_execution_contract(task), ensure_ascii=False, indent=2)
     instruction_context = json.dumps(worker_instruction_contract(task), ensure_ascii=False, indent=2)
+    task_packet = json.dumps(worker_agent_task_view(task), ensure_ascii=False, indent=2)
     prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
 WeChat is only the message transport: it receives user messages and returns safe files/messages. Backend execution belongs to the routine orchestrator and the selected per-chat worker agent session.
@@ -2981,7 +3237,7 @@ You are being resumed by the central routine orchestrator. Treat the routine con
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 Quality matters more than visible activity. Do not send low-value reports, screenshots, thumbnails, or boilerplate progress. For ordinary links, channel videos, webpage cards, and shared files, first try hard to read/watch/open the actual source or a reliable transcript/comment/metadata capture. Then send a short, useful human answer. If you only saw a title/card/verification page, say that limitation plainly and do not pretend you read the source.
 Do not force a rigid response template. Use whatever concise shape fits the actual material and the chat's purpose. Avoid repetitive acknowledgements, "saved files" chatter, and generic summaries that could apply to any page.
-For Shipinhao/Finder cards, read `task.preflight.shipinhao_media_transcript.agent_context_path` first when its status is `transcribed` or `cached`. Summarize the actual speech naturally and use comments/card metadata only as auxiliary context. Do not expose signed media URLs, download diagnostics, model-loading logs, or raw parser fields in the chat reply.
+For Shipinhao/Finder cards, use the deterministic Shipinhao resolver rather than improvising media/search commands. Read `task.preflight.shipinhao_media_transcript.agent_context_path` first when its status is `transcribed` or `cached`. Summarize the actual speech naturally and use comments/card metadata only as auxiliary context. Do not expose signed media URLs, download diagnostics, model-loading logs, or raw parser fields in the chat reply.
 Only describe a Shipinhao video as silent when that preflight has `status=no_audio` and `verified_silent_media=true`. A download failure, missing card, unsupported player, or unavailable capture stream means the audio was not recovered; it does not mean the source has no audio.
 For images, inspect the exact source and answer as a normal multimodal Codex conversation: explain the scene, story, document, screenshot, diagram, product, CAD/PCB render, or important text according to the user's likely intent and same-chat context. OCR is hidden supporting evidence only. Do not expose OCR labels, reader/model details, file diagnostics, or a fixed caption/transcription schema unless the user asks for those diagnostics or an exact transcription.
 For ZIP, Word, PDF, and text attachments, inspect `task.preflight.file_intake.copied[*].document_read` or `task.preflight.media_resolution.copied[*].document_read`. Open every `agent_context_path` needed for the current request before answering. A bare readable document should receive a short natural identification and preliminary content summary, not a checksum receipt. For an explicit request, perform the requested summary, extraction, comparison, translation, or analysis using the extracted content. Treat archive inventories and partial/OCR reads honestly. Do not expose parser/tool/checksum diagnostics or resend the original attachment unless the user asks.
@@ -3036,8 +3292,8 @@ PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --wait-s
 Then return a confirmation telling the user to complete the manual step in noVNC and approve continuation.
 If other external tools or files are not available, say exactly what is needed next.
 
-Task:
-{json.dumps(task, ensure_ascii=False, indent=2)}
+Bounded task packet:
+{task_packet}
 """
     backend = select_agent_backend(task)
     result = run_codex_session(
@@ -3472,6 +3728,8 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
                 )
         result["capture_tool"] = str(SHIPINHAO_GUI_AUDIO_CAPTURE_SCRIPT)
         write_shipinhao_media_transcript_manifest(output_dir, result)
+    result["source_text_file"] = str(source_path)
+    write_shipinhao_media_transcript_manifest(output_dir, result)
     return result
 
 
@@ -8956,7 +9214,7 @@ Generated-video route contract:
 
 def build_worker_tool_context(task: dict[str, Any]) -> str:
     artifact_dir = str(task.get("artifact_dir") or worker_artifact_dir(task))
-    prompt_text = str(task.get("request") or "").strip()
+    prompt_text = sanitize_worker_agent_text(task_focus_text(task), max_len=3000)
     quoted_prompt = json.dumps(prompt_text or "prepare CAD/PCB/Blender artifacts", ensure_ascii=False)
     generated_video_note = build_generated_video_tool_context(task)
     media_resolution_note = build_media_resolution_tool_context(task)
@@ -9021,8 +9279,10 @@ LazyEdit/AutoPublish video publishing:
 - Final responses should include LazyEdit job id, remote job id if present, platforms, status, whether processing was reused/rerun, and safe output paths.
 
 Shipinhao/Finder and short-video shares:
+- Treat the deterministic resolver as the method owner. For a standalone rerun use `PYTHONPATH=src python -m agenticapp wechat shipinhao-transcribe --source-text-file <exact-card.txt> --output-dir {artifact_dir}/shipinhao_media_transcript --json`. It owns signed-URL download, cover OCR/translation, bounded public-source search, longer-source excerpt isolation, ffprobe validation, Whisper transcription, caching, and the private evidence manifest. Do not make the backend agent rediscover those steps manually.
+- If that routine remains unresolved and its packet supplies `public_mirror_recovery.cover_path` plus `source_text_file`, inspect the cover privately with vision, derive at most three concise speaker/topic/source hints, and rerun the same CLI with repeatable `--search-hint "..."` arguments. The deterministic identity gate must still accept the transcript; an agent's visual guess alone is never evidence. Do not expose the cover path or search diagnostics in WeChat.
 - First inspect `task.preflight.wechat_source_recovery`. Its Shipinhao packet contains exact same-message title, author, object ID, nonce ID, and reconstruction queries without mixing older chats.
-- Then inspect `task.preflight.shipinhao_media_transcript`. If it is `transcribed` or `cached`, read `agent_context_path` before answering. Treat `visual_identity_verified=true` plus a matching object ID as actual source-audio evidence. A `content_verified_public_mirror` is also usable when `content_identity_verified=true` and `public_mirror_validation.accepted=true`; it means the private pipeline matched duration and transcript content against the exact card cover, not that it recovered the original binary. Do not expose private audio, capture manifests, signed URLs, screenshots, or downloader logs.
+- Then inspect `task.preflight.shipinhao_media_transcript`. If it is `transcribed` or `cached`, read `agent_context_path` before answering. Treat `visual_identity_verified=true` plus a matching object ID as actual source-audio evidence. A `content_verified_public_mirror` is also usable when `content_identity_verified=true` and `public_mirror_validation.accepted=true`; it means the private pipeline matched the exact card's content evidence and either its duration or a bounded excerpt from a longer public source, not that it recovered the original binary. Do not expose private audio, capture manifests, signed URLs, screenshots, or downloader logs.
 - Only call a Finder video silent when the preflight says `status=no_audio` and `verified_silent_media=true`. HTTP 400/download failure, card-scan failure, `finder_player_unavailable`, and `finder_audio_stream_unavailable` mean source audio was not recovered, not that it does not exist.
 - If the exact Tencent card URL expires, the transcriber first tries cover-OCR plus duration/content-verified public-mirror recovery. Only when that and exact cached media fail should the preflight use its `capture_tool`/`agent_next_action`: open only the exact native Finder card, run `shipinhao_gui_audio_capture.py` with distinctive title/author terms, and reprocess the same task. Never reload after binding the `WeChatAppEx` stream, trust nominal duration alone, or reuse a different object ID. The helper must trim feed auto-advance before transcription.
 - Treat comment sections as useful auxiliary evidence when they are accessible from exact local media/cache, an auto-discovered local `wx_channel` API/export, an already-visible native capture, or a reliable public source.
