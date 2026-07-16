@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="920" viewBox="0 0 1500 920">
+<rect width="100%" height="100%" fill="#f7fafc"/>
+<text x="70" y="55" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#14213d">C12880MA 25 mm pilot holder - dimensional intent</text>
+<text x="70" y="91" font-family="Arial, sans-serif" font-size="16" fill="#475569">Optical axis runs left to right. The pilot is smooth and is not a 1-32 thread.</text>
+<text x="80" y="130" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#1e293b">Side view</text>
+<rect x="147.0" y="195.0" width="90.0" height="450.0" fill="#7dd3fc" stroke="#0369a1" stroke-width="3"/>
+<rect x="237.0" y="168.0" width="115.2" height="504.0" rx="8" fill="#38bdf8" stroke="#0369a1" stroke-width="3"/>
+<rect x="327.0" y="307.5" width="182.16" height="225.0" fill="#334155" stroke="#0f172a" stroke-width="3"/>
+<rect x="513.66" y="204.0" width="50.4" height="432.0" fill="#fb923c" stroke="#c2410c" stroke-width="3"/>
+<line x1="127.0" y1="420" x2="599.06" y2="420" stroke="#ef4444" stroke-width="2" stroke-dasharray="10 7"/>
+<text x="147.0" y="158" font-family="Arial" font-size="15" fill="#075985">external pilot D25.0 x 5.0</text>
+<text x="342.0" y="576.6" font-family="Arial" font-size="15" fill="#334155">C12880MA 20.12 x 12.5 x 10.12</text>
+<text x="468.65999999999997" y="183" font-family="Arial" font-size="15" fill="#9a3412">lead-window retainer</text>
+<text x="920" y="125" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#1e293b">Pilot/front face</text>
+<rect x="846.0" y="142.0" width="408.0" height="336.0" rx="24" fill="#38bdf8" stroke="#0369a1" stroke-width="3"/>
+<circle cx="1050" cy="310" r="150.0" fill="#bae6fd" stroke="#0369a1" stroke-width="3"/>
+<circle cx="1050" cy="310" r="108.0" fill="#f8fafc" stroke="#64748b" stroke-width="2"/>
+<circle cx="888.0" cy="424.0" r="16.799999999999997" fill="#fed7aa" stroke="#c2410c" stroke-width="2"/>
+<circle cx="888.0" cy="196.0" r="16.799999999999997" fill="#fed7aa" stroke="#c2410c" stroke-width="2"/>
+<circle cx="1212.0" cy="424.0" r="16.799999999999997" fill="#fed7aa" stroke="#c2410c" stroke-width="2"/>
+<circle cx="1212.0" cy="196.0" r="16.799999999999997" fill="#fed7aa" stroke="#c2410c" stroke-width="2"/>
+<text x="75" y="700" font-family="Arial" font-size="20" font-weight="700" fill="#1e293b">Critical dimensions and constraints</text>
+<text x="75" y="735" font-family="Arial" font-size="16" fill="#334155">- Sensor locating pocket: 20.52 x 12.90 mm (0.20 mm clearance per side)</text>
+<text x="75" y="766" font-family="Arial" font-size="16" fill="#334155">- Final sensor-side aperture: D5.0 mm; official entrance opening: D3.2 mm</text>
+<text x="75" y="797" font-family="Arial" font-size="16" fill="#334155">- Slit: 0.05 x 0.5 mm; package center shifted -0.5 mm so slit meets pilot axis</text>
+<text x="75" y="828" font-family="Arial" font-size="16" fill="#334155">- Retainer: 32 x 24 x 2.8 mm with 18 x 9.5 mm lead window</text>
+<text x="75" y="859" font-family="Arial" font-size="16" fill="#334155">- Four M2.5 positions: Y +/-13.5 mm, Z +/-9.5 mm</text>
+<text x="75" y="890" font-family="Arial" font-size="16" fill="#334155">- Print in insulating polymer; do not electrically short the conductive sensor case</text>
+</svg>
