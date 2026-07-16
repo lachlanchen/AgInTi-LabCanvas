@@ -500,7 +500,10 @@ def build_adapter_design(
         "schema_version": 1,
         "name": stem,
         "design_kind": "smooth_stepped_adapter",
-        "design_intent": "Four independent exact-diameter M10-class to 6.5 mm stepped adapters.",
+        "design_intent": (
+            "Four independent exact-diameter M10-class to "
+            f"{upper_diameter_mm:g} mm stepped adapters."
+        ),
         "parameters": parameters,
         "outputs": outputs,
         "validation": validation,

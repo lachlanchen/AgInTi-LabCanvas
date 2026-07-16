@@ -1,33 +1,22 @@
 # cage_dock_m10_exact_to_m6p4_adapter_20_50
 
-Latest checked run: `runs/run-2-d10p0-to-d6p4-2x2-print-ready-20260716T065944Z/`
+This run contains one direct-print job: four independent smooth stepped adapters
+in a 2x2 upright layout.
 
-Use the root files prefixed `PRINT_THIS_` for slicing. The run folder preserves
-the exact source snapshot, validation manifest, renders, and editable single-part
-STEP files.
+## Dimensions
 
-## Parameters
+- Lower insert: `10.0 mm` diameter x `20.0 mm`
+- Upper shaft: `6.4 mm` diameter x `50.0 mm`
+- Total height: `70.0 mm`
+- Added fit compensation: `0.0 mm`
+- Threading: none
+- M3 pilot: none
 
-```json
-{
-  "lower_insert_diameter_mm": 10.0,
-  "lower_insert_length_mm": 20.0,
-  "upper_shaft_diameter_mm": 6.4,
-  "upper_shaft_length_mm": 50.0,
-  "total_height_mm": 70.0,
-  "diameter_fit_compensation_mm": 0.0,
-  "lead_in_chamfer_mm": 0.25,
-  "top_chamfer_mm": 0.25,
-  "print_grid_rows": 2,
-  "print_grid_cols": 2,
-  "print_grid_pitch_mm": 25.0,
-  "threading": "None; M10/M6 labels refer to smooth diameter classes only.",
-  "m3_pilot": "None in this run.",
-  "print_orientation": "Upright on the 10.0 mm lower insert; use a slicer brim if needed."
-}
-```
+`M10` and `M6` are descriptive smooth-diameter classes here. Use the files
+prefixed `PRINT_THIS_`; enable a slicer brim if the upright parts need more bed
+adhesion.
 
-## Latest Outputs
+## Outputs
 
 ```json
 {
@@ -37,5 +26,63 @@ STEP files.
   "adapter_grid_render": "cad/designs/cage_dock_m10_exact_to_m6p5_adapter_20_50/runs/run-2-d10p0-to-d6p4-2x2-print-ready-20260716T065944Z/PRINT_THIS_cage_dock_m10_exact_to_m6p4_adapter_20_50_2x2_print_grid_render.png",
   "single_editable_step": "cad/designs/cage_dock_m10_exact_to_m6p5_adapter_20_50/runs/run-2-d10p0-to-d6p4-2x2-print-ready-20260716T065944Z/USE_THIS_cage_dock_m10_exact_to_m6p4_adapter_20_50_single.step",
   "single_render": "cad/designs/cage_dock_m10_exact_to_m6p5_adapter_20_50/runs/run-2-d10p0-to-d6p4-2x2-print-ready-20260716T065944Z/USE_THIS_cage_dock_m10_exact_to_m6p4_adapter_20_50_single_render.png"
+}
+```
+
+## Validation
+
+```json
+{
+  "single_step": {
+    "valid": true,
+    "solids": 1,
+    "bbox_mm": [
+      10.0,
+      10.0,
+      70.0
+    ],
+    "bspline_faces": 0
+  },
+  "single_stl": {
+    "watertight": true,
+    "component_count": 1,
+    "bbox_mm": [
+      10.0,
+      9.996892,
+      70.0
+    ],
+    "vertices": 819,
+    "faces": 1634
+  },
+  "grid_step": {
+    "valid": true,
+    "solids": 4,
+    "bbox_mm": [
+      35.0,
+      35.0,
+      70.0
+    ],
+    "bspline_faces": 0
+  },
+  "grid_stl": {
+    "watertight": true,
+    "component_count": 4,
+    "bbox_mm": [
+      35.0,
+      34.996891,
+      70.0
+    ],
+    "vertices": 3276,
+    "faces": 6536
+  },
+  "grid_3mf": {
+    "entries": [
+      "3D/3dmodel.model",
+      "[Content_Types].xml",
+      "_rels/.rels"
+    ],
+    "has_model": true,
+    "model_bytes": 516851
+  }
 }
 ```
