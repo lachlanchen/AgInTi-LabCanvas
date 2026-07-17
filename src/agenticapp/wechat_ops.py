@@ -851,7 +851,9 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "Shipinhao related-speaker clips are rejected when they do not match the card paraphrase and topic evidence",
             "the backend receives a bounded task packet with readable context paths but no raw Finder XML or signed media tokens",
             "Shipinhao download failure is never mislabeled as verified silent media",
+            "Shipinhao acquisition failure writes agent context and cannot alias to verified silence",
             "Shipinhao native fallback binds a play control only to source identity in the same card",
+            "Shipinhao native fallback can bind the exact cached cover on the received side",
             "read-only source tasks cannot enter waiting_confirmation for a verification page",
             "ZIP, Word, PDF, and text attachments are safely extracted into agent-readable task context",
             "the tmux worker starts through the guarded self-test entrypoint",
@@ -995,6 +997,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": "tests.test_shipinhao_media_transcribe.ShipinhaoMediaTranscribeTests.test_download_failure_is_not_reported_as_no_audio",
         },
         {
+            "id": "shipinhao_failure_context_not_silent",
+            "test": worker_prefix + "test_failed_shipinhao_acquisition_creates_not_silent_agent_context",
+        },
+        {
+            "id": "shipinhao_failure_alias_not_silent",
+            "test": worker_prefix + "test_finder_audio_alias_cannot_turn_failed_download_into_silence",
+        },
+        {
             "id": "shipinhao_public_mirror_content_identity",
             "test": "tests.test_shipinhao_media_transcribe.ShipinhaoMediaTranscribeTests.test_public_mirror_match_requires_duration_and_content_evidence",
         },
@@ -1009,6 +1019,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "shipinhao_card_local_identity_binding",
             "test": "tests.test_shipinhao_gui_audio_capture.ShipinhaoGuiAudioCaptureTests.test_play_control_is_bound_only_to_nearby_card_identity",
+        },
+        {
+            "id": "shipinhao_exact_cover_identity_binding",
+            "test": "tests.test_shipinhao_gui_audio_capture.ShipinhaoGuiAudioCaptureTests.test_exact_cover_match_returns_source_scoped_click_target",
         },
         {
             "id": "read_only_source_never_waits_for_verification",

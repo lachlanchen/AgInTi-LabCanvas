@@ -11,7 +11,7 @@ This workflow lets a LabCanvas worker read a WeChat Channels/Shipinhao share as 
 3. Try the allowlisted Tencent media URL with bounded download and SSRF guards.
 4. If the signed URL expired, OCR the exact card cover, translate short Chinese evidence when useful, and search a bounded set of public mirrors. Require transcript-to-cover agreement plus either duration agreement or a time-localized excerpt from a bounded longer source.
 5. If no public mirror passes, automatically open that exact card in the guarded source chat.
-6. Normalize to the latest message and scan bounded recent history. Associate a play control only with nearby title/author OCR from the same card.
+6. Normalize to the latest message and scan bounded recent history. Match the exact cached card cover on the received side first; otherwise associate a play control only with nearby title/author OCR from the same card.
 7. Run an identity-gated local capture. Wait for or start the `WeChatAppEx` PipeWire stream once, then record while visual source identity remains valid.
 8. Stop after consecutive identity loss or the card duration upper bound, trim the source-only audio, and write `verified-capture.json` below the private object-ID cache.
 9. Transcribe with Whisper, write timestamped Markdown, and pass only the source-scoped transcript to the resumed per-chat worker agent.
@@ -37,7 +37,10 @@ For an exact player already visible, omit `--chat` and supply distinctive `--ide
 - takes the serialized WeChat GUI lock;
 - opens only the configured source chat and rejects a failed title guard;
 - parses Tesseract TSV literally so quote characters cannot merge unrelated rows;
+- locates the exact same-object cached cover with bounded multi-scale matching;
+- rejects cover/play candidates on the right-aligned reply side;
 - binds a play control only to OCR evidence in its local card neighborhood;
+- preserves cover/play candidate identity so real media targets receive the full player-open timeout;
 - selects a PipeWire output whose process binary is `WeChatAppEx` on the same display;
 - OCRs player title and footer regions without navigating or posting;
 - records with `pw-record` while source identity remains visible;
@@ -104,8 +107,9 @@ These outcomes are intentionally different:
 - `error_code=finder_player_unavailable`: the exact card was found, but the Linux client did not open its player.
 - `error_code=finder_audio_stream_unavailable`: the verified player produced no capturable PipeWire stream.
 - `error_code=wechat_gui_busy`: another guarded GUI operation owns the serialized lane; retry later.
+- `audio_evidence_status=media_unavailable_not_silent`: no source transcript was recovered, and silence was not verified.
 
-Only `no_audio` means the video is silent. A content-verified public mirror is usable transcript evidence; the remaining failure outcomes preserve card, comment, and public reconstruction as weaker evidence and require an evidence-limited answer. They must not be rewritten as “the video has no audio.”
+Every preflight outcome writes a private `agent_context_path`. The resumed agent must read it even when the pipeline failed. Only `no_audio` plus `verified_silent_media=true` means the video is silent. Failure aliases forcibly clear the silent flag. A content-verified public mirror is usable transcript evidence; the remaining failure outcomes preserve card, comment, and public reconstruction as weaker evidence and require an evidence-limited answer. They must not be rewritten as “the video has no audio.”
 
 ## Worker Reprocessing
 
@@ -147,6 +151,13 @@ from a 133.3-second public talk. It rejected a related “Secrets of Life” cli
 selected the consulting talk, localized `19.925-62.925`, and corroborated the
 caption match with a Whisper transcript about owning recommendations and
 learning from implementation. A warm-cache rerun completed in about one second.
+
+The 2026-07-17 regression used a real expired-URL card whose Linux client could
+not open a Finder player. Exact-cover matching located the source card at high
+confidence, while the worker emitted `media_unavailable_not_silent` and a
+mandatory agent evidence context. Tests prove that neither the Finder packet nor
+its general audio-intake alias can convert this acquisition failure into
+`verified_silent_media=true`.
 
 ## Open-Source References
 

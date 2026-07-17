@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -97,8 +98,67 @@ class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
 
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["center_x"], 200.0)
+        self.assertEqual(candidates[0]["kind"], "play_control")
         self.assertIn("一个人的能力是怎么来的", candidates[0]["matched_terms"])
         self.assertNotIn("TED英语演讲", candidates[0]["text"])
+
+    def test_identity_binding_rejects_right_aligned_play_control(self) -> None:
+        module = load_module()
+        tsv = (
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            "5\t1\t1\t1\t1\t1\t720\t220\t180\t35\t95\tExact title\n"
+        )
+        plays = [
+            {
+                "text": "visible video play control",
+                "kind": "play_control",
+                "matched_terms": [],
+                "center_x": 480.0,
+                "center_y": 150.0,
+                "score": 64,
+            }
+        ]
+
+        candidates = module.associate_play_candidates_with_identity(
+            tsv,
+            plays,
+            ["Exact title"],
+            1,
+            source_side_width=350.0,
+        )
+
+        self.assertEqual(candidates, [])
+
+    def test_exact_cover_match_returns_source_scoped_click_target(self) -> None:
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            self.skipTest("OpenCV is not installed")
+        module = load_module()
+        rng = np.random.default_rng(42)
+        cover = rng.integers(0, 256, size=(240, 180), dtype=np.uint8)
+        screenshot = np.full((700, 1000), 235, dtype=np.uint8)
+        displayed = cv2.resize(cover, (90, 120), interpolation=cv2.INTER_AREA)
+        region = {"left": 300, "top": 50, "width": 690, "height": 600}
+        screenshot[150:270, 350:440] = displayed
+
+        with tempfile.TemporaryDirectory() as tmp:
+            screenshot_path = Path(tmp) / "screen.png"
+            cover_path = Path(tmp) / "cover.png"
+            cv2.imwrite(str(screenshot_path), screenshot)
+            cv2.imwrite(str(cover_path), cover)
+            candidates = module.exact_cover_candidates(
+                screenshot_path,
+                cover_path,
+                region=region,
+            )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["kind"], "exact_cover")
+        self.assertGreaterEqual(candidates[0]["match_confidence"], 0.70)
+        self.assertAlmostEqual(candidates[0]["center_x"], 95.0, delta=3.0)
+        self.assertAlmostEqual(candidates[0]["center_y"], 160.0, delta=3.0)
 
     def test_play_control_preserves_tesseract_reading_order_across_baselines(self) -> None:
         module = load_module()
@@ -207,6 +267,7 @@ class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
         window = mock.Mock(width=1000, height=700, wid="100", x=20, y=30)
         candidate = {
             "text": "identity-bound video card",
+            "kind": "play_control",
             "matched_terms": ["Exact title"],
             "center_x": 220.0,
             "center_y": 230.0,
@@ -215,13 +276,15 @@ class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
 
         with mock.patch.object(module, "jump_to_latest_message", return_value=True), mock.patch.object(
             module, "capture_message_pane_tsv", return_value="tsv"
+        ), mock.patch.object(
+            module, "exact_cover_candidates", return_value=[]
         ), mock.patch.object(module, "ocr_line_candidates", return_value=[]), mock.patch.object(
             module, "play_button_candidates", return_value=[]
         ), mock.patch.object(
             module, "associate_play_candidates_with_identity", return_value=[candidate]
         ), mock.patch.object(module, "deduplicate_click_candidates", return_value=[candidate]), mock.patch.object(
             module, "wait_for_channels_window", return_value=None
-        ):
+        ) as wait_for_player:
             player, evidence = module.open_exact_card_from_visible_history(
                 env={"DISPLAY": ":97"},
                 gui=gui,
@@ -231,13 +294,14 @@ class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
                 min_term_matches=1,
                 max_scrolls=1,
                 scroll_clicks=1,
-                player_open_timeout=2,
+                player_open_timeout=8,
             )
 
         self.assertIsNone(player)
         self.assertEqual(evidence["status"], "source_card_found_player_unavailable")
         self.assertTrue(evidence["source_card_found"])
         self.assertEqual(evidence["matched_terms"], ["Exact title"])
+        self.assertEqual(wait_for_player.call_args.kwargs["timeout"], 8)
 
 
 if __name__ == "__main__":

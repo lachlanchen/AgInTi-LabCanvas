@@ -49,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--object-id", required=True)
     parser.add_argument("--title", required=True)
     parser.add_argument("--author", default="")
+    parser.add_argument(
+        "--cover-image",
+        type=Path,
+        help="Exact card cover cached from the same Finder object; used only as a visual identity anchor.",
+    )
     parser.add_argument("--identity-term", action="append", default=[])
     parser.add_argument("--min-term-matches", type=int, default=1)
     parser.add_argument("--display", default=":97")
@@ -88,6 +93,10 @@ def main() -> int:
             "expected_duration_seconds": max(0.0, args.expected_duration_seconds),
         }
         if args.chat.strip():
+            cover_image = args.cover_image
+            if cover_image is None:
+                candidate = DEFAULT_CACHE_ROOT / safe_component(args.object_id) / "card-cover.jpg"
+                cover_image = candidate if candidate.is_file() else None
             result = capture_exact_card_from_chat(
                 chat=args.chat.strip(),
                 targets_file=args.targets_file,
@@ -95,6 +104,7 @@ def main() -> int:
                 scroll_clicks=max(1, args.scroll_clicks),
                 player_open_timeout=max(2.0, args.player_open_timeout),
                 lock_timeout=max(0.0, args.lock_timeout),
+                cover_image=cover_image,
                 **capture_args,
             )
         else:
@@ -139,6 +149,7 @@ def capture_exact_card_from_chat(
     max_seconds: float,
     audio_stream_timeout: float,
     expected_duration_seconds: float,
+    cover_image: Path | None = None,
 ) -> dict[str, Any]:
     """Open one source-bound card from its chat, then capture its exact player."""
     require_tools("xdotool", "import", "convert", "tesseract")
@@ -157,7 +168,8 @@ def capture_exact_card_from_chat(
         main_window = gui.find_wechat_window(env)
         if not main_window:
             raise RuntimeError(f"no visible native WeChat chat window was found on {display}")
-        close_channels_players(env)
+        main_window_ids = {str(main_window.wid)}
+        close_channels_players(env, excluded_window_ids=main_window_ids)
         gui.focus(env, main_window)
         guard = gui.open_target(
             env,
@@ -184,6 +196,8 @@ def capture_exact_card_from_chat(
             max_scrolls=max_scrolls,
             scroll_clicks=scroll_clicks,
             player_open_timeout=player_open_timeout,
+            cover_image=cover_image,
+            excluded_window_ids=main_window_ids,
         )
         if not player:
             if open_evidence.get("source_card_found"):
@@ -214,6 +228,7 @@ def capture_exact_card_from_chat(
                 audio_stream_timeout=audio_stream_timeout,
                 expected_duration_seconds=expected_duration_seconds,
                 gui_lock_held=True,
+                player_window_id=str(player["id"]),
             )
             result["source_chat"] = chat
             result["card_open"] = open_evidence
@@ -229,7 +244,7 @@ def capture_exact_card_from_chat(
                 manifest_path.chmod(0o600)
             return result
         finally:
-            close_channels_players(env)
+            close_channels_players(env, excluded_window_ids=main_window_ids)
             gui.focus(env, main_window)
 
 
@@ -244,6 +259,8 @@ def open_exact_card_from_visible_history(
     max_scrolls: int,
     scroll_clicks: int,
     player_open_timeout: float,
+    cover_image: Path | None = None,
+    excluded_window_ids: set[str] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Scan recent visible messages and open only a card whose player identity matches."""
     region = message_pane_region(main_window)
@@ -262,13 +279,20 @@ def open_exact_card_from_visible_history(
             crop_path=crop_path,
         )
         line_candidates = ocr_line_candidates(tsv, identity_terms)
-        play_candidates = play_button_candidates(crop_path)
-        candidates = associate_play_candidates_with_identity(
+        exact_cover = exact_cover_candidates(
+            screenshot_path,
+            cover_image,
+            region=region,
+        )
+        play_candidates = play_button_candidates(crop_path, source_side_ratio=0.56)
+        identity_bound = associate_play_candidates_with_identity(
             tsv,
             play_candidates,
             identity_terms,
             min_term_matches,
+            source_side_width=float(region["width"]) * 0.56,
         )
+        candidates = [*exact_cover, *identity_bound]
         if not candidates:
             # A card can omit or obscure its play icon. Only use OCR fallback
             # on the received/source side of the message pane; this excludes
@@ -285,14 +309,22 @@ def open_exact_card_from_visible_history(
             click_y = region["top"] + int(candidate["center_y"])
             gui.focus(env, main_window)
             gui.click(env, main_window.x + click_x, main_window.y + click_y)
-            open_timeout = player_open_timeout if candidate["text"] == "visible video play control" else min(3.0, player_open_timeout)
-            player = wait_for_channels_window(env, timeout=open_timeout)
+            kind = str(candidate.get("kind") or "ocr_identity")
+            open_timeout = player_open_timeout if kind in {"exact_cover", "play_control"} else min(3.0, player_open_timeout)
+            player = wait_for_channels_window(
+                env,
+                timeout=open_timeout,
+                excluded_window_ids=excluded_window_ids,
+            )
             attempt = {
                 "scan": scan_index,
                 "candidate": candidate_index,
+                "candidate_kind": kind,
                 "matched_terms": candidate["matched_terms"],
                 "text_preview": compact_text(candidate["text"], 120),
             }
+            if candidate.get("match_confidence") is not None:
+                attempt["match_confidence"] = round(float(candidate["match_confidence"]), 4)
             if not player:
                 attempt["result"] = "no_player"
                 attempts.append(attempt)
@@ -315,7 +347,7 @@ def open_exact_card_from_visible_history(
                     "matched_terms": evidence["matched_terms"],
                     "attempt_count": len(attempts),
                 }
-            close_channels_players(env)
+            close_channels_players(env, excluded_window_ids=excluded_window_ids)
             gui.focus(env, main_window)
 
         gui.focus(env, main_window)
@@ -536,6 +568,7 @@ def ocr_line_candidates(tsv_text: str, identity_terms: list[str]) -> list[dict[s
                 "center_x": (left + right) / 3.2,
                 "center_y": (top + bottom) / 3.2,
                 "score": match_score,
+                "kind": "ocr_identity",
             }
         )
     candidates.sort(key=lambda item: (-int(item["score"]), -float(item["center_y"])))
@@ -547,6 +580,7 @@ def associate_play_candidates_with_identity(
     play_candidates: list[dict[str, Any]],
     identity_terms: list[str],
     min_term_matches: int,
+    source_side_width: float | None = None,
 ) -> list[dict[str, Any]]:
     """Bind play controls to OCR evidence inside the same visible card.
 
@@ -560,6 +594,8 @@ def associate_play_candidates_with_identity(
     for play in play_candidates:
         play_x = float(play.get("center_x") or 0)
         play_y = float(play.get("center_y") or 0)
+        if source_side_width is not None and play_x >= source_side_width:
+            continue
         nearby = []
         for word in words:
             word_x = (float(word["left"]) + float(word["width"]) / 2.0) / 1.6
@@ -578,6 +614,7 @@ def associate_play_candidates_with_identity(
             {
                 **play,
                 "text": f"identity-bound video card: {compact_text(evidence_text, 180)}",
+                "kind": str(play.get("kind") or "play_control"),
                 "matched_terms": matched,
                 "score": 1000 + match_score + int(play.get("score") or 0),
             }
@@ -614,7 +651,11 @@ def identity_term_variants(term: str) -> list[str]:
     return unique_strings(variants)
 
 
-def play_button_candidates(image_path: Path) -> list[dict[str, Any]]:
+def play_button_candidates(
+    image_path: Path,
+    *,
+    source_side_ratio: float | None = None,
+) -> list[dict[str, Any]]:
     """Detect visible circular play controls without making OpenCV mandatory."""
     try:
         import cv2
@@ -646,9 +687,12 @@ def play_button_candidates(image_path: Path) -> list[dict[str, Any]]:
             continue
         if original_x < 30 or original_x > width / 1.6 - 30:
             continue
+        if source_side_ratio is not None and original_x >= (width / 1.6) * source_side_ratio:
+            continue
         candidates.append(
             {
                 "text": "visible video play control",
+                "kind": "play_control",
                 "matched_terms": [],
                 "center_x": original_x,
                 "center_y": original_y,
@@ -657,6 +701,61 @@ def play_button_candidates(image_path: Path) -> list[dict[str, Any]]:
         )
     candidates.sort(key=lambda item: (-float(item["center_y"]), -int(item["score"])))
     return candidates[:6]
+
+
+def exact_cover_candidates(
+    screenshot_path: Path,
+    cover_image: Path | None,
+    *,
+    region: dict[str, int],
+    min_confidence: float = 0.70,
+) -> list[dict[str, Any]]:
+    """Locate the exact same-object cover in the received side of the chat.
+
+    Finder media URLs can expire while the cover remains cacheable. Matching the
+    cached cover gives the GUI fallback a stronger click target than OCR alone
+    and prevents a repeated title in our own right-aligned reply from winning.
+    """
+    if cover_image is None or not cover_image.is_file():
+        return []
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return []
+    screenshot = cv2.imread(str(screenshot_path), cv2.IMREAD_GRAYSCALE)
+    cover = cv2.imread(str(cover_image), cv2.IMREAD_GRAYSCALE)
+    if screenshot is None or cover is None:
+        return []
+    left = max(0, int(region["left"]))
+    top = max(0, int(region["top"]))
+    right = min(screenshot.shape[1], left + int(float(region["width"]) * 0.60))
+    bottom = min(screenshot.shape[0], top + int(region["height"]))
+    search = screenshot[top:bottom, left:right]
+    if search.size == 0:
+        return []
+    best: dict[str, Any] = {}
+    for scale in np.linspace(0.20, 0.90, 36):
+        width = max(24, int(round(cover.shape[1] * float(scale))))
+        height = max(24, int(round(cover.shape[0] * float(scale))))
+        if width >= search.shape[1] or height >= search.shape[0]:
+            continue
+        resized = cv2.resize(cover, (width, height), interpolation=cv2.INTER_AREA)
+        match = cv2.matchTemplate(search, resized, cv2.TM_CCOEFF_NORMED)
+        _, confidence, _, location = cv2.minMaxLoc(match)
+        if float(confidence) > float(best.get("match_confidence") or -1):
+            best = {
+                "text": "exact same-object Finder card cover",
+                "kind": "exact_cover",
+                "matched_terms": [],
+                "center_x": float(location[0] + width / 2.0),
+                "center_y": float(location[1] + height / 2.0),
+                "width": width,
+                "height": height,
+                "match_confidence": float(confidence),
+                "score": 5000 + int(float(confidence) * 1000),
+            }
+    return [best] if float(best.get("match_confidence") or 0.0) >= min_confidence else []
 
 
 def deduplicate_click_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -670,10 +769,15 @@ def deduplicate_click_candidates(candidates: list[dict[str, Any]]) -> list[dict[
     return result
 
 
-def wait_for_channels_window(env: dict[str, str], *, timeout: float) -> dict[str, Any] | None:
+def wait_for_channels_window(
+    env: dict[str, str],
+    *,
+    timeout: float,
+    excluded_window_ids: set[str] | None = None,
+) -> dict[str, Any] | None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        window = find_channels_window(env)
+        window = find_channels_window(env, excluded_window_ids=excluded_window_ids)
         if window:
             return window
         time.sleep(0.25)
@@ -714,14 +818,14 @@ def wait_for_player_identity(
     return last
 
 
-def close_channels_players(env: dict[str, str]) -> None:
+def close_channels_players(env: dict[str, str], *, excluded_window_ids: set[str] | None = None) -> None:
     while True:
-        window = find_channels_window(env)
+        window = find_channels_window(env, excluded_window_ids=excluded_window_ids)
         if not window:
             return
         run(["xdotool", "windowfocus", str(window["id"]), "key", "Escape"], env=env, check=False)
         time.sleep(0.5)
-        if find_channels_window(env):
+        if find_channels_window(env, excluded_window_ids=excluded_window_ids):
             run(["xdotool", "windowclose", str(window["id"])], env=env, check=False)
             time.sleep(0.5)
         else:
@@ -753,6 +857,7 @@ def capture_exact_player(
     expected_duration_seconds: float = 0.0,
     lock_timeout: float = 0.0,
     gui_lock_held: bool = False,
+    player_window_id: str = "",
 ) -> dict[str, Any]:
     require_tools("xdotool", "import", "convert", "tesseract", "pw-dump", "pw-record", "ffmpeg", "ffprobe")
     if not identity_terms:
@@ -765,7 +870,7 @@ def capture_exact_player(
 
     lock_context = nullcontext() if gui_lock_held else exclusive_gui_lock(GUI_LOCK, timeout_seconds=lock_timeout)
     with lock_context:
-        window = find_channels_window(env)
+        window = window_geometry(player_window_id, env) if player_window_id else find_channels_window(env)
         if not window:
             raise RuntimeError("the native WeChat Channels player is not visible")
         start_evidence = capture_identity_evidence(
@@ -947,10 +1052,26 @@ def capture_identity_evidence(
     return result
 
 
-def find_channels_window(env: dict[str, str]) -> dict[str, Any] | None:
-    proc = run(["xdotool", "search", "--onlyvisible", "--name", "^WeChat$"], env=env, check=False)
+def find_channels_window(
+    env: dict[str, str],
+    *,
+    excluded_window_ids: set[str] | None = None,
+) -> dict[str, Any] | None:
+    # Some Linux builds title the main client "Weixin" and the player
+    # "WeChat"; others title both alike. The source-bound path excludes the
+    # already-known main window before accepting either title.
+    pattern = "^(WeChat|Weixin)$" if excluded_window_ids else "^WeChat$"
+    proc = run(["xdotool", "search", "--onlyvisible", "--name", pattern], env=env, check=False)
     candidates = [window_geometry(wid, env) for wid in proc.stdout.split()]
-    candidates = [item for item in candidates if item and item["width"] >= 600 and item["height"] >= 600]
+    excluded = {str(value) for value in (excluded_window_ids or set())}
+    candidates = [
+        item
+        for item in candidates
+        if item
+        and str(item["id"]) not in excluded
+        and item["width"] >= 600
+        and item["height"] >= 600
+    ]
     return max(candidates, key=lambda item: item["width"] * item["height"]) if candidates else None
 
 

@@ -456,12 +456,10 @@ stderr: noisy internal trace
             }
 
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(worker, "run_shipinhao_media_transcriber", side_effect=fake_transcriber), mock.patch.object(
-                worker, "prepare_shipinhao_comment_intel_preflight", return_value={"status": "not_available"}
-            ):
-                preflight = worker.prepare_worker_preflight(task, Path(tmp))
+            with mock.patch.object(worker, "run_shipinhao_media_transcriber", side_effect=fake_transcriber):
+                result = worker.prepare_shipinhao_media_transcript_preflight(task, Path(tmp))
 
-        self.assertEqual(preflight["shipinhao_media_transcript"]["status"], "transcribed")
+        self.assertEqual(result["status"], "transcribed")
         self.assertIn(exact_url, str(captured["source_text"]))
         self.assertNotIn(wrong_url, str(captured["source_text"]))
         self.assertEqual(captured["profile"]["object_id"], "exact-object-123")
@@ -549,6 +547,46 @@ stderr: noisy internal trace
         self.assertEqual(command[command.index("--expected-duration-seconds") + 1], "42.500")
         self.assertEqual(result["error_code"], "finder_player_unavailable")
         self.assertTrue(result["source_card_found"])
+
+    def test_failed_shipinhao_acquisition_creates_not_silent_agent_context(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            stale_context = Path(tmp) / "stale-transcript.md"
+            stale_context.write_text("# stale transcript\n", encoding="utf-8")
+            result = worker.finalize_shipinhao_media_transcript_preflight(
+                Path(tmp),
+                {
+                    "status": "failed",
+                    "failure_stage": "media_resolution",
+                    "verified_silent_media": True,
+                    "agent_context_path": str(stale_context),
+                    "profile": {"title": "Exact source", "author": "Exact creator"},
+                },
+            )
+            context = Path(result["agent_context_path"]).read_text(encoding="utf-8")
+
+        self.assertEqual(result["audio_evidence_status"], "media_unavailable_not_silent")
+        self.assertFalse(result["verified_silent_media"])
+        self.assertNotEqual(Path(result["agent_context_path"]), stale_context)
+        self.assertIn("Media acquisition failure is not evidence that the source is silent", context)
+        self.assertIn("Do not say the video has no audio", context)
+
+    def test_finder_audio_alias_cannot_turn_failed_download_into_silence(self) -> None:
+        worker = load_worker()
+
+        result = worker.finder_audio_intake_alias(
+            {"source": {"local_id": 91}},
+            {
+                "status": "failed",
+                "verified_silent_media": True,
+                "audio_evidence_status": "verified_silent_media",
+                "failure_stage": "download",
+            },
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["verified_silent_media"])
+        self.assertEqual(result["audio_evidence_status"], "media_unavailable_not_silent")
 
     def test_shipinhao_preflight_prefers_matching_verified_capture_manifest(self) -> None:
         worker = load_worker()

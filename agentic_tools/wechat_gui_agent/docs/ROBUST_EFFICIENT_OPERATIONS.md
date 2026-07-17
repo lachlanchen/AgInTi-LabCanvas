@@ -238,10 +238,13 @@ retain the full private evidence on disk.
   the same deterministic identity gate must still accept the result; a visual
   guess alone is not evidence.
   If no candidate passes, use `shipinhao_gui_audio_capture.py` automatically
-  against the exact guarded source chat. Normalize to the latest message, scan
-  only bounded recent history, and
-  bind each detected play control to title/author OCR in that same card's local
-  neighborhood. Never authorize a click from matching text in a later bot reply.
+  against the exact guarded source chat. Normalize to the latest message and
+  scan only bounded recent history. Prefer a multi-scale match against the exact
+  same-object cached cover; otherwise bind a detected play control to
+  title/author OCR in that same card's local neighborhood. Restrict both paths
+  to the received/source side and preserve the candidate kind so a real
+  cover/play target gets the full player-open timeout. Never authorize a click
+  from matching text in a later right-aligned bot reply.
   After the exact card opens, bind the current `WeChatAppEx` PipeWire stream,
   start playback once if the stream has not appeared, require player title/author
   identity, and stop on consecutive identity loss or the source card's bounded
@@ -254,7 +257,12 @@ retain the full private evidence on disk.
   media and reports zero audio streams; HTTP/download failure, public-mirror
   mismatch, card not found,
   source card found but player unavailable, and PipeWire stream unavailable are
-  separate `failure_stage`/`error_code` values. Automatically discover
+  separate `failure_stage`/`error_code` values. Every outcome must write a
+  private `agent_context_path` and `audio_evidence_status`. Unresolved outcomes
+  use `media_unavailable_not_silent`, forcibly clear `verified_silent_media`,
+  and instruct the resumed agent not to rewrite acquisition failure as silence.
+  The same rule applies to the aliased `task.preflight.audio_intake` packet.
+  Automatically discover
   exact matching `comment_data` JSON under configured/private download roots and
   probe a local `wx_channel` API on `127.0.0.1:2026` when object IDs are known.
   The worker writes
