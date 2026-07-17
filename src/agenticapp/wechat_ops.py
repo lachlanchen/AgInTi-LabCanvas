@@ -233,6 +233,31 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     voice.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     voice.set_defaults(func=cmd_voice_transcribe)
 
+    audio = nested.add_parser(
+        "audio-intake",
+        help="Transcribe one exact local WeChat audio/video attachment for a worker agent.",
+    )
+    audio.add_argument("--input", type=Path, required=True)
+    audio.add_argument("--output-dir", type=Path, required=True)
+    audio.add_argument("--source-local-id", type=int)
+    audio.add_argument("--model", default=os.environ.get("WECHAT_AUDIO_WHISPER_MODEL", "medium"))
+    audio.add_argument(
+        "--backend",
+        choices=["auto", "faster-whisper", "whisper"],
+        default=os.environ.get("WECHAT_AUDIO_WHISPER_BACKEND", "auto"),
+    )
+    audio.add_argument(
+        "--python",
+        default=os.environ.get(
+            "WECHAT_AUDIO_TRANSCRIBE_PYTHON",
+            os.environ.get("WECHAT_VOICE_TRANSCRIBE_PYTHON", sys.executable),
+        ),
+        help="Python interpreter that can import faster_whisper or whisper.",
+    )
+    audio.add_argument("--refresh", action="store_true")
+    audio.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    audio.set_defaults(func=cmd_audio_intake)
+
     finder = nested.add_parser(
         "shipinhao-transcribe",
         help="Resolve and transcribe one exact WeChat Channels/Finder card with source-identity checks.",
@@ -689,7 +714,18 @@ def cmd_health(args: argparse.Namespace) -> int:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     agent_commands = configured_agent_backends()
-    commands = ["tmux", "Xvfb", "x11vnc", "websockify", "xdotool", "xclip", "import", "tesseract"]
+    commands = [
+        "tmux",
+        "Xvfb",
+        "x11vnc",
+        "websockify",
+        "xdotool",
+        "xclip",
+        "import",
+        "tesseract",
+        "ffmpeg",
+        "ffprobe",
+    ]
     commands.extend("claude" if backend == "claude" else "codex" for backend in agent_commands)
     commands = list(dict.fromkeys(commands))
     checks = {name: shutil.which(name) or "" for name in commands}
@@ -707,6 +743,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             SCRIPTS / "wechat_chatops_bridge.py",
             SCRIPTS / "wechat_browser_assist.py",
             SCRIPTS / "wechat_media_sync.py",
+            SCRIPTS / "wechat_audio_intake.py",
         )
     }
     missing = [name for name, found in checks.items() if not found]
@@ -805,6 +842,9 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "generated-video LazyEdit commands prefer worker-created correction context and metadata brief files",
             "generated-video LazyEdit context appends generated story/script and prompt material before publish",
             "mp.weixin read-only recovery extracts article content and reuses the private cache without GUI verification",
+            "group voice transcripts cross the private queue boundary without raw voice secrets",
+            "encoded WeChat card types still enter exact same-chat media resolution",
+            "ordinary group audio/video becomes agent-readable transcript context before the resumed Codex turn",
             "Shipinhao comment discovery accepts only the exact current card export",
             "Shipinhao media transcription uses only the exact current card, allowlisted Tencent hosts, a content-verified public mirror, or a matching visual-identity/audio-hash manifest",
             "Shipinhao public-mirror recovery requires exact-duration content evidence or a bounded, independently corroborated longer-source excerpt",
@@ -913,6 +953,26 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "mp_weixin_read_only_recovery",
             "test": "tests.test_wechat_source_recovery.WeChatSourceRecoveryTests.test_recover_article_uses_wechat_fetch_and_private_cache",
+        },
+        {
+            "id": "group_voice_queue_context",
+            "test": direct_prefix + "test_voice_queue_fields_preserve_transcript_without_private_payload",
+        },
+        {
+            "id": "encoded_card_media_resolution",
+            "test": worker_prefix + "test_encoded_file_card_type_still_runs_media_resolution",
+        },
+        {
+            "id": "group_media_audio_intake",
+            "test": worker_prefix + "test_local_group_video_audio_is_handed_to_reusable_transcriber",
+        },
+        {
+            "id": "local_audio_pipeline_context",
+            "test": "tests.test_wechat_audio_intake.WeChatAudioIntakeTests.test_pipeline_writes_source_scoped_agent_context_and_reuses_cache",
+        },
+        {
+            "id": "group_audio_reaches_resumed_agent",
+            "test": worker_prefix + "test_resumed_worker_prompt_requires_audio_context_before_reasoning",
         },
         {
             "id": "shipinhao_exact_comment_discovery",
@@ -1439,6 +1499,28 @@ def cmd_voice_transcribe(args: argparse.Namespace) -> int:
         "--backend",
         str(args.backend),
     ]
+    if args.refresh:
+        command.append("--refresh")
+    if getattr(args, "json", False):
+        command.append("--json")
+    return run_command(command, capture=False).returncode
+
+
+def cmd_audio_intake(args: argparse.Namespace) -> int:
+    command = [
+        str(args.python),
+        str(SCRIPTS / "wechat_audio_intake.py"),
+        "--input",
+        str(args.input),
+        "--output-dir",
+        str(args.output_dir),
+        "--model",
+        str(args.model),
+        "--backend",
+        str(args.backend),
+    ]
+    if args.source_local_id is not None:
+        command += ["--source-local-id", str(args.source_local_id)]
     if args.refresh:
         command.append("--refresh")
     if getattr(args, "json", False):

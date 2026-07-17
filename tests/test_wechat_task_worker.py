@@ -1710,6 +1710,11 @@ stderr: noisy internal trace
                 "source": {"local_id": 69, "kind": "image", "local_type": 3},
                 "route_decision": {"route_kind": "file_intake", "needs_recent_media": True},
                 "preflight": {
+                    "shipinhao_media_transcript": {
+                        "status": "failed",
+                        "failure_stage": "media_resolution",
+                        "error": "expired card URL",
+                    },
                     "media_resolution": {
                         "copied": [
                             {
@@ -6256,6 +6261,105 @@ stderr: noisy internal trace
                 worker.os.environ.pop("WECHAT_WORKER_CODEX_SANDBOX", None)
             else:
                 worker.os.environ["WECHAT_WORKER_CODEX_SANDBOX"] = original
+
+    def test_inline_group_voice_becomes_durable_agent_context(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "voice-task",
+            "chat": "EchoMind",
+            "source": {
+                "local_id": 88,
+                "local_type": 34,
+                "voice_transcript": "今日は雨ですが、散歩したいです。",
+                "voice_language": "ja",
+                "voice_duration": 3.2,
+            },
+            "context": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            result = worker.prepare_audio_intake_preflight(task, Path(tmp))
+            context = Path(result["agent_context_path"]).read_text(encoding="utf-8")
+
+        self.assertEqual(result["status"], "transcribed")
+        self.assertEqual(result["input_kind"], "wechat_voice_rows")
+        self.assertIn("今日は雨ですが", context)
+        self.assertIn("local_id=88", context)
+
+    def test_local_group_video_audio_is_handed_to_reusable_transcriber(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            video = root / "source_media" / "exact-video.mp4"
+            video.parent.mkdir()
+            video.write_bytes(b"video")
+            agent_context = root / "audio_intake" / "agent-context.md"
+            agent_context.parent.mkdir()
+            agent_context.write_text("# transcript\n", encoding="utf-8")
+            task = {
+                "id": "video-task",
+                "chat": "鏈接",
+                "source": {"local_id": 91, "local_type": 43, "kind": "video"},
+                "preflight": {
+                    "media_resolution": {
+                        "status": "ok",
+                        "copied": [{"task_copy_path": str(video), "suffix": ".mp4"}],
+                    }
+                },
+            }
+            expected = {
+                "status": "transcribed",
+                "input_kind": "local_wechat_media",
+                "agent_context_path": str(agent_context),
+            }
+            with mock.patch.object(worker, "run_audio_intake_transcriber", return_value=expected) as transcribe:
+                result = worker.prepare_audio_intake_preflight(task, root)
+
+        self.assertEqual(result, expected)
+        transcribe.assert_called_once_with(video.resolve(), output_dir=root / "audio_intake", source_local_id=91)
+
+    def test_encoded_file_card_type_still_runs_media_resolution(self) -> None:
+        worker = load_worker()
+        encoded_type = (51 << 32) | 49
+        task = {
+            "source": {"local_type": encoded_type, "kind": "file/link"},
+            "route_decision": {"route_kind": "research_or_summary", "needs_recent_media": True},
+            "request": "Please summarize the shared source.",
+        }
+
+        self.assertEqual(worker.wechat_base_message_type(encoded_type), 49)
+        self.assertTrue(worker.should_prepare_media_resolution(task))
+
+    def test_resumed_worker_prompt_requires_audio_context_before_reasoning(self) -> None:
+        worker = load_worker()
+        calls: list[str] = []
+        task = {
+            "id": "audio-agent-task",
+            "chat": "懒人科研",
+            "request": "Please answer the voice request.",
+            "source": {"local_id": 92, "local_type": 34, "voice_transcript": "请设计一个支架。"},
+            "preflight": {
+                "audio_intake": {
+                    "status": "transcribed",
+                    "input_kind": "wechat_voice_rows",
+                    "agent_context_path": "/tmp/private/audio-agent-context.md",
+                }
+            },
+        }
+
+        def fake_agent(prompt: str, **_kwargs: object) -> dict[str, object]:
+            calls.append(prompt)
+            return {"ok": True, "message": "done", "thread_id": "audio-thread", "resumed": True}
+
+        with mock.patch.object(worker, "run_codex_session", side_effect=fake_agent):
+            result = worker.run_worker_agent_session(
+                task,
+                {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "danger-full-access", "timeout_seconds": 300},
+            )
+
+        self.assertEqual(result, "done")
+        self.assertIn("/tmp/private/audio-agent-context.md", calls[0])
+        self.assertIn("Deterministic code owns exact same-chat media resolution", calls[0])
+        self.assertIn("请设计一个支架", calls[0])
 
     def test_wechat_send_env_extends_gui_alarm_to_worker_timeout(self) -> None:
         worker = load_worker()

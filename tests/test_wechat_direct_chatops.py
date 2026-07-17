@@ -1379,6 +1379,30 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(direct_chatops.should_respond(config, {}, row))
         self.assertEqual(metrics["voice_cached"], 1)
 
+    def test_voice_queue_fields_preserve_transcript_without_private_payload(self) -> None:
+        row = self.row(
+            '<msg><voicemsg aeskey="secret" voiceurl="private-cdn" /></msg>',
+            local_type=34,
+            local_id=73,
+        )
+        row["_voice_transcript"] = "请帮我设计一个支架"
+        row["_voice_transcription"] = {
+            "status": "transcribed",
+            "language": "zh",
+            "duration": 2.8,
+            "wav_path": "/private/voice.wav",
+        }
+
+        fields = direct_chatops.voice_queue_fields(row)
+
+        self.assertEqual(fields["voice_transcript"], "请帮我设计一个支架")
+        self.assertEqual(fields["voice_language"], "zh")
+        self.assertEqual(fields["voice_duration"], 2.8)
+        serialized = json.dumps(fields, ensure_ascii=False)
+        self.assertNotIn("secret", serialized)
+        self.assertNotIn("voiceurl", serialized)
+        self.assertNotIn("voice.wav", serialized)
+
     def test_failed_voice_transcription_adds_retry_backlog_without_blocking_cursor(self) -> None:
         config = self.base_config()
         config["chatroom_id"] = "demo@chatroom"

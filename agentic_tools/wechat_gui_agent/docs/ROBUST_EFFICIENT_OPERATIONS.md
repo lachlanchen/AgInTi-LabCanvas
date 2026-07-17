@@ -203,6 +203,17 @@ retain the full private evidence on disk.
   a human-confirmation state. Never open/focus a browser or ask the owner to
   verify for read-only research; return an evidence-limited answer if recovery
   remains incomplete.
+- Group voice, audio, and ordinary video intake is source-scoped and agent-led.
+  The monitor transcribes native type-34 voice rows before routing, keeps only
+  safe transcript/language/duration fields in the private task, and never loses
+  the transcript at the queue boundary. The worker aliases those rows or an
+  exact resolved audio/video file into `task.preflight.audio_intake`, whose
+  `agent_context_path` must be read by the same chat's resumed backend session.
+  `wechat_audio_intake.py` owns `ffprobe`, extraction, ASR, caching, and strict
+  `no_audio` evidence; Codex owns interpretation and requested work. Use
+  `PYTHONPATH=src python -m agenticapp wechat audio-intake --input <media> --output-dir <task-dir> --json`
+  for a standalone check. Encoded app-message types must be reduced to their
+  low 32-bit base type before deciding whether media resolution applies.
 - Shipinhao/Finder/视频号 research tasks should run the read-only source
   recovery, exact-media transcription, and comment-intelligence preflights.
   Try the card's allowlisted Tencent media URL first. If it expired, keep the

@@ -1331,6 +1331,23 @@ def self_message_skip_reason(config: dict[str, Any], state: dict[str, Any], row:
     return ""
 
 
+def voice_queue_fields(row: dict[str, Any]) -> dict[str, Any]:
+    """Keep safe ASR evidence when a voice row crosses into the worker queue."""
+    local_type, _ = split_message_type(row.get("local_type"))
+    if local_type != 34:
+        return {}
+    transcript = voice_row_transcript(row)
+    if not transcript:
+        return {}
+    fields: dict[str, Any] = {"voice_transcript": transcript}
+    metadata = row.get("_voice_transcription") if isinstance(row.get("_voice_transcription"), dict) else {}
+    for key in ("status", "language", "duration"):
+        value = metadata.get(key)
+        if value not in (None, ""):
+            fields[f"voice_{key}"] = value
+    return fields
+
+
 def allow_human_self_messages(config: dict[str, Any]) -> bool:
     policy = str(config.get("self_message_policy") or "").strip().lower()
     return bool(config.get("allow_human_self_messages", False)) or policy in {
@@ -2398,6 +2415,7 @@ def enqueue_third_party_publish_wait_task(
             "kind": message_kind(row),
             "sender": row["sender"],
             "sender_display": row["sender_display"],
+            **voice_queue_fields(row),
         },
         "context": [
             {
@@ -2409,6 +2427,7 @@ def enqueue_third_party_publish_wait_task(
                 "create_time": item.get("create_time"),
                 "kind": message_kind(item),
                 "content": item["content"],
+                **voice_queue_fields(item),
             }
             for item in context_rows[-8:]
         ],
@@ -5240,6 +5259,7 @@ def enqueue_worker_task(
             "kind": message_kind(row),
             "sender": row["sender"],
             "sender_display": row["sender_display"],
+            **voice_queue_fields(row),
         },
         "context": [
             {
@@ -5251,6 +5271,7 @@ def enqueue_worker_task(
                 "create_time": item.get("create_time"),
                 "kind": message_kind(item),
                 "content": item["content"],
+                **voice_queue_fields(item),
             }
             for item in context_rows[-8:]
         ],

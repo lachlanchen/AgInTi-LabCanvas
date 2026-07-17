@@ -250,6 +250,25 @@ labcanvas wechat voice-transcribe \
 
 Raw `aeskey` and `voiceurl` fields are intentionally stripped from prompts.
 
+When a transcribed voice message is routed to the slower worker, the monitor
+stores only safe transcript/language/duration fields in the private queue. The
+worker writes them to `preflight.audio_intake.agent_context_path` and resumes
+the exact chat's persistent Codex session. Ordinary local audio and video
+attachments use the same contract: exact same-chat media resolution, `ffprobe`,
+audio extraction, Whisper transcription, cache, then agent reasoning. Run that
+stage directly with:
+
+```bash
+labcanvas wechat audio-intake \
+  --input /absolute/path/to/exact-group-video.mp4 \
+  --output-dir output/wechat-audio-check \
+  --json
+```
+
+The model is not invoked while polling an idle chat. It runs only after a real
+message becomes a direct response or queued task. A probe/download/ASR failure
+is not silence; only readable media with zero audio streams is `no_audio`.
+
 For 视频号/Shipinhao/Finder shares, the worker first tries the exact card media
 URL, validates it with `ffprobe`, and transcribes its audio. If that signed URL
 has expired, the worker first OCRs the card cover and uses the locally installed
