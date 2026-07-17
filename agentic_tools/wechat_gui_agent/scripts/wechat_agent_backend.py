@@ -10,6 +10,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -26,6 +27,17 @@ CLAUDE_REGISTRY = CLAUDE_SESSION_DIR / "sessions.local.json"
 CLAUDE_READONLY_BLOCK = "Bash,Edit,Write,MultiEdit,NotebookEdit"
 DEFAULT_FALLBACK_MODEL = "gpt-5.6-sol"
 DEFAULT_FALLBACK_REASONING_EFFORT = "low"
+AGINTI_SESSION_RE = re.compile(r"^Session:\s*(web-agent-[0-9A-Za-z-]+)\s*$", re.MULTILINE)
+ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+BACKEND_METADATA_LINE_RE = re.compile(
+    r"^(?:Session|Provider|Model|Routing|Workspace|Sessions|Project session index|"
+    r"Docker|Docker workspace|Docker env|Shell|Step budget|Surgical context):\s*.+$",
+    re.IGNORECASE,
+)
+BARE_BACKEND_SESSION_RE = re.compile(
+    r"^(?:web-agent-[0-9A-Za-z-]+|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$",
+    re.IGNORECASE,
+)
 QUOTA_FAILURE_MARKERS = (
     "429",
     "billing hard limit",
@@ -146,16 +158,27 @@ def run_agent_session(
             registry_path=registry_path,
             backend_config=config,
         )
-        if result.get("ok") and backend_result_has_content(result):
+        usable_message = user_facing_backend_message(result.get("message"))
+        if result.get("ok") and usable_message:
+            result["message"] = usable_message
             attempt_summaries.append(summarize_attempt(attempt, result))
             return attach_attempt_summary(result, attempt_summaries)
         if result.get("ok"):
+            raw_message = str(result.get("message") or "")
             result = {
                 **result,
                 "ok": False,
+                "message": "",
                 "returncode": int(result.get("returncode") or 1),
                 "reason": "empty_response",
-                "stderr_tail": str(result.get("stderr_tail") or "Agent backend returned an empty response."),
+                "stderr_tail": str(
+                    result.get("stderr_tail")
+                    or (
+                        "Agent backend returned only internal runtime metadata."
+                        if raw_message.strip()
+                        else "Agent backend returned an empty response."
+                    )
+                ),
             }
         attempt_summaries.append(summarize_attempt(attempt, result))
         next_attempt = next_backend_attempt(attempt, result, backend_config=config)
@@ -374,7 +397,24 @@ def classify_backend_failure(result: dict[str, Any]) -> str:
 
 
 def backend_result_has_content(result: dict[str, Any]) -> bool:
-    return bool(str(result.get("message") or "").strip())
+    return bool(user_facing_backend_message(result.get("message")))
+
+
+def user_facing_backend_message(value: Any) -> str:
+    """Return chat-safe agent content, rejecting runtime identifiers alone."""
+    text = ANSI_ESCAPE_RE.sub("", str(value or "")).strip()
+    if not text:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    if len(lines) == 1 and (
+        AGINTI_SESSION_RE.fullmatch(lines[0]) or BARE_BACKEND_SESSION_RE.fullmatch(lines[0])
+    ):
+        return ""
+    if all(BACKEND_METADATA_LINE_RE.fullmatch(line) or line in {"Plan:", "Output:"} for line in lines):
+        return ""
+    return text
 
 
 def summarize_attempt(attempt: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
@@ -504,12 +544,16 @@ def run_aginti_session(
         sandbox=sandbox,
         backend_config=backend_config,
     )
-    prompt_mode = str(backend_config.get("prompt_mode") or os.environ.get("WECHAT_AGINTI_PROMPT_MODE") or "stdin").strip()
+    configured_prompt_mode = str(
+        backend_config.get("prompt_mode") or os.environ.get("WECHAT_AGINTI_PROMPT_MODE") or ""
+    ).strip()
+    prompt_mode = configured_prompt_mode or ("stdin" if "--stdin" in command else "arg")
     run_command = list(command)
     stdin_text = wrapped_prompt
     if prompt_mode == "arg":
         run_command.append(wrapped_prompt)
         stdin_text = None
+    invocation_started_at = datetime.now().timestamp()
     try:
         proc = subprocess.run(
             run_command,
@@ -544,9 +588,15 @@ def run_aginti_session(
             "fallback_started": False,
             "backend": "aginti",
         }
-    message = (proc.stdout or "").strip()
+    stdout = proc.stdout or ""
+    message, message_source = extract_aginti_user_message(
+        stdout,
+        backend_config=backend_config,
+        expected_prompt=wrapped_prompt,
+        invocation_started_at=invocation_started_at,
+    )
     if not message and proc.returncode != 0:
-        message = (proc.stderr or "").strip()
+        message = user_facing_backend_message(proc.stderr)
     return {
         "ok": proc.returncode == 0,
         "message": message,
@@ -557,6 +607,7 @@ def run_aginti_session(
         "resumed": False,
         "fallback_started": False,
         "backend": "aginti",
+        "message_source": message_source,
     }
 
 
@@ -610,7 +661,7 @@ def aginti_command(*, model: str, role: str, backend_config: dict[str, Any]) -> 
         return []
     raw_args = backend_config.get("args")
     if raw_args is None:
-        raw_args = os.environ.get("WECHAT_AGINTI_ARGS") or "agent run --stdin"
+        raw_args = os.environ.get("WECHAT_AGINTI_ARGS") or ""
     if isinstance(raw_args, list):
         command.extend(str(item) for item in raw_args if str(item).strip())
     else:
@@ -621,6 +672,110 @@ def aginti_command(*, model: str, role: str, backend_config: dict[str, Any]) -> 
     if configured_model and bool(backend_config.get("pass_model_arg", False)):
         command.extend(["--model", configured_model])
     return command
+
+
+def extract_aginti_user_message(
+    stdout: str,
+    *,
+    backend_config: dict[str, Any],
+    expected_prompt: str = "",
+    invocation_started_at: float = 0.0,
+) -> tuple[str, str]:
+    """Extract the final assistant turn without forwarding AgInTi console logs."""
+    text = ANSI_ESCAPE_RE.sub("", str(stdout or ""))
+    session_match = AGINTI_SESSION_RE.search(text)
+    if session_match:
+        session_id = session_match.group(1)
+        for sessions_dir in aginti_session_dirs(text, backend_config):
+            state_path = sessions_dir / session_id / "state.json"
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            messages = state.get("messages") if isinstance(state, dict) else None
+            if not isinstance(messages, list):
+                continue
+            if not aginti_state_matches_invocation(
+                messages,
+                state_path,
+                expected_prompt=expected_prompt,
+                invocation_started_at=invocation_started_at,
+            ):
+                continue
+            for item in reversed(messages):
+                if not isinstance(item, dict) or str(item.get("role") or "") != "assistant":
+                    continue
+                message = user_facing_backend_message(item.get("content"))
+                if message:
+                    return message, "session_state"
+    protocol = extract_agent_protocol_block(text)
+    if protocol:
+        return protocol, "stdout_protocol"
+    return "", "unavailable"
+
+
+def aginti_state_matches_invocation(
+    messages: list[Any],
+    state_path: Path,
+    *,
+    expected_prompt: str,
+    invocation_started_at: float,
+) -> bool:
+    if invocation_started_at:
+        try:
+            if state_path.stat().st_mtime < invocation_started_at - 1.0:
+                return False
+        except OSError:
+            return False
+    prompt = str(expected_prompt or "").strip()
+    if not prompt:
+        return True
+    return any(
+        isinstance(item, dict)
+        and str(item.get("role") or "") == "user"
+        and prompt in str(item.get("content") or "")
+        for item in messages
+    )
+
+
+def aginti_session_dirs(stdout: str, backend_config: dict[str, Any]) -> list[Path]:
+    candidates: list[Path] = []
+    for key in ("sessions_dir", "session_dir"):
+        raw = str(backend_config.get(key) or "").strip()
+        if raw:
+            candidates.append(Path(raw).expanduser())
+    for line in str(stdout or "").splitlines():
+        if line.strip().startswith("Sessions:"):
+            raw = line.split(":", 1)[1].strip()
+            if raw:
+                candidates.append(Path(raw).expanduser())
+    candidates.append(Path.home() / ".agintiflow" / "sessions")
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(resolved)
+    return unique
+
+
+def extract_agent_protocol_block(stdout: str) -> str:
+    lines = str(stdout or "").splitlines()
+    start = -1
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == "NO_REPLY" or re.match(r"^(?:CHAT|ACK|TASK)\s*[:：]", stripped, re.IGNORECASE):
+            start = index
+    if start < 0:
+        return ""
+    selected: list[str] = []
+    for line in lines[start:]:
+        stripped = line.strip()
+        if BACKEND_METADATA_LINE_RE.fullmatch(stripped) or stripped in {"Plan:", "Output:"}:
+            break
+        selected.append(line.rstrip())
+    return user_facing_backend_message("\n".join(selected))
 
 
 def aginti_workdir_from_config(backend_config: dict[str, Any], fallback: Path) -> Path:

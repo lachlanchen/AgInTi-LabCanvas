@@ -1015,6 +1015,11 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 self.assertEqual(direct_chatops.parse_fast_response(text), {"chat": "", "ack": "", "task": ""})
                 self.assertEqual(direct_chatops.sanitize_agent_ack(config, text), "")
 
+    def test_backend_session_banner_is_never_rendered_as_fast_chat(self) -> None:
+        response = "Session: web-agent-4a6d272a-b13d-4a16-ab2e-5fcdececdd12"
+
+        self.assertEqual(direct_chatops.parse_fast_response(response), {"chat": "", "ack": "", "task": ""})
+
     def test_recorded_successful_outbound_is_transport_evidence_for_self_echo(self) -> None:
         config = self.base_config()
         config["allow_human_self_messages"] = True
@@ -1939,7 +1944,11 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             self.row("今天很好", server_id="friend-1", local_id=11),
             self.row("我去睡觉", server_id="friend-2", local_id=12),
         ]
-        state: dict[str, object] = {"last_local_id": 12, "responded_server_ids": ["friend-1", "friend-2", "older"]}
+        state: dict[str, object] = {
+            "last_local_id": 12,
+            "responded_server_ids": ["friend-1", "friend-2", "older"],
+            "responded_message_keys": ["server:friend-1", "server:friend-2", "server:older"],
+        }
         original_history = direct_chatops.read_recent_history
         try:
             direct_chatops.read_recent_history = lambda *_args, **_kwargs: rows  # type: ignore[assignment]
@@ -1949,7 +1958,44 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertEqual(updated["last_local_id"], 10)
         self.assertEqual(updated["responded_server_ids"], ["older"])
+        self.assertEqual(updated["responded_message_keys"], ["server:older"])
         self.assertEqual(updated["force_replay_local_ids"], [11, 12])
+        self.assertEqual(updated["force_replay_restore_local_id"], 12)
+
+    def test_force_local_id_selects_only_exact_row_and_restores_cursor(self) -> None:
+        config = self.base_config()
+        target = self.row("分析这句日语", server_id="friend-229", local_id=229)
+        state: dict[str, object] = {
+            "last_local_id": 238,
+            "responded_server_ids": ["friend-229", "friend-232"],
+            "responded_message_keys": ["server:friend-229", "server:friend-232"],
+        }
+        original_history = direct_chatops.read_recent_history
+        original_read_new = direct_chatops.read_new_messages
+        original_run_codex = direct_chatops.run_codex
+        try:
+            direct_chatops.read_recent_history = lambda *_args, **_kwargs: [target]  # type: ignore[assignment]
+            prepared = direct_chatops.prepare_force_local_id(config, state, 229)
+            self.assertEqual(prepared["last_local_id"], 228)
+            self.assertEqual(prepared["force_replay_local_ids"], [229])
+            self.assertEqual(prepared["responded_server_ids"], ["friend-232"])
+            self.assertEqual(prepared["responded_message_keys"], ["server:friend-232"])
+
+            newer = self.row("newer row", server_id="friend-232", local_id=232)
+            direct_chatops.read_new_messages = lambda *_args, **_kwargs: [target, newer]  # type: ignore[assignment]
+            direct_chatops.run_codex = lambda *_args, **_kwargs: "CHAT: language analysis"  # type: ignore[assignment]
+            result = direct_chatops.run_once(config, prepared, send=False, no_decrypt=True)
+        finally:
+            direct_chatops.read_recent_history = original_history  # type: ignore[assignment]
+            direct_chatops.read_new_messages = original_read_new  # type: ignore[assignment]
+            direct_chatops.run_codex = original_run_codex  # type: ignore[assignment]
+
+        self.assertEqual(result["new_rows"], 1)
+        self.assertEqual(result["processed_local_id"], 229)
+        self.assertEqual(result["response_sent"], "language analysis")
+        self.assertEqual(result["state"]["last_local_id"], 238)
+        self.assertNotIn("force_replay_local_ids", result["state"])
+        self.assertEqual(result["metrics"]["force_replay_completed"], 1)
 
     def test_send_failure_does_not_mark_row_responded(self) -> None:
         config = self.base_config()
@@ -2954,6 +3000,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(config["agent_fallbacks"]["fallback_to_aginti"])
         self.assertTrue(config["agent_fallbacks"]["fallback_on_timeout"])
         self.assertEqual(config["aginti"]["command"], "aginti")
+        self.assertEqual(config["aginti"]["args"], "")
+        self.assertEqual(config["aginti"]["prompt_mode"], "")
         self.assertEqual(config["poll_seconds"], 0.8)
         self.assertEqual(config["catchup_poll_seconds"], 0.1)
         self.assertEqual(config["send_pause_seconds"], 0.35)

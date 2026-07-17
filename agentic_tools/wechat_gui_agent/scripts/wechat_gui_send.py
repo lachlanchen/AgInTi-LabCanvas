@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 from typing import Any
+import unicodedata
 
 from file_lock import fcntl_compat as fcntl
 from wechat_message_policy import is_no_reply_control
@@ -265,7 +266,8 @@ def send_one(
 ) -> dict[str, str]:
     close_non_target_wechat_windows(env, window, target)
     focus(env, window)
-    shot_prefix = f"{index:02d}-{safe_name(target.name)}"
+    attempt_id = datetime.now().strftime("%H%M%S-%f")
+    shot_prefix = f"{index:02d}-{safe_name(target.name)}-{attempt_id}"
     before_path = out_dir / f"{shot_prefix}-before.png"
     screenshot(env, before_path)
     if not skip_title_guard:
@@ -344,6 +346,7 @@ def send_one(
 
     clear_composer(env, compose_window, pause)
     paste_text(env, message)
+    verify_composer_text(env, message)
     time.sleep(pause)
     composed_path = out_dir / f"{shot_prefix}-composed.png"
     screenshot(env, composed_path)
@@ -1246,11 +1249,33 @@ def paste_text(env: dict[str, str], text: str) -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=1)
-        return
+        raise RuntimeError(
+            "WECHAT_CLIPBOARD_PASTE_TIMEOUT: WeChat did not consume the clipboard; "
+            "the message was not pasted"
+        )
     if proc.returncode not in (0, -15, None):
         stdout = proc.stdout.read() if proc.stdout else ""
         stderr = proc.stderr.read() if proc.stderr else ""
         raise RuntimeError(f"xclip failed to set clipboard: {(stderr or stdout).strip()}")
+
+
+def verify_composer_text(env: dict[str, str], expected: str) -> None:
+    """Read the focused composer back through the clipboard before sending."""
+    run(["xdotool", "key", "--clearmodifiers", "ctrl+a"], env=env)
+    run(["xdotool", "key", "--clearmodifiers", "ctrl+c"], env=env)
+    time.sleep(0.2)
+    copied = run(["xclip", "-selection", "clipboard", "-o"], env=env).stdout
+    run(["xdotool", "key", "--clearmodifiers", "ctrl+End"], env=env)
+    if normalize_composer_text(copied) != normalize_composer_text(expected):
+        raise RuntimeError(
+            "WECHAT_COMPOSE_VERIFY_FAILED: composed text does not match the intended message "
+            f"(expected {len(expected)} chars, read back {len(copied)} chars)"
+        )
+
+
+def normalize_composer_text(value: str) -> str:
+    normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    return unicodedata.normalize("NFC", normalized)
 
 
 def screenshot(env: dict[str, str], path: Path) -> None:

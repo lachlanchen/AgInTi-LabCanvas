@@ -827,12 +827,15 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "nontrivial worker tasks resume the exact chat's Codex worker session",
             "dead worker PID claims are reclaimed immediately after restart",
             "GUI sender alarm is aligned with the worker send timeout",
+            "GUI text sends fail on unconsumed clipboard data and verify the exact composer contents before Enter",
             "send_retrying rows are not reclaimed before the active GUI sender timeout plus grace",
             "chat-sync dry-open alarm is long enough to refresh inactive groups",
             "chat-sync retryable failures back off per chat without blocking other groups",
             "plain story/script requests route to the same worker capability set in research and device chats",
             "all monitored chats route explicit backend/tool/artifact requests through the shared routine skill surface",
             "EchoMind remains language-learning by default while explicit backend instructions enqueue worker routines",
+            "backend runtime session metadata can never become a user-facing WeChat reply",
+            "an exact-row backfill isolates one chat-local message and restores the live cursor",
             "route and worker Codex exec calls resume exact per-chat sessions by role",
             "route and worker prompts preserve every safe explicit current instruction instead of shrinking to keyword matches",
             "queued worker tasks persist a machine-readable instruction contract",
@@ -891,6 +894,8 @@ def publish_poststage_selftest_checks() -> list[dict[str, str]]:
 def transport_resume_selftest_checks() -> list[dict[str, str]]:
     worker_prefix = "tests.test_wechat_task_worker.WeChatTaskWorkerTests."
     direct_prefix = "tests.test_wechat_direct_chatops.WeChatDirectChatopsPolicyTests."
+    backend_prefix = "tests.test_wechat_agent_backend.WeChatAgentBackendTests."
+    gui_prefix = "tests.test_wechat_gui_send.WeChatGuiSendTests."
     return [
         {
             "id": "queued_task_has_transport_contract",
@@ -907,6 +912,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "gui_send_alarm_aligned",
             "test": worker_prefix + "test_wechat_send_env_extends_gui_alarm_to_worker_timeout",
+        },
+        {
+            "id": "gui_clipboard_timeout_fails",
+            "test": gui_prefix + "test_paste_text_timeout_is_a_send_failure",
+        },
+        {
+            "id": "gui_composer_readback_exact",
+            "test": gui_prefix + "test_verify_composer_text_reads_exact_message_back",
         },
         {
             "id": "send_retry_stale_after_sender_timeout",
@@ -931,6 +944,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "echomind_backend_instruction_route",
             "test": direct_prefix + "test_echomind_routes_explicit_backend_requests",
+        },
+        {
+            "id": "backend_session_metadata_not_chat",
+            "test": backend_prefix + "test_metadata_only_aginti_fallback_is_rejected",
+        },
+        {
+            "id": "exact_local_id_backfill",
+            "test": direct_prefix + "test_force_local_id_selects_only_exact_row_and_restores_cursor",
         },
         {
             "id": "route_agent_reuses_session",

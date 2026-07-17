@@ -289,6 +289,12 @@ retain the full private evidence on disk.
   that file-picker flow, the worker releases the serialized send lock, runs the
   Android-backed unlock watchdog, and retries the same file send within the
   bounded `WECHAT_WORKER_FILE_SEND_UNLOCK_RETRIES` budget.
+- Text delivery is successful only after WeChat consumes the clipboard and the
+  focused composer can be copied back with content equal to the intended
+  message. A clipboard-owner timeout or composer mismatch is a send failure;
+  screenshot pixel changes alone are not proof because focus and cursor blink
+  can change an otherwise empty window. Keep every attempt's screenshot prefix
+  unique so failed evidence cannot be overwritten by a later retry.
 - Fast chat replies and organizer acknowledgements use bounded durability. If
   the GUI is locked, the serialized sender is busy, or the sender times out,
   enqueue at most a short-lived `send_deferred_locked` outbox item. Preserve
@@ -394,6 +400,24 @@ evidence for local artifacts, not chat-facing content.
   deployment that prefers terminal timeouts. Normal weak agent answers do not
   trigger backend fallback; those stay under the worker effort-escalation
   policy.
+- The default AgInTi fallback uses the backward-compatible one-shot form
+  `aginti <wrapped-prompt>`. Do not assume the globally installed package has a
+  local checkout's newer `run --stdin` command: an older CLI interprets those
+  words as the task itself. An explicitly configured `--stdin` command remains
+  supported and automatically selects stdin prompt mode. The bridge resolves
+  the emitted `web-agent-*` session and accepts its final assistant turn only
+  when the state file is newer than the invocation and contains the exact
+  current wrapped prompt. It never forwards console headers such as `Session:`,
+  `Provider:`, `Model:`, `Plan:`, or workspace paths to WeChat. A response that
+  contains only a session UUID or runtime metadata is treated as empty/failure,
+  not as a valid chat reply. `parse_fast_response()` repeats this check as the
+  final transport gate.
+- Backfill one missed row with
+  `wechat_direct_chatops.py --config <CHAT_CONFIG> --force-local-id <LOCAL_ID>
+  --send --no-decrypt`. Exact replay is one-shot only: it isolates that local
+  row, clears both dedupe forms, and restores the monitor cursor afterward so
+  newer turns are neither coalesced nor duplicated. Use
+  `--force-latest-user-burst N` only when the whole newest burst was missed.
 - Keep fallback configuration system-level through `agent_fallbacks` and the
   per-backend `codex`/`claude`/`aginti` config blocks. Do not implement a
   one-off Spark quota workaround inside EchoMind, link inbox, video generation,

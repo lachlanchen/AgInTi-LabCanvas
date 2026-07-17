@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -235,6 +236,133 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(len(aginti_calls), 1)
         self.assertEqual(result["backend_attempts"][0]["failure_kind"], "timeout")
         self.assertEqual(result["backend_attempts"][-1]["backend"], "aginti")
+
+    def test_backend_session_banner_is_not_user_facing_content(self) -> None:
+        backend = load_backend()
+
+        self.assertEqual(backend.user_facing_backend_message("Session: web-agent-4a6d272a-b13d-4a16-ab2e-5fcdececdd12"), "")
+        self.assertFalse(backend.backend_result_has_content({"message": "web-agent-4a6d272a-b13d-4a16-ab2e-5fcdececdd12"}))
+        self.assertEqual(backend.user_facing_backend_message("CHAT: useful answer"), "CHAT: useful answer")
+
+    def test_default_aginti_command_uses_backward_compatible_one_shot(self) -> None:
+        backend = load_backend()
+
+        command = backend.aginti_command(model="aginti", role="fast", backend_config={})
+
+        self.assertEqual(command, ["aginti"])
+
+    def test_default_aginti_run_passes_the_wrapped_prompt_as_one_argument(self) -> None:
+        backend = load_backend()
+        completed = subprocess.CompletedProcess(
+            ["aginti", "original prompt"],
+            0,
+            stdout="CHAT: actual answer",
+            stderr="",
+        )
+        with (
+            mock.patch.object(backend, "command_available", return_value=True),
+            mock.patch.object(backend.subprocess, "run", return_value=completed) as run,
+        ):
+            result = backend.run_aginti_session(
+                "original prompt",
+                chat_name="EchoMind",
+                role="fast",
+                model="aginti",
+                reasoning_effort="low",
+                sandbox="read-only",
+                timeout_seconds=120,
+                workdir=ROOT,
+                backend_config={"wrap_prompt": False},
+            )
+
+        command = run.call_args.args[0]
+        self.assertEqual(command, ["aginti", "original prompt"])
+        self.assertIsNone(run.call_args.kwargs["input"])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["message"], "CHAT: actual answer")
+
+    def test_aginti_message_comes_from_final_session_assistant_turn(self) -> None:
+        backend = load_backend()
+        session_id = "web-agent-11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / session_id
+            state_dir.mkdir(parents=True)
+            (state_dir / "state.json").write_text(
+                '{"messages":['
+                '{"role":"user","content":"Goal: exact current prompt"},'
+                '{"role":"assistant","content":"CHAT: actual language answer"}'
+                ']}',
+                encoding="utf-8",
+            )
+            message, source = backend.extract_aginti_user_message(
+                f"Session: {session_id}\nProvider: test\nPlan:\n1. internal plan\n",
+                backend_config={"sessions_dir": tmp},
+                expected_prompt="exact current prompt",
+            )
+
+        self.assertEqual(message, "CHAT: actual language answer")
+        self.assertEqual(source, "session_state")
+
+    def test_aginti_session_state_must_belong_to_the_current_prompt(self) -> None:
+        backend = load_backend()
+        session_id = "web-agent-11111111-2222-3333-4444-555555555555"
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / session_id
+            state_dir.mkdir(parents=True)
+            (state_dir / "state.json").write_text(
+                '{"messages":['
+                '{"role":"user","content":"Goal: unrelated old task"},'
+                '{"role":"assistant","content":"CHAT: stale answer"}'
+                ']}',
+                encoding="utf-8",
+            )
+            message, source = backend.extract_aginti_user_message(
+                f"Session: {session_id}\nProvider: test\n",
+                backend_config={"sessions_dir": tmp},
+                expected_prompt="exact current prompt",
+            )
+
+        self.assertEqual(message, "")
+        self.assertEqual(source, "unavailable")
+
+    def test_metadata_only_aginti_fallback_is_rejected(self) -> None:
+        backend = load_backend()
+        original_codex = backend.run_codex_session
+        original_aginti = backend.run_aginti_session
+        try:
+            backend.run_codex_session = lambda *args, **kwargs: {
+                "ok": False,
+                "message": "Codex failed: timed out before completing the turn.",
+                "thread_id": "",
+                "returncode": 124,
+                "stderr_tail": "timeout",
+            }
+            backend.run_aginti_session = lambda *args, **kwargs: {
+                "ok": True,
+                "message": "Session: web-agent-4a6d272a-b13d-4a16-ab2e-5fcdececdd12",
+                "thread_id": "",
+                "returncode": 0,
+            }
+            result = backend.run_agent_session(
+                "hello",
+                backend="codex",
+                chat_name="EchoMind",
+                role="fast",
+                model="gpt-5.6-sol",
+                reasoning_effort="low",
+                sandbox="read-only",
+                timeout_seconds=25,
+                workdir=ROOT,
+                backend_config={"agent_fallbacks": {"fallback_to_aginti": True}},
+            )
+        finally:
+            backend.run_codex_session = original_codex
+            backend.run_aginti_session = original_aginti
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["message"], "")
+        self.assertEqual(result["reason"], "empty_response")
+        self.assertTrue(result["backend_fallback_used"])
 
     def test_timeout_fallback_can_be_disabled(self) -> None:
         backend = load_backend()

@@ -968,6 +968,75 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertIn(("run", ["xdotool", "key", "--clearmodifiers", "ctrl+v"]), calls)
         self.assertIn(("wait", 6.0), calls)
 
+    def test_paste_text_timeout_is_a_send_failure(self):
+        module = load_wechat_gui_send()
+
+        class FakePipe:
+            def write(self, _text):
+                return None
+
+            def close(self):
+                return None
+
+        class FakeProcess:
+            def __init__(self, _command, **_kwargs):
+                self.stdin = FakePipe()
+                self.stdout = None
+                self.stderr = None
+                self.returncode = None
+                self.wait_count = 0
+                self.terminated = False
+
+            def wait(self, timeout=None):
+                self.wait_count += 1
+                if self.wait_count == 1:
+                    raise subprocess.TimeoutExpired("xclip", timeout)
+                self.returncode = -15
+                return self.returncode
+
+            def terminate(self):
+                self.terminated = True
+
+            def kill(self):
+                self.returncode = -9
+
+        process = FakeProcess([])
+        with mock.patch.object(module.subprocess, "Popen", return_value=process), mock.patch.object(
+            module, "run", return_value=subprocess.CompletedProcess([], 0, "", "")
+        ), mock.patch.object(module.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "WECHAT_CLIPBOARD_PASTE_TIMEOUT"):
+                module.paste_text({}, "hello")
+
+        self.assertTrue(process.terminated)
+
+    def test_verify_composer_text_reads_exact_message_back(self):
+        module = load_wechat_gui_send()
+        expected = "第一行\n研究室（けんきゅうしつ）"
+        calls = []
+
+        def fake_run(command, *, env, check=True):
+            calls.append(command)
+            stdout = "第一行\r\n研究室（けんきゅうしつ）" if command[0] == "xclip" else ""
+            return subprocess.CompletedProcess(command, 0, stdout, "")
+
+        with mock.patch.object(module, "run", side_effect=fake_run), mock.patch.object(module.time, "sleep"):
+            module.verify_composer_text({}, expected)
+
+        self.assertIn(["xdotool", "key", "--clearmodifiers", "ctrl+a"], calls)
+        self.assertIn(["xdotool", "key", "--clearmodifiers", "ctrl+c"], calls)
+        self.assertIn(["xclip", "-selection", "clipboard", "-o"], calls)
+        self.assertIn(["xdotool", "key", "--clearmodifiers", "ctrl+End"], calls)
+
+    def test_verify_composer_text_rejects_empty_composer(self):
+        module = load_wechat_gui_send()
+
+        def fake_run(command, *, env, check=True):
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch.object(module, "run", side_effect=fake_run), mock.patch.object(module.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "WECHAT_COMPOSE_VERIFY_FAILED"):
+                module.verify_composer_text({}, "expected message")
+
     def test_target_search_requires_explicit_opt_in(self):
         module = load_wechat_gui_send()
 

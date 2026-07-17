@@ -26,7 +26,11 @@ except ModuleNotFoundError:  # Tests and dry policy checks should not require th
     zstd = None
 
 from file_lock import exclusive_lock, fcntl_compat as fcntl
-from wechat_agent_backend import run_agent_session as run_codex_session, select_agent_backend
+from wechat_agent_backend import (
+    run_agent_session as run_codex_session,
+    select_agent_backend,
+    user_facing_backend_message,
+)
 from wechat_memory import organize_messages
 from wechat_message_policy import is_no_reply_control, recorded_outbound_echo
 from wechat_mirror import DEFAULT_DB, record_event
@@ -72,17 +76,25 @@ def main() -> int:
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--poll-seconds", type=float, default=None)
     parser.add_argument("--catchup-poll-seconds", type=float, default=None)
-    parser.add_argument(
+    replay_group = parser.add_mutually_exclusive_group()
+    replay_group.add_argument(
         "--force-latest-user-burst",
         type=int,
         default=0,
         metavar="N",
         help="Replay the newest N non-self triggerable rows even if they were marked handled.",
     )
+    replay_group.add_argument(
+        "--force-local-id",
+        type=int,
+        default=0,
+        metavar="LOCAL_ID",
+        help="Replay one exact triggerable row from this chat without replaying newer messages.",
+    )
     parser.add_argument("--worker-queue", type=Path, default=DEFAULT_QUEUE, help="Private JSONL queue for slower worker tasks.")
     args = parser.parse_args()
-    if args.loop and args.force_latest_user_burst:
-        raise SystemExit("--force-latest-user-burst is only valid for a one-shot replay, not --loop.")
+    if args.loop and (args.force_latest_user_burst or args.force_local_id):
+        raise SystemExit("Force replay options are only valid for a one-shot replay, not --loop.")
 
     config = load_config(args.config)
     config["worker_queue"] = str(args.worker_queue)
@@ -98,6 +110,8 @@ def main() -> int:
         state = load_state(state_path)
         if args.force_latest_user_burst:
             state = prepare_force_latest_user_burst(config, state, args.force_latest_user_burst)
+        elif args.force_local_id:
+            state = prepare_force_local_id(config, state, args.force_local_id)
         result = run_once(config, state, send=args.send, no_decrypt=args.no_decrypt)
         save_state(state_path, result["state"])
         print(json.dumps({k: v for k, v in result.items() if k != "state"}, ensure_ascii=False, indent=2), flush=True)
@@ -120,7 +134,8 @@ def load_config(path: Path) -> dict[str, Any]:
         "claude": {"model": "", "timeout_seconds": 60},
         "aginti": {
             "command": os.environ.get("WECHAT_AGINTI_COMMAND", "aginti"),
-            "args": os.environ.get("WECHAT_AGINTI_ARGS", "agent run --stdin"),
+            "args": os.environ.get("WECHAT_AGINTI_ARGS", ""),
+            "prompt_mode": os.environ.get("WECHAT_AGINTI_PROMPT_MODE", ""),
             "workspace": os.environ.get("WECHAT_AGINTI_WORKSPACE", "../Agent/AgInTiFlow"),
             "timeout_seconds": 120,
             "wrap_prompt": True,
@@ -362,14 +377,19 @@ def refresh_decrypted_store() -> None:
 def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_decrypt: bool) -> dict[str, Any]:
     loop_started = time.monotonic()
     metrics: dict[str, float | int | str] = {"started_at": datetime.now().isoformat(timespec="seconds")}
+    replay_local_ids = force_replay_local_ids(state)
     if not no_decrypt:
         started = time.monotonic()
         refresh_decrypted_store()
         metrics["decrypt_ms"] = elapsed_ms(started)
 
-    pending_voice_rows = retry_pending_voice_backlog(config, state, metrics)
+    pending_voice_rows = [] if replay_local_ids else retry_pending_voice_backlog(config, state, metrics)
     started = time.monotonic()
     fresh_rows = read_new_messages(config, state)
+    if replay_local_ids:
+        fresh_rows = [row for row in fresh_rows if int(row.get("local_id") or 0) in replay_local_ids]
+        metrics["force_replay_requested"] = len(replay_local_ids)
+        metrics["force_replay_found"] = len(fresh_rows)
     metrics["read_ms"] = elapsed_ms(started)
     new_rows = merge_message_rows(pending_voice_rows, fresh_rows)
     if new_rows:
@@ -560,6 +580,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         else:
             state["last_local_id"] = retain_pending_voice_cursor(config, state, new_rows, proposed_last_local_id, metrics)
         state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
+    finish_force_replay(state, metrics)
     state["last_loop_at"] = datetime.now().isoformat(timespec="seconds")
     metrics["total_ms"] = elapsed_ms(loop_started)
     state["last_loop_metrics"] = metrics
@@ -915,15 +936,89 @@ def prepare_force_latest_user_burst(config: dict[str, Any], state: dict[str, Any
     selected = latest_force_replay_rows(config, rows, count)
     if not selected:
         return state
-    replay_ids = {str(row["server_id"]) for row in selected}
+    return prepare_force_replay_state(
+        state,
+        selected,
+        note="Force replay of latest non-self user burst; message content intentionally not stored here.",
+    )
+
+
+def prepare_force_local_id(config: dict[str, Any], state: dict[str, Any], local_id: int) -> dict[str, Any]:
+    if local_id <= 0:
+        raise ValueError("Force replay local_id must be positive.")
+    rows = read_recent_history(config, local_id, limit=1)
+    selected = [row for row in rows if int(row.get("local_id") or 0) == local_id]
+    if not selected:
+        raise ValueError(f"No message row found for local_id={local_id} in the configured chat.")
+    enrich_voice_rows(config, selected)
+    if not is_force_replay_candidate(config, selected[0]):
+        raise ValueError(f"Message local_id={local_id} is not a triggerable user row.")
+    return prepare_force_replay_state(
+        state,
+        selected,
+        note="Force replay of one exact chat-local row; message content intentionally not stored here.",
+    )
+
+
+def prepare_force_replay_state(
+    state: dict[str, Any],
+    selected: list[dict[str, Any]],
+    *,
+    note: str,
+) -> dict[str, Any]:
+    if not selected:
+        return state
+    replay_server_ids = {
+        str(row.get("server_id") or "")
+        for row in selected
+        if valid_response_server_id(str(row.get("server_id") or ""))
+    }
+    replay_message_keys = {response_message_key(row) for row in selected if response_message_key(row)}
+    restore_local_id = max(
+        int(state.get("last_local_id") or 0),
+        int(state.get("force_replay_restore_local_id") or 0),
+    )
     state["responded_server_ids"] = [
-        str(server_id) for server_id in state.get("responded_server_ids", []) if str(server_id) not in replay_ids
+        str(server_id)
+        for server_id in state.get("responded_server_ids", [])
+        if str(server_id) not in replay_server_ids
+    ]
+    state["responded_message_keys"] = [
+        str(key)
+        for key in state.get("responded_message_keys", [])
+        if str(key) not in replay_message_keys
     ]
     state["last_local_id"] = max(0, min(int(row["local_id"]) for row in selected) - 1)
-    state["manual_reprocess_note"] = "Force replay of latest non-self user burst; message content intentionally not stored here."
+    state["force_replay_restore_local_id"] = restore_local_id
+    state["manual_reprocess_note"] = note
     state["force_replay_local_ids"] = [int(row["local_id"]) for row in selected]
     state["force_replay_at"] = datetime.now().isoformat(timespec="seconds")
     return state
+
+
+def force_replay_local_ids(state: dict[str, Any]) -> set[int]:
+    ids: set[int] = set()
+    for item in state.get("force_replay_local_ids", []):
+        try:
+            local_id = int(item)
+        except (TypeError, ValueError):
+            continue
+        if local_id > 0:
+            ids.add(local_id)
+    return ids
+
+
+def finish_force_replay(state: dict[str, Any], metrics: dict[str, Any]) -> None:
+    if not force_replay_local_ids(state):
+        return
+    state["last_local_id"] = max(
+        int(state.get("last_local_id") or 0),
+        int(state.get("force_replay_restore_local_id") or 0),
+    )
+    state.pop("force_replay_local_ids", None)
+    state.pop("force_replay_restore_local_id", None)
+    state["force_replay_completed_at"] = datetime.now().isoformat(timespec="seconds")
+    metrics["force_replay_completed"] = 1
 
 
 def latest_force_replay_rows(config: dict[str, Any], rows: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
@@ -5194,7 +5289,7 @@ Do not mention database, OCR, decrypted messages, or automation internals.
 
 
 def parse_fast_response(response: str) -> dict[str, str]:
-    text = response.strip()
+    text = user_facing_backend_message(response)
     if not text or is_no_reply_control(text):
         return {"chat": "", "ack": "", "task": ""}
     routed = {"chat": "", "ack": "", "task": ""}
