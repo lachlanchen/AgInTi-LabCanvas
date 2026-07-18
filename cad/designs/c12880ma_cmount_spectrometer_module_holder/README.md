@@ -44,3 +44,7 @@ STEP, a female-thread cutter, a manifest, and validation evidence.
 The 6P connector clearance is intentionally based on the protruding PCB pins,
 not on the connector housing. The photos explain orientation only; they do not
 add any housing, daughterboard, notch, or other geometry to the measured holder.
+
+The complete orientation history, failed interpretations, coordinate mapping,
+and reusable validation method are documented in
+`references/c12880ma-holder-orientation-lessons-2026-07-18.md`.
