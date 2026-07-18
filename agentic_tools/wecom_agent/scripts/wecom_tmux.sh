@@ -17,6 +17,7 @@ QUEUE="${WECOM_TASK_QUEUE:-$TOOL_ROOT/.private/wecom_task_queue.jsonl}"
 LOG_DIR="$ROOT/output/wecom/$(date +%F)"
 GATEWAY_LOG="$LOG_DIR/gateway.log"
 WORKER_LOG="$LOG_DIR/worker.log"
+DAILY_LOG="$LOG_DIR/daily.log"
 mkdir -p "$LOG_DIR"
 
 usage() {
@@ -45,6 +46,8 @@ start_stack() {
     "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec node '$TOOL_ROOT/src/bridge.mjs' >> '$GATEWAY_LOG' 2>&1"
   tmux new-window -t "$SESSION" -n worker \
     "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh --queue '$QUEUE' --chat wecom --loop --send >> '$WORKER_LOG' 2>&1"
+  tmux new-window -t "$SESSION" -n daily \
+    "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_daily_research.py' loop --queue '$QUEUE' >> '$DAILY_LOG' 2>&1"
   echo "Started $SESSION"
   echo "Logs: $LOG_DIR"
 }

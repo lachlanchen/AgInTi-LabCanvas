@@ -40,11 +40,46 @@ Then start and verify the bridge:
 ```bash
 PYTHONPATH=src python -m agenticapp wecom gateway start
 PYTHONPATH=src python -m agenticapp wecom doctor --json
+PYTHONPATH=src python -m agenticapp wecom daily status --json
 ```
 
-The default `owner` access mode pairs the first sender and rejects other users
-unless their user IDs are listed in `WECOM_ALLOWED_USERIDS`. Use `all` only
-when the bot is intentionally available to every member who can see it.
+The default `owner` access mode pairs the first sender. When that owner first
+uses the bot in a group, the exact group is enrolled and its members may request
+safe research/tool work. Unrelated groups and non-owner DMs remain rejected.
+LabAgent does not perform video publication or other public posting. Dangerous
+or out-of-scope requests receive an agent-written refusal or safer alternative;
+the existing confirmation gates still protect sensitive in-scope actions. Use
+`all` only when the bot is intentionally available to every visible user.
+
+## LabAgent Research Group
+
+After adding the bot to the internal `LabAgent` group, send a new bot-visible
+message from the intended owner. WeCom normally requires mentioning the bot in
+a group. The official API does not expose earlier group history, so enrollment
+starts with the first delivered event.
+
+Normal messages are forwarded to a persistent, isolated LabCanvas agent session.
+The group can request literature research, research proposals, lawful paper
+downloads, Markdown/TeX/PDF reports, editable paper figures, and the other
+LabCanvas CAD/PCB/Blender design routines with the same worker permissions as
+the private LazyResearch group. Results and requested artifacts return to the
+same group. Video/publication work is deliberately outside this bot's scope.
+
+Use `#daily` for persistent research preferences:
+
+```text
+#daily event-camera reconstruction and hybrid imaging
+#daily status
+#daily off
+```
+
+`#daily` without a topic asks the group what to follow. At the configured time,
+the scheduler combines active topics with recent same-group context and queues
+one source-grounded briefing per group/day. It returns a concise Chinese digest,
+Markdown evidence, and a compiled PDF. Configure the local schedule with
+`WECOM_DAILY_RESEARCH_TIME`, `WECOM_DAILY_TOPIC_PROMPT_TIME`, and
+`WECOM_DAILY_TIMEZONE`. New owner-enrolled groups are prompted automatically;
+set `WECOM_DAILY_AUTO_ENROLL=0` to require a bare `#daily` first.
 
 ## Runtime
 
@@ -58,6 +93,10 @@ WeCom AI Bot WebSocket
   -> localhost authenticated delivery API
   -> WeCom text/media send
 ```
+
+The tmux stack has `gateway`, `worker`, and `daily` windows. The scheduler only
+reads local private SQLite state while idle; model quota is spent only when a
+due report is enqueued and executed by the worker.
 
 Private state lives under `agentic_tools/wecom_agent/.private/`. Downloaded
 source media and task artifacts live under ignored `output/`. The local send

@@ -58,3 +58,55 @@ export function canonicalChatLabel(accountId, chatType, chatId, digest) {
   const kind = chatType === 'group' ? 'group' : 'dm';
   return `wecom:${account}:${kind}:${String(digest || chatId || '').slice(0, 16)}`;
 }
+
+export function decideInboundAuthorization({
+  accessMode = 'owner',
+  userId = '',
+  chatId = '',
+  chatType = 'single',
+  ownerUserId = '',
+  pairFirstUser = true,
+  allowedUserIds = [],
+  trustedGroupIds = [],
+  groupMemberAccess = 'trusted',
+} = {}) {
+  const userid = String(userId || '');
+  const owner = String(ownerUserId || '');
+  const allowed = allowedUserIds instanceof Set ? allowedUserIds : new Set(allowedUserIds);
+  const trusted = trustedGroupIds instanceof Set ? trustedGroupIds : new Set(trustedGroupIds);
+  const isGroup = chatType === 'group';
+
+  if (!userid) return { allowed: false, role: 'rejected', reason: 'missing_userid' };
+  if (accessMode === 'all') return { allowed: true, role: 'all_user', reason: 'access_mode_all' };
+  if (allowed.has(userid)) {
+    return {
+      allowed: true,
+      role: 'allowlisted',
+      reason: 'allowlist',
+      trustGroup: isGroup && groupMemberAccess === 'trusted',
+    };
+  }
+  if (accessMode === 'allowlist') return { allowed: false, role: 'rejected', reason: 'not_allowlisted' };
+  if (owner) {
+    if (owner === userid) {
+      return {
+        allowed: true,
+        role: 'owner',
+        reason: 'paired_owner',
+        trustGroup: isGroup && groupMemberAccess === 'trusted',
+      };
+    }
+    if (isGroup && groupMemberAccess === 'trusted' && trusted.has(String(chatId || ''))) {
+      return { allowed: true, role: 'group_member', reason: 'trusted_group' };
+    }
+    return { allowed: false, role: 'rejected', reason: 'owner_only' };
+  }
+  if (!pairFirstUser) return { allowed: false, role: 'rejected', reason: 'owner_not_paired' };
+  return {
+    allowed: true,
+    role: 'owner',
+    reason: 'paired_first_user',
+    pairOwner: true,
+    trustGroup: isGroup && groupMemberAccess === 'trusted',
+  };
+}

@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { chunkUtf8, inferExtension, mediaTypeForPath, sanitizeFilename } from '../src/protocol.mjs';
+import {
+  chunkUtf8,
+  decideInboundAuthorization,
+  inferExtension,
+  mediaTypeForPath,
+  sanitizeFilename,
+} from '../src/protocol.mjs';
 
 test('sanitizeFilename removes traversal and control characters', () => {
   assert.equal(sanitizeFilename('../../bad\u0000:name.pdf'), 'bad_name.pdf');
@@ -20,4 +26,47 @@ test('mediaTypeForPath uses conservative WeCom upload types', () => {
   assert.equal(mediaTypeForPath('/tmp/render.png'), 'image');
   assert.equal(mediaTypeForPath('/tmp/result.mp4'), 'video');
   assert.equal(mediaTypeForPath('/tmp/report.pdf'), 'file');
+});
+
+test('owner enrollment trusts one group without opening unrelated groups or DMs', () => {
+  const paired = decideInboundAuthorization({
+    accessMode: 'owner',
+    userId: 'owner',
+    chatId: 'lab-agent',
+    chatType: 'group',
+    pairFirstUser: true,
+  });
+  assert.equal(paired.allowed, true);
+  assert.equal(paired.pairOwner, true);
+  assert.equal(paired.trustGroup, true);
+
+  const member = decideInboundAuthorization({
+    accessMode: 'owner',
+    userId: 'researcher',
+    chatId: 'lab-agent',
+    chatType: 'group',
+    ownerUserId: 'owner',
+    trustedGroupIds: new Set(['lab-agent']),
+  });
+  assert.deepEqual(member, { allowed: true, role: 'group_member', reason: 'trusted_group' });
+
+  const unrelated = decideInboundAuthorization({
+    accessMode: 'owner',
+    userId: 'researcher',
+    chatId: 'other-group',
+    chatType: 'group',
+    ownerUserId: 'owner',
+    trustedGroupIds: new Set(['lab-agent']),
+  });
+  assert.equal(unrelated.allowed, false);
+
+  const dm = decideInboundAuthorization({
+    accessMode: 'owner',
+    userId: 'researcher',
+    chatId: 'researcher',
+    chatType: 'single',
+    ownerUserId: 'owner',
+    trustedGroupIds: new Set(['lab-agent']),
+  });
+  assert.equal(dm.allowed, false);
 });

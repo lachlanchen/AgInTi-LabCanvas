@@ -27,6 +27,7 @@ from wechat_agent_backend import run_agent_session  # noqa: E402
 from wechat_mirror import DEFAULT_DB as MIRROR_DB  # noqa: E402
 from wechat_mirror import record_event  # noqa: E402
 from wechat_routines import ensure_task_routine_contract  # noqa: E402
+from wecom_daily_research import handle_daily_directive, mark_inline_topic_prompt, register_group  # noqa: E402
 
 
 DEFAULT_QUEUE = PRIVATE / "wecom_task_queue.jsonl"
@@ -103,29 +104,19 @@ def ingest_event(
             "ack": "" if prior_reply else "消息已接收，任务正在处理中。",
         }
     record_history_message(history_db, event, chat, request, direction="inbound")
+    first_group_event = register_group(history_db, event, chat)
+    daily_reply = handle_daily_directive(history_db, event, chat)
+    if daily_reply is not None:
+        return complete_direct_reply(history_db, event, chat, daily_reply, action="wecom_daily_command")
     context = recent_history(history_db, chat, limit=12)
     route = route_event(event, request, context) if route_with_agent else fallback_route(event, request)
 
     if not bool(route.get("worker_needed")) and str(route.get("response") or "").strip():
-        response = sanitize_chat_response(route["response"])
-        record_history_message(
-            history_db,
-            {**event, "message_id": f"reply:{event['message_id']}"},
-            chat,
-            response,
-            direction="outbound",
-        )
-        record_event(
-            chat_name=chat,
-            action="wecom_direct_reply",
-            direction="outbound",
-            message=response,
-            status="ready",
-            db_path=MIRROR_DB,
-            metadata={"transport": "wecom", "source_message_hash": short_hash(event["message_id"])},
-        )
-        mark_message_processed(history_db, str(event["message_id"]))
-        return {"duplicate": False, "queued": False, "chat": chat, "reply": response}
+        response = str(route["response"])
+        if first_group_event:
+            response = f"{response.rstrip()}\n\n{labagent_welcome_message()}"
+            mark_inline_topic_prompt(history_db, chat)
+        return complete_direct_reply(history_db, event, chat, response)
 
     task = build_task(event, chat, request, context, route, queue)
     appended = append_task_once(queue, task)
@@ -144,13 +135,16 @@ def ingest_event(
         },
     )
     mark_message_processed(history_db, str(event["message_id"]))
+    ack = sanitize_chat_response(route.get("ack")) or "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。"
+    if first_group_event:
+        ack = "当前请求已进入 LabCanvas 队列。\n\n" + labagent_welcome_message()
+        mark_inline_topic_prompt(history_db, chat)
     return {
         "duplicate": not appended,
         "queued": True,
         "task_id": task["id"],
         "chat": chat,
-        "ack": sanitize_chat_response(route.get("ack"))
-        or "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。",
+        "ack": ack,
     }
 
 
@@ -158,6 +152,44 @@ def canonical_chat_name(event: dict[str, Any]) -> str:
     account = safe_slug(str(event.get("account_id") or "default"), max_len=32)
     kind = "group" if str(event.get("chat_type")) == "group" else "dm"
     return f"wecom:{account}:{kind}:{short_hash(event.get('chat_id'))}"
+
+
+def labagent_welcome_message() -> str:
+    return (
+        "LabAgent 已连接。你希望这个群每天关注什么研究主题？\n"
+        "发送：#daily 你的主题\n"
+        "也可以直接提出文献调研、研究方案、开放获取论文下载、Markdown/TeX/PDF、论文图、CAD/PCB、Blender 或科学设计请求。"
+        "结果和文件会回到这个群；视频发布和其他公开发布不在此机器人范围内。"
+    )
+
+
+def complete_direct_reply(
+    history_db: Path,
+    event: dict[str, Any],
+    chat: str,
+    response_value: Any,
+    *,
+    action: str = "wecom_direct_reply",
+) -> dict[str, Any]:
+    response = sanitize_chat_response(response_value)
+    record_history_message(
+        history_db,
+        {**event, "message_id": f"reply:{event['message_id']}"},
+        chat,
+        response,
+        direction="outbound",
+    )
+    record_event(
+        chat_name=chat,
+        action=action,
+        direction="outbound",
+        message=response,
+        status="ready",
+        db_path=MIRROR_DB,
+        metadata={"transport": "wecom", "source_message_hash": short_hash(event["message_id"])},
+    )
+    mark_message_processed(history_db, str(event["message_id"]))
+    return {"duplicate": False, "queued": False, "chat": chat, "reply": response}
 
 
 def event_request(event: dict[str, Any]) -> str:
@@ -220,14 +252,18 @@ Allowed route_kind values:
 {', '.join(sorted(ROUTE_KINDS))}
 
 Rules:
-- Attachments, links requiring reading, research, file operations, CAD/PCB/Blender, generation, editing, publishing, or multi-step work need the worker.
+- LabAgent focuses on normal research, literature, research proposals, lawful paper downloads, Markdown/TeX/PDF reports, editable paper figures, scientific drawing, CAD/PCB/Blender design, and related artifact work.
+- Attachments, links requiring reading, research, file operations, figures, CAD/PCB/Blender, generation, editing, or multi-step design work need the worker.
 - Simple greetings, ordinary questions answerable without tools, and short conversational follow-ups may be answered directly.
 - Do not claim an attachment was read in the acknowledgement.
-- Do not authorize payment, purchase, deletion, credential changes, or public publication from old context.
-- public_publish_allowed is true only when the current message explicitly asks to publish/post to named public platforms.
+- Soft-filter dangerous or clearly out-of-scope requests with a concise natural refusal or a safer research/design alternative. Do not mechanically refuse ordinary scientific work.
+- LabAgent does not perform video publication or other public posting. Set public_publish_allowed to false.
+- Do not authorize payment, purchase, deletion, credential changes, device takeover, bypassing access controls, or another irreversible action from group context.
+- Preserve existing explicit approval gates for any sensitive action that remains within scope.
 - Preserve the whole current request; do not shrink it to one keyword.
 - Make the direct response natural and concise, not a fixed template.
 
+Sender authorization role: {event.get('authorization_role') or 'unknown'}
 Current message:
 {request[:9000]}
 
@@ -278,16 +314,13 @@ Recent same-chat context:
     if not worker_needed and not response:
         worker_needed = True
     task_text = str(payload.get("task") or "").strip() or request
-    publish_allowed = bool(payload.get("public_publish_allowed")) and current_message_explicitly_publishes(
-        str(event.get("text") or "")
-    )
     return {
         "worker_needed": worker_needed,
         "route_kind": route_kind,
         "response": response,
         "task": task_text,
         "ack": sanitize_chat_response(payload.get("ack")),
-        "public_publish_allowed": publish_allowed,
+        "public_publish_allowed": False,
     }
 
 
@@ -340,6 +373,8 @@ def build_task(
             "worker_needed": True,
             "public_publish_allowed": bool(route.get("public_publish_allowed")),
             "transport": "wecom",
+            "sender_authorization_role": str(event.get("authorization_role") or "unknown"),
+            "labagent_scope": "research_drawing_and_design_without_publication",
         },
         "instruction_contract": {
             "current_request_authoritative": True,
@@ -349,6 +384,8 @@ def build_task(
             "use_agent_reasoning": "resume_exact_chat_route_and_worker_sessions",
             "same_chat_source_isolation": True,
             "irreversible_actions_require_current_message_intent": True,
+            "dangerous_requests_use_agent_soft_filter": True,
+            "public_video_publication_forbidden": True,
         },
         "execution_contract": {
             "transport_role": "message_transport_only",
@@ -370,6 +407,8 @@ def build_task(
             "sender": str(event["sender_userid"]),
             "sender_display": str(event["sender_userid"]),
             "kind": str(event.get("msgtype") or "text"),
+            "authorization_role": str(event.get("authorization_role") or "unknown"),
+            "irreversible_actions_allowed": bool(event.get("irreversible_actions_allowed")),
         },
         "context": context[-12:],
         "transport_preflight": wecom_transport_preflight(event),

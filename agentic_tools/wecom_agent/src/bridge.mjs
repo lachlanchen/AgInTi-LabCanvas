@@ -10,7 +10,13 @@ import { promisify } from 'node:util';
 
 import AiBot, { generateReqId } from '@wecom/aibot-node-sdk';
 
-import { chunkUtf8, inferExtension, mediaTypeForPath, sanitizeFilename } from './protocol.mjs';
+import {
+  chunkUtf8,
+  decideInboundAuthorization,
+  inferExtension,
+  mediaTypeForPath,
+  sanitizeFilename,
+} from './protocol.mjs';
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -34,11 +40,13 @@ const OUTPUT_ROOT = path.resolve(process.env.WECOM_MEDIA_ROOT || path.join(REPO_
 const ACCESS_MODE = String(process.env.WECOM_ACCESS_MODE || 'owner').trim().toLowerCase();
 const PAIR_FIRST_USER = String(process.env.WECOM_PAIR_FIRST_USER || '1') !== '0';
 const ALLOWED_USERIDS = new Set(splitList(process.env.WECOM_ALLOWED_USERIDS));
+const GROUP_MEMBER_ACCESS = String(process.env.WECOM_GROUP_MEMBER_ACCESS || 'trusted').trim().toLowerCase();
 const MAX_INBOUND_BYTES = boundedInteger(process.env.WECOM_MAX_INBOUND_BYTES, 100 * 1024 * 1024, 1024, 500 * 1024 * 1024);
 const MAX_OUTBOUND_BYTES = boundedInteger(process.env.WECOM_MAX_OUTBOUND_BYTES, 49 * 1024 * 1024, 1024, 50 * 1024 * 1024);
 const ROUTE_TIMEOUT_MS = boundedInteger(process.env.WECOM_INGEST_TIMEOUT_MS, 120000, 5000, 600000);
 const OWNER_STATE_PATH = path.join(PRIVATE_DIR, 'owner.local.json');
 const KNOWN_CHATS_PATH = path.join(PRIVATE_DIR, 'known_chats.local.json');
+const TRUSTED_GROUPS_PATH = path.join(PRIVATE_DIR, 'trusted_groups.local.json');
 const SEEN_PATH = path.join(PRIVATE_DIR, 'seen_messages.local.json');
 const STATUS_PATH = path.join(PRIVATE_DIR, 'bridge_status.local.json');
 const DELIVERY_PATH = path.join(PRIVATE_DIR, 'deliveries.local.json');
@@ -55,6 +63,7 @@ fs.mkdirSync(OUTPUT_ROOT, { recursive: true, mode: 0o700 });
 fs.mkdirSync(path.dirname(QUEUE_PATH), { recursive: true, mode: 0o700 });
 
 const knownChats = Object.assign(Object.create(null), readJson(KNOWN_CHATS_PATH, {}));
+const trustedGroups = new Set(Object.keys(readJson(TRUSTED_GROUPS_PATH, {})));
 const seenMessages = new Map(Object.entries(readJson(SEEN_PATH, {})));
 const inFlightMessages = new Set();
 const deliveries = readJson(DELIVERY_PATH, {});
@@ -133,20 +142,21 @@ async function handleInbound(frame) {
     log('info', `Ignored in-flight duplicate message ${shortHash(messageId)}`);
     return;
   }
-  if (!authorizeSender(senderUserId)) {
-    log('warn', `Ignored sender ${shortHash(senderUserId)} under access mode ${ACCESS_MODE}`);
+  const authorization = authorizeInbound(senderUserId, chatId, chatType);
+  if (!authorization.allowed) {
+    log('warn', `Ignored sender ${shortHash(senderUserId)} under access mode ${ACCESS_MODE}: ${authorization.reason}`);
     return;
   }
 
   inFlightMessages.add(messageId);
   try {
-    rememberChat(chatId, chatType, senderUserId);
+    rememberChat(chatId, chatType, senderUserId, authorization.role);
     const streamId = generateReqId('labcanvas');
     await client.replyStream(frame, streamId, 'LabCanvas 正在处理。', false);
 
     const eventDir = inboundEventDir(chatId, messageId);
     fs.mkdirSync(eventDir, { recursive: true, mode: 0o700 });
-    const normalized = await normalizeInboundMessage(body, eventDir);
+    const normalized = await normalizeInboundMessage(body, eventDir, authorization);
     const eventPath = path.join(eventDir, 'event.json');
     writePrivateJson(eventPath, normalized);
 
@@ -160,7 +170,7 @@ async function handleInbound(frame) {
   }
 }
 
-async function normalizeInboundMessage(body, eventDir) {
+async function normalizeInboundMessage(body, eventDir, authorization) {
   const attachments = [];
   const textParts = [];
   if (body.text?.content) textParts.push(String(body.text.content));
@@ -189,6 +199,8 @@ async function normalizeInboundMessage(body, eventDir) {
     chat_id: String(body.chattype === 'group' ? body.chatid || '' : body.from?.userid || ''),
     chat_type: body.chattype === 'group' ? 'group' : 'single',
     sender_userid: String(body.from?.userid || ''),
+    authorization_role: String(authorization?.role || 'rejected'),
+    irreversible_actions_allowed: ['owner', 'allowlisted'].includes(String(authorization?.role || '')),
     create_time: Number(body.create_time || Math.floor(Date.now() / 1000)),
     msgtype: String(body.msgtype || 'unknown'),
     text: textParts.join('\n').trim(),
@@ -336,22 +348,40 @@ function persistDelivery(taskId, ledger) {
   writePrivateJson(DELIVERY_PATH, deliveries);
 }
 
-function authorizeSender(userid) {
-  if (ACCESS_MODE === 'all') return true;
-  if (ALLOWED_USERIDS.has(userid)) return true;
-  if (ACCESS_MODE === 'allowlist') return false;
+function authorizeInbound(userid, chatId, chatType) {
   const owner = readJson(OWNER_STATE_PATH, {});
-  if (owner.userid) return constantTimeEqual(String(owner.userid), userid);
-  if (!PAIR_FIRST_USER) return false;
-  writePrivateJson(OWNER_STATE_PATH, { userid, paired_at: new Date().toISOString() });
-  log('info', `Paired first owner ${shortHash(userid)}`);
-  return true;
+  const decision = decideInboundAuthorization({
+    accessMode: ACCESS_MODE,
+    userId: userid,
+    chatId,
+    chatType,
+    ownerUserId: owner.userid || '',
+    pairFirstUser: PAIR_FIRST_USER,
+    allowedUserIds: ALLOWED_USERIDS,
+    trustedGroupIds: trustedGroups,
+    groupMemberAccess: GROUP_MEMBER_ACCESS,
+  });
+  if (decision.pairOwner) {
+    writePrivateJson(OWNER_STATE_PATH, { userid, paired_at: new Date().toISOString() });
+    log('info', `Paired first owner ${shortHash(userid)}`);
+  }
+  if (decision.trustGroup && chatType === 'group' && chatId) {
+    trustedGroups.add(chatId);
+    writePrivateJson(
+      TRUSTED_GROUPS_PATH,
+      Object.fromEntries([...trustedGroups].map((id) => [id, { enrolled_at: new Date().toISOString() }])),
+    );
+    log('info', `Enrolled trusted group ${shortHash(chatId)}`);
+  }
+  return decision;
 }
 
-function rememberChat(chatId, chatType, senderUserId) {
+function rememberChat(chatId, chatType, senderUserId, authorizationRole) {
   knownChats[chatId] = {
     chat_type: chatType,
     last_sender_hash: shortHash(senderUserId),
+    authorization_role: authorizationRole,
+    trusted_group: chatType === 'group' && trustedGroups.has(chatId),
     last_seen_at: new Date().toISOString(),
   };
   writePrivateJson(KNOWN_CHATS_PATH, knownChats);

@@ -89,6 +89,19 @@ Default access is first-owner pairing; organization-wide access must be an
 explicit operator choice. Existing personal-WeChat groups are outside this API
 and continue using the GUI/database bridge.
 
+For the restricted LabAgent research group:
+
+- The paired owner enrolls the exact group; trusted members then share the
+  private LazyResearch worker's research, drawing, and design routines.
+- Video publication and other public posting are disabled. Other dangerous
+  requests are assessed by the route agent and retain the existing approval
+  gates.
+- `#daily <topic>` stores a private per-member preference. The local scheduler
+  enqueues one `research_summary` task per group/date into the same exact group
+  session; idle checks spend no model quota.
+- Daily reports return a concise digest and requested Markdown/PDF or editable
+  figure artifacts through the source-scoped WeCom send gate.
+
 ## Non-Negotiable Invariants
 
 - One chat or DM equals one private config, one state file, and one exact send

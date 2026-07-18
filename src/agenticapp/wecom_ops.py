@@ -18,6 +18,7 @@ PRIVATE = TOOL_ROOT / ".private"
 DEFAULT_ENV = PRIVATE / "wecom.local.env"
 SUPERVISOR = TOOL_ROOT / "scripts" / "wecom_tmux.sh"
 ADMIN_BROWSER = TOOL_ROOT / "scripts" / "wecom_admin_browser.sh"
+DAILY_RESEARCH = TOOL_ROOT / "scripts" / "wecom_daily_research.py"
 DEFAULT_API_URL = "http://127.0.0.1:19578"
 
 
@@ -47,6 +48,12 @@ def add_wecom_parser(subparsers: argparse._SubParsersAction) -> None:
     admin.add_argument("--json", action="store_true")
     admin.set_defaults(func=cmd_admin)
 
+    daily = nested.add_parser("daily", help="Inspect or run per-group #daily research scheduling.")
+    daily.add_argument("action", nargs="?", default="status", choices=["status", "run"])
+    daily.add_argument("--force", action="store_true", help="Run today's due action now without duplicating it.")
+    daily.add_argument("--json", action="store_true")
+    daily.set_defaults(func=cmd_daily)
+
 
 def cmd_init_config(args: argparse.Namespace) -> int:
     PRIVATE.mkdir(parents=True, exist_ok=True)
@@ -70,6 +77,9 @@ WECOM_LOCAL_API_TOKEN={token}
 WECOM_ACCESS_MODE=owner
 WECOM_PAIR_FIRST_USER=1
 WECOM_ALLOWED_USERIDS=
+# In owner mode, the owner enrolls a group on first use; members of that group
+# may request safe work while irreversible actions remain owner/allowlist-only.
+WECOM_GROUP_MEMBER_ACCESS=trusted
 
 WECOM_AGENT_BACKEND=codex
 WECOM_ROUTE_MODEL=gpt-5.6-sol
@@ -77,6 +87,13 @@ WECOM_ROUTE_EFFORT=low
 WECOM_ROUTE_TIMEOUT_SECONDS=35
 WECOM_PENDING_TTL_SECONDS=3600
 WECOM_TASK_QUEUE={TOOL_ROOT / '.private' / 'wecom_task_queue.jsonl'}
+
+# Per-group #daily research scheduler. Times use WECOM_DAILY_TIMEZONE.
+WECOM_DAILY_RESEARCH_TIME=09:00
+WECOM_DAILY_TOPIC_PROMPT_TIME=08:45
+WECOM_DAILY_TIMEZONE=Asia/Hong_Kong
+WECOM_DAILY_POLL_SECONDS=30
+WECOM_DAILY_AUTO_ENROLL=1
 """
     DEFAULT_ENV.write_text(content, encoding="utf-8")
     DEFAULT_ENV.chmod(0o600)
@@ -114,6 +131,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "local_api_token_configured": bool(config.get("WECOM_LOCAL_API_TOKEN")),
         "supervisor_script": SUPERVISOR.is_file() and os.access(SUPERVISOR, os.X_OK),
         "ingress_script": (TOOL_ROOT / "scripts" / "wecom_ingest.py").is_file(),
+        "daily_research_script": DAILY_RESEARCH.is_file() and os.access(DAILY_RESEARCH, os.X_OK),
         "local_api": probe_health(config.get("WECOM_LOCAL_API_URL") or DEFAULT_API_URL),
         "tmux": tmux_status(config.get("WECOM_TMUX_SESSION") or "labcanvas-wecom"),
     }
@@ -127,6 +145,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         checks["local_api_token_configured"],
         checks["supervisor_script"],
         checks["ingress_script"],
+        checks["daily_research_script"],
     )
     payload = {"ok": all(required), "checks": checks, "config_path": str(DEFAULT_ENV)}
     print_payload(payload, args.json)
@@ -170,6 +189,28 @@ def cmd_admin(args: argparse.Namespace) -> int:
     }
     print_payload(payload, args.json)
     return 0 if payload["ok"] else 1
+
+
+def cmd_daily(args: argparse.Namespace) -> int:
+    command = [sys.executable, str(DAILY_RESEARCH), args.action, "--json"]
+    if args.action == "run" and args.force:
+        command.append("--force")
+    config = read_env_file(DEFAULT_ENV)
+    env = {**os.environ, **config}
+    pythonpath = [str(PACKAGE_ROOT / "src"), env.get("PYTHONPATH", "")]
+    env["PYTHONPATH"] = os.pathsep.join(item for item in pythonpath if item)
+    proc = subprocess.run(command, cwd=PACKAGE_ROOT, env=env, capture_output=True, text=True, check=False)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "error": "daily research command returned invalid JSON",
+            "stdout_tail": proc.stdout[-1000:],
+            "stderr_tail": proc.stderr[-1000:],
+        }
+    print_payload(payload, args.json)
+    return 0 if proc.returncode == 0 and payload.get("ok") else 1
 
 
 def read_env_file(path: Path) -> dict[str, str]:

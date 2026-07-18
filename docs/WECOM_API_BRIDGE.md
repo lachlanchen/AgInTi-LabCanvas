@@ -59,11 +59,52 @@ becomes the paired owner. Add the bot to an internal group and mention it to
 test group routing. Each DM/group gets a hashed LabCanvas chat name and an
 independent route/worker Codex session.
 
+The owner can instead pair from the first group message. That action enrolls
+only that exact group when `WECOM_GROUP_MEMBER_ACCESS=trusted` (the default).
+Subsequent members of the enrolled group may request safe research and artifact
+work, while unrelated groups and DMs remain closed. LabAgent uses the same
+research/drawing/design worker permissions as the private LazyResearch group,
+but video publication and other public posting are disabled for this bridge.
+Dangerous requests are soft-filtered by the agent, with exact-chat isolation and
+the existing sensitive-action approval gates retained as hard boundaries.
+
+## Daily Research
+
+An enrolled research group can persist one topic per member:
+
+```text
+#daily computational microscopy and event sensors
+#daily status
+#daily off
+```
+
+A bare `#daily` enables the group and asks for a topic. At
+`WECOM_DAILY_RESEARCH_TIME` (default `09:00` in `Asia/Hong_Kong`), the `daily`
+tmux worker queues at most one report per group/date. It uses the same persistent
+per-group agent and research routine as ordinary requests, combines active
+preferences with bounded recent group context, verifies current papers and
+project sources, and returns a Chinese digest plus Markdown/PDF evidence. When
+no topic is configured, it asks once at `WECOM_DAILY_TOPIC_PROMPT_TIME` rather
+than consuming model quota.
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom daily status --json
+PYTHONPATH=src python -m agenticapp wecom daily run --force --json
+tmux list-windows -t labcanvas-wecom
+```
+
+Normal LabAgent messages may ask for literature reviews, research proposals,
+lawful open-access paper downloads, TeX/PDF reports, editable paper figures,
+CAD/PCB, Blender, and scientific design artifacts.
+They are queued through `wechat_task_worker.run_task_orchestrator`; deterministic
+transport code does not replace the agent's research judgment.
+
 ## Reliability Contract
 
 - The Node process uses the official `@wecom/aibot-node-sdk` and maintains one
   authenticated WebSocket connection with heartbeat and reconnect.
 - Incoming message IDs are deduplicated across restarts.
+- Daily report and topic-prompt IDs are deduplicated per group/date across restarts.
 - Encrypted media URLs and AES keys are used only in memory; only decrypted,
   source-scoped files are retained under ignored `output/wecom/inbound/`.
 - Simple chat can return through the callback stream. Tool work is queued and
@@ -72,9 +113,10 @@ independent route/worker Codex session.
   privately by task ID before a retry.
 - The proactive-send API listens only on localhost, requires a random bearer
   token, and refuses chats the gateway has not previously observed.
-- Payments, purchases, public publishing, deletion, credential changes, and
-  other irreversible actions keep the existing current-message authorization
-  gates.
+- Video publication and other public posting are disabled for LabAgent. Other
+  sensitive actions retain the existing current-message authorization gates.
+- The bridge can consume only new bot-visible events. It cannot retrieve prior
+  messages from an arbitrary personal-WeChat or WeCom group history.
 
 ## GitHub Options Reviewed
 
