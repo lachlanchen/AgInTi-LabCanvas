@@ -57,6 +57,13 @@ def load_daily():
     )
 
 
+def load_cli_bridge():
+    return load_module(
+        "wecom_cli_bridge_for_tests",
+        ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_cli_bridge.py",
+    )
+
+
 class WeComAgentBridgeTests(unittest.TestCase):
     def sample_event(self, **updates):
         event = {
@@ -112,6 +119,25 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(task["route"]["transport"], "wecom")
         self.assertEqual(task["transport_preflight"]["wecom_media"]["copied"][0]["task_copy_path"], str(image))
         self.assertEqual(task["routine"]["id"], "file_intake")
+
+    def test_cli_channel_is_preserved_without_personal_wechat_fallback(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(transport_channel="wecom_cli")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(ingest, "record_event"):
+                result = ingest.ingest_event(
+                    event,
+                    queue=root / "queue.jsonl",
+                    history_db=root / "history.sqlite",
+                    route_with_agent=False,
+                )
+            task = json.loads((root / "queue.jsonl").read_text(encoding="utf-8"))
+
+        self.assertTrue(result["queued"])
+        self.assertEqual(task["source"]["wecom_transport_channel"], "wecom_cli")
+        self.assertEqual(task["execution_contract"]["transport"], "wecom_cli")
+        self.assertEqual(task["route"]["transport_channel"], "wecom_cli")
 
     def test_agent_route_can_return_direct_chat_without_queue(self) -> None:
         ingest = load_ingest()
@@ -370,6 +396,20 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         send_wecom.assert_called_once_with(result, task["chat"], task)
 
+    def test_worker_selects_separate_cli_delivery_endpoint(self) -> None:
+        worker = load_worker()
+        task = {"source": {"transport": "wecom", "wecom_transport_channel": "wecom_cli"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "agentic_tools" / "wecom_agent" / ".private" / "wecom_cli_bridge.local.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({"local_api_port": 23456, "local_api_token": "private-token"}), encoding="utf-8")
+            with mock.patch.object(worker, "ROOT", root):
+                endpoint, token = worker.wecom_transport_settings(task)
+
+        self.assertEqual(endpoint, "http://127.0.0.1:23456")
+        self.assertEqual(token, "private-token")
+
     def test_worker_preflight_preserves_exact_wecom_media_and_skips_wechat_resolution(self) -> None:
         worker = load_worker()
         task = {
@@ -411,6 +451,76 @@ class WeComAgentBridgeTests(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertEqual(returncode, 0)
         self.assertEqual(payload["novnc_url"], reported_url)
+
+    def test_external_cli_exact_group_resolution_is_fail_closed(self) -> None:
+        bridge = load_cli_bridge()
+        chats = [
+            {"chat_id": "one", "chat_name": "AgentTest"},
+            {"chat_id": "two", "chat_name": "AgentTest archive"},
+            {"chat_id": "three", "chat_name": "Other"},
+        ]
+
+        resolved = bridge.resolve_exact_target_chats(chats, ["AgentTest", "Missing"])
+
+        self.assertEqual([item["chat_id"] for item in resolved["AgentTest"]], ["one"])
+        self.assertEqual(resolved["Missing"], [])
+
+    def test_external_cli_refuses_changed_chat_identity(self) -> None:
+        bridge = load_cli_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.sqlite"
+            bridge.init_state_db(state)
+            self.assertTrue(bridge.remember_target_chat(state, "AgentTest", "raw-one", bridge.short_hash("raw-one")))
+            with self.assertRaisesRegex(RuntimeError, "changed identity"):
+                bridge.remember_target_chat(state, "AgentTest", "raw-two", bridge.short_hash("raw-two"))
+
+    def test_external_cli_initial_bind_processes_only_latest_message(self) -> None:
+        bridge_module = load_cli_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = {
+                "target_groups": ["AgentTest"],
+                "cli_path": str(root / "wecom-cli"),
+                "auth_config_dir": str(root / "auth"),
+                "tmp_dir": str(root / "tmp"),
+                "state_db": str(root / "state.sqlite"),
+                "event_root": str(root / "events"),
+                "queue": str(root / "queue.jsonl"),
+                "initial_backfill": "latest",
+                "max_message_age_seconds": 3600,
+                "debounce_seconds": 0,
+            }
+            bridge = bridge_module.WeComCliBridge(config, config_path=root / "config.json")
+            now = datetime(2026, 7, 18, 15, 0, 0)
+            messages = [
+                {"userid": "member", "send_time": "2026-07-18 14:58:00", "msgtype": "text", "text": {"content": "old"}},
+                {"userid": "member", "send_time": "2026-07-18 14:59:00", "msgtype": "text", "text": {"content": "new"}},
+            ]
+            with mock.patch.object(bridge, "invoke_ingest", return_value={"ok": True, "queued": True, "ack": "working"}) as ingest_call, mock.patch.object(
+                bridge, "send_text", return_value={"ok": True}
+            ) as send_call:
+                outcome = bridge.process_chat_messages(
+                    target_name="AgentTest",
+                    chat_id="raw-chat",
+                    chat_hash=bridge_module.short_hash("raw-chat"),
+                    messages=messages,
+                    now=now,
+                    first_resolution=True,
+                )
+            event_path = Path(ingest_call.call_args.args[0])
+            event = json.loads(event_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(outcome["processed"], 1)
+        self.assertEqual(outcome["seeded"], 1)
+        self.assertEqual(event["text"], "new")
+        self.assertEqual(event["transport_channel"], "wecom_cli")
+        send_call.assert_called_once()
+
+    def test_external_cli_source_has_no_personal_wechat_runtime_import(self) -> None:
+        source = (ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_cli_bridge.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("wechat_gui_agent", source)
+        self.assertNotIn("xwechat_files", source)
 
 
 if __name__ == "__main__":

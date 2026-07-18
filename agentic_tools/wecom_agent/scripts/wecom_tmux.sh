@@ -18,6 +18,8 @@ LOG_DIR="$ROOT/output/wecom/$(date +%F)"
 GATEWAY_LOG="$LOG_DIR/gateway.log"
 WORKER_LOG="$LOG_DIR/worker.log"
 DAILY_LOG="$LOG_DIR/daily.log"
+CLI_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_cli_bridge.local.json"
+CLI_BRIDGE_LOG="$LOG_DIR/external-cli.log"
 mkdir -p "$LOG_DIR"
 
 usage() {
@@ -48,6 +50,13 @@ start_stack() {
     "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh --queue '$QUEUE' --chat wecom --loop --send >> '$WORKER_LOG' 2>&1"
   tmux new-window -t "$SESSION" -n daily \
     "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_daily_research.py' loop --queue '$QUEUE' >> '$DAILY_LOG' 2>&1"
+  if [[ -f "$CLI_BRIDGE_CONFIG" ]] \
+    && [[ -f "$TOOL_ROOT/.private/wecom-cli-message-config/bot.enc" ]] \
+    && [[ -f "$TOOL_ROOT/.private/wecom-cli-message-config/mcp_config.enc" ]] \
+    && python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("enabled", True) else 1)' "$CLI_BRIDGE_CONFIG"; then
+    tmux new-window -t "$SESSION" -n external \
+      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_cli_bridge.py' --config '$CLI_BRIDGE_CONFIG' loop >> '$CLI_BRIDGE_LOG' 2>&1"
+  fi
   echo "Started $SESSION"
   echo "Logs: $LOG_DIR"
 }

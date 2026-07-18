@@ -32,6 +32,7 @@ from wechat_routines import ensure_task_routine_contract  # noqa: E402
 DEFAULT_QUEUE = PRIVATE / "wecom_task_queue.jsonl"
 DEFAULT_STATE_DB = PRIVATE / "wecom_messages.local.sqlite"
 DEFAULT_API_URL = "http://127.0.0.1:19578"
+DEFAULT_CLI_CONFIG = PRIVATE / "wecom_cli_bridge.local.json"
 DAILY_DIRECTIVE = re.compile(r"^\s*#daily(?:\s+|$)(.*)$", re.IGNORECASE | re.DOTALL)
 STATUS_WORDS = {"status", "show", "list", "状态", "狀態", "查看", "列表"}
 OFF_WORDS = {"off", "clear", "remove", "取消", "清除", "关闭", "關閉"}
@@ -109,6 +110,12 @@ def init_daily_state(path: Path) -> None:
             )
             """
         )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_chats)")}
+        if "transport_channel" not in columns:
+            conn.execute(
+                "ALTER TABLE daily_chats ADD COLUMN transport_channel "
+                "TEXT NOT NULL DEFAULT 'wecom_bot_websocket'"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS daily_preferences (
@@ -147,18 +154,20 @@ def register_group(path: Path, event: dict[str, Any], chat: str) -> bool:
         existed = bool(conn.execute("SELECT 1 FROM daily_chats WHERE chat = ?", (chat,)).fetchone())
         conn.execute(
             """
-            INSERT INTO daily_chats(chat, account_id, chat_id, chat_type, enabled, first_seen_at, last_seen_at)
-            VALUES (?, ?, ?, 'group', ?, ?, ?)
+            INSERT INTO daily_chats(chat, account_id, chat_id, chat_type, transport_channel, enabled, first_seen_at, last_seen_at)
+            VALUES (?, ?, ?, 'group', ?, ?, ?, ?)
             ON CONFLICT(chat) DO UPDATE SET
                 account_id = excluded.account_id,
                 chat_id = excluded.chat_id,
                 chat_type = excluded.chat_type,
+                transport_channel = excluded.transport_channel,
                 last_seen_at = excluded.last_seen_at
             """,
             (
                 chat,
                 str(event.get("account_id") or "default"),
                 str(event.get("chat_id") or ""),
+                str(event.get("transport_channel") or "wecom_bot_websocket"),
                 auto_enroll,
                 now,
                 now,
@@ -312,14 +321,12 @@ def run_due_cycle(
     date_key = current.date().isoformat()
     actions: list[dict[str, Any]] = []
     append = append_func or append_task_once
-    send = send_func or send_topic_prompt
-
     with sqlite3.connect(state_db) as conn:
         chats = conn.execute(
-            "SELECT chat, account_id, chat_id, chat_type FROM daily_chats WHERE enabled = 1 ORDER BY chat"
+            "SELECT chat, account_id, chat_id, chat_type, transport_channel FROM daily_chats WHERE enabled = 1 ORDER BY chat"
         ).fetchall()
 
-    for chat, account_id, chat_id, chat_type in chats:
+    for chat, account_id, chat_id, chat_type, transport_channel in chats:
         topics = active_topics(state_db, chat)
         if topics:
             if not force and current.time().replace(tzinfo=None) < report_time:
@@ -332,6 +339,7 @@ def run_due_cycle(
                 account_id=account_id,
                 chat_id=chat_id,
                 chat_type=chat_type,
+                transport_channel=transport_channel,
                 topics=topics,
                 context=context,
                 report_date=date_key,
@@ -349,7 +357,15 @@ def run_due_cycle(
             continue
         task_id = f"wecom-daily-topic-{date_key}-{short_hash(chat)}"
         message = "今天想让 LabAgent 跟踪什么研究主题？请发送：#daily 你的主题"
-        result = send(chat_id, message, task_id)
+        if send_func is None:
+            result = send_topic_prompt(
+                chat_id,
+                message,
+                task_id,
+                transport_channel=transport_channel,
+            )
+        else:
+            result = send_func(chat_id, message, task_id)
         if result.get("ok"):
             record_daily_run(state_db, chat, date_key, "topic_prompt", "sent", task_id)
         actions.append({"kind": "topic_prompt", "chat": chat, "task_id": task_id, "sent": bool(result.get("ok")), "error": result.get("error", "")})
@@ -374,6 +390,7 @@ def build_daily_research_task(
     report_date: str,
     queue: Path,
     now: datetime,
+    transport_channel: str = "wecom_bot_websocket",
 ) -> dict[str, Any]:
     topic_text = "\n".join(f"- {topic}" for topic in topics)
     context_text = "\n".join(
@@ -416,12 +433,18 @@ Requirements:
             }
         },
         "agent_bridge_mode": True,
-        "route": {"chat": chat, "transport": "wecom", "account_id": account_id},
+        "route": {
+            "chat": chat,
+            "transport": "wecom",
+            "transport_channel": transport_channel,
+            "account_id": account_id,
+        },
         "route_decision": {
             "route_kind": "research_or_summary",
             "worker_needed": True,
             "public_publish_allowed": False,
             "transport": "wecom",
+            "transport_channel": transport_channel,
             "scheduled_daily_research": True,
         },
         "instruction_contract": {
@@ -434,7 +457,7 @@ Requirements:
         },
         "execution_contract": {
             "transport_role": "message_transport_only",
-            "transport": "wecom_official_websocket",
+            "transport": transport_channel,
             "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
             "agent_entrypoint": "wechat_agent_backend.run_agent_session",
             "session": {"chat": chat, "role": "worker", "reuse": True},
@@ -442,6 +465,7 @@ Requirements:
         },
         "source": {
             "transport": "wecom",
+            "wecom_transport_channel": transport_channel,
             "chat": chat,
             "wecom_chat_id": chat_id,
             "wecom_chat_type": chat_type,
@@ -522,9 +546,25 @@ def record_daily_run(path: Path, chat: str, run_date: str, kind: str, status: st
         )
 
 
-def send_topic_prompt(chat_id: str, message: str, task_id: str) -> dict[str, Any]:
-    api_url = os.environ.get("WECOM_LOCAL_API_URL", DEFAULT_API_URL).rstrip("/")
-    token = os.environ.get("WECOM_LOCAL_API_TOKEN", "").strip()
+def send_topic_prompt(
+    chat_id: str,
+    message: str,
+    task_id: str,
+    *,
+    transport_channel: str = "wecom_bot_websocket",
+) -> dict[str, Any]:
+    if transport_channel == "wecom_cli":
+        try:
+            config = json.loads(DEFAULT_CLI_CONFIG.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"ok": False, "error": f"WeCom CLI delivery config unavailable: {type(exc).__name__}"}
+        api_url = f"http://127.0.0.1:{int(config.get('local_api_port') or 19579)}"
+        token = str(config.get("local_api_token") or "").strip()
+    elif transport_channel == "wecom_bot_websocket":
+        api_url = os.environ.get("WECOM_LOCAL_API_URL", DEFAULT_API_URL).rstrip("/")
+        token = os.environ.get("WECOM_LOCAL_API_TOKEN", "").strip()
+    else:
+        return {"ok": False, "error": f"unsupported WeCom transport channel: {transport_channel}"}
     if not token:
         return {"ok": False, "error": "WECOM_LOCAL_API_TOKEN is not configured"}
     if not (api_url.startswith("http://127.0.0.1:") or api_url.startswith("http://localhost:")):

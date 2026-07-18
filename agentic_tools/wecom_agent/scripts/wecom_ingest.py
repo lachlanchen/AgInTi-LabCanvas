@@ -92,6 +92,7 @@ def ingest_event(
     route_with_agent: bool = True,
 ) -> dict[str, Any]:
     chat = canonical_chat_name(event)
+    transport_channel = event_transport_channel(event)
     request = event_request(event)
     init_history_db(history_db)
     if message_processed(history_db, str(event["message_id"])):
@@ -129,6 +130,7 @@ def ingest_event(
         db_path=MIRROR_DB,
         metadata={
             "transport": "wecom",
+            "transport_channel": transport_channel,
             "task_id": task["id"],
             "route_kind": task["route_decision"]["route_kind"],
             "source_message_hash": short_hash(event["message_id"]),
@@ -152,6 +154,13 @@ def canonical_chat_name(event: dict[str, Any]) -> str:
     account = safe_slug(str(event.get("account_id") or "default"), max_len=32)
     kind = "group" if str(event.get("chat_type")) == "group" else "dm"
     return f"wecom:{account}:{kind}:{short_hash(event.get('chat_id'))}"
+
+
+def event_transport_channel(event: dict[str, Any]) -> str:
+    value = str(event.get("transport_channel") or "wecom_bot_websocket").strip().casefold()
+    if value not in {"wecom_bot_websocket", "wecom_cli"}:
+        raise ValueError(f"unsupported WeCom transport channel: {value}")
+    return value
 
 
 def labagent_welcome_message() -> str:
@@ -186,7 +195,11 @@ def complete_direct_reply(
         message=response,
         status="ready",
         db_path=MIRROR_DB,
-        metadata={"transport": "wecom", "source_message_hash": short_hash(event["message_id"])},
+        metadata={
+            "transport": "wecom",
+            "transport_channel": event_transport_channel(event),
+            "source_message_hash": short_hash(event["message_id"]),
+        },
     )
     mark_message_processed(history_db, str(event["message_id"]))
     return {"duplicate": False, "queued": False, "chat": chat, "reply": response}
@@ -345,6 +358,7 @@ def build_task(
 ) -> dict[str, Any]:
     now = datetime.now()
     message_id = str(event["message_id"])
+    transport_channel = event_transport_channel(event)
     task = {
         "id": f"wecom-{now.strftime('%Y%m%d%H%M%S')}-{short_hash(message_id)}",
         "chat": chat,
@@ -366,6 +380,7 @@ def build_task(
         "route": {
             "chat": chat,
             "transport": "wecom",
+            "transport_channel": transport_channel,
             "account_id": str(event.get("account_id") or "default"),
         },
         "route_decision": {
@@ -373,6 +388,7 @@ def build_task(
             "worker_needed": True,
             "public_publish_allowed": bool(route.get("public_publish_allowed")),
             "transport": "wecom",
+            "transport_channel": transport_channel,
             "sender_authorization_role": str(event.get("authorization_role") or "unknown"),
             "labagent_scope": "research_drawing_and_design_without_publication",
         },
@@ -389,13 +405,14 @@ def build_task(
         },
         "execution_contract": {
             "transport_role": "message_transport_only",
-            "transport": "wecom_official_websocket",
+            "transport": transport_channel,
             "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
             "agent_entrypoint": "wechat_agent_backend.run_agent_session",
             "session": {"chat": chat, "role": "worker", "reuse": True},
         },
         "source": {
             "transport": "wecom",
+            "wecom_transport_channel": transport_channel,
             "chat": chat,
             "wecom_chat_id": str(event["chat_id"]),
             "wecom_chat_type": str(event["chat_type"]),
@@ -425,7 +442,7 @@ def wecom_transport_preflight(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "wecom_media": {
             "status": "ready",
-            "source_transport": "wecom_official_websocket",
+            "source_transport": event_transport_channel(event),
             "copied": attachments,
             "agent_next_action": "Open and use these exact source-scoped files before answering.",
         }

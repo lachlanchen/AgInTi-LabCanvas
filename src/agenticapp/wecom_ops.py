@@ -4,12 +4,13 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import subprocess
 import sys
 from typing import Any
-from urllib import error, request
+from urllib import error, parse, request
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +20,9 @@ DEFAULT_ENV = PRIVATE / "wecom.local.env"
 SUPERVISOR = TOOL_ROOT / "scripts" / "wecom_tmux.sh"
 ADMIN_BROWSER = TOOL_ROOT / "scripts" / "wecom_admin_browser.sh"
 DAILY_RESEARCH = TOOL_ROOT / "scripts" / "wecom_daily_research.py"
+EXTERNAL_BRIDGE = TOOL_ROOT / "scripts" / "wecom_cli_bridge.py"
+EXTERNAL_CONFIG = PRIVATE / "wecom_cli_bridge.local.json"
+EXTERNAL_RUNTIME = PRIVATE / "wecom-cli-runtime"
 DEFAULT_API_URL = "http://127.0.0.1:19578"
 
 
@@ -53,6 +57,18 @@ def add_wecom_parser(subparsers: argparse._SubParsersAction) -> None:
     daily.add_argument("--force", action="store_true", help="Run today's due action now without duplicating it.")
     daily.add_argument("--json", action="store_true")
     daily.set_defaults(func=cmd_daily)
+
+    external = nested.add_parser("external", help="Control the separate official WeCom external-group transport.")
+    external.add_argument(
+        "action",
+        nargs="?",
+        default="status",
+        choices=["init", "install", "bind", "probe", "status", "once", "restart"],
+    )
+    external.add_argument("--chat", action="append", dest="chats", default=[])
+    external.add_argument("--force", action="store_true")
+    external.add_argument("--json", action="store_true")
+    external.set_defaults(func=cmd_external)
 
 
 def cmd_init_config(args: argparse.Namespace) -> int:
@@ -132,6 +148,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "supervisor_script": SUPERVISOR.is_file() and os.access(SUPERVISOR, os.X_OK),
         "ingress_script": (TOOL_ROOT / "scripts" / "wecom_ingest.py").is_file(),
         "daily_research_script": DAILY_RESEARCH.is_file() and os.access(DAILY_RESEARCH, os.X_OK),
+        "external_bridge_script": EXTERNAL_BRIDGE.is_file(),
         "local_api": probe_health(config.get("WECOM_LOCAL_API_URL") or DEFAULT_API_URL),
         "tmux": tmux_status(config.get("WECOM_TMUX_SESSION") or "labcanvas-wecom"),
     }
@@ -211,6 +228,142 @@ def cmd_daily(args: argparse.Namespace) -> int:
         }
     print_payload(payload, args.json)
     return 0 if proc.returncode == 0 and payload.get("ok") else 1
+
+
+def cmd_external(args: argparse.Namespace) -> int:
+    if args.action == "install":
+        npm = shutil.which("npm")
+        if not npm:
+            payload = {"ok": False, "error": "npm was not found"}
+        else:
+            EXTERNAL_RUNTIME.mkdir(parents=True, exist_ok=True)
+            proc = subprocess.run(
+                [npm, "install", "--no-audit", "--no-fund", "--prefix", str(EXTERNAL_RUNTIME), "@wecom/cli@0.1.9"],
+                cwd=PACKAGE_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            payload = {
+                "ok": proc.returncode == 0,
+                "returncode": proc.returncode,
+                "stdout_tail": proc.stdout[-1000:],
+                "stderr_tail": proc.stderr[-1000:],
+            }
+        print_payload(payload, args.json)
+        return 0 if payload.get("ok") else 1
+
+    if args.action == "bind":
+        payload = bind_external_cli_profile()
+        print_payload(payload, args.json)
+        return 0 if payload.get("ok") else 1
+
+    if args.action == "restart":
+        proc = subprocess.run([str(SUPERVISOR), "restart"], cwd=PACKAGE_ROOT, capture_output=True, text=True, check=False)
+        payload = {"ok": proc.returncode == 0, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()}
+        print_payload(payload, args.json)
+        return 0 if payload["ok"] else 1
+
+    command = [sys.executable, str(EXTERNAL_BRIDGE), "--config", str(EXTERNAL_CONFIG), args.action, "--json"]
+    if args.action == "init":
+        for chat in args.chats:
+            command.extend(["--chat", chat])
+        if args.force:
+            command.append("--force")
+    proc = subprocess.run(command, cwd=PACKAGE_ROOT, capture_output=True, text=True, check=False)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "error": "external WeCom command returned invalid JSON",
+            "stdout_tail": proc.stdout[-1000:],
+            "stderr_tail": proc.stderr[-1000:],
+        }
+    print_payload(payload, args.json)
+    return 0 if proc.returncode == 0 and payload.get("ok") else 1
+
+
+def bind_external_cli_profile() -> dict[str, Any]:
+    cli = EXTERNAL_RUNTIME / "node_modules" / ".bin" / "wecom-cli"
+    if not cli.is_file():
+        return {"ok": False, "error": "official WeCom CLI is not installed; run `labcanvas wecom external install`"}
+    browser = subprocess.run([str(ADMIN_BROWSER)], cwd=PACKAGE_ROOT, capture_output=True, text=True, check=False)
+    if browser.returncode != 0:
+        return {"ok": False, "error": "dedicated WeCom admin browser could not be started"}
+    auth_dir = PRIVATE / "wecom-cli-message-config"
+    env = {**os.environ, "WECOM_CLI_CONFIG_DIR": str(auth_dir)}
+    process = subprocess.Popen(
+        [str(cli), "init", "--noninteractive", "--no-open"],
+        cwd=PACKAGE_ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    qr_url = ""
+    prefix = "https://work.weixin.qq.com/ai/qc/gen?"
+    assert process.stdout is not None
+    for line in process.stdout:
+        match = re.search(r"https://work\.weixin\.qq\.com/ai/qc/gen\?[^\s]+", line)
+        if match:
+            qr_url = match.group(0).strip()
+            break
+    if not qr_url:
+        process.kill()
+        process.wait(timeout=5)
+        return {"ok": False, "error": "official WeCom CLI did not provide an authorization QR URL"}
+    if not qr_url.startswith(prefix):
+        process.kill()
+        process.wait(timeout=5)
+        return {"ok": False, "error": "refusing unexpected WeCom authorization URL"}
+    try:
+        page_id = open_cdp_tab(qr_url, int(os.environ.get("WECOM_ADMIN_CDP_PORT", "9353")))
+        _, _ = process.communicate(timeout=310)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+        return {"ok": False, "error": "WeCom QR authorization timed out", "novnc_url": admin_novnc_url()}
+    except (error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+        process.kill()
+        process.wait(timeout=5)
+        return {"ok": False, "error": f"authorization browser failed: {type(exc).__name__}"}
+    return {
+        "ok": process.returncode == 0,
+        "bound": process.returncode == 0,
+        "page": page_id,
+        "novnc_url": admin_novnc_url(),
+        "error": "" if process.returncode == 0 else "WeCom did not complete QR authorization",
+    }
+
+
+def open_cdp_tab(url: str, port: int) -> str:
+    with request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=5) as response:
+        pages = json.loads(response.read().decode("utf-8"))
+    for page in pages if isinstance(pages, list) else []:
+        if "/ai/qc/gen" not in str(page.get("url") or ""):
+            continue
+        old_page_id = str(page.get("id") or "")
+        if old_page_id:
+            try:
+                with request.urlopen(f"http://127.0.0.1:{port}/json/close/{old_page_id}", timeout=5):
+                    pass
+            except error.URLError:
+                pass
+    endpoint = f"http://127.0.0.1:{port}/json/new?{parse.quote(url, safe='')}"
+    with request.urlopen(request.Request(endpoint, method="PUT"), timeout=5) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    page_id = str(payload.get("id") or "")
+    if not page_id:
+        raise ValueError("CDP did not return a page id")
+    with request.urlopen(f"http://127.0.0.1:{port}/json/activate/{page_id}", timeout=5):
+        pass
+    return page_id
+
+
+def admin_novnc_url() -> str:
+    port = os.environ.get("WECOM_ADMIN_NOVNC_PORT", "6133")
+    return f"http://127.0.0.1:{port}/vnc.html?host=127.0.0.1&port={port}&autoconnect=1&resize=scale"
 
 
 def read_env_file(path: Path) -> dict[str, str]:

@@ -1,10 +1,9 @@
 # WeCom API Bridge
 
-LabCanvas supports an official, bidirectional WeCom route through an AI Bot
-WebSocket connection. This is preferable to GUI automation when the target
-conversation is a WeCom bot DM or an internal WeCom group: it needs no public
-callback URL, maintains its own heartbeat/reconnect loop, and supports text,
-image, mixed, voice transcript, file, and video input.
+LabCanvas has two separate official WeCom transports. The AI Bot WebSocket
+handles bot DMs and internal groups. Tencent's `wecom-cli msg` interface can
+poll an explicitly authorized external WeCom group when the tenant grants its
+message permission. Neither route reads personal WeChat state.
 
 ## What It Can Reach
 
@@ -13,7 +12,10 @@ image, mixed, voice transcript, file, and video input.
 | WeCom AI bot direct message | Yes |
 | Internal WeCom group containing the bot | Yes; group delivery normally follows WeCom's bot mention rules |
 | Existing personal WeChat group | No; keep using `labcanvas wechat` |
-| External customer/WeChat group | Different WeCom customer-contact or archive product; not enabled here |
+| External WeCom group | Conditional: separate `wecom-cli` QR authorization and exact-name allowlist required |
+
+The transports never fall back into each other. In particular, failure to read
+an external WeCom group must not trigger personal-WeChat database or GUI access.
 
 ## One-Time Setup
 
@@ -58,6 +60,42 @@ Send the bot a direct message first. With the default access policy, that user
 becomes the paired owner. Add the bot to an internal group and mention it to
 test group routing. Each DM/group gets a hashed LabCanvas chat name and an
 independent route/worker Codex session.
+
+## External Group Transport
+
+Install and initialize the separate official CLI runtime:
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom external install --json
+PYTHONPATH=src python -m agenticapp wecom external init --chat AgentTest --json
+```
+
+Authorize its message profile with the WeCom mobile app. Credentials stay in
+ignored `agentic_tools/wecom_agent/.private/wecom-cli-message-config/`. This is
+a tenant capability: `wecom external probe` fails clearly when WeCom does not
+grant the `msg` category.
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom external bind --json
+
+# Equivalent low-level command:
+WECOM_CLI_CONFIG_DIR="$PWD/agentic_tools/wecom_agent/.private/wecom-cli-message-config" \
+  agentic_tools/wecom_agent/.private/wecom-cli-runtime/node_modules/.bin/wecom-cli \
+  init --noninteractive
+
+PYTHONPATH=src python -m agenticapp wecom external probe --json
+PYTHONPATH=src python -m agenticapp wecom external once --json
+PYTHONPATH=src python -m agenticapp wecom external restart --json
+```
+
+The bridge resolves `AgentTest` by one exact `chat_name` match. Zero or multiple
+matches fail closed. On first binding it seeds old history and processes only
+the latest recent message, preventing a restart flood. Later polls use private
+fingerprints, a short debounce, bounded batching, and stale-message expiry.
+Incoming attachments are downloaded by exact `media_id` into an ignored,
+source-scoped directory. The external path currently returns text through the
+official CLI; generic outbound file messages are not claimed because its `msg`
+interface exposes text send only.
 
 The owner can instead pair from the first group message. That action enrolls
 only that exact group when `WECOM_GROUP_MEMBER_ACCESS=trusted` (the default).
@@ -115,12 +153,19 @@ transport code does not replace the agent's research judgment.
   token, and refuses chats the gateway has not previously observed.
 - Video publication and other public posting are disabled for LabAgent. Other
   sensitive actions retain the existing current-message authorization gates.
-- The bridge can consume only new bot-visible events. It cannot retrieve prior
-  messages from an arbitrary personal-WeChat or WeCom group history.
+- The AI Bot WebSocket consumes only new bot-visible events. Neither channel
+  can retrieve arbitrary personal-WeChat group history.
+- The external CLI path can retrieve only authorized recent WeCom
+  conversations (currently a seven-day API window); only exact configured
+  group names are admitted.
+- Both channels carry `wecom_transport_channel` through ingress, tasks, daily
+  scheduling, and delivery. A CLI-origin task cannot fall back to the AI Bot
+  WebSocket or the personal-WeChat sender.
 
 ## GitHub Options Reviewed
 
 The direct dependency is the [official WeCom AI Bot Node SDK](https://github.com/WecomTeam/aibot-node-sdk).
+External-group polling uses Tencent's [official WeCom CLI](https://github.com/WecomTeam/wecom-cli).
 The [official WeCom OpenClaw plugin](https://github.com/WecomTeam/wecom-openclaw-plugin)
 is the strongest full-feature reference for chat isolation, message parsing,
 stream expiry, and media delivery. The [Qwen Code WeCom channel](https://github.com/QwenLM/qwen-code/tree/main/packages/channels/wecom)

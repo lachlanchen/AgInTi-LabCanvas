@@ -1220,7 +1220,7 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
     if not combined_message and not pending_files:
         return
 
-    endpoint, token = wecom_transport_settings()
+    endpoint, token = wecom_transport_settings(task)
     payload = {
         "task_id": str(task.get("id") or ""),
         "chat_id": chat_id,
@@ -1264,7 +1264,22 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
         raise RuntimeError("WeCom delivery errors: " + json.dumps(errors[:3], ensure_ascii=False))
 
 
-def wecom_transport_settings() -> tuple[str, str]:
+def wecom_transport_settings(task: dict[str, Any] | None = None) -> tuple[str, str]:
+    source = task.get("source") if isinstance((task or {}).get("source"), dict) else {}
+    transport_channel = str(source.get("wecom_transport_channel") or "wecom_bot_websocket").strip().casefold()
+    if transport_channel == "wecom_cli":
+        config_path = ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom_cli_bridge.local.json"
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"WeCom CLI transport config is unavailable: {type(exc).__name__}") from exc
+        endpoint = f"http://127.0.0.1:{int(config.get('local_api_port') or 19579)}"
+        token = str(config.get("local_api_token") or "").strip()
+        if not token:
+            raise RuntimeError("WeCom CLI local API token is missing")
+        return endpoint, token
+    if transport_channel != "wecom_bot_websocket":
+        raise RuntimeError(f"Unsupported WeCom transport channel: {transport_channel}")
     endpoint = os.environ.get("WECOM_LOCAL_API_URL", "http://127.0.0.1:19578").strip()
     token = os.environ.get("WECOM_LOCAL_API_TOKEN", "").strip()
     if not token:

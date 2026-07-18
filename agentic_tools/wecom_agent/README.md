@@ -1,13 +1,16 @@
 # LabCanvas WeCom Bridge
 
-This optional sidecar connects LabCanvas to the official WeCom AI Bot
-WebSocket channel. It receives bot DMs and WeCom group messages, decrypts
-official media downloads, preserves a separate Codex session per chat, queues
-nontrivial work through the existing LabCanvas routine orchestrator, and sends
-text and artifacts back through the same official connection.
+This sidecar exposes two separate official WeCom transports. The AI Bot
+WebSocket receives bot DMs and internal-group events. Tencent's `wecom-cli`
+message interface can poll explicitly authorized external WeCom groups. Both
+preserve one isolated agent session per chat and use the LabCanvas routine
+orchestrator.
 
 It does not replace the personal-WeChat GUI/database bridge. Existing ordinary
 WeChat groups are not exposed by the WeCom API.
+
+There is no cross-transport fallback: WeCom never enters through personal
+WeChat, and personal WeChat never enters through this sidecar.
 
 ## Setup
 
@@ -42,6 +45,27 @@ PYTHONPATH=src python -m agenticapp wecom gateway start
 PYTHONPATH=src python -m agenticapp wecom doctor --json
 PYTHONPATH=src python -m agenticapp wecom daily status --json
 ```
+
+For an external WeCom group, install and bind the separate CLI profile:
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom external install --json
+PYTHONPATH=src python -m agenticapp wecom external init --chat AgentTest --json
+PYTHONPATH=src python -m agenticapp wecom external bind --json
+
+# Equivalent low-level command:
+WECOM_CLI_CONFIG_DIR="$PWD/agentic_tools/wecom_agent/.private/wecom-cli-message-config" \
+  agentic_tools/wecom_agent/.private/wecom-cli-runtime/node_modules/.bin/wecom-cli \
+  init --noninteractive
+PYTHONPATH=src python -m agenticapp wecom external probe --json
+PYTHONPATH=src python -m agenticapp wecom external restart --json
+```
+
+The CLI bridge admits one exact configured group-name match, stores raw IDs and
+message fingerprints privately, processes only the latest recent message on
+first binding, and prevents restart backlog floods. Its official message API
+currently supports text replies; do not claim generic outbound file delivery
+for this channel.
 
 The default `owner` access mode pairs the first sender. When that owner first
 uses the bot in a group, the exact group is enrolled and its members may request
@@ -92,11 +116,20 @@ WeCom AI Bot WebSocket
   -> persistent per-chat Codex/AgInTi session
   -> localhost authenticated delivery API
   -> WeCom text/media send
+
+Authorized external WeCom group
+  -> official wecom-cli msg polling
+  -> scripts/wecom_cli_bridge.py
+  -> scripts/wecom_ingest.py
+  -> the same private queue and isolated agent session
+  -> separate localhost CLI delivery API
+  -> official wecom-cli text send
 ```
 
-The tmux stack has `gateway`, `worker`, and `daily` windows. The scheduler only
-reads local private SQLite state while idle; model quota is spent only when a
-due report is enqueued and executed by the worker.
+The tmux stack has `gateway`, `worker`, and `daily` windows. An `external`
+window is added when the CLI bridge is enabled and its QR-bound profile exists.
+The scheduler only reads local private SQLite state while idle; model quota is
+spent only when a due report is enqueued and executed by the worker.
 
 Private state lives under `agentic_tools/wecom_agent/.private/`. Downloaded
 source media and task artifacts live under ignored `output/`. The local send
@@ -108,6 +141,7 @@ committed.
 
 - Official SDK: <https://github.com/WecomTeam/aibot-node-sdk>
 - Official full plugin reference: <https://github.com/WecomTeam/wecom-openclaw-plugin>
+- Official external message CLI: <https://github.com/WecomTeam/wecom-cli>
 - Agent-channel reference: <https://github.com/QwenLM/qwen-code/tree/main/packages/channels/wecom>
 
 The SDK is pinned in this sidecar's `package-lock.json`. The project does not
