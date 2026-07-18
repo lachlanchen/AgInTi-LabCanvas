@@ -1,0 +1,270 @@
+{
+  "name": "c12880ma_cmount_holder_42x42_run1",
+  "run": "run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z",
+  "params": {
+    "name": "c12880ma_cmount_holder_42x42_run1",
+    "units": "mm",
+    "design_date": "2026-07-18",
+    "holder_plate_size_y_mm": 42.0,
+    "holder_plate_size_z_mm": 42.0,
+    "holder_plate_thickness_x_mm": 5.0,
+    "holder_plate_corner_radius_mm": 1.5,
+    "cmount_socket_outer_diameter_mm": 34.0,
+    "cmount_socket_length_x_mm": 16.0,
+    "cmount_female_pilot_root_diameter_mm": 25.0,
+    "cmount_female_thread_nominal_major_diameter_mm": 25.4,
+    "cmount_thread_pitch_mm": 0.8,
+    "cmount_thread_tooth_radial_height_mm": 0.2,
+    "cmount_thread_tooth_base_mm": 0.8,
+    "cmount_thread_start_x_mm": 0.2,
+    "cmount_thread_length_x_mm": 5.0,
+    "cmount_thread_half_pitch_runout_each_end_mm": 0.4,
+    "pcb_length_y_mm": 38.3,
+    "pcb_width_z_mm": 22.8,
+    "pcb_thickness_x_mm": 1.5,
+    "pcb_mount_hole_spacing_y_mm": 33.6,
+    "left_mount_hole_to_sensor_axis_y_mm": 13.2,
+    "pcb_left_edge_to_sensor_axis_y_mm": 15.55,
+    "pcb_right_edge_from_sensor_axis_y_mm": 22.75,
+    "pcb_top_edge_from_sensor_axis_z_mm": 10.3,
+    "pcb_bottom_edge_from_sensor_axis_z_mm": 12.5,
+    "pcb_center_y_from_sensor_axis_mm": 3.6,
+    "pcb_center_z_from_sensor_axis_mm": -1.1,
+    "holder_plate_center_y_from_sensor_axis_mm": 3.6,
+    "holder_plate_center_z_from_sensor_axis_mm": 0.0,
+    "left_mount_hole_y_mm": -13.2,
+    "right_mount_hole_y_mm": 20.4,
+    "mount_hole_z_mm": 0.0,
+    "m2_printed_tap_pilot_diameter_mm": 1.6,
+    "m2_printed_tap_pilot_depth_mm": 4.5,
+    "pcb_proxy_mount_hole_diameter_mm": 2.4,
+    "sensor_package_measured_max_y_mm": 20.5,
+    "sensor_package_measured_max_z_mm": 13.0,
+    "sensor_package_height_from_pcb_x_mm": 15.0,
+    "sensor_package_clearance_y_mm": 20.9,
+    "sensor_package_clearance_z_mm": 13.4,
+    "sensor_package_clearance_corner_radius_mm": 1.5,
+    "sensor_window_reference_diameter_mm": 3.2,
+    "six_pin_count": 6,
+    "six_pin_pitch_y_mm": 2.54,
+    "six_pin_row_center_y_mm": 0.0,
+    "six_pin_row_center_z_mm": -9.3,
+    "six_pin_tail_relief_diameter_mm": 3.0,
+    "six_pin_tail_relief_bridge_overlap_mm": 0.08,
+    "six_pin_tail_reference_diameter_mm": 1.0,
+    "six_pin_row_position_note": "Photo-derived centerline about 3.2 mm above the measured PCB bottom edge. The cut is intentionally generous and connected; verify this one Z offset against the physical board before a production print.",
+    "print_orientation": "Socket front face on the build plate, C-mount axis vertical. This keeps the internal thread vertical and requires no generated support geometry.",
+    "source_priority": "User caliper measurements and the exact vendor board image control module fit and mounting-hole placement; the official Hamamatsu datasheet controls the bare C12880MA package reference only."
+  },
+  "derived_geometry": {
+    "sensor_axis_yz_mm": [
+      0.0,
+      0.0
+    ],
+    "pcb_bounds_relative_to_sensor_axis_mm": {
+      "y_min": -15.55,
+      "y_max": 22.75,
+      "z_min": -12.5,
+      "z_max": 10.3
+    },
+    "pcb_center_relative_to_sensor_axis_mm": {
+      "y": 3.6,
+      "z": -1.1
+    },
+    "holder_plate_center_relative_to_sensor_axis_mm": {
+      "y": 3.6,
+      "z": 0.0
+    },
+    "mount_holes_relative_to_sensor_axis_mm": [
+      {
+        "name": "left_m2_tap_pilot",
+        "y": -13.2,
+        "z": 0.0
+      },
+      {
+        "name": "right_m2_tap_pilot",
+        "y": 20.4,
+        "z": 0.0
+      }
+    ],
+    "six_pin_tail_reliefs_relative_to_sensor_axis_mm": [
+      {
+        "index": 1,
+        "y": -6.35,
+        "z": -9.3,
+        "relief_diameter_mm": 3.0
+      },
+      {
+        "index": 2,
+        "y": -3.81,
+        "z": -9.3,
+        "relief_diameter_mm": 3.0
+      },
+      {
+        "index": 3,
+        "y": -1.27,
+        "z": -9.3,
+        "relief_diameter_mm": 3.0
+      },
+      {
+        "index": 4,
+        "y": 1.27,
+        "z": -9.3,
+        "relief_diameter_mm": 3.0
+      },
+      {
+        "index": 5,
+        "y": 3.81,
+        "z": -9.3,
+        "relief_diameter_mm": 3.0
+      },
+      {
+        "index": 6,
+        "y": 6.35,
+        "z": -9.3,
+        "relief_diameter_mm": 3.0
+      }
+    ],
+    "derivation": {
+      "pcb_end_margin_each_side_mm": 2.35,
+      "sensor_axis_from_left_pcb_edge_mm": 15.55,
+      "right_hole_from_sensor_axis_mm": 20.4,
+      "hole_positions_about_plate_center_mm": [
+        -16.8,
+        16.8
+      ]
+    }
+  },
+  "outputs": {
+    "print_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/PRINT_THIS_c12880ma_cmount_holder_42x42_run1.step",
+    "print_stl": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/PRINT_THIS_c12880ma_cmount_holder_42x42_run1.stl",
+    "print_3mf": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/PRINT_THIS_c12880ma_cmount_holder_42x42_run1.3mf",
+    "use_this_assembly_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/USE_THIS_c12880ma_cmount_holder_42x42_run1_assembly.step",
+    "design_orientation_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_design_orientation.step",
+    "smooth_editable_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_smooth_editable.step",
+    "decoupled_socket_and_plate_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_decoupled_socket_and_plate.step",
+    "cmount_socket_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_cmount_socket.step",
+    "holder_plate_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_holder_plate.step",
+    "board_proxy_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_board_proxy.step",
+    "sensor_package_proxy_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_sensor_package_proxy.step",
+    "six_pin_tail_proxy_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_six_pin_tail_proxy.step",
+    "female_thread_cutter_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_female_thread_cutter.step",
+    "assembly_with_proxies_step": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_assembly_with_proxies.step",
+    "rear_alignment_png": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_rear_alignment.png",
+    "rear_alignment_pdf": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_rear_alignment.pdf",
+    "rear_alignment_svg": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_rear_alignment.svg",
+    "side_section_png": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_side_section.png",
+    "side_section_pdf": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_side_section.pdf",
+    "side_section_svg": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/artifacts/c12880ma_cmount_holder_42x42_run1_side_section.svg",
+    "print_render_png": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/PRINT_THIS_c12880ma_cmount_holder_42x42_run1_render.png",
+    "assembly_render_png": "cad/designs/c12880ma_cmount_spectrometer_module_holder/runs/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z/c12880ma_cmount_holder_42x42_run1_assembly_render.png"
+  },
+  "validations": {
+    "geometry": {
+      "sensor_axis_is_cmount_axis": [
+        0.0,
+        0.0
+      ],
+      "hole_spacing_is_33p6_mm": true,
+      "holes_are_symmetric_about_plate_center": true,
+      "pcb_fits_42x42_plate": true,
+      "socket_od_fits_plate": true,
+      "rectangular_package_clearance_fits_25mm_chamber": true,
+      "thread_to_sensor_front_gap_mm": 0.8,
+      "thread_does_not_reach_sensor_package": true,
+      "six_pin_relief_is_on_pcb_footprint": true,
+      "plate_bounds_y_mm": [
+        -17.4,
+        24.6
+      ],
+      "plate_bounds_z_mm": [
+        -21.0,
+        21.0
+      ],
+      "pcb_bounds_yz_mm": {
+        "y_min": -15.55,
+        "y_max": 22.75,
+        "z_min": -12.5,
+        "z_max": 10.3
+      }
+    },
+    "print_step": {
+      "exists": true,
+      "bytes": 469264,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        42.0,
+        42.0,
+        21.0
+      ]
+    },
+    "print_stl": {
+      "exists": true,
+      "bytes": 473784,
+      "watertight": true,
+      "body_count": 1,
+      "extents_mm": [
+        42.0,
+        42.0,
+        21.0
+      ],
+      "face_count": 9474
+    },
+    "print_3mf": {
+      "exists": true,
+      "bytes": 116852,
+      "zip_valid": true,
+      "members": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ]
+    },
+    "use_this_design_step": {
+      "exists": true,
+      "bytes": 470782,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        21.0,
+        42.0,
+        42.0
+      ]
+    },
+    "smooth_editable_step": {
+      "exists": true,
+      "bytes": 134804,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        21.0,
+        42.0,
+        42.0
+      ]
+    },
+    "decoupled_step": {
+      "exists": true,
+      "bytes": 454138,
+      "solid_count": 2,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        21.0,
+        42.0,
+        42.0
+      ]
+    },
+    "assembly_with_proxies_step": {
+      "exists": true,
+      "bytes": 557064,
+      "solid_count": 11,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        28.0,
+        42.0,
+        42.0
+      ]
+    }
+  },
+  "nutstore_sync": "/home/lachlan/Nutstore Files/Projects/LabCanvas/c12880ma_cmount_spectrometer_module_holder/run-1-42x42-centered-sensor-6p-pin-clearance-print-ready-20260718T064716Z"
+}
