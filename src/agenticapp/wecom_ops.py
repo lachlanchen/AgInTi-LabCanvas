@@ -19,6 +19,7 @@ PRIVATE = TOOL_ROOT / ".private"
 DEFAULT_ENV = PRIVATE / "wecom.local.env"
 SUPERVISOR = TOOL_ROOT / "scripts" / "wecom_tmux.sh"
 ADMIN_BROWSER = TOOL_ROOT / "scripts" / "wecom_admin_browser.sh"
+WINDOWS_CLIENT = TOOL_ROOT / "scripts" / "wecom_windows_client.sh"
 DAILY_RESEARCH = TOOL_ROOT / "scripts" / "wecom_daily_research.py"
 EXTERNAL_BRIDGE = TOOL_ROOT / "scripts" / "wecom_cli_bridge.py"
 EXTERNAL_GUARD = TOOL_ROOT / "scripts" / "wecom_cli_transport_guard.py"
@@ -53,6 +54,11 @@ def add_wecom_parser(subparsers: argparse._SubParsersAction) -> None:
     admin = nested.add_parser("admin", help="Open the WeCom admin console in the shared noVNC browser.")
     admin.add_argument("--json", action="store_true")
     admin.set_defaults(func=cmd_admin)
+
+    client = nested.add_parser("client", help="Manage the isolated official WeCom desktop enrollment client.")
+    client.add_argument("action", nargs="?", default="status", choices=["status", "download", "install", "start"])
+    client.add_argument("--json", action="store_true")
+    client.set_defaults(func=cmd_client)
 
     daily = nested.add_parser("daily", help="Inspect or run per-group #daily research scheduling.")
     daily.add_argument("action", nargs="?", default="status", choices=["status", "run"])
@@ -214,6 +220,27 @@ def cmd_admin(args: argparse.Namespace) -> int:
     }
     print_payload(payload, args.json)
     return 0 if payload["ok"] else 1
+
+
+def cmd_client(args: argparse.Namespace) -> int:
+    proc = subprocess.run(
+        [str(WINDOWS_CLIENT), args.action, "--json"],
+        cwd=PACKAGE_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "error": "WeCom desktop helper returned invalid JSON",
+            "stdout_tail": proc.stdout[-1000:],
+            "stderr_tail": proc.stderr[-1000:],
+        }
+    print_payload(payload, args.json)
+    return 0 if proc.returncode == 0 and payload.get("ok") else 1
 
 
 def cmd_daily(args: argparse.Namespace) -> int:

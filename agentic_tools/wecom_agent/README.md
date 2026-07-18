@@ -83,6 +83,22 @@ It never bypasses a secure keyguard and never uses personal WeChat as ingress.
 The Android client is setup-only; the running transports remain the official
 AI Bot WebSocket and official `wecom-cli` bridge.
 
+On Linux, the official download page does not provide a native desktop build.
+The optional enrollment helper installs Tencent's official Windows client in a
+dedicated ignored Wine prefix and exposes only that client on localhost noVNC:
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom client install --json
+PYTHONPATH=src python -m agenticapp wecom client start --json
+PYTHONPATH=src python -m agenticapp wecom client status --json
+```
+
+Its default desktop is `:92`, with VNC `5992` and noVNC `6192`. Override these
+with `WECOM_CLIENT_DISPLAY`, `WECOM_CLIENT_VNC_PORT`, and
+`WECOM_CLIENT_NOVNC_PORT`. The Wine client exists only for official login and
+the admin console's `Forward to chat` action. It is not an ingress, database,
+media source, or delivery fallback for either WeCom transport.
+
 The CLI bridge admits one exact configured group-name match, stores raw IDs and
 message fingerprints privately, processes only the latest recent message on
 first binding, and prevents restart backlog floods. Its official message API

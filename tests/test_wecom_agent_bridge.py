@@ -523,6 +523,49 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(returncode, 0)
         self.assertEqual(payload["novnc_url"], reported_url)
 
+    def test_windows_client_is_wecom_only_and_isolated(self) -> None:
+        source = (
+            ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_windows_client.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("WECOM_CLIENT_WINEPREFIX", source)
+        self.assertIn("127.0.0.1", source)
+        self.assertIn("WXWork", source)
+        self.assertNotIn("com.tencent.mm", source)
+        self.assertNotIn("wechat_gui_agent", source)
+        self.assertNotIn("xwechat_files", source)
+
+    def test_client_command_reports_isolated_novnc_url(self) -> None:
+        wecom_ops = load_wecom_ops()
+        reported_url = (
+            "http://127.0.0.1:6192/vnc.html?"
+            "host=127.0.0.1&port=6192&autoconnect=1&resize=scale"
+        )
+        completed = mock.Mock(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "action": "start",
+                    "installed": True,
+                    "running": True,
+                    "novnc_url": reported_url,
+                    "error": "",
+                }
+            ),
+            stderr="",
+        )
+        output = io.StringIO()
+
+        with mock.patch.object(wecom_ops.subprocess, "run", return_value=completed) as run, redirect_stdout(output):
+            returncode = wecom_ops.cmd_client(SimpleNamespace(action="start", json=True))
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(returncode, 0)
+        self.assertTrue(payload["running"])
+        self.assertEqual(payload["novnc_url"], reported_url)
+        self.assertEqual(run.call_args.args[0][-2:], ["start", "--json"])
+
     def test_external_cli_exact_group_resolution_is_fail_closed(self) -> None:
         bridge = load_cli_bridge()
         chats = [

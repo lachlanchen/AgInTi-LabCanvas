@@ -112,6 +112,26 @@ agentic_tools/wecom_agent/scripts/wecom_android_setup.sh wait-install
 
 It neither bypasses a keyguard nor becomes a runtime transport.
 
+For a Linux workstation, an optional isolated Wine client provides the official
+desktop enrollment path when Android installation is unavailable:
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom client install --json
+PYTHONPATH=src python -m agenticapp wecom client start --json
+```
+
+The helper downloads only from Tencent's current official Windows-client URL,
+stores the installer and Wine prefix under ignored `.private/`, and binds its
+VNC/noVNC ports to localhost. The default viewer is:
+
+```text
+http://127.0.0.1:6192/vnc.html?host=127.0.0.1&port=6192&autoconnect=1&resize=scale
+```
+
+This client is enrollment-only. It may log in and forward the intelligent bot
+to an internal group, but all message processing still enters through
+`wecom_bot_websocket` or `wecom_cli`; it never reads personal-WeChat state.
+
 The bridge resolves `AgentTest` by one exact `chat_name` match. Zero or multiple
 matches fail closed. On first binding it seeds old history and processes only
 the latest recent message, preventing a restart flood. Later polls use private
