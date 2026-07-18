@@ -5,7 +5,7 @@ sensor package, rather than the PCB center, defines the C-mount optical axis.
 
 ## Latest Checked Run
 
-`runs/run-2-2mm-raised-rim-pcb-sunk-print-ready-20260718T070716Z/`
+`runs/run-3-component-side-orientation-pin-row-refined-print-ready-20260718T101655Z/`
 
 Use the unambiguous root handoff:
 
@@ -27,9 +27,13 @@ STEP, a female-thread cutter, a manifest, and validation evidence.
   nominal groove maximum.
 - Board holes: `Y=-13.2/+20.4 mm`, `Z=0`, giving `33.6 mm` spacing.
 - M2 printed tap pilots: `1.6 mm`, blind depth `4.5 mm`.
+- Verified component-side orientation: sensor up, 6P socket down, sensor closer
+  to the left PCB edge, and larger PCB margin on the right.
 - Six socket solder-tail clearances: joined `3.0 mm` reliefs at `2.54 mm`
-  pitch on the PCB seating surface.
+  pitch, centered at `Y=-0.4 mm`, `Z=-9.3 mm` on the PCB seating surface.
+- Pin-row center margins are approximately `8.8 mm` left and `16.8 mm` right;
+  the relief gives `1.0 mm` radial clearance around the `1.0 mm` pin proxy.
 
 The 6P connector clearance is intentionally based on the protruding PCB pins,
-not on the connector housing. Check the row's photo-derived Z position against
-the physical module before a production print.
+not on the connector housing. Front/rear camera views may mirror the drawing,
+but the physical feature coordinates preserve the component-side orientation.
