@@ -531,6 +531,9 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("WECOM_CLIENT_WINEPREFIX", source)
         self.assertIn("127.0.0.1", source)
         self.assertIn("WXWork", source)
+        self.assertIn("autofit-loop", source)
+        self.assertIn("xdotool getdisplaygeometry", source)
+        self.assertIn("resize=scale", source)
         self.assertNotIn("com.tencent.mm", source)
         self.assertNotIn("wechat_gui_agent", source)
         self.assertNotIn("xwechat_files", source)
@@ -565,6 +568,15 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(payload["running"])
         self.assertEqual(payload["novnc_url"], reported_url)
         self.assertEqual(run.call_args.args[0][-2:], ["start", "--json"])
+
+    def test_virtual_desktop_defaults_to_full_scaled_novnc(self) -> None:
+        source = (
+            ROOT / "agentic_tools" / "virtual_desktop" / "launch_virtual_desktop.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("/vnc.html?", source)
+        self.assertIn("resize=scale", source)
+        self.assertNotIn("vnc_lite.html", source)
 
     def test_external_cli_exact_group_resolution_is_fail_closed(self) -> None:
         bridge = load_cli_bridge()

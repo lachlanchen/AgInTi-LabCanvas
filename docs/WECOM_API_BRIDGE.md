@@ -131,6 +131,10 @@ http://127.0.0.1:6192/vnc.html?host=127.0.0.1&port=6192&autoconnect=1&resize=sca
 This client is enrollment-only. It may log in and forward the intelligent bot
 to an internal group, but all message processing still enters through
 `wecom_bot_websocket` or `wecom_cli`; it never reads personal-WeChat state.
+The full noVNC client scales the entire remote canvas, and a persistent autofit
+guard keeps the login QR centered before authentication and expands the main
+WeCom window to the X display after login. Reapply it manually with
+`labcanvas wecom client fit --json` if needed.
 
 The bridge resolves `AgentTest` by one exact `chat_name` match. Zero or multiple
 matches fail closed. On first binding it seeds old history and processes only

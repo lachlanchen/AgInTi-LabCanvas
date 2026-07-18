@@ -27,8 +27,12 @@ agentic_tools/virtual_desktop/launch_virtual_desktop.sh \
 Open:
 
 ```text
-http://127.0.0.1:6099/vnc_lite.html?host=127.0.0.1&port=6099&autoconnect=1&resize=remote
+http://127.0.0.1:6099/vnc.html?host=127.0.0.1&port=6099&autoconnect=1&resize=scale
 ```
+
+Use the full `vnc.html` client. It preserves the noVNC control bar and text
+clipboard, while `resize=scale` fits the complete remote canvas inside the
+local browser viewport without changing the X display resolution.
 
 ## Why This Pattern Worked
 

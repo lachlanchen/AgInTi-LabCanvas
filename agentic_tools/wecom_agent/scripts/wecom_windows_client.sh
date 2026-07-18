@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+SELF="$ROOT/agentic_tools/wecom_agent/scripts/wecom_windows_client.sh"
 ACTION="${1:-status}"
 JSON=0
 if [[ "${2:-}" == "--json" || "${1:-}" == "--json" ]]; then
@@ -16,6 +17,7 @@ DISPLAY_ID="${WECOM_CLIENT_DISPLAY:-:92}"
 VNC_PORT="${WECOM_CLIENT_VNC_PORT:-5992}"
 NOVNC_PORT="${WECOM_CLIENT_NOVNC_PORT:-6192}"
 LOG_DIR="${WECOM_CLIENT_LOG_DIR:-$ROOT/output/virtual_desktop/wecom-client}"
+AUTOFIT_PID_FILE="$LOG_DIR/autofit.pid"
 DOWNLOAD_URL="${WECOM_CLIENT_DOWNLOAD_URL:-https://work.weixin.qq.com/wework_admin/commdownload?platform=win&from=wwindex}"
 EXE_UNIX="$PREFIX/drive_c/Program Files (x86)/WXWork/WXWork.exe"
 EXE_WINDOWS='C:\Program Files (x86)\WXWork\WXWork.exe'
@@ -28,15 +30,22 @@ is_running() {
   pgrep -u "${USER:-$(id -un)}" -f "$APP_PATTERN" >/dev/null 2>&1
 }
 
+is_autofit_running() {
+  [[ -s "$AUTOFIT_PID_FILE" ]] || return 1
+  kill -0 "$(cat "$AUTOFIT_PID_FILE")" >/dev/null 2>&1
+}
+
 emit() {
   local ok="$1"
   local error="${2:-}"
   local installed=false
   local running=false
+  local autofit_running=false
   [[ -f "$EXE_UNIX" ]] && installed=true
   is_running && running=true
+  is_autofit_running && autofit_running=true
   if [[ "$JSON" == "1" ]]; then
-    python3 - "$ok" "$ACTION" "$installed" "$running" "$NOVNC_URL" "$error" <<'PY'
+    python3 - "$ok" "$ACTION" "$installed" "$running" "$autofit_running" "$NOVNC_URL" "$error" <<'PY'
 import json
 import sys
 
@@ -45,14 +54,91 @@ print(json.dumps({
     "action": sys.argv[2],
     "installed": sys.argv[3] == "true",
     "running": sys.argv[4] == "true",
-    "novnc_url": sys.argv[5],
-    "error": sys.argv[6],
+    "autofit_running": sys.argv[5] == "true",
+    "novnc_url": sys.argv[6],
+    "error": sys.argv[7],
 }, ensure_ascii=False, sort_keys=True))
 PY
   else
-    printf 'installed=%s running=%s\nnoVNC: %s\n' "$installed" "$running" "$NOVNC_URL"
+    printf 'installed=%s running=%s autofit=%s\nnoVNC: %s\n' \
+      "$installed" "$running" "$autofit_running" "$NOVNC_URL"
     [[ -z "$error" ]] || printf 'error: %s\n' "$error" >&2
   fi
+}
+
+fit_client_window() {
+  command -v xdotool >/dev/null 2>&1 || return 1
+  local window_id=""
+  local candidate=""
+  local geometry=""
+  local candidate_width=0
+  local candidate_height=0
+  local candidate_area=0
+  local best_area=0
+  local width=0
+  local height=0
+  local screen_width=1920
+  local screen_height=1080
+  local x=0
+  local y=0
+  local windows=()
+
+  mapfile -t windows < <(
+    env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible --name 'WeCom|企业微信' 2>/dev/null || true
+  )
+  if [[ ${#windows[@]} -eq 0 ]]; then
+    mapfile -t windows < <(
+      env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible --class 'wxwork.exe' 2>/dev/null || true
+    )
+  fi
+  for candidate in "${windows[@]}"; do
+    geometry="$(env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool getwindowgeometry --shell "$candidate" 2>/dev/null || true)"
+    candidate_width="$(awk -F= '$1 == "WIDTH" {print $2}' <<<"$geometry")"
+    candidate_height="$(awk -F= '$1 == "HEIGHT" {print $2}' <<<"$geometry")"
+    [[ "$candidate_width" =~ ^[0-9]+$ && "$candidate_height" =~ ^[0-9]+$ ]] || continue
+    candidate_area=$((candidate_width * candidate_height))
+    if (( candidate_area > best_area )); then
+      best_area="$candidate_area"
+      window_id="$candidate"
+      width="$candidate_width"
+      height="$candidate_height"
+    fi
+  done
+  [[ -n "$window_id" ]] || return 1
+
+  read -r screen_width screen_height < <(
+    env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool getdisplaygeometry
+  )
+  if (( width >= 600 && height >= 500 )); then
+    env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool \
+      windowmap "$window_id" \
+      windowmove --sync "$window_id" 0 0 \
+      windowsize --sync "$window_id" "$screen_width" "$screen_height" \
+      windowraise "$window_id" >/dev/null 2>&1 || true
+  else
+    x=$(((screen_width - width) / 2))
+    y=$(((screen_height - height) / 2))
+    (( x < 0 )) && x=0
+    (( y < 0 )) && y=0
+    env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool \
+      windowmap "$window_id" \
+      windowmove --sync "$window_id" "$x" "$y" \
+      windowraise "$window_id" >/dev/null 2>&1 || true
+  fi
+}
+
+autofit_loop() {
+  while is_running; do
+    fit_client_window || true
+    sleep 2
+  done
+}
+
+start_autofit_guard() {
+  is_autofit_running && return 0
+  env DISPLAY="$DISPLAY_ID" XAUTHORITY= setsid "$SELF" autofit-loop \
+    >>"$LOG_DIR/autofit.log" 2>&1 < /dev/null &
+  echo "$!" >"$AUTOFIT_PID_FILE"
 }
 
 launch_desktop() {
@@ -103,7 +189,11 @@ start_client() {
       >"$LOG_DIR/app.log" 2>&1 < /dev/null &
   fi
   for _ in $(seq 1 30); do
-    is_running && return 0
+    if is_running; then
+      start_autofit_guard
+      fit_client_window || true
+      return 0
+    fi
     sleep 0.5
   done
   return 1
@@ -121,6 +211,12 @@ case "$ACTION" in
     ;;
   start)
     if start_client; then emit true; else emit false "official WeCom client is not installed or did not start"; exit 1; fi
+    ;;
+  fit)
+    if fit_client_window; then emit true; else emit false "WeCom window was not found"; exit 1; fi
+    ;;
+  autofit-loop)
+    autofit_loop
     ;;
   *)
     emit false "unknown action: $ACTION"

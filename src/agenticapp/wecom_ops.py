@@ -56,7 +56,7 @@ def add_wecom_parser(subparsers: argparse._SubParsersAction) -> None:
     admin.set_defaults(func=cmd_admin)
 
     client = nested.add_parser("client", help="Manage the isolated official WeCom desktop enrollment client.")
-    client.add_argument("action", nargs="?", default="status", choices=["status", "download", "install", "start"])
+    client.add_argument("action", nargs="?", default="status", choices=["status", "download", "install", "start", "fit"])
     client.add_argument("--json", action="store_true")
     client.set_defaults(func=cmd_client)
 

@@ -65,7 +65,6 @@ fi
 fit_admin_window() {
   command -v xdotool >/dev/null 2>&1 || return 0
   local window_id=""
-  local dimensions=""
   local width="1920"
   local height="1080"
   for _ in $(seq 1 30); do
@@ -74,13 +73,12 @@ fit_admin_window() {
     sleep 0.2
   done
   [[ -n "$window_id" ]] || return 0
-  dimensions="$(env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo 2>/dev/null | awk '/dimensions:/ {print $2; exit}')"
-  if [[ "$dimensions" =~ ^([0-9]+)x([0-9]+)$ ]]; then
-    width="${BASH_REMATCH[1]}"
-    height="${BASH_REMATCH[2]}"
-  fi
-  env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool windowmove "$window_id" 0 0 >/dev/null 2>&1 || true
-  env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool windowsize "$window_id" "$width" "$height" >/dev/null 2>&1 || true
+  read -r width height < <(env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool getdisplaygeometry)
+  env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool \
+    windowmap "$window_id" \
+    windowmove --sync "$window_id" 0 0 \
+    windowsize --sync "$window_id" "$width" "$height" \
+    windowraise "$window_id" >/dev/null 2>&1 || true
 }
 
 fit_admin_window
