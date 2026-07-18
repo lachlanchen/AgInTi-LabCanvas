@@ -2999,7 +2999,7 @@ Important distinction:
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
 - Old context can explain a follow-up, but old context cannot authorize a new public publish.
 - In web_clip_inbox/link_inbox/internet_inbox/reading_inbox chats, shared URLs, forwarded webpage cards, mp.weixin/Gongzhonghao articles, Shipinhao/视频号/Finder cards, GitHub links, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, images, videos, and files should normally route to research_or_summary with worker_needed=true so the worker tries to read the actual source and returns a concise useful chat answer. Do not promise a report, PDF, image, or deep analysis before the source is actually readable.
-- For a bare WeChat file upload with no explicit user instruction, route to file_intake with worker_needed=true. For raster images, the worker should sync/copy the exact source image, inspect it with Codex vision, and reply naturally with what it shows or means. OCR is private supporting evidence, not the user-facing response format: do not expose `Visible text / Image caption / Notes`, model names, checksums, dimensions, or an extra OCR dump unless the user explicitly asks for technical extraction. For ZIP, Word, PDF, and text files, run bounded read-only extraction and let the resumed worker provide a concise natural identification/preliminary summary from `agent_context_path`; do not stop at a checksum receipt when readable content exists. If the current message asks to summarize/analyze/translate/convert/publish/edit the file, preserve that deeper instruction in the selected worker route.
+- For a bare WeChat file upload with no explicit user instruction, route to file_intake with worker_needed=true. For raster images, the worker should sync/copy the exact source image, inspect it with Codex vision, and reply naturally with what it shows or means. OCR is private supporting evidence, not the user-facing response format: do not expose `Visible text / Image caption / Notes`, model names, checksums, dimensions, or an extra OCR dump unless the user explicitly asks for technical extraction. For ZIP, Word, PDF, and text uploads, run bounded read-only extraction and let the resumed worker provide a concise natural identification/preliminary summary from `agent_context_path`; do not stop at a checksum receipt when readable content exists. RAR and 7z archives use the same safe intake contract. If the current message asks to summarize/analyze/translate/convert/publish/edit the file, preserve that deeper instruction in the selected worker route.
 - For mp.weixin links, verification text such as 环境异常 or 完成验证后继续访问 means that one fetch path is blocked, not that the task needs human confirmation. Route to the worker's read-only source-recovery preflight, which tries mobile-WeChat extraction/private cache and then exact-title/account public reconstruction. Do not open/focus an external browser or ask the user to verify for read-only research.
 - A video-generation request should use local/default reference assets unless the current request says this/that/same/attached/quoted video/image.
 - Plain story/script/plot writing or revision should use story_or_script. Do not choose generate_image unless the current request explicitly asks for an image/figure/diagram/illustration. Do not choose generate_video unless the current request explicitly asks for video/animation/小云雀/Seedance/XYQ.
@@ -4820,6 +4820,8 @@ def format_app_message_text(text: str, *, max_len: int = 700) -> str:
     source = card_field(appmsg, "sourcedisplayname") or card_field(appmsg, "appname")
     file_name = card_field(appmsg, "appattach/title")
     file_ext = card_field(appmsg, "appattach/fileext")
+    file_size = card_field(appmsg, "appattach/totallen")
+    file_md5 = card_field(appmsg, "appattach/md5") or card_field(appmsg, ".//md5")
     finder_name = card_field(appmsg, ".//nickname") or card_field(appmsg, ".//findername")
     finder_desc = card_field(appmsg, ".//desc")
     for name, value in (
@@ -4829,6 +4831,8 @@ def format_app_message_text(text: str, *, max_len: int = 700) -> str:
         ("source", source),
         ("file", file_name),
         ("extension", file_ext),
+        ("size_bytes", file_size if file_ext else ""),
+        ("md5", file_md5 if file_ext else ""),
         ("channel", finder_name),
         ("channel_description", finder_desc),
     ):

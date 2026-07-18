@@ -689,7 +689,7 @@ even without a known keyword. EchoMind keeps attachment triggers disabled so it
 only responds to language-learning text.
 Bare file uploads route to the source-scoped `file_intake` routine. The worker
 copies the exact attachment into `output/wechat_worker/<task-id>/intake/`, then
-uses `wechat_document_reader.py` for ZIP, Word, PDF, and text files. Readable
+uses `wechat_document_reader.py` for ZIP, RAR, 7z, Word, PDF, and text files. Readable
 documents reach the resumed per-chat agent as an `agent_context_path`, so a
 bare upload receives a concise natural identification and preliminary summary
 instead of a checksum receipt. Explicit requests can summarize, extract,

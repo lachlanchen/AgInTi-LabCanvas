@@ -25,6 +25,101 @@ def load_wechat_gui_send():
 
 
 class WeChatGuiSendTests(unittest.TestCase):
+    def test_download_file_card_reuses_exact_complete_native_cache_file(self):
+        module = load_wechat_gui_send()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cached = root / "2026-07" / "bundle.rar"
+            cached.parent.mkdir(parents=True)
+            cached.write_bytes(b"Rar!\x1a\x07\x00payload")
+
+            result = module.download_visible_file_card(
+                {},
+                module.Window("main", 0, 0, 1000, 700),
+                "bundle.rar",
+                root,
+                root / "evidence",
+                "probe",
+                pause=0.1,
+                wait_seconds=1,
+                expected_size=cached.stat().st_size,
+                expected_md5=module.file_md5(cached),
+            )
+
+        self.assertEqual(result["status"], "already-downloaded")
+        self.assertEqual(result["downloaded_path"], str(cached.resolve()))
+
+    def test_existing_native_cache_file_must_match_declared_identity(self):
+        module = load_wechat_gui_send()
+        with tempfile.TemporaryDirectory() as tmp:
+            cached = Path(tmp) / "bundle.rar"
+            cached.write_bytes(b"wrong payload")
+            matches = module.exact_download_matches(Path(tmp), "bundle.rar")
+
+            result = module.newest_complete_download(
+                matches,
+                expected_size=123456,
+                expected_md5="0" * 32,
+            )
+
+        self.assertIsNone(result)
+
+    def test_file_card_accepts_direct_download_without_popup(self):
+        module = load_wechat_gui_send()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            downloaded = root / "bundle.rar"
+            downloaded.write_bytes(b"Rar!\x1a\x07\x00payload")
+            with mock.patch.object(module, "exact_download_matches", return_value={}), mock.patch.object(
+                module, "screenshot"
+            ), mock.patch.object(
+                module,
+                "run",
+                return_value=subprocess.CompletedProcess(["tesseract"], 0, "", ""),
+            ), mock.patch.object(
+                module,
+                "locate_file_card_from_tsv",
+                return_value={"click_x": 800, "click_y": 400, "click_candidates": [[800, 400]]},
+            ), mock.patch.object(module, "click"), mock.patch.object(
+                module, "wait_for_new_wechat_popup", return_value=None
+            ), mock.patch.object(module, "wait_for_exact_download", return_value=downloaded):
+                result = module.download_visible_file_card(
+                    {},
+                    module.Window("main", 0, 0, 1000, 700),
+                    "bundle.rar",
+                    root,
+                    root / "evidence",
+                    "probe",
+                    pause=0.1,
+                    wait_seconds=1,
+                )
+
+        self.assertEqual(result["status"], "downloaded-directly")
+        self.assertEqual(result["downloaded_path"], str(downloaded))
+
+    def test_file_card_locator_matches_exact_rar_in_right_pane(self):
+        module = load_wechat_gui_send()
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t1\t1\t1\t1\t937\t443\t29\t10\t90\t128",
+                "5\t1\t1\t1\t1\t2\t987\t443\t31\t11\t90\t光谱",
+                "5\t1\t1\t1\t2\t1\t939\t462\t26\t14\t90\t资料",
+                "5\t1\t1\t1\t2\t2\t968\t456\t19\t28\t90\t.rar",
+                "5\t1\t2\t1\t1\t1\t610\t350\t70\t15\t90\told.jpg",
+            ]
+        )
+
+        match = module.locate_file_card_from_tsv(
+            tsv,
+            "c12880光谱仪带数据存配套资料.rar",
+            module.Window("main", 489, 193, 1020, 739),
+        )
+
+        self.assertIsNotNone(match)
+        self.assertGreater(match["identity_score"], 0.35)
+        self.assertEqual(match["click_x"], 977)
+
     def test_load_targets_resolves_cli_target_from_registry_mapping(self):
         module = load_wechat_gui_send()
         with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8") as handle:

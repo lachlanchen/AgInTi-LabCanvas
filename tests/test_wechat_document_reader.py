@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 import importlib.util
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,39 @@ def docx_bytes() -> bytes:
 
 
 class WeChatDocumentReaderTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("7z") or shutil.which("7zz"), "7z is required")
+    def test_7z_reads_text_and_never_extracts_executable(self) -> None:
+        reader = load_reader()
+        tool = shutil.which("7zz") or shutil.which("7z")
+        assert tool
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            (source_dir / "notes").mkdir(parents=True)
+            (source_dir / "notes" / "readme.txt").write_text(
+                "The spectrometer bundle contains calibration data.", encoding="utf-8"
+            )
+            (source_dir / "unsafe.exe").write_bytes(b"MZ" + b"0" * 64)
+            archive = root / "bundle.7z"
+            subprocess.run(
+                [tool, "a", "-t7z", str(archive), "notes/readme.txt", "unsafe.exe"],
+                cwd=source_dir,
+                check=True,
+                capture_output=True,
+            )
+
+            result = reader.analyze_document(archive, root / "read")
+            content = Path(result["text_path"]).read_text(encoding="utf-8")
+
+        self.assertEqual(result["kind"], "7z")
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["readable_member_count"], 1)
+        self.assertIn("notes/readme.txt", content)
+        self.assertTrue(
+            any(item.get("name") == "unsafe.exe" and item.get("reason") == "executable-content" for item in result["members"])
+        )
+        self.assertFalse(result["executed_content"])
+
     def test_docx_extracts_paragraphs_tables_and_metadata(self) -> None:
         reader = load_reader()
         with tempfile.TemporaryDirectory() as tmp:

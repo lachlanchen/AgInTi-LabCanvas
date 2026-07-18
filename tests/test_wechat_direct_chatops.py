@@ -1247,6 +1247,9 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             local_id=60,
             server_id="srv-60",
         )
+        formatted = direct_chatops.format_app_message_text(row["content"])
+        self.assertIn("size_bytes: 3540423", formatted)
+        self.assertIn("md5: f009733815f616342bb20a92ef1dff07", formatted)
         original_session = direct_chatops.run_codex_session
         try:
             def fake_route_session(_prompt: str, **_kwargs: object) -> dict[str, object]:

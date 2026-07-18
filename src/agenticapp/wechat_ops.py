@@ -858,7 +858,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "Shipinhao native fallback binds a play control only to source identity in the same card",
             "Shipinhao native fallback can bind the exact cached cover on the received side",
             "read-only source tasks cannot enter waiting_confirmation for a verification page",
-            "ZIP, Word, PDF, and text attachments are safely extracted into agent-readable task context",
+            "ZIP, RAR, 7z, Word, PDF, and text attachments are safely extracted into agent-readable task context",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }

@@ -11,6 +11,7 @@ import argparse
 import csv
 from dataclasses import dataclass
 from datetime import datetime
+from difflib import SequenceMatcher
 import hashlib
 import io
 import json
@@ -61,7 +62,6 @@ class WeChatLockedError(RuntimeError):
 
 
 def main() -> int:
-    install_process_timeout()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--display", default=":97", help="X display running WeChat. Default: :97.")
     parser.add_argument("--target", action="append", default=[], help="Chat/group/contact name. Repeatable.")
@@ -80,7 +80,14 @@ def main() -> int:
     parser.add_argument("--no-search", action="store_true", help="Compatibility flag; search is already disabled unless --allow-search is passed.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F"))
     parser.add_argument("--mirror-db", type=Path, default=DEFAULT_DB, help="SQLite mirror database path.")
+    parser.add_argument("--download-file-title", default="", help="Open and download the exact visible WeChat file card title without sending a message.")
+    parser.add_argument("--download-root", type=Path, default=Path.home() / "Documents" / "xwechat_files")
+    parser.add_argument("--download-wait-seconds", type=float, default=120.0)
+    parser.add_argument("--download-file-size", type=int, default=0, help="Optional exact declared attachment size.")
+    parser.add_argument("--download-file-md5", default="", help="Optional exact attachment MD5 from the source card.")
     args = parser.parse_args()
+    minimum_timeout = int(args.download_wait_seconds + 30) if args.download_file_title else 0
+    install_process_timeout(minimum_seconds=minimum_timeout)
 
     targets, message = load_targets(args.target, args.targets_file, args.message)
     if not targets:
@@ -133,6 +140,11 @@ def main() -> int:
                 args.output_dir,
                 args.mirror_db,
                 index,
+                download_file_title=args.download_file_title,
+                download_root=args.download_root,
+                download_wait_seconds=args.download_wait_seconds,
+                download_file_size=args.download_file_size,
+                download_file_md5=args.download_file_md5,
             )
             results.append(result)
         fcntl.flock(lock, fcntl.LOCK_UN)
@@ -143,6 +155,7 @@ def main() -> int:
         "send": args.send,
         "compose_dry_run": args.compose_dry_run,
         "message": args.message,
+        "download_file_title": args.download_file_title,
         "results": results,
     }
     manifest_path = args.output_dir / "send_manifest.json"
@@ -151,8 +164,8 @@ def main() -> int:
     return 0
 
 
-def install_process_timeout() -> None:
-    timeout = int(os.environ.get("WECHAT_GUI_SEND_MAX_SECONDS", "45"))
+def install_process_timeout(*, minimum_seconds: int = 0) -> None:
+    timeout = max(minimum_seconds, int(os.environ.get("WECHAT_GUI_SEND_MAX_SECONDS", "45")))
     if timeout <= 0:
         return
 
@@ -263,7 +276,13 @@ def send_one(
     out_dir: Path,
     mirror_db: Path,
     index: int,
-) -> dict[str, str]:
+    *,
+    download_file_title: str = "",
+    download_root: Path | None = None,
+    download_wait_seconds: float = 120.0,
+    download_file_size: int = 0,
+    download_file_md5: str = "",
+) -> dict[str, Any]:
     close_non_target_wechat_windows(env, window, target)
     focus(env, window)
     attempt_id = datetime.now().strftime("%H%M%S-%f")
@@ -329,6 +348,33 @@ def send_one(
             metadata={"target": target.__dict__, "guard": guard},
         )
 
+    if download_file_title:
+        action_window = window_from_guard(guard) or window
+        result = download_visible_file_card(
+            env,
+            action_window,
+            download_file_title,
+            download_root or (Path.home() / "Documents" / "xwechat_files"),
+            out_dir,
+            shot_prefix,
+            pause=pause,
+            wait_seconds=download_wait_seconds,
+            expected_size=download_file_size,
+            expected_md5=download_file_md5,
+        )
+        record_event(
+            chat_name=target.name,
+            query=target.query,
+            action="download-file",
+            direction="inbound",
+            message=download_file_title,
+            status=str(result.get("status") or "failed"),
+            db_path=mirror_db,
+            screenshot_path=str(result.get("screenshot_path") or opened_path),
+            metadata={"target": target.__dict__, "guard": guard, "download": result},
+        )
+        return {"target": target.name, "screenshot_prefix": shot_prefix, **result}
+
     if not do_send and not compose_dry_run:
         record_event(
             chat_name=target.name,
@@ -376,6 +422,355 @@ def send_one(
         metadata={"target": target.__dict__, "guard": guard},
     )
     return {"target": target.name, "status": status, "screenshot_prefix": shot_prefix}
+
+
+def download_visible_file_card(
+    env: dict[str, str],
+    window: Window,
+    title: str,
+    download_root: Path,
+    out_dir: Path,
+    shot_prefix: str,
+    *,
+    pause: float,
+    wait_seconds: float,
+    expected_size: int = 0,
+    expected_md5: str = "",
+) -> dict[str, Any]:
+    """Download one exact file card after the guarded chat title is open."""
+    download_root = download_root.expanduser().resolve()
+    baseline = exact_download_matches(download_root, title)
+    existing = newest_complete_download(baseline, expected_size=expected_size, expected_md5=expected_md5)
+    if existing is not None:
+        return {
+            "status": "already-downloaded",
+            "filename": title,
+            "downloaded_path": str(existing),
+            "size_bytes": existing.stat().st_size,
+            "reason": "an exact complete native-cache file already exists",
+        }
+    source_path = out_dir / f"{shot_prefix}-file-card-source.png"
+    screenshot(env, source_path)
+    tsv = run(
+        ["tesseract", str(source_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "11", "tsv"],
+        env=env,
+        check=False,
+    ).stdout
+    card = locate_file_card_from_tsv(tsv, title, window)
+    if not card:
+        return {
+            "status": "file-card-not-found",
+            "filename": title,
+            "screenshot_path": str(source_path),
+            "reason": "the exact filename was not visible in the guarded source chat",
+        }
+    popup: Window | None = None
+    for point in card.get("click_candidates") or [[card["click_x"], card["click_y"]]]:
+        click(env, int(point[0]), int(point[1]))
+        popup = wait_for_new_wechat_popup(env, excluded_wids={window.wid}, timeout=max(3.0, pause * 3))
+        if popup is not None:
+            break
+    popup_path = out_dir / f"{shot_prefix}-file-download-popup.png"
+    screenshot(env, popup_path)
+    if popup is None:
+        downloaded = wait_for_exact_download(
+            download_root,
+            title,
+            baseline,
+            timeout=wait_seconds,
+            expected_size=expected_size,
+            expected_md5=expected_md5,
+        )
+        if downloaded:
+            return {
+                "status": "downloaded-directly",
+                "filename": title,
+                "downloaded_path": str(downloaded),
+                "size_bytes": downloaded.stat().st_size,
+                "card_match": card,
+                "screenshot_path": str(popup_path),
+            }
+        return {
+            "status": "file-popup-not-found",
+            "filename": title,
+            "card_match": card,
+            "screenshot_path": str(popup_path),
+        }
+    popup_text = ocr_window_text(env, popup, popup_path, out_dir / f"{shot_prefix}-file-download-popup-crop.png")
+    identity_score = filename_identity_score(title, popup_text)
+    if Path(title).suffix.lower().lstrip(".") not in normalize_title(popup_text) or identity_score < 0.35:
+        key(env, "Escape")
+        return {
+            "status": "file-popup-identity-mismatch",
+            "filename": title,
+            "identity_score": round(identity_score, 3),
+            "screenshot_path": str(popup_path),
+        }
+    button = locate_download_button(env, popup, popup_path)
+    button_x = int(button.get("click_x") or (popup.x + popup.width * 0.5))
+    button_y = int(button.get("click_y") or (popup.y + popup.height * 0.77))
+    click(env, button_x, button_y)
+    time.sleep(max(0.8, pause))
+    clicked_path = out_dir / f"{shot_prefix}-file-download-clicked.png"
+    screenshot(env, clicked_path)
+    downloaded = wait_for_exact_download(
+        download_root,
+        title,
+        baseline,
+        timeout=wait_seconds,
+        expected_size=expected_size,
+        expected_md5=expected_md5,
+    )
+    if downloaded:
+        return {
+            "status": "downloaded",
+            "filename": title,
+            "downloaded_path": str(downloaded),
+            "size_bytes": downloaded.stat().st_size,
+            "card_match": card,
+            "identity_score": round(identity_score, 3),
+            "screenshot_path": str(clicked_path),
+        }
+    return {
+        "status": "download-started",
+        "filename": title,
+        "card_match": card,
+        "identity_score": round(identity_score, 3),
+        "screenshot_path": str(clicked_path),
+        "reason": "the exact file was not complete before the bounded wait ended",
+    }
+
+
+def locate_file_card_from_tsv(tsv_text: str, title: str, window: Window) -> dict[str, Any] | None:
+    words = tesseract_words(tsv_text)
+    extension = Path(title).suffix.lower().lstrip(".")
+    if not extension:
+        return None
+    candidates: list[dict[str, Any]] = []
+    right_edge = window.x + window.width
+    min_x = window.x + int(window.width * 0.34)
+    min_y = window.y + 90
+    max_y = window.y + window.height - 120
+    for word in words:
+        observed_word = normalize_title(str(word["text"]))
+        if extension not in observed_word:
+            continue
+        center_x = int(word["left"]) + int(word["width"]) // 2
+        center_y = int(word["top"]) + int(word["height"]) // 2
+        if not (min_x <= center_x <= right_edge and min_y <= center_y <= max_y):
+            continue
+        nearby = [
+            item
+            for item in words
+            if min_x <= int(item["left"]) <= right_edge
+            and abs((int(item["top"]) + int(item["height"]) // 2) - center_y) <= 48
+        ]
+        nearby.sort(key=lambda item: (int(item["top"]), int(item["left"])))
+        observed = "".join(str(item["text"]) for item in nearby)
+        score = filename_identity_score(title, observed)
+        if score < 0.35:
+            continue
+        candidates.append(
+            {
+                "click_x": center_x,
+                "click_y": center_y,
+                "click_candidates": [
+                    [min(right_edge - 20, center_x + 177), center_y],
+                    [min(right_edge - 20, center_x + 80), center_y + 15],
+                    [center_x, center_y + 15],
+                    [min(right_edge - 20, center_x + 150), center_y + 15],
+                    [max(min_x + 20, center_x - 50), center_y + 15],
+                ],
+                "identity_score": round(score, 3),
+                "observed": observed[:240],
+            }
+        )
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (float(item["identity_score"]), int(item["click_y"])), reverse=True)
+    return candidates[0]
+
+
+def filename_identity_score(expected: str, observed: str) -> float:
+    expected_normalized = normalize_title(expected)
+    observed_normalized = normalize_title(observed)
+    if not expected_normalized or not observed_normalized:
+        return 0.0
+    return SequenceMatcher(None, expected_normalized, observed_normalized).ratio()
+
+
+def tesseract_words(tsv_text: str) -> list[dict[str, Any]]:
+    words: list[dict[str, Any]] = []
+    reader = csv.DictReader(io.StringIO(tsv_text), delimiter="\t")
+    for row in reader:
+        text = str(row.get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            left = int(float(row.get("left") or 0))
+            top = int(float(row.get("top") or 0))
+            width = int(float(row.get("width") or 0))
+            height = int(float(row.get("height") or 0))
+        except ValueError:
+            continue
+        if width > 0 and height > 0:
+            words.append({"text": text, "left": left, "top": top, "width": width, "height": height})
+    return words
+
+
+def visible_wechat_windows(env: dict[str, str]) -> list[Window]:
+    windows: list[Window] = []
+    ids = run(["xdotool", "search", "--onlyvisible", "--class", "wechat"], env=env, check=False).stdout.split()
+    for wid in ids:
+        geom = run(["xdotool", "getwindowgeometry", "--shell", wid], env=env, check=False).stdout
+        values: dict[str, int] = {}
+        for line in geom.splitlines():
+            if "=" not in line:
+                continue
+            key_name, raw = line.split("=", 1)
+            try:
+                values[key_name] = int(raw)
+            except ValueError:
+                continue
+        if {"X", "Y", "WIDTH", "HEIGHT"} <= values.keys():
+            windows.append(Window(wid, values["X"], values["Y"], values["WIDTH"], values["HEIGHT"]))
+    return windows
+
+
+def wait_for_new_wechat_popup(env: dict[str, str], *, excluded_wids: set[str], timeout: float) -> Window | None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        focused = focused_window(env)
+        candidates = [
+            item
+            for item in visible_wechat_windows(env)
+            if item.wid not in excluded_wids and 360 <= item.width <= 900 and 280 <= item.height <= 850
+        ]
+        if focused:
+            candidates.sort(key=lambda item: (item.wid == focused.wid, item.width * item.height), reverse=True)
+        if candidates:
+            return candidates[0]
+        time.sleep(0.4)
+    return None
+
+
+def ocr_window_text(env: dict[str, str], window: Window, source_path: Path, crop_path: Path) -> str:
+    run(
+        [
+            "convert",
+            str(source_path),
+            "-crop",
+            f"{window.width}x{window.height}+{window.x}+{window.y}",
+            "-resize",
+            "160%",
+            str(crop_path),
+        ],
+        env=env,
+        check=False,
+    )
+    return run(
+        ["tesseract", str(crop_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "11"],
+        env=env,
+        check=False,
+    ).stdout
+
+
+def locate_download_button(env: dict[str, str], popup: Window, screenshot_path: Path) -> dict[str, int]:
+    tsv = run(
+        ["tesseract", str(screenshot_path), "stdout", "-l", "chi_sim+chi_tra+eng", "--psm", "11", "tsv"],
+        env=env,
+        check=False,
+    ).stdout
+    for word in tesseract_words(tsv):
+        text = normalize_title(str(word["text"]))
+        center_x = int(word["left"]) + int(word["width"]) // 2
+        center_y = int(word["top"]) + int(word["height"]) // 2
+        if text in {"download", "下载", "下載"} and popup.x <= center_x <= popup.x + popup.width and popup.y <= center_y <= popup.y + popup.height:
+            return {"click_x": center_x, "click_y": center_y}
+    return {}
+
+
+def exact_download_matches(root: Path, title: str) -> dict[str, tuple[int, int]]:
+    matches: dict[str, tuple[int, int]] = {}
+    if not root.is_dir():
+        return matches
+    for path in root.rglob(title):
+        try:
+            stat_result = path.stat()
+        except OSError:
+            continue
+        if path.is_file():
+            matches[str(path.resolve())] = (stat_result.st_size, stat_result.st_mtime_ns)
+    return matches
+
+
+def newest_complete_download(
+    matches: dict[str, tuple[int, int]],
+    *,
+    expected_size: int = 0,
+    expected_md5: str = "",
+) -> Path | None:
+    complete = [
+        (Path(raw), state)
+        for raw, state in matches.items()
+        if state[0] > 0 and not raw.lower().endswith((".tmp", ".part", ".download"))
+    ]
+    if not complete:
+        return None
+    complete.sort(key=lambda item: (item[1][1], item[1][0], str(item[0])), reverse=True)
+    for path, state in complete:
+        if expected_size > 0 and state[0] != expected_size:
+            continue
+        if expected_md5:
+            try:
+                if file_md5(path) != expected_md5.lower():
+                    continue
+            except OSError:
+                continue
+        return path
+    return None
+
+
+def wait_for_exact_download(
+    root: Path,
+    title: str,
+    baseline: dict[str, tuple[int, int]],
+    *,
+    timeout: float,
+    expected_size: int = 0,
+    expected_md5: str = "",
+) -> Path | None:
+    deadline = time.monotonic() + max(1.0, timeout)
+    stable: dict[str, tuple[int, int]] = {}
+    while time.monotonic() < deadline:
+        for raw, state in exact_download_matches(root, title).items():
+            if baseline.get(raw) == state:
+                continue
+            size = state[0]
+            previous_size, count = stable.get(raw, (-1, 0))
+            count = count + 1 if previous_size == size and size > 0 else 0
+            stable[raw] = (size, count)
+            if count >= 2:
+                path = Path(raw)
+                if expected_size > 0 and size != expected_size:
+                    continue
+                if expected_md5:
+                    try:
+                        if file_md5(path) != expected_md5.lower():
+                            continue
+                    except OSError:
+                        continue
+                return path
+        time.sleep(1.0)
+    return None
+
+
+def file_md5(path: Path) -> str:
+    digest = hashlib.md5()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def clear_composer(env: dict[str, str], window: Window, pause: float) -> None:

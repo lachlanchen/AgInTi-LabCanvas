@@ -1731,6 +1731,51 @@ stderr: noisy internal trace
 
         self.assertEqual([item["filename"] for item in copied], ["Chaos_Making_New_Science_2015.pdf"])
 
+    def test_file_intake_does_not_treat_missing_rar_as_recent_image(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_image = tmp_path / "downloads" / "619_old_thumb.jpg"
+            old_image.parent.mkdir(parents=True)
+            old_image.write_bytes(b"unrelated-jpeg")
+            task = {
+                "id": "20260718123216-624",
+                "chat": "鏈接",
+                "source": {"local_id": 624, "kind": "file/link", "local_type": 49},
+                "route_decision": {"route_kind": "file_intake", "needs_recent_media": True},
+                "request": (
+                    "Current coalesced request:\n"
+                    "New WeChat file/link item received.\n"
+                    "title: c12880光谱仪带数据存配套资料.rar\n"
+                    "extension: rar\n\n"
+                    "Recent synced WeChat files:\n"
+                    f"- {old_image} ({old_image.stat().st_size} bytes)\n"
+                    "md5: 10bc7495e854bd2462741e045a45d708"
+                ),
+            }
+
+            with mock.patch.dict(
+                worker.os.environ,
+                {
+                    "WECHAT_MIRROR_DB": str(tmp_path / "missing-mirror.sqlite"),
+                    "WECHAT_WORKER_DISABLE_MEDIA_SYNC_PREFLIGHT": "1",
+                },
+            ):
+                with mock.patch.object(
+                    worker,
+                    "codex_read_image_file",
+                    side_effect=AssertionError("an unrelated thumbnail must not reach image analysis"),
+                ):
+                    preflight = worker.prepare_worker_preflight(task, tmp_path / "artifact")
+
+        self.assertEqual(preflight["media_resolution"]["status"], "missing")
+        self.assertEqual(preflight["media_resolution"]["expected_suffixes"], [".rar"])
+        self.assertEqual(preflight["media_resolution"]["copied"], [])
+        self.assertEqual(preflight["file_intake"]["status"], "missing")
+        self.assertEqual(preflight["file_intake"]["copied"], [])
+        self.assertEqual(worker.extract_request_synced_files_from_task(task), [])
+        self.assertEqual(worker.current_request_file_md5(task["request"]), "")
+
     def test_file_intake_prefers_source_scoped_media_resolution_for_bare_image(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

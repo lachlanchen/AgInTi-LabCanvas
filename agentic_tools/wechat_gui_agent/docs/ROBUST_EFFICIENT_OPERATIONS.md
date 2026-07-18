@@ -164,7 +164,7 @@ retain the full private evidence on disk.
   explain what the image shows or means, using nearby same-chat context when
   useful. Do not send raw OCR blocks, reader/model diagnostics, dimensions,
   checksums, or a fixed caption schema unless the user explicitly asks for
-  exact transcription or diagnostics. ZIP, Word, PDF, and text files must be
+  exact transcription or diagnostics. ZIP, RAR, 7z, Word, PDF, and text files must be
   passed through the bounded read-only document reader. When readable evidence
   exists, resume the exact-chat agent and provide a concise natural preliminary
   summary; do not short-circuit into a checksum receipt. An explicit user
@@ -172,11 +172,21 @@ retain the full private evidence on disk.
   conversion. Unsupported, encrypted, oversized, or missing files fail closed.
   The file-intake preflight must prefer `media_resolution.copied[*].task_copy_path`
   over broad "Recent synced files" appendices so old images/files cannot be
-  mistaken for the new source upload.
+  mistaken for the new source upload. A typed attachment `title` and
+  `extension` are an identity contract: candidates must match the exact
+  filename/local ID and declared suffix. If no match exists, return no
+  candidate; never rank a nearby image or another recent file as a fallback.
+  For native file cards that are not cached yet, guarded GUI intake opens only
+  the exact source chat, matches the visible filename, downloads it through the
+  official client, and then repeats source-scoped resolution. A complete exact
+  native-cache file is reused without clicking the card again.
 - Archive handling is inventory/extraction only: reject traversal paths,
   symlinks, encrypted members, executables, excessive member counts/sizes,
   excessive nesting, and suspicious compression ratios. Never execute archive
-  members or Office macros. DOCX is read from XML; PDF uses `pdftotext` and a
+  members or Office macros. RAR/7z inventory uses `7z`; RAR extraction may use
+  read-only `bsdtar` when the installed 7z build can list but cannot decompress
+  the archive method. Only supported document members are extracted for
+  bounded recursive reading. DOCX is read from XML; PDF uses `pdftotext` and a
   bounded `pdftoppm` + Tesseract fallback for scanned pages. Full extracted
   text stays in ignored task artifacts and only a short preview enters queue
   JSON; the worker must open `agent_context_path` before answering.

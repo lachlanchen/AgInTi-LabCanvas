@@ -53,7 +53,7 @@ TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
-DOCUMENT_SUFFIXES = TEXT_SUFFIXES | {".doc", ".docx", ".pdf", ".zip"}
+DOCUMENT_SUFFIXES = TEXT_SUFFIXES | {".7z", ".doc", ".docx", ".pdf", ".rar", ".zip"}
 EXECUTABLE_SUFFIXES = {
     ".appimage",
     ".bat",
@@ -100,7 +100,7 @@ def env_float(name: str, default: float) -> float:
 def is_document_candidate(path: Path) -> bool:
     if path.suffix.lower() in DOCUMENT_SUFFIXES:
         return True
-    return detect_document_kind(path) in {"pdf", "docx", "legacy_word", "zip", "text"}
+    return detect_document_kind(path) in {"pdf", "docx", "legacy_word", "zip", "rar", "7z", "text"}
 
 
 def analyze_document(
@@ -145,6 +145,8 @@ def analyze_document(
             result.update(read_legacy_word(source, output_dir, active_limits))
         elif kind == "zip":
             result.update(read_zip_archive(source, output_dir, active_limits, archive_depth=archive_depth))
+        elif kind in {"rar", "7z"}:
+            result.update(read_external_archive(source, output_dir, active_limits, archive_depth=archive_depth, kind=kind))
         elif kind == "text":
             result.update(read_text_file(source, active_limits))
         else:
@@ -165,6 +167,10 @@ def detect_document_kind(path: Path) -> str:
         return "pdf"
     if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
         return "legacy_word" if suffix in {".doc", ".docx"} else "unsupported"
+    if head.startswith((b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01\x00")):
+        return "rar"
+    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return "7z"
     if zipfile.is_zipfile(path):
         try:
             with zipfile.ZipFile(path) as archive:
@@ -180,6 +186,8 @@ def detect_document_kind(path: Path) -> str:
         return "pdf"
     if suffix == ".doc":
         return "legacy_word"
+    if suffix in {".rar", ".7z"}:
+        return suffix.lstrip(".")
     return "unsupported"
 
 
@@ -598,6 +606,216 @@ def read_zip_archive(
         "text": bound_text(inventory, int(limits["max_text_chars"])),
         "warnings": [f"{len(skipped)} archive member(s) were safely skipped"] if skipped else [],
     }
+
+
+def read_external_archive(
+    path: Path,
+    output_dir: Path,
+    limits: dict[str, int | float],
+    *,
+    archive_depth: int,
+    kind: str,
+) -> dict[str, Any]:
+    method = f"safe-{kind}-via-7z"
+    if archive_depth >= int(limits["max_archive_depth"]):
+        return {"status": "unsupported", "method": method, "error": "maximum nested archive depth reached"}
+    tool = shutil.which("7zz") or shutil.which("7z")
+    if not tool:
+        return {"status": "unsupported", "method": method, "error": "7z command is not installed"}
+    fallback_tool = shutil.which("bsdtar") if kind == "rar" else None
+    try:
+        listed = subprocess.run(
+            [tool, "l", "-slt", "-ba", "--", str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=float(limits["command_timeout_seconds"]),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"status": "failed", "method": method, "error": f"archive listing failed: {type(exc).__name__}"}
+    if listed.returncode != 0:
+        return {"status": "failed", "method": method, "error": listed.stderr.strip()[:500] or "archive listing failed"}
+    records = parse_7z_slt(listed.stdout)
+    if len(records) > int(limits["max_archive_members"]):
+        return {
+            "status": "oversized",
+            "method": method,
+            "member_count": len(records),
+            "error": "archive has too many members",
+        }
+    extract_root = output_dir / "archive_files"
+    analysis_root = output_dir / "archive_analysis"
+    extract_root.mkdir(parents=True, exist_ok=True)
+    analysis_root.mkdir(parents=True, exist_ok=True)
+    members: list[dict[str, Any]] = []
+    readable: list[dict[str, Any]] = []
+    total_uncompressed = 0
+    for index, record in enumerate(records, start=1):
+        name = str(record.get("Path") or "")
+        size = integer_field(record.get("Size"))
+        packed_size = integer_field(record.get("Packed Size"))
+        is_dir = str(record.get("Folder") or "").strip() == "+"
+        entry: dict[str, Any] = {
+            "name": name,
+            "size_bytes": size,
+            "compressed_bytes": packed_size,
+        }
+        members.append(entry)
+        if is_dir:
+            entry["status"] = "directory"
+            continue
+        reason = unsafe_external_archive_member_reason(record, extract_root, limits, total_uncompressed)
+        if reason:
+            entry.update(status="skipped", reason=reason)
+            continue
+        total_uncompressed += size
+        if Path(name).suffix.lower() not in DOCUMENT_SUFFIXES:
+            entry.update(status="listed", read_status="inventory-only")
+            continue
+        relative = PurePosixPath(name)
+        target = extract_root.joinpath(*relative.parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        extracted_bytes, extraction_tool, extraction_error = extract_external_archive_member(
+            path,
+            name,
+            primary_tool=tool,
+            fallback_tool=fallback_tool,
+            timeout=float(limits["command_timeout_seconds"]),
+        )
+        if extracted_bytes is None:
+            entry.update(status="skipped", reason=f"extract-failed:{extraction_error[:240]}")
+            continue
+        if len(extracted_bytes) > int(limits["max_archive_member_bytes"]):
+            entry.update(status="skipped", reason="member-too-large-after-extract")
+            continue
+        target.write_bytes(extracted_bytes)
+        entry.update(status="extracted", extracted_path=str(target), extraction_tool=extraction_tool)
+        child_dir = analysis_root / f"{index:03d}-{safe_slug(target.stem)}"
+        child = analyze_document(target, child_dir, limits=limits, archive_depth=archive_depth + 1)
+        entry["read_status"] = child.get("status")
+        entry["analysis_manifest"] = child.get("manifest_json")
+        entry["text_path"] = child.get("text_path")
+        if child.get("status") in READABLE_STATUSES:
+            readable.append(
+                {
+                    "name": name,
+                    "status": child.get("status"),
+                    "kind": child.get("kind"),
+                    "text_path": child.get("text_path"),
+                    "text_preview": child.get("text_preview"),
+                }
+            )
+    skipped = [item for item in members if item.get("status") == "skipped"]
+    inventory = archive_inventory_text(path.name, members, readable)
+    status = "partial" if skipped else "readable"
+    if not members:
+        status = "unreadable"
+    return {
+        "status": status,
+        "method": method,
+        "member_count": len(members),
+        "readable_member_count": len(readable),
+        "total_uncompressed_bytes": total_uncompressed,
+        "members": members,
+        "readable_members": readable,
+        "text": bound_text(inventory, int(limits["max_text_chars"])),
+        "warnings": [f"{len(skipped)} archive member(s) were safely skipped"] if skipped else [],
+    }
+
+
+def extract_external_archive_member(
+    archive: Path,
+    member: str,
+    *,
+    primary_tool: str,
+    fallback_tool: str | None,
+    timeout: float,
+) -> tuple[bytes | None, str, str]:
+    commands = [("7z", [primary_tool, "x", "-so", "-y", "--", str(archive), member])]
+    if fallback_tool:
+        commands.append(("bsdtar", [fallback_tool, "-xOf", str(archive), "--", member]))
+    errors: list[str] = []
+    for label, command in commands:
+        try:
+            extracted = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            errors.append(f"{label}:{type(exc).__name__}")
+            continue
+        if extracted.returncode == 0:
+            return extracted.stdout, label, ""
+        error = extracted.stderr.decode("utf-8", errors="replace").strip()
+        errors.append(f"{label}:{error or extracted.returncode}")
+    return None, "", "; ".join(errors) or "no extractor succeeded"
+
+
+def parse_7z_slt(text: str) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in str(text or "").splitlines():
+        if not line.strip():
+            if current.get("Path"):
+                records.append(current)
+            current = {}
+            continue
+        if " = " not in line:
+            continue
+        key, value = line.split(" = ", 1)
+        current[key.strip()] = value.strip()
+    if current.get("Path"):
+        records.append(current)
+    return records
+
+
+def integer_field(value: Any) -> int:
+    try:
+        return max(0, int(str(value or "0").strip()))
+    except ValueError:
+        return 0
+
+
+def unsafe_external_archive_member_reason(
+    record: dict[str, str],
+    extract_root: Path,
+    limits: dict[str, int | float],
+    current_total: int,
+) -> str:
+    raw_name = str(record.get("Path") or "")
+    name = PurePosixPath(raw_name)
+    if (
+        name.is_absolute()
+        or "\\" in raw_name
+        or "\x00" in raw_name
+        or len(raw_name) > 4096
+        or not name.parts
+        or ":" in name.parts[0]
+        or any(len(part.encode("utf-8")) > 255 for part in name.parts)
+        or any(part in {"", ".", ".."} for part in name.parts)
+    ):
+        return "unsafe-path"
+    target = extract_root.joinpath(*name.parts).resolve()
+    if not path_is_within(target, extract_root.resolve()):
+        return "unsafe-path"
+    attributes = str(record.get("Attributes") or "").upper()
+    if "L" in attributes:
+        return "symlink"
+    if str(record.get("Encrypted") or "").strip() == "+":
+        return "encrypted"
+    if Path(raw_name).suffix.lower() in EXECUTABLE_SUFFIXES:
+        return "executable-content"
+    size = integer_field(record.get("Size"))
+    packed_size = integer_field(record.get("Packed Size"))
+    if size > int(limits["max_archive_member_bytes"]):
+        return "member-too-large"
+    if current_total + size > int(limits["max_archive_total_bytes"]):
+        return "archive-total-too-large"
+    if size / max(1, packed_size) > float(limits["max_archive_ratio"]):
+        return "compression-ratio-too-high"
+    return ""
 
 
 def unsafe_zip_member_reason(
