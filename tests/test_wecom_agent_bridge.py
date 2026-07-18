@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -35,6 +38,13 @@ def load_worker():
     return load_module(
         "wechat_task_worker_for_wecom_tests",
         ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_task_worker.py",
+    )
+
+
+def load_wecom_ops():
+    return load_module(
+        "wecom_ops_for_tests",
+        ROOT / "src" / "agenticapp" / "wecom_ops.py",
     )
 
 
@@ -194,6 +204,26 @@ class WeComAgentBridgeTests(unittest.TestCase):
             preflight = worker.prepare_worker_preflight(task, Path(tmp))
 
         self.assertEqual(preflight["wecom_media"]["status"], "ready")
+
+    def test_admin_command_reports_launcher_novnc_url(self) -> None:
+        wecom_ops = load_wecom_ops()
+        reported_url = (
+            "http://127.0.0.1:6244/vnc_lite.html?"
+            "host=127.0.0.1&port=6244&autoconnect=1&scale=1"
+        )
+        completed = mock.Mock(
+            returncode=0,
+            stdout=f"WeCom admin opened.\nnoVNC: {reported_url}\n",
+            stderr="",
+        )
+        output = io.StringIO()
+
+        with mock.patch.object(wecom_ops.subprocess, "run", return_value=completed), redirect_stdout(output):
+            returncode = wecom_ops.cmd_admin(SimpleNamespace(json=True))
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(returncode, 0)
+        self.assertEqual(payload["novnc_url"], reported_url)
 
 
 if __name__ == "__main__":

@@ -23,12 +23,18 @@ PYTHONPATH=src python -m agenticapp wecom install
 PYTHONPATH=src python -m agenticapp wecom admin
 ```
 
-The last command opens the WeCom admin console in the established shared
-browser on the isolated `:98` desktop. View it at:
+The last command opens the WeCom admin console in a dedicated browser profile
+on the isolated `:93` desktop. It intentionally does not share the
+Xiaoyunque/WeChat browser profile. View it at:
 
 ```text
-http://127.0.0.1:6099/vnc_lite.html?host=127.0.0.1&port=6099&autoconnect=1&scale=1
+http://127.0.0.1:6133/vnc_lite.html?host=127.0.0.1&port=6133&autoconnect=1&scale=1
 ```
+
+The default VNC and CDP ports are `5933` and `9353`. Override them with
+`WECOM_ADMIN_VNC_PORT`, `WECOM_ADMIN_NOVNC_PORT`, and
+`WECOM_ADMIN_CDP_PORT` when needed; `labcanvas wecom admin --json` reports the
+actual noVNC URL.
 
 Scan the admin QR code, create an intelligent bot in long-connection mode, and
 place its Bot ID and Secret in:

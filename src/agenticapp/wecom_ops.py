@@ -149,11 +149,24 @@ def cmd_gateway(args: argparse.Namespace) -> int:
 
 def cmd_admin(args: argparse.Namespace) -> int:
     proc = subprocess.run([str(ADMIN_BROWSER)], cwd=PACKAGE_ROOT, capture_output=True, text=True, check=False)
+    default_port = os.environ.get("WECOM_ADMIN_NOVNC_PORT", "6133")
+    default_url = (
+        f"http://127.0.0.1:{default_port}/vnc_lite.html?"
+        f"host=127.0.0.1&port={default_port}&autoconnect=1&scale=1"
+    )
+    reported_url = next(
+        (
+            line.removeprefix("noVNC:").strip()
+            for line in proc.stdout.splitlines()
+            if line.strip().startswith("noVNC:")
+        ),
+        default_url,
+    )
     payload = {
         "ok": proc.returncode == 0,
         "stdout": proc.stdout.strip(),
         "stderr": proc.stderr.strip(),
-        "novnc_url": "http://127.0.0.1:6099/vnc_lite.html?host=127.0.0.1&port=6099&autoconnect=1&scale=1",
+        "novnc_url": reported_url,
     }
     print_payload(payload, args.json)
     return 0 if payload["ok"] else 1

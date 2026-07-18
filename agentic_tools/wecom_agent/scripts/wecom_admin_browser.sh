@@ -2,11 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
-DISPLAY_ID="${WECOM_ADMIN_DISPLAY:-:98}"
-VNC_PORT="${WECOM_ADMIN_VNC_PORT:-5908}"
-NOVNC_PORT="${WECOM_ADMIN_NOVNC_PORT:-6099}"
-CDP_PORT="${WECOM_ADMIN_CDP_PORT:-9344}"
-PROFILE="${WECOM_ADMIN_CHROME_PROFILE:-$HOME/.cache/xyq-chrome}"
+DISPLAY_ID="${WECOM_ADMIN_DISPLAY:-:93}"
+VNC_PORT="${WECOM_ADMIN_VNC_PORT:-5933}"
+NOVNC_PORT="${WECOM_ADMIN_NOVNC_PORT:-6133}"
+CDP_PORT="${WECOM_ADMIN_CDP_PORT:-9353}"
+PROFILE="${WECOM_ADMIN_CHROME_PROFILE:-$HOME/.local/state/labcanvas-wecom-admin/chrome-profile}"
 ADMIN_URL="${WECOM_ADMIN_URL:-https://work.weixin.qq.com/wework_admin/frame}"
 
 "$ROOT/agentic_tools/virtual_desktop/launch_virtual_desktop.sh" \
@@ -61,7 +61,7 @@ else
   done
 fi
 
-echo "WeCom admin opened in the shared browser profile."
+echo "WeCom admin opened in its dedicated persistent browser profile."
 echo "noVNC: http://127.0.0.1:${NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port=${NOVNC_PORT}&autoconnect=1&scale=1"
 echo "CDP: http://127.0.0.1:${CDP_PORT}"
 echo "Profile: $PROFILE"

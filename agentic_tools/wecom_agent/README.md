@@ -17,6 +17,10 @@ PYTHONPATH=src python -m agenticapp wecom install
 PYTHONPATH=src python -m agenticapp wecom admin
 ```
 
+The admin browser uses a dedicated persistent profile on display `:93` and is
+available through localhost noVNC port `6133` by default. The command's JSON
+output reports the actual URL when ports are overridden.
+
 In the WeCom admin console:
 
 1. Create an intelligent/AI bot with API access.
