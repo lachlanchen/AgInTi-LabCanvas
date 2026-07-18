@@ -15,6 +15,11 @@ This folder preserves the exact evidence used for the C12880MA module holder.
 - `user-measured-dimensions.jpg`: caliper-derived module corrections used for
   fit: PCB `38.3 x 22.8 mm`, package up to `20.5 x 13 mm`, package height `15
   mm`, and asymmetric package margins.
+- `user-module-front-elevation-20260718.jpg`: physical front elevation proving
+  that the metal can sits on a daughterboard elevated above the main PCB by a
+  six-position black header.
+- `user-module-top-view-20260718.jpg`: physical top view proving the sensor-can,
+  pin-row, two-hole, and white edge-socket orientation on the actual board.
 - `CCD3D.stp`, `光谱仪C12880使用说明.pdf`, calibration spreadsheets, and
   `file_config.ini`: inert files extracted from the user's vendor archive.
 
@@ -39,6 +44,13 @@ The six connector solder-tail reliefs use `3.0 mm` overlapping holes on a
 `2.54 mm` pitch. Their row position is photo-derived and should be checked
 against the physical board before a production print.
 
+The plan and top photos show the **component-side source view**: sensor at the
+PCB top-left and the connector below. The sensor component face mates against
+the C-mount holder, so holder cutouts use the corresponding long-edge-axis
+flip (`Z -> -Z`) while preserving the measured long-direction coordinate. The
+C-mount body and depth stack are not rotated. The large `20.5 x 13 mm` can brim,
+not the smaller `18.5 x 11 mm` inner body, controls the package opening.
+
 ## Integrity
 
 | File | SHA-256 |
@@ -47,4 +59,6 @@ against the physical board before a production print.
 | `hamamatsu-c12880ma-datasheet.pdf` | `4ff596fb8aec2cdb813c90076804444bfc0024c82cbab5e9ec4479c7d6dfb08f` |
 | `user-measured-dimensions.jpg` | `322e966a3028d82ed94216b57e28e369cd81a121ee602129ccd672ff16ff0f89` |
 | `vendor-board-dimensions.jpg` | `23706900b81dee6bbc57c2e240448e4f63a9e89c0e580a5ae8b8f358848e7d53` |
+| `user-module-front-elevation-20260718.jpg` | `282efba07bcf688a7b62a9eeadab5c6c02bafa69a72dc030f0cc56c31b8c18d0` |
+| `user-module-top-view-20260718.jpg` | `bb01b760b46b16fd91bc4ce7f6d9c8d83388ce01f2b326d9d87f9009f9789c4e` |
 | `光谱仪C12880使用说明.pdf` | `046b0b94e5758e0144d6f1b9cdbbcb1f1ce6bef5886755401ad9042c9fb35719` |
