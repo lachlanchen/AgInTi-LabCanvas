@@ -76,7 +76,8 @@ a tenant capability: `wecom external probe` fails clearly when WeCom does not
 grant the `msg` category.
 
 ```bash
-PYTHONPATH=src python -m agenticapp wecom external bind --json
+PYTHONPATH=src python -m agenticapp wecom external authorize --json
+PYTHONPATH=src python -m agenticapp wecom external status --json
 
 # Equivalent low-level command:
 WECOM_CLI_CONFIG_DIR="$PWD/agentic_tools/wecom_agent/.private/wecom-cli-message-config" \
@@ -87,6 +88,29 @@ PYTHONPATH=src python -m agenticapp wecom external probe --json
 PYTHONPATH=src python -m agenticapp wecom external once --json
 PYTHONPATH=src python -m agenticapp wecom external restart --json
 ```
+
+The `authorize` command runs a persistent QR/bridge guard in the `external`
+tmux window. It refreshes expired official QR pages in one dedicated browser
+tab, records only a fingerprint in private state, and switches to
+`bridge_running` when the complete encrypted CLI profile exists. It restarts
+only that external window and does not disconnect the internal LabAgent bot.
+Use `bind` only for a bounded one-shot authorization attempt.
+
+Tencent's current AI Bot documentation says long-connection bots do not support
+external/customer groups. The external path is therefore a separate,
+conditional `wecom-cli msg` capability rather than a fallback from the internal
+bot. If the tenant does not grant that capability, AgentTest remains unavailable
+through official APIs and the system fails closed.
+
+An optional setup-only Android helper can install Tencent's official WeCom APK
+after the owner unlocks a connected device:
+
+```bash
+agentic_tools/wecom_agent/scripts/wecom_android_setup.sh prepare
+agentic_tools/wecom_agent/scripts/wecom_android_setup.sh wait-install
+```
+
+It neither bypasses a keyguard nor becomes a runtime transport.
 
 The bridge resolves `AgentTest` by one exact `chat_name` match. Zero or multiple
 matches fail closed. On first binding it seeds old history and processes only
@@ -161,10 +185,20 @@ transport code does not replace the agent's research judgment.
 - Both channels carry `wecom_transport_channel` through ingress, tasks, daily
   scheduling, and delivery. A CLI-origin task cannot fall back to the AI Bot
   WebSocket or the personal-WeChat sender.
+- The shared LabCanvas routine orchestrator is execution code only. It does not
+  read a personal-WeChat database or GUI for a WeCom task; WeCom source media
+  and delivery remain bound to the originating WeCom transport and chat.
+- `scripts/wecom_worker_loop.sh` disables personal-WeChat GUI/media/Android
+  fallbacks and public-publish preflights before entering that shared runtime.
+- WeCom event telemetry is stored in ignored
+  `output/wecom/wecom_mirror.sqlite`; it does not use the personal-WeChat
+  mirror database.
 
 ## GitHub Options Reviewed
 
 The direct dependency is the [official WeCom AI Bot Node SDK](https://github.com/WecomTeam/aibot-node-sdk).
+Tencent's [AI Bot help page](https://open.work.weixin.qq.com/help?doc_id=21657)
+defines the current internal/external-group scope.
 External-group polling uses Tencent's [official WeCom CLI](https://github.com/WecomTeam/wecom-cli).
 The [official WeCom OpenClaw plugin](https://github.com/WecomTeam/wecom-openclaw-plugin)
 is the strongest full-feature reference for chat isolation, message parsing,

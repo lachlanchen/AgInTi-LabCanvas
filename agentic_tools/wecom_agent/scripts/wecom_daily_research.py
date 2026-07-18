@@ -22,9 +22,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 ROOT = Path(__file__).resolve().parents[3]
 TOOL_ROOT = ROOT / "agentic_tools" / "wecom_agent"
 PRIVATE = TOOL_ROOT / ".private"
-WECHAT_SCRIPTS = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts"
-if str(WECHAT_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(WECHAT_SCRIPTS))
+SHARED_AGENT_SCRIPTS = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts"
+if str(SHARED_AGENT_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SHARED_AGENT_SCRIPTS))
 
 from wechat_routines import ensure_task_routine_contract  # noqa: E402
 

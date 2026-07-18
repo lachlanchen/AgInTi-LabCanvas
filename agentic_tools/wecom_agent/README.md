@@ -51,7 +51,8 @@ For an external WeCom group, install and bind the separate CLI profile:
 ```bash
 PYTHONPATH=src python -m agenticapp wecom external install --json
 PYTHONPATH=src python -m agenticapp wecom external init --chat AgentTest --json
-PYTHONPATH=src python -m agenticapp wecom external bind --json
+PYTHONPATH=src python -m agenticapp wecom external authorize --json
+PYTHONPATH=src python -m agenticapp wecom external status --json
 
 # Equivalent low-level command:
 WECOM_CLI_CONFIG_DIR="$PWD/agentic_tools/wecom_agent/.private/wecom-cli-message-config" \
@@ -61,11 +62,38 @@ PYTHONPATH=src python -m agenticapp wecom external probe --json
 PYTHONPATH=src python -m agenticapp wecom external restart --json
 ```
 
+`authorize` starts a persistent guard in the dedicated WeCom tmux stack. Until
+authorization succeeds it keeps one current official QR page open in the
+separate WeCom-admin browser; expired QR pages are replaced rather than
+accumulated. After the ignored profile is complete, that same guard starts and
+supervises the external bridge. Authorization/restart touches only the
+`external` tmux window, so the internal LabAgent WebSocket stays connected.
+`bind` remains a bounded one-shot diagnostic.
+
+If an Android WeCom client is needed only to scan the QR, the optional helper
+downloads Tencent's official APK into the ignored private directory and waits
+for the owner to unlock the device:
+
+```bash
+agentic_tools/wecom_agent/scripts/wecom_android_setup.sh prepare
+agentic_tools/wecom_agent/scripts/wecom_android_setup.sh wait-install
+```
+
+It never bypasses a secure keyguard and never uses personal WeChat as ingress.
+The Android client is setup-only; the running transports remain the official
+AI Bot WebSocket and official `wecom-cli` bridge.
+
 The CLI bridge admits one exact configured group-name match, stores raw IDs and
 message fingerprints privately, processes only the latest recent message on
 first binding, and prevents restart backlog floods. Its official message API
 currently supports text replies; do not claim generic outbound file delivery
 for this channel.
+
+Tencent currently documents that long-connection AI bots do not participate in
+external/customer groups. Therefore `LabAgent` should use the internal AI Bot
+WebSocket, while an external `AgentTest` group is enabled only when the tenant
+grants the separate CLI `msg` capability. A missing capability is a clear
+WeCom-side blocker, never permission to fall back to personal-WeChat state.
 
 The default `owner` access mode pairs the first sender. When that owner first
 uses the bot in a group, the exact group is enrolled and its members may request
@@ -112,7 +140,8 @@ WeCom AI Bot WebSocket
   -> src/bridge.mjs
   -> scripts/wecom_ingest.py
   -> private durable task queue
-  -> wechat_task_worker.run_task_orchestrator
+  -> scripts/wecom_worker_loop.sh
+  -> shared run_task_orchestrator execution routines
   -> persistent per-chat Codex/AgInTi session
   -> localhost authenticated delivery API
   -> WeCom text/media send
@@ -127,19 +156,28 @@ Authorized external WeCom group
 ```
 
 The tmux stack has `gateway`, `worker`, and `daily` windows. An `external`
-window is added when the CLI bridge is enabled and its QR-bound profile exists.
+window is added whenever the external bridge is enabled. Before authorization
+it maintains the official QR; afterward it runs the bridge and reports
+`bridge_running` through `wecom external status`.
 The scheduler only reads local private SQLite state while idle; model quota is
 spent only when a due report is enqueued and executed by the worker.
 
 Private state lives under `agentic_tools/wecom_agent/.private/`. Downloaded
-source media and task artifacts live under ignored `output/`. The local send
+source media and task artifacts live under ignored `output/`; WeCom event
+telemetry uses `output/wecom/wecom_mirror.sqlite`, never the personal-WeChat
+mirror. The local send
 API binds only to `127.0.0.1`; it refuses unknown chat IDs and uses a private
 bearer token. Bot secrets, user IDs, chat IDs, and message history must never be
 committed.
 
+`wecom_worker_loop.sh` is the WeCom-specific worker boundary. It disables
+personal-WeChat GUI file recovery, media-sync fallback, Android text sending,
+and publication preflights before invoking the shared routine orchestrator.
+
 ## Upstream
 
 - Official SDK: <https://github.com/WecomTeam/aibot-node-sdk>
+- Official AI Bot scope/help: <https://open.work.weixin.qq.com/help?doc_id=21657>
 - Official full plugin reference: <https://github.com/WecomTeam/wecom-openclaw-plugin>
 - Official external message CLI: <https://github.com/WecomTeam/wecom-cli>
 - Agent-channel reference: <https://github.com/QwenLM/qwen-code/tree/main/packages/channels/wecom>

@@ -64,6 +64,13 @@ def load_cli_bridge():
     )
 
 
+def load_cli_guard():
+    return load_module(
+        "wecom_cli_transport_guard_for_tests",
+        ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_cli_transport_guard.py",
+    )
+
+
 class WeComAgentBridgeTests(unittest.TestCase):
     def sample_event(self, **updates):
         event = {
@@ -91,6 +98,70 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(chat.startswith("wecom:default:group:"))
         self.assertNotIn(event["chat_id"], chat)
         self.assertEqual(chat, ingest.canonical_chat_name(event))
+
+    def test_first_group_message_returns_labagent_task_guide(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(transport_channel="wecom_bot_websocket")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(ingest, "record_event"):
+            root = Path(tmp)
+            result = ingest.ingest_event(
+                event,
+                queue=root / "queue.jsonl",
+                history_db=root / "history.sqlite",
+                route_with_agent=False,
+            )
+
+        self.assertTrue(result["queued"])
+        self.assertIn("LabAgent 已连接", result["ack"])
+        self.assertIn("#daily", result["ack"])
+        self.assertIn("CAD/PCB", result["ack"])
+
+    def test_internal_and_external_groups_keep_distinct_agent_sessions(self) -> None:
+        ingest = load_ingest()
+        internal = self.sample_event(
+            account_id="internal",
+            transport_channel="wecom_bot_websocket",
+            chat_id="same-platform-id",
+        )
+        external = self.sample_event(
+            account_id="external",
+            transport_channel="wecom_cli",
+            chat_id="same-platform-id",
+        )
+        internal_chat = ingest.canonical_chat_name(internal)
+        external_chat = ingest.canonical_chat_name(external)
+
+        self.assertNotEqual(internal_chat, external_chat)
+        self.assertTrue(internal_chat.startswith("wecom:internal:group:"))
+        self.assertTrue(external_chat.startswith("wecom:external:group:"))
+
+    def test_wecom_telemetry_uses_separate_mirror_database(self) -> None:
+        ingest = load_ingest()
+        mirror = ingest.MIRROR_DB.resolve()
+
+        self.assertEqual(mirror.parent.name, "wecom")
+        self.assertEqual(mirror.name, "wecom_mirror.sqlite")
+        self.assertNotIn("wechat_gui_agent", str(mirror))
+
+    def test_wecom_worker_disables_personal_wechat_fallbacks(self) -> None:
+        source = (
+            ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_worker_loop.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("WECHAT_WORKER_DISABLE_GUI_FILE_DOWNLOAD=1", source)
+        self.assertIn("WECHAT_WORKER_DISABLE_MEDIA_SYNC_PREFLIGHT=1", source)
+        self.assertIn("WECHAT_WORKER_ANDROID_TEXT_FALLBACK=0", source)
+        self.assertIn("WECHAT_WORKER_DISABLE_AUTOPUBLISH_PREFLIGHT=1", source)
+
+    def test_android_setup_is_wecom_only_and_does_not_bypass_keyguard(self) -> None:
+        source = (
+            ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_android_setup.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('PACKAGE="com.tencent.wework"', source)
+        self.assertIn("keyguard_locked", source)
+        self.assertNotIn("com.tencent.mm", source)
+        self.assertNotIn("wm dismiss-keyguard", source)
 
     def test_attachment_event_enqueues_source_scoped_transport_task_once(self) -> None:
         ingest = load_ingest()
@@ -521,6 +592,113 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         self.assertNotIn("wechat_gui_agent", source)
         self.assertNotIn("xwechat_files", source)
+
+    def test_external_transport_guard_requires_complete_official_profile(self) -> None:
+        guard = load_cli_guard()
+        with tempfile.TemporaryDirectory() as tmp:
+            auth = Path(tmp) / "auth"
+            auth.mkdir()
+            config = {"auth_config_dir": str(auth)}
+            (auth / "bot.enc").write_text("bot", encoding="utf-8")
+            (auth / "mcp_config.enc").write_text("mcp", encoding="utf-8")
+            self.assertFalse(guard.profile_ready(config))
+            (auth / ".encryption_key").write_text("key", encoding="utf-8")
+            self.assertTrue(guard.profile_ready(config))
+
+    def test_external_transport_guard_status_exposes_no_raw_group_identity(self) -> None:
+        guard = load_cli_guard()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth = root / "auth"
+            auth.mkdir()
+            state = root / "status.json"
+            state.write_text(
+                json.dumps({"state": "waiting_for_qr_scan", "raw_chat_id": "wr-private"}),
+                encoding="utf-8",
+            )
+            status = guard.transport_status(
+                {
+                    "enabled": True,
+                    "auth_config_dir": str(auth),
+                    "target_groups": ["AgentTest"],
+                },
+                state,
+            )
+
+        self.assertEqual(status["state"], "waiting_for_qr_scan")
+        self.assertEqual(status["target_group_count"], 1)
+        self.assertNotIn("raw_chat_id", status)
+        self.assertNotIn("AgentTest", json.dumps(status))
+
+    def test_external_transport_guard_never_imports_personal_wechat(self) -> None:
+        source = (
+            ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_cli_transport_guard.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("wechat_gui_agent", source)
+        self.assertNotIn("xwechat_files", source)
+
+    def test_external_transport_guard_marks_live_bridge_running(self) -> None:
+        guard = load_cli_guard()
+        process = mock.Mock()
+        process.wait.return_value = 0
+
+        with mock.patch.object(guard.subprocess, "Popen", return_value=process), mock.patch.object(
+            guard, "write_status"
+        ) as write_status:
+            result = guard.run_bridge(
+                {"_config_path": "/private/external.json"},
+                Path("/private/status.json"),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(write_status.call_args_list[0].args[1]["state"], "bridge_starting")
+        self.assertEqual(write_status.call_args_list[1].args[1]["state"], "bridge_running")
+        self.assertEqual(write_status.call_args_list[2].args[1]["state"], "bridge_stopped")
+
+    def test_external_status_reads_separate_guard(self) -> None:
+        wecom_ops = load_wecom_ops()
+        completed = mock.Mock(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "configured": True,
+                    "profile_ready": False,
+                    "state": "waiting_for_qr_scan",
+                    "target_group_count": 1,
+                }
+            ),
+            stderr="",
+        )
+        output = io.StringIO()
+
+        with mock.patch.object(wecom_ops.subprocess, "run", return_value=completed) as run, redirect_stdout(output):
+            returncode = wecom_ops.cmd_external(SimpleNamespace(action="status", json=True))
+
+        payload = json.loads(output.getvalue())
+        command = run.call_args.args[0]
+        self.assertEqual(returncode, 0)
+        self.assertEqual(payload["state"], "waiting_for_qr_scan")
+        self.assertIn("wecom_cli_transport_guard.py", " ".join(command))
+        self.assertNotIn("wechat_gui_agent", " ".join(command))
+
+    def test_external_authorize_restarts_only_external_window(self) -> None:
+        wecom_ops = load_wecom_ops()
+        completed = mock.Mock(returncode=0, stdout="ok", stderr="")
+        output = io.StringIO()
+
+        with mock.patch.object(
+            wecom_ops.subprocess,
+            "run",
+            side_effect=[completed, completed],
+        ) as run, redirect_stdout(output):
+            returncode = wecom_ops.cmd_external(
+                SimpleNamespace(action="authorize", json=True)
+            )
+
+        self.assertEqual(returncode, 0)
+        self.assertEqual(run.call_args_list[1].args[0][-1], "external-restart")
+        self.assertNotEqual(run.call_args_list[1].args[0][-1], "restart")
 
 
 if __name__ == "__main__":

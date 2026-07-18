@@ -21,6 +21,8 @@ SUPERVISOR = TOOL_ROOT / "scripts" / "wecom_tmux.sh"
 ADMIN_BROWSER = TOOL_ROOT / "scripts" / "wecom_admin_browser.sh"
 DAILY_RESEARCH = TOOL_ROOT / "scripts" / "wecom_daily_research.py"
 EXTERNAL_BRIDGE = TOOL_ROOT / "scripts" / "wecom_cli_bridge.py"
+EXTERNAL_GUARD = TOOL_ROOT / "scripts" / "wecom_cli_transport_guard.py"
+WECOM_WORKER = TOOL_ROOT / "scripts" / "wecom_worker_loop.sh"
 EXTERNAL_CONFIG = PRIVATE / "wecom_cli_bridge.local.json"
 EXTERNAL_RUNTIME = PRIVATE / "wecom-cli-runtime"
 DEFAULT_API_URL = "http://127.0.0.1:19578"
@@ -63,7 +65,7 @@ def add_wecom_parser(subparsers: argparse._SubParsersAction) -> None:
         "action",
         nargs="?",
         default="status",
-        choices=["init", "install", "bind", "probe", "status", "once", "restart"],
+        choices=["init", "install", "authorize", "bind", "probe", "status", "once", "restart"],
     )
     external.add_argument("--chat", action="append", dest="chats", default=[])
     external.add_argument("--force", action="store_true")
@@ -103,6 +105,9 @@ WECOM_ROUTE_EFFORT=low
 WECOM_ROUTE_TIMEOUT_SECONDS=35
 WECOM_PENDING_TTL_SECONDS=3600
 WECOM_TASK_QUEUE={TOOL_ROOT / '.private' / 'wecom_task_queue.jsonl'}
+WECOM_MIRROR_DB={PACKAGE_ROOT / 'output' / 'wecom' / 'wecom_mirror.sqlite'}
+WECOM_AGINTI_COMMAND=aginti
+WECOM_AGINTI_WORKSPACE=../Agent/AgInTiFlow
 
 # Per-group #daily research scheduler. Times use WECOM_DAILY_TIMEZONE.
 WECOM_DAILY_RESEARCH_TIME=09:00
@@ -149,6 +154,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "ingress_script": (TOOL_ROOT / "scripts" / "wecom_ingest.py").is_file(),
         "daily_research_script": DAILY_RESEARCH.is_file() and os.access(DAILY_RESEARCH, os.X_OK),
         "external_bridge_script": EXTERNAL_BRIDGE.is_file(),
+        "external_guard_script": EXTERNAL_GUARD.is_file(),
+        "wecom_worker_script": WECOM_WORKER.is_file() and os.access(WECOM_WORKER, os.X_OK),
         "local_api": probe_health(config.get("WECOM_LOCAL_API_URL") or DEFAULT_API_URL),
         "tmux": tmux_status(config.get("WECOM_TMUX_SESSION") or "labcanvas-wecom"),
     }
@@ -163,6 +170,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         checks["supervisor_script"],
         checks["ingress_script"],
         checks["daily_research_script"],
+        checks["wecom_worker_script"],
     )
     payload = {"ok": all(required), "checks": checks, "config_path": str(DEFAULT_ENV)}
     print_payload(payload, args.json)
@@ -258,11 +266,66 @@ def cmd_external(args: argparse.Namespace) -> int:
         print_payload(payload, args.json)
         return 0 if payload.get("ok") else 1
 
+    if args.action == "authorize":
+        browser = subprocess.run(
+            [str(ADMIN_BROWSER)],
+            cwd=PACKAGE_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        supervisor = subprocess.run(
+            [str(SUPERVISOR), "external-restart"],
+            cwd=PACKAGE_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        payload = {
+            "ok": browser.returncode == 0 and supervisor.returncode == 0,
+            "state": "authorization_guard_started",
+            "novnc_url": admin_novnc_url(),
+            "tmux_stdout": supervisor.stdout.strip(),
+            "error": (browser.stderr or supervisor.stderr).strip(),
+        }
+        print_payload(payload, args.json)
+        return 0 if payload["ok"] else 1
+
     if args.action == "restart":
-        proc = subprocess.run([str(SUPERVISOR), "restart"], cwd=PACKAGE_ROOT, capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            [str(SUPERVISOR), "external-restart"],
+            cwd=PACKAGE_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         payload = {"ok": proc.returncode == 0, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()}
         print_payload(payload, args.json)
         return 0 if payload["ok"] else 1
+
+    if args.action == "status":
+        command = [
+            sys.executable,
+            str(EXTERNAL_GUARD),
+            "--config",
+            str(EXTERNAL_CONFIG),
+            "status",
+            "--json",
+        ]
+        proc = subprocess.run(command, cwd=PACKAGE_ROOT, capture_output=True, text=True, check=False)
+        try:
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            payload = {
+                "ok": False,
+                "error": "external WeCom guard returned invalid JSON",
+                "stdout_tail": proc.stdout[-1000:],
+                "stderr_tail": proc.stderr[-1000:],
+            }
+        else:
+            payload["ok"] = proc.returncode == 0 and bool(payload.get("configured"))
+        print_payload(payload, args.json)
+        return 0 if payload.get("ok") else 1
 
     command = [sys.executable, str(EXTERNAL_BRIDGE), "--config", str(EXTERNAL_CONFIG), args.action, "--json"]
     if args.action == "init":

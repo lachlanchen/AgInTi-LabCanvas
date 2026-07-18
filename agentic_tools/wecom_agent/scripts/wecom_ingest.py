@@ -19,15 +19,20 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[3]
 TOOL_ROOT = ROOT / "agentic_tools" / "wecom_agent"
 PRIVATE = TOOL_ROOT / ".private"
-WECHAT_SCRIPTS = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts"
-if str(WECHAT_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(WECHAT_SCRIPTS))
+SHARED_AGENT_SCRIPTS = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts"
+if str(SHARED_AGENT_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SHARED_AGENT_SCRIPTS))
 
 from wechat_agent_backend import run_agent_session  # noqa: E402
-from wechat_mirror import DEFAULT_DB as MIRROR_DB  # noqa: E402
 from wechat_mirror import record_event  # noqa: E402
 from wechat_routines import ensure_task_routine_contract  # noqa: E402
 from wecom_daily_research import handle_daily_directive, mark_inline_topic_prompt, register_group  # noqa: E402
+
+
+MIRROR_DB = Path(
+    os.environ.get("WECOM_MIRROR_DB")
+    or ROOT / "output" / "wecom" / "wecom_mirror.sqlite"
+).expanduser().resolve()
 
 
 DEFAULT_QUEUE = PRIVATE / "wecom_task_queue.jsonl"
@@ -306,8 +311,8 @@ Recent same-chat context:
                 "fallback_on_timeout": True,
             },
             "aginti": {
-                "command": os.environ.get("WECHAT_AGINTI_COMMAND", "aginti"),
-                "workspace": os.environ.get("WECHAT_AGINTI_WORKSPACE", "../Agent/AgInTiFlow"),
+                "command": os.environ.get("WECOM_AGINTI_COMMAND", "aginti"),
+                "workspace": os.environ.get("WECOM_AGINTI_WORKSPACE", "../Agent/AgInTiFlow"),
                 "timeout_seconds": 120,
                 "wrap_prompt": True,
             },

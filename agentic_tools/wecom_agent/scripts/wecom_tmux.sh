@@ -17,13 +17,15 @@ QUEUE="${WECOM_TASK_QUEUE:-$TOOL_ROOT/.private/wecom_task_queue.jsonl}"
 LOG_DIR="$ROOT/output/wecom/$(date +%F)"
 GATEWAY_LOG="$LOG_DIR/gateway.log"
 WORKER_LOG="$LOG_DIR/worker.log"
+WECOM_WORKER="$TOOL_ROOT/scripts/wecom_worker_loop.sh"
 DAILY_LOG="$LOG_DIR/daily.log"
 CLI_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_cli_bridge.local.json"
 CLI_BRIDGE_LOG="$LOG_DIR/external-cli.log"
+CLI_TRANSPORT_GUARD="$TOOL_ROOT/scripts/wecom_cli_transport_guard.py"
 mkdir -p "$LOG_DIR"
 
 usage() {
-  echo "Usage: wecom_tmux.sh start|stop|restart|status"
+  echo "Usage: wecom_tmux.sh start|stop|restart|external-restart|status"
 }
 
 require_runtime() {
@@ -37,6 +39,30 @@ require_runtime() {
   }
 }
 
+external_enabled() {
+  [[ -f "$CLI_BRIDGE_CONFIG" ]] \
+    && python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("enabled", True) else 1)' "$CLI_BRIDGE_CONFIG"
+}
+
+start_external_window() {
+  if ! external_enabled; then
+    echo "External WeCom transport is not configured or is disabled."
+    return 0
+  fi
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "Main WeCom session is not running: $SESSION" >&2
+    return 1
+  fi
+  tmux kill-window -t "$SESSION:external" 2>/dev/null || true
+  if [[ ! -f "$TOOL_ROOT/.private/wecom-cli-message-config/bot.enc" ]] \
+    || [[ ! -f "$TOOL_ROOT/.private/wecom-cli-message-config/mcp_config.enc" ]]; then
+    "$TOOL_ROOT/scripts/wecom_admin_browser.sh" >/dev/null
+  fi
+  tmux new-window -t "$SESSION" -n external \
+    "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$CLI_TRANSPORT_GUARD' --config '$CLI_BRIDGE_CONFIG' loop >> '$CLI_BRIDGE_LOG' 2>&1"
+  echo "Started separate external WeCom transport window."
+}
+
 start_stack() {
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Session already running: $SESSION"
@@ -47,16 +73,10 @@ start_stack() {
   tmux new-session -d -s "$SESSION" -n gateway \
     "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec node '$TOOL_ROOT/src/bridge.mjs' >> '$GATEWAY_LOG' 2>&1"
   tmux new-window -t "$SESSION" -n worker \
-    "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh --queue '$QUEUE' --chat wecom --loop --send >> '$WORKER_LOG' 2>&1"
+    "cd '$ROOT' && exec '$WECOM_WORKER' >> '$WORKER_LOG' 2>&1"
   tmux new-window -t "$SESSION" -n daily \
     "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_daily_research.py' loop --queue '$QUEUE' >> '$DAILY_LOG' 2>&1"
-  if [[ -f "$CLI_BRIDGE_CONFIG" ]] \
-    && [[ -f "$TOOL_ROOT/.private/wecom-cli-message-config/bot.enc" ]] \
-    && [[ -f "$TOOL_ROOT/.private/wecom-cli-message-config/mcp_config.enc" ]] \
-    && python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("enabled", True) else 1)' "$CLI_BRIDGE_CONFIG"; then
-    tmux new-window -t "$SESSION" -n external \
-      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_cli_bridge.py' --config '$CLI_BRIDGE_CONFIG' loop >> '$CLI_BRIDGE_LOG' 2>&1"
-  fi
+  start_external_window
   echo "Started $SESSION"
   echo "Logs: $LOG_DIR"
 }
@@ -81,6 +101,13 @@ case "$action" in
   restart)
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     start_stack
+    ;;
+  external-restart)
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      start_external_window
+    else
+      start_stack
+    fi
     ;;
   status)
     status_stack
