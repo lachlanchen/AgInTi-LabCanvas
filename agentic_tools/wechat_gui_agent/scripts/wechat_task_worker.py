@@ -1127,6 +1127,9 @@ def send_result_once(
     task: dict[str, Any] | None = None,
     target: dict[str, Any] | None = None,
 ) -> None:
+    if task is not None and task_transport_kind(task) == "wecom":
+        send_result_once_wecom(result, target_chat, task)
+        return
     target = target if target is not None else guarded_send_target(target_chat, send_targets, task=task)
     files_to_send, files_to_note = partition_result_files_for_wechat(result.get("files") or [])
     if task is not None and files_to_send and not result_allows_chat_artifact_delivery(task, result):
@@ -1179,6 +1182,107 @@ def send_result_once(
         send_message(confirmation, target_chat, send_targets, target=target)
     if not require_file_delivery:
         send_files()
+
+
+def task_transport_kind(task: dict[str, Any]) -> str:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    route = task.get("route") if isinstance(task.get("route"), dict) else {}
+    return str(source.get("transport") or route.get("transport") or "wechat").strip().casefold()
+
+
+def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[str, Any]) -> None:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    task_chat = str(task.get("chat") or "").strip()
+    source_chat = str(source.get("chat") or "").strip()
+    if task_chat and task_chat != target_chat:
+        raise RuntimeError(f"Refusing WeCom send route mismatch: task.chat={task_chat!r} target={target_chat!r}")
+    if source_chat and source_chat != target_chat:
+        raise RuntimeError(f"Refusing WeCom send route mismatch: source.chat={source_chat!r} target={target_chat!r}")
+    chat_id = str(source.get("wecom_chat_id") or "").strip()
+    if not chat_id:
+        raise RuntimeError("Refusing WeCom send without source.wecom_chat_id")
+
+    files_to_send, files_to_note = partition_result_files_for_wechat(result.get("files") or [])
+    if files_to_send and not result_allows_chat_artifact_delivery(task, result):
+        task["suppressed_chat_files"] = [str(path) for path in files_to_send]
+        files_to_send = []
+    if files_to_note:
+        task["unsent_saved_files"] = [str(path) for path in files_to_note]
+    note_files = [] if task_is_research_summary(task) else files_to_note
+    raw_message = str(result.get("message") or "")
+    raw_confirmation = str(result.get("confirmation") or "")
+    message = "" if is_no_reply_control(raw_message) else message_with_saved_file_note(raw_message, note_files)
+    confirmation = "" if is_no_reply_control(raw_confirmation) else raw_confirmation
+    text_parts = [part.strip() for part in (message, confirmation) if part.strip()]
+    combined_message = "\n\n".join(text_parts)
+    sent_files = {str(Path(str(path)).expanduser().resolve()) for path in task.get("sent_file_paths") or []}
+    pending_files = [path for path in files_to_send if str(path.expanduser().resolve()) not in sent_files]
+    if not combined_message and not pending_files:
+        return
+
+    endpoint, token = wecom_transport_settings()
+    payload = {
+        "task_id": str(task.get("id") or ""),
+        "chat_id": chat_id,
+        "message": combined_message,
+        "files": [str(path.expanduser().resolve()) for path in pending_files],
+    }
+    request = urllib.request.Request(
+        endpoint.rstrip("/") + "/v1/send",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=max(10, int(os.environ.get("WECOM_SEND_TIMEOUT_SECONDS", "240"))),
+        ) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:1000]
+        raise RuntimeError(f"WeCom transport HTTP {exc.code}: {detail}") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"WeCom transport failed: {type(exc).__name__}: {str(exc)[:800]}") from exc
+    if not isinstance(response_payload, dict):
+        raise RuntimeError("WeCom transport returned an invalid response")
+    delivered = {str(Path(str(path)).expanduser().resolve()) for path in response_payload.get("sent_files") or []}
+    sent_files.update(delivered)
+    task["sent_file_paths"] = sorted(sent_files)
+    task["wecom_delivery"] = {
+        "status": "sent" if response_payload.get("ok") else "partial",
+        "sent_messages": response_payload.get("sent_messages") or [],
+        "sent_file_count": len(delivered),
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    errors = response_payload.get("errors") if isinstance(response_payload.get("errors"), list) else []
+    require_file_delivery = result_requires_file_delivery(task, result)
+    if require_file_delivery and not required_file_delivery_complete(task, result):
+        missing = sorted(set(str(path) for path in required_delivery_file_paths(result)) - sent_files)
+        raise RuntimeError("required WeCom artifact delivery incomplete: " + "; ".join(missing[:3]))
+    if errors:
+        raise RuntimeError("WeCom delivery errors: " + json.dumps(errors[:3], ensure_ascii=False))
+
+
+def wecom_transport_settings() -> tuple[str, str]:
+    endpoint = os.environ.get("WECOM_LOCAL_API_URL", "http://127.0.0.1:19578").strip()
+    token = os.environ.get("WECOM_LOCAL_API_TOKEN", "").strip()
+    if not token:
+        env_path = ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom.local.env"
+        if env_path.is_file():
+            for raw_line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                if key.strip().removeprefix("export ").strip() == "WECOM_LOCAL_API_TOKEN":
+                    token = value.strip().strip("\"'")
+                    break
+    if not endpoint.startswith("http://127.0.0.1:") and not endpoint.startswith("http://localhost:"):
+        raise RuntimeError("Refusing non-local WeCom transport endpoint")
+    if not token:
+        raise RuntimeError("WECOM_LOCAL_API_TOKEN is missing")
+    return endpoint, token
 
 
 def android_text_fallback_allowed(task: dict[str, Any], result: dict[str, Any], errors: list[str]) -> bool:
@@ -3255,9 +3359,9 @@ def run_worker_agent_session(task: dict[str, Any], policy: dict[str, Any]) -> st
     execution_context = json.dumps(worker_execution_contract(task), ensure_ascii=False, indent=2)
     instruction_context = json.dumps(worker_instruction_contract(task), ensure_ascii=False, indent=2)
     task_packet = json.dumps(worker_agent_task_view(task), ensure_ascii=False, indent=2)
-    prompt = f"""You are the slower worker agent for a WeChat LabCanvas chat.
+    prompt = f"""You are the slower worker agent for a WeChat or WeCom LabCanvas chat.
 Handle the task using available local files/tools. Save downloaded or generated artifacts under the repo's ignored private/output folders when possible.
-WeChat is only the message transport: it receives user messages and returns safe files/messages. Backend execution belongs to the routine orchestrator and the selected per-chat worker agent session.
+WeChat is only the message transport: it receives user messages and returns safe files/messages. Official WeCom tasks follow the same transport-only contract. Backend execution belongs to the routine orchestrator and the selected per-chat worker agent session.
 You are being resumed by the central routine orchestrator. Treat the routine contract and orchestrator handoff as the execution center: inspect current stage, use mature routine entrypoints first, repair blockers, and only invent a new approach if no routine stage applies.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 Quality matters more than visible activity. Do not send low-value reports, screenshots, thumbnails, or boilerplate progress. For ordinary links, channel videos, webpage cards, and shared files, first try hard to read/watch/open the actual source or a reliable transcript/comment/metadata capture. Then send a short, useful human answer. If you only saw a title/card/verification page, say that limitation plainly and do not pretend you read the source.
@@ -3275,6 +3379,7 @@ Before executing, inspect `task.route_decision` against the Current coalesced re
 For paid Xiaoyunque/Seedance work, use request-level idempotence: one logical WeChat request owns at most one paid generation thread unless the current user message explicitly asks for a new paid rerun. If `task.generated_video_monitor.thread_url`, `task.generated_video_submit_probe`, `task.credit_guard`, `route_decision.no_new_xyq_submit`, or `monitor_only_no_resubmit` exists, do not submit, retry, continue, or create another Xiaoyunque job. Only monitor/download the existing thread and send the resulting MP4 back.
 Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
 Strict source isolation: the task's `chat`, `source.local_id`, `source.server_id`, `context`, and any explicit source/reference rows embedded in `request` define the only WeChat source. Never use media, files, or generated artifacts from another chat, another direct message, a nearby queue item, or an unrelated old task.
+For official WeCom tasks, `task.preflight.wecom_media.copied[*].task_copy_path` contains already decrypted, exact same-message files. Open those files directly; do not run personal-WeChat GUI or decrypted-database recovery for them.
 If no exact matching source media is available for "this image", "this PDF", "this video", "last one", or a quoted command, return a source-limited message asking for the exact file/source. Do not synthesize or continue from unrelated media.
 Follow the routine supervisor contract. The contract is saved in `task.routine_contract`; use it as the routine checklist and update task state through the existing queue/status mechanisms instead of inventing an ad hoc workflow.
 Exception for WeChat video-to-AutoPublish requests: if the task asks to copy/download a WeChat video to Nutstore AutoPublish and the recent context contains a same-chat video row, first run:
@@ -3379,7 +3484,8 @@ def worker_execution_contract(task: dict[str, Any]) -> dict[str, Any]:
 
 def default_worker_execution_contract(task: dict[str, Any], instruction: dict[str, Any]) -> dict[str, Any]:
     return {
-        "wechat_role": "message_transport_only",
+        "transport_role": "message_transport_only",
+        "transport": task_transport_kind(task),
         "monitor_role": "receive_coalesce_ack_enqueue",
         "routine_source": "task.routine",
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
@@ -3563,7 +3669,9 @@ def worker_artifact_dir(task: dict[str, Any]) -> Path:
 
 def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    preflight: dict[str, Any] = {}
+    supplied = task.get("transport_preflight") if isinstance(task.get("transport_preflight"), dict) else {}
+    preflight: dict[str, Any] = dict(supplied)
+    native_wechat_transport = task_transport_kind(task) != "wecom"
     interruptions = task_interruptions_manifest(task, artifact_dir)
     if interruptions:
         preflight["interruptions"] = interruptions
@@ -3580,13 +3688,14 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
             task["preflight"] = preflight
     if (
         "resolved_video_artifact" not in preflight
+        and native_wechat_transport
         and should_prepare_media_resolution(task)
         and not file_intake_has_explicit_non_image_request_files(task)
     ):
         media_task = source_scoped_file_intake_task(task) if is_file_intake_task(task) else task
         preflight["media_resolution"] = prepare_media_resolution_preflight(media_task, artifact_dir)
         task["preflight"] = preflight
-    if is_file_intake_task(task):
+    if native_wechat_transport and is_file_intake_task(task):
         preflight["file_intake"] = prepare_file_intake_preflight(task, artifact_dir)
         task["preflight"] = preflight
     if task_is_research_summary(task) and task_needs_source_recovery(task):
@@ -3595,7 +3704,7 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     if should_prepare_shipinhao_media_transcript(task):
         preflight["shipinhao_media_transcript"] = prepare_shipinhao_media_transcript_preflight(task, artifact_dir)
         task["preflight"] = preflight
-    if should_prepare_audio_intake(task):
+    if native_wechat_transport and should_prepare_audio_intake(task):
         preflight["audio_intake"] = prepare_audio_intake_preflight(task, artifact_dir)
         task["preflight"] = preflight
     if should_prepare_shipinhao_comment_intel(task):

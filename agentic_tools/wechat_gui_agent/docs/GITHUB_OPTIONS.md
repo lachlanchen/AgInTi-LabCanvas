@@ -16,7 +16,10 @@ Checked on 2026-06-19 with `gh search repos`.
 | `BiboyQG/WeChat-MCP` | n/a | macOS MCP | Uses macOS Accessibility/screen capture to read and reply; good MCP reference, not usable on this Ubuntu Linux desktop. |
 | `lw396/wechat-mcp` | n/a | Windows WeChatFerry MCP | Provides Codex/Claude/VS Code HTTP MCP examples and tools for messages, contacts, chatrooms, and files; Windows-only for practical use. |
 | `paean-ai/claude-code-wechat` | n/a | WeChat iOS ClawBot channel | API-like ClawBot/ilink path into Claude Code Channels; interesting but tied to iOS ClawBot and Claude Code. |
-| `loonghao/wecom-bot-mcp-server` | n/a | WeCom MCP | Good enterprise WeChat option if workflows can move to WeCom rather than personal WeChat. |
+| `WecomTeam/aibot-node-sdk` | Official | WeCom AI Bot WebSocket | Selected transport for bidirectional WeCom DM/group chat, media, streaming reply, and proactive send. |
+| `WecomTeam/wecom-openclaw-plugin` | Official | Full WeCom agent plugin | Primary architecture reference for isolation, queues, media, and long-task delivery. |
+| `QwenLM/qwen-code/packages/channels/wecom` | Upstream agent project | Agent channel adapter | Reference for dedupe, attachment handling, watchdogs, and per-chat agent mapping. |
+| `loonghao/wecom-bot-mcp-server` | Community | WeCom webhook MCP | Outbound only; keep as an optional notification backend, not inbound group transport. |
 
 Search for `linux wechat xdotool` returned no strong purpose-built repository.
 

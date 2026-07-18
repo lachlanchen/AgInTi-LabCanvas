@@ -1,0 +1,17 @@
+{
+  "name": "@lazyingart/labcanvas-wecom-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Official WeCom AI Bot WebSocket transport for AgInTi LabCanvas.",
+  "scripts": {
+    "check": "node --check src/bridge.mjs && node --test test/protocol.test.mjs",
+    "start": "node src/bridge.mjs"
+  },
+  "dependencies": {
+    "@wecom/aibot-node-sdk": "1.0.7"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

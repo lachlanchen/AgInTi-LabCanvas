@@ -62,6 +62,33 @@ paths. Strip raw Finder XML, signed media URLs, cookies, keys, hashes, and unuse
 media paths. This keeps the resumed agent focused while deterministic routines
 retain the full private evidence on disk.
 
+## Official WeCom Transport
+
+WeCom AI bot DMs and internal WeCom groups may enter the same routine
+orchestrator through `agentic_tools/wecom_agent/`. This is an alternate
+transport, not a second agent runtime:
+
+```text
+official WeCom WebSocket -> wecom_ingest.py -> private queue
+  -> run_task_orchestrator -> same per-chat backend/session rules
+  -> authenticated localhost send API -> official WeCom text/media send
+```
+
+Use the official `@wecom/aibot-node-sdk` long connection by default. It needs
+only BotID and Secret and does not expose a public callback endpoint. Keep each
+WeCom DM/group in its own hashed chat key. Incoming encrypted URLs/AES keys are
+ephemeral; exact decrypted files go to ignored source-scoped output folders and
+enter the bounded worker packet as `preflight.wecom_media`. Never run personal
+WeChat DB/GUI media recovery for those files.
+
+The local proactive-send endpoint must remain on `127.0.0.1`, require its
+private bearer token, refuse unseen chat IDs, and keep an idempotent per-task
+delivery ledger. Bot credentials, raw chat/user IDs, owner pairing, known-chat
+state, and message history stay under `agentic_tools/wecom_agent/.private/`.
+Default access is first-owner pairing; organization-wide access must be an
+explicit operator choice. Existing personal-WeChat groups are outside this API
+and continue using the GUI/database bridge.
+
 ## Non-Negotiable Invariants
 
 - One chat or DM equals one private config, one state file, and one exact send

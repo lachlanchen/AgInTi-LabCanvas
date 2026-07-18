@@ -9,7 +9,8 @@ Checked on 2026-06-19.
 | `BiboyQG/WeChat-MCP` | macOS | MCP tools over Accessibility API and screen capture; reads recent chats and sends replies. | Good reference for MCP shape, not usable on this Ubuntu Linux WeChat desktop. |
 | `lw396/wechat-mcp` | Windows | WeChatFerry-backed MCP with login, send, contacts, groups, attachments, and chatroom tools. | Strong option if we run a supported Windows WeChat VM; not the current Linux client. |
 | `paean-ai/claude-code-wechat` | WeChat iOS + ClawBot | Official ClawBot ilink API bridge into Claude Code channels. | Interesting official/API-like route, but tied to Claude Code Channels and iOS ClawBot. |
-| `loonghao/wecom-bot-mcp-server` | WeCom | Enterprise WeChat/WeCom bot MCP. | Useful only if the workflow can move to WeCom. |
+| `WecomTeam/aibot-node-sdk` | WeCom | Official bidirectional AI Bot WebSocket SDK. | Preferred for receiving and replying in WeCom bot DMs/internal groups; implemented by `agentic_tools/wecom_agent/`. |
+| `loonghao/wecom-bot-mcp-server` | WeCom | Outbound webhook/MCP sender. | Useful for outbound notifications, but does not provide the bidirectional group ingress required here. |
 | `wechaty/wechaty` | Cross-platform bot SDK | Bot architecture with WeChat puppet/provider backends. | Mature ecosystem, but heavier and provider-dependent for personal WeChat. |
 | `ylytdeng/wechat-decrypt` | Windows/macOS/Linux desktop | WeChat 4.x key extraction, SQLCipher DB decrypt, real-time Web UI/SSE, and MCP tools. | Implemented as optional private receive backend; GUI sending remains the production output path. |
 

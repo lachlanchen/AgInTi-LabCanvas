@@ -177,9 +177,11 @@ def build_parser() -> argparse.ArgumentParser:
     worker_parser.set_defaults(func=cmd_agent_worker)
 
     from .wechat_ops import add_wechat_parser
+    from .wecom_ops import add_wecom_parser
     from .social_ops import add_social_parser
 
     add_wechat_parser(subparsers)
+    add_wecom_parser(subparsers)
     add_social_parser(subparsers)
     return parser
 
