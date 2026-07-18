@@ -28,7 +28,7 @@ on the isolated `:93` desktop. It intentionally does not share the
 Xiaoyunque/WeChat browser profile. View it at:
 
 ```text
-http://127.0.0.1:6133/vnc_lite.html?host=127.0.0.1&port=6133&autoconnect=1&scale=1
+http://127.0.0.1:6133/vnc.html?host=127.0.0.1&port=6133&autoconnect=1&resize=scale
 ```
 
 The default VNC and CDP ports are `5933` and `9353`. Override them with
@@ -36,8 +36,11 @@ The default VNC and CDP ports are `5933` and `9353`. Override them with
 `WECOM_ADMIN_CDP_PORT` when needed; `labcanvas wecom admin --json` reports the
 actual noVNC URL.
 
-Scan the admin QR code, create an intelligent bot in long-connection mode, and
-place its Bot ID and Secret in:
+After login, open `App Management -> Intelligent Bot` (route
+`#/aiHelper/list`). Choose `Create Bot -> Manual creation -> API mode
+creation`, select `Use long connection`, set the visibility range, and save.
+This is separate from the self-built `Message Push` webhook app. Place the
+resulting Bot ID and Secret in:
 
 ```text
 agentic_tools/wecom_agent/.private/wecom.local.env

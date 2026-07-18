@@ -19,15 +19,21 @@ PYTHONPATH=src python -m agenticapp wecom admin
 
 The admin browser uses a dedicated persistent profile on display `:93` and is
 available through localhost noVNC port `6133` by default. The command's JSON
-output reports the actual URL when ports are overridden.
+output reports the actual URL when ports are overridden. It uses the full
+noVNC client with `resize=scale` and fits Chrome to the virtual display.
 
 In the WeCom admin console:
 
-1. Create an intelligent/AI bot with API access.
-2. Select the WebSocket long-connection mode.
-3. Copy its `Bot ID` and `Secret` into the ignored file printed by
+1. Open `App Management -> Intelligent Bot`, or navigate to
+   `#/aiHelper/list` in the authenticated admin console.
+2. Choose `Create Bot -> Manual creation -> API mode creation`.
+3. Select `Use long connection`, set the visibility range, and save the bot.
+4. Copy its `Bot ID` and `Secret` into the ignored file printed by
    `wecom init-config`.
-4. Add the bot to an internal WeCom group or open its direct chat.
+5. Add the bot to an internal WeCom group or open its direct chat.
+
+Do not confuse `Intelligent Bot` with the self-built `Message Push` app. The
+latter is an outbound webhook and cannot provide this bidirectional transport.
 
 Then start and verify the bridge:
 

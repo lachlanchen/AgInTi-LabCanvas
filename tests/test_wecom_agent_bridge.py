@@ -208,8 +208,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
     def test_admin_command_reports_launcher_novnc_url(self) -> None:
         wecom_ops = load_wecom_ops()
         reported_url = (
-            "http://127.0.0.1:6244/vnc_lite.html?"
-            "host=127.0.0.1&port=6244&autoconnect=1&scale=1"
+            "http://127.0.0.1:6244/vnc.html?"
+            "host=127.0.0.1&port=6244&autoconnect=1&resize=scale"
         )
         completed = mock.Mock(
             returncode=0,

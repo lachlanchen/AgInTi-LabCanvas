@@ -151,8 +151,8 @@ def cmd_admin(args: argparse.Namespace) -> int:
     proc = subprocess.run([str(ADMIN_BROWSER)], cwd=PACKAGE_ROOT, capture_output=True, text=True, check=False)
     default_port = os.environ.get("WECOM_ADMIN_NOVNC_PORT", "6133")
     default_url = (
-        f"http://127.0.0.1:{default_port}/vnc_lite.html?"
-        f"host=127.0.0.1&port={default_port}&autoconnect=1&scale=1"
+        f"http://127.0.0.1:{default_port}/vnc.html?"
+        f"host=127.0.0.1&port={default_port}&autoconnect=1&resize=scale"
     )
     reported_url = next(
         (

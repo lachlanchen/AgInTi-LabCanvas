@@ -8,6 +8,7 @@ NOVNC_PORT="${WECOM_ADMIN_NOVNC_PORT:-6133}"
 CDP_PORT="${WECOM_ADMIN_CDP_PORT:-9353}"
 PROFILE="${WECOM_ADMIN_CHROME_PROFILE:-$HOME/.local/state/labcanvas-wecom-admin/chrome-profile}"
 ADMIN_URL="${WECOM_ADMIN_URL:-https://work.weixin.qq.com/wework_admin/frame}"
+NOVNC_URL="http://127.0.0.1:${NOVNC_PORT}/vnc.html?host=127.0.0.1&port=${NOVNC_PORT}&autoconnect=1&resize=scale"
 
 "$ROOT/agentic_tools/virtual_desktop/launch_virtual_desktop.sh" \
   --name wecom-admin \
@@ -61,7 +62,30 @@ else
   done
 fi
 
+fit_admin_window() {
+  command -v xdotool >/dev/null 2>&1 || return 0
+  local window_id=""
+  local dimensions=""
+  local width="1920"
+  local height="1080"
+  for _ in $(seq 1 30); do
+    window_id="$(env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible --class 'google-chrome' 2>/dev/null | tail -n 1 || true)"
+    [[ -n "$window_id" ]] && break
+    sleep 0.2
+  done
+  [[ -n "$window_id" ]] || return 0
+  dimensions="$(env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo 2>/dev/null | awk '/dimensions:/ {print $2; exit}')"
+  if [[ "$dimensions" =~ ^([0-9]+)x([0-9]+)$ ]]; then
+    width="${BASH_REMATCH[1]}"
+    height="${BASH_REMATCH[2]}"
+  fi
+  env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool windowmove "$window_id" 0 0 >/dev/null 2>&1 || true
+  env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool windowsize "$window_id" "$width" "$height" >/dev/null 2>&1 || true
+}
+
+fit_admin_window
+
 echo "WeCom admin opened in its dedicated persistent browser profile."
-echo "noVNC: http://127.0.0.1:${NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port=${NOVNC_PORT}&autoconnect=1&scale=1"
+echo "noVNC: $NOVNC_URL"
 echo "CDP: http://127.0.0.1:${CDP_PORT}"
 echo "Profile: $PROFILE"
