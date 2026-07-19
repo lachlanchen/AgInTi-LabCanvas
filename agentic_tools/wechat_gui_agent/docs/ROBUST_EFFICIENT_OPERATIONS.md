@@ -173,6 +173,22 @@ personal-WeChat database, media, search, sender, or fallback paths.
   only exact stale WeCom picker/document/error modal classes after an interrupted
   file send. Detect QR/login/abnormal-device screens before input, fail closed,
   and let the persistent client retain ownership of its authenticated profile.
+- Before each WeCom exact-chat poll, close only stale same-process native file
+  pickers, document hosts, file-error reminders, and `SearchResultWindow2`.
+  These overlays can visually leave the target chat selected while blocking
+  title verification; cleanup must resume ingestion without restarting or
+  logging out the authenticated client. Never approximate the search-layer
+  close button with the adjacent main-toolbar `+`; that opens `Start Group
+  Chat`, which is also an exact allowlisted stale-window cleanup target. Wine
+  may keep its wrapper HWND marked disabled after a modal closes, so use exact
+  post-cleanup chat-title verification instead of that flag as the readiness
+  gate.
+- WeCom transport should feel conversational: coalesce adjacent messages from
+  one sender and let the low-effort route agent return one natural response to
+  ordinary comments as well as requests. Do not use silence merely because a
+  human message has no explicit command, and do not reply to proven self-output.
+  Suppress exact same-chat WeCom GUI text repeated within 90 seconds before the
+  route turn; sender OCR instability must not create duplicate tasks or replies.
 - Keep GUI config, cursors, events, screenshots, and delivery ledgers under
   ignored `agentic_tools/wecom_agent/.private/` paths.
 

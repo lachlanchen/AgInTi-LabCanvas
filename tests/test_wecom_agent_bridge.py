@@ -271,6 +271,57 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(result["reply"].startswith(route["response"]))
         self.assertIn("#daily", result["reply"])
 
+    def test_gui_ingest_suppresses_recent_exact_duplicate_with_changed_sender(self) -> None:
+        ingest = load_ingest()
+        route = {
+            "worker_needed": False,
+            "route_kind": "other_worker",
+            "response": "收到，明早六点会按计划执行。",
+            "task": "",
+            "ack": "",
+            "daily_topic": "",
+            "public_publish_allowed": False,
+        }
+        first_event = self.sample_event(
+            message_id="gui:first",
+            account_id="external-gui",
+            chat_id="gui:LabAgent",
+            transport_channel="wecom_gui",
+            sender_userid="external-member:first-ocr-label",
+            text="明早六点记得发送日常论文阅读计划",
+        )
+        duplicate_event = {
+            **first_event,
+            "message_id": "gui:duplicate",
+            "sender_userid": "external-member:changed-ocr-label",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(ingest, "route_event", return_value=route) as route_agent, mock.patch.object(
+                ingest,
+                "record_event",
+            ):
+                first = ingest.ingest_event(
+                    first_event,
+                    queue=root / "queue.jsonl",
+                    history_db=root / "history.sqlite",
+                    route_with_agent=True,
+                )
+                duplicate = ingest.ingest_event(
+                    duplicate_event,
+                    queue=root / "queue.jsonl",
+                    history_db=root / "history.sqlite",
+                    route_with_agent=True,
+                )
+
+        self.assertTrue(first["reply"].startswith(route["response"]))
+        self.assertTrue(duplicate["duplicate"])
+        self.assertFalse(duplicate["queued"])
+        self.assertEqual(duplicate["reply"], "")
+        self.assertEqual(duplicate["suppressed"], "recent_exact_wecom_gui_duplicate")
+        self.assertEqual(route_agent.call_count, 1)
+
     def test_daily_directive_queues_one_immediate_report_without_route_turn(self) -> None:
         ingest = load_ingest()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1788,6 +1839,19 @@ class WeComAgentBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_gui_poll_cleanup_closes_native_overlay_before_neutral_click(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.close_stale_native_overlays = mock.Mock()
+        bridge.click = mock.Mock()
+        window = module.Window("1", 100, 200, 1000, 650)
+
+        with mock.patch.object(module.time, "sleep"):
+            bridge.dismiss_transient_overlays(window)
+
+        bridge.close_stale_native_overlays.assert_called_once_with()
+        bridge.click.assert_called_once_with(680, 252)
+
     def test_gui_auth_blocker_detects_abnormal_device_before_input(self) -> None:
         module = load_gui_bridge()
         with tempfile.TemporaryDirectory() as temporary:
@@ -2066,6 +2130,9 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("wait_for_file_in_history", source)
         self.assertIn('strcmp(argv[1], "--click")', win32_input)
         self.assertIn('strcmp(argv[1], "--close-stale-modals")', win32_input)
+        self.assertIn('L"SearchResultWindow2"', win32_input)
+        self.assertIn('L"Start Group Chat"', win32_input)
+        self.assertNotIn("WeCom remains disabled after closing", win32_input)
         self.assertNotIn("WM_DROPFILES", win32_input)
         self.assertNotIn('"--drag"', win32_input)
         self.assertIn("external-gui", tmux_source)

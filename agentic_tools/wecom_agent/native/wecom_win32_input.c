@@ -51,6 +51,8 @@ static BOOL CALLBACK close_stale_modal(HWND window, LPARAM parameter) {
     BOOL is_picker;
     BOOL is_wedoc;
     BOOL is_reminder;
+    BOOL is_search_result;
+    BOOL is_start_group_chat;
 
     GetWindowThreadProcessId(window, &process_id);
     if (process_id != context->process_id) {
@@ -65,7 +67,12 @@ static BOOL CALLBACK close_stale_modal(HWND window, LPARAM parameter) {
     is_wedoc = wcscmp(class_name, L"Tencent.WXWork.WedocHostWindow") == 0;
     is_reminder = wcscmp(class_name, L"WeWorkMessageBoxFrame") == 0 &&
         wcscmp(title, L"Reminder") == 0;
-    if (is_picker || is_wedoc || is_reminder) {
+    is_search_result = wcscmp(title, L"SearchResultWindow2") == 0;
+    is_start_group_chat = wcscmp(title, L"Start Group Chat") == 0;
+    if (
+        is_picker || is_wedoc || is_reminder || is_search_result ||
+        is_start_group_chat
+    ) {
         if (PostMessageW(window, WM_CLOSE, 0, 0)) {
             context->closed += 1;
         }
@@ -77,7 +84,6 @@ static int close_stale_modals(void) {
     HWND main_window = find_wecom();
     DWORD process_id = 0;
     modal_cleanup_context context = {0};
-    int attempt;
 
     if (main_window == NULL) {
         return 0;
@@ -85,17 +91,10 @@ static int close_stale_modals(void) {
     GetWindowThreadProcessId(main_window, &process_id);
     context.process_id = process_id;
     EnumWindows(close_stale_modal, (LPARAM)&context);
-    for (attempt = 0; attempt < 40 && !IsWindowEnabled(main_window); ++attempt) {
-        Sleep(50);
-    }
-    if (!IsWindowEnabled(main_window)) {
-        fprintf(
-            stderr,
-            "WeCom remains disabled after closing %d stale modal window(s)\n",
-            context.closed
-        );
-        return 5;
-    }
+    /* Wine can report the wrapper HWND disabled while its layered content is
+       interactive. Exact title/class matching above is the cleanup contract;
+       later OCR/title verification remains the fail-closed readiness gate. */
+    Sleep(context.closed > 0 ? 250 : 50);
     return 0;
 }
 

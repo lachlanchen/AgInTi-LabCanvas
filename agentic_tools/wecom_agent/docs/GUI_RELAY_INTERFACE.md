@@ -155,9 +155,20 @@ outbox item or deliver worker output.
   delivery fallback.
 - Wine WeCom may ignore the X11 click that opens `More`. That single click uses
   the controlled `wecom_win32_input` `SendInput` helper. If an interrupted send
-  left native pickers, document hosts, or file-error `Reminder` windows behind,
-  the same helper closes only those exact WeCom-process modal classes before one
-  retry. It never restarts or logs out the authenticated client.
+  left native pickers, document hosts, file-error `Reminder` windows, or the
+  exact `SearchResultWindow2` or an accidentally retained `Start Group Chat`
+  window behind, the same helper closes only those exact WeCom-process windows
+  before polling or one send retry. This cleanup runs
+  before every exact-chat verification, and never restarts or logs out the
+  authenticated client. It does not treat Wine's unreliable wrapper
+  `IsWindowEnabled` state as readiness; exact title OCR remains the fail-closed
+  gate after cleanup.
+- Legitimate short comments, thanks, reactions, and conversational follow-ups
+  receive one concise agent-generated reply even when they contain no task.
+  Consecutive fragments from the same sender are coalesced into one turn; empty,
+  duplicate, and proven self-output rows remain silent. Because GUI OCR may
+  derive a different sender fingerprint for the same bubble on adjacent polls,
+  exact same-chat text repeated within 90 seconds is suppressed before routing.
 - GUI access is serialized with a process lock. Combined text/file requests stay
   in one critical section, so concurrent workers cannot switch the target chat.
 - Read cursors and send ledgers are durable SQLite state under ignored

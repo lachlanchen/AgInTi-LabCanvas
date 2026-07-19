@@ -117,6 +117,24 @@ def ingest_event(
             "reply": prior_reply,
             "ack": "" if prior_reply else "消息已接收，任务正在处理中。",
         }
+    if transport_channel == "wecom_gui" and recent_equivalent_gui_inbound(
+        history_db,
+        chat,
+        request,
+    ):
+        # OCR sender labels can vary between adjacent captures of the same
+        # bubble. Exact same-chat text inside a short window is a transport
+        # duplicate even when its derived sender fingerprint changed.
+        record_history_message(history_db, event, chat, request, direction="inbound")
+        mark_message_processed(history_db, str(event["message_id"]))
+        return {
+            "duplicate": True,
+            "queued": False,
+            "chat": chat,
+            "reply": "",
+            "ack": "",
+            "suppressed": "recent_exact_wecom_gui_duplicate",
+        }
     record_history_message(history_db, event, chat, request, direction="inbound")
     first_group_event = register_group(history_db, event, chat)
     daily_result = handle_daily_directive_result(history_db, event, chat)
@@ -314,6 +332,8 @@ Rules:
 - LabAgent focuses on normal research, literature, research proposals, lawful paper downloads, Markdown/TeX/PDF reports, editable paper figures, scientific drawing, CAD/PCB/Blender design, and related artifact work.
 - Attachments, links requiring reading, research, file operations, figures, CAD/PCB/Blender, generation, editing, or multi-step design work need the worker.
 - Simple greetings, ordinary questions answerable without tools, and short conversational follow-ups may be answered directly.
+- Give every legitimate new human conversational message one brief, natural response, including thanks, encouragement, reactions, and non-request statements. Do not ignore it merely because it contains no explicit task. Only omit a response for an empty/duplicate message or a message proven to be the system's own output.
+- Reply to several consecutive messages from the same sender as one coherent turn using all of them; do not emit one mechanical response per fragment.
 - Do not claim an attachment was read in the acknowledgement.
 - Soft-filter dangerous or clearly out-of-scope requests with a concise natural refusal or a safer research/design alternative. Do not mechanically refuse ordinary scientific work.
 - LabAgent does not perform video publication or other public posting. Set public_publish_allowed to false.
@@ -573,6 +593,28 @@ def prior_direct_reply(path: Path, message_id: str) -> str:
             (f"reply:{message_id}",),
         ).fetchone()
     return str(row[0]) if row else ""
+
+
+def recent_equivalent_gui_inbound(
+    path: Path,
+    chat: str,
+    body: str,
+    *,
+    window_seconds: int = 90,
+) -> bool:
+    normalized = str(body or "").strip()
+    if not normalized:
+        return False
+    cutoff = (datetime.now() - timedelta(seconds=max(1, window_seconds))).isoformat(
+        timespec="seconds"
+    )
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM messages WHERE chat = ? AND direction = 'inbound' "
+            "AND body = ? AND created_at >= ? ORDER BY id DESC LIMIT 1",
+            (chat, normalized, cutoff),
+        ).fetchone()
+    return bool(row)
 
 
 def mark_message_processed(path: Path, message_id: str) -> None:

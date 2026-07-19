@@ -695,8 +695,10 @@ class WeComGuiBridge:
         self.click(window.x + int(window.width * 0.20), window.y + int(window.height * 0.33))
         time.sleep(self.pause)
         # Selecting a Wine-rendered search result opens the chat behind the
-        # search layer. Explicitly clear that layer before title verification.
-        self.click(window.x + int(window.width * 0.268), window.y + int(window.height * 0.06))
+        # search layer. Close its exact native window before title verification.
+        # The nearby main-toolbar `+` opens Start Group Chat, so it must never
+        # be used as an approximate close target.
+        self.close_stale_native_overlays()
         time.sleep(max(0.25, self.pause / 2))
         window = self.find_window()
         if not self.current_title_matches(window, chat):
@@ -1672,11 +1674,29 @@ class WeComGuiBridge:
         self.run_xdotool(["key", "--clearmodifiers", keys])
 
     def dismiss_transient_overlays(self, window: Window) -> None:
+        # Search and failed-file windows are native top-level Wine windows.
+        # Clicking the main Electron surface cannot dismiss them and leaves
+        # every subsequent exact-title check blocked. The helper closes only
+        # exact allowlisted WeCom modal/search classes owned by this process.
+        self.close_stale_native_overlays()
         self.click(
             window.x + int(window.width * 0.58),
             window.y + int(window.height * 0.08),
         )
         time.sleep(0.05)
+
+    def close_stale_native_overlays(self) -> None:
+        ensure_win32_input_helper()
+        proc = subprocess.run(
+            ["wine", str(WIN32_INPUT_EXE), "--close-stale-modals"],
+            env=self.gui_env(),
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = proc.stderr.decode(errors="replace")[:300]
+            raise RuntimeError(f"Wine stale WeCom overlay cleanup failed: {detail}")
 
     def composer_keys(self, window: Window, *keys: str) -> None:
         # Wine renders this Electron composer as synchronized layered windows.
@@ -1724,10 +1744,7 @@ class WeComGuiBridge:
 
         proc = invoke("--click", str(x), str(y))
         if proc.returncode == 4:
-            cleanup = invoke("--close-stale-modals")
-            if cleanup.returncode != 0:
-                detail = cleanup.stderr.decode(errors="replace")[:300]
-                raise RuntimeError(f"Wine stale WeCom modal cleanup failed: {detail}")
+            self.close_stale_native_overlays()
             time.sleep(max(0.25, self.pause / 2))
             proc = invoke("--click", str(x), str(y))
         if proc.returncode != 0:
