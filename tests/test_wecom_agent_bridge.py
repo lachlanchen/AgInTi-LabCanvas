@@ -878,6 +878,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
     def test_gui_bubble_regions_isolate_inbound_message_background(self) -> None:
         bridge = load_gui_bridge()
+        if bridge.Image is None:
+            self.skipTest("Pillow is an optional WeCom GUI runtime dependency")
         image = bridge.Image.new("RGB", (120, 80), (248, 249, 250))
         for x in range(10, 90):
             for y in range(20, 50):

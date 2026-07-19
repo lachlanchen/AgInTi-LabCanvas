@@ -5160,13 +5160,15 @@ stderr: noisy internal trace
 
     def test_queue_timestamps_normalize_explicit_timezone_to_local_naive(self) -> None:
         worker = load_worker()
+        source = "2026-07-19T09:00:19+08:00"
 
-        parsed = worker.parse_iso_datetime("2026-07-19T09:00:19+08:00")
+        parsed = worker.parse_iso_datetime(source)
+        expected = datetime.fromisoformat(source).astimezone().replace(tzinfo=None)
 
         self.assertIsNotNone(parsed)
         assert parsed is not None
         self.assertIsNone(parsed.tzinfo)
-        self.assertEqual(parsed.hour, 9)
+        self.assertEqual(parsed, expected)
 
     def test_claim_next_deferred_send_repairs_retryable_send_failed(self) -> None:
         worker = load_worker()
