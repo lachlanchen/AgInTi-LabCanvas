@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-LABAGENT_GUIDE_VERSION = "v1"
+LABAGENT_GUIDE_VERSION = "v2"
 
 
 def labagent_welcome_message() -> str:
@@ -12,6 +12,7 @@ def labagent_welcome_message() -> str:
         "- 文献调研、研究方案、开放获取论文与带引用 PDF\n"
         "- Markdown/TeX/PDF、可编辑论文图和科学插图\n"
         "- CAD/PCB、Blender 或实验装置设计\n"
-        "- #daily 你的主题（设置每日研究跟踪）\n"
+        "- 你的研究兴趣 #daily（每人一个每日任务，兴趣可累计）\n"
+        "- status #daily（查看）或 off #daily（关闭自己的任务）\n"
         "结果和文件会回到当前群。视频发布和其他公开发布不在此机器人范围内。"
     )

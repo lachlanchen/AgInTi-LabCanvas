@@ -265,9 +265,30 @@ show_login_qr() {
 
 supervise_client() {
   trap 'exit 0' INT TERM
+  local backoff=10
   while true; do
-    start_client || true
-    sleep 10
+    if is_running; then
+      # An existing process owns the authenticated profile. Never relaunch or
+      # enter account-switch mode because a layered window is hidden, blocked
+      # by security verification, or temporarily not discoverable by X11.
+      launch_desktop || true
+      if has_visible_client_window; then
+        start_autofit_guard || true
+        fit_client_window || true
+      fi
+      backoff=10
+      sleep 10
+      continue
+    fi
+
+    if start_client; then
+      backoff=10
+    else
+      # Avoid a crash/relaunch loop that can invalidate Tencent device trust.
+      backoff=$((backoff * 2))
+      (( backoff > 600 )) && backoff=600
+    fi
+    sleep "$backoff"
   done
 }
 

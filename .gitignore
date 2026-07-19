@@ -10,6 +10,7 @@ dist/
 agenticapp.targets.json
 labcanvas.targets.json
 output/
+000_labcanvas_wecom_send_*/
 *.blend1
 .env
 .env.*
@@ -33,3 +34,5 @@ cad/analysis/**/workspace.sqlite
 # Local operator handoffs
 handoff/lalachan-story-video-generation-handoff.md
 npm-debug.log*
+.aginti-sessions/
+.sessions/

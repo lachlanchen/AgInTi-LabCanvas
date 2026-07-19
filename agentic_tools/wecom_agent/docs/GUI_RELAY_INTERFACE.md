@@ -87,13 +87,31 @@ chat ID. Advance the consumer cursor only after processing the returned items.
 
 ## Delivery Guarantees
 
+The relay is a closed loop, not a fire-and-forget GUI macro:
+
+```text
+authenticated client -> exact-chat poll -> durable ingest -> isolated worker
+-> verified compose -> verified send/history -> durable delivery ledger
+```
+
+`status` reports `closed_loop_state` as `login_required`,
+`chat_verification_pending`, or `ready`. Only `ready` may recover an expired
+outbox item or deliver worker output.
+
 - Exact configured group names are matched; unknown or ambiguous targets fail.
 - The first visible history is seeded, not replayed, after setup or recovery.
 - Before every poll, the conversation is moved to its live tail so a scrolled
   history cannot be mistaken for new input.
+- After all new records are durably ingested, persist the inbound viewport
+  checkpoint before attempting any acknowledgement send. If WeCom accepts a
+  message but GUI verification is uncertain, the next poll must not re-ingest
+  the request or send the acknowledgement again.
 - Incoming grey bubbles are located visually, then read with WeCom's native
   context-menu Copy action and `CF_UNICODETEXT` through the Wine clipboard.
   This preserves case and digit-bearing identifiers such as `col1a1` exactly.
+- The sender label immediately above each inbound bubble is normalized into a
+  private visual fingerprint. That fingerprint, rather than fallible OCR text,
+  keeps per-member state such as accumulated `#daily` interests isolated.
 - Native Copy always dismisses its context menu before releasing the GUI lock.
   Every outbound transaction also clears stale transient menus before touching
   the composer; otherwise a visible popup can intercept paste and Send clicks.
@@ -104,14 +122,42 @@ chat ID. Advance the consumer cursor only after processing the returned items.
   the composer, and recorded only after the composer clears on Send. Composer
   select-all plus paste/copy are emitted in one X11 key command so Wine cannot
   drop focus between short-lived key processes.
+- Use visible X11/VNC pointer navigation. The local Wine helper may emit normal
+  SendInput keystrokes only for the focused composer; it does not post private
+  messages into proprietary windows. Never send a blind `Escape`: it can close
+  the main client or trigger another verification cycle. Context menus are
+  dismissed with a neutral pointer click.
+- If Wine recognizes a visible conversation row but ignores its pointer click,
+  the relay locates the selected row from WeCom's blue highlight, locates the
+  target row with OCR, and uses bounded normal `Up`/`Down` plus `Return`,
+  followed by the same exact-title verification.
+- Submit a verified composer with WeCom's `Alt+S` accelerator. The visible Send
+  button is not used as the sole control because Wine can render it while
+  ignoring an X11 click; empty-composer or exact-history verification remains
+  mandatory before recording delivery.
+- Detect login, QR, and abnormal-device security screens before any GUI input.
+  While one is visible, report `security_verification_required`, leave the
+  client process untouched, and defer all intake and delivery.
+- The client supervisor treats every existing WeCom process as the sole owner
+  of the persistent profile. Hidden/layered/security windows are not restart
+  signals, and process crashes use bounded exponential relaunch backoff.
 - Files must be regular, allowlisted artifacts inside this repository. One file
-  is staged at a time, dragged from an isolated Wine Explorer window, checked by
-  filename in the composer, and checked again in chat history before delivery is
-  recorded.
+  is hard-linked or copied into a private one-file C-drive directory, selected
+  through `More -> File -> Local File`, checked by a visible filename prefix in
+  that isolated directory, and then checked by exact full-name readback from the
+  picker's `File name` field. It is checked again after staging in the composer
+  and a third time as a new chat-history item. Typing a full path alone is not
+  selection; the relay navigates to the directory, selects its sole row, clicks
+  the picker's Send button, then separately clicks the composer's Send button.
+  Drag-and-drop is not a delivery fallback.
 - GUI access is serialized with a process lock. Combined text/file requests stay
   in one critical section, so concurrent workers cannot switch the target chat.
 - Read cursors and send ledgers are durable SQLite state under ignored
   `.private/`; screenshots and raw events also remain private.
+- A newly registered `#daily` interest creates one source-scoped immediate
+  `research_summary` task and remains eligible for future scheduled reports.
+  The source message and normalized topic form its idempotency key, so OCR
+  retries and repeated interests cannot create extra initial runs.
 - Window size is not authentication evidence. After a disconnected/login
   period, the relay waits until the normal poll can open and title-verify the
   exact allowlisted chats. Only that successful poll triggers one bounded

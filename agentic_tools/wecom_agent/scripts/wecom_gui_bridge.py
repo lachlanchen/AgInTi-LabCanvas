@@ -51,6 +51,8 @@ INGEST_SCRIPT = TOOL_ROOT / "scripts" / "wecom_ingest.py"
 RECONNECT_OUTBOX_SCRIPT = TOOL_ROOT / "scripts" / "wecom_reconnect_outbox.py"
 CLIPBOARD_SOURCE = TOOL_ROOT / "native" / "wecom_clipboard_utf8.c"
 CLIPBOARD_EXE = PRIVATE / "bin" / "wecom_clipboard_utf8.exe"
+WIN32_INPUT_SOURCE = TOOL_ROOT / "native" / "wecom_win32_input.c"
+WIN32_INPUT_EXE = PRIVATE / "bin" / "wecom_win32_input.exe"
 DEFAULT_PREFIX = PRIVATE / "wineprefix"
 MAX_API_BODY = 2 * 1024 * 1024
 SAFE_SEND_EXTENSIONS = {
@@ -197,6 +199,12 @@ def initialize_config(
         "wineprefix": str(existing.get("wineprefix") or DEFAULT_PREFIX),
         "poll_seconds": bounded_float(existing.get("poll_seconds"), 4.0, 2.0, 120.0),
         "action_pause_seconds": bounded_float(existing.get("action_pause_seconds"), 0.8, 0.2, 5.0),
+        "failure_backoff_seconds": bounded_float(
+            existing.get("failure_backoff_seconds"), 30.0, 5.0, 900.0
+        ),
+        "max_failure_backoff_seconds": bounded_float(
+            existing.get("max_failure_backoff_seconds"), 300.0, 30.0, 3600.0
+        ),
         "local_api_host": "127.0.0.1",
         "local_api_port": bounded_int(existing.get("local_api_port"), 19580, 1024, 65535),
         "local_api_token": str(existing.get("local_api_token") or secrets.token_hex(32)),
@@ -245,6 +253,9 @@ class WeComGuiBridge:
         self._stop = threading.Event()
         self._poll_lock = threading.Lock()
         self._client_was_visible = False
+        self._poll_cursor = 0
+        self._chat_failures: dict[str, int] = {}
+        self._chat_retry_at: dict[str, float] = {}
         init_state_db(self.state_db)
 
     def status(self) -> dict[str, Any]:
@@ -253,18 +264,46 @@ class WeComGuiBridge:
             rows = conn.execute(
                 "SELECT chat_name, updated_at FROM snapshots ORDER BY chat_name"
             ).fetchall()
-            last_error = conn.execute(
-                "SELECT value FROM runtime WHERE key = 'last_error'"
-            ).fetchone()
+            runtime = dict(
+                conn.execute(
+                    "SELECT key, value FROM runtime WHERE key IN "
+                    "('auth_blocker', 'chat_ready', 'last_error', 'last_poll_at', 'last_ready_at')"
+                ).fetchall()
+            )
+        last_error = str(runtime.get("last_error") or "")[:500]
+        auth_blocker = str(runtime.get("auth_blocker") or "")[:200]
+        ready_chats = [
+            chat
+            for chat in self.target_groups
+            if get_runtime(self.state_db, f"chat_ready:{safe_slug(chat)}") == "1"
+        ]
+        chat_ready = bool(window) and len(ready_chats) == len(self.target_groups) and not auth_blocker
+        closed_loop_state = (
+            "ready"
+            if chat_ready
+            else "degraded_ready"
+            if window and ready_chats and not auth_blocker
+            else "security_verification_required"
+            if auth_blocker
+            else "chat_verification_pending"
+            if window
+            else "login_required"
+        )
         return {
             "ok": True,
             "api_version": 1,
             "enabled": bool(self.config.get("enabled", True)),
             "client_visible": bool(window),
+            "chat_ready": chat_ready,
+            "ready_chat_count": len(ready_chats),
+            "closed_loop_state": closed_loop_state,
             "display": self.display,
             "target_groups": self.target_groups,
             "seeded_groups": [{"chat": row[0], "updated_at": row[1]} for row in rows],
-            "last_error": str(last_error[0])[:500] if last_error else "",
+            "auth_blocker": auth_blocker,
+            "last_error": last_error,
+            "last_poll_at": str(runtime.get("last_poll_at") or ""),
+            "last_ready_at": str(runtime.get("last_ready_at") or ""),
             "local_api_url": f"http://127.0.0.1:{bounded_int(self.config.get('local_api_port'), 19580, 1024, 65535)}",
             "transport": "wecom_gui_only",
             "personal_wechat_fallback": False,
@@ -285,6 +324,8 @@ class WeComGuiBridge:
             "ok": bool(status.get("ok")),
             "api_version": status.get("api_version"),
             "client_visible": status.get("client_visible"),
+            "chat_ready": status.get("chat_ready"),
+            "closed_loop_state": status.get("closed_loop_state"),
             "transport": status.get("transport"),
             "capabilities": status.get("capabilities"),
         }
@@ -293,25 +334,72 @@ class WeComGuiBridge:
         if not self._poll_lock.acquire(blocking=False):
             return {"ok": True, "skipped": "poll_already_running", "processed": 0}
         try:
+            selected = self.next_due_chat()
+            if selected is None:
+                set_runtime(self.state_db, "last_poll_at", now_iso())
+                return {"ok": True, "skipped": "chat_failure_backoff", "processed": 0}
             with self.serialized_gui():
-                outcomes = [self.poll_chat(chat) for chat in self.target_groups]
+                outcomes = [self.poll_chat(selected)]
             errors = [item for item in outcomes if not item.get("ok")]
             processed = sum(int(item.get("processed") or 0) for item in outcomes)
+            if errors:
+                self.defer_failed_chat(selected)
+            else:
+                self._chat_failures.pop(selected, None)
+                self._chat_retry_at.pop(selected, None)
             set_runtime(self.state_db, "last_poll_at", now_iso())
             set_runtime(self.state_db, "last_error", "" if not errors else json.dumps(errors, ensure_ascii=False)[:1000])
+            set_runtime(self.state_db, f"chat_ready:{safe_slug(selected)}", "0" if errors else "1")
+            if not errors:
+                set_runtime(self.state_db, "auth_blocker", "")
+                set_runtime(self.state_db, "last_ready_at", now_iso())
             return {"ok": not errors, "processed": processed, "groups": outcomes}
         except Exception as exc:
             message = f"{type(exc).__name__}: {str(exc)[:800]}"
+            set_runtime(self.state_db, "last_poll_at", now_iso())
             set_runtime(self.state_db, "last_error", message)
+            selected = locals().get("selected")
+            if isinstance(selected, str):
+                self.defer_failed_chat(selected)
+                set_runtime(self.state_db, f"chat_ready:{safe_slug(selected)}", "0")
+            if "WECOM_GUI_AUTH_REQUIRED:" in message:
+                set_runtime(
+                    self.state_db,
+                    "auth_blocker",
+                    message.split("WECOM_GUI_AUTH_REQUIRED:", 1)[1].strip()[:200],
+                )
             return {"ok": False, "processed": 0, "error": message}
         finally:
             self._poll_lock.release()
+
+    def next_due_chat(self) -> str | None:
+        if not self.target_groups:
+            return None
+        now = time.monotonic()
+        count = len(self.target_groups)
+        for offset in range(count):
+            index = (self._poll_cursor + offset) % count
+            chat = self.target_groups[index]
+            if now >= self._chat_retry_at.get(chat, 0.0):
+                self._poll_cursor = (index + 1) % count
+                return chat
+        return None
+
+    def defer_failed_chat(self, chat: str) -> None:
+        failures = self._chat_failures.get(chat, 0) + 1
+        self._chat_failures[chat] = failures
+        base = bounded_float(self.config.get("failure_backoff_seconds"), 30.0, 5.0, 900.0)
+        maximum = bounded_float(
+            self.config.get("max_failure_backoff_seconds"), 300.0, 30.0, 3600.0
+        )
+        self._chat_retry_at[chat] = time.monotonic() + min(maximum, base * (2 ** (failures - 1)))
 
     def poll_chat(self, chat: str) -> dict[str, Any]:
         window = self.ensure_chat(chat)
         self.scroll_chat_to_bottom(window)
         screenshot = self.capture_screen(f"poll-{safe_slug(chat)}")
-        inbound, crop_path = self.extract_inbound_messages(screenshot, window, chat)
+        records, crop_path = self.extract_inbound_records(screenshot, window, chat)
+        inbound = [str(record.get("text") or "") for record in records]
         old = load_snapshot(self.state_db, chat)
         image_hash = sha256_file(crop_path)
         if old is None:
@@ -336,29 +424,53 @@ class WeComGuiBridge:
                     "processed": 0,
                     "error": "OCR viewport changed ambiguously; refusing replay of previously seen text",
                 }
-        event_path = self.build_event(chat, new_messages, image_hash)
-        record_inbound_messages(self.state_db, chat, new_messages, event_path, image_hash)
-        try:
-            result = self.invoke_ingest(event_path)
-        except Exception as exc:
-            mark_event_ingest(
-                self.state_db,
-                event_path,
-                status="failed",
-                error=f"{type(exc).__name__}: {str(exc)[:500]}",
+        new_records = records[-len(new_messages) :]
+        queued = False
+        replied = False
+        pending_replies: list[tuple[str, str]] = []
+        for batch in coalesce_sender_records(new_records):
+            batch_messages = [str(record.get("text") or "") for record in batch]
+            sender_label = str(batch[0].get("sender_label") or "")
+            sender_fingerprint = str(batch[0].get("sender_fingerprint") or "")
+            sender_confidence = str(batch[0].get("sender_confidence") or "unresolved")
+            event_path = self.build_event(
+                chat,
+                batch_messages,
+                image_hash,
+                sender_label=sender_label,
+                sender_fingerprint=sender_fingerprint,
+                sender_confidence=sender_confidence,
             )
-            raise
-        mark_event_ingest(self.state_db, event_path, status="ingested")
-        response = str(result.get("reply") or result.get("ack") or "").strip()
-        if response:
-            self.send_text_locked(chat, response, task_id=f"ingress:{event_path.parent.name}")
+            record_inbound_messages(self.state_db, chat, batch_messages, event_path, image_hash)
+            try:
+                result = self.invoke_ingest(event_path)
+            except Exception as exc:
+                mark_event_ingest(
+                    self.state_db,
+                    event_path,
+                    status="failed",
+                    error=f"{type(exc).__name__}: {str(exc)[:500]}",
+                )
+                raise
+            mark_event_ingest(self.state_db, event_path, status="ingested")
+            queued = queued or bool(result.get("queued"))
+            response = str(result.get("reply") or result.get("ack") or "").strip()
+            if response:
+                pending_replies.append((response, f"ingress:{event_path.parent.name}"))
+
+        # Ingest is the durable boundary. Checkpoint the inbound viewport before
+        # any GUI send so an uncertain send result cannot replay the request and
+        # emit the same acknowledgement again on the next poll.
         save_snapshot(self.state_db, chat, inbound, image_hash)
+        for response, task_id in pending_replies:
+            self.send_text_locked(chat, response, task_id=task_id)
+            replied = True
         return {
             "ok": True,
             "chat": chat,
             "processed": len(new_messages),
-            "queued": bool(result.get("queued")),
-            "replied": bool(response),
+            "queued": queued,
+            "replied": replied,
         }
 
     def scroll_chat_to_bottom(self, window: Window) -> None:
@@ -460,7 +572,7 @@ class WeComGuiBridge:
                 raise RuntimeError(
                     "WECOM_GUI_COMPOSE_UNVERIFIED: composer did not contain the exact Unicode message"
                 )
-            self.click(window.x + int(window.width * 0.78), window.y + int(window.height * 0.945))
+            self.composer_keys(window, "alt+s")
             time.sleep(self.pause)
             if not self.composer_is_empty(window, delivery_key):
                 raise RuntimeError("WECOM_GUI_SEND_UNCERTAIN: composer did not clear after Send")
@@ -482,7 +594,6 @@ class WeComGuiBridge:
         self.ensure_chat(chat)
         for index, source in enumerate(paths):
             staging_dir: Path | None = None
-            explorer: Window | None = None
             try:
                 path = self.validate_send_file(source)
                 stat = path.stat()
@@ -494,14 +605,19 @@ class WeComGuiBridge:
                 before_screen = self.capture_screen(f"file-before-{delivery_key}")
                 before_text = self.read_chat_history_text(before_screen, window, delivery_key)
                 staged, staging_dir = self.stage_send_file(path, delivery_key)
-                explorer = self.open_staging_explorer(staging_dir)
-                self.drag_staged_file(explorer, window)
-                composed = self.capture_screen(f"file-composed-{delivery_key}")
+                picker_evidence = self.compose_staged_file_with_picker(
+                    window,
+                    staged,
+                    staging_dir,
+                    delivery_key,
+                )
+                window = self.ensure_chat(chat)
+                composed = self.capture_screen(f"file-composed-picker-{delivery_key}")
                 if not self.composer_contains_filename(composed, window, staged.name, delivery_key):
                     raise RuntimeError(
                         "WECOM_GUI_COMPOSE_UNVERIFIED: WeCom did not compose the exact staged artifact"
                     )
-                self.click(window.x + int(window.width * 0.78), window.y + int(window.height * 0.945))
+                self.composer_keys(window, "alt+s")
                 sent_screen = self.wait_for_file_in_history(
                     window,
                     staged.name,
@@ -510,12 +626,21 @@ class WeComGuiBridge:
                 )
                 remember_delivery(self.state_db, delivery_key, chat, str(path))
                 sent_files.append(str(path))
-                set_runtime(self.state_db, f"delivery_evidence:{delivery_key}", str(sent_screen))
+                set_runtime(
+                    self.state_db,
+                    f"delivery_evidence:{delivery_key}",
+                    json.dumps(
+                        {
+                            "picker": str(picker_evidence),
+                            "composer": str(composed),
+                            "history": str(sent_screen),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
             except Exception as exc:
                 errors.append({"path": str(source), "error": f"{type(exc).__name__}: {str(exc)[:300]}"})
             finally:
-                if explorer is not None:
-                    self.close_window(explorer.wid)
                 if staging_dir is not None:
                     shutil.rmtree(staging_dir, ignore_errors=True)
         return {"ok": not errors, "sent_messages": [], "sent_files": sent_files, "errors": errors}
@@ -539,17 +664,25 @@ class WeComGuiBridge:
     def ensure_chat(self, chat: str) -> Window:
         if chat not in self.target_groups:
             raise RuntimeError("chat is not allowlisted")
-        # A native bubble-copy probe can leave WeCom's context menu open when
-        # Wine accepts Copy without dismissing the popup. Close transient UI
-        # before any conversation selection or composer interaction.
-        self.dismiss_transient_overlays()
         window = self.find_window()
+        blocker = self.detect_auth_blocker(window)
+        if blocker:
+            raise RuntimeError(f"WECOM_GUI_AUTH_REQUIRED: {blocker}")
+        # A bubble-copy probe can leave a context menu open. Dismiss it with a
+        # neutral pointer click; Escape can close the main WeCom window when no
+        # popup owns the key.
+        self.dismiss_transient_overlays(window)
         if self.current_title_matches(window, chat):
             return window
+        current_chat = self.current_allowlisted_chat(window, exclude=chat)
         if self.open_from_visible_list(window, chat):
             window = self.find_window()
             if self.current_title_matches(window, chat):
                 return window
+            if current_chat and self.open_from_visible_list_keyboard(window, current_chat, chat):
+                window = self.find_window()
+                if self.current_title_matches(window, chat):
+                    return window
             raise RuntimeError(f"visible WeCom conversation did not open exact chat {chat!r}")
         if not bool(self.config.get("allow_search_fallback", False)):
             raise RuntimeError(f"exact WeCom chat {chat!r} is not visible; search fallback is disabled")
@@ -566,9 +699,26 @@ class WeComGuiBridge:
         time.sleep(max(0.25, self.pause / 2))
         window = self.find_window()
         if not self.current_title_matches(window, chat):
-            self.key("Escape")
             raise RuntimeError(f"exact WeCom GUI chat title did not match {chat!r}")
         return window
+
+    def detect_auth_blocker(self, window: Window) -> str:
+        screenshot = self.capture_screen("auth-state-check")
+        crop = self.crop(
+            screenshot,
+            (window.x, window.y, window.width, window.height),
+            self.runtime_dir / "auth-state-check.png",
+        )
+        observed = normalize_text(self.ocr(crop, psm=11)).casefold()
+        patterns = (
+            ("device_environment_abnormal", ("deviceenvironmentisabnormal", "环境异常")),
+            ("security_verification_required", ("securityverification", "安全验证")),
+            ("qr_login_required", ("scantheqrcode", "loadingqrcode", "扫码登录", "二维码登录")),
+        )
+        for label, needles in patterns:
+            if any(normalize_text(needle).casefold() in observed for needle in needles):
+                return label
+        return ""
 
     def open_from_visible_list(self, window: Window, chat: str) -> bool:
         screenshot = self.capture_screen("conversation-list-check")
@@ -591,6 +741,103 @@ class WeComGuiBridge:
         )
         time.sleep(self.pause)
         return True
+
+    def current_allowlisted_chat(self, window: Window, *, exclude: str = "") -> str:
+        for candidate in self.target_groups:
+            if candidate == exclude:
+                continue
+            if self.current_title_matches(window, candidate):
+                return candidate
+        return ""
+
+    def open_from_visible_list_keyboard(
+        self,
+        window: Window,
+        current_chat: str,
+        target_chat: str,
+    ) -> bool:
+        """Navigate between visible rows when Wine ignores a pointer selection."""
+        screenshot = self.capture_screen("conversation-keyboard-fallback")
+        crop_path = self.crop(
+            screenshot,
+            (
+                window.x + int(window.width * 0.06),
+                window.y + int(window.height * 0.20),
+                int(window.width * 0.255),
+                int(window.height * 0.72),
+            ),
+            self.runtime_dir / "conversation-keyboard-fallback.png",
+        )
+        target = self.find_ocr_line(crop_path, target_chat, scale=3)
+        current_center_y = self.selected_conversation_center_y(crop_path)
+        if current_center_y is None:
+            current = self.find_ocr_line(crop_path, current_chat, scale=3)
+            current_center_y = float(current["center_y"]) if current is not None else None
+        if current_center_y is None or target is None:
+            return False
+        delta = float(target["center_y"]) - current_center_y
+        row_height = max(40.0, float(window.height) * 0.11)
+        steps = int(round(abs(delta) / row_height))
+        if steps < 1 or steps > 12:
+            return False
+        direction = "Down" if delta > 0 else "Up"
+        list_left = window.x + int(window.width * 0.06)
+        list_width = int(window.width * 0.255)
+        list_top = window.y + int(window.height * 0.20)
+        command = [
+            "mousemove",
+            str(list_left + int(list_width * 0.50)),
+            str(list_top + int(current_center_y)),
+            "click",
+            "1",
+        ]
+        for _ in range(steps):
+            command.extend(["key", "--clearmodifiers", direction])
+        command.extend(["key", "--clearmodifiers", "Return"])
+        self.run_xdotool(command)
+        time.sleep(self.pause)
+        return True
+
+    def selected_conversation_center_y(self, path: Path) -> float | None:
+        """Locate WeCom's vivid-blue selected row without trusting its OCR text."""
+        if Image is None:
+            raise RuntimeError("Pillow is required for WeCom GUI conversation selection")
+        with Image.open(path).convert("RGB") as image:
+            width, height = image.size
+            row_counts: list[int] = []
+            for y in range(height):
+                count = 0
+                for red, green, blue in (image.getpixel((x, y)) for x in range(width)):
+                    if (
+                        20 <= red <= 120
+                        and 95 <= green <= 190
+                        and 210 <= blue <= 255
+                        and blue - green >= 45
+                    ):
+                        count += 1
+                row_counts.append(count)
+
+        minimum = max(24, int(width * 0.20))
+        bands: list[tuple[int, int, int]] = []
+        start: int | None = None
+        score = 0
+        for y, count in enumerate([*row_counts, 0]):
+            if count >= minimum:
+                if start is None:
+                    start = y
+                    score = 0
+                score += count
+                continue
+            if start is not None:
+                bands.append((start, y - 1, score))
+                start = None
+                score = 0
+        if not bands:
+            return None
+        top, bottom, _score = max(bands, key=lambda item: item[2])
+        if bottom - top + 1 < 12:
+            return None
+        return (top + bottom) / 2.0
 
     def find_ocr_line(self, path: Path, target: str, *, scale: int = 3) -> dict[str, Any] | None:
         if Image is None or ImageOps is None or ImageFilter is None:
@@ -678,6 +925,15 @@ class WeComGuiBridge:
         window: Window,
         chat: str,
     ) -> tuple[list[str], Path]:
+        records, crop_path = self.extract_inbound_records(screenshot, window, chat)
+        return [str(record.get("text") or "") for record in records], crop_path
+
+    def extract_inbound_records(
+        self,
+        screenshot: Path,
+        window: Window,
+        chat: str,
+    ) -> tuple[list[dict[str, str]], Path]:
         crop_path = self.runtime_dir / f"messages-{safe_slug(chat)}.png"
         left = window.x + int(window.width * 0.325)
         top = window.y + int(window.height * 0.12)
@@ -691,7 +947,7 @@ class WeComGuiBridge:
             ),
             crop_path,
         )
-        return self.extract_bubble_texts(crop, chat, screen_origin=(left, top)), crop_path
+        return self.extract_bubble_records(crop, chat, screen_origin=(left, top)), crop_path
 
     def extract_bubble_texts(
         self,
@@ -700,16 +956,46 @@ class WeComGuiBridge:
         *,
         screen_origin: tuple[int, int] | None = None,
     ) -> list[str]:
+        return [
+            str(record.get("text") or "")
+            for record in self.extract_bubble_records(path, chat, screen_origin=screen_origin)
+        ]
+
+    def extract_bubble_records(
+        self,
+        path: Path,
+        chat: str,
+        *,
+        screen_origin: tuple[int, int] | None = None,
+    ) -> list[dict[str, str]]:
         if Image is None:
             raise RuntimeError("Pillow is required for WeCom GUI bubble extraction")
         with Image.open(path).convert("RGB") as image:
+            image_width, image_height = image.size
             regions = [
                 region
                 for region in find_color_regions(image, (228, 231, 235), tolerance=8)
                 if region[2] - region[0] >= 40 and region[3] - region[1] >= 20 and region[4] >= 300
             ]
-        messages: list[str] = []
+        records: list[dict[str, str]] = []
+        last_sender = ""
+        last_sender_fingerprint = ""
         for index, (left, top, right, bottom, _area) in enumerate(regions):
+            sender, sender_fingerprint = self.extract_sender_identity(
+                path,
+                left=left,
+                top=top,
+                image_width=image_width,
+                image_height=image_height,
+                label=f"{safe_slug(chat)}-{index}",
+            )
+            if sender:
+                last_sender = sender
+                last_sender_fingerprint = sender_fingerprint
+            else:
+                sender = last_sender
+                sender_fingerprint = last_sender_fingerprint
+            text = ""
             if screen_origin is not None:
                 exact = self.copy_text_bubble(
                     screen_origin[0] + (left + right) // 2,
@@ -717,24 +1003,65 @@ class WeComGuiBridge:
                     probe_id=f"{safe_slug(chat)}-{index}",
                 )
                 if exact:
-                    messages.append(exact)
-                    continue
-            bubble = self.crop(
-                path,
-                (left, top, right - left, bottom - top),
-                self.runtime_dir / f"bubble-{safe_slug(chat)}-{index}.png",
-            )
-            psm = 7 if bottom - top <= 45 else 6
-            text = self.ocr_scaled(
-                bubble,
-                scale=4,
-                psm=psm,
-                threshold=178,
-                prefer_han=True,
-            ).strip()
+                    text = exact
+            if not text:
+                bubble = self.crop(
+                    path,
+                    (left, top, right - left, bottom - top),
+                    self.runtime_dir / f"bubble-{safe_slug(chat)}-{index}.png",
+                )
+                psm = 7 if bottom - top <= 45 else 6
+                text = self.ocr_scaled(
+                    bubble,
+                    scale=4,
+                    psm=psm,
+                    threshold=178,
+                    prefer_han=True,
+                ).strip()
             if normalize_text(text):
-                messages.append(text)
-        return messages
+                records.append(
+                    {
+                        "text": text,
+                        "sender_label": sender,
+                        "sender_fingerprint": sender_fingerprint,
+                        "sender_confidence": (
+                            "visual_fingerprint" if sender_fingerprint else "unresolved"
+                        ),
+                    }
+                )
+        return records
+
+    def extract_sender_identity(
+        self,
+        path: Path,
+        *,
+        left: int,
+        top: int,
+        image_width: int,
+        image_height: int,
+        label: str,
+    ) -> tuple[str, str]:
+        if top < 12:
+            return "", ""
+        name_left = max(0, left - 8)
+        name_top = max(0, top - 38)
+        name_right = min(image_width, left + 230)
+        name_bottom = min(image_height, max(name_top + 12, top - 2))
+        if name_right <= name_left or name_bottom <= name_top:
+            return "", ""
+        sender_crop = self.crop(
+            path,
+            (name_left, name_top, name_right - name_left, name_bottom - name_top),
+            self.runtime_dir / f"sender-{safe_slug(label)}.png",
+        )
+        observed = self.ocr_scaled(
+            sender_crop,
+            scale=4,
+            psm=7,
+            threshold=170,
+            prefer_han=True,
+        )
+        return canonical_sender_label(observed), sender_visual_fingerprint(sender_crop)
 
     def copy_text_bubble(self, x: int, y: int, *, probe_id: str) -> str:
         """Copy one visible WeCom text bubble through its native context menu."""
@@ -742,7 +1069,7 @@ class WeComGuiBridge:
         copied = ""
         try:
             self.set_clipboard(sentinel)
-            self.run_xdotool(["mousemove", str(x), str(y), "click", "3"])
+            self.right_click(x, y)
             time.sleep(0.20)
             # Copy is the first menu item in both Chinese and English WeCom.
             # Keyboard selection avoids fragile pixel offsets and DPI changes.
@@ -753,16 +1080,35 @@ class WeComGuiBridge:
         except Exception:
             return ""
         finally:
-            # Copy normally closes the menu, but the Wine client occasionally
-            # leaves it visible. Such a popup intercepts every later composer
-            # click, so cleanup is part of the exact-copy contract.
-            self.dismiss_transient_overlays()
+            window = self.find_window(required=False)
+            if window is not None:
+                self.dismiss_transient_overlays(window)
         if not copied or copied == sentinel:
             return ""
         return copied[:12000]
 
-    def build_event(self, chat: str, messages: list[str], image_hash: str) -> Path:
-        identity = json.dumps({"chat": chat, "messages": messages, "image": image_hash}, ensure_ascii=False)
+    def build_event(
+        self,
+        chat: str,
+        messages: list[str],
+        image_hash: str,
+        *,
+        sender_label: str = "",
+        sender_fingerprint: str = "",
+        sender_confidence: str = "unresolved",
+    ) -> Path:
+        normalized_sender = canonical_sender_label(sender_label)
+        normalized_fingerprint = re.sub(r"[^0-9a-f]", "", sender_fingerprint.casefold())[:64]
+        identity = json.dumps(
+            {
+                "chat": chat,
+                "messages": messages,
+                "image": image_hash,
+                "sender": normalized_sender,
+                "sender_fingerprint": normalized_fingerprint,
+            },
+            ensure_ascii=False,
+        )
         event_id = short_hash(identity)
         event_dir = self.event_root / datetime.now().strftime("%Y%m%d") / safe_slug(chat) / event_id
         event_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -779,7 +1125,19 @@ class WeComGuiBridge:
             "chat_id": f"gui:{chat}",
             "chat_name": chat,
             "chat_type": "group",
-            "sender_userid": f"external-member:{event_id[:8]}",
+            "sender_userid": (
+                f"external-member:{short_hash(normalized_fingerprint)}"
+                if normalized_fingerprint
+                else f"external-member:{short_hash(normalized_sender)}"
+                if normalized_sender
+                else f"external-member:unresolved:{event_id[:8]}"
+            ),
+            "sender_display": normalized_sender,
+            "sender_identity_confidence": (
+                sender_confidence
+                if normalized_fingerprint or normalized_sender
+                else "unresolved"
+            ),
             "authorization_role": "group_member",
             "irreversible_actions_allowed": False,
             "create_time": int(time.time()),
@@ -869,6 +1227,8 @@ class WeComGuiBridge:
             # and title-verified by the normal poll path.
             self._client_was_visible = False
             return {"ok": True, "recovered_count": 0, "skipped": "chat_poll_not_ready"}
+        if poll_result.get("skipped"):
+            return {"ok": True, "recovered_count": 0, "skipped": str(poll_result["skipped"])}
         if self._client_was_visible:
             return {"ok": True, "recovered_count": 0, "skipped": "already_ready"}
         try:
@@ -934,6 +1294,37 @@ class WeComGuiBridge:
             time.sleep(0.05)
         raise RuntimeError(f"Wine clipboard readback failed: {last_error}")
 
+    def set_file_clipboard(self, paths: list[Path]) -> list[str]:
+        ensure_clipboard_helper()
+        windows_paths = [self.windows_path(path) for path in paths]
+        proc = subprocess.run(
+            ["wine", str(CLIPBOARD_EXE), "--files"],
+            input=("\n".join(windows_paths) + "\n").encode("utf-8"),
+            env=self.gui_env(),
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"Wine file clipboard helper failed: {proc.stderr.decode(errors='replace')[:300]}")
+        readback = subprocess.run(
+            ["wine", str(CLIPBOARD_EXE), "--read-files"],
+            env=self.gui_env(),
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+        observed = [
+            line.strip()
+            for line in readback.stdout.decode("utf-8", errors="strict").splitlines()
+            if line.strip()
+        ]
+        if readback.returncode != 0 or [item.casefold() for item in observed] != [
+            item.casefold() for item in windows_paths
+        ]:
+            raise RuntimeError("WECOM_GUI_FILE_CLIPBOARD_UNVERIFIED: clipboard file list did not round-trip")
+        return observed
+
     def composer_text_matches(self, window: Window, expected: str, delivery_key: str) -> bool:
         sentinel = f"__LABCANVAS_COMPOSER_PROBE_{delivery_key}__"
         self.set_clipboard(sentinel)
@@ -954,7 +1345,7 @@ class WeComGuiBridge:
         self.composer_keys(window, "ctrl+a", "BackSpace")
 
     def stage_send_file(self, source: Path, delivery_key: str) -> tuple[Path, Path]:
-        staging_dir = ROOT / "output" / "wecom_gui_send" / delivery_key
+        staging_dir = self.prefix / "drive_c" / "labcanvas_wecom_send" / delivery_key
         shutil.rmtree(staging_dir, ignore_errors=True)
         staging_dir.mkdir(parents=True, exist_ok=True)
         staged = staging_dir / source.name
@@ -964,26 +1355,122 @@ class WeComGuiBridge:
             shutil.copy2(source, staged)
         return staged, staging_dir
 
-    def open_staging_explorer(self, staging_dir: Path) -> Window:
-        windows_dir = self.windows_path(staging_dir)
-        subprocess.Popen(
-            ["wine", "explorer", f"/e,{windows_dir}"],
-            cwd=ROOT,
-            env=self.gui_env(),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        title = staging_dir.name
-        deadline = time.monotonic() + 15
+    def compose_staged_file_with_picker(
+        self,
+        wecom: Window,
+        staged_file: Path,
+        staging_dir: Path,
+        delivery_key: str,
+    ) -> Path:
+        staged_files = [path for path in staging_dir.iterdir() if path.is_file()]
+        if len(staged_files) != 1 or staged_files[0].resolve() != staged_file.resolve():
+            raise RuntimeError("isolated WeCom staging folder must contain exactly one file")
+        stale_picker = self.find_named_window("Select file/folder")
+        if stale_picker is not None:
+            self.close_window(stale_picker.wid)
+            time.sleep(max(0.25, self.pause / 2))
+
+        # The native picker only stages the file. The caller verifies the
+        # composer and then clicks the separate WeCom Send button.
+        self.click(wecom.x + int(wecom.width * 0.572), wecom.y + int(wecom.height * 0.797))
+        time.sleep(max(0.25, self.pause / 2))
+        self.click(wecom.x + int(wecom.width * 0.607), wecom.y + int(wecom.height * 0.846))
+        time.sleep(max(0.25, self.pause / 2))
+        self.click(wecom.x + int(wecom.width * 0.789), wecom.y + int(wecom.height * 0.849))
+
+        picker = self.wait_for_named_window("Select file/folder", timeout=15.0)
+        try:
+            self.set_clipboard(self.windows_path(staging_dir))
+            self.click(
+                picker.x + int(picker.width * 0.56),
+                picker.y + int(picker.height * 0.91),
+            )
+            self.run_xdotool(["key", "--clearmodifiers", "ctrl+a", "ctrl+v", "Return"])
+
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                picker = self.find_named_window("Select file/folder") or picker
+                if self.picker_contains_filename(picker, staged_file.name, delivery_key):
+                    break
+                time.sleep(0.25)
+            else:
+                raise RuntimeError(
+                    "WECOM_GUI_PICKER_UNVERIFIED: native picker did not show the exact staged artifact"
+                )
+
+            self.click(
+                picker.x + int(picker.width * 0.36),
+                picker.y + int(picker.height * 0.13),
+            )
+            time.sleep(max(0.25, self.pause / 2))
+            selected_evidence = self.capture_screen(f"file-picker-selected-{delivery_key}")
+            if not self.picker_filename_field_matches(picker, staged_file.name, delivery_key):
+                raise RuntimeError(
+                    "WECOM_GUI_PICKER_UNVERIFIED: File name field did not equal the exact artifact"
+                )
+
+            self.click(
+                picker.x + int(picker.width * 0.85),
+                picker.y + int(picker.height * 0.96),
+            )
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                if self.find_named_window("Select file/folder") is None:
+                    return selected_evidence
+                time.sleep(0.25)
+            raise RuntimeError("WECOM_GUI_PICKER_UNCERTAIN: native picker did not close after staging")
+        except Exception:
+            active_picker = self.find_named_window("Select file/folder")
+            if active_picker is not None:
+                self.close_window(active_picker.wid)
+            raise
+
+    def wait_for_named_window(self, title: str, *, timeout: float) -> Window:
+        deadline = time.monotonic() + max(0.0, timeout)
         while time.monotonic() < deadline:
             window = self.find_named_window(title)
             if window is not None:
-                self.run_xdotool(["windowmove", window.wid, "10", "30"], check=False)
-                self.run_xdotool(["windowsize", window.wid, "620", "360"], check=False)
-                time.sleep(max(0.5, self.pause))
-                return self.window_geometry(window.wid) or window
+                return window
             time.sleep(0.25)
-        raise RuntimeError("Wine Explorer did not open the isolated artifact staging folder")
+        raise RuntimeError(f"native WeCom window did not appear: {title}")
+
+    def picker_contains_filename(
+        self,
+        picker: Window,
+        filename: str,
+        label: str,
+    ) -> bool:
+        screenshot = self.capture_screen(f"file-picker-{safe_slug(label)}")
+        title_height = min(24, picker.height // 10)
+        body = self.crop(
+            screenshot,
+            (
+                picker.x,
+                picker.y + title_height,
+                picker.width,
+                max(80, picker.height - title_height),
+            ),
+            self.runtime_dir / f"file-picker-{safe_slug(label)}-body.png",
+        )
+        return filename_matches_ocr(filename, self.ocr_scaled(body, scale=3, psm=11))
+
+    def picker_filename_field_matches(
+        self,
+        picker: Window,
+        filename: str,
+        delivery_key: str,
+    ) -> bool:
+        sentinel = f"__LABCANVAS_PICKER_PROBE_{delivery_key}__"
+        self.set_clipboard(sentinel)
+        self.click(
+            picker.x + int(picker.width * 0.56),
+            picker.y + int(picker.height * 0.91),
+        )
+        self.run_xdotool(["key", "--clearmodifiers", "ctrl+a", "ctrl+c"])
+        time.sleep(max(0.2, self.pause / 3))
+        observed = canonical_clipboard_text(self.get_clipboard()).strip('"')
+        observed_name = re.split(r"[\\/]", observed)[-1]
+        return secrets.compare_digest(observed_name.casefold(), filename.casefold())
 
     def windows_path(self, path: Path) -> str:
         proc = subprocess.run(
@@ -998,25 +1485,6 @@ class WeComGuiBridge:
         if proc.returncode != 0 or not value:
             raise RuntimeError(f"winepath failed for {path}: {proc.stderr[:200]}")
         return value
-
-    def drag_staged_file(self, explorer: Window, wecom: Window) -> None:
-        source_x = explorer.x + int(explorer.width * 0.36)
-        source_y = explorer.y + int(explorer.height * 0.24)
-        target_x = wecom.x + int(wecom.width * 0.56)
-        target_y = wecom.y + int(wecom.height * 0.86)
-        points = [
-            (source_x + 15, source_y + 15),
-            (int((source_x * 3 + target_x) / 4), int((source_y * 3 + target_y) / 4)),
-            (int((source_x + target_x) / 2), int((source_y + target_y) / 2)),
-            (int((source_x + target_x * 3) / 4), int((source_y + target_y * 3) / 4)),
-            (target_x, target_y),
-        ]
-        command = ["mousemove", str(source_x), str(source_y), "mousedown", "1"]
-        for x, y in points:
-            command.extend(["mousemove", str(x), str(y), "sleep", "0.25"])
-        command.extend(["sleep", "0.75", "mouseup", "1"])
-        self.run_xdotool(command)
-        time.sleep(max(1.0, self.pause))
 
     def composer_contains_filename(
         self,
@@ -1175,19 +1643,50 @@ class WeComGuiBridge:
     def click(self, x: int, y: int) -> None:
         self.run_xdotool(["mousemove", str(x), str(y), "click", "1"])
 
+    def right_click(self, x: int, y: int) -> None:
+        self.run_xdotool(["mousemove", str(x), str(y), "click", "3"])
+
     def key(self, keys: str) -> None:
         self.run_xdotool(["key", "--clearmodifiers", keys])
 
-    def dismiss_transient_overlays(self) -> None:
-        self.key("Escape")
+    def dismiss_transient_overlays(self, window: Window) -> None:
+        self.click(
+            window.x + int(window.width * 0.58),
+            window.y + int(window.height * 0.08),
+        )
         time.sleep(0.05)
 
     def composer_keys(self, window: Window, *keys: str) -> None:
-        self.click(
-            window.x + int(window.width * 0.57),
-            window.y + int(window.height * 0.87),
-        )
+        # Wine renders this Electron composer as synchronized layered windows.
+        # The left side is stable even when the right-side layer captures black.
+        x = window.x + int(window.width * 0.40)
+        y = window.y + int(window.height * 0.87)
+        self.click(x, y)
+        normalized = tuple(value.casefold() for value in keys)
+        native_actions = {
+            ("ctrl+a", "ctrl+v"): ("--clear", "--paste"),
+            ("ctrl+v",): ("--paste",),
+            ("ctrl+a", "ctrl+c"): ("--copy-all",),
+            ("ctrl+a", "backspace"): ("--clear",),
+        }.get(normalized)
+        if native_actions is not None:
+            for action in native_actions:
+                self.run_win32_input(action)
+            return
         self.run_xdotool(["key", "--clearmodifiers", *keys])
+
+    def run_win32_input(self, action: str) -> None:
+        ensure_win32_input_helper()
+        proc = subprocess.run(
+            ["wine", str(WIN32_INPUT_EXE), action],
+            env=self.gui_env(),
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = proc.stderr.decode(errors="replace")[:300]
+            raise RuntimeError(f"Wine SendInput helper failed for {action}: {detail}")
 
     def run_xdotool(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
         proc = subprocess.run(
@@ -1357,6 +1856,7 @@ def ensure_clipboard_helper() -> None:
             "-o",
             str(CLIPBOARD_EXE),
             str(CLIPBOARD_SOURCE),
+            "-lshell32",
         ],
         capture_output=True,
         text=True,
@@ -1365,6 +1865,36 @@ def ensure_clipboard_helper() -> None:
     )
     if proc.returncode != 0:
         raise RuntimeError(f"failed to build Wine clipboard helper: {proc.stderr[:500]}")
+
+
+def ensure_win32_input_helper() -> None:
+    if (
+        WIN32_INPUT_EXE.is_file()
+        and WIN32_INPUT_EXE.stat().st_mtime >= WIN32_INPUT_SOURCE.stat().st_mtime
+    ):
+        return
+    if not WIN32_INPUT_SOURCE.is_file():
+        raise RuntimeError(f"missing Wine SendInput helper source: {WIN32_INPUT_SOURCE}")
+    compiler = "x86_64-w64-mingw32-gcc"
+    WIN32_INPUT_EXE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    proc = subprocess.run(
+        [
+            compiler,
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-mwindows",
+            "-o",
+            str(WIN32_INPUT_EXE),
+            str(WIN32_INPUT_SOURCE),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"failed to build Wine SendInput helper: {proc.stderr[:500]}")
 
 
 def init_state_db(path: Path) -> None:
@@ -1517,6 +2047,12 @@ def set_runtime(path: Path, key: str, value: str) -> None:
         conn.execute("INSERT OR REPLACE INTO runtime(key, value) VALUES (?, ?)", (key, value))
 
 
+def get_runtime(path: Path, key: str) -> str:
+    with sqlite3.connect(path) as conn:
+        row = conn.execute("SELECT value FROM runtime WHERE key = ?", (key,)).fetchone()
+    return str(row[0]) if row else ""
+
+
 def find_color_regions(
     image: Any,
     target: tuple[int, int, int],
@@ -1609,6 +2145,54 @@ def new_message_suffix(old: list[str], new: list[str]) -> tuple[list[str], int]:
     return (new, 0)
 
 
+def coalesce_sender_records(records: list[dict[str, str]]) -> list[list[dict[str, str]]]:
+    batches: list[list[dict[str, str]]] = []
+    for record in records:
+        sender = str(record.get("sender_fingerprint") or "") or canonical_sender_label(
+            record.get("sender_label") or ""
+        )
+        if batches:
+            previous = str(batches[-1][0].get("sender_fingerprint") or "") or canonical_sender_label(
+                batches[-1][0].get("sender_label") or ""
+            )
+            if sender and sender == previous:
+                batches[-1].append(record)
+                continue
+        batches.append([record])
+    return batches
+
+
+def canonical_sender_label(value: Any) -> str:
+    label = canonical_clipboard_text(str(value or ""))
+    label = re.sub(r"\s*@\s*", "@", label)
+    label = re.sub(r"@we\s*chat\b", "@WeChat", label, flags=re.IGNORECASE)
+    label = re.sub(r"\s+", " ", label).strip(" |:：·-")
+    if not label or len(label) > 96:
+        return ""
+    if re.fullmatch(r"\d{1,2}:\d{2}(?:\s*[AP]M)?", label, flags=re.IGNORECASE):
+        return ""
+    if not re.search(r"[0-9A-Za-z\u3400-\u4dbf\u4e00-\u9fff]", label):
+        return ""
+    return label
+
+
+def sender_visual_fingerprint(path: Path) -> str:
+    if Image is None or ImageOps is None:
+        return ""
+    try:
+        with Image.open(path).convert("L") as image:
+            image = ImageOps.autocontrast(image)
+            ink = ImageOps.invert(image).point(lambda value: 255 if value >= 35 else 0)
+            bounds = ink.getbbox()
+            if bounds is None:
+                return ""
+            image = image.crop(bounds).resize((160, 32), Image.Resampling.LANCZOS)
+            normalized = image.point(lambda value: 255 if value >= 190 else 0)
+            return hashlib.sha256(normalized.tobytes()).hexdigest()
+    except (OSError, ValueError):
+        return ""
+
+
 def similar_text(left: str, right: str) -> float:
     return SequenceMatcher(None, normalize_text(left), normalize_text(right)).ratio()
 
@@ -1694,7 +2278,7 @@ def filename_identity_terms(filename: str) -> list[str]:
     suffix = normalize_text(path.suffix.lstrip("."))
     terms: list[str] = []
     if len(stem) >= 8:
-        terms.append(stem[: min(16, len(stem))])
+        terms.append(stem[: min(14, len(stem))])
     elif stem:
         terms.append(stem + suffix)
     if len(stem) >= 16:
@@ -1705,7 +2289,10 @@ def filename_identity_terms(filename: str) -> list[str]:
 def filename_ocr_count(filename: str, ocr_text: str) -> int:
     normalized = normalize_text(ocr_text)
     terms = filename_identity_terms(filename)
-    return max((normalized.count(term) for term in terms), default=0)
+    direct = max((normalized.count(term) for term in terms), default=0)
+    confusable = ocr_identifier_confusable_key(normalized)
+    normalized_terms = [ocr_identifier_confusable_key(term) for term in terms]
+    return max(direct, max((confusable.count(term) for term in normalized_terms), default=0))
 
 
 def filename_matches_ocr(filename: str, ocr_text: str) -> bool:

@@ -34,7 +34,8 @@ DEFAULT_STATE_DB = PRIVATE / "wecom_messages.local.sqlite"
 DEFAULT_API_URL = "http://127.0.0.1:19578"
 DEFAULT_CLI_CONFIG = PRIVATE / "wecom_cli_bridge.local.json"
 DEFAULT_GUI_CONFIG = PRIVATE / "wecom_gui_bridge.local.json"
-DAILY_DIRECTIVE = re.compile(r"^\s*#daily(?:\s+|$)(.*)$", re.IGNORECASE | re.DOTALL)
+DAILY_PREFIX = re.compile(r"^\s*#daily(?:\s+|$)(.*)$", re.IGNORECASE | re.DOTALL)
+DAILY_SUFFIX = re.compile(r"^(.*?)\s*#daily\s*$", re.IGNORECASE | re.DOTALL)
 STATUS_WORDS = {"status", "show", "list", "状态", "狀態", "查看", "列表"}
 OFF_WORDS = {"off", "clear", "remove", "取消", "清除", "关闭", "關閉"}
 PAUSE_WORDS = {"pause", "disable", "stop", "暂停", "暫停", "停用"}
@@ -129,6 +130,14 @@ def init_daily_state(path: Path) -> None:
             )
             """
         )
+        preference_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(daily_preferences)")
+        }
+        if "topics_json" not in preference_columns:
+            conn.execute(
+                "ALTER TABLE daily_preferences ADD COLUMN topics_json "
+                "TEXT NOT NULL DEFAULT '[]'"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS daily_runs (
@@ -191,14 +200,33 @@ def mark_inline_topic_prompt(path: Path, chat: str, *, now: datetime | None = No
 
 
 def handle_daily_directive(path: Path, event: dict[str, Any], chat: str) -> str | None:
-    match = DAILY_DIRECTIVE.match(str(event.get("text") or ""))
-    if not match:
+    result = handle_daily_directive_result(path, event, chat)
+    return str(result.get("reply") or "") if result is not None else None
+
+
+def handle_daily_directive_result(
+    path: Path,
+    event: dict[str, Any],
+    chat: str,
+) -> dict[str, Any] | None:
+    command = parse_daily_directive(str(event.get("text") or ""))
+    if command is None:
         return None
     if str(event.get("chat_type") or "") != "group":
-        return "#daily 用于研究群。请在目标群里发送 #daily 加研究主题。"
+        return {
+            "action": "wrong_chat_type",
+            "reply": "#daily 用于研究群。请在目标群里发送“你的研究兴趣 #daily”。",
+        }
+    if (
+        str(event.get("transport_channel") or "") == "wecom_gui"
+        and str(event.get("sender_identity_confidence") or "") == "unresolved"
+    ):
+        return {
+            "action": "sender_unresolved",
+            "reply": "未能稳定识别这条消息的发送者，未保存 #daily 兴趣。请稍后重新发送一次。",
+        }
 
     register_group(path, event, chat)
-    command = match.group(1).strip()
     command_key = command.casefold()
     sender_hash = short_hash(event.get("sender_userid"))
     role = str(event.get("authorization_role") or "")
@@ -207,14 +235,18 @@ def handle_daily_directive(path: Path, event: dict[str, Any], chat: str) -> str 
         set_group_enabled(path, chat, True)
         topics = active_topics(path, chat)
         if topics:
-            return "当前每日研究主题：\n" + "\n".join(f"- {topic}" for topic in topics) + "\n发送 #daily 新主题 可更新你的偏好。"
-        return "今天想让 LabAgent 跟踪什么研究主题？请发送：#daily 你的主题"
+            reply = "当前每日研究兴趣：\n" + "\n".join(f"- {topic}" for topic in topics) + "\n发送“新兴趣 #daily”可加入你的每日任务。"
+        else:
+            reply = "今天想让 LabAgent 跟踪什么研究主题？请发送：你的研究兴趣 #daily"
+        return {"action": "show_or_prompt", "reply": reply}
 
     if command_key in STATUS_WORDS:
         topics = active_topics(path, chat)
         if not topics:
-            return "这个群还没有每日研究主题。发送 #daily 你的主题 即可设置。"
-        return "当前每日研究主题：\n" + "\n".join(f"- {topic}" for topic in topics)
+            reply = "这个群还没有每日研究兴趣。发送“你的研究兴趣 #daily”即可设置。"
+        else:
+            reply = "当前每日研究兴趣：\n" + "\n".join(f"- {topic}" for topic in topics)
+        return {"action": "status", "reply": reply}
 
     if command_key in OFF_WORDS:
         disable_sender_preference(path, chat, sender_hash)
@@ -222,37 +254,124 @@ def handle_daily_directive(path: Path, event: dict[str, Any], chat: str) -> str 
         if not topics:
             set_group_enabled(path, chat, False)
         suffix = "当前已没有主题，每日研究已暂停。" if not topics else "其他成员的主题仍会保留。"
-        return f"已关闭你的 #daily 主题。{suffix}"
+        return {"action": "off", "reply": f"已关闭你的 #daily 每日任务。{suffix}"}
 
     if command_key in PAUSE_WORDS:
         if role not in {"owner", "allowlisted"}:
-            return "只有已配对的所有者或允许名单成员可以暂停整个群的每日研究。"
+            return {
+                "action": "pause_refused",
+                "reply": "只有已配对的所有者或允许名单成员可以暂停整个群的每日研究。",
+            }
         set_group_enabled(path, chat, False)
-        return "已暂停这个群的每日研究；已有主题仍保留。发送 #daily 新主题 可重新启用。"
+        return {
+            "action": "pause",
+            "reply": "已暂停这个群的每日研究；已有兴趣仍保留。发送“新兴趣 #daily”可重新启用。",
+        }
 
     topic = re.sub(r"^(?:topic|主题|主題)\s*[:：]?\s*", "", command, flags=re.IGNORECASE).strip()
     topic = " ".join(topic.split())[:1000]
     if not topic:
-        return "请在 #daily 后写研究主题，例如：#daily event camera reconstruction"
-    set_preference(path, chat, sender_hash, topic)
+        return {
+            "action": "invalid_topic",
+            "reply": "请把 #daily 放在研究兴趣末尾，例如：event camera reconstruction #daily",
+        }
+    interests, added = set_preference_with_status(path, chat, sender_hash, topic)
     set_group_enabled(path, chat, True)
-    return f"已设置每日研究主题：{topic}\nLabAgent 会在每日研究时结合本群近期讨论检索最新可靠资料。"
+    if added:
+        reply = (
+            f"已加入你的每日研究兴趣：{topic}\n"
+            f"你目前累计 {len(interests)} 项兴趣；每天只生成一个合并任务。"
+        )
+    else:
+        reply = (
+            f"这项每日研究兴趣已经记录：{topic}\n"
+            f"未重复创建任务；你目前累计 {len(interests)} 项兴趣。"
+        )
+    return {
+        "action": "topic_added" if added else "topic_existing",
+        "reply": reply,
+        "topic": topic,
+        "interests": interests,
+        "topic_added": added,
+    }
 
 
-def set_preference(path: Path, chat: str, sender_hash: str, topic: str) -> None:
+def parse_daily_directive(text: str) -> str | None:
+    value = str(text or "")
+    prefix = DAILY_PREFIX.match(value)
+    if prefix:
+        return prefix.group(1).strip()
+    suffix = DAILY_SUFFIX.match(value)
+    if suffix:
+        return suffix.group(1).strip()
+    return None
+
+
+def set_preference(path: Path, chat: str, sender_hash: str, topic: str) -> list[str]:
+    interests, _added = set_preference_with_status(path, chat, sender_hash, topic)
+    return interests
+
+
+def set_preference_with_status(
+    path: Path,
+    chat: str,
+    sender_hash: str,
+    topic: str,
+) -> tuple[list[str], bool]:
     init_daily_state(path)
     with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT topic, topics_json FROM daily_preferences WHERE chat = ? AND sender_hash = ?",
+            (chat, sender_hash),
+        ).fetchone()
+        interests = preference_interests(row[0], row[1]) if row else []
+        normalized = " ".join(str(topic or "").split())[:1000]
+        added = bool(normalized) and normalized.casefold() not in {
+            item.casefold() for item in interests
+        }
+        if added:
+            interests.append(normalized)
         conn.execute(
             """
-            INSERT INTO daily_preferences(chat, sender_hash, topic, enabled, updated_at)
-            VALUES (?, ?, ?, 1, ?)
+            INSERT INTO daily_preferences(chat, sender_hash, topic, topics_json, enabled, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?)
             ON CONFLICT(chat, sender_hash) DO UPDATE SET
                 topic = excluded.topic,
+                topics_json = excluded.topics_json,
                 enabled = 1,
                 updated_at = excluded.updated_at
             """,
-            (chat, sender_hash, topic, datetime.now().isoformat(timespec="seconds")),
+            (
+                chat,
+                sender_hash,
+                normalized,
+                json.dumps(interests, ensure_ascii=False),
+                datetime.now().isoformat(timespec="seconds"),
+            ),
         )
+    return interests, added
+
+
+def preference_interests(topic: Any, topics_json: Any) -> list[str]:
+    values: list[str] = []
+    try:
+        parsed = json.loads(str(topics_json or "[]"))
+    except json.JSONDecodeError:
+        parsed = []
+    if isinstance(parsed, list):
+        values.extend(str(item or "").strip() for item in parsed)
+    fallback = str(topic or "").strip()
+    if fallback and not values:
+        values.append(fallback)
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = " ".join(value.split())[:1000]
+        key = normalized.casefold()
+        if normalized and key not in seen:
+            seen.add(key)
+            result.append(normalized)
+    return result
 
 
 def disable_sender_preference(path: Path, chat: str, sender_hash: str) -> None:
@@ -274,14 +393,18 @@ def active_topics(path: Path, chat: str) -> list[str]:
     init_daily_state(path)
     with sqlite3.connect(path) as conn:
         rows = conn.execute(
-            "SELECT topic FROM daily_preferences WHERE chat = ? AND enabled = 1 ORDER BY updated_at, sender_hash",
+            "SELECT topic, topics_json FROM daily_preferences "
+            "WHERE chat = ? AND enabled = 1 ORDER BY updated_at, sender_hash",
             (chat,),
         ).fetchall()
     result: list[str] = []
-    for (topic,) in rows:
-        value = str(topic or "").strip()
-        if value and value not in result:
-            result.append(value)
+    seen: set[str] = set()
+    for topic, topics_json in rows:
+        for value in preference_interests(topic, topics_json):
+            key = value.casefold()
+            if key not in seen:
+                seen.add(key)
+                result.append(value)
     return result
 
 
@@ -357,7 +480,7 @@ def run_due_cycle(
         if daily_run_exists(state_db, chat, date_key, "topic_prompt"):
             continue
         task_id = f"wecom-daily-topic-{date_key}-{short_hash(chat)}"
-        message = "今天想让 LabAgent 跟踪什么研究主题？请发送：#daily 你的主题"
+        message = "今天想让 LabAgent 跟踪什么研究主题？请发送：你的研究兴趣 #daily"
         if send_func is None:
             result = send_topic_prompt(
                 chat_id,
@@ -487,6 +610,93 @@ Requirements:
     }
     ensure_task_routine_contract(task)
     return task
+
+
+def enqueue_initial_daily_research(
+    *,
+    state_db: Path,
+    history_db: Path,
+    queue: Path,
+    event: dict[str, Any],
+    chat: str,
+    topic: str,
+    now: datetime | None = None,
+    append_func: Callable[[Path, dict[str, Any]], bool] | None = None,
+) -> dict[str, Any]:
+    """Queue one immediate first briefing for a newly registered interest."""
+    init_daily_state(state_db)
+    timezone = configured_timezone()
+    current = (
+        now.astimezone(timezone)
+        if now and now.tzinfo
+        else now.replace(tzinfo=timezone)
+        if now
+        else datetime.now(timezone)
+    )
+    normalized_topic = " ".join(str(topic or "").split())[:1000]
+    if not normalized_topic:
+        raise ValueError("initial daily research requires a topic")
+
+    source_fingerprint = short_hash(
+        json.dumps(
+            {
+                "message": str(event.get("message_id") or ""),
+                "sender": short_hash(event.get("sender_userid")),
+                "topic": normalized_topic.casefold(),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+    source_id = f"daily-initial:{source_fingerprint}"
+    task_id = f"wecom-daily-initial-{source_fingerprint}"
+    task = build_daily_research_task(
+        chat=chat,
+        account_id=str(event.get("account_id") or "default"),
+        chat_id=str(event.get("chat_id") or ""),
+        chat_type=str(event.get("chat_type") or "group"),
+        transport_channel=str(event.get("transport_channel") or "wecom_bot_websocket"),
+        topics=[normalized_topic],
+        context=recent_group_context(history_db, chat, limit=20),
+        report_date=current.date().isoformat(),
+        queue=queue,
+        now=current,
+    )
+    _first_line, separator, remainder = task["request"].partition("\n")
+    task["request"] = (
+        "Prepare an immediate first research briefing for this newly registered "
+        "#daily interest in the exact WeCom research group."
+        + (separator + remainder if separator else "")
+    )
+    task["id"] = task_id
+    task["route_decision"]["scheduled_daily_research"] = False
+    task["route_decision"]["immediate_daily_research"] = True
+    task["source"].update(
+        {
+            "server_id": source_id,
+            "local_id": int(short_hash(source_id), 16),
+            "local_type": "immediate_daily_research",
+            "sender": "labcanvas-daily-registration",
+            "sender_display": "LabAgent immediate daily research",
+            "kind": "immediate_daily_research",
+        }
+    )
+    task["daily_research"].update(
+        {
+            "initial_run": True,
+            "trigger_topic": normalized_topic,
+            "trigger_message_hash": short_hash(event.get("message_id")),
+        }
+    )
+    ensure_task_routine_contract(task)
+    appended = (append_func or append_task_once)(queue, task)
+    return {
+        "ok": True,
+        "queued": appended,
+        "already_queued": not appended,
+        "task_id": task_id,
+        "source_id": source_id,
+    }
 
 
 def append_task_once(queue: Path, task: dict[str, Any]) -> bool:

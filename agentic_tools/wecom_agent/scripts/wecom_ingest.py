@@ -27,7 +27,8 @@ from wechat_agent_backend import run_agent_session  # noqa: E402
 from wechat_mirror import record_event  # noqa: E402
 from wechat_routines import ensure_task_routine_contract  # noqa: E402
 from wecom_daily_research import (  # noqa: E402
-    handle_daily_directive,
+    enqueue_initial_daily_research,
+    handle_daily_directive_result,
     mark_inline_topic_prompt,
     register_group,
     set_group_enabled,
@@ -118,9 +119,40 @@ def ingest_event(
         }
     record_history_message(history_db, event, chat, request, direction="inbound")
     first_group_event = register_group(history_db, event, chat)
-    daily_reply = handle_daily_directive(history_db, event, chat)
-    if daily_reply is not None:
-        return complete_direct_reply(history_db, event, chat, daily_reply, action="wecom_daily_command")
+    daily_result = handle_daily_directive_result(history_db, event, chat)
+    if daily_result is not None:
+        immediate: dict[str, Any] | None = None
+        daily_reply = str(daily_result.get("reply") or "")
+        if daily_result.get("action") == "topic_added":
+            immediate = enqueue_initial_daily_research(
+                state_db=history_db,
+                history_db=history_db,
+                queue=queue,
+                event=event,
+                chat=chat,
+                topic=str(daily_result.get("topic") or ""),
+            )
+            if immediate.get("queued"):
+                daily_reply += "\n首次研究已立即进入队列，完成后会把摘要和报告发回本群。"
+            else:
+                daily_reply += "\n首次研究任务已在队列中，未重复创建。"
+        result = complete_direct_reply(
+            history_db,
+            event,
+            chat,
+            daily_reply,
+            action="wecom_daily_command",
+        )
+        if immediate is not None:
+            result.update(
+                {
+                    "queued": True,
+                    "task_id": immediate["task_id"],
+                    "immediate_daily_research": True,
+                    "new_queue_entry": bool(immediate.get("queued")),
+                }
+            )
+        return result
     context = recent_history(history_db, chat, limit=12)
     route = route_event(event, request, context) if route_with_agent else fallback_route(event, request)
     daily_topic = str(route.get("daily_topic") or "").strip()[:1000]
@@ -451,7 +483,10 @@ def build_task(
             "local_type": str(event.get("msgtype") or "text"),
             "create_time": int(event.get("create_time") or 0),
             "sender": str(event["sender_userid"]),
-            "sender_display": str(event["sender_userid"]),
+            "sender_display": str(event.get("sender_display") or event["sender_userid"]),
+            "sender_identity_confidence": str(
+                event.get("sender_identity_confidence") or "transport_userid"
+            ),
             "kind": str(event.get("msgtype") or "text"),
             "authorization_role": str(event.get("authorization_role") or "unknown"),
             "irreversible_actions_allowed": bool(event.get("irreversible_actions_allowed")),

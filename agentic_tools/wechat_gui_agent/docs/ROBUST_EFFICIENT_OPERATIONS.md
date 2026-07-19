@@ -96,9 +96,14 @@ For the restricted LabAgent research group:
 - Video publication and other public posting are disabled. Other dangerous
   requests are assessed by the route agent and retain the existing approval
   gates.
-- `#daily <topic>` stores a private per-member preference. The local scheduler
-  enqueues one `research_summary` task per group/date into the same exact group
-  session; idle checks spend no model quota.
+- `<interest> #daily` stores one private subscription row per member and
+  accumulates distinct interests in that row. `status #daily` inspects it and
+  `off #daily` disables only that member. The local scheduler enqueues one
+  consolidated `research_summary` task per group/date into the same exact group
+  session; idle checks spend no model quota. A newly added interest also queues
+  one idempotent initial report immediately without consuming the scheduled
+  report. Repeated interests do not create another initial run. The prefix
+  syntax remains a compatibility alias.
 - Daily reports return a concise digest and requested Markdown/PDF or editable
   figure artifacts through the source-scoped WeCom send gate.
 
@@ -141,9 +146,18 @@ personal-WeChat database, media, search, sender, or fallback paths.
   layered window. Opening a fresh QR login is a separate explicit operator
   action, because it can invalidate a reusable authenticated session.
 - Verify Unicode composer readback before a text send. For files, require the
-  exact filename in the composer and sent history before updating delivery
-  state. Keep select/paste or select/copy in one xdotool key command; split key
-  processes are not reliable under Wine.
+  exact filename in WeCom's native picker, composer, and sent history before
+  updating delivery state. Native picker selection stages an artifact; the
+  separate composer Send is still mandatory. Keep select/paste or select/copy
+  in one key transaction; split key processes are not reliable under Wine.
+- Treat the external WeCom relay as an observable closed loop: authenticated
+  client, exact-chat readiness, durable ingest, worker result, verified
+  compose/send, and delivery ledger. `login_required` and
+  `chat_verification_pending` are not send-ready states.
+- Use X11/VNC input only for the WeCom fallback. Do not post native Win32 input
+  messages or send blind `Escape` cleanup. Detect QR/login/abnormal-device
+  screens before any input, fail closed, and let the one persistent client
+  process retain ownership of its authenticated profile.
 - Keep GUI config, cursors, events, screenshots, and delivery ledgers under
   ignored `agentic_tools/wecom_agent/.private/` paths.
 
@@ -286,6 +300,10 @@ The stable interface and recovery commands are documented in
   ignore AutoPublish-cache files and other chats, then return the MP4 through
   the required artifact delivery gate.
 - GUI file delivery is a first-class state, not a best-effort afterthought.
+- WeCom GUI artifacts use a private one-file C-drive staging directory and the
+  visible `More -> File -> Local File` picker. Navigate to the directory, select
+  the verified sole row, stage it, then send it from the composer. Do not use a
+  Wine Explorer drag fallback or treat a closed picker as proof of delivery.
 - Ordinary link/read-later research should send a concise chat answer by
   default, not Markdown/PDF/image attachments. Save local notes under the task
   artifact directory. Attach reports or images only when the current request
@@ -424,6 +442,15 @@ The stable interface and recovery commands are documented in
   the same historical burst again.
 - Login, CAPTCHA, QR, payment, lock screen, and irreversible decisions wait for
   normal human approval.
+- The WeCom GUI transport may derive bounded `Up`/`Down` navigation from the
+  selected row's blue geometry and the target row's OCR when Wine ignores a
+  pointer click, but must verify the exact title afterward. It sends a verified
+  composer with `Alt+S` and records delivery only after the composer clears or
+  the exact artifact appears in history.
+- The WeCom GUI transport checkpoints successfully ingested inbound messages
+  before attempting their acknowledgement sends. A post-send verification
+  failure may defer an acknowledgement, but it must never replay the incoming
+  request or bombard the group with duplicate replies.
 - Do not use packet interception, private-protocol replay, credential/session
   extraction, lock bypass, or traffic decryption for control.
 

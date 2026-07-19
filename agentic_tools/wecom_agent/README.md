@@ -8,6 +8,20 @@ bridge an external group through the owner's WeCom Wine client. All three
 preserve one isolated agent session per chat and use the LabCanvas routine
 orchestrator.
 
+Prefer the official API transports. They do not require a desktop login:
+
+| Chat surface | Transport | Desktop login |
+| --- | --- | --- |
+| Bot DM or internal group | AI Bot WebSocket | No |
+| Authorized external group in an eligible tenant | `wecom-cli msg` | No |
+| External group without server-side message permission | allowlisted GUI relay | Yes |
+
+Tencent currently limits `wecom-cli msg` to eligible small teams; a server-side
+`message_permission_unavailable` result cannot be fixed by patching the desktop
+binary. Do not reverse engineer, inject into, or modify the proprietary client.
+Use an internal bot-visible group, an eligible official CLI profile, or a
+dedicated native Windows/Android client for external-group fallback.
+
 It does not replace the personal-WeChat GUI/database bridge. Existing ordinary
 WeChat groups are not exposed by the WeCom API.
 
@@ -154,21 +168,30 @@ LabCanvas CAD/PCB/Blender design routines with the same worker permissions as
 the private LazyResearch group. Results and requested artifacts return to the
 same group. Video/publication work is deliberately outside this bot's scope.
 
-Use `#daily` for persistent research preferences:
+Each member gets one daily-research subscription. End a message with `#daily`
+to add a distinct interest; later interests accumulate in that same member
+record instead of creating additional daily jobs:
 
 ```text
-#daily event-camera reconstruction and hybrid imaging
-#daily status
-#daily off
+event-camera reconstruction and hybrid imaging #daily
+organoid spatial quality control #daily
+status #daily
+off #daily
 ```
 
-`#daily` without a topic asks the group what to follow. At the configured time,
-the scheduler combines active topics with recent same-group context and queues
+The older prefix form remains accepted for compatibility. A bare `#daily` asks
+the group what to follow. The GUI relay derives a private stable member identity
+from the visible sender label and refuses to save a preference when identity is
+unresolved. Each newly added interest also queues one idempotent first briefing
+immediately; repeating the same interest does not queue it again. This initial
+run does not consume the normal scheduled report. At the configured time, the
+scheduler combines active interests with recent same-group context and queues
 one source-grounded briefing per group/day. It returns a concise Chinese digest,
 Markdown evidence, and a compiled PDF. Configure the local schedule with
 `WECOM_DAILY_RESEARCH_TIME`, `WECOM_DAILY_TOPIC_PROMPT_TIME`, and
 `WECOM_DAILY_TIMEZONE`. New owner-enrolled groups are prompted automatically;
-set `WECOM_DAILY_AUTO_ENROLL=0` to require a bare `#daily` first.
+set `WECOM_DAILY_AUTO_ENROLL=0` to require a bare `#daily` first. `off #daily`
+disables only that member's subscription; other members' interests remain.
 
 ## Runtime
 
