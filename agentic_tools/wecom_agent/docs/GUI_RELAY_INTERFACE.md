@@ -133,10 +133,13 @@ PYTHONPATH=src python -m agenticapp wecom gui restart --json
 ```
 
 If `client_visible` is false, restore the Wine client and login first. The
-supervisor first tries persisted login and uses one cooldown-bound
-switch-account launch only when Wine has a broker but no visible login/main
-window. If a chat is not visible, place it in the conversation list or enable
-the exact-title fallback above. A pre-Send composer verification
+supervisor only starts the normal client against its persisted profile. It
+never invokes account-switch mode: a hidden layered window or crash is not
+proof that authentication expired, and switching can invalidate a reusable
+session. If an operator intentionally needs a fresh QR window, run the explicit
+`agentic_tools/wecom_agent/scripts/wecom_windows_client.sh login` action. If a
+chat is not visible, place it in the conversation list or enable the exact-title
+fallback above. A pre-Send composer verification
 failure is safe to retry with the same `task_id`. A failure after clicking Send
 is reported as uncertain and is not retried automatically, preventing duplicate
 messages or files.

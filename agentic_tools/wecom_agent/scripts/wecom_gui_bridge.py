@@ -620,8 +620,10 @@ class WeComGuiBridge:
             for value, unit_words in match_units:
                 normalized = normalize_text(value)
                 similarity = SequenceMatcher(None, normalized, wanted).ratio()
-                if normalized != wanted and similarity < 0.90:
+                visual_identity = ocr_visual_identity_matches(normalized, wanted)
+                if normalized != wanted and not visual_identity and similarity < 0.90:
                     continue
+                effective_similarity = 1.0 if visual_identity else similarity
                 left = min(int(item.get("left") or 0) for item in unit_words)
                 top = min(int(item.get("top") or 0) for item in unit_words)
                 right = max(int(item.get("left") or 0) + int(item.get("width") or 0) for item in unit_words)
@@ -629,7 +631,7 @@ class WeComGuiBridge:
                 candidates.append(
                     {
                         "text": value,
-                        "similarity": similarity,
+                        "similarity": effective_similarity,
                         "center_x": ((left + right) / 2) / scale,
                         "center_y": ((top + bottom) / 2) / scale,
                     }
@@ -1534,6 +1536,25 @@ def similar_text(left: str, right: str) -> float:
 
 def normalize_text(value: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or "")).casefold())
+
+
+def ocr_visual_identity_matches(observed: str, expected: str) -> bool:
+    """Accept a same-length ASCII title with only bounded OCR substitutions."""
+    left = normalize_text(observed)
+    right = normalize_text(expected)
+    if not left or len(left) != len(right) or not left.isascii() or not right.isascii():
+        return False
+    if not left.isalnum() or not right.isalnum():
+        return False
+    substitutions = {
+        ("0", "o"),
+        ("1", "i"),
+        ("1", "l"),
+        ("4", "a"),
+        ("5", "s"),
+        ("8", "b"),
+    }
+    return all(actual == wanted or (actual, wanted) in substitutions for actual, wanted in zip(left, right))
 
 
 def canonical_clipboard_text(value: str) -> str:

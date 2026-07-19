@@ -67,7 +67,7 @@ status() {
   else
     echo "status: stopped"
   fi
-  echo "noVNC: http://127.0.0.1:$NOVNC_PORT/vnc_lite.html?host=127.0.0.1&port=$NOVNC_PORT&autoconnect=1&resize=remote"
+  echo "noVNC: http://127.0.0.1:$NOVNC_PORT/vnc.html?host=127.0.0.1&port=$NOVNC_PORT&autoconnect=1&resize=scale"
 }
 
 stop_session() {

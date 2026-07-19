@@ -136,6 +136,10 @@ personal-WeChat database, media, search, sender, or fallback paths.
 - The official CLI guard must probe `msg_permission` before reporting
   `bridge_running`. Use the GUI relay when status is
   `message_permission_unavailable`; do not keep polling an unusable API.
+- The Wine client supervisor may restart only the normal persisted-profile
+  client. It must never enter account-switch mode after a crash or hidden
+  layered window. Opening a fresh QR login is a separate explicit operator
+  action, because it can invalidate a reusable authenticated session.
 - Verify Unicode composer readback before a text send. For files, require the
   exact filename in the composer and sent history before updating delivery
   state. Keep select/paste or select/copy in one xdotool key command; split key

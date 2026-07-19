@@ -69,6 +69,7 @@ need x11vnc
 need websockify
 need xdpyinfo
 need xwininfo
+need timeout
 
 mkdir -p "$LOG_DIR"
 
@@ -77,7 +78,11 @@ display_number="${display_number%%.*}"
 socket_path="/tmp/.X11-unix/X$display_number"
 lock_path="/tmp/.X$display_number-lock"
 
-if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1; then
+display_ready() {
+  timeout 3s env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1
+}
+
+if ! display_ready; then
   if [[ -S "$socket_path" ]] && ! pgrep -u "$USER_NAME" -f "Xvfb $DISPLAY_ID( |$)" >/dev/null 2>&1; then
     rm -f "$socket_path"
   fi
@@ -89,7 +94,7 @@ if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1; then
   sleep 2
 fi
 
-if ! DISPLAY="$DISPLAY_ID" XAUTHORITY= xdpyinfo >/dev/null 2>&1; then
+if ! display_ready; then
   echo "Display $DISPLAY_ID is not reachable." >&2
   tail -n 80 "$LOG_DIR/${NAME}_xvfb.log" 2>/dev/null || true
   exit 4

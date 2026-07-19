@@ -238,24 +238,29 @@ start_client() {
     return 0
   fi
 
-  # Some unauthenticated Wine launches create the broker process but never
-  # expose the QR window. A bounded switch-account launch reliably asks the
-  # existing broker for that window. The cooldown prevents restart loops from
-  # opening repeated login prompts.
-  if login_fallback_due; then
-    touch "$LOGIN_FALLBACK_STAMP"
-    env DISPLAY="$DISPLAY_ID" XAUTHORITY= WINEPREFIX="$PREFIX" WINEDEBUG=-all \
-      WINEDLLOVERRIDES='mscoree,mshtml=' setsid wine "$EXE_WINDOWS" \
-      --switch-account --from-broker --we-channel=676 --we-ppid="$$" \
-      --skia_enable --skia_text_enable --skia_enable_win7 \
-      >"$LOG_DIR/app-switch-account.log" 2>&1 < /dev/null &
-    if wait_for_client_window 30; then
-      start_autofit_guard
-      fit_client_window || true
-      return 0
-    fi
-  fi
+  # Never enter account-switch mode from the supervisor. A hidden or crashed
+  # layered window is not evidence that authentication expired; doing so can
+  # invalidate an otherwise reusable desktop session.
   return 1
+}
+
+show_login_qr() {
+  [[ -f "$EXE_UNIX" ]] || return 1
+  launch_desktop
+  if ! login_fallback_due; then
+    return 0
+  fi
+  touch "$LOGIN_FALLBACK_STAMP"
+  env DISPLAY="$DISPLAY_ID" XAUTHORITY= WINEPREFIX="$PREFIX" WINEDEBUG=-all \
+    WINEDLLOVERRIDES='mscoree,mshtml=' setsid wine "$EXE_WINDOWS" \
+    >"$LOG_DIR/app-login-broker.log" 2>&1 < /dev/null &
+  sleep 1
+  env DISPLAY="$DISPLAY_ID" XAUTHORITY= WINEPREFIX="$PREFIX" WINEDEBUG=-all \
+    WINEDLLOVERRIDES='mscoree,mshtml=' setsid wine "$EXE_WINDOWS" \
+    --switch-account --from-broker --we-channel=676 --we-ppid="$$" \
+    --skia_enable --skia_text_enable --skia_enable_win7 \
+    >"$LOG_DIR/app-switch-account.log" 2>&1 < /dev/null &
+  wait_for_client_window 30
 }
 
 supervise_client() {
@@ -278,6 +283,9 @@ case "$ACTION" in
     ;;
   start)
     if start_client; then emit true; else emit false "official WeCom client is not installed or did not start"; exit 1; fi
+    ;;
+  login)
+    if show_login_qr; then emit true; else emit false "WeCom login window did not open"; exit 1; fi
     ;;
   fit)
     if fit_client_window; then emit true; else emit false "WeCom window was not found"; exit 1; fi

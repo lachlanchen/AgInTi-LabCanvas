@@ -42,7 +42,7 @@ Default endpoints:
 
 - X display: `:99`
 - VNC: `127.0.0.1:5929`
-- noVNC: `http://127.0.0.1:6129/vnc_lite.html?host=127.0.0.1&port=6129&autoconnect=1&resize=remote`
+- noVNC: `http://127.0.0.1:6129/vnc.html?host=127.0.0.1&port=6129&autoconnect=1&resize=scale`
 - tmux session: `labcanvas-android-mix2s`
 
 The launcher runs:

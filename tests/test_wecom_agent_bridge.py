@@ -645,6 +645,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("login_fallback_due", source)
         self.assertIn("stable_checks >= 4", source)
         self.assertIn("if is_running && wait_for_client_window 4", source)
+        self.assertIn("app-login-broker.log", source)
+        self.assertIn("show_login_qr()", source)
+        start_client = source[source.index("start_client()") : source.index("show_login_qr()")]
+        self.assertNotIn("--switch-account", start_client)
         self.assertNotIn("if is_running && login_fallback_due", source)
         self.assertNotIn("com.tencent.mm", source)
         self.assertNotIn("wechat_gui_agent", source)
@@ -685,10 +689,18 @@ class WeComAgentBridgeTests(unittest.TestCase):
         source = (
             ROOT / "agentic_tools" / "virtual_desktop" / "launch_virtual_desktop.sh"
         ).read_text(encoding="utf-8")
+        android_source = (
+            ROOT / "agentic_tools" / "android_device_agent" / "scripts" / "android_device_desktop.sh"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("/vnc.html?", source)
         self.assertIn("resize=scale", source)
+        self.assertIn("display_ready()", source)
+        self.assertIn("timeout 3s env DISPLAY=", source)
         self.assertNotIn("vnc_lite.html", source)
+        self.assertIn("/vnc.html?", android_source)
+        self.assertIn("resize=scale", android_source)
+        self.assertNotIn("vnc_lite.html", android_source)
 
     def test_external_cli_exact_group_resolution_is_fail_closed(self) -> None:
         bridge = load_cli_bridge()
@@ -964,6 +976,15 @@ class WeComAgentBridgeTests(unittest.TestCase):
         selected = bridge.choose_ocr_variant("BY LACH", "可以啦")
 
         self.assertEqual(selected, "可以啦")
+
+    def test_gui_chat_identity_accepts_bounded_visual_ocr_substitution(self) -> None:
+        bridge = load_gui_bridge()
+
+        self.assertTrue(bridge.ocr_visual_identity_matches("4gentTest", "AgentTest"))
+        self.assertTrue(bridge.ocr_visual_identity_matches("LabAgent", "LabAgent"))
+        self.assertFalse(bridge.ocr_visual_identity_matches("AgentBest", "AgentTest"))
+        self.assertFalse(bridge.ocr_visual_identity_matches("AgentTest2", "AgentTest"))
+        self.assertFalse(bridge.ocr_visual_identity_matches("懒人科研", "LabAgent"))
 
     def test_gui_config_accumulates_two_groups_and_enables_exact_search_fallback(self) -> None:
         bridge = load_gui_bridge()
