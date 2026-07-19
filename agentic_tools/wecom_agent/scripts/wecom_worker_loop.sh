@@ -45,12 +45,20 @@ export WECHAT_WORKER_DISABLE_GUI_MEDIA_CLICK_PROBE=1
 export WECHAT_WORKER_DISABLE_AUTOPUBLISH_PREFLIGHT=1
 export WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH=1
 export WECHAT_WORKER_DISABLE_GENERATED_VIDEO_LAZYEDIT=1
-# WeCom uses the low-effort route session for ordinary chat. Anything that
-# reaches this durable worker is substantive work and should keep one stable
-# SOL/high policy unless the ignored local environment explicitly overrides it.
+# WeCom uses the low-effort route session for ordinary chat. Durable work uses
+# GPT-5.6 SOL and may escalate from low through ultra. Daily research has no
+# queue deadline; these generous per-turn watchdogs only reap a genuinely hung
+# subprocess, while exact-task artifacts remain recoverable and resumable.
 export WECHAT_WORKER_CODEX_MODEL="${WECHAT_WORKER_CODEX_MODEL:-gpt-5.6-sol}"
-export WECHAT_WORKER_MIN_EFFORT="${WECHAT_WORKER_MIN_EFFORT:-high}"
-export WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-high}"
+export WECHAT_WORKER_MIN_EFFORT="${WECHAT_WORKER_MIN_EFFORT:-low}"
+export WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-ultra}"
+export WECHAT_WORKER_TIMEOUT_LOW_SECONDS="${WECHAT_WORKER_TIMEOUT_LOW_SECONDS:-900}"
+export WECHAT_WORKER_TIMEOUT_MEDIUM_SECONDS="${WECHAT_WORKER_TIMEOUT_MEDIUM_SECONDS:-3600}"
+export WECHAT_WORKER_TIMEOUT_HIGH_SECONDS="${WECHAT_WORKER_TIMEOUT_HIGH_SECONDS:-21600}"
+export WECHAT_WORKER_TIMEOUT_XHIGH_SECONDS="${WECHAT_WORKER_TIMEOUT_XHIGH_SECONDS:-43200}"
+export WECHAT_WORKER_TIMEOUT_MAX_SECONDS="${WECHAT_WORKER_TIMEOUT_MAX_SECONDS:-64800}"
+export WECHAT_WORKER_TIMEOUT_ULTRA_SECONDS="${WECHAT_WORKER_TIMEOUT_ULTRA_SECONDS:-86400}"
+export WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS="${WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS:-0}"
 export WECHAT_WORKER_ENV_FILE="$PRIVATE_ENV"
 
 exec "$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh" \

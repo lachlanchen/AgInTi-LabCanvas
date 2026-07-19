@@ -32,6 +32,65 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_research_timeout_recovers_exact_task_report_and_latex_pdf(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "weekly_research_briefing.md"
+            report.write_text(
+                "# Weekly Research Briefing\n\n"
+                "> No exact seven-day match was found; three verified open-access papers are reviewed.\n\n"
+                "## Paper one\n\nDOI: 10.1000/example. https://example.org/paper\n\n"
+                "## Methods\n\nResearch evidence and conclusions.\n" + ("Grounded analysis. " * 50),
+                encoding="utf-8",
+            )
+            source_pdf = root / "source-paper.pdf"
+            source_pdf.write_bytes(b"%PDF-1.4\nsource")
+            compiled_pdf = root / "weekly_research_briefing.en.pdf"
+
+            def fake_compile(_source: Path, _language: str) -> Path:
+                compiled_pdf.write_bytes(b"%PDF-1.4\nreport")
+                return compiled_pdf
+
+            task = {
+                "id": "daily-recovery",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "route_decision": {"route_kind": "research_or_summary"},
+            }
+            with mock.patch.object(worker, "ensure_markdown_pdf_companion_for_language", side_effect=fake_compile):
+                result = worker.recover_completed_research_artifacts(task, "Worker failed via codex: timeout")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result["data"]["require_file_delivery"])
+        self.assertEqual(result["data"]["latex_style"], "nature_research_report")
+        self.assertEqual(result["files"], [str(compiled_pdf), str(report), str(source_pdf)])
+        self.assertFalse(task["worker_result_exhausted"])
+        self.assertIn("Weekly Research Briefing", result["message"])
+
+    def test_research_artifact_recovery_rejects_routine_notes_and_nonresearch(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "routine_contract.md").write_text(
+                "# Contract\n\n## Research\n\nDOI https://example.org\n" + ("instructions " * 100),
+                encoding="utf-8",
+            )
+            research = {
+                "id": "notes-only",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+            }
+            nonresearch = {
+                "id": "cad-task",
+                "artifact_dir": str(root),
+                "routine": {"id": "cad_design"},
+            }
+
+            self.assertIsNone(worker.recover_completed_research_artifacts(research, "timeout"))
+            self.assertIsNone(worker.recover_completed_research_artifacts(nonresearch, "timeout", force=True))
+
     def test_unique_paths_keeps_each_delivery_artifact_once(self) -> None:
         worker = load_worker()
         paths = [Path("/tmp/report.zh.pdf"), Path("/tmp/report.en.pdf"), Path("/tmp/report.zh.pdf")]
@@ -725,6 +784,35 @@ stderr: noisy internal trace
         self.assertEqual(next_policy["reasoning_effort"], "xhigh")
         self.assertEqual(next_policy["timeout_seconds"], 1200)
 
+    def test_worker_policy_supports_gpt56_max_and_ultra_escalation(self) -> None:
+        worker = load_worker()
+        with mock.patch.dict(
+            worker.os.environ,
+            {
+                "WECHAT_WORKER_CODEX_MODEL": "gpt-5.6-sol",
+                "WECHAT_WORKER_MIN_EFFORT": "low",
+                "WECHAT_WORKER_MAX_EFFORT": "ultra",
+            },
+            clear=False,
+        ):
+            maximum = worker.escalated_policy(
+                {
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "xhigh",
+                    "sandbox": "danger-full-access",
+                    "timeout_seconds": 1200,
+                },
+                "Worker failed: incomplete research task.",
+            )
+            assert maximum is not None
+            ultra = worker.escalated_policy(maximum, "Worker failed: incomplete research task.")
+
+        self.assertEqual(maximum["reasoning_effort"], "max")
+        self.assertIsNotNone(ultra)
+        assert ultra is not None
+        self.assertEqual(ultra["reasoning_effort"], "ultra")
+        self.assertEqual(ultra["model"], "gpt-5.6-sol")
+
     def test_worker_policy_does_not_use_spark_unless_allowed(self) -> None:
         worker = load_worker()
         original = worker.os.environ.get("WECHAT_WORKER_CODEX_MODEL")
@@ -842,6 +930,31 @@ stderr: noisy internal trace
         self.assertIn("Finished the task", result)
         self.assertEqual(task["worker_policy"]["reasoning_effort"], "xhigh")
         self.assertEqual(len(task["worker_policy_attempts"]), 3)
+
+    def test_run_worker_codex_stops_after_completed_artifact_recovery(self) -> None:
+        worker = load_worker()
+        recovered = {
+            "message": "Recovered complete report.",
+            "confirmation": "",
+            "files": ["/tmp/report.pdf"],
+            "data": {"require_file_delivery": True},
+        }
+        task = {
+            "chat": "wecom:group:labagent",
+            "request": "Prepare the daily research report",
+            "routine": {"id": "research_summary", "default_effort": "high"},
+        }
+        with mock.patch.object(worker, "run_worker_codex_once", return_value="Worker failed via codex: timeout") as run, mock.patch.object(
+            worker,
+            "recover_completed_research_artifacts",
+            return_value=recovered,
+        ):
+            result = worker.run_worker_codex(task)
+
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(json.loads(result)["message"], "Recovered complete report.")
+        self.assertTrue(task["worker_policy_attempts"][0]["artifact_recovered"])
+        self.assertFalse(task["worker_result_exhausted"])
 
     def test_worker_uses_group_worker_session_role(self) -> None:
         worker = load_worker()
@@ -1359,6 +1472,34 @@ stderr: noisy internal trace
         self.assertEqual(stored["reprocess_reason"], "source resolver fixed")
         self.assertEqual(stored["reprocess_history"][0]["previous_status"], "send_retrying")
         self.assertIn("stale wrong result", stored["reprocess_history"][0]["previous_result_message_excerpt"])
+
+    def test_reprocess_task_can_request_deterministic_artifact_recovery(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "daily-failed",
+                        "chat": "wecom:group:labagent",
+                        "status": "worker_failed",
+                        "worker_error": {"type": "WorkerAttemptsExhausted"},
+                        "result": {"message": "timeout", "files": []},
+                    }
+                ],
+            )
+
+            updated = worker.reprocess_task(
+                queue,
+                "daily-failed",
+                reason="recover completed report",
+                artifact_recovery_only=True,
+            )
+
+        self.assertEqual(updated["status"], "pending")
+        self.assertTrue(updated["artifact_recovery_only"])
+        self.assertNotIn("worker_error", updated)
 
     def test_video_publish_preflight_uses_same_chat_artifact_ledger_when_wechat_cache_misses(self) -> None:
         worker = load_worker()

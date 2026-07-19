@@ -158,6 +158,11 @@ outbox item or deliver worker output.
   `research_summary` task and remains eligible for future scheduled reports.
   The source message and normalized topic form its idempotency key, so OCR
   retries and repeated interests cannot create extra initial runs.
+- The immediate task has no queue deadline. Its report must be compiled with
+  LaTeX using the Nature-style research header and returned with the Markdown
+  and requested source papers. If an agent turn ends after writing a complete
+  report but before returning JSON, the worker recovers only that exact task's
+  substantive report, compiles it, and sends the artifacts once.
 - Window size is not authentication evidence. After a disconnected/login
   period, the relay waits until the normal poll can open and title-verify the
   exact allowlisted chats. Only that successful poll triggers one bounded
@@ -180,8 +185,8 @@ personal-WeChat database, GUI, or sender.
 
 Model roles are transport-specific. WeCom fast chat and routing use
 `gpt-5.6-sol` with low reasoning. Requests promoted to the durable worker use
-`gpt-5.6-sol` with high reasoning for research, reports, figures, CAD, and
-other multi-step work. The worker launcher reads ignored local overrides but
+`gpt-5.6-sol` with task-selected effort from low through ultra; daily research
+starts at high. The worker launcher reads ignored local overrides but
 does not inherit the older personal-WeChat model default. It passes its own
 private env through `WECHAT_WORKER_ENV_FILE` when entering the shared guarded
 worker, preserving transport isolation even though both transports reuse the

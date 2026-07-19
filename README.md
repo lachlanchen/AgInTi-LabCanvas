@@ -43,7 +43,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | LabVIEW automation | Linux install probe, MCP candidate research, stdio-to-HTTP bridge | [agentic_tools/labview_mcp_agent](agentic_tools/labview_mcp_agent) |
 | Android control | Dedicated noVNC/scrcpy desktop and ADB wrapper for the Mi MIX 2S real device plus matching AVD profile | [docs/ANDROID_DEVICE_CONTROL.md](docs/ANDROID_DEVICE_CONTROL.md) |
 | WeChat chatops | Isolated Linux GUI, direct local message mirror, fast ACK agent, strict per-chat media isolation, AgInTi figure generation plus CAD/PCB/Blender worker queue, file/PDF/render return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md), [full control manual](agentic_tools/wechat_gui_agent/docs/FULL_CONTROL_MANUAL.md), [robust operations](agentic_tools/wechat_gui_agent/docs/ROBUST_EFFICIENT_OPERATIONS.md) |
-| WeCom bridge | Official AI Bot and `wecom-cli` transports plus an allowlisted external-group GUI relay, cursor reads, verified file sends, per-chat sessions, and daily research | [setup and architecture](docs/WECOM_API_BRIDGE.md), [stable GUI interface](agentic_tools/wecom_agent/docs/GUI_RELAY_INTERFACE.md) |
+| WeCom bridge | Official AI Bot and `wecom-cli` transports plus an allowlisted external-group GUI relay, cursor reads, verified file sends, per-chat sessions, immediate `#daily` research, and LaTeX report recovery | [setup and architecture](docs/WECOM_API_BRIDGE.md), [stable GUI interface](agentic_tools/wecom_agent/docs/GUI_RELAY_INTERFACE.md) |
 | LALACHAN video handoff | Story drafting, Xiaoyunque browser generation, MP4 download, repo/Nutstore copy, and LazyEdit permission gates for WeChat workers | [references/lalachan-story-video-handoff-for-wechat.md](references/lalachan-story-video-handoff-for-wechat.md) |
 | Video publish handoff | Agents resolve exact videos and context, then delegate subtitle correction, metadata, logo/subtitle burn, packaging, and public posting to LazyEdit/AutoPublish | [references/lazyedit-agent-integration-handoff.md](references/lazyedit-agent-integration-handoff.md) |
 | Social content agent | Persistent Codex campaigns, source-grounded platform drafts, SQLite history, Postiz/X MCP adapters, and exact-content publication approvals | [agentic_tools/social_content_agent](agentic_tools/social_content_agent) |
@@ -61,6 +61,7 @@ PYTHONPATH=src python -m agenticapp agent capabilities
 PYTHONPATH=src python -m agenticapp agent chat "Design and render a C-mount sensor holder"
 PYTHONPATH=src python -m agenticapp studio figure-grid "optical device icons 2x3" --rows 2 --cols 3
 PYTHONPATH=src python -m agenticapp studio lab-task "prepare Lumileds no-resistor PCB and C-mount reflector CAD"
+PYTHONPATH=src python -m agenticapp wechat worker reprocess TASK_ID "recover completed report" --artifact-recovery-only --send --queue agentic_tools/wecom_agent/.private/wecom_task_queue.jsonl
 PYTHONPATH=src python -m unittest discover -s tests
 ```
 

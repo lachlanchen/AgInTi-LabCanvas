@@ -57,7 +57,10 @@ SHIPINHAO_GUI_AUDIO_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent"
 SHIPINHAO_NATIVE_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_native_capture.py"
 WECHAT_AUDIO_INTAKE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_audio_intake.py"
 WECHAT_SOURCE_RECOVERY_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_source_recovery.py"
-EFFORT_ORDER = ["low", "medium", "high", "xhigh"]
+NATURE_REPORT_LATEX_HEADER = (
+    ROOT / "agentic_tools" / "wechat_gui_agent" / "templates" / "nature_research_report_header.tex"
+)
+EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max", "ultra"]
 CLAIMED_STATUS = "in_progress"
 SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
 SEND_DEFERRED_ARTIFACT_STATUS = "send_deferred_artifact"
@@ -102,6 +105,8 @@ EFFORT_TIMEOUT_SECONDS = {
     "medium": 300,
     "high": 600,
     "xhigh": 1200,
+    "max": 2400,
+    "ultra": 3600,
 }
 OUTBOUND_SUFFIXES = {
     ".3mf",
@@ -234,6 +239,11 @@ def main() -> int:
     parser.add_argument("--resend", help="Send an existing task result by task id without rerunning the worker.")
     parser.add_argument("--reprocess", help="Reset an existing task to pending so the worker reruns it with current code.")
     parser.add_argument("--reason", default="", help="Reason recorded when reprocessing a task.")
+    parser.add_argument(
+        "--artifact-recovery-only",
+        action="store_true",
+        help="For a reprocessed research task, deliver completed exact-task artifacts without another agent turn.",
+    )
     parser.add_argument("--flush-deferred", action="store_true", help="Try one deferred locked send without running new worker tasks.")
     parser.add_argument("--repair-missing-artifacts", action="store_true", help="Requeue completed tasks whose required media files were not sent.")
     parser.add_argument(
@@ -269,7 +279,12 @@ def main() -> int:
         return resend_task_result(args.queue, args.resend, args.chat, send_targets=args.send_targets)
 
     if args.reprocess:
-        task = reprocess_task(args.queue, args.reprocess, reason=args.reason)
+        task = reprocess_task(
+            args.queue,
+            args.reprocess,
+            reason=args.reason,
+            artifact_recovery_only=args.artifact_recovery_only,
+        )
         print(json.dumps(task, ensure_ascii=False, indent=2))
         return 0
 
@@ -323,7 +338,13 @@ def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Pa
     return 1 if errors else 0
 
 
-def reprocess_task(queue: Path, task_id: str, *, reason: str = "") -> dict[str, Any]:
+def reprocess_task(
+    queue: Path,
+    task_id: str,
+    *,
+    reason: str = "",
+    artifact_recovery_only: bool = False,
+) -> dict[str, Any]:
     queue.parent.mkdir(parents=True, exist_ok=True)
     lock_path = queue.with_suffix(queue.suffix + ".lock")
     now_text = datetime.now().isoformat(timespec="seconds")
@@ -386,6 +407,10 @@ def reprocess_task(queue: Path, task_id: str, *, reason: str = "") -> dict[str, 
             task["reprocess_requested_at"] = now_text
             task["reprocess_reason"] = reason or "manual_reprocess"
             task["queue_path"] = str(queue)
+            if artifact_recovery_only:
+                task["artifact_recovery_only"] = True
+            else:
+                task.pop("artifact_recovery_only", None)
             tasks[index] = task
             write_tasks(queue, tasks)
             return task
@@ -1753,14 +1778,18 @@ def render_markdown_pdf(source: Path, output: Path) -> Path | None:
         "--pdf-engine",
         os.environ.get("WECHAT_MARKDOWN_PDF_ENGINE", "xelatex"),
         "-V",
-        f"mainfont={os.environ.get('WECHAT_MARKDOWN_PDF_MAINFONT', 'Noto Sans CJK SC')}",
+        f"mainfont={os.environ.get('WECHAT_MARKDOWN_PDF_MAINFONT', 'Noto Serif CJK SC')}",
         "-V",
-        f"CJKmainfont={os.environ.get('WECHAT_MARKDOWN_PDF_CJKFONT', 'Noto Sans CJK SC')}",
+        f"CJKmainfont={os.environ.get('WECHAT_MARKDOWN_PDF_CJKFONT', 'Noto Serif CJK SC')}",
+        "-V",
+        f"sansfont={os.environ.get('WECHAT_MARKDOWN_PDF_SANSFONT', 'Noto Sans CJK SC')}",
         "-V",
         f"monofont={os.environ.get('WECHAT_MARKDOWN_PDF_MONOFONT', 'DejaVu Sans Mono')}",
         "-V",
         os.environ.get("WECHAT_MARKDOWN_PDF_GEOMETRY", "geometry:margin=18mm"),
     ]
+    if NATURE_REPORT_LATEX_HEADER.is_file():
+        command.extend(["--include-in-header", str(NATURE_REPORT_LATEX_HEADER)])
     timeout = int(os.environ.get("WECHAT_MARKDOWN_PDF_TIMEOUT_SECONDS", "120"))
     proc = subprocess.run(command, cwd=str(source.parent), capture_output=True, text=True, timeout=timeout, check=False)
     if proc.returncode != 0 or not tmp_output.is_file() or tmp_output.stat().st_size <= 0:
@@ -1783,6 +1812,130 @@ def resolve_markdown_pdf_tool(env_name: str, default: str, *fallbacks: Path) -> 
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
     return ""
+
+
+RESEARCH_REPORT_EXCLUDED_MARKDOWN = {
+    "agent_routine_cheat_sheet.md",
+    "routine_contract.md",
+    "generated_video_route_contract.md",
+    "interruption_context.md",
+}
+
+
+def recover_completed_research_artifacts(
+    task: dict[str, Any],
+    failure_text: str = "",
+    *,
+    force: bool = False,
+) -> dict[str, Any] | None:
+    """Recover a completed research deliverable after an agent transport failure.
+
+    The worker agent may finish downloads and report writing before its final
+    response reaches the queue. Recovery is deliberately restricted to the
+    exact task artifact directory and requires a substantive report plus a
+    successfully compiled PDF; routine notes alone never count as completion.
+    """
+    if not task_is_research_summary(task):
+        return None
+    if not force and not worker_result_needs_escalation(failure_text):
+        return None
+    artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task))).expanduser().resolve()
+    if not artifact_dir.is_dir():
+        return None
+    report = select_substantive_research_report(artifact_dir)
+    if report is None:
+        return None
+    language = detect_markdown_primary_language(read_text_prefix(report, limit=24000))
+    report_pdf = ensure_markdown_pdf_companion_for_language(report, language)
+    if report_pdf is None or not report_pdf.is_file() or report_pdf.stat().st_size <= 0:
+        return None
+
+    files = [report_pdf, report]
+    for path in sorted(artifact_dir.glob("*.pdf"), key=lambda item: item.name.casefold()):
+        if path.resolve() != report_pdf.resolve():
+            files.append(path)
+    safe_files: list[str] = []
+    for path in unique_paths(files):
+        ok, _reason = is_safe_outbound_file(path)
+        if ok:
+            safe_files.append(str(path.resolve()))
+    if str(report_pdf.resolve()) not in safe_files:
+        return None
+
+    recovered_at = datetime.now().isoformat(timespec="seconds")
+    task["worker_artifact_recovery"] = {
+        "status": "recovered",
+        "reason": collapse_context_text(failure_text, max_len=300),
+        "report": str(report),
+        "compiled_pdf": str(report_pdf),
+        "file_count": len(safe_files),
+        "latex_style": "nature_research_report",
+        "recovered_at": recovered_at,
+    }
+    task["worker_result_exhausted"] = False
+    task.pop("worker_error", None)
+    return {
+        "message": research_report_chat_message(report),
+        "confirmation": "",
+        "files": safe_files,
+        "data": {
+            "require_file_delivery": True,
+            "send_report_to_wechat": True,
+            "source_read_quality": "substantive",
+            "artifact_recovery": True,
+            "latex_style": "nature_research_report",
+            "report_path": str(report),
+            "report_pdf": str(report_pdf),
+        },
+    }
+
+
+def select_substantive_research_report(artifact_dir: Path) -> Path | None:
+    candidates: list[tuple[int, Path]] = []
+    for path in artifact_dir.glob("*.md"):
+        lowered = path.name.casefold()
+        if lowered in RESEARCH_REPORT_EXCLUDED_MARKDOWN:
+            continue
+        if any(marker in lowered for marker in ("contract", "cheat_sheet", "manifest", "preflight", "interruption")):
+            continue
+        text = read_text_prefix(path, limit=50000)
+        if len(text.strip()) < 500 or len(re.findall(r"^#{1,4}\s+", text, flags=re.MULTILINE)) < 2:
+            continue
+        evidence_markers = sum(
+            marker in text.casefold()
+            for marker in ("doi", "http", "reference", "citation", "论文", "研究", "结论", "方法")
+        )
+        if evidence_markers < 2:
+            continue
+        name_score = sum(
+            marker in lowered
+            for marker in ("report", "briefing", "research", "summary", "analysis", "review", "简报", "报告")
+        )
+        translated_penalty = 2 if re.search(r"\.(?:en|zh)\.md$", lowered) else 0
+        candidates.append((name_score * 100 + min(len(text) // 100, 80) - translated_penalty, path.resolve()))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item[0], item[1].stat().st_mtime))[1]
+
+
+def research_report_chat_message(report: Path) -> str:
+    text = report.read_text(encoding="utf-8", errors="ignore")
+    title = next(
+        (re.sub(r"^#\s+", "", line).strip() for line in text.splitlines() if line.startswith("# ")),
+        "研究简报",
+    )
+    block = ""
+    quote_lines = [re.sub(r"^>\s?", "", line).strip() for line in text.splitlines() if line.lstrip().startswith(">")]
+    if quote_lines:
+        block = " ".join(quote_lines)
+    if not block:
+        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip() and not part.lstrip().startswith("#")]
+        block = paragraphs[0] if paragraphs else "报告及来源文件已整理完成。"
+    block = re.sub(r"!\[[^]]*]\([^)]*\)", "", block)
+    block = re.sub(r"\[([^]]+)]\([^)]*\)", r"\1", block)
+    block = re.sub(r"[*_`]+", "", block)
+    block = collapse_context_text(block, max_len=650)
+    return f"首份 #daily 研究简报已完成：{title}\n\n{block}"
 
 
 def message_with_saved_file_note(message: str, files: list[Path]) -> str:
@@ -3297,6 +3450,10 @@ def run_worker_codex(task: dict[str, Any]) -> str:
     for attempt_index in range(max_attempts):
         task["worker_policy"] = policy
         result = run_worker_codex_once(task, policy)
+        recovered = recover_completed_research_artifacts(task, result)
+        artifact_recovered = recovered is not None
+        if recovered is not None:
+            result = json.dumps(recovered, ensure_ascii=False)
         score = worker_result_quality(result)
         if score > best_score:
             best_result = result
@@ -3312,8 +3469,11 @@ def run_worker_codex(task: dict[str, Any]) -> str:
                 "escalated_from": policy.get("escalated_from"),
                 "result_quality": score,
                 "result_excerpt": collapse_context_text(result, max_len=280),
+                "artifact_recovered": artifact_recovered,
             }
         )
+        if artifact_recovered:
+            break
         next_policy = escalated_policy(policy, result, task=task)
         if not next_policy:
             break
@@ -3356,6 +3516,13 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
         },
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
+    if task.get("artifact_recovery_only"):
+        recovered = recover_completed_research_artifacts(task, force=True)
+        if recovered is not None:
+            task["orchestrator"]["last_action"] = "recover_completed_research_artifacts"
+            task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
+            persist_task_progress(task)
+            return json.dumps(recovered, ensure_ascii=False)
     preflight = prepare_worker_preflight(task, artifact_dir)
     if preflight:
         task["preflight"] = preflight

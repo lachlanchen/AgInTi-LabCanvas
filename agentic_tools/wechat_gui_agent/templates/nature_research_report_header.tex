@@ -1,0 +1,49 @@
+% Restrained research-report styling inspired by scientific journal typography.
+% Pandoc loads this after its standard XeLaTeX preamble.
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{booktabs}
+\usepackage{setspace}
+
+\definecolor{NatureRed}{HTML}{B5121B}
+\definecolor{NatureInk}{HTML}{202124}
+\definecolor{NatureMuted}{HTML}{666A70}
+\definecolor{NatureRule}{HTML}{C9CDD2}
+
+\color{NatureInk}
+\setstretch{1.06}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.45em}
+\setlist{nosep,leftmargin=1.5em,topsep=0.3em}
+
+\titleformat{\section}
+  {\Large\bfseries\sffamily\color{NatureInk}}
+  {\thesection}{0.65em}{}
+  [\vspace{0.15em}\color{NatureRed}\titlerule]
+\titleformat{\subsection}
+  {\large\bfseries\sffamily\color{NatureInk}}
+  {\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\sffamily\color{NatureMuted}}
+  {\thesubsubsection}{0.55em}{}
+\titlespacing*{\section}{0pt}{1.5em}{0.65em}
+\titlespacing*{\subsection}{0pt}{1.05em}{0.35em}
+\titlespacing*{\subsubsection}{0pt}{0.8em}{0.25em}
+
+\captionsetup{font=small,labelfont={bf,sf},textfont=it}
+\hypersetup{colorlinks=true,linkcolor=NatureRed,citecolor=NatureRed,urlcolor=NatureRed}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize\sffamily\color{NatureMuted}LABCANVAS RESEARCH BRIEF}
+\fancyhead[R]{\footnotesize\sffamily\color{NatureMuted}\today}
+\fancyfoot[C]{\footnotesize\sffamily\color{NatureMuted}\thepage}
+\renewcommand{\headrulewidth}{0.35pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{NatureRule}\leaders\hrule height \headrulewidth\hfill}}
+\renewcommand{\footrulewidth}{0pt}
+
+\AtBeginDocument{\color{NatureInk}}

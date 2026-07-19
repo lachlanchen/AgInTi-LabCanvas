@@ -161,8 +161,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("WECHAT_WORKER_ANDROID_TEXT_FALLBACK=0", source)
         self.assertIn("WECHAT_WORKER_DISABLE_AUTOPUBLISH_PREFLIGHT=1", source)
         self.assertIn('WECHAT_WORKER_CODEX_MODEL="${WECHAT_WORKER_CODEX_MODEL:-gpt-5.6-sol}"', source)
-        self.assertIn('WECHAT_WORKER_MIN_EFFORT="${WECHAT_WORKER_MIN_EFFORT:-high}"', source)
-        self.assertIn('WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-high}"', source)
+        self.assertIn('WECHAT_WORKER_MIN_EFFORT="${WECHAT_WORKER_MIN_EFFORT:-low}"', source)
+        self.assertIn('WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-ultra}"', source)
+        self.assertIn('WECHAT_WORKER_TIMEOUT_HIGH_SECONDS="${WECHAT_WORKER_TIMEOUT_HIGH_SECONDS:-21600}"', source)
+        self.assertIn('WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS="${WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS:-0}"', source)
         self.assertIn('WECHAT_WORKER_ENV_FILE="$PRIVATE_ENV"', source)
 
     def test_android_setup_is_wecom_only_and_does_not_bypass_keyguard(self) -> None:
@@ -308,8 +310,11 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertTrue(tasks[0]["route_decision"]["immediate_daily_research"])
         self.assertFalse(tasks[0]["route_decision"]["scheduled_daily_research"])
+        self.assertTrue(tasks[0]["route_decision"]["no_fixed_deadline"])
         self.assertTrue(tasks[0]["daily_research"]["initial_run"])
         self.assertEqual(tasks[0]["routine"]["id"], "research_summary")
+        self.assertEqual(tasks[0]["routine"]["default_effort"], "high")
+        self.assertNotIn("expires_at", tasks[0])
 
     def test_daily_preferences_keep_members_separate_and_support_status_and_off(self) -> None:
         daily = load_daily()
@@ -446,6 +451,9 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(task["routine"]["id"], "research_summary")
         self.assertFalse(task["route_decision"]["public_publish_allowed"])
         self.assertIn("compile a readable PDF", task["request"])
+        self.assertIn("Nature-style", task["request"])
+        self.assertTrue(task["route_decision"]["no_fixed_deadline"])
+        self.assertFalse(task["agent_backend_config"]["agent_fallbacks"]["fallback_on_timeout"])
 
     def test_immediate_daily_run_does_not_consume_the_scheduled_report(self) -> None:
         daily = load_daily()

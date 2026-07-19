@@ -105,7 +105,13 @@ For the restricted LabAgent research group:
   report. Repeated interests do not create another initial run. The prefix
   syntax remains a compatibility alias.
 - Daily reports return a concise digest and requested Markdown/PDF or editable
-  figure artifacts through the source-scoped WeCom send gate.
+  figure artifacts through the source-scoped WeCom send gate. Compile report
+  PDFs with XeLaTeX and the restrained Nature-style header. Daily tasks have no
+  queue expiry; a per-turn watchdog is only a hung-process guard.
+- If a daily/research agent writes a substantive exact-task Markdown report and
+  source PDFs but loses its final response, recover from that task directory,
+  compile the report PDF, and require one source-chat delivery. Exclude routine
+  contracts, manifests, and notes; never salvage another task's artifacts.
 
 ### External WeCom GUI Relay
 
@@ -510,7 +516,8 @@ evidence for local artifacts, not chat-facing content.
 - Use fast-router Codex only for new actionable messages, ambiguous routing, or
   immediate lightweight replies.
 - For the isolated WeCom transport, use `gpt-5.6-sol` low for route/chat turns
-  and `gpt-5.6-sol` high for every durable worker task. Keep those defaults in
+  and dynamic `gpt-5.6-sol` effort from low through ultra for durable work;
+  daily research starts at high. Keep those defaults in
   `wecom_worker_loop.sh` and pass its private env via
   `WECHAT_WORKER_ENV_FILE` so the shared guarded entrypoint cannot overwrite
   them with personal-WeChat policy.
@@ -575,6 +582,11 @@ evidence for local artifacts, not chat-facing content.
   jobs should persist queue/probe state, status, and artifacts, then continue or
   requeue from evidence. They should not restart or switch tools just because a
   generation browser page is still running.
+- Do not impose the ordinary 600-second worker boundary on WeCom daily
+  research. The task itself has no deadline, and the launcher uses long
+  effort-specific watchdogs. If a watchdog still fires after deliverables were
+  written, exact-task artifact recovery completes delivery before any effort or
+  backend retry, preventing duplicate research and duplicate acknowledgements.
 - Treat structured worker output as the delivery contract. A non-empty
   `message`, `confirmation`, `files`, or explicit `NO_REPLY` is a usable result.
   A useful answer may mention that one source request timed out; that sentence
@@ -668,9 +680,10 @@ evidence for local artifacts, not chat-facing content.
   starving real file/message delivery. The sync loop removes malformed,
   expired, or dead-owner reservations immediately so a crashed sender cannot
   stall chat materialization.
-- Use `gpt-5.5` medium for normal research, PDF, figure, and generated-video
-  browser work. Use high for CAD/PCB/Blender/install/tool execution. Use xhigh
-  only for full autonomous end-to-end tasks.
+- Personal-WeChat deployments may retain their configured model policy. The
+  isolated WeCom worker is explicitly GPT-5.6 SOL: low/medium for bounded work,
+  high for daily research and execution, and xhigh/max/ultra only when the
+  agent's incomplete result requires escalation.
 
 ## State Machine
 
@@ -812,6 +825,10 @@ When a bug fix invalidates an already stored worker result, re-run the original
 task with `labcanvas wechat worker reprocess <task_id> <reason>` instead of
 editing the private queue or manually doing the chat task. Reprocess preserves
 the source rows and clears stale result/preflight/send state.
+If a research backend stopped only after writing a complete report and source
+files, use `labcanvas wechat worker reprocess <task_id> '<reason>'
+--artifact-recovery-only --send`. This compiles and delivers the exact task
+artifacts without another model turn or repeated research.
 If LazyEdit reports only queued, submitted, running, missing, or unverified
 status, do not say published. Return the current stage to WeChat and keep the
 task in `publish_poststage_pending` until all requested platforms have terminal

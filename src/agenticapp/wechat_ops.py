@@ -159,6 +159,11 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     worker.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
     worker.add_argument("--chat", default="wechat-chat")
     worker.add_argument("--send", action="store_true")
+    worker.add_argument(
+        "--artifact-recovery-only",
+        action="store_true",
+        help="Recover completed exact-task research artifacts without rerunning the agent.",
+    )
     worker.set_defaults(func=cmd_worker)
 
     queue = nested.add_parser("queue", help="Inspect the private worker queue.")
@@ -1393,6 +1398,8 @@ def cmd_worker(args: argparse.Namespace) -> int:
         reason = " ".join(args.request[1:]).strip()
         if reason:
             command += ["--reason", reason]
+        if args.artifact_recovery_only:
+            command.append("--artifact-recovery-only")
     if args.send:
         command.append("--send")
     return run_command(command, capture=False).returncode

@@ -532,7 +532,7 @@ Requirements:
 - Use current web and scholarly research, prioritizing recent primary papers, preprints, datasets, and official project repositories. Verify publication dates and distinguish peer-reviewed work from preprints.
 - Synthesize the topics with the group's recent questions instead of producing a generic news list.
 - Return a concise Chinese chat digest with the most important findings, why they matter, limitations, and concrete next research steps.
-- Create a source-grounded Markdown report and compile a readable PDF with citations/DOIs/links. Include both files in the result so the transport sends them to this group.
+- Create a source-grounded Markdown report and compile a readable PDF through LaTeX as a restrained Nature-style research paper with citations/DOIs/links. Include both files in the result so the transport sends them to this group.
 - When an explanatory paper figure materially helps, create an editable source (SVG/TeX or a LabCanvas atomic figure manifest) plus a preview; do not use a generated bitmap as the sole source of truth.
 - Download requested or directly relevant papers only from lawful open-access sources. Do not bypass paywalls or access controls.
 - Never fabricate a paper, citation, benchmark, or claim. State evidence gaps plainly.
@@ -545,7 +545,6 @@ Requirements:
         "request": request_text,
         "status": "pending",
         "created_at": now.isoformat(timespec="seconds"),
-        "expires_at": (now + timedelta(seconds=int(os.environ.get("WECOM_DAILY_TASK_TTL_SECONDS", "21600")))).isoformat(timespec="seconds"),
         "agent_backend": os.environ.get("WECOM_AGENT_BACKEND", "codex"),
         "agent_backend_config": {
             "agent_fallbacks": {
@@ -553,7 +552,7 @@ Requirements:
                 "quota_fallback_model": "gpt-5.6-sol",
                 "quota_fallback_reasoning_effort": "low",
                 "fallback_to_aginti": True,
-                "fallback_on_timeout": True,
+                "fallback_on_timeout": False,
             }
         },
         "agent_bridge_mode": True,
@@ -570,6 +569,7 @@ Requirements:
             "transport": "wecom",
             "transport_channel": transport_channel,
             "scheduled_daily_research": True,
+            "no_fixed_deadline": True,
         },
         "instruction_contract": {
             "current_request_authoritative": True,
@@ -608,7 +608,12 @@ Requirements:
         "transport_preflight": {},
         "queue_path": str(queue),
     }
+    daily_ttl_seconds = int(os.environ.get("WECOM_DAILY_TASK_TTL_SECONDS", "0"))
+    if daily_ttl_seconds > 0:
+        task["expires_at"] = (now + timedelta(seconds=daily_ttl_seconds)).isoformat(timespec="seconds")
     ensure_task_routine_contract(task)
+    if isinstance(task.get("routine"), dict):
+        task["routine"]["default_effort"] = "high"
     return task
 
 

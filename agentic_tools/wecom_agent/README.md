@@ -187,7 +187,10 @@ immediately; repeating the same interest does not queue it again. This initial
 run does not consume the normal scheduled report. At the configured time, the
 scheduler combines active interests with recent same-group context and queues
 one source-grounded briefing per group/day. It returns a concise Chinese digest,
-Markdown evidence, and a compiled PDF. Configure the local schedule with
+Markdown evidence, and a LaTeX-compiled Nature-style PDF. Daily research tasks
+have no queue deadline: GPT-5.6 SOL may run from low through ultra effort, and
+completed exact-task reports are recovered and delivered if the final agent
+response is interrupted. Configure the local schedule with
 `WECOM_DAILY_RESEARCH_TIME`, `WECOM_DAILY_TOPIC_PROMPT_TIME`, and
 `WECOM_DAILY_TIMEZONE`. New owner-enrolled groups are prompted automatically;
 set `WECOM_DAILY_AUTO_ENROLL=0` to require a bare `#daily` first. `off #daily`
@@ -250,7 +253,9 @@ committed.
 
 `wecom_worker_loop.sh` is the WeCom-specific worker boundary. It disables
 personal-WeChat GUI file recovery, media-sync fallback, Android text sending,
-and publication preflights before invoking the shared routine orchestrator.
+and publication preflights before invoking the shared routine orchestrator. It
+keeps route/chat turns fast, while durable work uses GPT-5.6 SOL with dynamic
+effort and long per-turn hang watchdogs instead of a ten-minute research limit.
 
 ## Upstream
 
