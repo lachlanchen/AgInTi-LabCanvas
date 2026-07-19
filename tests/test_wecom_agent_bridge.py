@@ -536,11 +536,13 @@ class WeComAgentBridgeTests(unittest.TestCase):
             early = daily.run_due_cycle(
                 state_db=state,
                 history_db=state,
+                queue=Path(tmp) / "queue.jsonl",
                 now=datetime(2026, 7, 20, 5, 59, tzinfo=ZoneInfo("Asia/Hong_Kong")),
             )
             due = daily.run_due_cycle(
                 state_db=state,
                 history_db=state,
+                queue=Path(tmp) / "queue.jsonl",
                 now=datetime(2026, 7, 20, 6, 0, tzinfo=ZoneInfo("Asia/Hong_Kong")),
             )
 
