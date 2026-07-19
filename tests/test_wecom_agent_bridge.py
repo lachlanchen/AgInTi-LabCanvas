@@ -1201,6 +1201,51 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("--limit", command)
         self.assertIn("2", command)
 
+    def test_gui_reconnect_waits_for_exact_chat_poll_readiness(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge._client_was_visible = False
+        bridge.recover_expired_outbox = mock.Mock(
+            return_value={"ok": True, "recovered_count": 1}
+        )
+
+        transition = bridge.recover_outbox_after_ready_poll(
+            client_visible=True,
+            poll_result={"ok": False, "error": "chat title not ready"},
+        )
+
+        self.assertEqual(transition["skipped"], "chat_poll_not_ready")
+        self.assertFalse(bridge._client_was_visible)
+        bridge.recover_expired_outbox.assert_not_called()
+
+        ready = bridge.recover_outbox_after_ready_poll(
+            client_visible=True,
+            poll_result={"ok": True, "processed": 0},
+        )
+        repeated = bridge.recover_outbox_after_ready_poll(
+            client_visible=True,
+            poll_result={"ok": True, "processed": 0},
+        )
+
+        self.assertEqual(ready["recovered_count"], 1)
+        self.assertEqual(repeated["skipped"], "already_ready")
+        bridge.recover_expired_outbox.assert_called_once_with()
+
+    def test_gui_reconnect_readiness_rearms_after_client_disappears(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge._client_was_visible = True
+        bridge.recover_expired_outbox = mock.Mock()
+
+        payload = bridge.recover_outbox_after_ready_poll(
+            client_visible=False,
+            poll_result={"ok": False},
+        )
+
+        self.assertEqual(payload["skipped"], "client_not_visible")
+        self.assertFalse(bridge._client_was_visible)
+        bridge.recover_expired_outbox.assert_not_called()
+
     def test_gui_inbound_ledger_supports_cursor_reads(self) -> None:
         bridge = load_gui_bridge()
         with tempfile.TemporaryDirectory() as temporary:

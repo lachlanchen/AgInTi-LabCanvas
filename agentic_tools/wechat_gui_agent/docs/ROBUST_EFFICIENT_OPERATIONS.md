@@ -400,13 +400,15 @@ The stable interface and recovery commands are documented in
   `gui_send_timeout`, `wechat_entry_required`, or `title_guard_blank`. Ordinary
   deferred sends expire after 10 minutes by default and retries are globally
   spaced by 30 seconds, so a restart cannot dump a stale burst into WeChat.
-- WeCom GUI reconnect is a narrow exception, not backlog replay. A transition
-  from no full client window to an authenticated full window may recover at
-  most one `send_expired` WeCom result from the previous 12 hours, only when
-  they had already reached a send state and still contain a resendable result.
-  The per-task recovery cap, exact-chat guard, and durable text/file delivery
-  ledgers still apply. It must not recover pending work, another transport, or
-  arbitrary historical messages.
+- WeCom GUI reconnect is a narrow exception, not backlog replay. Do not infer
+  authentication from window geometry. Recovery begins only after the normal
+  poll successfully opens and title-verifies the exact allowlisted chats; a
+  cached or half-authenticated full-size window consumes no recovery attempt.
+  That ready transition may recover at most one `send_expired` WeCom result
+  from the previous 12 hours, only when it had already reached a send state and
+  still contains a resendable result. The per-task recovery cap, exact-chat
+  guard, and durable text/file delivery ledgers still apply. It must not
+  recover pending work, another transport, or arbitrary historical messages.
 - Duplicate-response guards must not use placeholder WeChat `server_id` values
   such as `0`, empty, `null`, or `-1` as globally unique ids. Store a per-row
   response key and fall back to `local_id` for placeholder server ids so

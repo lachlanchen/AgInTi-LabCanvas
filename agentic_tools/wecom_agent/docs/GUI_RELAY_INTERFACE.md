@@ -112,12 +112,15 @@ chat ID. Advance the consumer cursor only after processing the returned items.
   in one critical section, so concurrent workers cannot switch the target chat.
 - Read cursors and send ledgers are durable SQLite state under ignored
   `.private/`; screenshots and raw events also remain private.
-- When a full logged-in WeCom window reappears after a disconnected/login
-  period, the relay performs one bounded outbox recovery pass. It requeues at
-  most one `send_expired` WeCom result from the previous 12 hours, only when
-  they had already reached a send state. The normal worker then sends them
-  through the exact-chat and idempotency ledgers. Other transports, stale
-  backlog, and ordinary unprocessed requests are never replayed.
+- Window size is not authentication evidence. After a disconnected/login
+  period, the relay waits until the normal poll can open and title-verify the
+  exact allowlisted chats. Only that successful poll triggers one bounded
+  outbox recovery pass. A cached or half-authenticated full-size window leaves
+  the reconnect edge armed and consumes no recovery budget. The pass requeues
+  at most one `send_expired` WeCom result from the previous 12 hours, only when
+  it had already reached a send state. The normal worker then sends it through
+  the exact-chat and idempotency ledgers. Other transports, stale backlog, and
+  ordinary unprocessed requests are never replayed.
 
 The copied request is immutable transport evidence. `wecom_ingest.py` stores it
 as both `request` and `original_request`; a route model may add an advisory
@@ -138,7 +141,10 @@ PYTHONPATH=src python -m agenticapp wecom client status --json
 PYTHONPATH=src python -m agenticapp wecom gui restart --json
 ```
 
-If `client_visible` is false, restore the Wine client and login first. The
+If `client_visible` is false, restore the Wine client and login first. A true
+`client_visible` value alone is not ready state; confirm that a GUI poll opens
+and title-verifies every allowlisted chat before expecting reconnect recovery.
+The
 supervisor only starts the normal client against its persisted profile. It
 never invokes account-switch mode: a hidden layered window or crash is not
 proof that authentication expired, and switching can invalidate a reusable

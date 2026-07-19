@@ -853,6 +853,32 @@ class WeComGuiBridge:
         set_runtime(self.state_db, "last_reconnect_recovery", json.dumps(payload, ensure_ascii=False)[:4000])
         return payload
 
+    def recover_outbox_after_ready_poll(
+        self,
+        *,
+        client_visible: bool,
+        poll_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Recover deferred work only after exact-chat GUI readiness is proven."""
+        if not client_visible:
+            self._client_was_visible = False
+            return {"ok": True, "recovered_count": 0, "skipped": "client_not_visible"}
+        if not poll_result.get("ok"):
+            # A full-size cached/post-login window is not enough. Keep the
+            # reconnect edge armed until every allowlisted chat can be opened
+            # and title-verified by the normal poll path.
+            self._client_was_visible = False
+            return {"ok": True, "recovered_count": 0, "skipped": "chat_poll_not_ready"}
+        if self._client_was_visible:
+            return {"ok": True, "recovered_count": 0, "skipped": "already_ready"}
+        try:
+            recovered = self.recover_expired_outbox()
+        except Exception as exc:
+            recovered = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:800]}"}
+            set_runtime(self.state_db, "last_reconnect_recovery_error", recovered["error"])
+        self._client_was_visible = bool(recovered.get("ok"))
+        return recovered
+
     def find_window(self, *, required: bool = True) -> Window | None:
         proc = self.run_xdotool(["search", "--onlyvisible", "--name", "^WeCom$"], check=False)
         candidates: list[Window] = []
@@ -1200,20 +1226,15 @@ class WeComGuiBridge:
         try:
             while not self._stop.is_set():
                 client_visible = self.find_window(required=False) is not None
-                if not client_visible:
-                    self._client_was_visible = False
                 result = self.poll_once()
                 if not result.get("ok") or result.get("processed"):
                     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")), flush=True)
-                if client_visible and not self._client_was_visible:
-                    try:
-                        recovered = self.recover_expired_outbox()
-                    except Exception as exc:
-                        recovered = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:800]}"}
-                        set_runtime(self.state_db, "last_reconnect_recovery_error", recovered["error"])
-                    if not recovered.get("ok") or recovered.get("recovered_count"):
-                        print(json.dumps({"event": "reconnect_outbox_recovery", **recovered}, ensure_ascii=False), flush=True)
-                    self._client_was_visible = bool(recovered.get("ok"))
+                recovered = self.recover_outbox_after_ready_poll(
+                    client_visible=client_visible,
+                    poll_result=result,
+                )
+                if not recovered.get("ok") or recovered.get("recovered_count"):
+                    print(json.dumps({"event": "reconnect_outbox_recovery", **recovered}, ensure_ascii=False), flush=True)
                 self._stop.wait(interval)
         finally:
             server.shutdown()
