@@ -85,6 +85,9 @@ ROUTINES: dict[str, RoutineDefinition] = {
         ),
         rules=COMMON_RULES
         + (
+            "Use live web search for current research and verify important claims against primary literature or authoritative databases; do not claim browsing occurred when no source was opened.",
+            "Resolve uncertain names and identifiers before asking for clarification: search plausible spelling, capitalization, OCR, and letter/number variants in context. If one candidate is strongly supported, state the inference and proceed; ask one concise discriminating question only when multiple candidates remain plausible after search.",
+            "For genes and proteins, verify the official symbol, full name, species, and stable identifier with sources such as HGNC, NCBI Gene, UniProt, and peer-reviewed papers before building a report or pathway figure.",
             "For link/read-later inbox tasks, treat shared URLs/cards/media as source material to read and summarize by default.",
             "Quality over quantity: if you only saw a card title, metadata, a verification page, or a blocked preview, say that briefly and do not produce a report artifact.",
             "For mp.weixin/Gongzhonghao links, direct verification pages are not final; run read-only mobile-WeChat HTTP extraction/private-cache recovery, then exact-title/account public reconstruction without asking for verification or opening a browser.",

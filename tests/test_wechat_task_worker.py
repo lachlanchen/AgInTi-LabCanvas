@@ -5054,6 +5054,120 @@ stderr: noisy internal trace
         self.assertTrue(worker.send_errors_indicate_deferable(errors))
         self.assertEqual(worker.send_deferred_reason_from_errors(errors), "wechat_entry_required")
 
+    def test_wecom_gui_pre_send_verification_error_is_retryable(self) -> None:
+        worker = load_worker()
+        errors = [
+            "attempt 1: WeCom transport HTTP 500: "
+            "WECOM_GUI_COMPOSE_UNVERIFIED: composer did not contain the exact Unicode message"
+        ]
+
+        self.assertTrue(worker.send_errors_indicate_deferable(errors))
+        self.assertEqual(
+            worker.send_deferred_reason_from_errors(errors),
+            "gui_compose_verification",
+        )
+
+    def test_wecom_gui_post_send_uncertainty_is_not_automatically_retried(self) -> None:
+        worker = load_worker()
+        errors = [
+            "attempt 1: WECOM_GUI_SEND_UNCERTAIN: composer did not clear after Send"
+        ]
+
+        self.assertFalse(worker.send_errors_indicate_deferable(errors))
+
+    def test_claim_next_deferred_send_repairs_legacy_wecom_composer_failure(self) -> None:
+        worker = load_worker()
+        with mock.patch.dict(
+            worker.os.environ,
+            {"WECOM_GUI_COMPOSE_RETRY_BACKOFF_SECONDS": "0"},
+            clear=False,
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "wecom-compose-failed",
+                            "chat": "wecom:external-gui:group:one",
+                            "status": "send_failed",
+                            "send_errors": [
+                                "WeCom composer did not contain the exact Unicode message"
+                            ],
+                            "last_send_attempt_at": datetime.now().isoformat(timespec="seconds"),
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+        self.assertEqual(claimed["send_deferred_reason"], "gui_compose_verification")
+
+    def test_newer_same_chat_message_suppresses_unsent_stale_confirmation(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "old-question",
+                        "chat": "wecom:external-gui:group:one",
+                        "status": "send_failed",
+                        "created_at": "2026-07-19T08:51:00",
+                        "send_errors": ["WeCom composer did not contain the exact Unicode message"],
+                        "result": {"message": "confirm it", "confirmation": "Which protein?", "files": []},
+                    },
+                    {
+                        "id": "new-answer",
+                        "chat": "wecom:external-gui:group:one",
+                        "status": "pending",
+                        "created_at": "2026-07-19T08:52:00",
+                        "source": {"kind": "text", "authorization_role": "group_member"},
+                    },
+                ],
+            )
+
+            claimed = worker.claim_next_deferred_send(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertIsNone(claimed)
+        self.assertEqual(tasks[0]["status"], "canceled_superseded")
+        self.assertEqual(tasks[0]["superseded_by"], "new-answer")
+
+    def test_wecom_legacy_task_uses_exact_source_row_not_router_rewrite(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "Do not proceed until the name is confirmed.",
+            "source": {"transport": "wecom", "create_time": 1234, "local_id": 999},
+            "context": [
+                {
+                    "local_id": 9,
+                    "create_time": 1234,
+                    "content": "一个蛋白的名字，调研肿瘤影响并画信号通路图",
+                    "is_self": False,
+                }
+            ],
+        }
+
+        focused = worker.task_focus_text(task)
+
+        self.assertEqual(focused, "一个蛋白的名字，调研肿瘤影响并画信号通路图")
+        self.assertNotIn("Do not proceed", focused)
+
+    def test_queue_timestamps_normalize_explicit_timezone_to_local_naive(self) -> None:
+        worker = load_worker()
+
+        parsed = worker.parse_iso_datetime("2026-07-19T09:00:19+08:00")
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertIsNone(parsed.tzinfo)
+        self.assertEqual(parsed.hour, 9)
+
     def test_claim_next_deferred_send_repairs_retryable_send_failed(self) -> None:
         worker = load_worker()
         original_backoff = worker.os.environ.get("WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS")

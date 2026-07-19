@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import shutil
 import subprocess
 import tempfile
@@ -57,6 +58,7 @@ def run_codex_session(
             sandbox=sandbox,
             timeout_seconds=timeout_seconds,
             workdir=workdir,
+            web_search=codex_web_search_enabled(role),
         )
         if previous_id and not result["ok"] and result.get("returncode") != 124:
             fallback = run_codex_once(
@@ -67,6 +69,7 @@ def run_codex_session(
                 sandbox=sandbox,
                 timeout_seconds=timeout_seconds,
                 workdir=workdir,
+                web_search=codex_web_search_enabled(role),
             )
             fallback["resumed"] = False
             fallback["fallback_started"] = True
@@ -90,6 +93,7 @@ def run_codex_once(
     sandbox: str,
     timeout_seconds: int,
     workdir: Path,
+    web_search: bool = False,
 ) -> dict[str, Any]:
     with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False) as out:
         output_path = Path(out.name)
@@ -104,8 +108,11 @@ def run_codex_once(
             "stderr_tail": "codex executable not found",
             "stdout_tail": "",
         }
-    command = [
-        codex_bin,
+    command = [codex_bin]
+    if web_search:
+        # `--search` is a global Codex option and must precede `exec`.
+        command.append("--search")
+    command += [
         "exec",
         "--json",
         "-m",
@@ -124,13 +131,10 @@ def run_codex_once(
     else:
         command.append("-")
     try:
-        proc = subprocess.run(
+        proc = run_process_group(
             command,
             input=prompt,
             cwd=workdir,
-            capture_output=True,
-            text=True,
-            check=False,
             timeout=timeout_seconds,
             env=codex_subprocess_env(codex_bin),
         )
@@ -164,6 +168,71 @@ def run_codex_once(
         }
     finally:
         output_path.unlink(missing_ok=True)
+
+
+def run_process_group(
+    command: list[str],
+    *,
+    input: str | None,
+    cwd: Path,
+    timeout: int,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Run Codex in its own process group and reap every child on timeout."""
+    proc = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(input=input, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        terminate_process_group(proc)
+        stdout, stderr = proc.communicate()
+        raise subprocess.TimeoutExpired(
+            command,
+            timeout,
+            output=stdout,
+            stderr=stderr,
+        ) from exc
+    return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+
+
+def terminate_process_group(proc: subprocess.Popen[str], *, grace_seconds: float = 2.0) -> None:
+    """Terminate a wrapper and all native agent descendants without orphans."""
+    if proc.poll() is not None:
+        return
+    try:
+        process_group = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=grace_seconds)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    proc.wait(timeout=grace_seconds)
+
+
+def codex_web_search_enabled(role: str) -> bool:
+    """Enable native Responses web search for evidence-gathering turns."""
+    configured = os.environ.get("WECHAT_CODEX_WEB_SEARCH")
+    if configured is not None:
+        return configured.strip().casefold() not in {"0", "false", "no", "off"}
+    return str(role or "").strip().casefold() in {"worker", "research", "daily"}
 
 
 def resolve_codex_binary() -> str:

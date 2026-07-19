@@ -26,7 +26,13 @@ if str(SHARED_AGENT_SCRIPTS) not in sys.path:
 from wechat_agent_backend import run_agent_session  # noqa: E402
 from wechat_mirror import record_event  # noqa: E402
 from wechat_routines import ensure_task_routine_contract  # noqa: E402
-from wecom_daily_research import handle_daily_directive, mark_inline_topic_prompt, register_group  # noqa: E402
+from wecom_daily_research import (  # noqa: E402
+    handle_daily_directive,
+    mark_inline_topic_prompt,
+    register_group,
+    set_group_enabled,
+    set_preference,
+)
 
 
 MIRROR_DB = Path(
@@ -116,9 +122,15 @@ def ingest_event(
         return complete_direct_reply(history_db, event, chat, daily_reply, action="wecom_daily_command")
     context = recent_history(history_db, chat, limit=12)
     route = route_event(event, request, context) if route_with_agent else fallback_route(event, request)
+    daily_topic = str(route.get("daily_topic") or "").strip()[:1000]
+    if daily_topic and str(event.get("chat_type") or "") == "group":
+        set_preference(history_db, chat, short_hash(event.get("sender_userid")), daily_topic)
+        set_group_enabled(history_db, chat, True)
 
     if not bool(route.get("worker_needed")) and str(route.get("response") or "").strip():
         response = str(route["response"])
+        if daily_topic:
+            response = f"已设置每日研究主题：{daily_topic}\n\n{response}"
         if first_group_event:
             response = f"{response.rstrip()}\n\n{labagent_welcome_message()}"
             mark_inline_topic_prompt(history_db, chat)
@@ -143,8 +155,12 @@ def ingest_event(
     )
     mark_message_processed(history_db, str(event["message_id"]))
     ack = sanitize_chat_response(route.get("ack")) or "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。"
+    if daily_topic:
+        ack = f"已设置每日研究主题：{daily_topic}\n{ack}"
     if first_group_event:
         ack = "当前请求已进入 LabCanvas 队列。\n\n" + labagent_welcome_message()
+        if daily_topic:
+            ack = f"已设置每日研究主题：{daily_topic}\n\n{ack}"
         mark_inline_topic_prompt(history_db, chat)
     return {
         "duplicate": not appended,
@@ -163,7 +179,7 @@ def canonical_chat_name(event: dict[str, Any]) -> str:
 
 def event_transport_channel(event: dict[str, Any]) -> str:
     value = str(event.get("transport_channel") or "wecom_bot_websocket").strip().casefold()
-    if value not in {"wecom_bot_websocket", "wecom_cli"}:
+    if value not in {"wecom_bot_websocket", "wecom_cli", "wecom_gui"}:
         raise ValueError(f"unsupported WeCom transport channel: {value}")
     return value
 
@@ -263,6 +279,7 @@ Return one strict JSON object and no prose:
   "response": "natural direct reply only when worker_needed is false",
   "task": "complete worker instruction when worker_needed is true",
   "ack": "short natural acknowledgement for queued work",
+  "daily_topic": "persistent topic only when the current message explicitly requests recurring daily research, otherwise empty",
   "public_publish_allowed": false
 }}
 
@@ -279,6 +296,9 @@ Rules:
 - Do not authorize payment, purchase, deletion, credential changes, device takeover, bypassing access controls, or another irreversible action from group context.
 - Preserve existing explicit approval gates for any sensitive action that remains within scope.
 - Preserve the whole current request; do not shrink it to one keyword.
+- The task field is advisory planning only. Never replace the user's wording with a new factual assumption, a mandatory clarification, or a refusal to investigate an uncertain name. The worker receives the exact message and owns evidence gathering.
+- When a scientific name or identifier may contain OCR, speech, capitalization, or character ambiguity, route it to research. Tell the worker to search plausible candidates and authoritative sources before asking the user to clarify.
+- Set daily_topic only for an explicit recurring/daily research request. Extract a concise durable topic rather than the whole command.
 - Make the direct response natural and concise, not a fixed template.
 
 Sender authorization role: {event.get('authorization_role') or 'unknown'}
@@ -332,12 +352,14 @@ Recent same-chat context:
     if not worker_needed and not response:
         worker_needed = True
     task_text = str(payload.get("task") or "").strip() or request
+    daily_topic = " ".join(str(payload.get("daily_topic") or "").split())[:1000]
     return {
         "worker_needed": worker_needed,
         "route_kind": route_kind,
         "response": response,
         "task": task_text,
         "ack": sanitize_chat_response(payload.get("ack")),
+        "daily_topic": daily_topic,
         "public_publish_allowed": False,
     }
 
@@ -349,6 +371,7 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         "response": "",
         "task": request,
         "ack": "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。",
+        "daily_topic": "",
         "public_publish_allowed": False,
     }
 
@@ -367,7 +390,11 @@ def build_task(
     task = {
         "id": f"wecom-{now.strftime('%Y%m%d%H%M%S')}-{short_hash(message_id)}",
         "chat": chat,
-        "request": str(route.get("task") or request).strip(),
+        # The exact transport message remains authoritative. Router prose is
+        # useful as an advisory plan, but must never silently replace intent.
+        "request": request.strip(),
+        "original_request": request.strip(),
+        "route_plan": str(route.get("task") or "").strip(),
         "status": "pending",
         "created_at": now.isoformat(timespec="seconds"),
         "expires_at": (now + timedelta(seconds=int(os.environ.get("WECOM_PENDING_TTL_SECONDS", "3600")))).isoformat(timespec="seconds"),
@@ -396,6 +423,8 @@ def build_task(
             "transport_channel": transport_channel,
             "sender_authorization_role": str(event.get("authorization_role") or "unknown"),
             "labagent_scope": "research_drawing_and_design_without_publication",
+            "daily_topic": str(route.get("daily_topic") or ""),
+            "worker_plan": str(route.get("task") or "").strip(),
         },
         "instruction_contract": {
             "current_request_authoritative": True,
@@ -407,6 +436,9 @@ def build_task(
             "irreversible_actions_require_current_message_intent": True,
             "dangerous_requests_use_agent_soft_filter": True,
             "public_video_publication_forbidden": True,
+            "router_plan_is_advisory": True,
+            "resolve_uncertain_entities_with_evidence_before_clarifying": True,
+            "research_requests_use_live_web_search": True,
         },
         "execution_contract": {
             "transport_role": "message_transport_only",

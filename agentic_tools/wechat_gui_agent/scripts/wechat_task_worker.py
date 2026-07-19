@@ -1033,6 +1033,15 @@ def send_errors_indicate_blank_title_guard(errors: list[str]) -> bool:
     return False
 
 
+def send_errors_indicate_gui_compose_verification(errors: list[str]) -> bool:
+    text = "\n".join(str(error) for error in errors).lower()
+    return (
+        "wecom_gui_compose_unverified" in text
+        or "wecom composer did not contain the exact unicode message" in text
+        or "wecom did not compose the exact staged artifact" in text
+    )
+
+
 def send_errors_indicate_deferable(errors: list[str]) -> bool:
     return (
         send_errors_indicate_wechat_locked(errors)
@@ -1040,6 +1049,7 @@ def send_errors_indicate_deferable(errors: list[str]) -> bool:
         or send_errors_indicate_gui_timeout(errors)
         or send_errors_indicate_wechat_entry_required(errors)
         or send_errors_indicate_blank_title_guard(errors)
+        or send_errors_indicate_gui_compose_verification(errors)
     )
 
 
@@ -1052,6 +1062,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
         return "wechat_entry_required"
     if send_errors_indicate_blank_title_guard(errors):
         return "title_guard_blank"
+    if send_errors_indicate_gui_compose_verification(errors):
+        return "gui_compose_verification"
     return "wechat_locked"
 
 
@@ -1277,6 +1289,17 @@ def wecom_transport_settings(task: dict[str, Any] | None = None) -> tuple[str, s
         token = str(config.get("local_api_token") or "").strip()
         if not token:
             raise RuntimeError("WeCom CLI local API token is missing")
+        return endpoint, token
+    if transport_channel == "wecom_gui":
+        config_path = ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom_gui_bridge.local.json"
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"WeCom GUI transport config is unavailable: {type(exc).__name__}") from exc
+        endpoint = f"http://127.0.0.1:{int(config.get('local_api_port') or 19580)}"
+        token = str(config.get("local_api_token") or "").strip()
+        if not token:
+            raise RuntimeError("WeCom GUI local API token is missing")
         return endpoint, token
     if transport_channel != "wecom_bot_websocket":
         raise RuntimeError(f"Unsupported WeCom transport channel: {transport_channel}")
@@ -2562,6 +2585,18 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
             if chat_filter and str(task.get("chat") or "") != chat_filter:
                 continue
             status = str(task.get("status") or "")
+            if status in {"send_failed", SEND_DEFERRED_LOCKED_STATUS, SEND_DEFERRED_ARTIFACT_STATUS, SEND_RETRYING_STATUS}:
+                superseding = newer_task_superseding_deferred_confirmation(task, tasks)
+                if superseding is not None:
+                    task["status"] = "canceled_superseded"
+                    task["superseded_at"] = now_text
+                    task["superseded_by"] = str(superseding.get("id") or "")
+                    task["superseded_reason"] = "newer_same_chat_context_answered_confirmation"
+                    task.pop("send_errors", None)
+                    task.pop("send_deferred_reason", None)
+                    tasks[index] = task
+                    changed = True
+                    continue
             if status == "send_failed":
                 if not failed_send_retryable(task, now):
                     continue
@@ -2605,6 +2640,36 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
         if changed:
             write_tasks(path, tasks)
         return None
+
+
+def newer_task_superseding_deferred_confirmation(
+    task: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Return a newer same-chat task that makes an unsent question obsolete."""
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    if not str(result.get("confirmation") or "").strip() or result.get("files"):
+        return None
+    chat = str(task.get("chat") or "")
+    created = parse_iso_datetime(str(task.get("created_at") or ""))
+    if not chat or created is None:
+        return None
+    newer: list[tuple[datetime, dict[str, Any]]] = []
+    for candidate in tasks:
+        if candidate is task or str(candidate.get("chat") or "") != chat:
+            continue
+        candidate_source = candidate.get("source") if isinstance(candidate.get("source"), dict) else {}
+        if str(candidate_source.get("kind") or "").startswith("scheduled_"):
+            continue
+        if str(candidate_source.get("authorization_role") or "") == "system_safe_read_only":
+            continue
+        candidate_created = parse_iso_datetime(str(candidate.get("created_at") or ""))
+        if candidate_created is None or candidate_created <= created:
+            continue
+        if str(candidate.get("status") or "") in {"canceled", "canceled_superseded", "expired_stale"}:
+            continue
+        newer.append((candidate_created, candidate))
+    return max(newer, key=lambda item: item[0])[1] if newer else None
 
 
 def deferred_send_priority(task: dict[str, Any]) -> int:
@@ -2803,6 +2868,16 @@ def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
         if not last:
             return True
         return (now - last).total_seconds() >= backoff
+    if reason == "gui_compose_verification":
+        backoff = int(os.environ.get("WECOM_GUI_COMPOSE_RETRY_BACKOFF_SECONDS", "5"))
+        if backoff <= 0:
+            return True
+        last = parse_iso_datetime(
+            str(task.get("last_send_attempt_at") or task.get("resent_at") or task.get("completed_at") or "")
+        )
+        if not last:
+            return True
+        return (now - last).total_seconds() >= backoff
     backoff = int(os.environ.get("WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS", DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS))
     if backoff <= 0:
         return True
@@ -2834,7 +2909,9 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
     if not send_errors_indicate_deferable(errors) and not verified_publish_send_completion(task):
         return False
     reason = send_deferred_reason_from_errors(errors)
-    if verified_publish_send_completion(task):
+    if reason == "gui_compose_verification":
+        max_retries = int(os.environ.get("WECOM_GUI_COMPOSE_MAX_RETRIES", "2"))
+    elif verified_publish_send_completion(task):
         max_retries = int(
             os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", str(DEFAULT_VERIFIED_PUBLISH_SEND_MAX_RETRIES))
         )
@@ -2882,9 +2959,17 @@ def stale_transport_send_failure_recoverable(task: dict[str, Any], now: datetime
 
 def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
     reason = str(task.get("send_deferred_reason") or "")
-    if reason not in {"gui_send_busy", "gui_send_timeout", "wechat_entry_required", "title_guard_blank"}:
+    if reason not in {
+        "gui_send_busy",
+        "gui_send_timeout",
+        "wechat_entry_required",
+        "title_guard_blank",
+        "gui_compose_verification",
+    }:
         return False
-    if verified_publish_send_completion(task):
+    if reason == "gui_compose_verification":
+        max_retries = int(os.environ.get("WECOM_GUI_COMPOSE_MAX_RETRIES", "2"))
+    elif verified_publish_send_completion(task):
         max_retries = int(
             os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", str(DEFAULT_VERIFIED_PUBLISH_SEND_MAX_RETRIES))
         )
@@ -2934,9 +3019,15 @@ def process_alive(pid: int) -> bool:
 
 def parse_iso_datetime(value: str) -> datetime | None:
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except (TypeError, ValueError):
         return None
+    if parsed.tzinfo is not None:
+        # Queue producers may emit explicit offsets while older producers use
+        # local naive timestamps. Normalize both to local wall-clock time so a
+        # mixed queue cannot crash comparisons or the long-running worker.
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
 
 
 def worker_identity() -> str:
@@ -3097,6 +3188,7 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
         "chat": str(task.get("chat") or ""),
         "status": str(task.get("status") or ""),
         "current_request": sanitize_worker_agent_text(task_focus_text(task), max_len=7000),
+        "router_advisory": sanitize_worker_agent_text(task.get("route_plan"), max_len=3000),
         "source": {
             key: source.get(key)
             for key in (
@@ -3379,6 +3471,9 @@ Handle the task using available local files/tools. Save downloaded or generated 
 WeChat is only the message transport: it receives user messages and returns safe files/messages. Official WeCom tasks follow the same transport-only contract. Backend execution belongs to the routine orchestrator and the selected per-chat worker agent session.
 You are being resumed by the central routine orchestrator. Treat the routine contract and orchestrator handoff as the execution center: inspect current stage, use mature routine entrypoints first, repair blockers, and only invent a new approach if no routine stage applies.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
+The exact current source message and newer same-chat messages are authoritative. A router-generated plan is advisory only: it may classify and suggest tools, but it cannot replace user wording, insert a factual assumption, or force clarification. Combine consecutive fragments from the same conversation before deciding what the user means.
+When a scientific name, proper noun, or identifier looks misspelled or may contain OCR, speech, capitalization, or character ambiguity, do not repeatedly reject it. First use live web search and context to test plausible spellings and common character confusions such as `l/1/I` and `O/0`. Verify candidates with authoritative sources. If one candidate is strongly supported, briefly disclose the inference and proceed. Ask one concise discriminating question only if multiple plausible candidates remain after evidence gathering.
+For protein/gene research, verify the official symbol, full name, species, and stable identifiers in HGNC, NCBI Gene, UniProt, or equivalent authoritative databases, then corroborate tumor/pathway claims with primary peer-reviewed literature. For other current research, browse primary or official sources. Never claim web research if no source was actually opened.
 Quality matters more than visible activity. Do not send low-value reports, screenshots, thumbnails, or boilerplate progress. For ordinary links, channel videos, webpage cards, and shared files, first try hard to read/watch/open the actual source or a reliable transcript/comment/metadata capture. Then send a short, useful human answer. If you only saw a title/card/verification page, say that limitation plainly and do not pretend you read the source.
 Do not force a rigid response template. Use whatever concise shape fits the actual material and the chat's purpose. Avoid repetitive acknowledgements, "saved files" chatter, and generic summaries that could apply to any page.
 For Shipinhao/Finder cards, use the deterministic Shipinhao resolver rather than improvising media/search commands. Always read `task.preflight.shipinhao_media_transcript.agent_context_path` when present. Summarize actual speech only when its status is `transcribed` or `cached`; otherwise follow the context's evidence boundary and use comments/card metadata only as auxiliary evidence. Do not expose signed media URLs, download diagnostics, model-loading logs, or raw parser fields in the chat reply.
@@ -6534,8 +6629,10 @@ def task_focus_text(task: dict[str, Any]) -> str:
     if match:
         focused = match.group("body").strip()
 
-    source_local_id = int_or_none((task.get("source") or {}).get("local_id")) if isinstance(task.get("source"), dict) else None
-    source_text = ""
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    source_local_id = int_or_none(source.get("local_id"))
+    source_create_time = int_or_none(source.get("create_time"))
+    source_text = collapse_context_text(task.get("original_request"), max_len=3000)
     if source_local_id is not None:
         for row in task.get("context") or []:
             if not isinstance(row, dict):
@@ -6544,8 +6641,21 @@ def task_focus_text(task: dict[str, Any]) -> str:
                 source_text = str(row.get("content") or "").strip()
                 break
 
+    # WeCom GUI source IDs are transport-ledger hashes rather than mirror row
+    # IDs. Match by source timestamp for legacy tasks created before the exact
+    # original request was stored separately from the router's advisory plan.
+    if not source_text and source_create_time is not None and str(source.get("transport") or "") == "wecom":
+        for row in reversed(task.get("context") or []):
+            if not isinstance(row, dict) or bool(row.get("is_self")):
+                continue
+            if int_or_none(row.get("create_time")) == source_create_time:
+                source_text = str(row.get("content") or "").strip()
+                break
+
     parts = []
-    for value in (focused, source_text):
+    authoritative_wecom_source = bool(source_text and str(source.get("transport") or "") == "wecom")
+    values = (source_text,) if authoritative_wecom_source else (focused, source_text)
+    for value in values:
         text = collapse_context_text(value, max_len=3000)
         if text and text not in parts:
             parts.append(text)

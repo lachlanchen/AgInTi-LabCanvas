@@ -18,7 +18,14 @@ import uuid
 from typing import Any
 
 from file_lock import exclusive_lock
-from wechat_codex_sessions import DEFAULT_REGISTRY, ROOT, resolve_codex_binary, run_codex_session, session_key
+from wechat_codex_sessions import (
+    DEFAULT_REGISTRY,
+    ROOT,
+    resolve_codex_binary,
+    run_codex_session,
+    run_process_group,
+    session_key,
+)
 
 
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
@@ -458,14 +465,12 @@ def run_claude_session(
         backend_config=backend_config,
     )
     try:
-        proc = subprocess.run(
+        proc = run_process_group(
             command,
             input=prompt,
             cwd=workdir,
-            capture_output=True,
-            text=True,
-            check=False,
             timeout=timeout_seconds,
+            env=dict(os.environ),
         )
     except subprocess.TimeoutExpired:
         return {
@@ -555,14 +560,12 @@ def run_aginti_session(
         stdin_text = None
     invocation_started_at = datetime.now().timestamp()
     try:
-        proc = subprocess.run(
+        proc = run_process_group(
             run_command,
             input=stdin_text,
             cwd=aginti_workdir,
-            capture_output=True,
-            text=True,
-            check=False,
             timeout=timeout_seconds,
+            env=dict(os.environ),
         )
     except subprocess.TimeoutExpired:
         return {

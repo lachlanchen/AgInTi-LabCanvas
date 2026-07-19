@@ -23,6 +23,7 @@ EXE_UNIX="$PREFIX/drive_c/Program Files (x86)/WXWork/WXWork.exe"
 EXE_WINDOWS='C:\Program Files (x86)\WXWork\WXWork.exe'
 NOVNC_URL="http://127.0.0.1:${NOVNC_PORT}/vnc.html?host=127.0.0.1&port=${NOVNC_PORT}&autoconnect=1&resize=scale"
 APP_PATTERN='C:\\Program Files \(x86\)\\WXWork\\WXWork.exe'
+LAYERED_NATIVE_GEOMETRY="${WECOM_CLIENT_LAYERED_NATIVE_GEOMETRY:-1}"
 
 mkdir -p "$PRIVATE" "$LOG_DIR"
 
@@ -109,7 +110,13 @@ fit_client_window() {
   read -r screen_width screen_height < <(
     env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool getdisplaygeometry
   )
-  if (( width >= 600 && height >= 500 )); then
+  if (( width >= 600 && height >= 500 )) && [[ "$LAYERED_NATIVE_GEOMETRY" == "1" ]]; then
+    # WeCom under Wine renders one logical window through several synchronized
+    # top-level layers. Moving or resizing only the named layer separates the
+    # content from its frame. Keep the application's native geometry and let
+    # the full noVNC client scale the complete X desktop instead.
+    return 0
+  elif (( width >= 600 && height >= 500 )); then
     env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool \
       windowmap "$window_id" \
       windowmove --sync "$window_id" 0 0 \

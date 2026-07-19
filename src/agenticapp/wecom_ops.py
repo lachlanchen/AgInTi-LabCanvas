@@ -26,6 +26,8 @@ EXTERNAL_GUARD = TOOL_ROOT / "scripts" / "wecom_cli_transport_guard.py"
 WECOM_WORKER = TOOL_ROOT / "scripts" / "wecom_worker_loop.sh"
 EXTERNAL_CONFIG = PRIVATE / "wecom_cli_bridge.local.json"
 EXTERNAL_RUNTIME = PRIVATE / "wecom-cli-runtime"
+GUI_BRIDGE = TOOL_ROOT / "scripts" / "wecom_gui_bridge.py"
+GUI_CONFIG = PRIVATE / "wecom_gui_bridge.local.json"
 DEFAULT_API_URL = "http://127.0.0.1:19578"
 
 
@@ -77,6 +79,24 @@ def add_wecom_parser(subparsers: argparse._SubParsersAction) -> None:
     external.add_argument("--force", action="store_true")
     external.add_argument("--json", action="store_true")
     external.set_defaults(func=cmd_external)
+
+    gui = nested.add_parser("gui", help="Control the allowlisted external-group WeCom desktop relay.")
+    gui.add_argument(
+        "action",
+        nargs="?",
+        default="status",
+        choices=["init", "status", "once", "chats", "messages", "send", "restart"],
+    )
+    gui.add_argument("--chat", default="")
+    gui.add_argument("--message", default="")
+    gui.add_argument("--file", action="append", dest="files", default=[])
+    gui.add_argument("--after", type=int, default=0)
+    gui.add_argument("--limit", type=int, default=100)
+    gui.add_argument("--task-id", default="manual")
+    gui.add_argument("--live", action="store_true")
+    gui.add_argument("--force", action="store_true")
+    gui.add_argument("--json", action="store_true")
+    gui.set_defaults(func=cmd_gui)
 
 
 def cmd_init_config(args: argparse.Namespace) -> int:
@@ -367,6 +387,58 @@ def cmd_external(args: argparse.Namespace) -> int:
         payload = {
             "ok": False,
             "error": "external WeCom command returned invalid JSON",
+            "stdout_tail": proc.stdout[-1000:],
+            "stderr_tail": proc.stderr[-1000:],
+        }
+    print_payload(payload, args.json)
+    return 0 if proc.returncode == 0 and payload.get("ok") else 1
+
+
+def cmd_gui(args: argparse.Namespace) -> int:
+    if args.action == "restart":
+        proc = subprocess.run(
+            [str(SUPERVISOR), "gui-restart"],
+            cwd=PACKAGE_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        payload = {"ok": proc.returncode == 0, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()}
+        print_payload(payload, args.json)
+        return 0 if payload["ok"] else 1
+
+    command = [sys.executable, str(GUI_BRIDGE), "--config", str(GUI_CONFIG), args.action]
+    if args.action == "init":
+        if args.chat:
+            command.extend(["--chat", args.chat])
+        if args.force:
+            command.append("--force")
+    elif args.action in {"messages", "send"}:
+        if not args.chat:
+            payload = {"ok": False, "error": f"--chat is required for wecom gui {args.action}"}
+            print_payload(payload, args.json)
+            return 2
+        command.extend(["--chat", args.chat])
+        if args.action == "messages":
+            command.extend(["--after", str(max(0, args.after)), "--limit", str(args.limit)])
+        if args.action == "send":
+            if not args.message.strip() and not args.files:
+                payload = {"ok": False, "error": "wecom gui send requires --message and/or --file"}
+                print_payload(payload, args.json)
+                return 2
+            command.extend(["--message", args.message, "--task-id", args.task_id])
+            for path in args.files:
+                command.extend(["--file", str(Path(path).expanduser())])
+            if args.live:
+                command.append("--live")
+    command.append("--json")
+    proc = subprocess.run(command, cwd=PACKAGE_ROOT, capture_output=True, text=True, check=False)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "error": "WeCom GUI command returned invalid JSON",
             "stdout_tail": proc.stdout[-1000:],
             "stderr_tail": proc.stderr[-1000:],
         }

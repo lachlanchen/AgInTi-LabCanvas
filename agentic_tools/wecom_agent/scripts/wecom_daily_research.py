@@ -33,6 +33,7 @@ DEFAULT_QUEUE = PRIVATE / "wecom_task_queue.jsonl"
 DEFAULT_STATE_DB = PRIVATE / "wecom_messages.local.sqlite"
 DEFAULT_API_URL = "http://127.0.0.1:19578"
 DEFAULT_CLI_CONFIG = PRIVATE / "wecom_cli_bridge.local.json"
+DEFAULT_GUI_CONFIG = PRIVATE / "wecom_gui_bridge.local.json"
 DAILY_DIRECTIVE = re.compile(r"^\s*#daily(?:\s+|$)(.*)$", re.IGNORECASE | re.DOTALL)
 STATUS_WORDS = {"status", "show", "list", "状态", "狀態", "查看", "列表"}
 OFF_WORDS = {"off", "clear", "remove", "取消", "清除", "关闭", "關閉"}
@@ -559,6 +560,13 @@ def send_topic_prompt(
         except (OSError, json.JSONDecodeError) as exc:
             return {"ok": False, "error": f"WeCom CLI delivery config unavailable: {type(exc).__name__}"}
         api_url = f"http://127.0.0.1:{int(config.get('local_api_port') or 19579)}"
+        token = str(config.get("local_api_token") or "").strip()
+    elif transport_channel == "wecom_gui":
+        try:
+            config = json.loads(DEFAULT_GUI_CONFIG.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"ok": False, "error": f"WeCom GUI delivery config unavailable: {type(exc).__name__}"}
+        api_url = f"http://127.0.0.1:{int(config.get('local_api_port') or 19580)}"
         token = str(config.get("local_api_token") or "").strip()
     elif transport_channel == "wecom_bot_websocket":
         api_url = os.environ.get("WECOM_LOCAL_API_URL", DEFAULT_API_URL).rstrip("/")

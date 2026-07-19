@@ -102,6 +102,42 @@ For the restricted LabAgent research group:
 - Daily reports return a concise digest and requested Markdown/PDF or editable
   figure artifacts through the source-scoped WeCom send gate.
 
+### External WeCom GUI Relay
+
+When Tencent does not grant the tenant's official external-group `msg`
+permission, `wecom_gui` may bridge one explicitly allowlisted group through the
+isolated WeCom Wine client. It is still a WeCom transport and must never reuse
+personal-WeChat database, media, search, sender, or fallback paths.
+
+- Read through the durable cursor interface, not ad hoc screenshots from a
+  worker: `GET /v1/messages?chat_id=gui:<name>&after=<cursor>&limit=<n>`.
+- Send through the authenticated `/v1/send` interface with a stable `task_id`.
+  Combined text and files remain in one serialized GUI transaction.
+- Seed the first visible viewport and do not replay it after restart. Refuse an
+  ambiguous viewport rather than converting old OCR into new tasks. Move the
+  message pane to its live tail before each poll.
+- Read each visible inbound text bubble with WeCom's native Copy command and
+  Wine `CF_UNICODETEXT`. Use OCR only to locate the bubble or as a bounded
+  fallback; never replace a successful native copy with OCR output.
+- Treat native context-menu cleanup as part of the read transaction. Dismiss
+  the popup after every copy attempt and again before outbound compose so a
+  stale overlay cannot consume later paste or Send clicks.
+- Preserve exact text in `request` and `original_request`. A route-agent plan is
+  advisory and must not rewrite names, capitalization, or digits. For an
+  uncertain scientific identifier, the worker checks capitalization and
+  letter/digit variants against authoritative databases and primary literature
+  before deciding whether one concise clarification is actually necessary.
+- Match one exact configured chat title. Search is disabled by default.
+- Verify Unicode composer readback before a text send. For files, require the
+  exact filename in the composer and sent history before updating delivery
+  state. Keep select/paste or select/copy in one xdotool key command; split key
+  processes are not reliable under Wine.
+- Keep GUI config, cursors, events, screenshots, and delivery ledgers under
+  ignored `agentic_tools/wecom_agent/.private/` paths.
+
+The stable interface and recovery commands are documented in
+`agentic_tools/wecom_agent/docs/GUI_RELAY_INTERFACE.md`.
+
 ## Non-Negotiable Invariants
 
 - One chat or DM equals one private config, one state file, and one exact send
@@ -477,6 +513,10 @@ evidence for local artifacts, not chat-facing content.
 - Keep fast route/chat timeouts bounded (25 seconds by default). A slow primary
   must yield to the centralized fallback instead of holding the monitor lane for
   minutes. Worker and long-job probe timeouts remain separate and longer.
+- Launch Codex, Claude, and AgInTi agent turns in dedicated process groups. On
+  timeout, terminate and reap the entire group, including native CLI children;
+  killing only a Node/Python wrapper can leave an inherited output pipe open
+  and prevent the worker from reaching its fallback policy.
 - Do not confuse agent-turn timeout fallback with long browser or generation
   monitoring. Xiaoyunque, LazyEdit, AutoPublish, CAD, PCB, and file-download
   jobs should persist queue/probe state, status, and artifacts, then continue or

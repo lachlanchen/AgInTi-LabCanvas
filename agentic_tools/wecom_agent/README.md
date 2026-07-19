@@ -1,8 +1,10 @@
 # LabCanvas WeCom Bridge
 
-This sidecar exposes two separate official WeCom transports. The AI Bot
-WebSocket receives bot DMs and internal-group events. Tencent's `wecom-cli`
-message interface can poll explicitly authorized external WeCom groups. Both
+This sidecar exposes two official WeCom transports and one isolated desktop
+fallback. The AI Bot WebSocket receives bot DMs and internal-group events.
+Tencent's `wecom-cli` message interface can poll authorized external groups.
+When the tenant does not grant that capability, the allowlisted GUI relay can
+bridge an external group through the owner's WeCom Wine client. All three
 preserve one isolated agent session per chat and use the LabCanvas routine
 orchestrator.
 
@@ -80,8 +82,7 @@ agentic_tools/wecom_agent/scripts/wecom_android_setup.sh wait-install
 ```
 
 It never bypasses a secure keyguard and never uses personal WeChat as ingress.
-The Android client is setup-only; the running transports remain the official
-AI Bot WebSocket and official `wecom-cli` bridge.
+The Android client remains setup-only.
 
 On Linux, the official download page does not provide a native desktop build.
 The optional enrollment helper installs Tencent's official Windows client in a
@@ -95,9 +96,26 @@ PYTHONPATH=src python -m agenticapp wecom client status --json
 
 Its default desktop is `:92`, with VNC `5992` and noVNC `6192`. Override these
 with `WECOM_CLIENT_DISPLAY`, `WECOM_CLIENT_VNC_PORT`, and
-`WECOM_CLIENT_NOVNC_PORT`. The Wine client exists only for official login and
-the admin console's `Forward to chat` action. It is not an ingress, database,
-media source, or delivery fallback for either WeCom transport.
+`WECOM_CLIENT_NOVNC_PORT`. Outside GUI-relay mode, the Wine client is only for
+official login and the admin console's `Forward to chat` action. It is never a
+personal-WeChat ingress, database, media source, or delivery fallback. It can
+host the separate allowlisted WeCom GUI relay when the tenant blocks
+external-group API access.
+
+Configure that relay only for an exact external group:
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom gui init --chat LabAgent
+PYTHONPATH=src python -m agenticapp wecom gui restart --json
+PYTHONPATH=src python -m agenticapp wecom gui status --json
+PYTHONPATH=src python -m agenticapp wecom gui chats --json
+PYTHONPATH=src python -m agenticapp wecom gui messages --chat LabAgent --after 0 --limit 100 --json
+```
+
+Text/file sends are dry runs unless `--live` is present. Always supply a stable
+`--task-id` so retrying the exact payload cannot duplicate it. The full local
+API and delivery contract is in
+[`docs/GUI_RELAY_INTERFACE.md`](docs/GUI_RELAY_INTERFACE.md).
 
 The CLI bridge admits one exact configured group-name match, stores raw IDs and
 message fingerprints privately, processes only the latest recent message on
@@ -169,12 +187,29 @@ Authorized external WeCom group
   -> the same private queue and isolated agent session
   -> separate localhost CLI delivery API
   -> official wecom-cli text send
+
+Allowlisted external WeCom group without CLI permission
+  -> isolated WeCom Wine client on :92
+  -> scripts/wecom_gui_bridge.py native per-bubble Copy + cursor ledger
+  -> scripts/wecom_ingest.py
+  -> the same private queue and isolated agent session
+  -> authenticated localhost GUI delivery API
+  -> verified Unicode text/file send to the exact group
 ```
+
+The GUI relay reads visible text with WeCom's native Copy command and the Wine
+Unicode clipboard. OCR is only a bubble locator and bounded fallback. It never
+rewrites the copied request; the route agent's plan is advisory, while the
+worker receives the exact original text and may normalize identifiers only
+after checking authoritative evidence. Native-copy context menus are closed
+before the GUI lock is released and outbound compose clears stale transient UI
+before pasting, so reads cannot block later verified delivery.
 
 The tmux stack has `gateway`, `worker`, and `daily` windows. An `external`
 window is added whenever the external bridge is enabled. Before authorization
 it maintains the official QR; afterward it runs the bridge and reports
-`bridge_running` through `wecom external status`.
+`bridge_running` through `wecom external status`. An `external-gui` window is
+added when `wecom_gui_bridge.local.json` is enabled.
 The scheduler only reads local private SQLite state while idle; model quota is
 spent only when a due report is enqueued and executed by the worker.
 

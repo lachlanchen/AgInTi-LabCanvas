@@ -261,7 +261,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
         )
         with (
             mock.patch.object(backend, "command_available", return_value=True),
-            mock.patch.object(backend.subprocess, "run", return_value=completed) as run,
+            mock.patch.object(backend, "run_process_group", return_value=completed) as run,
         ):
             result = backend.run_aginti_session(
                 "original prompt",
@@ -448,7 +448,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
 
     def test_claude_backend_uses_stdin_and_readonly_tool_block(self) -> None:
         backend = load_backend()
-        original_run = backend.subprocess.run
+        original_run = backend.run_process_group
         original_registry = backend.CLAUDE_REGISTRY
         original_session_dir = backend.CLAUDE_SESSION_DIR
         calls: list[dict[str, object]] = []
@@ -461,7 +461,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
                     calls.append({"command": command, **kwargs})
                     return subprocess.CompletedProcess(command, 0, "CHAT: ok\n", "")
 
-                backend.subprocess.run = fake_run
+                backend.run_process_group = fake_run
                 result = backend.run_agent_session(
                     "long prompt body",
                     backend="claude",
@@ -475,7 +475,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
                     backend_config={"bin": "claude", "permission_mode": "bypassPermissions", "timeout_seconds": 77},
                 )
         finally:
-            backend.subprocess.run = original_run
+            backend.run_process_group = original_run
             backend.CLAUDE_REGISTRY = original_registry
             backend.CLAUDE_SESSION_DIR = original_session_dir
 

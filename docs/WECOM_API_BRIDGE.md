@@ -1,18 +1,20 @@
 # WeCom API Bridge
 
-LabCanvas has two separate official WeCom transports. The AI Bot WebSocket
-handles bot DMs and internal groups. Tencent's `wecom-cli msg` interface can
-poll an explicitly authorized external WeCom group when the tenant grants its
-message permission. Neither route reads personal WeChat state.
+LabCanvas has two official WeCom transports and one isolated desktop fallback.
+The AI Bot WebSocket handles bot DMs and internal groups. Tencent's
+`wecom-cli msg` interface can poll an authorized external group when the tenant grants its
+message permission. When that permission is unavailable, an allowlisted GUI
+relay can bridge an external group through the owner's WeCom desktop client.
+None of these routes reads personal WeChat state.
 
 ## What It Can Reach
 
-| Conversation | Official bridge |
+| Conversation | Transport |
 | --- | --- |
-| WeCom AI bot direct message | Yes |
-| Internal WeCom group containing the bot | Yes; group delivery normally follows WeCom's bot mention rules |
-| Existing personal WeChat group | No; keep using `labcanvas wechat` |
-| External WeCom group | Conditional: separate `wecom-cli` QR authorization and exact-name allowlist required |
+| WeCom AI bot direct message | Official AI Bot WebSocket |
+| Internal WeCom group containing the bot | Official AI Bot WebSocket; normal mention rules apply |
+| External WeCom group | Official `wecom-cli msg` when granted; otherwise exact-name GUI relay |
+| Existing personal WeChat group | Not available here; keep using `labcanvas wechat` |
 
 The transports never fall back into each other. In particular, failure to read
 an external WeCom group must not trigger personal-WeChat database or GUI access.
@@ -128,16 +130,51 @@ VNC/noVNC ports to localhost. The default viewer is:
 http://127.0.0.1:6192/vnc.html?host=127.0.0.1&port=6192&autoconnect=1&resize=scale
 ```
 
-This client is enrollment-only. It may log in and forward the intelligent bot
-to an internal group, but all message processing still enters through
-`wecom_bot_websocket` or `wecom_cli`; it never reads personal-WeChat state.
-The full noVNC client scales the entire remote canvas, and a persistent autofit
-guard keeps the login QR centered before authentication and expands the main
-WeCom window to the X display after login. Reapply it manually with
-`labcanvas wecom client fit --json` if needed.
+The client supports official login/enrollment and, when explicitly configured,
+the external-group GUI relay described below. It never reads personal-WeChat
+state.
+The full noVNC client scales the entire remote canvas. A persistent guard keeps
+the login QR centered before authentication. After login, WeCom under Wine uses
+several synchronized top-level layers, so the guard preserves its native main
+window geometry; force-resizing one layer separates the content from its frame.
+Reapply the safe fit check with `labcanvas wecom client fit --json` if needed.
 
-The bridge resolves `AgentTest` by one exact `chat_name` match. Zero or multiple
-matches fail closed. On first binding it seeds old history and processes only
+## External GUI Relay
+
+Use this owner-account fallback only when the official CLI probe confirms that
+the tenant does not grant external-group `msg` permission:
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom gui init --chat LabAgent
+PYTHONPATH=src python -m agenticapp wecom gui restart --json
+PYTHONPATH=src python -m agenticapp wecom gui status --json
+PYTHONPATH=src python -m agenticapp wecom gui chats --json
+PYTHONPATH=src python -m agenticapp wecom gui messages --chat LabAgent --after 0 --limit 100 --json
+```
+
+The relay watches only exact names in its ignored allowlist. It seeds the
+visible history on first run, records later inbound messages in a cursor-based
+private SQLite ledger, and sends them into `wecom_ingest.py` with transport
+channel `wecom_gui`. The same per-chat agent and worker routines then answer the
+question or deliver a daily report to that exact group.
+
+Text and artifacts use one authenticated localhost interface. `task_id` plus
+the exact payload provides retry-safe duplicate suppression:
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom gui send \
+  --chat LabAgent --message 'The report is ready.' \
+  --file output/report.pdf --task-id report-20260719 --live --json
+```
+
+Unicode text is read back from the composer before Send. Files are staged one
+at a time and recorded only after the exact filename is visible in both the
+composer and sent history. The detailed CLI, HTTP schemas, cursor rules, and
+recovery playbook are in
+[`GUI_RELAY_INTERFACE.md`](../agentic_tools/wecom_agent/docs/GUI_RELAY_INTERFACE.md).
+
+The official CLI bridge resolves `AgentTest` by one exact `chat_name` match.
+Zero or multiple matches fail closed. On first binding it seeds old history and processes only
 the latest recent message, preventing a restart flood. Later polls use private
 fingerprints, a short debounce, bounded batching, and stale-message expiry.
 Incoming attachments are downloaded by exact `media_id` into an ignored,
@@ -209,6 +246,12 @@ transport code does not replace the agent's research judgment.
 - Both channels carry `wecom_transport_channel` through ingress, tasks, daily
   scheduling, and delivery. A CLI-origin task cannot fall back to the AI Bot
   WebSocket or the personal-WeChat sender.
+- The GUI relay uses the same transport field with value `wecom_gui`. It binds
+  only to localhost, authenticates versioned read/send APIs, serializes GUI
+  access, and refuses non-allowlisted group names and repository-external files.
+- GUI cursor reads are monotonic. Text is composer-readback verified; file
+  delivery is composer- and history-verified before the idempotency ledger is
+  updated.
 - The shared LabCanvas routine orchestrator is execution code only. It does not
   read a personal-WeChat database or GUI for a WeCom task; WeCom source media
   and delivery remain bound to the originating WeCom transport and chat.

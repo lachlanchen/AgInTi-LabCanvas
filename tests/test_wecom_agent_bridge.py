@@ -71,6 +71,13 @@ def load_cli_guard():
     )
 
 
+def load_gui_bridge():
+    return load_module(
+        "wecom_gui_bridge_for_tests",
+        ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_gui_bridge.py",
+    )
+
+
 class WeComAgentBridgeTests(unittest.TestCase):
     def sample_event(self, **updates):
         event = {
@@ -209,6 +216,29 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(task["source"]["wecom_transport_channel"], "wecom_cli")
         self.assertEqual(task["execution_contract"]["transport"], "wecom_cli")
         self.assertEqual(task["route"]["transport_channel"], "wecom_cli")
+
+    def test_gui_channel_is_preserved_without_personal_wechat_fallback(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(
+            account_id="external-gui",
+            chat_id="gui:LabAgent",
+            transport_channel="wecom_gui",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(ingest, "record_event"):
+                result = ingest.ingest_event(
+                    event,
+                    queue=root / "queue.jsonl",
+                    history_db=root / "history.sqlite",
+                    route_with_agent=False,
+                )
+            task = json.loads((root / "queue.jsonl").read_text(encoding="utf-8"))
+
+        self.assertTrue(result["queued"])
+        self.assertEqual(task["source"]["wecom_transport_channel"], "wecom_gui")
+        self.assertEqual(task["source"]["wecom_chat_id"], "gui:LabAgent")
+        self.assertTrue(task["chat"].startswith("wecom:external-gui:group:"))
 
     def test_agent_route_can_return_direct_chat_without_queue(self) -> None:
         ingest = load_ingest()
@@ -448,6 +478,39 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(task["route_decision"]["sender_authorization_role"], "group_member")
         self.assertFalse(task["route_decision"]["public_publish_allowed"])
 
+    def test_router_plan_cannot_replace_exact_user_request(self) -> None:
+        ingest = load_ingest()
+        exact = "collal 是一个蛋白，研究它对肿瘤的影响并画信号通路图"
+        route = {
+            "worker_needed": True,
+            "route_kind": "research_or_summary",
+            "response": "",
+            "task": "Do not proceed until the user confirms the spelling.",
+            "ack": "我会先核验名称并调研。",
+            "daily_topic": "",
+            "public_publish_allowed": False,
+        }
+        event = self.sample_event(text=exact, transport_channel="wecom_gui")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(ingest, "route_event", return_value=route), mock.patch.object(
+                ingest,
+                "record_event",
+            ):
+                ingest.ingest_event(
+                    event,
+                    queue=root / "queue.jsonl",
+                    history_db=root / "history.sqlite",
+                    route_with_agent=True,
+                )
+            task = json.loads((root / "queue.jsonl").read_text(encoding="utf-8"))
+
+        self.assertEqual(task["request"], exact)
+        self.assertEqual(task["original_request"], exact)
+        self.assertEqual(task["route_plan"], route["task"])
+        self.assertTrue(task["instruction_contract"]["router_plan_is_advisory"])
+
     def test_worker_uses_wecom_transport_without_resolving_gui_target(self) -> None:
         worker = load_worker()
         task = {
@@ -480,6 +543,48 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         self.assertEqual(endpoint, "http://127.0.0.1:23456")
         self.assertEqual(token, "private-token")
+
+    def test_worker_selects_separate_gui_delivery_endpoint(self) -> None:
+        worker = load_worker()
+        task = {"source": {"transport": "wecom", "wecom_transport_channel": "wecom_gui"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "agentic_tools" / "wecom_agent" / ".private" / "wecom_gui_bridge.local.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({"local_api_port": 23457, "local_api_token": "gui-token"}), encoding="utf-8")
+            with mock.patch.object(worker, "ROOT", root):
+                endpoint, token = worker.wecom_transport_settings(task)
+
+        self.assertEqual(endpoint, "http://127.0.0.1:23457")
+        self.assertEqual(token, "gui-token")
+
+    def test_agent_route_can_enroll_natural_daily_topic(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(text="每天整理类器官最前沿研究", transport_channel="wecom_gui")
+        route = {
+            "worker_needed": True,
+            "route_kind": "research_or_summary",
+            "task": "Prepare a deep organoid frontier review and PDF.",
+            "ack": "我会整理并把 PDF 发回群里。",
+            "daily_topic": "类器官最前沿研究",
+            "public_publish_allowed": False,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "history.sqlite"
+            with mock.patch.object(ingest, "route_event", return_value=route), mock.patch.object(ingest, "record_event"):
+                result = ingest.ingest_event(
+                    event,
+                    queue=root / "queue.jsonl",
+                    history_db=history,
+                    route_with_agent=True,
+                )
+            daily = load_daily()
+            status = daily.daily_status(history)
+
+        self.assertTrue(result["queued"])
+        self.assertIn("类器官最前沿研究", result["ack"])
+        self.assertEqual(status["chats"][0]["topics"], ["类器官最前沿研究"])
 
     def test_worker_preflight_preserves_exact_wecom_media_and_skips_wechat_resolution(self) -> None:
         worker = load_worker()
@@ -534,6 +639,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("autofit-loop", source)
         self.assertIn("xdotool getdisplaygeometry", source)
         self.assertIn("resize=scale", source)
+        self.assertIn("WECOM_CLIENT_LAYERED_NATIVE_GEOMETRY", source)
+        self.assertIn("native geometry", source)
         self.assertNotIn("com.tencent.mm", source)
         self.assertNotIn("wechat_gui_agent", source)
         self.assertNotIn("xwechat_files", source)
@@ -754,6 +861,289 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(returncode, 0)
         self.assertEqual(run.call_args_list[1].args[0][-1], "external-restart")
         self.assertNotEqual(run.call_args_list[1].args[0][-1], "restart")
+
+    def test_gui_tsv_parser_does_not_merge_quoted_rows(self) -> None:
+        bridge = load_gui_bridge()
+        value = (
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            "5\t1\t1\t1\t1\t1\t1\t2\t3\t4\t90\t#daily \"topic\"\n"
+            "5\t1\t1\t1\t2\t1\t1\t8\t3\t4\t90\tnext message\n"
+        )
+
+        rows = bridge.parse_tesseract_tsv(value)
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["text"], '#daily "topic"')
+        self.assertEqual(rows[1]["text"], "next message")
+
+    def test_gui_bubble_regions_isolate_inbound_message_background(self) -> None:
+        bridge = load_gui_bridge()
+        image = bridge.Image.new("RGB", (120, 80), (248, 249, 250))
+        for x in range(10, 90):
+            for y in range(20, 50):
+                image.putpixel((x, y), (228, 231, 235))
+
+        regions = [item for item in bridge.find_color_regions(image, (228, 231, 235), tolerance=8) if item[4] > 300]
+
+        self.assertEqual(regions, [(10, 20, 90, 50, 2400)])
+
+    def test_gui_empty_seed_accepts_first_future_message(self) -> None:
+        bridge = load_gui_bridge()
+
+        messages, overlap = bridge.new_message_suffix([], ["new question"])
+
+        self.assertEqual(messages, ["new question"])
+        self.assertEqual(overlap, 0)
+
+    def test_gui_ocr_prefers_han_result_over_english_hallucination(self) -> None:
+        bridge = load_gui_bridge()
+
+        selected = bridge.choose_ocr_variant("BY LACH", "可以啦")
+
+        self.assertEqual(selected, "可以啦")
+
+    def test_gui_ocr_recovers_digit_bearing_scientific_identifier(self) -> None:
+        bridge = load_gui_bridge()
+
+        selected = bridge.choose_ocr_variant(
+            "collal 帮我调研这个蛋白对肿瘤的影响",
+            "collal 帮我调研这个蛋白对肿瘤的影响",
+            "COL1A1",
+        )
+
+        self.assertEqual(selected, "COL1A1 帮我调研这个蛋白对肿瘤的影响")
+
+    def test_gui_native_bubble_copy_is_exact_text_source(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.set_clipboard = mock.Mock()
+        bridge.run_xdotool = mock.Mock()
+        bridge.key = mock.Mock()
+        bridge.get_clipboard = mock.Mock(return_value="col1a1 是一个蛋白\r\n")
+
+        with mock.patch.object(module.time, "sleep"):
+            copied = bridge.copy_text_bubble(500, 300, probe_id="message-1")
+
+        self.assertEqual(copied, "col1a1 是一个蛋白")
+        bridge.run_xdotool.assert_called_once_with(["mousemove", "500", "300", "click", "3"])
+        self.assertEqual(
+            bridge.key.call_args_list,
+            [mock.call("Home"), mock.call("Return"), mock.call("Escape")],
+        )
+
+    def test_gui_native_bubble_copy_closes_context_menu_after_failure(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.set_clipboard = mock.Mock()
+        bridge.run_xdotool = mock.Mock(side_effect=RuntimeError("copy failed"))
+        bridge.key = mock.Mock()
+
+        with mock.patch.object(module.time, "sleep"):
+            copied = bridge.copy_text_bubble(500, 300, probe_id="message-1")
+
+        self.assertEqual(copied, "")
+        bridge.key.assert_called_once_with("Escape")
+
+    def test_gui_poll_forces_live_tail_before_reading(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.run_xdotool = mock.Mock()
+        window = module.Window("1", 100, 200, 1000, 800)
+
+        with mock.patch.object(module.time, "sleep"):
+            bridge.scroll_chat_to_bottom(window)
+
+        command = bridge.run_xdotool.call_args.args[0]
+        self.assertEqual(command[:3], ["mousemove", "720", "616"])
+        self.assertEqual(command.count("5"), 24)
+
+    def test_gui_clipboard_comparison_normalizes_windows_newlines(self) -> None:
+        bridge = load_gui_bridge()
+
+        self.assertEqual(
+            bridge.canonical_clipboard_text("first\r\nsecond\x00"),
+            "first\nsecond",
+        )
+        self.assertEqual(
+            bridge.canonical_composer_text("first\n\n\n\nsecond"),
+            bridge.canonical_composer_text("first\n\nsecond"),
+        )
+
+    def test_gui_text_delivery_is_not_recorded_when_send_is_unverified(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.pause = 0.0
+            bridge.ensure_chat = mock.Mock()
+            bridge.find_window = mock.Mock(return_value=module.Window("1", 0, 0, 1000, 800))
+            bridge.click = mock.Mock()
+            bridge.key = mock.Mock()
+            bridge.composer_keys = mock.Mock()
+            bridge.set_clipboard = mock.Mock()
+            bridge.capture_screen = mock.Mock(return_value=Path(temporary) / "screen.png")
+            bridge.composer_text_matches = mock.Mock(return_value=True)
+            bridge.composer_is_empty = mock.Mock(return_value=False)
+
+            with mock.patch.object(module, "remember_delivery") as remember:
+                with self.assertRaisesRegex(RuntimeError, "did not clear"):
+                    bridge.send_text_locked("LabAgent", "hello", task_id="task-1")
+
+        remember.assert_not_called()
+
+    def test_gui_text_delivery_restores_composer_focus_after_clipboard_write(self) -> None:
+        module = load_gui_bridge()
+        events: list[str] = []
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.pause = 0.0
+            bridge.ensure_chat = mock.Mock()
+            bridge.find_window = mock.Mock(return_value=module.Window("1", 0, 0, 1000, 800))
+            bridge.composer_keys = mock.Mock(
+                side_effect=lambda _window, *values: events.append(f"composer:{','.join(values)}")
+            )
+            bridge.set_clipboard = mock.Mock(side_effect=lambda _value: events.append("clipboard"))
+            bridge.capture_screen = mock.Mock(return_value=Path(temporary) / "screen.png")
+            bridge.composer_text_matches = mock.Mock(return_value=False)
+            bridge.clear_composer = mock.Mock()
+
+            with self.assertRaisesRegex(RuntimeError, "COMPOSE_UNVERIFIED"):
+                bridge.send_text_locked("LabAgent", "hello", task_id="task-1")
+
+        self.assertEqual(
+            events[:2],
+            ["clipboard", "composer:ctrl+a,ctrl+v"],
+        )
+
+    def test_gui_composer_keys_keeps_focus_and_keys_in_one_xdotool_transaction(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.click = mock.Mock()
+        bridge.run_xdotool = mock.Mock()
+        window = module.Window("1", 100, 200, 1000, 800)
+
+        bridge.composer_keys(window, "ctrl+a", "ctrl+v")
+
+        bridge.click.assert_called_once_with(670, 896)
+        bridge.run_xdotool.assert_called_once_with(
+            [
+                "key",
+                "--clearmodifiers",
+                "ctrl+a",
+                "ctrl+v",
+            ]
+        )
+
+    def test_gui_health_does_not_expose_allowlisted_chat_names(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.status = mock.Mock(
+            return_value={
+                "ok": True,
+                "api_version": 1,
+                "client_visible": True,
+                "transport": "wecom_gui_only",
+                "capabilities": {"text": True},
+                "target_groups": ["Private Group"],
+            }
+        )
+
+        payload = bridge.health()
+
+        self.assertNotIn("target_groups", payload)
+        self.assertEqual(payload["transport"], "wecom_gui_only")
+
+    def test_gui_inbound_ledger_supports_cursor_reads(self) -> None:
+        bridge = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "state.sqlite"
+            event = root / "events" / "event-001" / "event.json"
+            event.parent.mkdir(parents=True)
+            event.write_text("{}\n", encoding="utf-8")
+            bridge.init_state_db(database)
+
+            bridge.record_inbound_messages(
+                database,
+                "LabAgent",
+                ["first question", "second question"],
+                event,
+                "image-hash",
+            )
+            bridge.mark_event_ingest(database, event, status="ingested")
+
+            first = bridge.read_inbound_messages(database, "LabAgent", after=0, limit=1)
+            second = bridge.read_inbound_messages(
+                database,
+                "LabAgent",
+                after=first[0]["cursor"],
+                limit=10,
+            )
+
+        self.assertEqual([item["text"] for item in first], ["first question"])
+        self.assertEqual([item["text"] for item in second], ["second question"])
+        self.assertEqual(first[0]["ingest_status"], "ingested")
+        self.assertGreater(second[0]["cursor"], first[0]["cursor"])
+
+    def test_gui_cli_send_accepts_files_without_text(self) -> None:
+        wecom_ops = load_wecom_ops()
+        completed = mock.Mock(returncode=0, stdout='{"ok": true}\n', stderr="")
+        output = io.StringIO()
+        with mock.patch.object(wecom_ops.subprocess, "run", return_value=completed) as run, redirect_stdout(output):
+            returncode = wecom_ops.cmd_gui(
+                SimpleNamespace(
+                    action="send",
+                    chat="LabAgent",
+                    message="",
+                    files=["output/report.pdf"],
+                    after=0,
+                    limit=100,
+                    task_id="task-1",
+                    live=True,
+                    force=False,
+                    json=True,
+                )
+            )
+
+        self.assertEqual(returncode, 0)
+        command = run.call_args.args[0]
+        self.assertIn("--file", command)
+        self.assertIn("output/report.pdf", command)
+        self.assertIn("--live", command)
+
+    def test_gui_bridge_source_is_allowlisted_and_wecom_only(self) -> None:
+        source = (
+            ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_gui_bridge.py"
+        ).read_text(encoding="utf-8")
+        clipboard = (
+            ROOT / "agentic_tools" / "wecom_agent" / "native" / "wecom_clipboard_utf8.c"
+        ).read_text(encoding="utf-8")
+        tmux_source = (
+            ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_tmux.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("target_groups", source)
+        self.assertIn("/v1/chats", source)
+        self.assertIn("/v1/messages", source)
+        self.assertIn("/v1/send", source)
+        self.assertIn("inbound_messages", source)
+        self.assertIn("CF_UNICODETEXT", clipboard)
+        self.assertIn('strcmp(argv[1], "--read")', clipboard)
+        self.assertIn("composer_text_matches", source)
+        self.assertIn("composer_is_empty", source)
+        self.assertIn('"explorer"', source)
+        self.assertIn("drag_staged_file", source)
+        self.assertIn("wait_for_file_in_history", source)
+        self.assertIn("external-gui", tmux_source)
+        self.assertIn("ensure_core_windows", tmux_source)
+        self.assertIn("missing windows repaired", tmux_source)
+        self.assertNotIn("xwechat_files", source)
+        self.assertNotIn("wechat_gui_agent", source)
 
 
 if __name__ == "__main__":
