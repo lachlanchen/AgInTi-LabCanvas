@@ -61,6 +61,7 @@ SAFE_SEND_EXTENSIONS = {
     ".pdf", ".png", ".step", ".stl", ".svg", ".tex", ".txt", ".wav",
     ".xlsx", ".zip",
 }
+FILE_PICKER_TITLES = ("Select file/folder", "Select file")
 
 
 @dataclass(frozen=True)
@@ -1365,20 +1366,23 @@ class WeComGuiBridge:
         staged_files = [path for path in staging_dir.iterdir() if path.is_file()]
         if len(staged_files) != 1 or staged_files[0].resolve() != staged_file.resolve():
             raise RuntimeError("isolated WeCom staging folder must contain exactly one file")
-        stale_picker = self.find_named_window("Select file/folder")
+        stale_picker = self.find_file_picker()
         if stale_picker is not None:
             self.close_window(stale_picker.wid)
             time.sleep(max(0.25, self.pause / 2))
 
         # The native picker only stages the file. The caller verifies the
         # composer and then clicks the separate WeCom Send button.
-        self.click(wecom.x + int(wecom.width * 0.572), wecom.y + int(wecom.height * 0.797))
+        self.run_win32_click(
+            wecom.x + int(wecom.width * 0.572),
+            wecom.y + int(wecom.height * 0.797),
+        )
         time.sleep(max(0.25, self.pause / 2))
         self.click(wecom.x + int(wecom.width * 0.607), wecom.y + int(wecom.height * 0.846))
         time.sleep(max(0.25, self.pause / 2))
         self.click(wecom.x + int(wecom.width * 0.789), wecom.y + int(wecom.height * 0.849))
 
-        picker = self.wait_for_named_window("Select file/folder", timeout=15.0)
+        picker = self.wait_for_file_picker(timeout=15.0)
         try:
             self.set_clipboard(self.windows_path(staging_dir))
             self.click(
@@ -1389,7 +1393,7 @@ class WeComGuiBridge:
 
             deadline = time.monotonic() + 15.0
             while time.monotonic() < deadline:
-                picker = self.find_named_window("Select file/folder") or picker
+                picker = self.find_file_picker() or picker
                 if self.picker_contains_filename(picker, staged_file.name, delivery_key):
                     break
                 time.sleep(0.25)
@@ -1415,15 +1419,33 @@ class WeComGuiBridge:
             )
             deadline = time.monotonic() + 15.0
             while time.monotonic() < deadline:
-                if self.find_named_window("Select file/folder") is None:
+                if self.find_file_picker() is None:
                     return selected_evidence
                 time.sleep(0.25)
             raise RuntimeError("WECOM_GUI_PICKER_UNCERTAIN: native picker did not close after staging")
         except Exception:
-            active_picker = self.find_named_window("Select file/folder")
+            active_picker = self.find_file_picker()
             if active_picker is not None:
                 self.close_window(active_picker.wid)
             raise
+
+    def find_file_picker(self) -> Window | None:
+        for title in FILE_PICKER_TITLES:
+            window = self.find_named_window(title)
+            if window is not None:
+                return window
+        return None
+
+    def wait_for_file_picker(self, *, timeout: float) -> Window:
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() < deadline:
+            window = self.find_file_picker()
+            if window is not None:
+                return window
+            time.sleep(0.25)
+        raise RuntimeError(
+            "native WeCom file picker did not appear: " + " or ".join(FILE_PICKER_TITLES)
+        )
 
     def wait_for_named_window(self, title: str, *, timeout: float) -> Window:
         deadline = time.monotonic() + max(0.0, timeout)
@@ -1687,6 +1709,30 @@ class WeComGuiBridge:
         if proc.returncode != 0:
             detail = proc.stderr.decode(errors="replace")[:300]
             raise RuntimeError(f"Wine SendInput helper failed for {action}: {detail}")
+
+    def run_win32_click(self, x: int, y: int) -> None:
+        ensure_win32_input_helper()
+
+        def invoke(*args: str) -> subprocess.CompletedProcess[bytes]:
+            return subprocess.run(
+                ["wine", str(WIN32_INPUT_EXE), *args],
+                env=self.gui_env(),
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+
+        proc = invoke("--click", str(x), str(y))
+        if proc.returncode == 4:
+            cleanup = invoke("--close-stale-modals")
+            if cleanup.returncode != 0:
+                detail = cleanup.stderr.decode(errors="replace")[:300]
+                raise RuntimeError(f"Wine stale WeCom modal cleanup failed: {detail}")
+            time.sleep(max(0.25, self.pause / 2))
+            proc = invoke("--click", str(x), str(y))
+        if proc.returncode != 0:
+            detail = proc.stderr.decode(errors="replace")[:300]
+            raise RuntimeError(f"Wine SendInput click failed at {x},{y}: {detail}")
 
     def run_xdotool(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
         proc = subprocess.run(
@@ -2278,7 +2324,11 @@ def filename_identity_terms(filename: str) -> list[str]:
     suffix = normalize_text(path.suffix.lstrip("."))
     terms: list[str] = []
     if len(stem) >= 8:
-        terms.append(stem[: min(14, len(stem))])
+        # WeCom truncates long composer/history labels after roughly twelve
+        # visible characters. Exact identity is already proven in the isolated
+        # native picker; this shorter prefix verifies that its attachment card
+        # actually appeared without trusting a neighboring file.
+        terms.append(stem[: min(12, len(stem))])
     elif stem:
         terms.append(stem + suffix)
     if len(stem) >= 16:

@@ -184,10 +184,12 @@ the group what to follow. The GUI relay derives a private stable member identity
 from the visible sender label and refuses to save a preference when identity is
 unresolved. Each newly added interest also queues one idempotent first briefing
 immediately; repeating the same interest does not queue it again. This initial
-run does not consume the normal scheduled report. At the configured time, the
-scheduler combines active interests with recent same-group context and queues
-one source-grounded briefing per group/day. It returns a concise Chinese digest,
-Markdown evidence, and a LaTeX-compiled Nature-style PDF. Daily research tasks
+run does not consume the normal scheduled report. At 06:00 `Asia/Hong_Kong` by
+default, the scheduler creates one source-grounded briefing per active member
+subscription. Multiple interests from the same member remain one job, while
+different members are kept separate and run sequentially through the single
+worker queue. Each job returns a concise Chinese digest, Markdown evidence, and
+a LaTeX-compiled Nature-style PDF. Daily research tasks
 have no queue deadline: GPT-5.6 SOL may run from low through ultra effort, and
 completed exact-task reports are recovered and delivered if the final agent
 response is interrupted. Configure the local schedule with

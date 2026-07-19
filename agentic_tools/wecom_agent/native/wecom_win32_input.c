@@ -3,7 +3,9 @@
 
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 
 static void send_key(WORD key, DWORD flags) {
     INPUT input = {0};
@@ -36,8 +38,105 @@ static HWND find_wecom(void) {
     return window;
 }
 
+typedef struct {
+    DWORD process_id;
+    int closed;
+} modal_cleanup_context;
+
+static BOOL CALLBACK close_stale_modal(HWND window, LPARAM parameter) {
+    modal_cleanup_context *context = (modal_cleanup_context *)parameter;
+    DWORD process_id = 0;
+    WCHAR class_name[128] = {0};
+    WCHAR title[256] = {0};
+    BOOL is_picker;
+    BOOL is_wedoc;
+    BOOL is_reminder;
+
+    GetWindowThreadProcessId(window, &process_id);
+    if (process_id != context->process_id) {
+        return TRUE;
+    }
+    GetClassNameW(window, class_name, 127);
+    GetWindowTextW(window, title, 255);
+    is_picker = wcscmp(class_name, L"#32770") == 0 && (
+        wcscmp(title, L"Select file/folder") == 0 ||
+        wcscmp(title, L"Select file") == 0
+    );
+    is_wedoc = wcscmp(class_name, L"Tencent.WXWork.WedocHostWindow") == 0;
+    is_reminder = wcscmp(class_name, L"WeWorkMessageBoxFrame") == 0 &&
+        wcscmp(title, L"Reminder") == 0;
+    if (is_picker || is_wedoc || is_reminder) {
+        if (PostMessageW(window, WM_CLOSE, 0, 0)) {
+            context->closed += 1;
+        }
+    }
+    return TRUE;
+}
+
+static int close_stale_modals(void) {
+    HWND main_window = find_wecom();
+    DWORD process_id = 0;
+    modal_cleanup_context context = {0};
+    int attempt;
+
+    if (main_window == NULL) {
+        return 0;
+    }
+    GetWindowThreadProcessId(main_window, &process_id);
+    context.process_id = process_id;
+    EnumWindows(close_stale_modal, (LPARAM)&context);
+    for (attempt = 0; attempt < 40 && !IsWindowEnabled(main_window); ++attempt) {
+        Sleep(50);
+    }
+    if (!IsWindowEnabled(main_window)) {
+        fprintf(
+            stderr,
+            "WeCom remains disabled after closing %d stale modal window(s)\n",
+            context.closed
+        );
+        return 5;
+    }
+    return 0;
+}
+
+static int send_click(const char *x_text, const char *y_text) {
+    char *x_end = NULL;
+    char *y_end = NULL;
+    long x = strtol(x_text, &x_end, 10);
+    long y = strtol(y_text, &y_end, 10);
+    INPUT events[2] = {0};
+
+    if (x_end == x_text || *x_end != '\0' || y_end == y_text || *y_end != '\0') {
+        fputs("Invalid click coordinates\n", stderr);
+        return 3;
+    }
+    if (!SetCursorPos((int)x, (int)y)) {
+        fputs("SetCursorPos failed\n", stderr);
+        return 3;
+    }
+    events[0].type = INPUT_MOUSE;
+    events[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    events[1].type = INPUT_MOUSE;
+    events[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    if (SendInput(2, events, sizeof(INPUT)) != 2) {
+        fputs("SendInput mouse click failed\n", stderr);
+        return 3;
+    }
+    Sleep(120);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     HWND window;
+
+    if (
+        argc == 2 && (
+            strcmp(argv[1], "--close-stale-modals") == 0 ||
+            strcmp(argv[1], "--close-stale-wedoc") == 0
+        )
+    ) {
+        return close_stale_modals();
+    }
 
     window = find_wecom();
 
@@ -48,6 +147,14 @@ int main(int argc, char **argv) {
     ShowWindow(window, SW_RESTORE);
     SetForegroundWindow(window);
     Sleep(120);
+
+    if (argc == 4 && strcmp(argv[1], "--click") == 0) {
+        if (!IsWindowEnabled(window)) {
+            fputs("WeCom top-level window is disabled\n", stderr);
+            return 4;
+        }
+        return send_click(argv[2], argv[3]);
+    }
 
     if (argc == 2 && strcmp(argv[1], "--paste") == 0) {
         send_chord('V');
@@ -64,6 +171,10 @@ int main(int argc, char **argv) {
         send_key(VK_BACK, KEYEVENTF_KEYUP);
         return 0;
     }
-    fputs("usage: wecom_win32_input --paste|--copy-all|--clear\n", stderr);
+    fputs(
+        "usage: wecom_win32_input --paste|--copy-all|--clear|"
+        "--click X Y|--close-stale-modals\n",
+        stderr
+    );
     return 2;
 }

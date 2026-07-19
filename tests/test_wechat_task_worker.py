@@ -1469,6 +1469,7 @@ stderr: noisy internal trace
         self.assertNotIn("execution_contract", stored)
         self.assertNotIn("send_errors", stored)
         self.assertNotIn("existing_video_publish_poststage", stored)
+        self.assertIn("expires_at", stored)
         self.assertEqual(stored["reprocess_reason"], "source resolver fixed")
         self.assertEqual(stored["reprocess_history"][0]["previous_status"], "send_retrying")
         self.assertIn("stale wrong result", stored["reprocess_history"][0]["previous_result_message_excerpt"])
@@ -1484,6 +1485,7 @@ stderr: noisy internal trace
                         "id": "daily-failed",
                         "chat": "wecom:group:labagent",
                         "status": "worker_failed",
+                        "daily_research": {"report_date": "2026-07-19"},
                         "worker_error": {"type": "WorkerAttemptsExhausted"},
                         "result": {"message": "timeout", "files": []},
                     }
@@ -1500,6 +1502,7 @@ stderr: noisy internal trace
         self.assertEqual(updated["status"], "pending")
         self.assertTrue(updated["artifact_recovery_only"])
         self.assertNotIn("worker_error", updated)
+        self.assertNotIn("expires_at", updated)
 
     def test_video_publish_preflight_uses_same_chat_artifact_ledger_when_wechat_cache_misses(self) -> None:
         worker = load_worker()
@@ -6585,6 +6588,38 @@ stderr: noisy internal trace
         self.assertIsNone(claimed)
         self.assertEqual(stored["status"], "expired_stale")
         self.assertEqual(stored["expire_reason"], "pending_task_ttl_exceeded")
+
+    def test_claim_next_pending_preserves_old_daily_research_without_deadline(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            worker.os.environ,
+            {
+                "WECHAT_WORKER_PENDING_TASK_TTL_SECONDS": "60",
+                "WECHAT_WORKER_EXPIRE_LEGACY_QUEUE": "1",
+            },
+            clear=False,
+        ):
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "old-daily",
+                        "chat": "wecom:group:labagent",
+                        "request": "daily research report",
+                        "status": "pending",
+                        "created_at": "2000-01-01T00:00:00",
+                        "daily_research": {"report_date": "2026-07-19"},
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertIsNotNone(claimed)
+        self.assertEqual(stored["status"], "in_progress")
+        self.assertNotIn("expired_at", stored)
 
     def test_claim_next_deferred_send_expires_old_outbox_without_sending(self) -> None:
         worker = load_worker()

@@ -145,11 +145,19 @@ outbox item or deliver worker output.
   is hard-linked or copied into a private one-file C-drive directory, selected
   through `More -> File -> Local File`, checked by a visible filename prefix in
   that isolated directory, and then checked by exact full-name readback from the
-  picker's `File name` field. It is checked again after staging in the composer
-  and a third time as a new chat-history item. Typing a full path alone is not
-  selection; the relay navigates to the directory, selects its sole row, clicks
-  the picker's Send button, then separately clicks the composer's Send button.
-  Drag-and-drop is not a delivery fallback.
+  picker's `File name` field. The Wine client truncates long composer/history
+  labels, so the later checks combine the already-proven picker identity with a
+  visible filename prefix and a newly appearing attachment card; they do not
+  demand an impossible untruncated label. Typing a full path alone is not
+  selection. The relay navigates to the directory, selects its sole row, clicks
+  the picker's Send button to stage it, then separately clicks the composer's
+  Send button and verifies a new chat-history item. Drag-and-drop is not a
+  delivery fallback.
+- Wine WeCom may ignore the X11 click that opens `More`. That single click uses
+  the controlled `wecom_win32_input` `SendInput` helper. If an interrupted send
+  left native pickers, document hosts, or file-error `Reminder` windows behind,
+  the same helper closes only those exact WeCom-process modal classes before one
+  retry. It never restarts or logs out the authenticated client.
 - GUI access is serialized with a process lock. Combined text/file requests stay
   in one critical section, so concurrent workers cannot switch the target chat.
 - Read cursors and send ledgers are durable SQLite state under ignored
@@ -158,7 +166,13 @@ outbox item or deliver worker output.
   `research_summary` task and remains eligible for future scheduled reports.
   The source message and normalized topic form its idempotency key, so OCR
   retries and repeated interests cannot create extra initial runs.
-- The immediate task has no queue deadline. Its report must be compiled with
+- Scheduled reports start at 06:00 `Asia/Hong_Kong` by default. Each active
+  member preference row becomes one job; that member's interests are combined,
+  different members are not merged, and the single worker consumes the jobs in
+  deterministic sequence.
+- Immediate and scheduled daily tasks have no pending or deferred-send queue
+  deadline, including old rows reprocessed under legacy-expiry settings. Their
+  reports must be compiled with
   LaTeX using the Nature-style research header and returned with the Markdown
   and requested source papers. If an agent turn ends after writing a complete
   report but before returning JSON, the worker recovers only that exact task's

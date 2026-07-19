@@ -98,16 +98,19 @@ For the restricted LabAgent research group:
   gates.
 - `<interest> #daily` stores one private subscription row per member and
   accumulates distinct interests in that row. `status #daily` inspects it and
-  `off #daily` disables only that member. The local scheduler enqueues one
-  consolidated `research_summary` task per group/date into the same exact group
-  session; idle checks spend no model quota. A newly added interest also queues
-  one idempotent initial report immediately without consuming the scheduled
-  report. Repeated interests do not create another initial run. The prefix
-  syntax remains a compatibility alias.
+  `off #daily` disables only that member. At 06:00 `Asia/Hong_Kong` by default,
+  the local scheduler enqueues one `research_summary` job per active member
+  subscription. Interests belonging to that member are combined, but jobs from
+  different members remain separate and carry deterministic sequence metadata;
+  the single worker executes them one by one. Idle checks spend no model quota.
+  A newly added interest also queues one idempotent initial report immediately
+  without consuming the scheduled report. Repeated interests do not create
+  another initial run. The prefix syntax remains a compatibility alias.
 - Daily reports return a concise digest and requested Markdown/PDF or editable
   figure artifacts through the source-scoped WeCom send gate. Compile report
   PDFs with XeLaTeX and the restrained Nature-style header. Daily tasks have no
-  queue expiry; a per-turn watchdog is only a hung-process guard.
+  pending or deferred-send queue expiry, including legacy rows restored through
+  artifact-only reprocessing; a per-turn watchdog is only a hung-process guard.
 - If a daily/research agent writes a substantive exact-task Markdown report and
   source PDFs but loses its final response, recover from that task directory,
   compile the report PDF, and require one source-chat delivery. Exclude routine
@@ -152,18 +155,24 @@ personal-WeChat database, media, search, sender, or fallback paths.
   layered window. Opening a fresh QR login is a separate explicit operator
   action, because it can invalidate a reusable authenticated session.
 - Verify Unicode composer readback before a text send. For files, require the
-  exact filename in WeCom's native picker, composer, and sent history before
-  updating delivery state. Native picker selection stages an artifact; the
-  separate composer Send is still mandatory. Keep select/paste or select/copy
-  in one key transaction; split key processes are not reliable under Wine.
+  exact filename in WeCom's native picker. Because WeCom visually truncates long
+  attachment labels, verify the composer/history attachment using the proven
+  isolated-picker identity plus its visible filename prefix and a newly added
+  card before updating delivery state. Native picker selection only stages an
+  artifact; the separate composer Send is mandatory. Keep select/paste or
+  select/copy in one key transaction; split key processes are not reliable
+  under Wine.
 - Treat the external WeCom relay as an observable closed loop: authenticated
   client, exact-chat readiness, durable ingest, worker result, verified
   compose/send, and delivery ledger. `login_required` and
   `chat_verification_pending` are not send-ready states.
-- Use X11/VNC input only for the WeCom fallback. Do not post native Win32 input
-  messages or send blind `Escape` cleanup. Detect QR/login/abnormal-device
-  screens before any input, fail closed, and let the one persistent client
-  process retain ownership of its authenticated profile.
+- Use X11/VNC input for ordinary WeCom navigation and text entry. The one known
+  Wine exception is the `More` toolbar click, which uses a controlled Win32
+  `SendInput` helper because the X11 click is ignored. Do not post arbitrary
+  native window messages or send blind `Escape` cleanup. The helper may close
+  only exact stale WeCom picker/document/error modal classes after an interrupted
+  file send. Detect QR/login/abnormal-device screens before input, fail closed,
+  and let the persistent client retain ownership of its authenticated profile.
 - Keep GUI config, cursors, events, screenshots, and delivery ledgers under
   ignored `agentic_tools/wecom_agent/.private/` paths.
 
@@ -308,8 +317,10 @@ The stable interface and recovery commands are documented in
 - GUI file delivery is a first-class state, not a best-effort afterthought.
 - WeCom GUI artifacts use a private one-file C-drive staging directory and the
   visible `More -> File -> Local File` picker. Navigate to the directory, select
-  the verified sole row, stage it, then send it from the composer. Do not use a
-  Wine Explorer drag fallback or treat a closed picker as proof of delivery.
+  the verified sole row, stage it, then send it from the composer. Long labels
+  may be ellipsized; exact picker readback plus the visible attachment prefix
+  and a new history card form the identity proof. Do not use a Wine Explorer
+  drag fallback or treat a closed picker as proof of delivery.
 - Ordinary link/read-later research should send a concise chat answer by
   default, not Markdown/PDF/image attachments. Save local notes under the task
   artifact directory. Attach reports or images only when the current request

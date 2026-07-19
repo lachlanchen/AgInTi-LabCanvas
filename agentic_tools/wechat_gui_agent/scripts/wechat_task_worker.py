@@ -403,7 +403,16 @@ def reprocess_task(
             for field in stale_fields:
                 task.pop(field, None)
             task["status"] = "pending"
-            task["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
+            route_decision = (
+                task.get("route_decision")
+                if isinstance(task.get("route_decision"), dict)
+                else {}
+            )
+            if isinstance(task.get("daily_research"), dict):
+                route_decision["no_fixed_deadline"] = True
+                task["route_decision"] = route_decision
+            if not task_has_no_fixed_deadline(task):
+                task["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
             task["reprocess_requested_at"] = now_text
             task["reprocess_reason"] = reason or "manual_reprocess"
             task["queue_path"] = str(queue)
@@ -2876,6 +2885,8 @@ def expire_stale_queue_entries(tasks: list[dict[str, Any]], now: datetime) -> bo
     changed = False
     for index, task in enumerate(tasks):
         status = str(task.get("status") or "")
+        if task_has_no_fixed_deadline(task):
+            continue
         if status == "pending":
             ttl = pending_ttl
             expired_status = "expired_stale"
@@ -2904,6 +2915,17 @@ def expire_stale_queue_entries(tasks: list[dict[str, Any]], now: datetime) -> bo
         tasks[index] = task
         changed = True
     return changed
+
+
+def task_has_no_fixed_deadline(task: dict[str, Any]) -> bool:
+    route_decision = (
+        task.get("route_decision")
+        if isinstance(task.get("route_decision"), dict)
+        else {}
+    )
+    return bool(route_decision.get("no_fixed_deadline")) or isinstance(
+        task.get("daily_research"), dict
+    )
 
 
 def queue_entry_created_at(task: dict[str, Any]) -> datetime | None:

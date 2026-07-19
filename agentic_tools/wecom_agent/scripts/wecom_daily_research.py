@@ -280,7 +280,7 @@ def handle_daily_directive_result(
     if added:
         reply = (
             f"已加入你的每日研究兴趣：{topic}\n"
-            f"你目前累计 {len(interests)} 项兴趣；每天只生成一个合并任务。"
+            f"你目前累计 {len(interests)} 项兴趣；你的兴趣每天合并为一个任务，不同成员分别排队。"
         )
     else:
         reply = (
@@ -390,22 +390,39 @@ def set_group_enabled(path: Path, chat: str, enabled: bool) -> None:
 
 
 def active_topics(path: Path, chat: str) -> list[str]:
-    init_daily_state(path)
-    with sqlite3.connect(path) as conn:
-        rows = conn.execute(
-            "SELECT topic, topics_json FROM daily_preferences "
-            "WHERE chat = ? AND enabled = 1 ORDER BY updated_at, sender_hash",
-            (chat,),
-        ).fetchall()
     result: list[str] = []
     seen: set[str] = set()
-    for topic, topics_json in rows:
-        for value in preference_interests(topic, topics_json):
+    for job in active_daily_jobs(path, chat):
+        for value in job["topics"]:
             key = value.casefold()
             if key not in seen:
                 seen.add(key)
                 result.append(value)
     return result
+
+
+def active_daily_jobs(path: Path, chat: str) -> list[dict[str, Any]]:
+    """Return one stable scheduled job per member preference row."""
+    init_daily_state(path)
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute(
+            "SELECT sender_hash, topic, topics_json FROM daily_preferences "
+            "WHERE chat = ? AND enabled = 1 ORDER BY updated_at, sender_hash",
+            (chat,),
+        ).fetchall()
+    jobs: list[dict[str, Any]] = []
+    for sender_hash, topic, topics_json in rows:
+        topics = preference_interests(topic, topics_json)
+        if not topics:
+            continue
+        jobs.append(
+            {
+                "job_key": short_hash(f"{chat}:{sender_hash}"),
+                "member_key": short_hash(sender_hash),
+                "topics": topics,
+            }
+        )
+    return jobs
 
 
 def daily_status(path: Path) -> dict[str, Any]:
@@ -414,16 +431,20 @@ def daily_status(path: Path) -> dict[str, Any]:
         rows = conn.execute(
             "SELECT chat, enabled, first_seen_at, last_seen_at FROM daily_chats ORDER BY last_seen_at DESC"
         ).fetchall()
-    chats = [
-        {
-            "chat": chat,
-            "enabled": bool(enabled),
-            "topics": active_topics(path, chat),
-            "first_seen_at": first_seen,
-            "last_seen_at": last_seen,
-        }
-        for chat, enabled, first_seen, last_seen in rows
-    ]
+    chats: list[dict[str, Any]] = []
+    for chat, enabled, first_seen, last_seen in rows:
+        jobs = active_daily_jobs(path, chat)
+        chats.append(
+            {
+                "chat": chat,
+                "enabled": bool(enabled),
+                "topics": [topic for job in jobs for topic in job["topics"]],
+                "jobs": jobs,
+                "job_count": len(jobs),
+                "first_seen_at": first_seen,
+                "last_seen_at": last_seen,
+            }
+        )
     return {"ok": True, "chat_count": len(chats), "enabled_count": sum(item["enabled"] for item in chats), "chats": chats}
 
 
@@ -440,8 +461,8 @@ def run_due_cycle(
     init_daily_state(state_db)
     timezone = configured_timezone()
     current = now.astimezone(timezone) if now and now.tzinfo else (now.replace(tzinfo=timezone) if now else datetime.now(timezone))
-    report_time = parse_clock(os.environ.get("WECOM_DAILY_RESEARCH_TIME", "09:00"))
-    prompt_time = parse_clock(os.environ.get("WECOM_DAILY_TOPIC_PROMPT_TIME", "08:45"))
+    report_time = parse_clock(os.environ.get("WECOM_DAILY_RESEARCH_TIME", "06:00"))
+    prompt_time = parse_clock(os.environ.get("WECOM_DAILY_TOPIC_PROMPT_TIME", "06:00"))
     date_key = current.date().isoformat()
     actions: list[dict[str, Any]] = []
     append = append_func or append_task_once
@@ -451,28 +472,56 @@ def run_due_cycle(
         ).fetchall()
 
     for chat, account_id, chat_id, chat_type, transport_channel in chats:
-        topics = active_topics(state_db, chat)
-        if topics:
+        jobs = active_daily_jobs(state_db, chat)
+        if jobs:
             if not force and current.time().replace(tzinfo=None) < report_time:
                 continue
+            # Preserve the old one-report-per-group ledger for the day on which
+            # member-scoped scheduling is first deployed. New dates use one
+            # run key per member job.
             if daily_run_exists(state_db, chat, date_key, "report"):
                 continue
             context = recent_group_context(history_db, chat, limit=20)
-            task = build_daily_research_task(
-                chat=chat,
-                account_id=account_id,
-                chat_id=chat_id,
-                chat_type=chat_type,
-                transport_channel=transport_channel,
-                topics=topics,
-                context=context,
-                report_date=date_key,
-                queue=queue,
-                now=current,
-            )
-            appended = append(queue, task)
-            record_daily_run(state_db, chat, date_key, "report", "queued" if appended else "already_queued", task["id"])
-            actions.append({"kind": "report", "chat": chat, "task_id": task["id"], "queued": appended})
+            for sequence_index, job in enumerate(jobs, start=1):
+                run_kind = f"report:{job['job_key']}"
+                if daily_run_exists(state_db, chat, date_key, run_kind):
+                    continue
+                task = build_daily_research_task(
+                    chat=chat,
+                    account_id=account_id,
+                    chat_id=chat_id,
+                    chat_type=chat_type,
+                    transport_channel=transport_channel,
+                    topics=job["topics"],
+                    context=context,
+                    report_date=date_key,
+                    queue=queue,
+                    now=current,
+                    daily_job_key=job["job_key"],
+                    daily_member_key=job["member_key"],
+                    sequence_index=sequence_index,
+                    sequence_total=len(jobs),
+                )
+                appended = append(queue, task)
+                record_daily_run(
+                    state_db,
+                    chat,
+                    date_key,
+                    run_kind,
+                    "queued" if appended else "already_queued",
+                    task["id"],
+                )
+                actions.append(
+                    {
+                        "kind": "report",
+                        "chat": chat,
+                        "task_id": task["id"],
+                        "job_key": job["job_key"],
+                        "sequence_index": sequence_index,
+                        "sequence_total": len(jobs),
+                        "queued": appended,
+                    }
+                )
             continue
 
         if not force and current.time().replace(tzinfo=None) < prompt_time:
@@ -515,14 +564,18 @@ def build_daily_research_task(
     queue: Path,
     now: datetime,
     transport_channel: str = "wecom_bot_websocket",
+    daily_job_key: str = "",
+    daily_member_key: str = "",
+    sequence_index: int = 1,
+    sequence_total: int = 1,
 ) -> dict[str, Any]:
     topic_text = "\n".join(f"- {topic}" for topic in topics)
     context_text = "\n".join(
         f"- {item.get('direction', 'inbound')}: {str(item.get('content') or '')[:800]}" for item in context[-12:]
     ) or "- No additional recent discussion."
-    request_text = f"""Prepare the {report_date} daily research briefing for this exact WeCom research group.
+    request_text = f"""Prepare the {report_date} daily research briefing for one exact member-scoped job in this WeCom research group.
 
-Persistent #daily topics:
+Persistent #daily topics for this job only:
 {topic_text}
 
 Recent same-group discussion:
@@ -530,6 +583,7 @@ Recent same-group discussion:
 
 Requirements:
 - Use current web and scholarly research, prioritizing recent primary papers, preprints, datasets, and official project repositories. Verify publication dates and distinguish peer-reviewed work from preprints.
+- Keep this job separate from other members' daily topics. Same-group context is supporting evidence, not permission to merge another job into this report.
 - Synthesize the topics with the group's recent questions instead of producing a generic news list.
 - Return a concise Chinese chat digest with the most important findings, why they matter, limitations, and concrete next research steps.
 - Create a source-grounded Markdown report and compile a readable PDF through LaTeX as a restrained Nature-style research paper with citations/DOIs/links. Include both files in the result so the transport sends them to this group.
@@ -538,9 +592,11 @@ Requirements:
 - Never fabricate a paper, citation, benchmark, or claim. State evidence gaps plainly.
 - This scheduled research task does not authorize public posting, payment, purchases, deletion, or credential changes.
 """.strip()
-    source_id = f"daily:{report_date}:{short_hash(chat)}"
+    job_suffix = f":{daily_job_key}" if daily_job_key else ""
+    source_id = f"daily:{report_date}:{short_hash(chat)}{job_suffix}"
+    task_suffix = f"-{daily_job_key}" if daily_job_key else ""
     task = {
-        "id": f"wecom-daily-{report_date.replace('-', '')}-{short_hash(chat)}",
+        "id": f"wecom-daily-{report_date.replace('-', '')}-{short_hash(chat)}{task_suffix}",
         "chat": chat,
         "request": request_text,
         "status": "pending",
@@ -570,6 +626,7 @@ Requirements:
             "transport_channel": transport_channel,
             "scheduled_daily_research": True,
             "no_fixed_deadline": True,
+            "serialized_daily_job": True,
         },
         "instruction_contract": {
             "current_request_authoritative": True,
@@ -586,6 +643,7 @@ Requirements:
             "agent_entrypoint": "wechat_agent_backend.run_agent_session",
             "session": {"chat": chat, "role": "worker", "reuse": True},
             "required_artifacts": ["markdown_report", "compiled_pdf"],
+            "queue_mode": "single_worker_sequential",
         },
         "source": {
             "transport": "wecom",
@@ -604,7 +662,16 @@ Requirements:
             "authorization_role": "system_safe_read_only",
         },
         "context": context[-20:],
-        "daily_research": {"report_date": report_date, "topics": topics, "timezone": str(now.tzinfo)},
+        "daily_research": {
+            "report_date": report_date,
+            "topics": topics,
+            "timezone": str(now.tzinfo),
+            "job_key": daily_job_key,
+            "member_key": daily_member_key,
+            "sequence_index": sequence_index,
+            "sequence_total": sequence_total,
+            "serialized": True,
+        },
         "transport_preflight": {},
         "queue_path": str(queue),
     }
@@ -819,7 +886,7 @@ def parse_clock(value: str):
     try:
         return datetime.strptime(str(value).strip(), "%H:%M").time()
     except ValueError:
-        return datetime.strptime("09:00", "%H:%M").time()
+        return datetime.strptime("06:00", "%H:%M").time()
 
 
 def short_hash(value: Any) -> str:

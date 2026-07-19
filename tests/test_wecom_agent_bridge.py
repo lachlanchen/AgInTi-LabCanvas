@@ -455,6 +455,98 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(task["route_decision"]["no_fixed_deadline"])
         self.assertFalse(task["agent_backend_config"]["agent_fallbacks"]["fallback_on_timeout"])
 
+    def test_daily_scheduler_keeps_member_jobs_separate_and_serialized(self) -> None:
+        daily = load_daily()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.sqlite"
+            queue = root / "queue.jsonl"
+            chat = "wecom:default:group:labagent"
+            daily.handle_daily_directive(
+                state,
+                self.sample_event(
+                    sender_userid="member-ma",
+                    text="Professor Ma external peer papers #daily",
+                ),
+                chat,
+            )
+            daily.handle_daily_directive(
+                state,
+                self.sample_event(
+                    message_id="msg-002",
+                    sender_userid="member-organoid",
+                    text="recent organoid CNS papers #daily",
+                ),
+                chat,
+            )
+            captured: list[dict] = []
+
+            def append_once(_queue, task):
+                captured.append(task)
+                return True
+
+            now = datetime(2026, 7, 20, 6, 0, tzinfo=ZoneInfo("Asia/Hong_Kong"))
+            first = daily.run_due_cycle(
+                state_db=state,
+                history_db=state,
+                queue=queue,
+                now=now,
+                append_func=append_once,
+            )
+            second = daily.run_due_cycle(
+                state_db=state,
+                history_db=state,
+                queue=queue,
+                now=now,
+                append_func=append_once,
+            )
+
+        self.assertEqual(len(first["actions"]), 2)
+        self.assertEqual(second["actions"], [])
+        self.assertEqual(len(captured), 2)
+        self.assertEqual(
+            [task["daily_research"]["sequence_index"] for task in captured],
+            [1, 2],
+        )
+        self.assertTrue(all(task["daily_research"]["sequence_total"] == 2 for task in captured))
+        self.assertTrue(all(task["daily_research"]["serialized"] for task in captured))
+        self.assertCountEqual(
+            [task["daily_research"]["topics"][0] for task in captured],
+            ["Professor Ma external peer papers", "recent organoid CNS papers"],
+        )
+        self.assertEqual(len({task["id"] for task in captured}), 2)
+
+    def test_daily_scheduler_default_report_time_is_six_am(self) -> None:
+        daily = load_daily()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            daily.os.environ,
+            {
+                "WECOM_DAILY_RESEARCH_TIME": "06:00",
+                "WECOM_DAILY_TIMEZONE": "Asia/Hong_Kong",
+            },
+            clear=False,
+        ):
+            state = Path(tmp) / "state.sqlite"
+            chat = "wecom:default:group:labagent"
+            daily.handle_daily_directive(
+                state,
+                self.sample_event(text="organoid imaging #daily"),
+                chat,
+            )
+            early = daily.run_due_cycle(
+                state_db=state,
+                history_db=state,
+                now=datetime(2026, 7, 20, 5, 59, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+            )
+            due = daily.run_due_cycle(
+                state_db=state,
+                history_db=state,
+                now=datetime(2026, 7, 20, 6, 0, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+            )
+
+        self.assertEqual(early["actions"], [])
+        self.assertEqual(len(due["actions"]), 1)
+
     def test_immediate_daily_run_does_not_consume_the_scheduled_report(self) -> None:
         daily = load_daily()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1268,6 +1360,16 @@ class WeComAgentBridgeTests(unittest.TestCase):
             )
         )
 
+    def test_gui_filename_verifier_accepts_wecom_truncated_attachment_label(self) -> None:
+        bridge = load_gui_bridge()
+
+        self.assertTrue(
+            bridge.filename_matches_ocr(
+                "organoid_cns_briefing_20260719.zh.pdf",
+                "organoid_cns_...260719.zh.pdf 169.8KB",
+            )
+        )
+
     def test_gui_sender_display_name_produces_stable_private_member_id(self) -> None:
         module = load_gui_bridge()
         with tempfile.TemporaryDirectory() as temporary:
@@ -1547,14 +1649,13 @@ class WeComAgentBridgeTests(unittest.TestCase):
             bridge = object.__new__(module.WeComGuiBridge)
             bridge.pause = 0.0
             bridge.runtime_dir = root
-            bridge.find_named_window = mock.Mock(
-                side_effect=[None, module.Window("2", 467, 215, 660, 490), None]
-            )
             picker = module.Window("2", 467, 215, 660, 490)
-            bridge.wait_for_named_window = mock.Mock(return_value=picker)
+            bridge.find_file_picker = mock.Mock(side_effect=[None, picker, None])
+            bridge.wait_for_file_picker = mock.Mock(return_value=picker)
             bridge.windows_path = mock.Mock(return_value=r"C:\\labcanvas_wecom_send\\key")
             bridge.set_clipboard = mock.Mock()
             bridge.run_xdotool = mock.Mock()
+            bridge.run_win32_click = mock.Mock()
             bridge.click = mock.Mock()
             bridge.capture_screen = mock.Mock(return_value=root / "picker.png")
             bridge.picker_contains_filename = mock.Mock(return_value=True)
@@ -1575,10 +1676,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
         bridge.run_xdotool.assert_called_once_with(
             ["key", "--clearmodifiers", "ctrl+a", "ctrl+v", "Return"]
         )
+        bridge.run_win32_click.assert_called_once_with(1030, 733)
         self.assertEqual(
             bridge.click.call_args_list,
             [
-                mock.call(1030, 733),
                 mock.call(1065, 764),
                 mock.call(1244, 766),
                 mock.call(836, 660),
@@ -1625,11 +1726,12 @@ class WeComAgentBridgeTests(unittest.TestCase):
             picker = module.Window("2", 467, 215, 660, 490)
             bridge = object.__new__(module.WeComGuiBridge)
             bridge.pause = 0.0
-            bridge.find_named_window = mock.Mock(side_effect=[None, picker, picker])
-            bridge.wait_for_named_window = mock.Mock(return_value=picker)
+            bridge.find_file_picker = mock.Mock(side_effect=[None, picker])
+            bridge.wait_for_file_picker = mock.Mock(return_value=picker)
             bridge.windows_path = mock.Mock(return_value=r"C:\\staging")
             bridge.set_clipboard = mock.Mock()
             bridge.run_xdotool = mock.Mock()
+            bridge.run_win32_click = mock.Mock()
             bridge.click = mock.Mock()
             bridge.picker_contains_filename = mock.Mock(return_value=False)
             bridge.close_window = mock.Mock()
@@ -1645,6 +1747,44 @@ class WeComAgentBridgeTests(unittest.TestCase):
                 )
 
         bridge.close_window.assert_called_once_with("2")
+
+    def test_gui_file_picker_accepts_generic_and_document_titles(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        picker = module.Window("2", 467, 215, 660, 490)
+        bridge.find_named_window = mock.Mock(side_effect=[None, picker])
+
+        self.assertEqual(bridge.find_file_picker(), picker)
+        self.assertEqual(
+            bridge.find_named_window.call_args_list,
+            [mock.call("Select file/folder"), mock.call("Select file")],
+        )
+
+    def test_gui_native_click_recovers_all_stale_wecom_modals(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.pause = 0.0
+        bridge.gui_env = mock.Mock(return_value={"DISPLAY": ":92"})
+        outcomes = [
+            SimpleNamespace(returncode=4, stderr=b"disabled"),
+            SimpleNamespace(returncode=0, stderr=b""),
+            SimpleNamespace(returncode=0, stderr=b""),
+        ]
+
+        with mock.patch.object(module, "ensure_win32_input_helper"), mock.patch.object(
+            module.subprocess, "run", side_effect=outcomes
+        ) as run, mock.patch.object(module.time, "sleep"):
+            bridge.run_win32_click(1030, 733)
+
+        commands = [call.args[0][2:] for call in run.call_args_list]
+        self.assertEqual(
+            commands,
+            [
+                ["--click", "1030", "733"],
+                ["--close-stale-modals"],
+                ["--click", "1030", "733"],
+            ],
+        )
 
     def test_gui_auth_blocker_detects_abnormal_device_before_input(self) -> None:
         module = load_gui_bridge()
@@ -1922,6 +2062,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("compose_staged_file_with_picker", source)
         self.assertIn('"Select file/folder"', source)
         self.assertIn("wait_for_file_in_history", source)
+        self.assertIn('strcmp(argv[1], "--click")', win32_input)
+        self.assertIn('strcmp(argv[1], "--close-stale-modals")', win32_input)
         self.assertNotIn("WM_DROPFILES", win32_input)
         self.assertNotIn('"--drag"', win32_input)
         self.assertIn("external-gui", tmux_source)
