@@ -1170,6 +1170,37 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertNotIn("target_groups", payload)
         self.assertEqual(payload["transport"], "wecom_gui_only")
 
+    def test_gui_reconnect_recovery_requeues_only_bounded_wecom_outbox(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state_db = root / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.config = {
+                "recover_expired_on_reconnect": True,
+                "reconnect_recovery_max_age_seconds": 7200,
+                "reconnect_recovery_limit": 2,
+            }
+            bridge.queue = root / "queue.jsonl"
+            bridge.state_db = state_db
+            completed = SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"ok": True, "recovered_count": 1}),
+                stderr="",
+            )
+
+            with mock.patch.object(module.subprocess, "run", return_value=completed) as run:
+                payload = bridge.recover_expired_outbox()
+
+        self.assertEqual(payload["recovered_count"], 1)
+        command = run.call_args.args[0]
+        self.assertTrue(command[1].endswith("wecom_reconnect_outbox.py"))
+        self.assertIn("--max-age-seconds", command)
+        self.assertIn("7200", command)
+        self.assertIn("--limit", command)
+        self.assertIn("2", command)
+
     def test_gui_inbound_ledger_supports_cursor_reads(self) -> None:
         bridge = load_gui_bridge()
         with tempfile.TemporaryDirectory() as temporary:

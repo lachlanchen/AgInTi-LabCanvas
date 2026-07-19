@@ -112,6 +112,12 @@ chat ID. Advance the consumer cursor only after processing the returned items.
   in one critical section, so concurrent workers cannot switch the target chat.
 - Read cursors and send ledgers are durable SQLite state under ignored
   `.private/`; screenshots and raw events also remain private.
+- When a full logged-in WeCom window reappears after a disconnected/login
+  period, the relay performs one bounded outbox recovery pass. It requeues at
+  most one `send_expired` WeCom result from the previous 12 hours, only when
+  they had already reached a send state. The normal worker then sends them
+  through the exact-chat and idempotency ledgers. Other transports, stale
+  backlog, and ordinary unprocessed requests are never replayed.
 
 The copied request is immutable transport evidence. `wecom_ingest.py` stores it
 as both `request` and `original_request`; a route model may add an advisory
@@ -143,3 +149,16 @@ fallback above. A pre-Send composer verification
 failure is safe to retry with the same `task_id`. A failure after clicking Send
 is reported as uncertain and is not retried automatically, preventing duplicate
 messages or files.
+
+The reconnect recovery defaults can be narrowed or disabled in the ignored GUI
+config with `recover_expired_on_reconnect`,
+`reconnect_recovery_max_age_seconds`, and `reconnect_recovery_limit`. For an
+operator audit without sending, run the shared worker action against a copied
+queue:
+
+```bash
+PYTHONPATH=src python agentic_tools/wecom_agent/scripts/wecom_reconnect_outbox.py \
+  --queue /path/to/copied-queue.jsonl \
+  --max-age-seconds 43200 \
+  --limit 1
+```

@@ -48,6 +48,7 @@ DEFAULT_STATE_DB = PRIVATE / "wecom_gui_bridge.local.sqlite"
 DEFAULT_EVENT_ROOT = PRIVATE / "wecom-gui-events"
 DEFAULT_QUEUE = PRIVATE / "wecom_task_queue.jsonl"
 INGEST_SCRIPT = TOOL_ROOT / "scripts" / "wecom_ingest.py"
+RECONNECT_OUTBOX_SCRIPT = TOOL_ROOT / "scripts" / "wecom_reconnect_outbox.py"
 CLIPBOARD_SOURCE = TOOL_ROOT / "native" / "wecom_clipboard_utf8.c"
 CLIPBOARD_EXE = PRIVATE / "bin" / "wecom_clipboard_utf8.exe"
 DEFAULT_PREFIX = PRIVATE / "wineprefix"
@@ -211,6 +212,11 @@ def initialize_config(
         "max_send_file_bytes": bounded_int(
             existing.get("max_send_file_bytes"), 100 * 1024 * 1024, 1, 1024 * 1024 * 1024
         ),
+        "recover_expired_on_reconnect": bool(existing.get("recover_expired_on_reconnect", True)),
+        "reconnect_recovery_max_age_seconds": bounded_int(
+            existing.get("reconnect_recovery_max_age_seconds"), 12 * 60 * 60, 0, 7 * 24 * 60 * 60
+        ),
+        "reconnect_recovery_limit": bounded_int(existing.get("reconnect_recovery_limit"), 1, 0, 20),
     }
     write_private_json(path, payload)
     return {
@@ -238,6 +244,7 @@ class WeComGuiBridge:
         self.runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._stop = threading.Event()
         self._poll_lock = threading.Lock()
+        self._client_was_visible = False
         init_state_db(self.state_db)
 
     def status(self) -> dict[str, Any]:
@@ -807,6 +814,45 @@ class WeComGuiBridge:
             raise RuntimeError(f"WeCom GUI ingress failed: {str(detail)[:800]}")
         return payload
 
+    def recover_expired_outbox(self) -> dict[str, Any]:
+        if not bool(self.config.get("recover_expired_on_reconnect", True)):
+            return {"ok": True, "recovered_count": 0, "disabled": True}
+        max_age = bounded_int(
+            self.config.get("reconnect_recovery_max_age_seconds"),
+            12 * 60 * 60,
+            0,
+            7 * 24 * 60 * 60,
+        )
+        limit = bounded_int(self.config.get("reconnect_recovery_limit"), 1, 0, 20)
+        env = {
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join([str(ROOT / "src"), os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep),
+        }
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(RECONNECT_OUTBOX_SCRIPT),
+                "--queue",
+                str(self.queue),
+                "--max-age-seconds",
+                str(max_age),
+                "--limit",
+                str(limit),
+            ],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        payload = parse_json(proc.stdout)
+        if proc.returncode != 0 or not isinstance(payload, dict) or not payload.get("ok"):
+            detail = payload.get("error") if isinstance(payload, dict) else proc.stderr or proc.stdout
+            raise RuntimeError(f"WeCom reconnect outbox recovery failed: {str(detail)[:800]}")
+        set_runtime(self.state_db, "last_reconnect_recovery", json.dumps(payload, ensure_ascii=False)[:4000])
+        return payload
+
     def find_window(self, *, required: bool = True) -> Window | None:
         proc = self.run_xdotool(["search", "--onlyvisible", "--name", "^WeCom$"], check=False)
         candidates: list[Window] = []
@@ -1153,9 +1199,21 @@ class WeComGuiBridge:
         interval = bounded_float(self.config.get("poll_seconds"), 4.0, 2.0, 120.0)
         try:
             while not self._stop.is_set():
+                client_visible = self.find_window(required=False) is not None
+                if not client_visible:
+                    self._client_was_visible = False
                 result = self.poll_once()
                 if not result.get("ok") or result.get("processed"):
                     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")), flush=True)
+                if client_visible and not self._client_was_visible:
+                    try:
+                        recovered = self.recover_expired_outbox()
+                    except Exception as exc:
+                        recovered = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:800]}"}
+                        set_runtime(self.state_db, "last_reconnect_recovery_error", recovered["error"])
+                    if not recovered.get("ok") or recovered.get("recovered_count"):
+                        print(json.dumps({"event": "reconnect_outbox_recovery", **recovered}, ensure_ascii=False), flush=True)
+                    self._client_was_visible = bool(recovered.get("ok"))
                 self._stop.wait(interval)
         finally:
             server.shutdown()

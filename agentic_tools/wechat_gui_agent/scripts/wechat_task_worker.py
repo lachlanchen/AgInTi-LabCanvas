@@ -71,6 +71,9 @@ DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS = 5 * 60
 DEFAULT_PENDING_TASK_TTL_SECONDS = 15 * 60
 DEFAULT_DEFERRED_SEND_TTL_SECONDS = 10 * 60
 DEFAULT_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS = 30
+DEFAULT_TRANSPORT_RECOVERY_MAX_AGE_SECONDS = 12 * 60 * 60
+DEFAULT_TRANSPORT_RECOVERY_LIMIT = 3
+DEFAULT_TRANSPORT_RECOVERY_MAX_ATTEMPTS = 2
 DEFAULT_TRANSIENT_SEND_MAX_RETRIES = 2
 DEFAULT_VERIFIED_PUBLISH_SEND_MAX_RETRIES = 3
 DEFAULT_GENERATED_VIDEO_POLL_BACKOFF_SECONDS = 5 * 60
@@ -233,6 +236,20 @@ def main() -> int:
     parser.add_argument("--reason", default="", help="Reason recorded when reprocessing a task.")
     parser.add_argument("--flush-deferred", action="store_true", help="Try one deferred locked send without running new worker tasks.")
     parser.add_argument("--repair-missing-artifacts", action="store_true", help="Requeue completed tasks whose required media files were not sent.")
+    parser.add_argument(
+        "--recover-expired-transport",
+        help="Requeue a bounded recent expired outbox for one authenticated transport.",
+    )
+    parser.add_argument(
+        "--recovery-max-age-seconds",
+        type=int,
+        default=DEFAULT_TRANSPORT_RECOVERY_MAX_AGE_SECONDS,
+    )
+    parser.add_argument(
+        "--recovery-limit",
+        type=int,
+        default=DEFAULT_TRANSPORT_RECOVERY_LIMIT,
+    )
     args = parser.parse_args()
 
     if args.enqueue:
@@ -264,6 +281,16 @@ def main() -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
+    if args.recover_expired_transport:
+        payload = recover_recent_expired_transport_deliveries(
+            args.queue,
+            transport=args.recover_expired_transport,
+            max_age_seconds=max(0, args.recovery_max_age_seconds),
+            limit=max(0, args.recovery_limit),
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
     if args.once or args.loop:
         while True:
             processed = process_one(args.queue, args.chat, send=args.send, send_targets=args.send_targets, log_idle=not args.loop)
@@ -274,7 +301,10 @@ def main() -> int:
 
                 time.sleep(args.poll_seconds)
         return 0
-    raise SystemExit("Use --enqueue, --once, --loop, --resend, --reprocess, --flush-deferred, or --repair-missing-artifacts")
+    raise SystemExit(
+        "Use --enqueue, --once, --loop, --resend, --reprocess, --flush-deferred, "
+        "--repair-missing-artifacts, or --recover-expired-transport"
+    )
 
 
 def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Path = DEFAULT_SEND_TARGETS) -> int:
@@ -2826,6 +2856,178 @@ def repair_missing_artifact_deliveries(path: Path) -> dict[str, Any]:
             repaired.append({"id": task.get("id"), "chat": task.get("chat"), "from_status": status, "files": missing_existing})
         write_tasks(path, tasks)
     return {"ok": True, "queue": str(path), "repaired_count": len(repaired), "repaired": repaired, "skipped": skipped}
+
+
+def recover_recent_expired_transport_deliveries(
+    path: Path,
+    *,
+    transport: str,
+    max_age_seconds: int = DEFAULT_TRANSPORT_RECOVERY_MAX_AGE_SECONDS,
+    limit: int = DEFAULT_TRANSPORT_RECOVERY_LIMIT,
+) -> dict[str, Any]:
+    """Restore a small recent outbox only after its transport reconnects.
+
+    Ordinary queue expiry remains final. This recovery lane is deliberately
+    narrower: the caller names the newly authenticated transport, only tasks
+    that expired while already in a send state qualify, and each task has a
+    small lifetime recovery cap. The sender's delivery ledger remains the
+    exactly-once gate when a partially delivered task is retried.
+    """
+    normalized_transport = str(transport or "").strip().lower()
+    bounded_limit = max(0, int(limit))
+    bounded_age = max(0, int(max_age_seconds))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    recovered: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    now = datetime.now()
+    now_text = now.isoformat(timespec="seconds")
+    max_attempts = max(
+        1,
+        int(
+            os.environ.get(
+                "WECHAT_WORKER_TRANSPORT_RECOVERY_MAX_ATTEMPTS",
+                DEFAULT_TRANSPORT_RECOVERY_MAX_ATTEMPTS,
+            )
+        ),
+    )
+
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        candidate_indices: list[int] = []
+        for index, task in enumerate(tasks):
+            if str(task.get("status") or "") != "send_expired":
+                continue
+            if task_transport_name(task) != normalized_transport:
+                continue
+            if str(task.get("expired_from_status") or "") not in {
+                "send_failed",
+                SEND_DEFERRED_LOCKED_STATUS,
+                SEND_DEFERRED_ARTIFACT_STATUS,
+                SEND_RETRYING_STATUS,
+            }:
+                skipped.append({"id": task.get("id"), "reason": "not_transport_send_expiry"})
+                continue
+            expired_at = parse_iso_datetime(str(task.get("expired_at") or ""))
+            if expired_at is None or (now - expired_at).total_seconds() > bounded_age:
+                skipped.append({"id": task.get("id"), "reason": "expired_outside_recovery_window"})
+                continue
+            if int(task.get("transport_recovery_count") or 0) >= max_attempts:
+                skipped.append({"id": task.get("id"), "reason": "transport_recovery_cap_reached"})
+                continue
+            result = task.get("result")
+            if not isinstance(result, dict) or result_is_no_reply(result) or not worker_result_has_delivery_content(result):
+                skipped.append({"id": task.get("id"), "reason": "no_resendable_result"})
+                continue
+            if newer_task_superseding_deferred_confirmation(task, tasks) is not None:
+                skipped.append({"id": task.get("id"), "reason": "superseded_confirmation"})
+                continue
+            candidate_indices.append(index)
+
+        candidate_indices.sort(
+            key=lambda index: transport_recovery_sort_timestamp(tasks[index]),
+            reverse=True,
+        )
+        selected_indices: list[int] = []
+        seen_delivery_fingerprints: set[str] = set()
+        for index in candidate_indices:
+            fingerprint = expired_transport_delivery_fingerprint(tasks[index])
+            if fingerprint in seen_delivery_fingerprints:
+                skipped.append({"id": tasks[index].get("id"), "reason": "duplicate_recent_delivery"})
+                continue
+            seen_delivery_fingerprints.add(fingerprint)
+            selected_indices.append(index)
+            if len(selected_indices) >= bounded_limit:
+                break
+
+        for index in selected_indices:
+            task = tasks[index]
+            result = task["result"]
+            unsent_files = [
+                str(path.resolve())
+                for path in required_delivery_file_paths(result)
+                if path.exists() and str(path.resolve()) not in set(task.get("sent_file_paths") or [])
+            ]
+            previous_status = str(task.get("status") or "")
+            previous_reason = str(task.get("send_deferred_reason") or "")
+            task.setdefault("transport_recovery_history", []).append(
+                {
+                    "at": now_text,
+                    "transport": normalized_transport,
+                    "from_status": previous_status,
+                    "from_reason": previous_reason,
+                    "unsent_files": unsent_files,
+                }
+            )
+            task["status"] = SEND_DEFERRED_ARTIFACT_STATUS if unsent_files else SEND_DEFERRED_LOCKED_STATUS
+            task["send_deferred_reason"] = "transport_reconnected"
+            task["transport_recovery_count"] = int(task.get("transport_recovery_count") or 0) + 1
+            task["transport_recovered_at"] = now_text
+            task["send_retry_count"] = 0
+            task["last_send_attempt_at"] = "1970-01-01T00:00:00"
+            task["send_expires_at"] = queue_deadline_iso(DEFAULT_DEFERRED_SEND_TTL_SECONDS)
+            task.pop("completed_at", None)
+            task.pop("worker_id", None)
+            task.pop("send_retry_claimed_at", None)
+            tasks[index] = task
+            recovered.append(
+                {
+                    "id": task.get("id"),
+                    "chat": task.get("chat"),
+                    "from_status": previous_status,
+                    "status": task["status"],
+                    "unsent_file_count": len(unsent_files),
+                }
+            )
+        write_tasks(path, tasks)
+
+    return {
+        "ok": True,
+        "queue": str(path),
+        "transport": normalized_transport,
+        "recovered_count": len(recovered),
+        "recovered": recovered,
+        "skipped": skipped,
+    }
+
+
+def task_transport_name(task: dict[str, Any]) -> str:
+    for container_name in ("source", "route", "execution_contract"):
+        container = task.get(container_name)
+        if not isinstance(container, dict):
+            continue
+        value = str(container.get("transport") or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def expired_transport_delivery_fingerprint(task: dict[str, Any]) -> str:
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    file_identities: list[str] = []
+    for raw in result.get("files") or []:
+        candidate = Path(str(raw)).expanduser()
+        try:
+            stat = candidate.stat()
+        except OSError:
+            continue
+        if candidate.is_file():
+            file_identities.append(f"{candidate.name}:{stat.st_size}")
+    if file_identities:
+        material = json.dumps(sorted(file_identities), ensure_ascii=False, separators=(",", ":"))
+    else:
+        material = collapse_context_text(result.get("confirmation") or result.get("message") or "", max_len=4000)
+    chat = str(task.get("chat") or "")
+    return hashlib.sha256(f"{chat}\n{material}".encode("utf-8")).hexdigest()
+
+
+def transport_recovery_sort_timestamp(task: dict[str, Any]) -> float:
+    for key in ("expired_at", "last_send_attempt_at", "created_at", "completed_at"):
+        value = parse_iso_datetime(str(task.get(key) or ""))
+        if value:
+            return value.timestamp()
+    return 0.0
 
 
 def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:

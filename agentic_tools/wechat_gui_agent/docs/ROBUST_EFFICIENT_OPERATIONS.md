@@ -400,6 +400,13 @@ The stable interface and recovery commands are documented in
   `gui_send_timeout`, `wechat_entry_required`, or `title_guard_blank`. Ordinary
   deferred sends expire after 10 minutes by default and retries are globally
   spaced by 30 seconds, so a restart cannot dump a stale burst into WeChat.
+- WeCom GUI reconnect is a narrow exception, not backlog replay. A transition
+  from no full client window to an authenticated full window may recover at
+  most one `send_expired` WeCom result from the previous 12 hours, only when
+  they had already reached a send state and still contain a resendable result.
+  The per-task recovery cap, exact-chat guard, and durable text/file delivery
+  ledgers still apply. It must not recover pending work, another transport, or
+  arbitrary historical messages.
 - Duplicate-response guards must not use placeholder WeChat `server_id` values
   such as `0`, empty, `null`, or `-1` as globally unique ids. Store a per-row
   response key and fall back to `local_id` for placeholder server ids so
@@ -645,7 +652,7 @@ evidence for local artifacts, not chat-facing content.
 | `waiting_confirmation` | Human approval required. | Approve/reject through CLI or web panel. |
 | `send_failed` | Non-deferred send failure. | Inspect evidence, fix target/title guard, then explicitly resend or set `WECHAT_WORKER_FAILED_SEND_MAX_RETRIES` for a repair run. Default workers do not auto-flush terminal failed rows. |
 | `expired_stale` | An ordinary pending task exceeded the 15-minute backlog TTL. | Leave terminal; explicitly replay the current request only if it is still wanted. |
-| `send_expired` | An outbound retry exceeded the 10-minute outbox TTL. | Leave terminal; use explicit resend only after confirming the message is still useful. |
+| `send_expired` | An outbound retry exceeded the 10-minute outbox TTL. | Leave terminal by default. Explicitly resend only after confirming relevance. The authenticated WeCom GUI reconnect hook may revive a bounded recent transport-send result under the constraints above. |
 | `worker_abandoned` | The process owning an ordinary `in_progress` task ended. | Leave terminal by default; explicitly reprocess only if the request is still wanted. |
 | `worker_failed` | Backend failed or every fallback returned an empty delivery payload. | Fix source/tool issue; rerun only if safe. Never mark an empty payload `done`. |
 | `done` | Requested stages completed. | No action. |

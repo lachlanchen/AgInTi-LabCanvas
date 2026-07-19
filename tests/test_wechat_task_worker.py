@@ -6006,6 +6006,139 @@ stderr: noisy internal trace
         self.assertEqual(payload["repaired_count"], 0)
         self.assertEqual(tasks[0]["status"], "done")
 
+    def test_recover_recent_expired_transport_delivery_is_bounded_and_scoped(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            report = tmp_path / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            now = worker.datetime.now()
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "wecom-recent",
+                        "chat": "wecom:external-gui:group:one",
+                        "status": "send_expired",
+                        "source": {"transport": "wecom"},
+                        "expired_from_status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                        "expired_at": (now - worker.timedelta(minutes=5)).isoformat(timespec="seconds"),
+                        "send_deferred_reason": "gui_compose_verification",
+                        "result": {"message": "done", "confirmation": "", "files": [str(report)]},
+                    },
+                    {
+                        "id": "wechat-recent",
+                        "chat": "other",
+                        "status": "send_expired",
+                        "source": {"transport": "wechat"},
+                        "expired_from_status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                        "expired_at": (now - worker.timedelta(minutes=5)).isoformat(timespec="seconds"),
+                        "result": {"message": "other", "confirmation": "", "files": []},
+                    },
+                    {
+                        "id": "wecom-stale",
+                        "chat": "wecom:external-gui:group:old",
+                        "status": "send_expired",
+                        "route": {"transport": "wecom"},
+                        "expired_from_status": worker.SEND_DEFERRED_ARTIFACT_STATUS,
+                        "expired_at": (now - worker.timedelta(hours=13)).isoformat(timespec="seconds"),
+                        "result": {"message": "old", "confirmation": "", "files": [str(report)]},
+                    },
+                ],
+            )
+
+            payload = worker.recover_recent_expired_transport_deliveries(
+                queue,
+                transport="wecom",
+                max_age_seconds=12 * 60 * 60,
+                limit=1,
+            )
+            tasks = {task["id"]: task for task in worker.read_tasks(queue)}
+
+        self.assertEqual(payload["recovered_count"], 1)
+        self.assertEqual(tasks["wecom-recent"]["status"], worker.SEND_DEFERRED_ARTIFACT_STATUS)
+        self.assertEqual(tasks["wecom-recent"]["send_deferred_reason"], "transport_reconnected")
+        self.assertEqual(tasks["wecom-recent"]["transport_recovery_count"], 1)
+        self.assertEqual(tasks["wecom-recent"]["send_retry_count"], 0)
+        self.assertEqual(tasks["wechat-recent"]["status"], "send_expired")
+        self.assertEqual(tasks["wecom-stale"]["status"], "send_expired")
+
+    def test_recover_recent_expired_transport_delivery_does_not_requeue_twice(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "wecom-once",
+                        "chat": "wecom:external-gui:group:one",
+                        "status": "send_expired",
+                        "source": {"transport": "wecom"},
+                        "expired_from_status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                        "expired_at": worker.datetime.now().isoformat(timespec="seconds"),
+                        "result": {"message": "done", "confirmation": "", "files": []},
+                    }
+                ],
+            )
+
+            first = worker.recover_recent_expired_transport_deliveries(queue, transport="wecom")
+            second = worker.recover_recent_expired_transport_deliveries(queue, transport="wecom")
+
+        self.assertEqual(first["recovered_count"], 1)
+        self.assertEqual(second["recovered_count"], 0)
+
+    def test_recover_recent_expired_transport_delivery_deduplicates_same_artifacts(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            first_dir = tmp_path / "first"
+            second_dir = tmp_path / "second"
+            first_dir.mkdir()
+            second_dir.mkdir()
+            first_report = first_dir / "report.pdf"
+            second_report = second_dir / "report.pdf"
+            first_report.write_bytes(b"same-report")
+            second_report.write_bytes(b"same-report")
+            now = worker.datetime.now()
+            queue = tmp_path / "queue.jsonl"
+            common = {
+                "chat": "wecom:external-gui:group:one",
+                "status": "send_expired",
+                "source": {"transport": "wecom"},
+                "expired_from_status": worker.SEND_DEFERRED_LOCKED_STATUS,
+            }
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        **common,
+                        "id": "older",
+                        "expired_at": (now - worker.timedelta(minutes=2)).isoformat(timespec="seconds"),
+                        "result": {"message": "old wording", "confirmation": "", "files": [str(first_report)]},
+                    },
+                    {
+                        **common,
+                        "id": "newer",
+                        "expired_at": (now - worker.timedelta(minutes=1)).isoformat(timespec="seconds"),
+                        "result": {"message": "new wording", "confirmation": "", "files": [str(second_report)]},
+                    },
+                ],
+            )
+
+            payload = worker.recover_recent_expired_transport_deliveries(queue, transport="wecom", limit=3)
+            tasks = {task["id"]: task for task in worker.read_tasks(queue)}
+
+        self.assertEqual(payload["recovered_count"], 1)
+        self.assertEqual(tasks["newer"]["status"], worker.SEND_DEFERRED_ARTIFACT_STATUS)
+        self.assertEqual(tasks["older"]["status"], "send_expired")
+        self.assertIn(
+            {"id": "older", "reason": "duplicate_recent_delivery"},
+            payload["skipped"],
+        )
+
     def test_send_result_does_not_attach_markdown_pdf_companion_by_default(self) -> None:
         worker = load_worker()
         messages: list[str] = []
