@@ -30,6 +30,8 @@ import unicodedata
 from typing import Any
 from urllib import parse
 
+from wecom_contract import LABAGENT_GUIDE_VERSION, labagent_welcome_message
+
 try:
     from PIL import Image, ImageFilter, ImageOps
 except ImportError:  # pragma: no cover - runtime doctor reports this clearly.
@@ -75,6 +77,9 @@ def main() -> int:
     initialize = subparsers.add_parser("init", help="Create ignored GUI relay configuration.")
     initialize.add_argument("--chat", action="append", dest="chats", default=[])
     initialize.add_argument("--force", action="store_true")
+    search = initialize.add_mutually_exclusive_group()
+    search.add_argument("--allow-search-fallback", action="store_true", default=None)
+    search.add_argument("--no-search-fallback", action="store_false", dest="allow_search_fallback")
     initialize.add_argument("--json", action="store_true")
 
     for name, help_text in (
@@ -93,6 +98,11 @@ def main() -> int:
     send.add_argument("--live", action="store_true", help="Actually click WeCom Send.")
     send.add_argument("--json", action="store_true")
 
+    guide = subparsers.add_parser("guide", help="Send the idempotent LabAgent task guide.")
+    guide.add_argument("--chat", required=True)
+    guide.add_argument("--live", action="store_true", help="Actually click WeCom Send.")
+    guide.add_argument("--json", action="store_true")
+
     messages = subparsers.add_parser("messages", help="Read the latest normalized inbound snapshot.")
     messages.add_argument("--chat", required=True)
     messages.add_argument("--after", type=int, default=0, help="Return messages after this cursor.")
@@ -104,7 +114,12 @@ def main() -> int:
 
     args = parser.parse_args()
     if args.command == "init":
-        payload = initialize_config(args.config, args.chats, force=args.force)
+        payload = initialize_config(
+            args.config,
+            args.chats,
+            force=args.force,
+            allow_search_fallback=args.allow_search_fallback,
+        )
     else:
         bridge = WeComGuiBridge(load_config(args.config), config_path=args.config)
         if args.command == "status":
@@ -131,6 +146,23 @@ def main() -> int:
                     args.files,
                     task_id=args.task_id,
                 )
+        elif args.command == "guide":
+            if args.chat not in bridge.target_groups:
+                payload = {"ok": False, "error": "chat is not allowlisted"}
+            elif not args.live:
+                payload = {
+                    "ok": True,
+                    "dry_run": True,
+                    "chat": args.chat,
+                    "guide_version": LABAGENT_GUIDE_VERSION,
+                    "message_bytes": len(labagent_welcome_message().encode("utf-8")),
+                }
+            else:
+                payload = bridge.send_text(
+                    args.chat,
+                    labagent_welcome_message(),
+                    task_id=f"labagent-guide:{LABAGENT_GUIDE_VERSION}:{args.chat}",
+                )
         elif args.command == "messages":
             payload = bridge.read_messages(args.chat, after=args.after, limit=args.limit)
         elif args.command == "chats":
@@ -142,7 +174,13 @@ def main() -> int:
     return 0 if payload.get("ok") else 1
 
 
-def initialize_config(path: Path, chats: list[str], *, force: bool = False) -> dict[str, Any]:
+def initialize_config(
+    path: Path,
+    chats: list[str],
+    *,
+    force: bool = False,
+    allow_search_fallback: bool | None = None,
+) -> dict[str, Any]:
     existing: dict[str, Any] = {}
     if path.is_file() and not force:
         existing = load_config(path)
@@ -165,7 +203,11 @@ def initialize_config(path: Path, chats: list[str], *, force: bool = False) -> d
         "event_root": str(existing.get("event_root") or DEFAULT_EVENT_ROOT),
         "queue": str(existing.get("queue") or DEFAULT_QUEUE),
         "initial_backfill": "seed",
-        "allow_search_fallback": bool(existing.get("allow_search_fallback", False)),
+        "allow_search_fallback": (
+            bool(existing.get("allow_search_fallback", False))
+            if allow_search_fallback is None
+            else bool(allow_search_fallback)
+        ),
         "max_send_file_bytes": bounded_int(
             existing.get("max_send_file_bytes"), 100 * 1024 * 1024, 1, 1024 * 1024 * 1024
         ),
@@ -175,6 +217,7 @@ def initialize_config(path: Path, chats: list[str], *, force: bool = False) -> d
         "ok": True,
         "config_path": str(path),
         "target_groups": target_groups,
+        "allow_search_fallback": payload["allow_search_fallback"],
         "local_api_url": f"http://127.0.0.1:{payload['local_api_port']}",
     }
 

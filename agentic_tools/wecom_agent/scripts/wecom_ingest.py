@@ -33,6 +33,7 @@ from wecom_daily_research import (  # noqa: E402
     set_group_enabled,
     set_preference,
 )
+from wecom_contract import labagent_welcome_message  # noqa: E402
 
 
 MIRROR_DB = Path(
@@ -182,15 +183,6 @@ def event_transport_channel(event: dict[str, Any]) -> str:
     if value not in {"wecom_bot_websocket", "wecom_cli", "wecom_gui"}:
         raise ValueError(f"unsupported WeCom transport channel: {value}")
     return value
-
-
-def labagent_welcome_message() -> str:
-    return (
-        "LabAgent 已连接。你希望这个群每天关注什么研究主题？\n"
-        "发送：#daily 你的主题\n"
-        "也可以直接提出文献调研、研究方案、开放获取论文下载、Markdown/TeX/PDF、论文图、CAD/PCB、Blender 或科学设计请求。"
-        "结果和文件会回到这个群；视频发布和其他公开发布不在此机器人范围内。"
-    )
 
 
 def complete_direct_reply(

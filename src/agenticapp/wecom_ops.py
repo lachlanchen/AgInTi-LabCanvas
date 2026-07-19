@@ -85,7 +85,7 @@ def add_wecom_parser(subparsers: argparse._SubParsersAction) -> None:
         "action",
         nargs="?",
         default="status",
-        choices=["init", "status", "once", "chats", "messages", "send", "restart"],
+        choices=["init", "status", "once", "chats", "messages", "send", "guide", "restart"],
     )
     gui.add_argument("--chat", default="")
     gui.add_argument("--message", default="")
@@ -95,6 +95,9 @@ def add_wecom_parser(subparsers: argparse._SubParsersAction) -> None:
     gui.add_argument("--task-id", default="manual")
     gui.add_argument("--live", action="store_true")
     gui.add_argument("--force", action="store_true")
+    search = gui.add_mutually_exclusive_group()
+    search.add_argument("--allow-search-fallback", action="store_true", default=None)
+    search.add_argument("--no-search-fallback", action="store_false", dest="allow_search_fallback")
     gui.add_argument("--json", action="store_true")
     gui.set_defaults(func=cmd_gui)
 
@@ -413,7 +416,12 @@ def cmd_gui(args: argparse.Namespace) -> int:
             command.extend(["--chat", args.chat])
         if args.force:
             command.append("--force")
-    elif args.action in {"messages", "send"}:
+        search_fallback = getattr(args, "allow_search_fallback", None)
+        if search_fallback is True:
+            command.append("--allow-search-fallback")
+        elif search_fallback is False:
+            command.append("--no-search-fallback")
+    elif args.action in {"messages", "send", "guide"}:
         if not args.chat:
             payload = {"ok": False, "error": f"--chat is required for wecom gui {args.action}"}
             print_payload(payload, args.json)
@@ -431,6 +439,8 @@ def cmd_gui(args: argparse.Namespace) -> int:
                 command.extend(["--file", str(Path(path).expanduser())])
             if args.live:
                 command.append("--live")
+        if args.action == "guide" and args.live:
+            command.append("--live")
     command.append("--json")
     proc = subprocess.run(command, cwd=PACKAGE_ROOT, capture_output=True, text=True, check=False)
     try:

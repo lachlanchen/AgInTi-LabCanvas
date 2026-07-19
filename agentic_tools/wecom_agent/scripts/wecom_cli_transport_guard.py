@@ -101,6 +101,8 @@ def transport_status(config: dict[str, Any], status_path: Path = DEFAULT_STATUS)
         "state": str(persisted.get("state") or "not_started"),
         "last_transition": str(persisted.get("last_transition") or ""),
         "last_error": str(persisted.get("last_error") or ""),
+        "msg_permission": persisted.get("msg_permission"),
+        "gui_fallback_recommended": bool(persisted.get("gui_fallback_recommended", False)),
         "novnc_url": admin_novnc_url(),
     }
 
@@ -111,18 +113,80 @@ def run_once(config: dict[str, Any], status_path: Path, cdp_port: int) -> dict[s
         write_status(status_path, result)
         return result
     if profile_ready(config):
+        capability = probe_message_capability(config)
+        if not capability.get("ok"):
+            checks = capability.get("checks") if isinstance(capability.get("checks"), dict) else {}
+            permission_unavailable = checks.get("msg_permission") is False
+            result = {
+                "ok": False,
+                "stopped": True,
+                "state": (
+                    "message_permission_unavailable"
+                    if permission_unavailable
+                    else "bridge_probe_failed"
+                ),
+                "msg_permission": checks.get("msg_permission"),
+                "gui_fallback_recommended": permission_unavailable,
+                "last_error": str(capability.get("error") or "official WeCom message probe failed")[:500],
+            }
+            write_status(status_path, result)
+            return result
         return run_bridge(config, status_path)
     return run_authorization(config, status_path, cdp_port)
 
 
+def probe_message_capability(config: dict[str, Any]) -> dict[str, Any]:
+    """Prove the official message scope before advertising a live bridge."""
+    config_path = str(config.get("_config_path") or "")
+    if not config_path:
+        return {"ok": False, "checks": {}, "error": "external WeCom config path is missing"}
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(BRIDGE), "--config", config_path, "probe", "--json"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "checks": {}, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    if payload:
+        return payload
+    detail = (proc.stderr or proc.stdout or "official WeCom message probe returned no JSON").strip()
+    return {"ok": False, "checks": {}, "error": detail[:500]}
+
+
 def run_bridge(config: dict[str, Any], status_path: Path) -> dict[str, Any]:
     config_path = str(config["_config_path"])
-    write_status(status_path, {"state": "bridge_starting", "last_error": ""})
+    write_status(
+        status_path,
+        {
+            "state": "bridge_starting",
+            "last_error": "",
+            "msg_permission": True,
+            "gui_fallback_recommended": False,
+        },
+    )
     process = subprocess.Popen(
         [sys.executable, str(BRIDGE), "--config", config_path, "loop"],
         cwd=ROOT,
     )
-    write_status(status_path, {"state": "bridge_running", "last_error": ""})
+    write_status(
+        status_path,
+        {
+            "state": "bridge_running",
+            "last_error": "",
+            "msg_permission": True,
+            "gui_fallback_recommended": False,
+        },
+    )
     try:
         returncode = process.wait()
     except KeyboardInterrupt:

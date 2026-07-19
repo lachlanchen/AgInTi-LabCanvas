@@ -106,10 +106,12 @@ Configure that relay only for an exact external group:
 
 ```bash
 PYTHONPATH=src python -m agenticapp wecom gui init --chat LabAgent
+PYTHONPATH=src python -m agenticapp wecom gui init --chat AgentTest --allow-search-fallback
 PYTHONPATH=src python -m agenticapp wecom gui restart --json
 PYTHONPATH=src python -m agenticapp wecom gui status --json
 PYTHONPATH=src python -m agenticapp wecom gui chats --json
 PYTHONPATH=src python -m agenticapp wecom gui messages --chat LabAgent --after 0 --limit 100 --json
+PYTHONPATH=src python -m agenticapp wecom gui guide --chat LabAgent --live --json
 ```
 
 Text/file sends are dry runs unless `--live` is present. Always supply a stable
@@ -124,10 +126,11 @@ currently supports text replies; do not claim generic outbound file delivery
 for this channel.
 
 Tencent currently documents that long-connection AI bots do not participate in
-external/customer groups. Therefore `LabAgent` should use the internal AI Bot
-WebSocket, while an external `AgentTest` group is enabled only when the tenant
-grants the separate CLI `msg` capability. A missing capability is a clear
-WeCom-side blocker, never permission to fall back to personal-WeChat state.
+external/customer groups. The official CLI guard therefore verifies `msg`
+permission before claiming readiness. When it reports
+`message_permission_unavailable`, the owner may bind `LabAgent` and `AgentTest`
+to the isolated GUI relay; this is still WeCom-only and never permission to
+fall back to personal-WeChat state.
 
 The default `owner` access mode pairs the first sender. When that owner first
 uses the bot in a group, the exact group is enrolled and its members may request
@@ -207,9 +210,10 @@ before pasting, so reads cannot block later verified delivery.
 
 The tmux stack has `gateway`, `worker`, and `daily` windows. An `external`
 window is added whenever the external bridge is enabled. Before authorization
-it maintains the official QR; afterward it runs the bridge and reports
-`bridge_running` through `wecom external status`. An `external-gui` window is
-added when `wecom_gui_bridge.local.json` is enabled.
+it maintains the official QR; afterward it probes message permission before it
+can report `bridge_running`. `wecom-client` and `external-gui` windows are added
+when `wecom_gui_bridge.local.json` is enabled. The client supervisor restores
+the desktop and uses a cooldown-bound login-window fallback after reboot.
 The scheduler only reads local private SQLite state while idle; model quota is
 spent only when a due report is enqueued and executed by the worker.
 

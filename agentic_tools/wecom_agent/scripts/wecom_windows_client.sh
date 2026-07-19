@@ -18,6 +18,7 @@ VNC_PORT="${WECOM_CLIENT_VNC_PORT:-5992}"
 NOVNC_PORT="${WECOM_CLIENT_NOVNC_PORT:-6192}"
 LOG_DIR="${WECOM_CLIENT_LOG_DIR:-$ROOT/output/virtual_desktop/wecom-client}"
 AUTOFIT_PID_FILE="$LOG_DIR/autofit.pid"
+LOGIN_FALLBACK_STAMP="$LOG_DIR/login-fallback.stamp"
 DOWNLOAD_URL="${WECOM_CLIENT_DOWNLOAD_URL:-https://work.weixin.qq.com/wework_admin/commdownload?platform=win&from=wwindex}"
 EXE_UNIX="$PREFIX/drive_c/Program Files (x86)/WXWork/WXWork.exe"
 EXE_WINDOWS='C:\Program Files (x86)\WXWork\WXWork.exe'
@@ -34,6 +35,37 @@ is_running() {
 is_autofit_running() {
   [[ -s "$AUTOFIT_PID_FILE" ]] || return 1
   kill -0 "$(cat "$AUTOFIT_PID_FILE")" >/dev/null 2>&1
+}
+
+has_visible_client_window() {
+  command -v xdotool >/dev/null 2>&1 || return 1
+  env DISPLAY="$DISPLAY_ID" XAUTHORITY= xdotool search --onlyvisible \
+    --name 'WeCom|企业微信' 2>/dev/null | head -n 1 | grep -q .
+}
+
+login_fallback_due() {
+  [[ -e "$LOGIN_FALLBACK_STAMP" ]] || return 0
+  local now modified
+  now="$(date +%s)"
+  modified="$(stat -c %Y "$LOGIN_FALLBACK_STAMP" 2>/dev/null || printf '0')"
+  (( now - modified >= 60 ))
+}
+
+wait_for_client_window() {
+  local attempts="${1:-30}"
+  local stable_checks=0
+  for _ in $(seq 1 "$attempts"); do
+    if is_running && has_visible_client_window; then
+      stable_checks=$((stable_checks + 1))
+      if (( stable_checks >= 4 )); then
+        return 0
+      fi
+    else
+      stable_checks=0
+    fi
+    sleep 0.5
+  done
+  return 1
 }
 
 emit() {
@@ -190,20 +222,48 @@ install_client() {
 start_client() {
   [[ -f "$EXE_UNIX" ]] || return 1
   launch_desktop
+  if is_running && wait_for_client_window 4; then
+    start_autofit_guard
+    fit_client_window || true
+    return 0
+  fi
   if ! is_running; then
     env DISPLAY="$DISPLAY_ID" XAUTHORITY= WINEPREFIX="$PREFIX" WINEDEBUG=-all \
       WINEDLLOVERRIDES='mscoree,mshtml=' setsid wine "$EXE_WINDOWS" \
       >"$LOG_DIR/app.log" 2>&1 < /dev/null &
   fi
-  for _ in $(seq 1 30); do
-    if is_running; then
+  if wait_for_client_window 30; then
+    start_autofit_guard
+    fit_client_window || true
+    return 0
+  fi
+
+  # Some unauthenticated Wine launches create the broker process but never
+  # expose the QR window. A bounded switch-account launch reliably asks the
+  # existing broker for that window. The cooldown prevents restart loops from
+  # opening repeated login prompts.
+  if login_fallback_due; then
+    touch "$LOGIN_FALLBACK_STAMP"
+    env DISPLAY="$DISPLAY_ID" XAUTHORITY= WINEPREFIX="$PREFIX" WINEDEBUG=-all \
+      WINEDLLOVERRIDES='mscoree,mshtml=' setsid wine "$EXE_WINDOWS" \
+      --switch-account --from-broker --we-channel=676 --we-ppid="$$" \
+      --skia_enable --skia_text_enable --skia_enable_win7 \
+      >"$LOG_DIR/app-switch-account.log" 2>&1 < /dev/null &
+    if wait_for_client_window 30; then
       start_autofit_guard
       fit_client_window || true
       return 0
     fi
-    sleep 0.5
-  done
+  fi
   return 1
+}
+
+supervise_client() {
+  trap 'exit 0' INT TERM
+  while true; do
+    start_client || true
+    sleep 10
+  done
 }
 
 case "$ACTION" in
@@ -221,6 +281,9 @@ case "$ACTION" in
     ;;
   fit)
     if fit_client_window; then emit true; else emit false "WeCom window was not found"; exit 1; fi
+    ;;
+  supervise)
+    supervise_client
     ;;
   autofit-loop)
     autofit_loop

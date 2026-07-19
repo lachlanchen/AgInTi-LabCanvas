@@ -641,6 +641,11 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("resize=scale", source)
         self.assertIn("WECOM_CLIENT_LAYERED_NATIVE_GEOMETRY", source)
         self.assertIn("native geometry", source)
+        self.assertIn("supervise_client", source)
+        self.assertIn("login_fallback_due", source)
+        self.assertIn("stable_checks >= 4", source)
+        self.assertIn("if is_running && wait_for_client_window 4", source)
+        self.assertNotIn("if is_running && login_fallback_due", source)
         self.assertNotIn("com.tencent.mm", source)
         self.assertNotIn("wechat_gui_agent", source)
         self.assertNotIn("xwechat_files", source)
@@ -818,6 +823,62 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(write_status.call_args_list[1].args[1]["state"], "bridge_running")
         self.assertEqual(write_status.call_args_list[2].args[1]["state"], "bridge_stopped")
 
+    def test_external_transport_guard_refuses_false_running_without_message_permission(self) -> None:
+        guard = load_cli_guard()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth = root / "auth"
+            auth.mkdir()
+            for name in ("bot.enc", "mcp_config.enc", ".encryption_key"):
+                (auth / name).write_text("private", encoding="utf-8")
+            config = {
+                "enabled": True,
+                "auth_config_dir": str(auth),
+                "_config_path": str(root / "external.json"),
+            }
+            status_path = root / "status.json"
+            capability = {
+                "ok": False,
+                "checks": {"msg_permission": False},
+                "error": "current enterprise does not grant message permission",
+            }
+            with mock.patch.object(guard, "probe_message_capability", return_value=capability), mock.patch.object(
+                guard, "run_bridge", side_effect=AssertionError("bridge must not start")
+            ):
+                result = guard.run_once(config, status_path, 9353)
+            persisted = json.loads(status_path.read_text(encoding="utf-8"))
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["stopped"])
+        self.assertEqual(result["state"], "message_permission_unavailable")
+        self.assertFalse(result["msg_permission"])
+        self.assertTrue(result["gui_fallback_recommended"])
+        self.assertEqual(persisted["state"], "message_permission_unavailable")
+
+    def test_external_transport_guard_starts_bridge_only_after_capability_probe(self) -> None:
+        guard = load_cli_guard()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth = root / "auth"
+            auth.mkdir()
+            for name in ("bot.enc", "mcp_config.enc", ".encryption_key"):
+                (auth / name).write_text("private", encoding="utf-8")
+            config = {
+                "enabled": True,
+                "auth_config_dir": str(auth),
+                "_config_path": str(root / "external.json"),
+            }
+            expected = {"ok": True, "state": "bridge_stopped"}
+            with mock.patch.object(
+                guard,
+                "probe_message_capability",
+                return_value={"ok": True, "checks": {"msg_permission": True}},
+            ), mock.patch.object(guard, "run_bridge", return_value=expected) as run_bridge:
+                result = guard.run_once(config, root / "status.json", 9353)
+
+        self.assertEqual(result, expected)
+        run_bridge.assert_called_once()
+
     def test_external_status_reads_separate_guard(self) -> None:
         wecom_ops = load_wecom_ops()
         completed = mock.Mock(
@@ -903,6 +964,34 @@ class WeComAgentBridgeTests(unittest.TestCase):
         selected = bridge.choose_ocr_variant("BY LACH", "可以啦")
 
         self.assertEqual(selected, "可以啦")
+
+    def test_gui_config_accumulates_two_groups_and_enables_exact_search_fallback(self) -> None:
+        bridge = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "gui.json"
+            bridge.initialize_config(config, ["LabAgent"], allow_search_fallback=False)
+            payload = bridge.initialize_config(
+                config,
+                ["AgentTest"],
+                allow_search_fallback=True,
+            )
+            stored = json.loads(config.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["target_groups"], ["LabAgent", "AgentTest"])
+        self.assertTrue(payload["allow_search_fallback"])
+        self.assertEqual(stored["target_groups"], ["LabAgent", "AgentTest"])
+        self.assertTrue(stored["allow_search_fallback"])
+
+    def test_gui_guide_and_first_contact_share_one_user_contract(self) -> None:
+        bridge = load_gui_bridge()
+        ingest = load_ingest()
+
+        message = bridge.labagent_welcome_message()
+
+        self.assertEqual(message, ingest.labagent_welcome_message())
+        self.assertIn("请直接发送你想完成的任务", message)
+        self.assertIn("#daily", message)
+        self.assertIn("CAD/PCB", message)
 
     def test_gui_ocr_recovers_digit_bearing_scientific_identifier(self) -> None:
         bridge = load_gui_bridge()
@@ -1118,6 +1207,31 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("output/report.pdf", command)
         self.assertIn("--live", command)
 
+    def test_gui_cli_guide_uses_exact_group_and_live_gate(self) -> None:
+        wecom_ops = load_wecom_ops()
+        completed = mock.Mock(returncode=0, stdout='{"ok": true}\n', stderr="")
+        output = io.StringIO()
+        with mock.patch.object(wecom_ops.subprocess, "run", return_value=completed) as run, redirect_stdout(output):
+            returncode = wecom_ops.cmd_gui(
+                SimpleNamespace(
+                    action="guide",
+                    chat="AgentTest",
+                    message="",
+                    files=[],
+                    after=0,
+                    limit=100,
+                    task_id="manual",
+                    live=True,
+                    force=False,
+                    allow_search_fallback=None,
+                    json=True,
+                )
+            )
+
+        self.assertEqual(returncode, 0)
+        command = run.call_args.args[0]
+        self.assertEqual(command[-5:], ["guide", "--chat", "AgentTest", "--live", "--json"])
+
     def test_gui_bridge_source_is_allowlisted_and_wecom_only(self) -> None:
         source = (
             ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_gui_bridge.py"
@@ -1142,6 +1256,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("drag_staged_file", source)
         self.assertIn("wait_for_file_in_history", source)
         self.assertIn("external-gui", tmux_source)
+        self.assertIn("wecom-client", tmux_source)
+        self.assertIn("supervise", tmux_source)
         self.assertIn("ensure_core_windows", tmux_source)
         self.assertIn("missing windows repaired", tmux_source)
         self.assertNotIn("xwechat_files", source)

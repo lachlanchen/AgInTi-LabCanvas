@@ -10,6 +10,7 @@ sends through personal WeChat.
 ```bash
 PYTHONPATH=src python -m agenticapp wecom client start --json
 PYTHONPATH=src python -m agenticapp wecom gui init --chat LabAgent
+PYTHONPATH=src python -m agenticapp wecom gui init --chat AgentTest --allow-search-fallback
 PYTHONPATH=src python -m agenticapp wecom gui restart --json
 PYTHONPATH=src python -m agenticapp wecom gui status --json
 ```
@@ -17,8 +18,9 @@ PYTHONPATH=src python -m agenticapp wecom gui status --json
 The ignored config is
 `agentic_tools/wecom_agent/.private/wecom_gui_bridge.local.json`. It contains
 the exact group allowlist, display, state paths, localhost port, and bearer
-token. The relay runs in the `labcanvas-wecom:external-gui` tmux window and is
-restored by the normal WeCom tmux launcher. The default viewer is:
+token. The client supervisor and relay run in the
+`labcanvas-wecom:wecom-client` and `labcanvas-wecom:external-gui` tmux windows
+and are restored by the normal WeCom launcher. The default viewer is:
 
 ```text
 http://127.0.0.1:6192/vnc.html?host=127.0.0.1&port=6192&autoconnect=1&resize=scale
@@ -29,6 +31,10 @@ http://127.0.0.1:6192/vnc.html?host=127.0.0.1&port=6192&autoconnect=1&resize=sca
 ```bash
 # List stable target IDs.
 PYTHONPATH=src python -m agenticapp wecom gui chats --json
+
+# Invite one exact group to send tasks. Repeating this is idempotent.
+PYTHONPATH=src python -m agenticapp wecom gui guide \
+  --chat LabAgent --live --json
 
 # Read messages after a durable cursor.
 PYTHONPATH=src python -m agenticapp wecom gui messages \
@@ -46,6 +52,11 @@ PYTHONPATH=src python -m agenticapp wecom gui send \
 
 Use a stable `task_id` for retries. Repeating the same task and exact payload
 returns success without sending a duplicate.
+
+`--allow-search-fallback` permits only exact chat-name navigation when a group
+is absent from the visible recent list. The opened title must still match
+exactly before any read or send; this does not search message content or weaken
+the allowlist.
 
 ## Local API
 
@@ -108,8 +119,9 @@ worker plan but cannot replace either field. The research worker resolves
 scientific letter/digit ambiguities with live search and authoritative sources
 before asking a clarification question. If native copy and bounded OCR both
 fail, or if the viewport changes ambiguously, the relay refuses replay instead
-of guessing. It does not search for chats by default and never falls back to
-the personal-WeChat database, GUI, or sender.
+of guessing. Exact-title search is disabled by default and can be enabled only
+in ignored local configuration. The relay never falls back to the
+personal-WeChat database, GUI, or sender.
 
 ## Recovery
 
@@ -120,9 +132,11 @@ PYTHONPATH=src python -m agenticapp wecom client status --json
 PYTHONPATH=src python -m agenticapp wecom gui restart --json
 ```
 
-If `client_visible` is false, restore the Wine client and login first. If a chat
-is not visible, place it in the conversation list; search remains disabled by
-default to avoid opening the wrong group. A pre-Send composer verification
+If `client_visible` is false, restore the Wine client and login first. The
+supervisor first tries persisted login and uses one cooldown-bound
+switch-account launch only when Wine has a broker but no visible login/main
+window. If a chat is not visible, place it in the conversation list or enable
+the exact-title fallback above. A pre-Send composer verification
 failure is safe to retry with the same `task_id`. A failure after clicking Send
 is reported as uncertain and is not retried automatically, preventing duplicate
 messages or files.

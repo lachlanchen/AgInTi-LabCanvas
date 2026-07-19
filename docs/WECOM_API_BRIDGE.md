@@ -93,16 +93,18 @@ PYTHONPATH=src python -m agenticapp wecom external restart --json
 
 The `authorize` command runs a persistent QR/bridge guard in the `external`
 tmux window. It refreshes expired official QR pages in one dedicated browser
-tab, records only a fingerprint in private state, and switches to
-`bridge_running` when the complete encrypted CLI profile exists. It restarts
+tab, records only a fingerprint in private state, and probes the actual `msg`
+scope before switching to `bridge_running`. A complete encrypted profile alone
+is not readiness. When the tenant denies the scope, status becomes
+`message_permission_unavailable` with `gui_fallback_recommended=true`. It restarts
 only that external window and does not disconnect the internal LabAgent bot.
 Use `bind` only for a bounded one-shot authorization attempt.
 
 Tencent's current AI Bot documentation says long-connection bots do not support
 external/customer groups. The external path is therefore a separate,
 conditional `wecom-cli msg` capability rather than a fallback from the internal
-bot. If the tenant does not grant that capability, AgentTest remains unavailable
-through official APIs and the system fails closed.
+bot. If the tenant does not grant that capability, official access fails closed
+and the separately allowlisted GUI relay may be used instead.
 
 An optional setup-only Android helper can install Tencent's official WeCom APK
 after the owner unlocks a connected device:
@@ -146,10 +148,13 @@ the tenant does not grant external-group `msg` permission:
 
 ```bash
 PYTHONPATH=src python -m agenticapp wecom gui init --chat LabAgent
+PYTHONPATH=src python -m agenticapp wecom gui init --chat AgentTest --allow-search-fallback
 PYTHONPATH=src python -m agenticapp wecom gui restart --json
 PYTHONPATH=src python -m agenticapp wecom gui status --json
 PYTHONPATH=src python -m agenticapp wecom gui chats --json
 PYTHONPATH=src python -m agenticapp wecom gui messages --chat LabAgent --after 0 --limit 100 --json
+PYTHONPATH=src python -m agenticapp wecom gui guide --chat LabAgent --live --json
+PYTHONPATH=src python -m agenticapp wecom gui guide --chat AgentTest --live --json
 ```
 
 The relay watches only exact names in its ignored allowlist. It seeds the
@@ -157,6 +162,9 @@ visible history on first run, records later inbound messages in a cursor-based
 private SQLite ledger, and sends them into `wecom_ingest.py` with transport
 channel `wecom_gui`. The same per-chat agent and worker routines then answer the
 question or deliver a daily report to that exact group.
+`LabAgent` and `AgentTest` therefore have distinct hashed chat keys, durable
+cursors, delivery ledgers, and resumed agent sessions even though one desktop
+serializes their GUI operations.
 
 Text and artifacts use one authenticated localhost interface. `task_id` plus
 the exact payload provides retry-safe duplicate suppression:

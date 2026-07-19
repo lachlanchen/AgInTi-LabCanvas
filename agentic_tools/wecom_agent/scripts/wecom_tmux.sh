@@ -65,7 +65,11 @@ start_gui_window() {
     echo "Main WeCom session is not running: $SESSION" >&2
     return 1
   fi
-  "$WINDOWS_CLIENT" start --json >> "$GUI_BRIDGE_LOG" 2>&1
+  if ! window_exists wecom-client; then
+    tmux new-window -t "$SESSION" -n wecom-client \
+      "cd '$ROOT' && exec '$WINDOWS_CLIENT' supervise >> '$GUI_BRIDGE_LOG' 2>&1"
+  fi
+  "$WINDOWS_CLIENT" start --json >> "$GUI_BRIDGE_LOG" 2>&1 || true
   tmux kill-window -t "$SESSION:external-gui" 2>/dev/null || true
   tmux new-window -t "$SESSION" -n external-gui \
     "cd '$ROOT' && exec python3 '$GUI_BRIDGE' --config '$GUI_BRIDGE_CONFIG' loop >> '$GUI_BRIDGE_LOG' 2>&1"

@@ -128,6 +128,14 @@ personal-WeChat database, media, search, sender, or fallback paths.
   letter/digit variants against authoritative databases and primary literature
   before deciding whether one concise clarification is actually necessary.
 - Match one exact configured chat title. Search is disabled by default.
+- Multiple allowlisted WeCom groups share one serialized desktop only; each
+  keeps its own cursor, source ID, hashed chat key, agent session, task state,
+  and delivery ledger. Never reuse a result or cursor across group names.
+- When enabled explicitly, GUI search is an exact-title navigation fallback,
+  not content search. Verify the opened title before reading or sending.
+- The official CLI guard must probe `msg_permission` before reporting
+  `bridge_running`. Use the GUI relay when status is
+  `message_permission_unavailable`; do not keep polling an unusable API.
 - Verify Unicode composer readback before a text send. For files, require the
   exact filename in the composer and sent history before updating delivery
   state. Keep select/paste or select/copy in one xdotool key command; split key
