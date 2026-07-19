@@ -132,6 +132,15 @@ of guessing. Exact-title search is disabled by default and can be enabled only
 in ignored local configuration. The relay never falls back to the
 personal-WeChat database, GUI, or sender.
 
+Model roles are transport-specific. WeCom fast chat and routing use
+`gpt-5.6-sol` with low reasoning. Requests promoted to the durable worker use
+`gpt-5.6-sol` with high reasoning for research, reports, figures, CAD, and
+other multi-step work. The worker launcher reads ignored local overrides but
+does not inherit the older personal-WeChat model default. It passes its own
+private env through `WECHAT_WORKER_ENV_FILE` when entering the shared guarded
+worker, preserving transport isolation even though both transports reuse the
+same task orchestrator.
+
 ## Recovery
 
 ```bash

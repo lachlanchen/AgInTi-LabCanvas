@@ -45,6 +45,13 @@ export WECHAT_WORKER_DISABLE_GUI_MEDIA_CLICK_PROBE=1
 export WECHAT_WORKER_DISABLE_AUTOPUBLISH_PREFLIGHT=1
 export WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH=1
 export WECHAT_WORKER_DISABLE_GENERATED_VIDEO_LAZYEDIT=1
+# WeCom uses the low-effort route session for ordinary chat. Anything that
+# reaches this durable worker is substantive work and should keep one stable
+# SOL/high policy unless the ignored local environment explicitly overrides it.
+export WECHAT_WORKER_CODEX_MODEL="${WECHAT_WORKER_CODEX_MODEL:-gpt-5.6-sol}"
+export WECHAT_WORKER_MIN_EFFORT="${WECHAT_WORKER_MIN_EFFORT:-high}"
+export WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-high}"
+export WECHAT_WORKER_ENV_FILE="$PRIVATE_ENV"
 
 exec "$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh" \
   --queue "$QUEUE" \

@@ -159,6 +159,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("WECHAT_WORKER_DISABLE_MEDIA_SYNC_PREFLIGHT=1", source)
         self.assertIn("WECHAT_WORKER_ANDROID_TEXT_FALLBACK=0", source)
         self.assertIn("WECHAT_WORKER_DISABLE_AUTOPUBLISH_PREFLIGHT=1", source)
+        self.assertIn('WECHAT_WORKER_CODEX_MODEL="${WECHAT_WORKER_CODEX_MODEL:-gpt-5.6-sol}"', source)
+        self.assertIn('WECHAT_WORKER_MIN_EFFORT="${WECHAT_WORKER_MIN_EFFORT:-high}"', source)
+        self.assertIn('WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-high}"', source)
+        self.assertIn('WECHAT_WORKER_ENV_FILE="$PRIVATE_ENV"', source)
 
     def test_android_setup_is_wecom_only_and_does_not_bypass_keyguard(self) -> None:
         source = (

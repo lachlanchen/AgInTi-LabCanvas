@@ -106,6 +106,7 @@ stderr: noisy internal trace
         self.assertIn("worker_window_name", supervisor_text)
         self.assertIn("wechat selftest --suite all", wrapper_text)
         self.assertIn("wechat_supervisor.local.env", wrapper_text)
+        self.assertIn("WECHAT_WORKER_ENV_FILE", wrapper_text)
         self.assertIn('source "$PRIVATE_ENV"', wrapper_text)
 
     def test_worker_policy_selects_high_for_cad_or_pcb_tasks(self) -> None:

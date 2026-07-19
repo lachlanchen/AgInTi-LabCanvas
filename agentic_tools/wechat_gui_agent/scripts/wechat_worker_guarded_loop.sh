@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
-PRIVATE_ENV="$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_supervisor.local.env"
+PRIVATE_ENV="${WECHAT_WORKER_ENV_FILE:-$ROOT/agentic_tools/wechat_gui_agent/.private/wechat_supervisor.local.env}"
 LOG_DIR="$ROOT/output/wechat_gui_agent/$(date +%F)"
 mkdir -p "$LOG_DIR"
 

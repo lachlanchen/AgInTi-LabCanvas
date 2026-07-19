@@ -482,6 +482,11 @@ evidence for local artifacts, not chat-facing content.
 - Idle polling is local-only and should not spend model tokens.
 - Use fast-router Codex only for new actionable messages, ambiguous routing, or
   immediate lightweight replies.
+- For the isolated WeCom transport, use `gpt-5.6-sol` low for route/chat turns
+  and `gpt-5.6-sol` high for every durable worker task. Keep those defaults in
+  `wecom_worker_loop.sh` and pass its private env via
+  `WECHAT_WORKER_ENV_FILE` so the shared guarded entrypoint cannot overwrite
+  them with personal-WeChat policy.
 - Keep route classification agent-first for triggerable monitored chats:
   `agent_route_enabled=true` with `agent_route_prefilter=agent_first` lets the
   per-chat `route` Codex session choose `route_kind`, project, source policy,
