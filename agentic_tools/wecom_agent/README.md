@@ -198,6 +198,39 @@ response is interrupted. Configure the local schedule with
 set `WECOM_DAILY_AUTO_ENROLL=0` to require a bare `#daily` first. `off #daily`
 disables only that member's subscription; other members' interests remain.
 
+## Private Member Knowledge
+
+Every stable WeCom member has a private knowledge partition. Incoming papers
+and other attachments are indexed immediately; completed worker and daily tasks
+add their returned artifacts plus durable ideas, insights, intuitions,
+hypotheses, interests, decisions, preferences, and useful agent conclusions.
+Each row retains its exact member, chat, source message/task, checksum, and
+timestamp. The agent only receives a bounded view for the same member in the
+same chat, so another member's records cannot enter its prompt.
+
+State remains local and ignored by git:
+
+- database: `agentic_tools/wecom_agent/.private/wecom_member_knowledge.sqlite`
+- archive: `output/wecom/member_knowledge/<member-key>/<category>/<year>/<month>/`
+
+Use explicit markers such as `#idea`, `#insight`, `#intuition`, `#interest`,
+`#hypothesis`, or `#note` when a message must be retained deterministically.
+The route/worker agents may also return structured memory items, but are told
+not to store greetings, credentials, quoted paper text as a personal belief, or
+speculative profiling.
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom knowledge status --json
+PYTHONPATH=src python -m agenticapp wecom knowledge sync --json
+PYTHONPATH=src python -m agenticapp wecom knowledge search \
+  --member-key MEMBER_KEY --kind paper --query microscopy --json
+PYTHONPATH=src python -m agenticapp wecom knowledge export \
+  --member-key MEMBER_KEY --output-dir output/private-export --json
+```
+
+Search and export use hashed member keys and never emit raw transport user IDs.
+Exports are private operator artifacts and should remain under ignored paths.
+
 ## Runtime
 
 ```text
@@ -236,7 +269,9 @@ after checking authoritative evidence. Native-copy context menus are closed
 before the GUI lock is released and outbound compose clears stale transient UI
 before pasting, so reads cannot block later verified delivery.
 
-The tmux stack has `gateway`, `worker`, and `daily` windows. An `external`
+The tmux stack has `gateway`, `worker`, `daily`, and `knowledge` windows. The
+knowledge window incrementally indexes new message rows and changed completed
+tasks without model calls or full-history polling. An `external`
 window is added whenever the external bridge is enabled. Before authorization
 it maintains the official QR; afterward it probes message permission before it
 can report `bridge_running`. `wecom-client` and `external-gui` windows are added

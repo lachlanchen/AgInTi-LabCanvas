@@ -35,6 +35,14 @@ from wecom_daily_research import (  # noqa: E402
     set_preference,
 )
 from wecom_contract import labagent_welcome_message  # noqa: E402
+from wecom_member_knowledge import (  # noqa: E402
+    knowledge_db_for_history,
+    member_context,
+    normalize_memory_items,
+    record_incoming_event,
+    record_knowledge_items,
+    task_source_member_key,
+)
 
 
 MIRROR_DB = Path(
@@ -136,12 +144,36 @@ def ingest_event(
             "suppressed": "recent_exact_wecom_gui_duplicate",
         }
     record_history_message(history_db, event, chat, request, direction="inbound")
+    knowledge_db = knowledge_db_for_history(history_db)
+    member_key = task_source_member_key(event)
+    record_incoming_event(
+        knowledge_db,
+        event,
+        chat,
+        request,
+        attachments=normalized_attachments(event),
+    )
     first_group_event = register_group(history_db, event, chat)
     daily_result = handle_daily_directive_result(history_db, event, chat)
     if daily_result is not None:
         immediate: dict[str, Any] | None = None
         daily_reply = str(daily_result.get("reply") or "")
         if daily_result.get("action") == "topic_added":
+            record_knowledge_items(
+                knowledge_db,
+                member_key=member_key,
+                chat=chat,
+                items=[
+                    {
+                        "kind": "interest",
+                        "title": "Daily research interest",
+                        "content": str(daily_result.get("topic") or ""),
+                        "tags": ["daily", "research"],
+                    }
+                ],
+                source_type="daily_preference",
+                source_id=short_hash(event.get("message_id")),
+            )
             immediate = enqueue_initial_daily_research(
                 state_db=history_db,
                 history_db=history_db,
@@ -172,7 +204,20 @@ def ingest_event(
             )
         return result
     context = recent_history(history_db, chat, limit=12)
-    route = route_event(event, request, context) if route_with_agent else fallback_route(event, request)
+    memory_context = member_context(knowledge_db, chat, member_key, limit=12)
+    route = (
+        route_event(event, request, context, memory_context=memory_context)
+        if route_with_agent
+        else fallback_route(event, request)
+    )
+    record_knowledge_items(
+        knowledge_db,
+        member_key=member_key,
+        chat=chat,
+        items=normalize_memory_items(route.get("memory_items")),
+        source_type="route_memory",
+        source_id=short_hash(event.get("message_id")),
+    )
     daily_topic = str(route.get("daily_topic") or "").strip()[:1000]
     if daily_topic and str(event.get("chat_type") or "") == "group":
         set_preference(history_db, chat, short_hash(event.get("sender_userid")), daily_topic)
@@ -187,7 +232,15 @@ def ingest_event(
             mark_inline_topic_prompt(history_db, chat)
         return complete_direct_reply(history_db, event, chat, response)
 
-    task = build_task(event, chat, request, context, route, queue)
+    task = build_task(
+        event,
+        chat,
+        request,
+        context,
+        route,
+        queue,
+        member_memory=memory_context,
+    )
     appended = append_task_once(queue, task)
     record_event(
         chat_name=chat,
@@ -310,7 +363,13 @@ def normalized_attachments(event: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
-def route_event(event: dict[str, Any], request: str, context: list[dict[str, Any]]) -> dict[str, Any]:
+def route_event(
+    event: dict[str, Any],
+    request: str,
+    context: list[dict[str, Any]],
+    *,
+    memory_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     prompt = f"""You route one WeCom message into the persistent LabCanvas agent runtime.
 WeCom is message transport only. Decide whether a quick conversational response is sufficient or the durable worker must execute tools/research/files.
 
@@ -322,6 +381,7 @@ Return one strict JSON object and no prose:
   "task": "complete worker instruction when worker_needed is true",
   "ack": "short natural acknowledgement for queued work",
   "daily_topic": "persistent topic only when the current message explicitly requests recurring daily research, otherwise empty",
+  "memory_items": [{{"kind": "idea|insight|intuition|interest|hypothesis|decision|preference|question|note", "title": "short title", "content": "durable user-authored knowledge", "tags": ["optional"]}}],
   "public_publish_allowed": false
 }}
 
@@ -343,6 +403,8 @@ Rules:
 - The task field is advisory planning only. Never replace the user's wording with a new factual assumption, a mandatory clarification, or a refusal to investigate an uncertain name. The worker receives the exact message and owns evidence gathering.
 - When a scientific name or identifier may contain OCR, speech, capitalization, or character ambiguity, route it to research. Tell the worker to search plausible candidates and authoritative sources before asking the user to clarify.
 - Set daily_topic only for an explicit recurring/daily research request. Extract a concise durable topic rather than the whole command.
+- Put only durable user-authored knowledge in memory_items: ideas, insights, intuitions, hypotheses, decisions, preferences, research interests, and questions worth retaining. Do not store greetings, acknowledgements, secrets, credentials, or content merely quoted from an attachment as the user's belief.
+- Use the private member memory only as same-user context. Never mention another member's records or infer that two member keys are the same person.
 - Make the direct response natural and concise, not a fixed template.
 
 Sender authorization role: {event.get('authorization_role') or 'unknown'}
@@ -351,6 +413,9 @@ Current message:
 
 Recent same-chat context:
 {json.dumps(context[-8:], ensure_ascii=False)[:9000]}
+
+Private same-member knowledge context:
+{json.dumps(memory_context or {}, ensure_ascii=False)[:7000]}
 """
     model = os.environ.get("WECOM_ROUTE_MODEL", "gpt-5.6-sol")
     effort = os.environ.get("WECOM_ROUTE_EFFORT", "low")
@@ -404,6 +469,7 @@ Recent same-chat context:
         "task": task_text,
         "ack": sanitize_chat_response(payload.get("ack")),
         "daily_topic": daily_topic,
+        "memory_items": normalize_memory_items(payload.get("memory_items")),
         "public_publish_allowed": False,
     }
 
@@ -416,6 +482,7 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         "task": request,
         "ack": "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。",
         "daily_topic": "",
+        "memory_items": [],
         "public_publish_allowed": False,
     }
 
@@ -427,6 +494,8 @@ def build_task(
     context: list[dict[str, Any]],
     route: dict[str, Any],
     queue: Path,
+    *,
+    member_memory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = datetime.now()
     message_id = str(event["message_id"])
@@ -504,6 +573,7 @@ def build_task(
             "create_time": int(event.get("create_time") or 0),
             "sender": str(event["sender_userid"]),
             "sender_display": str(event.get("sender_display") or event["sender_userid"]),
+            "member_key": task_source_member_key(event),
             "sender_identity_confidence": str(
                 event.get("sender_identity_confidence") or "transport_userid"
             ),
@@ -512,6 +582,7 @@ def build_task(
             "irreversible_actions_allowed": bool(event.get("irreversible_actions_allowed")),
         },
         "context": context[-12:],
+        "member_memory": member_memory or {},
         "transport_preflight": wecom_transport_preflight(event),
         "queue_path": str(queue),
     }

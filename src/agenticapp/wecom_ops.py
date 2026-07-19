@@ -21,6 +21,7 @@ SUPERVISOR = TOOL_ROOT / "scripts" / "wecom_tmux.sh"
 ADMIN_BROWSER = TOOL_ROOT / "scripts" / "wecom_admin_browser.sh"
 WINDOWS_CLIENT = TOOL_ROOT / "scripts" / "wecom_windows_client.sh"
 DAILY_RESEARCH = TOOL_ROOT / "scripts" / "wecom_daily_research.py"
+MEMBER_KNOWLEDGE = TOOL_ROOT / "scripts" / "wecom_member_knowledge.py"
 EXTERNAL_BRIDGE = TOOL_ROOT / "scripts" / "wecom_cli_bridge.py"
 EXTERNAL_GUARD = TOOL_ROOT / "scripts" / "wecom_cli_transport_guard.py"
 WECOM_WORKER = TOOL_ROOT / "scripts" / "wecom_worker_loop.sh"
@@ -67,6 +68,17 @@ def add_wecom_parser(subparsers: argparse._SubParsersAction) -> None:
     daily.add_argument("--force", action="store_true", help="Run today's due action now without duplicating it.")
     daily.add_argument("--json", action="store_true")
     daily.set_defaults(func=cmd_daily)
+
+    knowledge = nested.add_parser("knowledge", help="Inspect and sync private per-member research knowledge.")
+    knowledge.add_argument("action", nargs="?", default="status", choices=["status", "sync", "search", "export"])
+    knowledge.add_argument("--member-key", default="")
+    knowledge.add_argument("--chat", default="")
+    knowledge.add_argument("--kind", default="")
+    knowledge.add_argument("--query", default="")
+    knowledge.add_argument("--limit", type=int, default=25)
+    knowledge.add_argument("--output-dir", default="")
+    knowledge.add_argument("--json", action="store_true")
+    knowledge.set_defaults(func=cmd_knowledge)
 
     external = nested.add_parser("external", help="Control the separate official WeCom external-group transport.")
     external.add_argument(
@@ -144,11 +156,16 @@ WECOM_AGINTI_COMMAND=aginti
 WECOM_AGINTI_WORKSPACE=../Agent/AgInTiFlow
 
 # Per-group #daily research scheduler. Times use WECOM_DAILY_TIMEZONE.
-WECOM_DAILY_RESEARCH_TIME=09:00
-WECOM_DAILY_TOPIC_PROMPT_TIME=08:45
+WECOM_DAILY_RESEARCH_TIME=06:00
+WECOM_DAILY_TOPIC_PROMPT_TIME=05:45
 WECOM_DAILY_TIMEZONE=Asia/Hong_Kong
 WECOM_DAILY_POLL_SECONDS=30
 WECOM_DAILY_AUTO_ENROLL=1
+
+# Private per-member papers, files, interests, ideas, and agent conclusions.
+WECOM_MEMBER_KNOWLEDGE_DB={TOOL_ROOT / '.private' / 'wecom_member_knowledge.sqlite'}
+WECOM_MEMBER_ARCHIVE_ROOT={PACKAGE_ROOT / 'output' / 'wecom' / 'member_knowledge'}
+WECOM_KNOWLEDGE_POLL_SECONDS=5
 """
     DEFAULT_ENV.write_text(content, encoding="utf-8")
     DEFAULT_ENV.chmod(0o600)
@@ -187,6 +204,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "supervisor_script": SUPERVISOR.is_file() and os.access(SUPERVISOR, os.X_OK),
         "ingress_script": (TOOL_ROOT / "scripts" / "wecom_ingest.py").is_file(),
         "daily_research_script": DAILY_RESEARCH.is_file() and os.access(DAILY_RESEARCH, os.X_OK),
+        "member_knowledge_script": MEMBER_KNOWLEDGE.is_file(),
         "external_bridge_script": EXTERNAL_BRIDGE.is_file(),
         "external_guard_script": EXTERNAL_GUARD.is_file(),
         "wecom_worker_script": WECOM_WORKER.is_file() and os.access(WECOM_WORKER, os.X_OK),
@@ -204,6 +222,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         checks["supervisor_script"],
         checks["ingress_script"],
         checks["daily_research_script"],
+        checks["member_knowledge_script"],
         checks["wecom_worker_script"],
     )
     payload = {"ok": all(required), "checks": checks, "config_path": str(DEFAULT_ENV)}
@@ -286,6 +305,42 @@ def cmd_daily(args: argparse.Namespace) -> int:
         payload = {
             "ok": False,
             "error": "daily research command returned invalid JSON",
+            "stdout_tail": proc.stdout[-1000:],
+            "stderr_tail": proc.stderr[-1000:],
+        }
+    print_payload(payload, args.json)
+    return 0 if proc.returncode == 0 and payload.get("ok") else 1
+
+
+def cmd_knowledge(args: argparse.Namespace) -> int:
+    command = [sys.executable, str(MEMBER_KNOWLEDGE), args.action]
+    if args.action == "search":
+        command.append(args.query)
+        if args.member_key:
+            command.extend(["--member-key", args.member_key])
+        if args.chat:
+            command.extend(["--chat", args.chat])
+        if args.kind:
+            command.extend(["--kind", args.kind])
+        command.extend(["--limit", str(max(1, min(200, args.limit)))])
+    elif args.action == "export":
+        if not args.member_key:
+            payload = {"ok": False, "error": "--member-key is required for export"}
+            print_payload(payload, args.json)
+            return 2
+        command.extend(["--member-key", args.member_key])
+        if args.output_dir:
+            command.extend(["--output-dir", args.output_dir])
+    command.append("--json")
+    config = read_env_file(DEFAULT_ENV)
+    env = {**os.environ, **config}
+    proc = subprocess.run(command, cwd=PACKAGE_ROOT, env=env, capture_output=True, text=True, check=False)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "error": "member knowledge command returned invalid JSON",
             "stdout_tail": proc.stdout[-1000:],
             "stderr_tail": proc.stderr[-1000:],
         }

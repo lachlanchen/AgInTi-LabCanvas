@@ -19,6 +19,8 @@ GATEWAY_LOG="$LOG_DIR/gateway.log"
 WORKER_LOG="$LOG_DIR/worker.log"
 WECOM_WORKER="$TOOL_ROOT/scripts/wecom_worker_loop.sh"
 DAILY_LOG="$LOG_DIR/daily.log"
+KNOWLEDGE_LOG="$LOG_DIR/knowledge.log"
+KNOWLEDGE_INDEXER="$TOOL_ROOT/scripts/wecom_member_knowledge.py"
 CLI_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_cli_bridge.local.json"
 CLI_BRIDGE_LOG="$LOG_DIR/external-cli.log"
 CLI_TRANSPORT_GUARD="$TOOL_ROOT/scripts/wecom_cli_transport_guard.py"
@@ -48,6 +50,10 @@ ensure_core_windows() {
   if ! window_exists daily; then
     tmux new-window -t "$SESSION" -n daily \
       "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_daily_research.py' loop --queue '$QUEUE' >> '$DAILY_LOG' 2>&1"
+  fi
+  if ! window_exists knowledge; then
+    tmux new-window -t "$SESSION" -n knowledge \
+      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$KNOWLEDGE_INDEXER' loop --queue '$QUEUE' >> '$KNOWLEDGE_LOG' 2>&1"
   fi
 }
 

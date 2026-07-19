@@ -201,7 +201,7 @@ the existing sensitive-action approval gates retained as hard boundaries.
 
 ## Daily Research
 
-An enrolled research group can persist one topic per member:
+An enrolled research group can persist multiple interests per member:
 
 ```text
 #daily computational microscopy and event sensors
@@ -210,19 +210,44 @@ An enrolled research group can persist one topic per member:
 ```
 
 A bare `#daily` enables the group and asks for a topic. At
-`WECOM_DAILY_RESEARCH_TIME` (default `09:00` in `Asia/Hong_Kong`), the `daily`
-tmux worker queues at most one report per group/date. It uses the same persistent
-per-group agent and research routine as ordinary requests, combines active
-preferences with bounded recent group context, verifies current papers and
-project sources, and returns a Chinese digest plus Markdown/PDF evidence. When
-no topic is configured, it asks once at `WECOM_DAILY_TOPIC_PROMPT_TIME` rather
-than consuming model quota.
+`WECOM_DAILY_RESEARCH_TIME` (default `06:00` in `Asia/Hong_Kong`), the `daily`
+tmux worker queues one report per active member/date. It uses the same persistent
+per-chat agent and research routine as ordinary requests, combines only that
+member's interests with bounded context, verifies current papers and project
+sources, and returns a Chinese digest plus Markdown/PDF evidence. When no topic
+is configured, it asks once at `WECOM_DAILY_TOPIC_PROMPT_TIME` rather than
+consuming model quota.
 
 ```bash
 PYTHONPATH=src python -m agenticapp wecom daily status --json
 PYTHONPATH=src python -m agenticapp wecom daily run --force --json
 tmux list-windows -t labcanvas-wecom
 ```
+
+## Per-Member Knowledge Archive
+
+LabCanvas keeps papers, other files, research interests, ideas, insights, and
+useful task conclusions in an ignored local SQLite database partitioned by a
+stable hashed member key. Files are copied into an ignored per-member archive
+by default, with category, checksum, exact chat, source message/task,
+and timestamp provenance. The route and worker agents see only a bounded view
+for the same member in the same chat.
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom knowledge status --json
+PYTHONPATH=src python -m agenticapp wecom knowledge sync --json
+PYTHONPATH=src python -m agenticapp wecom knowledge search \
+  --member-key MEMBER_KEY --kind insight --query mechanics --json
+PYTHONPATH=src python -m agenticapp wecom knowledge export \
+  --member-key MEMBER_KEY --output-dir output/private-export --json
+```
+
+Use `#idea`, `#insight`, `#intuition`, `#interest`, `#hypothesis`, or `#note`
+for deterministic retention. Agent-derived items must remain source-grounded;
+credentials, greetings, raw transport identifiers, and speculative profiling
+are excluded. The `knowledge` tmux window indexes incrementally without model
+quota while idle. Its database and archive must never be committed or sent to
+another member.
 
 Normal LabAgent messages may ask for literature reviews, research proposals,
 lawful open-access paper downloads, TeX/PDF reports, editable paper figures,

@@ -27,6 +27,7 @@ if str(SHARED_AGENT_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SHARED_AGENT_SCRIPTS))
 
 from wechat_routines import ensure_task_routine_contract  # noqa: E402
+from wecom_member_knowledge import knowledge_db_for_history, member_context  # noqa: E402
 
 
 DEFAULT_QUEUE = PRIVATE / "wecom_task_queue.jsonl"
@@ -499,6 +500,12 @@ def run_due_cycle(
                     now=current,
                     daily_job_key=job["job_key"],
                     daily_member_key=job["member_key"],
+                    member_memory=member_context(
+                        knowledge_db_for_history(history_db),
+                        chat,
+                        job["member_key"],
+                        limit=16,
+                    ),
                     sequence_index=sequence_index,
                     sequence_total=len(jobs),
                 )
@@ -566,6 +573,7 @@ def build_daily_research_task(
     transport_channel: str = "wecom_bot_websocket",
     daily_job_key: str = "",
     daily_member_key: str = "",
+    member_memory: dict[str, Any] | None = None,
     sequence_index: int = 1,
     sequence_total: int = 1,
 ) -> dict[str, Any]:
@@ -658,10 +666,12 @@ Requirements:
             "create_time": int(now.timestamp()),
             "sender": "labcanvas-daily-scheduler",
             "sender_display": "LabAgent daily research",
+            "member_key": daily_member_key,
             "kind": "scheduled_daily_research",
             "authorization_role": "system_safe_read_only",
         },
         "context": context[-20:],
+        "member_memory": member_memory or {},
         "daily_research": {
             "report_date": report_date,
             "topics": topics,
@@ -733,6 +743,13 @@ def enqueue_initial_daily_research(
         report_date=current.date().isoformat(),
         queue=queue,
         now=current,
+        daily_member_key=short_hash(event.get("sender_userid")),
+        member_memory=member_context(
+            knowledge_db_for_history(history_db),
+            chat,
+            short_hash(event.get("sender_userid")),
+            limit=16,
+        ),
     )
     _first_line, separator, remainder = task["request"].partition("\n")
     task["request"] = (

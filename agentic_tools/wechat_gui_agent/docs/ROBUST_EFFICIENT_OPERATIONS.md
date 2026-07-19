@@ -115,6 +115,24 @@ For the restricted LabAgent research group:
   source PDFs but loses its final response, recover from that task directory,
   compile the report PDF, and require one source-chat delivery. Exclude routine
   contracts, manifests, and notes; never salvage another task's artifacts.
+- Maintain the private per-member knowledge store with
+  `wecom_member_knowledge.py`. Inbound attachments are archived at ingest;
+  completed task artifacts and structured ideas/insights are indexed by the
+  `knowledge` tmux window. Ownership is the stable hashed member key plus exact
+  chat, with message/task provenance and file checksums. Never merge records
+  because display names look similar.
+- Only a bounded exact-member/exact-chat memory view may enter route or worker
+  prompts. Keep the SQLite database under `agentic_tools/wecom_agent/.private/`
+  and file copies under ignored `output/wecom/member_knowledge/`. Do not commit,
+  send, or expose database internals, raw user IDs, archive hashes, or another
+  member's memory. Explicit `#idea`, `#insight`, `#intuition`, `#interest`,
+  `#hypothesis`, and `#note` markers are deterministic; agent-derived memory
+  must still be durable, source-grounded, and free of credentials or speculative
+  profiling.
+- The knowledge indexer must be cheap while idle. Use the message-table
+  high-water row and queue file signature; do not rescan full history or spend a
+  route/worker turn merely to maintain the index. `labcanvas wecom knowledge
+  status|sync|search|export` is the operator interface.
 
 ### External WeCom GUI Relay
 

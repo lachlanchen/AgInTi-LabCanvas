@@ -151,6 +151,29 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(mirror.name, "wecom_mirror.sqlite")
         self.assertNotIn("wechat_gui_agent", str(mirror))
 
+    def test_wecom_member_knowledge_cli_is_available(self) -> None:
+        from agenticapp.cli import build_parser
+
+        args = build_parser().parse_args(
+            [
+                "wecom",
+                "knowledge",
+                "search",
+                "--query",
+                "organoid mechanics",
+                "--member-key",
+                "member-key-a",
+                "--kind",
+                "insight",
+                "--json",
+            ]
+        )
+
+        self.assertEqual(args.action, "search")
+        self.assertEqual(args.query, "organoid mechanics")
+        self.assertEqual(args.member_key, "member-key-a")
+        self.assertEqual(args.kind, "insight")
+
     def test_wecom_worker_disables_personal_wechat_fallbacks(self) -> None:
         source = (
             ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_worker_loop.sh"
@@ -201,6 +224,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         task = tasks[0]
         self.assertEqual(task["source"]["transport"], "wecom")
+        self.assertEqual(task["source"]["member_key"], ingest.short_hash(event["sender_userid"]))
+        self.assertEqual(task["member_memory"].get("scope"), "exact_member_and_chat")
         self.assertEqual(task["route"]["transport"], "wecom")
         self.assertEqual(task["transport_preflight"]["wecom_media"]["copied"][0]["task_copy_path"], str(image))
         self.assertEqual(task["routine"]["id"], "file_intake")
@@ -363,6 +388,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertFalse(tasks[0]["route_decision"]["scheduled_daily_research"])
         self.assertTrue(tasks[0]["route_decision"]["no_fixed_deadline"])
         self.assertTrue(tasks[0]["daily_research"]["initial_run"])
+        self.assertEqual(tasks[0]["daily_research"]["member_key"], ingest.short_hash(event["sender_userid"]))
+        self.assertEqual(tasks[0]["source"]["member_key"], ingest.short_hash(event["sender_userid"]))
         self.assertEqual(tasks[0]["routine"]["id"], "research_summary")
         self.assertEqual(tasks[0]["routine"]["default_effort"], "high")
         self.assertNotIn("expires_at", tasks[0])
@@ -565,6 +592,11 @@ class WeComAgentBridgeTests(unittest.TestCase):
             [task["daily_research"]["topics"][0] for task in captured],
             ["Professor Ma external peer papers", "recent organoid CNS papers"],
         )
+        self.assertEqual(
+            {task["source"]["member_key"] for task in captured},
+            {task["daily_research"]["member_key"] for task in captured},
+        )
+        self.assertEqual(len({task["source"]["member_key"] for task in captured}), 2)
         self.assertEqual(len({task["id"] for task in captured}), 2)
 
     def test_daily_scheduler_default_report_time_is_six_am(self) -> None:
@@ -2139,6 +2171,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("wecom-client", tmux_source)
         self.assertIn("supervise", tmux_source)
         self.assertIn("ensure_core_windows", tmux_source)
+        self.assertIn("wecom_member_knowledge.py", tmux_source)
+        self.assertIn("window_exists knowledge", tmux_source)
         self.assertIn("missing windows repaired", tmux_source)
         self.assertNotIn("xwechat_files", source)
         self.assertNotIn("wechat_gui_agent", source)

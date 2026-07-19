@@ -3589,6 +3589,7 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
                 "create_time",
                 "local_type",
                 "sender_display",
+                "member_key",
                 "voice_transcript",
                 "voice_language",
                 "voice_duration",
@@ -3601,6 +3602,8 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
         "routine_contract": str(task.get("routine_contract") or ""),
         "orchestrator": compact_worker_agent_value(task.get("orchestrator") or {}, key="orchestrator"),
     }
+    if isinstance(task.get("member_memory"), dict) and task.get("member_memory"):
+        view["member_memory"] = compact_worker_agent_value(task["member_memory"], key="member_memory")
     recent_context: list[dict[str, Any]] = []
     for row in (task.get("context") or [])[-12:]:
         if not isinstance(row, dict):
@@ -3880,6 +3883,7 @@ Before executing, inspect `task.route_decision` against the Current coalesced re
 For paid Xiaoyunque/Seedance work, use request-level idempotence: one logical WeChat request owns at most one paid generation thread unless the current user message explicitly asks for a new paid rerun. If `task.generated_video_monitor.thread_url`, `task.generated_video_submit_probe`, `task.credit_guard`, `route_decision.no_new_xyq_submit`, or `monitor_only_no_resubmit` exists, do not submit, retry, continue, or create another Xiaoyunque job. Only monitor/download the existing thread and send the resulting MP4 back.
 Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
 Strict source isolation: the task's `chat`, `source.local_id`, `source.server_id`, `context`, and any explicit source/reference rows embedded in `request` define the only WeChat source. Never use media, files, or generated artifacts from another chat, another direct message, a nearby queue item, or an unrelated old task.
+For official WeCom tasks, `task.member_memory` is a bounded private view of this exact member in this exact chat. Use it only for continuity, personalization, and linking prior papers or ideas. Never expose member keys, database internals, another member's records, or claim two identities are the same without explicit evidence.
 For official WeCom tasks, `task.preflight.wecom_media.copied[*].task_copy_path` contains already decrypted, exact same-message files. Open those files directly; do not run personal-WeChat GUI or decrypted-database recovery for them.
 If no exact matching source media is available for "this image", "this PDF", "this video", "last one", or a quoted command, return a source-limited message asking for the exact file/source. Do not synthesize or continue from unrelated media.
 Follow the routine supervisor contract. The contract is saved in `task.routine_contract`; use it as the routine checklist and update task state through the existing queue/status mechanisms instead of inventing an ad hoc workflow.
@@ -3914,8 +3918,11 @@ Return either plain text or this JSON shape:
 {{
   "message": "concise message to send back",
   "files": ["/absolute/path/to/file.pdf", "/absolute/path/to/preview.png"],
-  "confirmation": "optional question to ask before continuing"
+  "confirmation": "optional question to ask before continuing",
+  "knowledge_items": [{{"kind": "idea|insight|intuition|interest|hypothesis|decision|preference|question|note", "title": "short title", "content": "durable knowledge worth retaining", "tags": ["optional"]}}]
 }}
+
+For WeCom, include `knowledge_items` only for durable user-authored ideas or genuinely useful conclusions developed for that member. Do not store greetings, credentials, private transport details, speculative personal profiling, or attachment text as though it were the user's own belief.
 
 Use confirmation when an important choice, purchase, external send, deletion, privacy-sensitive action, or irreversible action needs approval.
 If an authenticated download, account action, purchase, publication, deletion, or other requested operation is blocked by login, CAPTCHA, bot check, or consent, do not try to bypass it. This human-assist rule does not apply to read-only mp.weixin/Shipinhao research: use `task.preflight.wechat_source_recovery` and finish with extracted, reconstructed, or evidence-limited status without opening/focusing a browser or asking for verification.

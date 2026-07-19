@@ -173,6 +173,16 @@ outbox item or deliver worker output.
   in one critical section, so concurrent workers cannot switch the target chat.
 - Read cursors and send ledgers are durable SQLite state under ignored
   `.private/`; screenshots and raw events also remain private.
+- Each stable GUI member fingerprint owns an independent private knowledge
+  partition. Exact inbound files are archived with provenance and checksums;
+  completed reports, papers, figures, and structured ideas/insights are indexed
+  by the `knowledge` tmux window. An unresolved OCR sender is not silently
+  merged with another member, and same-text duplicate GUI bubbles inside the
+  transport debounce window create only one event.
+- Route and worker prompts receive only a bounded same-member/same-chat view.
+  Operators may inspect it with `labcanvas wecom knowledge status` and
+  `labcanvas wecom knowledge search --member-key ...`; private databases and
+  exports never belong in git or outbound chat artifacts.
 - A newly registered `#daily` interest creates one source-scoped immediate
   `research_summary` task and remains eligible for future scheduled reports.
   The source message and normalized topic form its idempotency key, so OCR
