@@ -275,8 +275,14 @@ tasks without model calls or full-history polling. An `external`
 window is added whenever the external bridge is enabled. Before authorization
 it maintains the official QR; afterward it probes message permission before it
 can report `bridge_running`. `wecom-client` and `external-gui` windows are added
-when `wecom_gui_bridge.local.json` is enabled. The client supervisor restores
-the desktop and uses a cooldown-bound login-window fallback after reboot.
+when `wecom_gui_bridge.local.json` is enabled. The client supervisor preserves
+the same Wine prefix, never enters account-switch mode implicitly, and limits
+restart attempts to protect device trust. The GUI relay uses passive
+screen-change detection while idle; active navigation runs only after a visible
+change or bounded rescan. Security/QR challenges start a durable input
+quarantine and clean recovery window. Reconnect recovery waits for every
+allowlisted chat to remain ready, composer operations use X11 input by default,
+and sends are paced to prevent retry bursts.
 The scheduler only reads local private SQLite state while idle; model quota is
 spent only when a due report is enqueued and executed by the worker.
 

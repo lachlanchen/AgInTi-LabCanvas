@@ -149,7 +149,11 @@ personal-WeChat database, media, search, sender, or fallback paths.
   Combined text and files remain in one serialized GUI transaction.
 - Seed the first visible viewport and do not replay it after restart. Refuse an
   ambiguous viewport rather than converting old OCR into new tasks. Move the
-  message pane to its live tail before each poll.
+  message pane to its live tail before each active poll. The normal loop first
+  takes a passive, quantized screenshot signature that excludes the composer.
+  It touches the client only when the conversation list/chat tail changes or a
+  bounded three-minute safety rescan is due. Passive checks spend no model
+  quota and inject no keyboard or pointer events.
 - Read each visible inbound text bubble with WeCom's native Copy command and
   Wine `CF_UNICODETEXT`. Use OCR only to locate the bubble or as a bounded
   fallback; never replace a successful native copy with OCR output.
@@ -174,6 +178,9 @@ personal-WeChat database, media, search, sender, or fallback paths.
   client. It must never enter account-switch mode after a crash or hidden
   layered window. Opening a fresh QR login is a separate explicit operator
   action, because it can invalidate a reusable authenticated session.
+  Limit automatic client starts to three attempts per hour, followed by a
+  30-minute quiet period. A continuously healthy hour replenishes the budget;
+  a short crash/relaunch cycle does not.
 - Verify Unicode composer readback before a text send. For files, require the
   exact filename in WeCom's native picker. Because WeCom visually truncates long
   attachment labels, verify the composer/history attachment using the proven
@@ -189,13 +196,25 @@ personal-WeChat database, media, search, sender, or fallback paths.
   report this state as a generic filename/history verification failure; persist
   `send_deferred_reason=wecom_auth_required` so the outbox waits for the same
   client profile to become ready again.
+- The first detected security challenge places the GUI transport in a durable
+  five-minute input quarantine. During quarantine, polling is screenshot-only
+  and sends fail closed before navigation, clipboard, keyboard, or pointer
+  input. After the warning disappears, require an uninterrupted one-minute
+  passive stabilization window before exact-chat verification resumes.
+- Pace ordinary text attempts at least 12 seconds apart and file attempts at
+  least 30 seconds apart. Wait inside the serialized transaction instead of
+  returning an error that encourages retries against the desktop. After a
+  reconnect, all allowlisted chats must remain ready for two minutes before
+  recovering at most one prior outbox delivery.
 - Treat the external WeCom relay as an observable closed loop: authenticated
   client, exact-chat readiness, durable ingest, worker result, verified
   compose/send, and delivery ledger. `login_required` and
   `chat_verification_pending` are not send-ready states.
-- Use X11/VNC input for ordinary WeCom navigation and text entry. The one known
-  Wine exception is the `More` toolbar click, which uses a controlled Win32
-  `SendInput` helper because the X11 click is ignored. Do not post arbitrary
+- Use X11/VNC input for ordinary WeCom navigation, composer select/copy/paste,
+  and text entry. Win32 `SendInput` for the composer is disabled by default and
+  requires explicit private configuration. The one retained Wine exception is
+  the file-picker `More` toolbar click, which uses a controlled Win32 helper
+  because the X11 click is ignored. Do not post arbitrary
   native window messages or send blind `Escape` cleanup. The helper may close
   only exact stale WeCom picker/document/error modal classes after an interrupted
   file send. Detect QR/login/abnormal-device screens before input, fail closed,
@@ -482,11 +501,12 @@ The stable interface and recovery commands are documented in
   authentication from window geometry. Recovery begins only after the normal
   poll successfully opens and title-verifies the exact allowlisted chats; a
   cached or half-authenticated full-size window consumes no recovery attempt.
-  That ready transition may recover at most one `send_expired` WeCom result
-  from the previous 12 hours, only when it had already reached a send state and
-  still contains a resendable result. The per-task recovery cap, exact-chat
-  guard, and durable text/file delivery ledgers still apply. It must not
-  recover pending work, another transport, or arbitrary historical messages.
+  Hold that verified state for two minutes before recovery. The transition may
+  then recover at most one `send_expired` WeCom result from the previous 12
+  hours, only when it had already reached a send state and still contains a
+  resendable result. The per-task recovery cap, exact-chat guard, and durable
+  text/file delivery ledgers still apply. It must not recover pending work,
+  another transport, or arbitrary historical messages.
 - Duplicate-response guards must not use placeholder WeChat `server_id` values
   such as `0`, empty, `null`, or `-1` as globally unique ids. Store a per-row
   response key and fall back to `local_id` for placeholder server ids so

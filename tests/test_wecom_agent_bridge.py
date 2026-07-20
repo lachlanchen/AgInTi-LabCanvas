@@ -950,6 +950,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("WECOM_CLIENT_LAYERED_NATIVE_GEOMETRY", source)
         self.assertIn("native geometry", source)
         self.assertIn("supervise_client", source)
+        self.assertIn("WECOM_CLIENT_RESTART_LIMIT", source)
+        self.assertIn("WECOM_CLIENT_RESTART_QUARANTINE_SECONDS", source)
         self.assertIn("login_fallback_due", source)
         self.assertIn("stable_checks >= 4", source)
         self.assertIn("if is_running && wait_for_client_window 4", source)
@@ -1310,6 +1312,11 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(payload["allow_search_fallback"])
         self.assertEqual(stored["target_groups"], ["LabAgent", "AgentTest"])
         self.assertTrue(stored["allow_search_fallback"])
+        self.assertTrue(stored["passive_poll_enabled"])
+        self.assertEqual(stored["active_rescan_seconds"], 180.0)
+        self.assertEqual(stored["auth_quarantine_seconds"], 300.0)
+        self.assertEqual(stored["reconnect_stabilization_seconds"], 120.0)
+        self.assertEqual(stored["composer_input_backend"], "xdotool")
 
     def test_gui_guide_and_first_contact_share_one_user_contract(self) -> None:
         bridge = load_gui_bridge()
@@ -1702,9 +1709,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
         bridge.capture_screen.assert_not_called()
         bridge.read_chat_history_text.assert_not_called()
 
-    def test_gui_composer_keys_uses_native_sendinput_for_wine_composer(self) -> None:
+    def test_gui_composer_keys_uses_x11_input_by_default(self) -> None:
         module = load_gui_bridge()
         bridge = object.__new__(module.WeComGuiBridge)
+        bridge.config = {}
         bridge.click = mock.Mock()
         bridge.run_win32_input = mock.Mock()
         bridge.run_xdotool = mock.Mock()
@@ -1713,6 +1721,22 @@ class WeComAgentBridgeTests(unittest.TestCase):
         bridge.composer_keys(window, "ctrl+a", "ctrl+v")
 
         bridge.click.assert_called_once_with(500, 896)
+        bridge.run_win32_input.assert_not_called()
+        bridge.run_xdotool.assert_called_once_with(
+            ["key", "--clearmodifiers", "ctrl+a", "ctrl+v"]
+        )
+
+    def test_gui_composer_native_sendinput_requires_explicit_opt_in(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.config = {"composer_input_backend": "native"}
+        bridge.click = mock.Mock()
+        bridge.run_win32_input = mock.Mock()
+        bridge.run_xdotool = mock.Mock()
+        window = module.Window("1", 100, 200, 1000, 800)
+
+        bridge.composer_keys(window, "ctrl+a", "ctrl+v")
+
         self.assertEqual(
             bridge.run_win32_input.call_args_list,
             [mock.call("--clear"), mock.call("--paste")],
@@ -1722,6 +1746,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
     def test_gui_composer_keys_keeps_xdotool_fallback_for_unmapped_keys(self) -> None:
         module = load_gui_bridge()
         bridge = object.__new__(module.WeComGuiBridge)
+        bridge.config = {}
         bridge.click = mock.Mock()
         bridge.run_win32_input = mock.Mock()
         bridge.run_xdotool = mock.Mock()
@@ -1921,6 +1946,112 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         self.assertEqual(blocker, "device_environment_abnormal")
 
+    def test_gui_auth_blocker_enters_durable_input_quarantine(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {"auth_quarantine_seconds": 300}
+            bridge.target_groups = ["LabAgent"]
+            bridge._client_was_visible = True
+            bridge._active_scan_remaining = 2
+
+            with mock.patch.object(module.time, "time", return_value=100.0):
+                bridge.activate_auth_quarantine("device_environment_abnormal")
+                state = bridge.security_pause_state()
+                with self.assertRaisesRegex(RuntimeError, "WECOM_GUI_AUTH_REQUIRED"):
+                    bridge.require_gui_input_allowed()
+
+            self.assertEqual(state["auth_blocker"], "device_environment_abnormal")
+            self.assertEqual(state["security_cooldown_remaining_seconds"], 300)
+            self.assertEqual(module.get_runtime(state_db, "chat_ready:LabAgent"), "0")
+            self.assertFalse(bridge._client_was_visible)
+            self.assertEqual(bridge._active_scan_remaining, 0)
+
+    def test_gui_passive_cycle_does_not_touch_unchanged_chat(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            module.set_runtime(state_db, "passive_screen_signature", "stable")
+            module.set_runtime(state_db, "last_active_poll_epoch", "100")
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {"active_rescan_seconds": 180}
+            bridge.target_groups = ["LabAgent"]
+            bridge._client_was_visible = True
+            bridge._active_scan_remaining = 0
+            window = module.Window("1", 0, 0, 1000, 650)
+            bridge.find_window = mock.Mock(return_value=window)
+            bridge.serialized_gui = mock.MagicMock()
+            bridge.capture_screen = mock.Mock(return_value=Path(temporary) / "screen.png")
+            bridge.passive_screen_signature = mock.Mock(return_value="stable")
+            bridge.poll_once = mock.Mock()
+
+            with mock.patch.object(module.time, "time", return_value=200.0):
+                payload = bridge.poll_cycle()
+
+        self.assertEqual(payload["skipped"], "screen_unchanged")
+        bridge.poll_once.assert_not_called()
+
+    def test_gui_send_pacing_waits_locally_instead_of_retrying_gui(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            module.set_runtime(state_db, "last_gui_send_attempt_epoch", "95")
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {"send_min_interval_seconds": 12}
+
+            with mock.patch.object(
+                module.time,
+                "time",
+                side_effect=[100.0, 107.0, 107.0],
+            ), mock.patch.object(module.time, "sleep") as sleep:
+                bridge.pace_gui_send("text")
+
+            self.assertEqual(
+                module.runtime_float(state_db, "last_gui_send_attempt_epoch"),
+                107.0,
+            )
+
+        sleep.assert_called_once_with(7.0)
+
+    def test_gui_late_file_auth_error_quarantines_followup_sends(self) -> None:
+        module = load_gui_bridge()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {"auth_quarantine_seconds": 300}
+            bridge.target_groups = ["LabAgent"]
+            bridge._client_was_visible = True
+            bridge._active_scan_remaining = 0
+
+            with mock.patch.object(module.time, "time", return_value=100.0):
+                bridge.quarantine_from_send_result(
+                    {
+                        "errors": [
+                            {
+                                "error": (
+                                    "RuntimeError: WECOM_GUI_AUTH_REQUIRED: "
+                                    "device_environment_abnormal"
+                                )
+                            }
+                        ]
+                    }
+                )
+
+            self.assertEqual(
+                module.get_runtime(state_db, "auth_blocker"),
+                "device_environment_abnormal",
+            )
+            self.assertEqual(module.get_runtime(state_db, "chat_ready:LabAgent"), "0")
+
     def test_gui_health_does_not_expose_allowlisted_chat_names(self) -> None:
         module = load_gui_bridge()
         bridge = object.__new__(module.WeComGuiBridge)
@@ -2030,48 +2161,66 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
     def test_gui_reconnect_waits_for_exact_chat_poll_readiness(self) -> None:
         module = load_gui_bridge()
-        bridge = object.__new__(module.WeComGuiBridge)
-        bridge._client_was_visible = False
-        bridge.recover_expired_outbox = mock.Mock(
-            return_value={"ok": True, "recovered_count": 1}
-        )
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge.config = {"reconnect_stabilization_seconds": 120}
+            bridge.target_groups = ["LabAgent"]
+            bridge._client_was_visible = False
+            bridge.recover_expired_outbox = mock.Mock(
+                return_value={"ok": True, "recovered_count": 1}
+            )
 
-        transition = bridge.recover_outbox_after_ready_poll(
-            client_visible=True,
-            poll_result={"ok": False, "error": "chat title not ready"},
-        )
+            transition = bridge.recover_outbox_after_ready_poll(
+                client_visible=True,
+                poll_result={"ok": False, "error": "chat title not ready"},
+            )
+            module.set_runtime(state_db, "chat_ready:LabAgent", "1")
+            with mock.patch.object(module.time, "time", return_value=100.0):
+                stabilizing = bridge.recover_outbox_after_ready_poll(
+                    client_visible=True,
+                    poll_result={"ok": True, "processed": 0},
+                )
+            with mock.patch.object(module.time, "time", return_value=221.0):
+                ready = bridge.recover_outbox_after_ready_poll(
+                    client_visible=True,
+                    poll_result={
+                        "ok": True,
+                        "skipped": "screen_unchanged",
+                        "processed": 0,
+                    },
+                )
+                repeated = bridge.recover_outbox_after_ready_poll(
+                    client_visible=True,
+                    poll_result={"ok": True, "processed": 0},
+                )
 
-        self.assertEqual(transition["skipped"], "chat_poll_not_ready")
-        self.assertFalse(bridge._client_was_visible)
-        bridge.recover_expired_outbox.assert_not_called()
-
-        ready = bridge.recover_outbox_after_ready_poll(
-            client_visible=True,
-            poll_result={"ok": True, "processed": 0},
-        )
-        repeated = bridge.recover_outbox_after_ready_poll(
-            client_visible=True,
-            poll_result={"ok": True, "processed": 0},
-        )
-
-        self.assertEqual(ready["recovered_count"], 1)
-        self.assertEqual(repeated["skipped"], "already_ready")
-        bridge.recover_expired_outbox.assert_called_once_with()
+            self.assertEqual(transition["skipped"], "chat_poll_not_ready")
+            self.assertEqual(stabilizing["skipped"], "reconnect_stabilizing")
+            self.assertEqual(ready["recovered_count"], 1)
+            self.assertEqual(repeated["skipped"], "already_ready")
+            bridge.recover_expired_outbox.assert_called_once_with()
 
     def test_gui_reconnect_readiness_rearms_after_client_disappears(self) -> None:
         module = load_gui_bridge()
-        bridge = object.__new__(module.WeComGuiBridge)
-        bridge._client_was_visible = True
-        bridge.recover_expired_outbox = mock.Mock()
+        with tempfile.TemporaryDirectory() as temporary:
+            state_db = Path(temporary) / "state.sqlite"
+            module.init_state_db(state_db)
+            bridge = object.__new__(module.WeComGuiBridge)
+            bridge.state_db = state_db
+            bridge._client_was_visible = True
+            bridge.recover_expired_outbox = mock.Mock()
 
-        payload = bridge.recover_outbox_after_ready_poll(
-            client_visible=False,
-            poll_result={"ok": False},
-        )
+            payload = bridge.recover_outbox_after_ready_poll(
+                client_visible=False,
+                poll_result={"ok": False},
+            )
 
-        self.assertEqual(payload["skipped"], "client_not_visible")
-        self.assertFalse(bridge._client_was_visible)
-        bridge.recover_expired_outbox.assert_not_called()
+            self.assertEqual(payload["skipped"], "client_not_visible")
+            self.assertFalse(bridge._client_was_visible)
+            bridge.recover_expired_outbox.assert_not_called()
 
     def test_gui_inbound_ledger_supports_cursor_reads(self) -> None:
         bridge = load_gui_bridge()

@@ -25,6 +25,9 @@ EXE_WINDOWS='C:\Program Files (x86)\WXWork\WXWork.exe'
 NOVNC_URL="http://127.0.0.1:${NOVNC_PORT}/vnc.html?host=127.0.0.1&port=${NOVNC_PORT}&autoconnect=1&resize=scale"
 APP_PATTERN='C:\\Program Files \(x86\)\\WXWork\\WXWork.exe'
 LAYERED_NATIVE_GEOMETRY="${WECOM_CLIENT_LAYERED_NATIVE_GEOMETRY:-1}"
+RESTART_WINDOW_SECONDS="${WECOM_CLIENT_RESTART_WINDOW_SECONDS:-3600}"
+RESTART_LIMIT="${WECOM_CLIENT_RESTART_LIMIT:-3}"
+RESTART_QUARANTINE_SECONDS="${WECOM_CLIENT_RESTART_QUARANTINE_SECONDS:-1800}"
 
 mkdir -p "$PRIVATE" "$LOG_DIR"
 
@@ -266,7 +269,13 @@ show_login_qr() {
 supervise_client() {
   trap 'exit 0' INT TERM
   local backoff=10
+  local restart_attempts=0
+  local restart_window_started
+  local running_since=0
+  local now=0
+  restart_window_started="$(date +%s)"
   while true; do
+    now="$(date +%s)"
     if is_running; then
       # An existing process owns the authenticated profile. Never relaunch or
       # enter account-switch mode because a layered window is hidden, blocked
@@ -276,13 +285,35 @@ supervise_client() {
         start_autofit_guard || true
         fit_client_window || true
       fi
+      if (( running_since == 0 )); then
+        running_since="$now"
+      elif (( now - running_since >= RESTART_WINDOW_SECONDS )); then
+        # A continuously healthy client earns a fresh restart budget. Short
+        # crash/relaunch cycles never do, so they cannot erode device trust.
+        restart_attempts=0
+        restart_window_started="$now"
+      fi
       backoff=10
       sleep 10
       continue
     fi
 
+    running_since=0
+    if (( now - restart_window_started >= RESTART_WINDOW_SECONDS )); then
+      restart_attempts=0
+      restart_window_started="$now"
+    fi
+    if (( restart_attempts >= RESTART_LIMIT )); then
+      # Keep the persisted profile untouched and wait for an operator instead
+      # of repeatedly relaunching a client Tencent may already distrust.
+      sleep "$RESTART_QUARANTINE_SECONDS"
+      restart_attempts=0
+      restart_window_started="$(date +%s)"
+      continue
+    fi
+    restart_attempts=$((restart_attempts + 1))
     if start_client; then
-      backoff=10
+      backoff=30
     else
       # Avoid a crash/relaunch loop that can invalidate Tencent device trust.
       backoff=$((backoff * 2))

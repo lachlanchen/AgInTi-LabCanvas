@@ -199,6 +199,10 @@ def initialize_config(
         "display": str(existing.get("display") or ":92"),
         "wineprefix": str(existing.get("wineprefix") or DEFAULT_PREFIX),
         "poll_seconds": bounded_float(existing.get("poll_seconds"), 4.0, 2.0, 120.0),
+        "passive_poll_enabled": bool(existing.get("passive_poll_enabled", True)),
+        "active_rescan_seconds": bounded_float(
+            existing.get("active_rescan_seconds"), 180.0, 30.0, 3600.0
+        ),
         "action_pause_seconds": bounded_float(existing.get("action_pause_seconds"), 0.8, 0.2, 5.0),
         "failure_backoff_seconds": bounded_float(
             existing.get("failure_backoff_seconds"), 30.0, 5.0, 900.0
@@ -226,6 +230,26 @@ def initialize_config(
             existing.get("reconnect_recovery_max_age_seconds"), 12 * 60 * 60, 0, 7 * 24 * 60 * 60
         ),
         "reconnect_recovery_limit": bounded_int(existing.get("reconnect_recovery_limit"), 1, 0, 20),
+        "reconnect_stabilization_seconds": bounded_float(
+            existing.get("reconnect_stabilization_seconds"), 120.0, 10.0, 3600.0
+        ),
+        "auth_quarantine_seconds": bounded_float(
+            existing.get("auth_quarantine_seconds"), 300.0, 30.0, 24 * 60 * 60.0
+        ),
+        "auth_recovery_stabilization_seconds": bounded_float(
+            existing.get("auth_recovery_stabilization_seconds"), 60.0, 10.0, 3600.0
+        ),
+        "send_min_interval_seconds": bounded_float(
+            existing.get("send_min_interval_seconds"), 12.0, 0.0, 300.0
+        ),
+        "file_send_min_interval_seconds": bounded_float(
+            existing.get("file_send_min_interval_seconds"), 30.0, 0.0, 900.0
+        ),
+        "composer_input_backend": (
+            "native"
+            if str(existing.get("composer_input_backend") or "").casefold() == "native"
+            else "xdotool"
+        ),
     }
     write_private_json(path, payload)
     return {
@@ -255,6 +279,7 @@ class WeComGuiBridge:
         self._poll_lock = threading.Lock()
         self._client_was_visible = False
         self._poll_cursor = 0
+        self._active_scan_remaining = 0
         self._chat_failures: dict[str, int] = {}
         self._chat_retry_at: dict[str, float] = {}
         init_state_db(self.state_db)
@@ -268,7 +293,8 @@ class WeComGuiBridge:
             runtime = dict(
                 conn.execute(
                     "SELECT key, value FROM runtime WHERE key IN "
-                    "('auth_blocker', 'chat_ready', 'last_error', 'last_poll_at', 'last_ready_at')"
+                    "('auth_blocker', 'auth_quarantine_until_epoch', 'chat_ready', "
+                    "'last_error', 'last_poll_at', 'last_ready_at', 'last_active_poll_epoch')"
                 ).fetchall()
             )
         last_error = str(runtime.get("last_error") or "")[:500]
@@ -278,14 +304,20 @@ class WeComGuiBridge:
             for chat in self.target_groups
             if get_runtime(self.state_db, f"chat_ready:{safe_slug(chat)}") == "1"
         ]
-        chat_ready = bool(window) and len(ready_chats) == len(self.target_groups) and not auth_blocker
+        security_cooldown = seconds_until_epoch(runtime.get("auth_quarantine_until_epoch"))
+        chat_ready = (
+            bool(window)
+            and len(ready_chats) == len(self.target_groups)
+            and not auth_blocker
+            and security_cooldown <= 0
+        )
         closed_loop_state = (
             "ready"
             if chat_ready
             else "degraded_ready"
-            if window and ready_chats and not auth_blocker
+            if window and ready_chats and not auth_blocker and security_cooldown <= 0
             else "security_verification_required"
-            if auth_blocker
+            if auth_blocker or security_cooldown > 0
             else "chat_verification_pending"
             if window
             else "login_required"
@@ -302,9 +334,12 @@ class WeComGuiBridge:
             "target_groups": self.target_groups,
             "seeded_groups": [{"chat": row[0], "updated_at": row[1]} for row in rows],
             "auth_blocker": auth_blocker,
+            "security_cooldown_remaining_seconds": security_cooldown,
             "last_error": last_error,
             "last_poll_at": str(runtime.get("last_poll_at") or ""),
             "last_ready_at": str(runtime.get("last_ready_at") or ""),
+            "last_active_poll_epoch": str(runtime.get("last_active_poll_epoch") or ""),
+            "passive_poll_enabled": bool(self.config.get("passive_poll_enabled", True)),
             "local_api_url": f"http://127.0.0.1:{bounded_int(self.config.get('local_api_port'), 19580, 1024, 65535)}",
             "transport": "wecom_gui_only",
             "personal_wechat_fallback": False,
@@ -335,6 +370,15 @@ class WeComGuiBridge:
         if not self._poll_lock.acquire(blocking=False):
             return {"ok": True, "skipped": "poll_already_running", "processed": 0}
         try:
+            security_pause = self.security_pause_state()
+            if security_pause:
+                set_runtime(self.state_db, "last_poll_at", now_iso())
+                return {
+                    "ok": True,
+                    "skipped": "security_quarantine",
+                    "processed": 0,
+                    **security_pause,
+                }
             selected = self.next_due_chat()
             if selected is None:
                 set_runtime(self.state_db, "last_poll_at", now_iso())
@@ -352,8 +396,8 @@ class WeComGuiBridge:
             set_runtime(self.state_db, "last_error", "" if not errors else json.dumps(errors, ensure_ascii=False)[:1000])
             set_runtime(self.state_db, f"chat_ready:{safe_slug(selected)}", "0" if errors else "1")
             if not errors:
-                set_runtime(self.state_db, "auth_blocker", "")
                 set_runtime(self.state_db, "last_ready_at", now_iso())
+                set_runtime(self.state_db, "last_active_poll_epoch", str(time.time()))
             return {"ok": not errors, "processed": processed, "groups": outcomes}
         except Exception as exc:
             message = f"{type(exc).__name__}: {str(exc)[:800]}"
@@ -364,14 +408,163 @@ class WeComGuiBridge:
                 self.defer_failed_chat(selected)
                 set_runtime(self.state_db, f"chat_ready:{safe_slug(selected)}", "0")
             if "WECOM_GUI_AUTH_REQUIRED:" in message:
-                set_runtime(
-                    self.state_db,
-                    "auth_blocker",
-                    message.split("WECOM_GUI_AUTH_REQUIRED:", 1)[1].strip()[:200],
+                self.activate_auth_quarantine(
+                    message.split("WECOM_GUI_AUTH_REQUIRED:", 1)[1].strip()[:200]
                 )
             return {"ok": False, "processed": 0, "error": message}
         finally:
             self._poll_lock.release()
+
+    def poll_cycle(self) -> dict[str, Any]:
+        """Observe passively and touch the GUI only after a visible change."""
+        window = self.find_window(required=False)
+        if window is None:
+            self._client_was_visible = False
+            self._active_scan_remaining = 0
+            set_runtime(self.state_db, "reconnect_ready_since_epoch", "")
+            set_runtime(self.state_db, "last_poll_at", now_iso())
+            return {"ok": False, "processed": 0, "error": "WeCom client is not visible"}
+
+        with self.serialized_gui():
+            screenshot = self.capture_screen("passive-state-check")
+            signature = self.passive_screen_signature(screenshot, window)
+            previous = get_runtime(self.state_db, "passive_screen_signature")
+            changed = not previous or not secrets.compare_digest(previous, signature)
+            stored_blocker = get_runtime(self.state_db, "auth_blocker")
+            if changed or stored_blocker or self.auth_quarantine_remaining() > 0:
+                blocker = self.detect_auth_blocker_from_screen(window, screenshot)
+                if blocker:
+                    self.activate_auth_quarantine(blocker)
+                    set_runtime(self.state_db, "passive_screen_signature", signature)
+                    set_runtime(self.state_db, "last_poll_at", now_iso())
+                    return {
+                        "ok": True,
+                        "skipped": "security_quarantine",
+                        "processed": 0,
+                        **self.security_pause_state(),
+                    }
+                recovery = self.advance_auth_recovery()
+                if recovery is not None:
+                    set_runtime(self.state_db, "passive_screen_signature", signature)
+                    set_runtime(self.state_db, "last_poll_at", now_iso())
+                    return recovery
+            set_runtime(self.state_db, "passive_screen_signature", signature)
+
+        last_active = runtime_float(self.state_db, "last_active_poll_epoch")
+        rescan_seconds = bounded_float(
+            self.config.get("active_rescan_seconds"), 180.0, 30.0, 3600.0
+        )
+        periodic_rescan_due = last_active <= 0 or time.time() - last_active >= rescan_seconds
+        if (changed or periodic_rescan_due) and self._active_scan_remaining <= 0:
+            self._active_scan_remaining = max(1, len(self.target_groups))
+        if self._active_scan_remaining <= 0:
+            set_runtime(self.state_db, "last_poll_at", now_iso())
+            return {"ok": True, "skipped": "screen_unchanged", "processed": 0}
+
+        result = self.poll_once()
+        if result.get("groups"):
+            self._active_scan_remaining = max(0, self._active_scan_remaining - 1)
+            self.record_passive_screen_signature()
+        return result
+
+    def passive_screen_signature(self, screenshot: Path, window: Window) -> str:
+        if Image is None:
+            return sha256_file(screenshot)
+        with Image.open(screenshot).convert("L") as image:
+            # Exclude the composer and desktop clock. Conversation-list unread
+            # badges and the visible chat tail remain inside this stable region.
+            observed = image.crop(
+                (
+                    window.x + int(window.width * 0.05),
+                    window.y + int(window.height * 0.08),
+                    window.x + int(window.width * 0.86),
+                    window.y + int(window.height * 0.74),
+                )
+            )
+            observed = observed.resize((96, 64), Image.Resampling.BILINEAR)
+            quantized = bytes((value // 16) * 16 for value in observed.tobytes())
+        return hashlib.sha256(quantized).hexdigest()
+
+    def record_passive_screen_signature(self) -> None:
+        window = self.find_window(required=False)
+        if window is None:
+            return
+        with self.serialized_gui():
+            screenshot = self.capture_screen("passive-state-baseline")
+            signature = self.passive_screen_signature(screenshot, window)
+            set_runtime(self.state_db, "passive_screen_signature", signature)
+
+    def activate_auth_quarantine(self, blocker: str) -> None:
+        now = time.time()
+        current_until = runtime_float(self.state_db, "auth_quarantine_until_epoch")
+        config = getattr(self, "config", {})
+        duration = bounded_float(
+            config.get("auth_quarantine_seconds"), 300.0, 30.0, 24 * 60 * 60.0
+        )
+        if current_until <= now:
+            current_until = now + duration
+        set_runtime(self.state_db, "auth_blocker", str(blocker)[:200])
+        set_runtime(self.state_db, "auth_quarantine_until_epoch", str(current_until))
+        set_runtime(self.state_db, "auth_recovery_candidate_since_epoch", "")
+        set_runtime(self.state_db, "reconnect_ready_since_epoch", "")
+        for chat in self.target_groups:
+            set_runtime(self.state_db, f"chat_ready:{safe_slug(chat)}", "0")
+        self._client_was_visible = False
+        self._active_scan_remaining = 0
+
+    def auth_quarantine_remaining(self) -> int:
+        return seconds_until_epoch(get_runtime(self.state_db, "auth_quarantine_until_epoch"))
+
+    def security_pause_state(self) -> dict[str, Any]:
+        blocker = get_runtime(self.state_db, "auth_blocker")
+        remaining = self.auth_quarantine_remaining()
+        if not blocker and remaining <= 0:
+            return {}
+        return {
+            "auth_blocker": blocker or "security_cooldown",
+            "security_cooldown_remaining_seconds": remaining,
+        }
+
+    def require_gui_input_allowed(self) -> None:
+        state = self.security_pause_state()
+        if state:
+            raise RuntimeError(
+                "WECOM_GUI_AUTH_REQUIRED: "
+                f"{state['auth_blocker']} (cooldown {state['security_cooldown_remaining_seconds']}s)"
+            )
+
+    def advance_auth_recovery(self) -> dict[str, Any] | None:
+        state = self.security_pause_state()
+        if not state:
+            return None
+        remaining = int(state.get("security_cooldown_remaining_seconds") or 0)
+        if remaining > 0:
+            set_runtime(self.state_db, "auth_recovery_candidate_since_epoch", "")
+            return {"ok": True, "skipped": "security_quarantine", "processed": 0, **state}
+        now = time.time()
+        candidate = runtime_float(self.state_db, "auth_recovery_candidate_since_epoch")
+        if candidate <= 0:
+            set_runtime(self.state_db, "auth_recovery_candidate_since_epoch", str(now))
+            candidate = now
+        stabilization = bounded_float(
+            getattr(self, "config", {}).get("auth_recovery_stabilization_seconds"),
+            60.0,
+            10.0,
+            3600.0,
+        )
+        stable_for = max(0.0, now - candidate)
+        if stable_for < stabilization:
+            return {
+                "ok": True,
+                "skipped": "auth_recovery_stabilizing",
+                "processed": 0,
+                "stabilization_remaining_seconds": int(stabilization - stable_for + 0.999),
+            }
+        set_runtime(self.state_db, "auth_blocker", "")
+        set_runtime(self.state_db, "auth_quarantine_until_epoch", "")
+        set_runtime(self.state_db, "auth_recovery_candidate_since_epoch", "")
+        self._active_scan_remaining = max(1, len(self.target_groups))
+        return None
 
     def next_due_chat(self) -> str | None:
         if not self.target_groups:
@@ -490,13 +683,19 @@ class WeComGuiBridge:
         if chat not in self.target_groups:
             raise RuntimeError("refusing send to a non-allowlisted WeCom GUI group")
         with self.serialized_gui():
-            return self.send_text_locked(chat, text, task_id=task_id)
+            try:
+                return self.send_text_locked(chat, text, task_id=task_id)
+            except Exception as exc:
+                self.quarantine_from_exception(exc)
+                raise
 
     def send_files(self, chat: str, paths: list[Path], *, task_id: str) -> dict[str, Any]:
         if chat not in self.target_groups:
             raise RuntimeError("refusing file send to a non-allowlisted WeCom GUI group")
         with self.serialized_gui():
-            return self.send_files_locked(chat, paths, task_id=task_id)
+            result = self.send_files_locked(chat, paths, task_id=task_id)
+            self.quarantine_from_send_result(result)
+            return result
 
     def send(
         self,
@@ -509,17 +708,33 @@ class WeComGuiBridge:
         if chat not in self.target_groups:
             raise RuntimeError("refusing send to a non-allowlisted WeCom GUI group")
         with self.serialized_gui():
-            text_result = (
-                self.send_text_locked(chat, text, task_id=task_id)
-                if text.strip()
-                else empty_send_result()
-            )
-            file_result = (
-                self.send_files_locked(chat, paths, task_id=task_id)
-                if paths
-                else empty_send_result()
-            )
-            return merge_send_results(text_result, file_result)
+            try:
+                text_result = (
+                    self.send_text_locked(chat, text, task_id=task_id)
+                    if text.strip()
+                    else empty_send_result()
+                )
+                file_result = (
+                    self.send_files_locked(chat, paths, task_id=task_id)
+                    if paths
+                    else empty_send_result()
+                )
+                result = merge_send_results(text_result, file_result)
+                self.quarantine_from_send_result(result)
+                return result
+            except Exception as exc:
+                self.quarantine_from_exception(exc)
+                raise
+
+    def quarantine_from_send_result(self, result: dict[str, Any]) -> None:
+        for error in result.get("errors") or []:
+            self.quarantine_from_exception(str(error.get("error") or ""))
+
+    def quarantine_from_exception(self, error: Any) -> None:
+        message = str(error)
+        marker = "WECOM_GUI_AUTH_REQUIRED:"
+        if marker in message:
+            self.activate_auth_quarantine(message.split(marker, 1)[1].strip()[:200])
 
     def list_chats(self) -> dict[str, Any]:
         return {
@@ -555,11 +770,12 @@ class WeComGuiBridge:
     def send_text_locked(self, chat: str, text: str, *, task_id: str) -> dict[str, Any]:
         chunks = chunk_text(text, 1800)
         sent: list[dict[str, Any]] = []
-        self.ensure_chat(chat)
         for index, chunk in enumerate(chunks):
             delivery_key = short_hash(f"{chat}:{task_id}:{index}:{chunk}")
             if delivery_done(self.state_db, delivery_key, chat):
                 continue
+            self.pace_gui_send("text")
+            self.ensure_chat(chat)
             window = self.find_window()
             self.set_clipboard(chunk)
             # Keep replacement and paste in one xdotool key command. Wine can
@@ -592,7 +808,6 @@ class WeComGuiBridge:
     def send_files_locked(self, chat: str, paths: list[Path], *, task_id: str) -> dict[str, Any]:
         sent_files: list[str] = []
         errors: list[dict[str, str]] = []
-        self.ensure_chat(chat)
         for index, source in enumerate(paths):
             staging_dir: Path | None = None
             try:
@@ -602,6 +817,8 @@ class WeComGuiBridge:
                 if delivery_done(self.state_db, delivery_key, chat):
                     sent_files.append(str(path))
                     continue
+                self.pace_gui_send("file")
+                self.ensure_chat(chat)
                 window = self.find_window()
                 before_screen = self.capture_screen(f"file-before-{delivery_key}")
                 before_text = self.read_chat_history_text(before_screen, window, delivery_key)
@@ -645,6 +862,31 @@ class WeComGuiBridge:
                 if staging_dir is not None:
                     shutil.rmtree(staging_dir, ignore_errors=True)
         return {"ok": not errors, "sent_messages": [], "sent_files": sent_files, "errors": errors}
+
+    def pace_gui_send(self, kind: str) -> None:
+        """Space GUI attempts without making callers retry against the desktop."""
+        if kind not in {"text", "file"}:
+            raise ValueError("unsupported WeCom GUI send kind")
+        self.require_gui_input_allowed()
+        config = getattr(self, "config", {})
+        minimum = bounded_float(config.get("send_min_interval_seconds"), 12.0, 0.0, 300.0)
+        now = time.time()
+        delays = [minimum - (now - runtime_float(self.state_db, "last_gui_send_attempt_epoch"))]
+        if kind == "file":
+            file_minimum = bounded_float(
+                config.get("file_send_min_interval_seconds"), 30.0, 0.0, 900.0
+            )
+            delays.append(
+                file_minimum - (now - runtime_float(self.state_db, "last_gui_file_send_attempt_epoch"))
+            )
+        delay = max(0.0, *delays)
+        if delay > 0:
+            time.sleep(delay)
+        self.require_gui_input_allowed()
+        attempted_at = str(time.time())
+        set_runtime(self.state_db, "last_gui_send_attempt_epoch", attempted_at)
+        if kind == "file":
+            set_runtime(self.state_db, "last_gui_file_send_attempt_epoch", attempted_at)
 
     def validate_send_file(self, source: Path) -> Path:
         path = source.expanduser().resolve()
@@ -707,6 +949,9 @@ class WeComGuiBridge:
 
     def detect_auth_blocker(self, window: Window) -> str:
         screenshot = self.capture_screen("auth-state-check")
+        return self.detect_auth_blocker_from_screen(window, screenshot)
+
+    def detect_auth_blocker_from_screen(self, window: Window, screenshot: Path) -> str:
         crop = self.crop(
             screenshot,
             (window.x, window.y, window.width, window.height),
@@ -1223,17 +1468,49 @@ class WeComGuiBridge:
         """Recover deferred work only after exact-chat GUI readiness is proven."""
         if not client_visible:
             self._client_was_visible = False
+            set_runtime(self.state_db, "reconnect_ready_since_epoch", "")
             return {"ok": True, "recovered_count": 0, "skipped": "client_not_visible"}
         if not poll_result.get("ok"):
             # A full-size cached/post-login window is not enough. Keep the
             # reconnect edge armed until every allowlisted chat can be opened
             # and title-verified by the normal poll path.
             self._client_was_visible = False
+            set_runtime(self.state_db, "reconnect_ready_since_epoch", "")
             return {"ok": True, "recovered_count": 0, "skipped": "chat_poll_not_ready"}
-        if poll_result.get("skipped"):
+        if poll_result.get("skipped") in {
+            "security_quarantine",
+            "auth_recovery_stabilizing",
+            "chat_failure_backoff",
+            "poll_already_running",
+        }:
             return {"ok": True, "recovered_count": 0, "skipped": str(poll_result["skipped"])}
+        if self.security_pause_state():
+            return {"ok": True, "recovered_count": 0, "skipped": "security_quarantine"}
+        if not all(
+            get_runtime(self.state_db, f"chat_ready:{safe_slug(chat)}") == "1"
+            for chat in self.target_groups
+        ):
+            self._client_was_visible = False
+            set_runtime(self.state_db, "reconnect_ready_since_epoch", "")
+            return {"ok": True, "recovered_count": 0, "skipped": "all_chats_not_ready"}
         if self._client_was_visible:
             return {"ok": True, "recovered_count": 0, "skipped": "already_ready"}
+        now = time.time()
+        ready_since = runtime_float(self.state_db, "reconnect_ready_since_epoch")
+        if ready_since <= 0:
+            set_runtime(self.state_db, "reconnect_ready_since_epoch", str(now))
+            ready_since = now
+        stabilization = bounded_float(
+            self.config.get("reconnect_stabilization_seconds"), 120.0, 10.0, 3600.0
+        )
+        stable_for = max(0.0, now - ready_since)
+        if stable_for < stabilization:
+            return {
+                "ok": True,
+                "recovered_count": 0,
+                "skipped": "reconnect_stabilizing",
+                "stabilization_remaining_seconds": int(stabilization - stable_for + 0.999),
+            }
         try:
             recovered = self.recover_expired_outbox()
         except Exception as exc:
@@ -1707,17 +1984,19 @@ class WeComGuiBridge:
         x = window.x + int(window.width * 0.40)
         y = window.y + int(window.height * 0.87)
         self.click(x, y)
-        normalized = tuple(value.casefold() for value in keys)
-        native_actions = {
-            ("ctrl+a", "ctrl+v"): ("--clear", "--paste"),
-            ("ctrl+v",): ("--paste",),
-            ("ctrl+a", "ctrl+c"): ("--copy-all",),
-            ("ctrl+a", "backspace"): ("--clear",),
-        }.get(normalized)
-        if native_actions is not None:
-            for action in native_actions:
-                self.run_win32_input(action)
-            return
+        config = getattr(self, "config", {})
+        if str(config.get("composer_input_backend") or "xdotool").casefold() == "native":
+            normalized = tuple(value.casefold() for value in keys)
+            native_actions = {
+                ("ctrl+a", "ctrl+v"): ("--clear", "--paste"),
+                ("ctrl+v",): ("--paste",),
+                ("ctrl+a", "ctrl+c"): ("--copy-all",),
+                ("ctrl+a", "backspace"): ("--clear",),
+            }.get(normalized)
+            if native_actions is not None:
+                for action in native_actions:
+                    self.run_win32_input(action)
+                return
         self.run_xdotool(["key", "--clearmodifiers", *keys])
 
     def run_win32_input(self, action: str) -> None:
@@ -1791,7 +2070,11 @@ class WeComGuiBridge:
         try:
             while not self._stop.is_set():
                 client_visible = self.find_window(required=False) is not None
-                result = self.poll_once()
+                result = (
+                    self.poll_cycle()
+                    if bool(self.config.get("passive_poll_enabled", True))
+                    else self.poll_once()
+                )
                 if not result.get("ok") or result.get("processed"):
                     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")), flush=True)
                 recovered = self.recover_outbox_after_ready_poll(
@@ -2117,6 +2400,24 @@ def get_runtime(path: Path, key: str) -> str:
     with sqlite3.connect(path) as conn:
         row = conn.execute("SELECT value FROM runtime WHERE key = ?", (key,)).fetchone()
     return str(row[0]) if row else ""
+
+
+def runtime_float(path: Path, key: str) -> float:
+    try:
+        return float(get_runtime(path, key) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def seconds_until_epoch(value: Any, *, now: float | None = None) -> int:
+    try:
+        target = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0
+    if target <= 0:
+        return 0
+    remaining = target - (time.time() if now is None else now)
+    return max(0, int(remaining + 0.999))
 
 
 def find_color_regions(
