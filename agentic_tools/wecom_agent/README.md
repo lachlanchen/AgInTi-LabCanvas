@@ -62,6 +62,42 @@ PYTHONPATH=src python -m agenticapp wecom doctor --json
 PYTHONPATH=src python -m agenticapp wecom daily status --json
 ```
 
+### Reboot and Crash Recovery
+
+Install the dedicated user service once:
+
+```bash
+agentic_tools/wecom_agent/scripts/install_wecom_autostart.sh install
+agentic_tools/wecom_agent/scripts/install_wecom_autostart.sh status
+loginctl show-user "$USER" -p Linger
+```
+
+The service starts at boot through the user's `default.target`, even before an
+interactive desktop login when linger is enabled. Every minute it idempotently
+verifies the `labcanvas-wecom` tmux stack and recreates missing `gateway`,
+`worker`, `daily`, `knowledge`, official external transport, `wecom-client`, or
+`external-gui` windows according to private configuration. The existing
+`~/scripts/create_tmux_session.sh` launcher remains a compatible second boot
+entry; a private mutation lock makes concurrent starts safe.
+
+Recovery reuses the same ignored Wine prefix and noVNC desktop. It does not
+switch accounts, open a new QR flow, send messages, replay old tasks, or restart
+a healthy GUI relay. The desktop client supervisor separately restores Xvfb,
+x11vnc, websockify, window fitting, and the normal persisted-profile client with
+its bounded restart budget. If Tencent invalidates authentication, the service
+keeps the profile intact and waits for the owner rather than bypassing login.
+
+Useful checks:
+
+```bash
+agentic_tools/wecom_agent/scripts/wecom_autostart.sh status
+tmux list-windows -t labcanvas-wecom
+curl -fsS http://127.0.0.1:6192/vnc.html >/dev/null
+```
+
+The GUI remains available at
+`http://127.0.0.1:6192/vnc.html?host=127.0.0.1&port=6192&autoconnect=1&resize=scale`.
+
 For an external WeCom group, install and bind the separate CLI profile:
 
 ```bash
@@ -285,6 +321,13 @@ allowlisted chat to remain ready, composer operations use X11 input by default,
 and sends are paced to prevent retry bursts.
 The scheduler only reads local private SQLite state while idle; model quota is
 spent only when a due report is enqueued and executed by the worker.
+
+`labcanvas-wecom-autostart.service` is the outer recovery boundary. It survives
+ordinary shell and desktop logouts through the user manager, starts the stack
+after reboot, and periodically calls the same idempotent tmux repair path used
+by the CLI. It never owns chat state itself; durable queues, cursors, delivery
+ledgers, daily subscriptions, and member knowledge remain in ignored storage
+and are resumed by their normal windows.
 
 Private state lives under `agentic_tools/wecom_agent/.private/`. Downloaded
 source media and task artifacts live under ignored `output/`; WeCom event

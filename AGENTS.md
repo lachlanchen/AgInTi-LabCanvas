@@ -32,6 +32,7 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m agenticapp wechat selftest --suite publish-poststage --json`: prove the WeChat worker can repair missing LazyEdit publish jobs, avoid duplicates, and pause on login blockers.
 - `PYTHONPATH=src python -m agenticapp wecom init-config && PYTHONPATH=src python -m agenticapp wecom install`: prepare the ignored official WeCom AI Bot WebSocket sidecar.
 - `PYTHONPATH=src python -m agenticapp wecom gateway start`: run the WeCom gateway and its transport-aware LabCanvas worker in tmux.
+- `agentic_tools/wecom_agent/scripts/install_wecom_autostart.sh install`: enable the lingering user service that restores the full WeCom tmux, GUI/noVNC, worker, scheduler, and knowledge stack after reboot and repairs missing windows without switching accounts.
 - `PYTHONPATH=src python -m agenticapp wecom gui init --chat LabAgent && PYTHONPATH=src python -m agenticapp wecom gui restart --json`: start the exact-name external-group GUI relay when the tenant blocks official external-group APIs.
 - `PYTHONPATH=src python -m agenticapp wecom gui init --chat AgentTest --allow-search-fallback && PYTHONPATH=src python -m agenticapp wecom gui guide --chat AgentTest --live --json`: add a second exact group and send its idempotent task guide.
 - `PYTHONPATH=src python -m agenticapp wecom gui messages --chat LabAgent --after 0 --limit 100 --json`: consume normalized inbound messages through a durable cursor.

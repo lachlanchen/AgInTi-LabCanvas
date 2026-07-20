@@ -28,6 +28,7 @@ GUI_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_gui_bridge.local.json"
 GUI_BRIDGE="$TOOL_ROOT/scripts/wecom_gui_bridge.py"
 GUI_BRIDGE_LOG="$LOG_DIR/external-gui.log"
 WINDOWS_CLIENT="$TOOL_ROOT/scripts/wecom_windows_client.sh"
+MUTATION_LOCK="${WECOM_TMUX_MUTATION_LOCK:-$TOOL_ROOT/.private/wecom_tmux.lock}"
 mkdir -p "$LOG_DIR"
 
 usage() {
@@ -36,6 +37,15 @@ usage() {
 
 window_exists() {
   tmux has-session -t "$SESSION:$1" 2>/dev/null
+}
+
+acquire_mutation_lock() {
+  mkdir -p "$(dirname "$MUTATION_LOCK")"
+  exec 9>"$MUTATION_LOCK"
+  if ! flock -w "${WECOM_TMUX_LOCK_TIMEOUT_SECONDS:-45}" 9; then
+    echo "Timed out waiting for WeCom tmux mutation lock: $MUTATION_LOCK" >&2
+    return 1
+  fi
 }
 
 ensure_core_windows() {
@@ -62,6 +72,34 @@ gui_enabled() {
     && python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("enabled", True) else 1)' "$GUI_BRIDGE_CONFIG"
 }
 
+ensure_gui_client_window() {
+  if ! window_exists wecom-client; then
+    tmux new-window -t "$SESSION" -n wecom-client \
+      "cd '$ROOT' && exec '$WINDOWS_CLIENT' supervise >> '$GUI_BRIDGE_LOG' 2>&1"
+  fi
+}
+
+start_gui_bridge_window() {
+  tmux kill-window -t "$SESSION:external-gui" 2>/dev/null || true
+  tmux new-window -t "$SESSION" -n external-gui \
+    "cd '$ROOT' && exec python3 '$GUI_BRIDGE' --config '$GUI_BRIDGE_CONFIG' loop >> '$GUI_BRIDGE_LOG' 2>&1"
+}
+
+ensure_gui_windows() {
+  if ! gui_enabled; then
+    echo "External WeCom GUI relay is not configured or is disabled."
+    return 0
+  fi
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "Main WeCom session is not running: $SESSION" >&2
+    return 1
+  fi
+  ensure_gui_client_window
+  if ! window_exists external-gui; then
+    start_gui_bridge_window
+  fi
+}
+
 start_gui_window() {
   if ! gui_enabled; then
     echo "External WeCom GUI relay is not configured or is disabled."
@@ -71,14 +109,8 @@ start_gui_window() {
     echo "Main WeCom session is not running: $SESSION" >&2
     return 1
   fi
-  if ! window_exists wecom-client; then
-    tmux new-window -t "$SESSION" -n wecom-client \
-      "cd '$ROOT' && exec '$WINDOWS_CLIENT' supervise >> '$GUI_BRIDGE_LOG' 2>&1"
-  fi
-  "$WINDOWS_CLIENT" start --json >> "$GUI_BRIDGE_LOG" 2>&1 || true
-  tmux kill-window -t "$SESSION:external-gui" 2>/dev/null || true
-  tmux new-window -t "$SESSION" -n external-gui \
-    "cd '$ROOT' && exec python3 '$GUI_BRIDGE' --config '$GUI_BRIDGE_CONFIG' loop >> '$GUI_BRIDGE_LOG' 2>&1"
+  ensure_gui_client_window
+  start_gui_bridge_window
   echo "Started allowlisted external WeCom GUI relay window."
 }
 
@@ -124,8 +156,8 @@ start_stack() {
     if external_enabled && ! window_exists external; then
       start_external_window
     fi
-    if gui_enabled && ! window_exists external-gui; then
-      start_gui_window
+    if gui_enabled; then
+      ensure_gui_windows
     fi
     echo "Session running and missing windows repaired: $SESSION"
     status_stack
@@ -152,17 +184,21 @@ status_stack() {
 action="${1:-status}"
 case "$action" in
   start)
+    acquire_mutation_lock
     start_stack
     ;;
   stop)
+    acquire_mutation_lock
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     echo "Stopped $SESSION"
     ;;
   restart)
+    acquire_mutation_lock
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     start_stack
     ;;
   external-restart)
+    acquire_mutation_lock
     if tmux has-session -t "$SESSION" 2>/dev/null; then
       start_external_window
     else
@@ -170,6 +206,7 @@ case "$action" in
     fi
     ;;
   gui-restart)
+    acquire_mutation_lock
     if tmux has-session -t "$SESSION" 2>/dev/null; then
       start_gui_window
     else

@@ -89,6 +89,27 @@ Default access is first-owner pairing; organization-wide access must be an
 explicit operator choice. Existing personal-WeChat groups are outside this API
 and continue using the GUI/database bridge.
 
+WeCom boot recovery is independent from the personal-WeChat stack. Install
+`agentic_tools/wecom_agent/scripts/install_wecom_autostart.sh` as the lingering
+user service `labcanvas-wecom-autostart.service`. Its only job is to call the
+idempotent WeCom tmux repair contract on startup and at a low-frequency health
+interval. It must:
+
+- preserve the same private queue, SQLite state, Wine prefix, noVNC display,
+  delivery ledgers, and per-chat agent sessions across reboot;
+- independently restore `gateway`, `worker`, `daily`, `knowledge`, optional
+  official external transport, `wecom-client`, and `external-gui` windows;
+- use the tmux mutation lock so the general `create_tmux_session.sh` fallback
+  and the dedicated service may start concurrently without duplicate windows;
+- leave healthy windows and the authenticated GUI process untouched;
+- never enter account-switch/QR login, send a message, replay an old queue, or
+  bypass Tencent authentication as part of boot repair.
+
+The Wine client supervisor owns Xvfb, x11vnc, websockify, noVNC, native window
+fitting, and bounded persisted-profile relaunch. If authentication is no longer
+valid, boot recovery may expose the existing localhost noVNC desktop for normal
+owner action, but it must not manufacture or automate a login.
+
 For the restricted LabAgent research group:
 
 - The paired owner enrolls the exact group; trusted members then share the

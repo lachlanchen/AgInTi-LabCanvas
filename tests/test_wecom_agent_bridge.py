@@ -2348,6 +2348,52 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertNotIn("xwechat_files", source)
         self.assertNotIn("wechat_gui_agent", source)
 
+    def test_wecom_autostart_repairs_each_runtime_without_login_actions(self) -> None:
+        scripts = ROOT / "agentic_tools" / "wecom_agent" / "scripts"
+        autostart = (scripts / "wecom_autostart.sh").read_text(encoding="utf-8")
+        installer = (scripts / "install_wecom_autostart.sh").read_text(encoding="utf-8")
+        unit = (
+            ROOT
+            / "agentic_tools"
+            / "wecom_agent"
+            / "systemd"
+            / "labcanvas-wecom-autostart.service.in"
+        ).read_text(encoding="utf-8")
+        tmux_source = (scripts / "wecom_tmux.sh").read_text(encoding="utf-8")
+
+        self.assertIn('"$TMUX_SUPERVISOR" start', autostart)
+        self.assertIn("WECOM_AUTOSTART_INTERVAL_SECONDS", autostart)
+        self.assertIn("timeout --signal=TERM", autostart)
+        self.assertNotIn("--switch-account", autostart)
+        self.assertNotIn(" show_login_qr", autostart)
+        self.assertIn("systemctl --user", installer)
+        self.assertIn("enable --now", installer)
+        self.assertIn("DBUS_SESSION_BUS_ADDRESS", installer)
+        self.assertIn("Restart=always", unit)
+        self.assertIn("WantedBy=default.target", unit)
+        self.assertIn("KillMode=process", unit)
+        self.assertIn("acquire_mutation_lock", tmux_source)
+        self.assertIn("ensure_gui_client_window", tmux_source)
+        self.assertIn("ensure_gui_windows", tmux_source)
+        self.assertIn("if ! window_exists external-gui", tmux_source)
+
+    def test_wecom_autostart_docs_define_persisted_profile_boundary(self) -> None:
+        readme = (
+            ROOT / "agentic_tools" / "wecom_agent" / "README.md"
+        ).read_text(encoding="utf-8")
+        operations = (
+            ROOT
+            / "agentic_tools"
+            / "wechat_gui_agent"
+            / "docs"
+            / "ROBUST_EFFICIENT_OPERATIONS.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("### Reboot and Crash Recovery", readme)
+        self.assertIn("labcanvas-wecom-autostart.service", readme)
+        self.assertIn("It does not\nswitch accounts", readme)
+        self.assertIn("never enter account-switch/QR login", operations)
+
 
 if __name__ == "__main__":
     unittest.main()

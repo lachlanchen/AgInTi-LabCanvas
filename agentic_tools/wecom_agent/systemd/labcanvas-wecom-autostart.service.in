@@ -1,0 +1,17 @@
+[Unit]
+Description=AgInTi LabCanvas WeCom boot and recovery supervisor
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=HOME=@HOME@
+Environment=PATH=@HOME@/.local/bin:@HOME@/miniconda3/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@ROOT@/agentic_tools/wecom_agent/scripts/wecom_autostart.sh supervise
+Restart=always
+RestartSec=20
+KillMode=process
+TimeoutStopSec=10
+UMask=0077
+
+[Install]
+WantedBy=default.target
