@@ -29,11 +29,11 @@ For the local MIX 2S, the useful state was:
 
 ## Start the Phone Mirror
 
-Start or restart the dedicated tmux-held virtual desktop and open mobile
+Turn on the dedicated tmux-held virtual desktop and optionally open mobile
 WeChat:
 
 ```bash
-agentic_tools/android_device_agent/scripts/android_device_desktop.sh restart \
+scripts/mix2s on \
   --serial <ADB_SERIAL> \
   --open-wechat
 ```
@@ -61,6 +61,29 @@ the exact serial every 10 seconds and restores only the missing mirror after the
 device reconnects. Override the interval with `ANDROID_DEVICE_RETRY_SECONDS`.
 `android_device_desktop.sh status --serial <ADB_SERIAL>` distinguishes a live
 mirror from a transport-only desktop waiting for retry.
+
+## Turn the Mirror and Phone Screen Off
+
+When mobile control is not needed, use the complete off routine rather than
+leaving a blank noVNC desktop running:
+
+```bash
+scripts/mix2s off --serial <ADB_SERIAL>
+scripts/mix2s status --serial <ADB_SERIAL>
+```
+
+`off` is idempotent. It stops only the MIX 2S resources identified by tmux
+session, serial, X display `:99`, VNC `5929`, and noVNC `6129`. It also runs:
+
+```bash
+adb -s <ADB_SERIAL> shell svc power stayon false
+adb -s <ADB_SERIAL> shell input keyevent 223
+```
+
+Expected status is `mirror: off`, `transport: off`, `phone: Asleep`, and
+`USB stay-awake: 0`. This reduces display and mirroring load while preserving
+ADB authorization and does not stop the separate computer WeChat or WeCom
+desktops. `on` wakes the phone but never bypasses a secure lock.
 
 ## Unlock Desktop WeChat from Mobile WeChat
 

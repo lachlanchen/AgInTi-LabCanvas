@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+exec "$ROOT/agentic_tools/android_device_agent/scripts/android_device_desktop.sh" "$@"

@@ -10,15 +10,22 @@ Use the real device when the task depends on installed apps, logins, WeChat,
 photos, files, notifications, or account state.
 
 ```bash
-agentic_tools/android_device_agent/scripts/android_device_desktop.sh start --serial <MIX2S_SERIAL>
+scripts/mix2s on --serial <MIX2S_SERIAL>
+scripts/mix2s status --serial <MIX2S_SERIAL>
+scripts/mix2s off --serial <MIX2S_SERIAL>
 agentic_tools/android_device_agent/scripts/android_control.py status --serial <MIX2S_SERIAL>
 ```
 
 The desktop runs separately from the WeChat desktop:
 
 ```text
-http://127.0.0.1:6129/vnc_lite.html?host=127.0.0.1&port=6129&autoconnect=1&resize=remote
+http://127.0.0.1:6129/vnc.html?host=127.0.0.1&port=6129&autoconnect=1&resize=scale
 ```
+
+`on` starts only the MIX 2S mirror and wakes the phone. `off` stops scrcpy and
+the private `:99`/`5929`/`6129` transport, disables USB stay-awake, and sleeps
+the display. It does not stop desktop WeChat or WeCom. The saved serial under
+ignored `output/android_device_agent/` makes later calls deterministic.
 
 ## Scripted Actions
 

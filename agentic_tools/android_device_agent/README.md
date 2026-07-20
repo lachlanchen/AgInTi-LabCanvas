@@ -17,10 +17,12 @@ or dry automation that does not need the real phone state.
 
 ## Dedicated noVNC Desktop
 
-Start a persistent phone-control desktop:
+Use the short on/off routine for a persistent phone-control desktop:
 
 ```bash
-agentic_tools/android_device_agent/scripts/android_device_desktop.sh start --serial <MIX2S_SERIAL>
+scripts/mix2s on --serial <MIX2S_SERIAL>
+scripts/mix2s status --serial <MIX2S_SERIAL>
+scripts/mix2s off --serial <MIX2S_SERIAL>
 ```
 
 Open the printed noVNC URL. The desktop runs `scrcpy` for direct mouse/keyboard
@@ -46,11 +48,20 @@ Defaults:
 Detailed MIX 2S and mobile-WeChat desktop-unlock steps are in
 `docs/MIX2S_ADB_SCRCPY_RUNBOOK.md`.
 
-Stop only the Android desktop session:
+`off` stops the Android tmux retry loop, scrcpy, display `:99`, VNC/noVNC
+listeners, and the display keep-awake process. It then disables Android's USB
+stay-awake setting and sends `KEYCODE_SLEEP`, leaving WeChat and WeCom desktop
+services untouched.
+
+The long command remains available and accepts the same `on`, `off`, and
+`status` actions:
 
 ```bash
-agentic_tools/android_device_agent/scripts/android_device_desktop.sh stop
+agentic_tools/android_device_agent/scripts/android_device_desktop.sh off
 ```
+
+See `../../references/mix2s-mirror-power-routine.md` for the ownership boundaries,
+verification checks, and heat-reduction behavior.
 
 ## Direct ADB Control
 

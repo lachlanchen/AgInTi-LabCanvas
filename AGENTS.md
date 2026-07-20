@@ -46,6 +46,7 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m agenticapp wechat audio-intake --input <media> --output-dir <task-dir> --json`: transcribe one exact local WeChat audio/video attachment into reusable worker context.
 - `PYTHONPATH=src python -m agenticapp wechat shipinhao-transcribe --source-text-file <card.txt> --output-dir <task-dir> --json`: run exact-card URL, public-excerpt, cache, and Whisper recovery directly.
 - `PYTHONPATH=src python -m unittest discover -s tests`: run the full test suite.
+- `scripts/mix2s on|off|status [--serial SERIAL]`: start, completely stop/sleep, or inspect the isolated MIX 2S scrcpy/noVNC desktop without affecting WeChat or WeCom.
 - `scripts/install_blender_portable.sh`: install a no-sudo Blender binary under `~/.local/share/labcanvas/blender`.
 - `labcanvas --config configs/blender-local-command.example.json dispatch blender "Draw a building"`: run the local Blender bridge.
 - `agentic_tools/labview_mcp_agent/scripts/probe_labview.sh`: check local LabVIEW/NI package state.

@@ -114,7 +114,9 @@ labcanvas wechat shipinhao-transcribe --source-text-file <card.txt> --output-dir
 labcanvas social project add --repo ../ZhJpBook --id pocketpolyglot
 labcanvas social campaign create --project pocketpolyglot --name introduction --objective "Introduce the usable open-source Studio" --platform x --platform reddit:r/languagelearning --platform hackernews
 labcanvas social draft generate CAMPAIGN_ID --dry-run --json
-agentic_tools/android_device_agent/scripts/android_device_desktop.sh start --serial <MIX2S_SERIAL>
+scripts/mix2s on --serial <MIX2S_SERIAL>
+scripts/mix2s status --serial <MIX2S_SERIAL>
+scripts/mix2s off --serial <MIX2S_SERIAL>
 agentic_tools/android_device_agent/scripts/android_control.py status --serial <MIX2S_SERIAL>
 ```
 

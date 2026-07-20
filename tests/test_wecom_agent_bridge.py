@@ -1015,6 +1015,16 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn('--app-match "^scrcpy --serial $serial([[:space:]]|$)"', android_source)
         self.assertIn("while true; do $command || true", android_source)
         self.assertIn("mirror: waiting for scrcpy retry", android_source)
+        self.assertIn("on|off|start|stop|restart|status", android_source)
+        self.assertIn('shell svc power stayon false', android_source)
+        self.assertIn('shell input keyevent 223', android_source)
+        self.assertIn('stop_matching_processes "noVNC relay', android_source)
+        self.assertIn('stop_matching_processes "Xvfb display', android_source)
+        self.assertIn('echo "mirror: off"', android_source)
+
+        mix2s_wrapper = (ROOT / "scripts" / "mix2s").read_text(encoding="utf-8")
+        self.assertIn("android_device_desktop.sh", mix2s_wrapper)
+        self.assertIn('exec ', mix2s_wrapper)
 
     def test_external_cli_exact_group_resolution_is_fail_closed(self) -> None:
         bridge = load_cli_bridge()
