@@ -528,7 +528,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(task["route_decision"]["route_kind"], "research_or_summary")
         self.assertEqual(task["routine"]["id"], "research_summary")
         self.assertFalse(task["route_decision"]["public_publish_allowed"])
-        self.assertIn("compile a readable PDF", task["request"])
+        self.assertIn("polished LaTeX source", task["request"])
+        self.assertIn("Render and inspect the compiled pages", task["request"])
         self.assertIn("Nature-style", task["request"])
         self.assertTrue(task["route_decision"]["no_fixed_deadline"])
         self.assertFalse(task["agent_backend_config"]["agent_fallbacks"]["fallback_on_timeout"])
@@ -1679,6 +1680,27 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("COMPOSE_UNVERIFIED", payload["errors"][0]["error"])
         bridge.click.assert_not_called()
         remember.assert_not_called()
+
+    def test_gui_file_history_wait_reports_late_auth_challenge(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.detect_auth_blocker = mock.Mock(return_value="device_environment_abnormal")
+        bridge.capture_screen = mock.Mock()
+        bridge.read_chat_history_text = mock.Mock()
+        window = module.Window("1", 0, 0, 1000, 800)
+
+        with mock.patch.object(module.time, "monotonic", side_effect=[0.0, 1.0]), mock.patch.object(
+            module.time, "sleep"
+        ), self.assertRaisesRegex(RuntimeError, "WECOM_GUI_AUTH_REQUIRED: device_environment_abnormal"):
+            bridge.wait_for_file_in_history(
+                window,
+                "report.pdf",
+                before_text="",
+                delivery_key="delivery-key",
+            )
+
+        bridge.capture_screen.assert_not_called()
+        bridge.read_chat_history_text.assert_not_called()
 
     def test_gui_composer_keys_uses_native_sendinput_for_wine_composer(self) -> None:
         module = load_gui_bridge()

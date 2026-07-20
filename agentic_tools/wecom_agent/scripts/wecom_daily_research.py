@@ -594,7 +594,7 @@ Requirements:
 - Keep this job separate from other members' daily topics. Same-group context is supporting evidence, not permission to merge another job into this report.
 - Synthesize the topics with the group's recent questions instead of producing a generic news list.
 - Return a concise Chinese chat digest with the most important findings, why they matter, limitations, and concrete next research steps.
-- Create a source-grounded Markdown report and compile a readable PDF through LaTeX as a restrained Nature-style research paper with citations/DOIs/links. Include both files in the result so the transport sends them to this group.
+- Create a source-grounded Markdown report and a polished LaTeX source, then compile a restrained Nature-style research PDF with clear hierarchy, citations/DOIs/links, embedded fonts, and no clipped or overflowing content. Render and inspect the compiled pages before returning the Markdown and PDF so the transport sends both to this group.
 - When an explanatory paper figure materially helps, create an editable source (SVG/TeX or a LabCanvas atomic figure manifest) plus a preview; do not use a generated bitmap as the sole source of truth.
 - Download requested or directly relevant papers only from lawful open-access sources. Do not bypass paywalls or access controls.
 - Never fabricate a paper, citation, benchmark, or claim. State evidence gaps plainly.

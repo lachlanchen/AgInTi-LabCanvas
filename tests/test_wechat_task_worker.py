@@ -5072,6 +5072,32 @@ stderr: noisy internal trace
         self.assertEqual(task["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
         self.assertEqual(task["send_deferred_reason"], "wechat_locked")
 
+    def test_send_result_defers_immediately_when_wecom_security_verification_is_required(self) -> None:
+        worker = load_worker()
+        calls = []
+        original = worker.send_result_once
+        try:
+            def auth_required(*args: object, **kwargs: object) -> None:
+                calls.append((args, kwargs))
+                raise RuntimeError("WECOM_GUI_AUTH_REQUIRED: device_environment_abnormal")
+
+            worker.send_result_once = auth_required
+            task: dict[str, object] = {}
+            errors = worker.send_result_with_retries(
+                {"message": "", "confirmation": "", "files": ["report.pdf"]},
+                "wecom:group",
+                Path("/tmp/no-targets.json"),
+                task=task,
+            )
+            worker.apply_send_outcome(task, {"message": "", "confirmation": "", "files": ["report.pdf"]}, errors)
+        finally:
+            worker.send_result_once = original
+
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(worker.send_errors_indicate_wecom_auth_required(errors))
+        self.assertEqual(task["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
+        self.assertEqual(task["send_deferred_reason"], "wecom_auth_required")
+
     def test_send_result_defers_immediately_when_gui_sender_busy(self) -> None:
         worker = load_worker()
         calls = []

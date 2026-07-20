@@ -1067,6 +1067,11 @@ def send_errors_indicate_wechat_locked(errors: list[str]) -> bool:
     return "wechat_locked" in text or "weixin for linux is locked" in text or "unlock on phone" in text
 
 
+def send_errors_indicate_wecom_auth_required(errors: list[str]) -> bool:
+    text = "\n".join(str(error) for error in errors).lower()
+    return "wecom_gui_auth_required" in text or "device_environment_abnormal" in text
+
+
 def send_errors_indicate_gui_busy(errors: list[str]) -> bool:
     text = "\n".join(str(error) for error in errors).lower()
     return "wechat_send_busy" in text or "serialized gui sender is already sending" in text
@@ -1109,6 +1114,7 @@ def send_errors_indicate_gui_compose_verification(errors: list[str]) -> bool:
 def send_errors_indicate_deferable(errors: list[str]) -> bool:
     return (
         send_errors_indicate_wechat_locked(errors)
+        or send_errors_indicate_wecom_auth_required(errors)
         or send_errors_indicate_gui_busy(errors)
         or send_errors_indicate_gui_timeout(errors)
         or send_errors_indicate_wechat_entry_required(errors)
@@ -1118,6 +1124,8 @@ def send_errors_indicate_deferable(errors: list[str]) -> bool:
 
 
 def send_deferred_reason_from_errors(errors: list[str]) -> str:
+    if send_errors_indicate_wecom_auth_required(errors):
+        return "wecom_auth_required"
     if send_errors_indicate_gui_busy(errors):
         return "gui_send_busy"
     if send_errors_indicate_gui_timeout(errors):
@@ -10598,6 +10606,7 @@ Link/read-later summary reports:
 
 Artifact return contract:
 - Include files in JSON `files` only when the user requested them, the routine requires delivery, or the artifact is genuinely useful to send back. Saving a local note is not enough reason to attach it to WeChat.
+- When the user requests a research report or PDF, produce an actual LaTeX source and compile a polished scholarly PDF rather than renaming Markdown or returning plain text alone. Use restrained Nature-style typography, a clear information hierarchy, source-grounded citations/DOIs/links, embedded fonts, and sensible page geometry. Render and inspect the compiled pages for missing glyphs, blank pages, clipping, overflow, and unreadably dense text before listing the PDF for delivery.
 - For generated videos, CAD/PCB/renders, requested downloads, requested PDFs, requested source files, and publish outputs, return artifacts as files when safe: story Markdown, LaTeX/source files, compiled PDFs, image previews, renders, CAD/PCB exports, manifests, archives, video/audio, and any requested downloadable file.
 - For ordinary link summaries, avoid listing Markdown, PDF, or image files by default. Do not send a low-quality image/thumbnail just because one was scraped; only send an image when the user asked for it or it is a high-value figure/screenshot that you actually inspected and need to discuss.
 - Prefer PNG/JPG/SVG/PDF/MD/TEX/MP4/MOV/audio/STEP/STL/3MF/DXF/ZIP/SCAD/Blend/KiCad/Gerber files. Do not include decrypted WeChat DBs, private config, cookies, tokens, browser profiles, or chat logs.

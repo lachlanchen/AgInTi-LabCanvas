@@ -1555,6 +1555,9 @@ class WeComGuiBridge:
         latest: Path | None = None
         while time.monotonic() < deadline:
             time.sleep(1.0)
+            blocker = self.detect_auth_blocker(window)
+            if blocker:
+                raise RuntimeError(f"WECOM_GUI_AUTH_REQUIRED: {blocker}")
             latest = self.capture_screen(f"file-sent-{delivery_key}")
             after_text = self.read_chat_history_text(latest, window, f"after-{delivery_key}")
             if filename_ocr_count(filename, after_text) > before_count:

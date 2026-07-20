@@ -107,8 +107,10 @@ For the restricted LabAgent research group:
   without consuming the scheduled report. Repeated interests do not create
   another initial run. The prefix syntax remains a compatibility alias.
 - Daily reports return a concise digest and requested Markdown/PDF or editable
-  figure artifacts through the source-scoped WeCom send gate. Compile report
-  PDFs with XeLaTeX and the restrained Nature-style header. Daily tasks have no
+  figure artifacts through the source-scoped WeCom send gate. Author a polished
+  LaTeX source, compile with XeLaTeX and the restrained Nature-style header, and
+  inspect rendered pages for missing glyphs, blank pages, clipping, overflow,
+  and unreadably dense text before delivery. Daily tasks have no
   pending or deferred-send queue expiry, including legacy rows restored through
   artifact-only reprocessing; a per-turn watchdog is only a hung-process guard.
 - If a daily/research agent writes a substantive exact-task Markdown report and
@@ -180,6 +182,13 @@ personal-WeChat database, media, search, sender, or fallback paths.
   artifact; the separate composer Send is mandatory. Keep select/paste or
   select/copy in one key transaction; split key processes are not reliable
   under Wine.
+- A device-security or QR challenge can appear after the native file picker,
+  even when the chat was ready at transaction start. Re-check authentication
+  while waiting for the sent file card, classify it as
+  `WECOM_GUI_AUTH_REQUIRED`, and defer the exact idempotent delivery. Never
+  report this state as a generic filename/history verification failure; persist
+  `send_deferred_reason=wecom_auth_required` so the outbox waits for the same
+  client profile to become ready again.
 - Treat the external WeCom relay as an observable closed loop: authenticated
   client, exact-chat readiness, durable ingest, worker result, verified
   compose/send, and delivery ledger. `login_required` and
