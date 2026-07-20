@@ -239,6 +239,13 @@ PYTHONPATH=src python -m agenticapp wecom gui restart --json
 If `client_visible` is false, restore the Wine client and login first. A true
 `client_visible` value alone is not ready state; confirm that a GUI poll opens
 and title-verifies every allowlisted chat before expecting reconnect recovery.
+If the client keeps a `device_environment_abnormal` warning but native file
+delivery still works, the bridge may use its verified file-only fallback when
+`allow_verified_file_send_during_device_warning` is enabled. This does not
+clear the quarantine: text sends and inbound polling remain blocked, while each
+file must pass exact native-picker identity, composer filename, and new history
+card verification. QR-login and explicit security-verification states never
+use this fallback.
 The
 supervisor only starts the normal client against its persisted profile. It
 never invokes account-switch mode: a hidden layered window or crash is not

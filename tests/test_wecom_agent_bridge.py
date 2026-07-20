@@ -1702,17 +1702,46 @@ class WeComAgentBridgeTests(unittest.TestCase):
         bridge.click.assert_not_called()
         remember.assert_not_called()
 
+    def test_gui_mixed_delivery_sends_files_before_blocked_text_during_device_warning(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.config = {"allow_verified_file_send_during_device_warning": True}
+        bridge.target_groups = ["LabAgent"]
+        bridge.serialized_gui = mock.MagicMock()
+        bridge.security_pause_state = mock.Mock(
+            return_value={"auth_blocker": "device_environment_abnormal"}
+        )
+        report = Path("report.pdf")
+        bridge.send_files_locked = mock.Mock(
+            return_value={
+                "ok": True,
+                "sent_messages": [],
+                "sent_files": [str(report)],
+                "errors": [],
+            }
+        )
+        bridge.send_text_locked = mock.Mock()
+        bridge.quarantine_from_send_result = mock.Mock()
+
+        payload = bridge.send("LabAgent", "summary", [report], task_id="task-1")
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["sent_files"], [str(report)])
+        self.assertIn("WECOM_GUI_AUTH_REQUIRED", payload["errors"][0]["error"])
+        bridge.send_files_locked.assert_called_once_with("LabAgent", [report], task_id="task-1")
+        bridge.send_text_locked.assert_not_called()
+
     def test_gui_file_history_wait_reports_late_auth_challenge(self) -> None:
         module = load_gui_bridge()
         bridge = object.__new__(module.WeComGuiBridge)
-        bridge.detect_auth_blocker = mock.Mock(return_value="device_environment_abnormal")
+        bridge.detect_auth_blocker = mock.Mock(return_value="security_verification_required")
         bridge.capture_screen = mock.Mock()
         bridge.read_chat_history_text = mock.Mock()
         window = module.Window("1", 0, 0, 1000, 800)
 
         with mock.patch.object(module.time, "monotonic", side_effect=[0.0, 1.0]), mock.patch.object(
             module.time, "sleep"
-        ), self.assertRaisesRegex(RuntimeError, "WECOM_GUI_AUTH_REQUIRED: device_environment_abnormal"):
+        ), self.assertRaisesRegex(RuntimeError, "WECOM_GUI_AUTH_REQUIRED: security_verification_required"):
             bridge.wait_for_file_in_history(
                 window,
                 "report.pdf",
@@ -1722,6 +1751,27 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         bridge.capture_screen.assert_not_called()
         bridge.read_chat_history_text.assert_not_called()
+
+    def test_gui_file_history_can_verify_during_device_warning(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.config = {"allow_verified_file_send_during_device_warning": True}
+        bridge.detect_auth_blocker = mock.Mock(return_value="device_environment_abnormal")
+        bridge.capture_screen = mock.Mock(return_value=Path("sent.png"))
+        bridge.read_chat_history_text = mock.Mock(return_value="daily_report_")
+        window = module.Window("1", 0, 0, 1000, 800)
+
+        with mock.patch.object(module.time, "monotonic", side_effect=[0.0, 1.0]), mock.patch.object(
+            module.time, "sleep"
+        ):
+            evidence = bridge.wait_for_file_in_history(
+                window,
+                "daily_report_2026.pdf",
+                before_text="",
+                delivery_key="delivery-key",
+            )
+
+        self.assertEqual(evidence, Path("sent.png"))
 
     def test_gui_composer_keys_uses_x11_input_by_default(self) -> None:
         module = load_gui_bridge()
@@ -1967,7 +2017,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
             module.init_state_db(state_db)
             bridge = object.__new__(module.WeComGuiBridge)
             bridge.state_db = state_db
-            bridge.config = {"auth_quarantine_seconds": 300}
+            bridge.config = {
+                "auth_quarantine_seconds": 300,
+                "allow_verified_file_send_during_device_warning": True,
+            }
             bridge.target_groups = ["LabAgent"]
             bridge._client_was_visible = True
             bridge._active_scan_remaining = 2
@@ -1977,12 +2030,29 @@ class WeComAgentBridgeTests(unittest.TestCase):
                 state = bridge.security_pause_state()
                 with self.assertRaisesRegex(RuntimeError, "WECOM_GUI_AUTH_REQUIRED"):
                     bridge.require_gui_input_allowed()
+                bridge.require_gui_input_allowed("file")
 
             self.assertEqual(state["auth_blocker"], "device_environment_abnormal")
             self.assertEqual(state["security_cooldown_remaining_seconds"], 300)
             self.assertEqual(module.get_runtime(state_db, "chat_ready:LabAgent"), "0")
             self.assertFalse(bridge._client_was_visible)
             self.assertEqual(bridge._active_scan_remaining, 0)
+
+    def test_gui_device_warning_file_fallback_is_opt_in(self) -> None:
+        module = load_gui_bridge()
+        bridge = object.__new__(module.WeComGuiBridge)
+        bridge.config = {}
+
+        self.assertTrue(
+            bridge.blocker_prevents_operation("device_environment_abnormal", "file")
+        )
+        bridge.config["allow_verified_file_send_during_device_warning"] = True
+        self.assertFalse(
+            bridge.blocker_prevents_operation("device_environment_abnormal", "file")
+        )
+        self.assertTrue(
+            bridge.blocker_prevents_operation("security_verification_required", "file")
+        )
 
     def test_gui_passive_cycle_does_not_touch_unchanged_chat(self) -> None:
         module = load_gui_bridge()

@@ -212,16 +212,22 @@ personal-WeChat database, media, search, sender, or fallback paths.
   under Wine.
 - A device-security or QR challenge can appear after the native file picker,
   even when the chat was ready at transaction start. Re-check authentication
-  while waiting for the sent file card, classify it as
-  `WECOM_GUI_AUTH_REQUIRED`, and defer the exact idempotent delivery. Never
-  report this state as a generic filename/history verification failure; persist
-  `send_deferred_reason=wecom_auth_required` so the outbox waits for the same
-  client profile to become ready again.
+  while waiting for the sent file card. QR-login and explicit security-
+  verification screens always fail closed. A persistent
+  `device_environment_abnormal` composer warning is narrower: when
+  `allow_verified_file_send_during_device_warning` is enabled, the relay may
+  attempt files only, through the exact native picker and new-card history
+  verification. Text, polling, and unverified attachment sends remain blocked.
+  If the verified file route does not complete, classify it as
+  `WECOM_GUI_AUTH_REQUIRED` and preserve
+  `send_deferred_reason=wecom_auth_required` for idempotent recovery.
 - The first detected security challenge places the GUI transport in a durable
-  five-minute input quarantine. During quarantine, polling is screenshot-only
-  and sends fail closed before navigation, clipboard, keyboard, or pointer
-  input. After the warning disappears, require an uninterrupted one-minute
-  passive stabilization window before exact-chat verification resumes.
+  five-minute input quarantine. During quarantine, polling and text sends are
+  screenshot-only/fail-closed. The sole exception is the verified file-only
+  route above; successful delivery still requires exact filename identity and
+  a newly visible chat card. After the warning disappears, require an
+  uninterrupted one-minute passive stabilization window before exact-chat
+  polling and text delivery resume.
 - Pace ordinary text attempts at least 12 seconds apart and file attempts at
   least 30 seconds apart. Wait inside the serialized transaction instead of
   returning an error that encourages retries against the desktop. After a

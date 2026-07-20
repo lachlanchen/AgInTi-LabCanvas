@@ -239,6 +239,9 @@ def initialize_config(
         "auth_recovery_stabilization_seconds": bounded_float(
             existing.get("auth_recovery_stabilization_seconds"), 60.0, 10.0, 3600.0
         ),
+        "allow_verified_file_send_during_device_warning": bool(
+            existing.get("allow_verified_file_send_during_device_warning", False)
+        ),
         "send_min_interval_seconds": bounded_float(
             existing.get("send_min_interval_seconds"), 12.0, 0.0, 300.0
         ),
@@ -525,9 +528,25 @@ class WeComGuiBridge:
             "security_cooldown_remaining_seconds": remaining,
         }
 
-    def require_gui_input_allowed(self) -> None:
+    def blocker_prevents_operation(self, blocker: str, operation: str) -> bool:
+        if not blocker:
+            return False
+        return not (
+            operation == "file"
+            and blocker == "device_environment_abnormal"
+            and bool(
+                getattr(self, "config", {}).get(
+                    "allow_verified_file_send_during_device_warning", False
+                )
+            )
+        )
+
+    def require_gui_input_allowed(self, operation: str = "text") -> None:
         state = self.security_pause_state()
         if state:
+            blocker = str(state.get("auth_blocker") or "")
+            if not self.blocker_prevents_operation(blocker, operation):
+                return
             raise RuntimeError(
                 "WECOM_GUI_AUTH_REQUIRED: "
                 f"{state['auth_blocker']} (cooldown {state['security_cooldown_remaining_seconds']}s)"
@@ -709,6 +728,28 @@ class WeComGuiBridge:
             raise RuntimeError("refusing send to a non-allowlisted WeCom GUI group")
         with self.serialized_gui():
             try:
+                pause_state = self.security_pause_state()
+                blocker = str(pause_state.get("auth_blocker") or "")
+                if paths and blocker and not self.blocker_prevents_operation(blocker, "file"):
+                    file_result = self.send_files_locked(chat, paths, task_id=task_id)
+                    text_result = empty_send_result()
+                    if text.strip():
+                        text_result = {
+                            "ok": False,
+                            "sent_messages": [],
+                            "sent_files": [],
+                            "errors": [
+                                {
+                                    "error": (
+                                        "RuntimeError: WECOM_GUI_AUTH_REQUIRED: "
+                                        f"{blocker}"
+                                    )
+                                }
+                            ],
+                        }
+                    result = merge_send_results(text_result, file_result)
+                    self.quarantine_from_send_result(result)
+                    return result
                 text_result = (
                     self.send_text_locked(chat, text, task_id=task_id)
                     if text.strip()
@@ -818,7 +859,7 @@ class WeComGuiBridge:
                     sent_files.append(str(path))
                     continue
                 self.pace_gui_send("file")
-                self.ensure_chat(chat)
+                self.ensure_chat(chat, operation="file")
                 window = self.find_window()
                 before_screen = self.capture_screen(f"file-before-{delivery_key}")
                 before_text = self.read_chat_history_text(before_screen, window, delivery_key)
@@ -829,7 +870,7 @@ class WeComGuiBridge:
                     staging_dir,
                     delivery_key,
                 )
-                window = self.ensure_chat(chat)
+                window = self.ensure_chat(chat, operation="file")
                 composed = self.capture_screen(f"file-composed-picker-{delivery_key}")
                 if not self.composer_contains_filename(composed, window, staged.name, delivery_key):
                     raise RuntimeError(
@@ -867,7 +908,7 @@ class WeComGuiBridge:
         """Space GUI attempts without making callers retry against the desktop."""
         if kind not in {"text", "file"}:
             raise ValueError("unsupported WeCom GUI send kind")
-        self.require_gui_input_allowed()
+        self.require_gui_input_allowed(kind)
         config = getattr(self, "config", {})
         minimum = bounded_float(config.get("send_min_interval_seconds"), 12.0, 0.0, 300.0)
         now = time.time()
@@ -882,7 +923,7 @@ class WeComGuiBridge:
         delay = max(0.0, *delays)
         if delay > 0:
             time.sleep(delay)
-        self.require_gui_input_allowed()
+        self.require_gui_input_allowed(kind)
         attempted_at = str(time.time())
         set_runtime(self.state_db, "last_gui_send_attempt_epoch", attempted_at)
         if kind == "file":
@@ -904,12 +945,12 @@ class WeComGuiBridge:
             raise RuntimeError("artifact exceeds the configured WeCom GUI size limit")
         return path
 
-    def ensure_chat(self, chat: str) -> Window:
+    def ensure_chat(self, chat: str, *, operation: str = "text") -> Window:
         if chat not in self.target_groups:
             raise RuntimeError("chat is not allowlisted")
         window = self.find_window()
         blocker = self.detect_auth_blocker(window)
-        if blocker:
+        if self.blocker_prevents_operation(blocker, operation):
             raise RuntimeError(f"WECOM_GUI_AUTH_REQUIRED: {blocker}")
         # A bubble-copy probe can leave a context menu open. Dismiss it with a
         # neutral pointer click; Escape can close the main WeCom window when no
@@ -1833,7 +1874,7 @@ class WeComGuiBridge:
         while time.monotonic() < deadline:
             time.sleep(1.0)
             blocker = self.detect_auth_blocker(window)
-            if blocker:
+            if self.blocker_prevents_operation(blocker, "file"):
                 raise RuntimeError(f"WECOM_GUI_AUTH_REQUIRED: {blocker}")
             latest = self.capture_screen(f"file-sent-{delivery_key}")
             after_text = self.read_chat_history_text(latest, window, f"after-{delivery_key}")
