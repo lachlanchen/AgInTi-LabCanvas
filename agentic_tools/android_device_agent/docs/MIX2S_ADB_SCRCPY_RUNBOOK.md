@@ -55,6 +55,13 @@ scrcpy --serial <ADB_SERIAL> --stay-awake --disable-screensaver
 adb -s <ADB_SERIAL> shell monkey -p com.tencent.mm -c android.intent.category.LAUNCHER 1
 ```
 
+The tmux pane is a lightweight retry supervisor. If USB/ADB disconnects,
+`scrcpy` may exit but Xvfb, x11vnc, and noVNC remain available. The pane checks
+the exact serial every 10 seconds and restores only the missing mirror after the
+device reconnects. Override the interval with `ANDROID_DEVICE_RETRY_SECONDS`.
+`android_device_desktop.sh status --serial <ADB_SERIAL>` distinguishes a live
+mirror from a transport-only desktop waiting for retry.
+
 ## Unlock Desktop WeChat from Mobile WeChat
 
 Use this only when the account owner requests unlocking the logged-in desktop
@@ -102,6 +109,10 @@ mirror and click the same visible controls manually.
   tmux capture-pane -pt labcanvas-android-mix2s -S -120
   DISPLAY=:99 XAUTHORITY= xwininfo -root -tree
   ```
+
+- If noVNC is black while its HTTP page and VNC port are healthy, inspect
+  `android-mix2s_app.log`. `Device disconnected` means the old mirror exited;
+  the retry supervisor should relaunch it when the exact device returns.
 
 - If no device is found, reconnect USB and re-run `adb devices -l`.
 - If multiple devices are connected, always pass `--serial`.

@@ -24,7 +24,9 @@ agentic_tools/android_device_agent/scripts/android_device_desktop.sh start --ser
 ```
 
 Open the printed noVNC URL. The desktop runs `scrcpy` for direct mouse/keyboard
-control and keeps the phone awake while connected.
+control and keeps the phone awake while connected. Its tmux pane also retries
+the exact device after a transient USB/ADB disconnect, so a live noVNC transport
+does not remain permanently blank after `scrcpy` exits.
 
 To start the mirror and bring mobile WeChat to the foreground:
 

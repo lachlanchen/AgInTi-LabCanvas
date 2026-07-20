@@ -9,6 +9,7 @@ DISPLAY_ID="${ANDROID_DEVICE_DISPLAY:-:99}"
 SCREEN="${ANDROID_DEVICE_SCREEN:-1440x2400x24}"
 VNC_PORT="${ANDROID_DEVICE_VNC_PORT:-5929}"
 NOVNC_PORT="${ANDROID_DEVICE_NOVNC_PORT:-6129}"
+RETRY_SECONDS="${ANDROID_DEVICE_RETRY_SECONDS:-10}"
 SERIAL="${ANDROID_SERIAL:-}"
 ACTION="start"
 OPEN_WECHAT="0"
@@ -60,12 +61,21 @@ device_serial() {
 }
 
 status() {
+  local serial=""
   echo "tmux session: $SESSION"
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "status: running"
     tmux list-panes -t "$SESSION" -F '#{pane_index}: #{pane_current_command} #{pane_pid}'
   else
     echo "status: stopped"
+  fi
+  serial="$(device_serial 2>/dev/null || true)"
+  if [[ -n "$serial" ]] && pgrep -u "${USER:-$(id -un)}" -f "^scrcpy --serial $serial([[:space:]]|$)" >/dev/null 2>&1; then
+    echo "mirror: connected ($serial)"
+  elif [[ -n "$serial" ]]; then
+    echo "mirror: waiting for scrcpy retry ($serial)"
+  else
+    echo "mirror: waiting for an authorized Android device"
   fi
   echo "noVNC: http://127.0.0.1:$NOVNC_PORT/vnc.html?host=127.0.0.1&port=$NOVNC_PORT&autoconnect=1&resize=scale"
 }
@@ -83,6 +93,10 @@ start_session() {
   need adb
   need scrcpy
   need tmux
+  if [[ ! "$RETRY_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ANDROID_DEVICE_RETRY_SECONDS must be a positive integer." >&2
+    exit 3
+  fi
   if [[ ! -x "$VIRTUAL_LAUNCHER" ]]; then
     echo "Missing virtual desktop launcher: $VIRTUAL_LAUNCHER" >&2
     exit 4
@@ -119,6 +133,7 @@ start_session() {
     --vnc-port "$VNC_PORT" \
     --novnc-port "$NOVNC_PORT" \
     --log-dir "$log_dir" \
+    --app-match "^scrcpy --serial $serial([[:space:]]|$)" \
     -- \
     scrcpy \
     --serial "$serial" \
@@ -127,7 +142,8 @@ start_session() {
     --window-title "LabCanvas Android MIX 2S ($serial)" \
     --window-width 540 \
     --window-height 1080)
-  tmux new-session -d -s "$SESSION" "cd '$ROOT' && $command; exec bash"
+  tmux new-session -d -s "$SESSION" \
+    "cd '$ROOT' && while true; do $command || true; sleep '$RETRY_SECONDS'; done"
   sleep 2
   if [[ "$OPEN_WECHAT" == "1" ]]; then
     adb -s "$serial" shell monkey -p com.tencent.mm -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true

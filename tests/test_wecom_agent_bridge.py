@@ -1011,6 +1011,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("/vnc.html?", android_source)
         self.assertIn("resize=scale", android_source)
         self.assertNotIn("vnc_lite.html", android_source)
+        self.assertIn("ANDROID_DEVICE_RETRY_SECONDS", android_source)
+        self.assertIn('--app-match "^scrcpy --serial $serial([[:space:]]|$)"', android_source)
+        self.assertIn("while true; do $command || true", android_source)
+        self.assertIn("mirror: waiting for scrcpy retry", android_source)
 
     def test_external_cli_exact_group_resolution_is_fail_closed(self) -> None:
         bridge = load_cli_bridge()
