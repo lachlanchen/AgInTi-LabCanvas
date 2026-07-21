@@ -43,7 +43,10 @@ DEFAULT_STAGING = PRIVATE / "android-staging"
 INGEST = TOOL_ROOT / "scripts" / "wecom_ingest.py"
 PACKAGE = "com.tencent.wework"
 DOCUMENTS_PACKAGE = "com.google.android.documentsui"
-REMOTE_STAGING = "/sdcard/Download/LabCanvas"
+# WeCom's Android document picker indexes the top-level Download provider
+# reliably, but can omit files staged under nested application directories.
+# The local hash directory still prevents collisions and preserves isolation.
+REMOTE_STAGING = "/sdcard/Download"
 MAX_API_BODY = 2 * 1024 * 1024
 MAX_MENTIONS = 4
 # WeCom exposes the same rich mention span with or without a literal leading
@@ -807,9 +810,10 @@ class AndroidBridge:
         if not local_copy.is_file() or sha256_file(local_copy) != digest:
             local_copy.write_bytes(resolved.read_bytes())
             os.chmod(local_copy, 0o600)
-        remote_dir = f"{REMOTE_STAGING}/{digest[:16]}"
-        remote_path = f"{remote_dir}/{name}"
-        self.adb_shell("mkdir", "-p", remote_dir)
+        # DocumentsUI search does not reliably index nested directories on
+        # this device. Keep the picker-visible copy at the Download root;
+        # the local hash directory remains the collision/deduplication guard.
+        remote_path = f"{REMOTE_STAGING}/{name}"
         self.adb("push", str(local_copy), remote_path, timeout=180)
         return resolved, digest, remote_path
 
@@ -859,7 +863,11 @@ class AndroidBridge:
         self.adb_shell("input", "keyevent", "66")
         time.sleep(1.2)
         results = self.dump_hierarchy()
-        matches = find_nodes(results, text=filename, resource_id="android:id/title", package=DOCUMENTS_PACKAGE)
+        # DocumentsUI uses android:id/title on some Android builds, but MIUI's
+        # provider may expose the same exact filename through text1 or a
+        # provider-specific row. Keep the filename exact while accepting the
+        # alternate row resource.
+        matches = find_nodes(results, text=filename, package=DOCUMENTS_PACKAGE)
         if len(matches) != 1:
             raise BridgeError(f"expected one exact staged file result, found {len(matches)}")
         self.tap_node(results, matches[0])
