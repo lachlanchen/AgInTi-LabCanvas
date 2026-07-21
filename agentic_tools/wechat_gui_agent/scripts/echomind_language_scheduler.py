@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run EchoMind's independent three-hour language-learning schedule."""
+"""Run EchoMind's independent language-learning schedule and deliver lessons."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def build_row() -> dict:
     }
 
 
-def run_once() -> dict:
+def run_once(*, deliver: bool = True) -> dict:
     config = direct.load_config(CONFIG)
     context = direct.read_recent_history(config, 10**18, limit=int(config.get("history_limit", 24)))
     history = "\n".join(f"{item.get('sender_display', 'member')}: {direct.visible_message_text(item)}" for item in context[-24:])
@@ -84,16 +84,29 @@ Recent EchoMind history:
     if not message:
         raise RuntimeError("EchoMind language teacher returned no lesson")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    delivery: dict[str, object] = {"requested": deliver, "status": "internal_only"}
+    if deliver:
+        screenshot = direct.send_gui_message(config, message)
+        if not screenshot or not Path(screenshot).is_file():
+            raise RuntimeError(f"EchoMind lesson send was not verified: {screenshot or 'no screenshot'}")
+        delivery = {"requested": True, "status": "sent_verified", "screenshot": screenshot}
     state = load_state()
-    state.update({"last_run_at": now, "last_message": message, "interval_seconds": INTERVAL, "last_agent": result.get("backend", "codex")})
+    state.update({
+        "last_run_at": now,
+        "last_message": message,
+        "interval_seconds": INTERVAL,
+        "last_agent": result.get("backend", "codex"),
+        "last_delivery": delivery,
+    })
     save_state(state)
-    return {"ok": True, "chat": config["chat_name"], "sent_at": now, "message": message, "internal": True}
+    return {"ok": True, "chat": config["chat_name"], "sent_at": now, "message": message, "delivery": delivery}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="Run immediately once.")
-    parser.add_argument("--loop", action="store_true", help="Run immediately, then every three hours.")
+    parser.add_argument("--loop", action="store_true", help="Run immediately, then every hour.")
+    parser.add_argument("--no-send", action="store_true", help="Keep the lesson internal instead of sending it to EchoMind.")
     parser.add_argument("--interval-seconds", type=int, default=INTERVAL)
     args = parser.parse_args()
     interval = max(300, args.interval_seconds)
@@ -101,7 +114,7 @@ def main() -> int:
         parser.error("use --once or --loop")
     while True:
         try:
-            print(json.dumps(run_once(), ensure_ascii=False), flush=True)
+            print(json.dumps(run_once(deliver=not args.no_send), ensure_ascii=False), flush=True)
         except Exception as exc:
             print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False), flush=True)
             if not args.loop:

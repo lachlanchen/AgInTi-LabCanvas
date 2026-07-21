@@ -524,6 +524,12 @@ The stable interface and recovery commands are documented in
   `gui_send_timeout`, `wechat_entry_required`, or `title_guard_blank`. Ordinary
   deferred sends expire after 10 minutes by default and retries are globally
   spaced by 30 seconds, so a restart cannot dump a stale burst into WeChat.
+- Immediate invocation is part of every routine contract: enabling or changing
+  a schedule runs one bounded invocation immediately. If that routine requests
+  chat output or an artifact, it must verify delivery before reporting success;
+  internal-only runs must use an explicit `--no-send` or equivalent mode. A
+  failed sender records a durable deferred state instead of silently dropping
+  the result or replaying a stale burst after restart.
 - WeCom GUI reconnect is a narrow exception, not backlog replay. Do not infer
   authentication from window geometry. Recovery begins only after the normal
   poll successfully opens and title-verifies the exact allowlisted chats; a
