@@ -100,7 +100,11 @@ Today's required domain is: **{topic}**. Teach a broad, practical lesson in this
 
 The recent chat is only a weak personalization signal. Use at most one short example from it when helpful; otherwise ignore it. Do not summarize the chat, make its latest message the topic, or keep dwelling on one recurring subject. Avoid repeating the previous lesson and vary the everyday domain from recent lessons.
 
-Give a complete Chinese/Japanese/English mini-lesson: natural example, meaning, Japanese kana/furigana, pronunciation guidance, grammar or usage point, one common mistake, and one short exercise. Be concise but substantive and write like a helpful friend. Do not say NO_REPLY.
+Give a complete, balanced Chinese/English/Japanese mini-lesson. Do not make Chinese the main answer with token translations. For the same example, give:
+- Chinese: natural sentence, pinyin, meaning, usage and grammar;
+- English: natural sentence, IPA or clear pronunciation, meaning, usage and grammar;
+- Japanese: natural sentence, kanji plus kana/furigana, romaji, pronunciation, meaning, usage and grammar.
+Then add useful vocabulary, one cross-language comparison, one common mistake, and one short exercise. Give substantive detail in all three languages, while avoiding a rigid repetitive essay template. Write like a helpful friend. Do not say NO_REPLY.
 
 Recent EchoMind history:
 {history}
