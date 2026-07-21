@@ -45,7 +45,7 @@ PAUSE_WORDS = {"pause", "disable", "stop", "暂停", "暫停", "停用"}
 ON_WORDS = {"on", "enable", "start", "开启", "開啟", "启用", "啟用"}
 INSPIRATION_FINAL_STATUSES = {"done", "failed", "cancelled", "expired", "rejected"}
 QUIET_START_HOUR = 20
-QUIET_END_HOUR = 6
+QUIET_END_HOUR = 8
 
 
 def in_scheduled_quiet_hours() -> bool:

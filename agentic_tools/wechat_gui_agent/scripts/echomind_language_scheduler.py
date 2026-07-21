@@ -26,7 +26,7 @@ STATE = PRIVATE / "echomind-language-schedule.state.json"
 INTERVAL = 60 * 60
 LOCAL_TZ = ZoneInfo("Asia/Hong_Kong")
 QUIET_START = 20
-QUIET_END = 6
+QUIET_END = 8
 TOPICS = (
     "food, cooking, and ordering at a restaurant",
     "clothes, shopping, sizes, and prices",

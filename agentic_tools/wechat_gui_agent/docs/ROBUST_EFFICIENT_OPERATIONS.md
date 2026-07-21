@@ -540,8 +540,8 @@ The stable interface and recovery commands are documented in
   failed sender records a durable deferred state instead of silently dropping
   the result or replaying a stale burst after restart.
 - Scheduled EchoMind lessons and LabAgent research/inspiration jobs observe
-  local `Asia/Hong_Kong` quiet hours from 20:00 through 06:00. The scheduler
-  sleeps until 06:00 and then resumes; explicit user requests and interactive
+  local `Asia/Hong_Kong` quiet hours from 20:00 through 08:00. The scheduler
+  sleeps until 08:00 and then resumes; explicit user requests and interactive
   replies remain available overnight.
 - WeCom GUI reconnect is a narrow exception, not backlog replay. Do not infer
   authentication from window geometry. Recovery begins only after the normal
