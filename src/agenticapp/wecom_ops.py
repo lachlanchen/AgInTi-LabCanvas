@@ -29,6 +29,8 @@ EXTERNAL_CONFIG = PRIVATE / "wecom_cli_bridge.local.json"
 EXTERNAL_RUNTIME = PRIVATE / "wecom-cli-runtime"
 GUI_BRIDGE = TOOL_ROOT / "scripts" / "wecom_gui_bridge.py"
 GUI_CONFIG = PRIVATE / "wecom_gui_bridge.local.json"
+ANDROID_BRIDGE = TOOL_ROOT / "scripts" / "wecom_android_bridge.py"
+ANDROID_CONFIG = PRIVATE / "wecom_android_bridge.local.json"
 DEFAULT_API_URL = "http://127.0.0.1:19578"
 
 
@@ -112,6 +114,28 @@ def add_wecom_parser(subparsers: argparse._SubParsersAction) -> None:
     search.add_argument("--no-search-fallback", action="store_false", dest="allow_search_fallback")
     gui.add_argument("--json", action="store_true")
     gui.set_defaults(func=cmd_gui)
+
+    android = nested.add_parser(
+        "android",
+        help="Control the allowlisted MIX 2S WeCom transport and fallback API.",
+    )
+    android.add_argument(
+        "action",
+        nargs="?",
+        default="status",
+        choices=["init", "status", "chats", "open", "messages", "send", "start", "restart"],
+    )
+    android.add_argument("--chat", action="append", dest="chats", default=[])
+    android.add_argument("--message", default="")
+    android.add_argument("--mention", action="append", dest="mentions", default=[])
+    android.add_argument("--file", action="append", dest="files", default=[])
+    android.add_argument("--task-id", default="manual")
+    android.add_argument("--serial", default="")
+    android.add_argument("--enqueue", action="store_true")
+    android.add_argument("--live", action="store_true")
+    android.add_argument("--force", action="store_true")
+    android.add_argument("--json", action="store_true")
+    android.set_defaults(func=cmd_android)
 
 
 def cmd_init_config(args: argparse.Namespace) -> int:
@@ -509,6 +533,67 @@ def cmd_gui(args: argparse.Namespace) -> int:
         payload = {
             "ok": False,
             "error": "WeCom GUI command returned invalid JSON",
+            "stdout_tail": proc.stdout[-1000:],
+            "stderr_tail": proc.stderr[-1000:],
+        }
+    print_payload(payload, args.json)
+    return 0 if proc.returncode == 0 and payload.get("ok") else 1
+
+
+def cmd_android(args: argparse.Namespace) -> int:
+    if args.action in {"start", "restart"}:
+        action = "android-restart" if args.action == "restart" else "android-start"
+        proc = subprocess.run(
+            [str(SUPERVISOR), action],
+            cwd=PACKAGE_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        payload = {
+            "ok": proc.returncode == 0,
+            "stdout": proc.stdout.strip(),
+            "stderr": proc.stderr.strip(),
+        }
+        print_payload(payload, args.json)
+        return 0 if payload["ok"] else 1
+
+    command = [sys.executable, str(ANDROID_BRIDGE), "--config", str(ANDROID_CONFIG), args.action]
+    if args.action == "init":
+        for chat in args.chats:
+            command.extend(["--chat", chat])
+        if args.serial:
+            command.extend(["--serial", args.serial])
+        if args.force:
+            command.append("--force")
+    elif args.action in {"open", "messages", "send"}:
+        if len(args.chats) != 1:
+            payload = {"ok": False, "error": f"wecom android {args.action} requires exactly one --chat"}
+            print_payload(payload, args.json)
+            return 2
+        command.extend(["--chat", args.chats[0]])
+        if args.action == "messages" and args.enqueue:
+            command.append("--enqueue")
+        if args.action == "send":
+            if not args.message.strip() and not args.files:
+                payload = {"ok": False, "error": "wecom android send requires --message and/or --file"}
+                print_payload(payload, args.json)
+                return 2
+            command.extend(["--message", args.message, "--task-id", args.task_id])
+            for mention in args.mentions:
+                command.extend(["--mention", mention])
+            for path in args.files:
+                command.extend(["--file", str(Path(path).expanduser())])
+            if args.live:
+                command.append("--live")
+    command.append("--json")
+    proc = subprocess.run(command, cwd=PACKAGE_ROOT, capture_output=True, text=True, check=False)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "error": "WeCom Android command returned invalid JSON",
             "stdout_tail": proc.stdout[-1000:],
             "stderr_tail": proc.stderr[-1000:],
         }

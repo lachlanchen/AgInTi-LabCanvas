@@ -1,10 +1,11 @@
 # LabCanvas WeCom Bridge
 
-This sidecar exposes two official WeCom transports and one isolated desktop
-fallback. The AI Bot WebSocket receives bot DMs and internal-group events.
+This sidecar exposes two official WeCom transports plus isolated desktop and
+owner-authorized Android fallbacks. The AI Bot WebSocket receives bot DMs and internal-group events.
 Tencent's `wecom-cli` message interface can poll authorized external groups.
 When the tenant does not grant that capability, the allowlisted GUI relay can
-bridge an external group through the owner's WeCom Wine client. All three
+bridge an external group through the owner's WeCom Wine client, while the
+allowlisted Android relay can use an authenticated physical WeCom client. All
 preserve one isolated agent session per chat and use the LabCanvas routine
 orchestrator.
 
@@ -14,6 +15,7 @@ Prefer the official API transports. They do not require a desktop login:
 | --- | --- | --- |
 | Bot DM or internal group | AI Bot WebSocket | No |
 | Authorized external group in an eligible tenant | `wecom-cli msg` | No |
+| Allowlisted external group on an owner-authorized phone | Android relay | No |
 | External group without server-side message permission | allowlisted GUI relay | Yes |
 
 Tencent currently limits `wecom-cli msg` to eligible small teams; a server-side
@@ -75,8 +77,8 @@ loginctl show-user "$USER" -p Linger
 The service starts at boot through the user's `default.target`, even before an
 interactive desktop login when linger is enabled. Every minute it idempotently
 verifies the `labcanvas-wecom` tmux stack and recreates missing `gateway`,
-`worker`, `daily`, `knowledge`, official external transport, `wecom-client`, or
-`external-gui` windows according to private configuration. The existing
+`worker`, `daily`, `knowledge`, official external transport, `android-relay`,
+`wecom-client`, or `external-gui` windows according to private configuration. The existing
 `~/scripts/create_tmux_session.sh` launcher remains a compatible second boot
 entry; a private mutation lock makes concurrent starts safe.
 
@@ -122,9 +124,8 @@ supervises the external bridge. Authorization/restart touches only the
 `external` tmux window, so the internal LabAgent WebSocket stays connected.
 `bind` remains a bounded one-shot diagnostic.
 
-If an Android WeCom client is needed only to scan the QR, the optional helper
-downloads Tencent's official APK into the ignored private directory and waits
-for the owner to unlock the device:
+The Android helper installs Tencent's official APK into the ignored private
+directory and waits for the owner to unlock and authorize the device:
 
 ```bash
 agentic_tools/wecom_agent/scripts/wecom_android_setup.sh prepare
@@ -132,7 +133,26 @@ agentic_tools/wecom_agent/scripts/wecom_android_setup.sh wait-install
 ```
 
 It never bypasses a secure keyguard and never uses personal WeChat as ingress.
-The Android client remains setup-only.
+After normal WeCom login, configure the guarded external-group relay:
+
+```bash
+PYTHONPATH=src python -m agenticapp wecom android init \
+  --serial <ADB_SERIAL> --chat LabAgent --chat AgentTest --force --json
+PYTHONPATH=src python -m agenticapp wecom android start --json
+PYTHONPATH=src python -m agenticapp wecom android status --json
+PYTHONPATH=src python -m agenticapp wecom android send \
+  --chat AgentTest --mention '<SENDER_DISPLAY_NAME>' \
+  --message '处理完成。' --task-id <STABLE_TASK_ID> --live --json
+```
+
+The bridge reads only exact allowlisted chats, seeds old visible history instead
+of replaying it, and forwards new events into the same isolated worker queue.
+Outbound replies verify the exact native title and can select the original
+sender through WeCom's real member picker. Plain `@name` text is not treated as
+a mention. External member rows may carry WeCom's native `@微信` suffix; the
+bridge accepts that one exact suffix while preserving case and rejecting
+ambiguous or broadcast matches. See
+[`docs/ANDROID_RELAY_INTERFACE.md`](docs/ANDROID_RELAY_INTERFACE.md).
 
 On Linux, the official download page does not provide a native desktop build.
 The optional enrollment helper installs Tencent's official Windows client in a
@@ -338,8 +358,10 @@ bearer token. Bot secrets, user IDs, chat IDs, and message history must never be
 committed.
 
 `wecom_worker_loop.sh` is the WeCom-specific worker boundary. It disables
-personal-WeChat GUI file recovery, media-sync fallback, Android text sending,
-and publication preflights before invoking the shared routine orchestrator. It
+personal-WeChat GUI file recovery, media-sync fallback, personal-WeChat Android
+text fallback, and publication preflights before invoking the shared routine
+orchestrator. The separate allowlisted WeCom Android transport remains
+available through its authenticated localhost API. It
 keeps route/chat turns fast, while durable work uses GPT-5.6 SOL with dynamic
 effort and long per-turn hang watchdogs instead of a ten-minute research limit.
 

@@ -10,6 +10,7 @@ SERIAL="${ANDROID_SERIAL:-}"
 ACTION="${1:-status}"
 POLL_SECONDS="${WECOM_ANDROID_SETUP_POLL_SECONDS:-10}"
 TIMEOUT_SECONDS="${WECOM_ANDROID_SETUP_TIMEOUT_SECONDS:-86400}"
+DISABLE_HOST_AUTOMOUNT="${WECOM_ANDROID_DISABLE_HOST_AUTOMOUNT:-1}"
 
 usage() {
   cat <<'EOF'
@@ -41,6 +42,16 @@ resolve_serial() {
     exit 3
   fi
   printf '%s\n' "${devices[0]}"
+}
+
+disable_host_media_automount() {
+  [[ "$DISABLE_HOST_AUTOMOUNT" == "1" ]] || return 0
+  command -v gsettings >/dev/null 2>&1 || return 0
+  # The mobile relay uses ADB. GNOME's MTP automount is unnecessary and can
+  # raise an org.freedesktop.udisks2.filesystem-mount-other-seat password
+  # dialog when the dedicated phone reconnects from another desktop seat.
+  gsettings set org.gnome.desktop.media-handling automount false >/dev/null 2>&1 || true
+  gsettings set org.gnome.desktop.media-handling automount-open false >/dev/null 2>&1 || true
 }
 
 package_installed() {
@@ -94,6 +105,7 @@ install_apk() {
 
 open_wecom() {
   serial="$1"
+  disable_host_media_automount
   package_installed "$serial" || {
     echo "WeCom is not installed on $serial." >&2
     exit 8
@@ -105,6 +117,7 @@ open_wecom() {
 
 case "$ACTION" in
   prepare)
+    disable_host_media_automount
     prepare_apk
     ;;
   status)
@@ -138,6 +151,7 @@ case "$ACTION" in
     ;;
   mirror)
     serial="$(resolve_serial)"
+    disable_host_media_automount
     "$ROOT/agentic_tools/android_device_agent/scripts/android_device_desktop.sh" restart --serial "$serial"
     if package_installed "$serial" && ! keyguard_locked "$serial"; then
       open_wecom "$serial"

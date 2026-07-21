@@ -125,7 +125,7 @@ def ingest_event(
             "reply": prior_reply,
             "ack": "" if prior_reply else "消息已接收，任务正在处理中。",
         }
-    if transport_channel == "wecom_gui" and recent_equivalent_gui_inbound(
+    if transport_channel in {"wecom_gui", "wecom_android"} and recent_equivalent_gui_inbound(
         history_db,
         chat,
         request,
@@ -283,9 +283,20 @@ def canonical_chat_name(event: dict[str, Any]) -> str:
 
 def event_transport_channel(event: dict[str, Any]) -> str:
     value = str(event.get("transport_channel") or "wecom_bot_websocket").strip().casefold()
-    if value not in {"wecom_bot_websocket", "wecom_cli", "wecom_gui"}:
+    if value not in {"wecom_bot_websocket", "wecom_cli", "wecom_gui", "wecom_android"}:
         raise ValueError(f"unsupported WeCom transport channel: {value}")
     return value
+
+
+def event_reply_mentions(event: dict[str, Any]) -> list[str]:
+    if str(event.get("chat_type") or "") != "group":
+        return []
+    display = " ".join(
+        str(event.get("sender_mention") or event.get("sender_display") or "").split()
+    )
+    if not display or display in {"unknown", "所有人", "MaLabAgent", "LabAgent"}:
+        return []
+    return [display]
 
 
 def complete_direct_reply(
@@ -392,7 +403,7 @@ Rules:
 - LabAgent focuses on normal research, literature, research proposals, lawful paper downloads, Markdown/TeX/PDF reports, editable paper figures, scientific drawing, CAD/PCB/Blender design, and related artifact work.
 - Attachments, links requiring reading, research, file operations, figures, CAD/PCB/Blender, generation, editing, or multi-step design work need the worker.
 - Simple greetings, ordinary questions answerable without tools, and short conversational follow-ups may be answered directly.
-- Give every legitimate new human conversational message one brief, natural response, including thanks, encouragement, reactions, and non-request statements. Do not ignore it merely because it contains no explicit task. Only omit a response for an empty/duplicate message or a message proven to be the system's own output.
+- Decide naturally whether to reply from the full recent conversation. Always answer direct questions, requests, mentions, and useful follow-ups. It is valid to stay silent when people are talking to each other and an AI reply would interrupt or add no value. Never emit a mechanical acknowledgement merely to prove receipt.
 - Reply to several consecutive messages from the same sender as one coherent turn using all of them; do not emit one mechanical response per fragment.
 - Do not claim an attachment was read in the acknowledgement.
 - Soft-filter dangerous or clearly out-of-scope requests with a concise natural refusal or a safer research/design alternative. Do not mechanically refuse ordinary scientific work.
@@ -573,6 +584,8 @@ def build_task(
             "create_time": int(event.get("create_time") or 0),
             "sender": str(event["sender_userid"]),
             "sender_display": str(event.get("sender_display") or event["sender_userid"]),
+            "wecom_sender_display": str(event.get("sender_display") or event["sender_userid"]),
+            "reply_mentions": event_reply_mentions(event),
             "member_key": task_source_member_key(event),
             "sender_identity_confidence": str(
                 event.get("sender_identity_confidence") or "transport_userid"
@@ -638,6 +651,7 @@ def init_history_db(path: Path) -> None:
                 chat TEXT NOT NULL,
                 direction TEXT NOT NULL,
                 sender TEXT,
+                sender_display TEXT,
                 body TEXT NOT NULL,
                 create_time INTEGER,
                 created_at TEXT NOT NULL,
@@ -648,6 +662,8 @@ def init_history_db(path: Path) -> None:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
         if "processed_at" not in columns:
             conn.execute("ALTER TABLE messages ADD COLUMN processed_at TEXT")
+        if "sender_display" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN sender_display TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_wecom_messages_chat_id ON messages(chat, id)")
 
 
@@ -707,14 +723,20 @@ def record_history_message(
     with sqlite3.connect(path) as conn:
         conn.execute(
             """
-            INSERT OR IGNORE INTO messages(message_id, chat, direction, sender, body, create_time, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO messages(
+                message_id, chat, direction, sender, sender_display, body, create_time, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(event.get("message_id") or ""),
                 chat,
                 direction,
                 str(event.get("sender_userid") or ""),
+                (
+                    str(event.get("sender_display") or event.get("sender_userid") or "")
+                    if direction == "inbound"
+                    else "LabAgent"
+                ),
                 body,
                 int(event.get("create_time") or 0),
                 datetime.now().isoformat(timespec="seconds"),
@@ -725,17 +747,18 @@ def record_history_message(
 def recent_history(path: Path, chat: str, *, limit: int) -> list[dict[str, Any]]:
     with sqlite3.connect(path) as conn:
         rows = conn.execute(
-            "SELECT id, direction, sender, body, create_time FROM messages WHERE chat = ? ORDER BY id DESC LIMIT ?",
+            "SELECT id, direction, sender, sender_display, body, create_time "
+            "FROM messages WHERE chat = ? ORDER BY id DESC LIMIT ?",
             (chat, limit),
         ).fetchall()
     result = []
-    for row_id, direction, sender, body, create_time in reversed(rows):
+    for row_id, direction, sender, sender_display, body, create_time in reversed(rows):
         result.append(
             {
                 "local_id": row_id,
                 "server_id": f"history:{row_id}",
                 "sender": sender or "",
-                "sender_display": sender or "",
+                "sender_display": sender_display or sender or "",
                 "local_type": "text",
                 "create_time": create_time or 0,
                 "kind": "text",

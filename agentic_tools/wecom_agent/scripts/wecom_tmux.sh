@@ -28,11 +28,43 @@ GUI_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_gui_bridge.local.json"
 GUI_BRIDGE="$TOOL_ROOT/scripts/wecom_gui_bridge.py"
 GUI_BRIDGE_LOG="$LOG_DIR/external-gui.log"
 WINDOWS_CLIENT="$TOOL_ROOT/scripts/wecom_windows_client.sh"
+ANDROID_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_android_bridge.local.json"
+ANDROID_BRIDGE="$TOOL_ROOT/scripts/wecom_android_bridge.py"
+ANDROID_BRIDGE_LOG="$LOG_DIR/android-relay.log"
 MUTATION_LOCK="${WECOM_TMUX_MUTATION_LOCK:-$TOOL_ROOT/.private/wecom_tmux.lock}"
 mkdir -p "$LOG_DIR"
 
 usage() {
-  echo "Usage: wecom_tmux.sh start|stop|restart|external-restart|gui-restart|status"
+  echo "Usage: wecom_tmux.sh start|stop|restart|external-restart|gui-restart|android-start|android-restart|status"
+}
+
+android_enabled() {
+  [[ -f "$ANDROID_BRIDGE_CONFIG" ]] \
+    && python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("enabled", True) else 1)' "$ANDROID_BRIDGE_CONFIG"
+}
+
+android_serial() {
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("serial", ""))' "$ANDROID_BRIDGE_CONFIG"
+}
+
+start_android_window() {
+  if ! android_enabled; then
+    echo "Android WeCom relay is not configured or is disabled."
+    return 0
+  fi
+  local serial
+  serial="$(android_serial)"
+  [[ -n "$serial" ]] || { echo "Android WeCom relay serial is empty." >&2; return 1; }
+  tmux kill-window -t "$SESSION:android-relay" 2>/dev/null || true
+  tmux new-window -t "$SESSION" -n android-relay \
+    "cd '$ROOT' && '$ROOT/scripts/mix2s' on --serial '$serial' >> '$ANDROID_BRIDGE_LOG' 2>&1 && exec python3 '$ANDROID_BRIDGE' --config '$ANDROID_BRIDGE_CONFIG' serve >> '$ANDROID_BRIDGE_LOG' 2>&1"
+  echo "Started allowlisted Android WeCom relay window."
+}
+
+ensure_android_window() {
+  if android_enabled && ! window_exists android-relay; then
+    start_android_window
+  fi
 }
 
 window_exists() {
@@ -159,6 +191,7 @@ start_stack() {
     if gui_enabled; then
       ensure_gui_windows
     fi
+    ensure_android_window
     echo "Session running and missing windows repaired: $SESSION"
     status_stack
     return 0
@@ -169,6 +202,7 @@ start_stack() {
   ensure_core_windows
   start_external_window
   start_gui_window
+  start_android_window
   echo "Started $SESSION"
   echo "Logs: $LOG_DIR"
 }
@@ -209,6 +243,14 @@ case "$action" in
     acquire_mutation_lock
     if tmux has-session -t "$SESSION" 2>/dev/null; then
       start_gui_window
+    else
+      start_stack
+    fi
+    ;;
+  android-start|android-restart)
+    acquire_mutation_lock
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      start_android_window
     else
       start_stack
     fi

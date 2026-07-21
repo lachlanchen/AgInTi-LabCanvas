@@ -1305,12 +1305,15 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
         return
 
     endpoint, token = wecom_transport_settings(task)
+    mentions = wecom_native_reply_mentions(task, endpoint) if combined_message else []
     payload = {
         "task_id": str(task.get("id") or ""),
         "chat_id": chat_id,
         "message": combined_message,
         "files": [str(path.expanduser().resolve()) for path in pending_files],
     }
+    if mentions:
+        payload["mentions"] = mentions
     request = urllib.request.Request(
         endpoint.rstrip("/") + "/v1/send",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -1336,6 +1339,7 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
     task["wecom_delivery"] = {
         "status": "sent" if response_payload.get("ok") else "partial",
         "sent_messages": response_payload.get("sent_messages") or [],
+        "mentioned_users": response_payload.get("mentioned_users") or [],
         "sent_file_count": len(delivered),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
@@ -1346,6 +1350,42 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
         raise RuntimeError("required WeCom artifact delivery incomplete: " + "; ".join(missing[:3]))
     if errors:
         raise RuntimeError("WeCom delivery errors: " + json.dumps(errors[:3], ensure_ascii=False))
+
+
+def wecom_native_reply_mentions(task: dict[str, Any], endpoint: str) -> list[str]:
+    """Return exact inbound display names only for the native Android sender."""
+    config_path = ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom_android_bridge.local.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        android_endpoint = f"http://127.0.0.1:{int(config.get('local_api_port') or 19581)}"
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if endpoint.rstrip("/") != android_endpoint:
+        return []
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    route_decision = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    if str(source.get("wecom_chat_type") or "") != "group":
+        return []
+    if route_decision.get("scheduled_daily_research") or str(source.get("local_type") or "").startswith("scheduled_"):
+        return []
+    raw_mentions = source.get("reply_mentions")
+    if not isinstance(raw_mentions, list):
+        raw_mentions = [source.get("wecom_sender_display") or source.get("sender_display")]
+    mentions: list[str] = []
+    for value in raw_mentions:
+        name = " ".join(str(value or "").split())
+        if (
+            not name
+            or name in {"unknown", "所有人", "@所有人", "MaLabAgent", "LabAgent"}
+            or len(name) > 80
+            or any(ord(character) < 32 for character in name)
+        ):
+            continue
+        if name not in mentions:
+            mentions.append(name)
+        if len(mentions) >= 4:
+            break
+    return mentions
 
 
 def wecom_transport_settings(task: dict[str, Any] | None = None) -> tuple[str, str]:
@@ -1363,6 +1403,9 @@ def wecom_transport_settings(task: dict[str, Any] | None = None) -> tuple[str, s
             raise RuntimeError("WeCom CLI local API token is missing")
         return endpoint, token
     if transport_channel == "wecom_gui":
+        mobile = ready_wecom_android_transport()
+        if mobile is not None:
+            return mobile
         config_path = ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom_gui_bridge.local.json"
         try:
             config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -1373,6 +1416,11 @@ def wecom_transport_settings(task: dict[str, Any] | None = None) -> tuple[str, s
         if not token:
             raise RuntimeError("WeCom GUI local API token is missing")
         return endpoint, token
+    if transport_channel == "wecom_android":
+        mobile = ready_wecom_android_transport(require_preferred=False)
+        if mobile is None:
+            raise RuntimeError("WeCom Android transport is unavailable")
+        return mobile
     if transport_channel != "wecom_bot_websocket":
         raise RuntimeError(f"Unsupported WeCom transport channel: {transport_channel}")
     endpoint = os.environ.get("WECOM_LOCAL_API_URL", "http://127.0.0.1:19578").strip()
@@ -1392,6 +1440,34 @@ def wecom_transport_settings(task: dict[str, Any] | None = None) -> tuple[str, s
         raise RuntimeError("Refusing non-local WeCom transport endpoint")
     if not token:
         raise RuntimeError("WECOM_LOCAL_API_TOKEN is missing")
+    return endpoint, token
+
+
+def ready_wecom_android_transport(*, require_preferred: bool = True) -> tuple[str, str] | None:
+    config_path = ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom_android_bridge.local.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not bool(config.get("enabled", True)):
+        return None
+    if require_preferred and not bool(config.get("preferred_for_gui_send", False)):
+        return None
+    token = str(config.get("local_api_token") or "").strip()
+    if not token:
+        return None
+    try:
+        port = int(config.get("local_api_port") or 19581)
+    except (TypeError, ValueError):
+        return None
+    endpoint = f"http://127.0.0.1:{port}"
+    try:
+        with urllib.request.urlopen(endpoint + "/health", timeout=4) as response:
+            health = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(health, dict) or not health.get("ok") or not health.get("device_authorized"):
+        return None
     return endpoint, token
 
 
