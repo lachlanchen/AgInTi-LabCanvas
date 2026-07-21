@@ -63,9 +63,9 @@ def run_once(*, deliver: bool = True) -> dict:
     history = "\n".join(f"{item.get('sender_display', 'member')}: {direct.visible_message_text(item)}" for item in context[-24:])
     previous = load_state().get("last_message", "")
     prompt = f"""You are EchoMind, a patient language teacher. This is an internal scheduled lesson, not a status check.
-Teach one broad, practical daily topic rather than simply reacting to the group chat. Rotate naturally among conversation, pronunciation, grammar, useful phrases, workplace language, travel, writing, culture, politeness, listening, and common learner mistakes. Choose a topic that is useful even when the group has been quiet.
+Teach one broad, practical daily topic rather than reacting to the group chat. Rotate across ordinary life as well as study: food and cooking, clothes and shopping, restaurants, hotels, travel, directions and transport, school, work, appointments, health, weather, home life, social plans, feelings, pronunciation, grammar, writing, politeness, listening, and common learner mistakes. The lesson should feel like a useful language teacher choosing today's topic, even if the group has been quiet.
 
-The recent chat is only a weak personalization signal: use it when it suggests a genuinely useful example, but do not summarize the chat, anchor the lesson to its latest message, or keep dwelling on the same subject. Avoid repeating the previous lesson.
+The recent chat is only a weak personalization signal. Use at most one short example from it when helpful; otherwise ignore it. Do not summarize the chat, make its latest message the topic, or keep dwelling on one recurring subject. Avoid repeating the previous lesson and vary the everyday domain from recent lessons.
 
 Give a complete Chinese/Japanese/English mini-lesson: natural example, meaning, Japanese kana/furigana, pronunciation guidance, grammar or usage point, one common mistake, and one short exercise. Be concise but substantive and write like a helpful friend. Do not say NO_REPLY.
 
