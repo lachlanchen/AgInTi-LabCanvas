@@ -21,6 +21,23 @@ from wechat_agent_backend import run_agent_session  # noqa: E402
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
 STATE = PRIVATE / "echomind-language-schedule.state.json"
 INTERVAL = 60 * 60
+TOPICS = (
+    "food, cooking, and ordering at a restaurant",
+    "clothes, shopping, sizes, and prices",
+    "hotels, reservations, and travel arrangements",
+    "directions, public transport, and commuting",
+    "school, study, and asking for clarification",
+    "work, meetings, deadlines, and polite requests",
+    "home life, chores, and daily routines",
+    "weather, seasons, and outdoor plans",
+    "health, appointments, and describing symptoms",
+    "social plans, invitations, and making arrangements",
+    "feelings, opinions, and supportive conversation",
+    "pronunciation, listening, and a useful sound contrast",
+    "grammar in practical conversation",
+    "writing a clear short message or email",
+    "politeness, register, and cultural nuance",
+)
 
 
 def load_state() -> dict:
@@ -61,9 +78,12 @@ def run_once(*, deliver: bool = True) -> dict:
     config = direct.load_config(CONFIG)
     context = direct.read_recent_history(config, 10**18, limit=int(config.get("history_limit", 24)))
     history = "\n".join(f"{item.get('sender_display', 'member')}: {direct.visible_message_text(item)}" for item in context[-24:])
-    previous = load_state().get("last_message", "")
+    state = load_state()
+    topic_index = int(state.get("topic_index", 0)) % len(TOPICS)
+    topic = TOPICS[topic_index]
+    previous = state.get("last_message", "")
     prompt = f"""You are EchoMind, a patient language teacher. This is an internal scheduled lesson, not a status check.
-Teach one broad, practical daily topic rather than reacting to the group chat. Rotate across ordinary life as well as study: food and cooking, clothes and shopping, restaurants, hotels, travel, directions and transport, school, work, appointments, health, weather, home life, social plans, feelings, pronunciation, grammar, writing, politeness, listening, and common learner mistakes. The lesson should feel like a useful language teacher choosing today's topic, even if the group has been quiet.
+Today's required domain is: **{topic}**. Teach a broad, practical lesson in this domain rather than reacting to the group chat. Do not switch back to the previous domain merely because it appears in the history.
 
 The recent chat is only a weak personalization signal. Use at most one short example from it when helpful; otherwise ignore it. Do not summarize the chat, make its latest message the topic, or keep dwelling on one recurring subject. Avoid repeating the previous lesson and vary the everyday domain from recent lessons.
 
@@ -97,13 +117,14 @@ Previous scheduled lesson (avoid repeating its topic):
         if not screenshot or not Path(screenshot).is_file():
             raise RuntimeError(f"EchoMind lesson send was not verified: {screenshot or 'no screenshot'}")
         delivery = {"requested": True, "status": "sent_verified", "screenshot": screenshot}
-    state = load_state()
     state.update({
         "last_run_at": now,
         "last_message": message,
         "interval_seconds": INTERVAL,
         "last_agent": result.get("backend", "codex"),
         "last_delivery": delivery,
+        "topic": topic,
+        "topic_index": (topic_index + 1) % len(TOPICS),
     })
     save_state(state)
     return {"ok": True, "chat": config["chat_name"], "sent_at": now, "message": message, "delivery": delivery}
