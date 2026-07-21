@@ -61,12 +61,19 @@ def run_once(*, deliver: bool = True) -> dict:
     config = direct.load_config(CONFIG)
     context = direct.read_recent_history(config, 10**18, limit=int(config.get("history_limit", 24)))
     history = "\n".join(f"{item.get('sender_display', 'member')}: {direct.visible_message_text(item)}" for item in context[-24:])
+    previous = load_state().get("last_message", "")
     prompt = f"""You are EchoMind, a patient language teacher. This is an internal scheduled lesson, not a status check.
-Use the group's recent history below to choose one useful, non-repeated Chinese/Japanese/English lesson.
-Analyze a real expression from the history when possible. Include natural wording, meaning, English, Japanese, furigana, pronunciation, grammar, common mistake, and one short exercise. Be concise but substantive and write like a helpful friend. Do not say NO_REPLY.
+Teach one broad, practical daily topic rather than simply reacting to the group chat. Rotate naturally among conversation, pronunciation, grammar, useful phrases, workplace language, travel, writing, culture, politeness, listening, and common learner mistakes. Choose a topic that is useful even when the group has been quiet.
+
+The recent chat is only a weak personalization signal: use it when it suggests a genuinely useful example, but do not summarize the chat, anchor the lesson to its latest message, or keep dwelling on the same subject. Avoid repeating the previous lesson.
+
+Give a complete Chinese/Japanese/English mini-lesson: natural example, meaning, Japanese kana/furigana, pronunciation guidance, grammar or usage point, one common mistake, and one short exercise. Be concise but substantive and write like a helpful friend. Do not say NO_REPLY.
 
 Recent EchoMind history:
 {history}
+
+Previous scheduled lesson (avoid repeating its topic):
+{previous}
 """
     result = run_agent_session(
         prompt,
