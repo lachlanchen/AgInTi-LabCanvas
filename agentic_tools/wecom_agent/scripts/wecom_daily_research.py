@@ -37,9 +37,13 @@ DEFAULT_CLI_CONFIG = PRIVATE / "wecom_cli_bridge.local.json"
 DEFAULT_GUI_CONFIG = PRIVATE / "wecom_gui_bridge.local.json"
 DAILY_PREFIX = re.compile(r"^\s*#daily(?:\s+|$)(.*)$", re.IGNORECASE | re.DOTALL)
 DAILY_SUFFIX = re.compile(r"^(.*?)\s*#daily\s*$", re.IGNORECASE | re.DOTALL)
+INTEREST_PREFIX = re.compile(r"^\s*#(?:interest|inspire)(?:\s+|$)(.*)$", re.IGNORECASE | re.DOTALL)
+INTEREST_SUFFIX = re.compile(r"^(.*?)\s*#(?:interest|inspire)\s*$", re.IGNORECASE | re.DOTALL)
 STATUS_WORDS = {"status", "show", "list", "状态", "狀態", "查看", "列表"}
 OFF_WORDS = {"off", "clear", "remove", "取消", "清除", "关闭", "關閉"}
 PAUSE_WORDS = {"pause", "disable", "stop", "暂停", "暫停", "停用"}
+ON_WORDS = {"on", "enable", "start", "开启", "開啟", "启用", "啟用"}
+INSPIRATION_FINAL_STATUSES = {"done", "failed", "cancelled", "expired", "rejected"}
 
 
 def main() -> int:
@@ -65,7 +69,7 @@ def main() -> int:
         return 0
 
     if args.command == "run":
-        payload = run_due_cycle(
+        payload = run_scheduler_cycle(
             state_db=args.state_db,
             history_db=args.history_db,
             queue=args.queue,
@@ -77,7 +81,11 @@ def main() -> int:
     interval = max(5.0, min(3600.0, float(args.poll_seconds)))
     while True:
         try:
-            payload = run_due_cycle(state_db=args.state_db, history_db=args.history_db, queue=args.queue)
+            payload = run_scheduler_cycle(
+                state_db=args.state_db,
+                history_db=args.history_db,
+                queue=args.queue,
+            )
             if payload.get("actions"):
                 print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
         except Exception as exc:  # Keep the scheduler alive across transient API/DB failures.
@@ -151,6 +159,22 @@ def init_daily_state(path: Path) -> None:
                 PRIMARY KEY(chat, run_date, kind)
             )
             """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS inspiration_settings (
+                chat TEXT PRIMARY KEY,
+                topics_json TEXT NOT NULL DEFAULT '[]',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                interval_seconds INTEGER NOT NULL DEFAULT 10800,
+                last_enqueued_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_inspiration_settings_enabled "
+            "ON inspiration_settings(enabled, updated_at)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_preferences_chat ON daily_preferences(chat, enabled)")
 
@@ -306,6 +330,148 @@ def parse_daily_directive(text: str) -> str | None:
     if suffix:
         return suffix.group(1).strip()
     return None
+
+
+def parse_inspiration_directive(text: str) -> str | None:
+    value = str(text or "")
+    prefix = INTEREST_PREFIX.match(value)
+    if prefix:
+        return prefix.group(1).strip()
+    suffix = INTEREST_SUFFIX.match(value)
+    if suffix:
+        return suffix.group(1).strip()
+    return None
+
+
+def split_inspiration_topics(value: str) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in re.split(r"[\n;；]+", str(value or "")):
+        topic = " ".join(item.split()).strip(" ,，、")[:300]
+        key = topic.casefold()
+        if topic and key not in seen:
+            seen.add(key)
+            result.append(topic)
+    return result[:12]
+
+
+def group_inspiration_settings(path: Path, chat: str) -> dict[str, Any]:
+    init_daily_state(path)
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT topics_json, enabled, interval_seconds, last_enqueued_at, updated_at "
+            "FROM inspiration_settings WHERE chat = ?",
+            (chat,),
+        ).fetchone()
+    if not row:
+        return {
+            "chat": chat,
+            "topics": [],
+            "enabled": False,
+            "interval_seconds": int(os.environ.get("WECOM_INSPIRATION_INTERVAL_SECONDS", "10800")),
+            "last_enqueued_at": "",
+            "updated_at": "",
+        }
+    try:
+        raw_topics = json.loads(str(row[0] or "[]"))
+    except json.JSONDecodeError:
+        raw_topics = []
+    topics = split_inspiration_topics("\n".join(str(item) for item in raw_topics if item)) if isinstance(raw_topics, list) else []
+    try:
+        interval = max(900, min(604800, int(row[2] or 10800)))
+    except (TypeError, ValueError):
+        interval = 10800
+    return {
+        "chat": chat,
+        "topics": topics,
+        "enabled": bool(row[1]),
+        "interval_seconds": interval,
+        "last_enqueued_at": str(row[3] or ""),
+        "updated_at": str(row[4] or ""),
+    }
+
+
+def update_group_inspiration(
+    path: Path,
+    chat: str,
+    topics: list[str] | None = None,
+    *,
+    mode: str = "add",
+    enabled: bool = True,
+    interval_seconds: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    init_daily_state(path)
+    current = group_inspiration_settings(path, chat)
+    incoming = split_inspiration_topics("\n".join(topics or []))
+    if mode == "replace":
+        merged = incoming
+    elif mode == "remove":
+        remove_keys = {item.casefold() for item in incoming}
+        merged = [item for item in current["topics"] if item.casefold() not in remove_keys]
+    else:
+        merged = split_inspiration_topics("\n".join([*current["topics"], *incoming]))
+    stamp = (now or datetime.now()).isoformat(timespec="seconds")
+    try:
+        interval = max(
+            900,
+            min(
+                604800,
+                int(interval_seconds or os.environ.get("WECOM_INSPIRATION_INTERVAL_SECONDS", "10800")),
+            ),
+        )
+    except (TypeError, ValueError):
+        interval = 10800
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO inspiration_settings(chat, topics_json, enabled, interval_seconds, last_enqueued_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(chat) DO UPDATE SET topics_json=excluded.topics_json, enabled=excluded.enabled, "
+            "interval_seconds=excluded.interval_seconds, updated_at=excluded.updated_at",
+            (chat, json.dumps(merged, ensure_ascii=False), 1 if enabled else 0, interval, "", stamp),
+        )
+    return group_inspiration_settings(path, chat)
+
+
+def handle_inspiration_interest_directive_result(
+    path: Path,
+    event: dict[str, Any],
+    chat: str,
+) -> dict[str, Any] | None:
+    command = parse_inspiration_directive(str(event.get("text") or ""))
+    if command is None:
+        return None
+    if str(event.get("chat_type") or "") != "group":
+        return {"action": "wrong_chat_type", "reply": "#interest 只用于群聊。"}
+    register_group(path, event, chat)
+    value = command.strip()
+    if not value or value.casefold() in STATUS_WORDS:
+        settings = group_inspiration_settings(path, chat)
+        topics = "；".join(settings["topics"]) or "暂未设置，将依据群内近期讨论和 #daily 兴趣生成。"
+        state = "已开启" if settings["enabled"] else "已关闭"
+        return {"action": "status", "reply": f"群组灵感提示：{state}；当前关注：{topics}"}
+    if value.casefold() in OFF_WORDS or value.casefold() in PAUSE_WORDS:
+        settings = update_group_inspiration(path, chat, [], mode="add", enabled=False)
+        return {"action": "off", "reply": f"已暂停群组灵感提示；已保留关注：{'；'.join(settings['topics']) or '无'}"}
+    if value.casefold() in ON_WORDS:
+        settings = update_group_inspiration(path, chat, [], mode="add", enabled=True)
+        return {"action": "on", "reply": f"已恢复群组灵感提示，每 {settings['interval_seconds'] // 3600} 小时最多一条。"}
+    mode = "add"
+    lowered = value.casefold()
+    for prefix, candidate in (("replace", "replace"), ("update", "replace"), ("替换", "replace"), ("更新", "replace"), ("add", "add"), ("增加", "add"), ("加入", "add"), ("remove", "remove"), ("移除", "remove")):
+        if lowered.startswith(prefix.casefold() + " ") or value.startswith(prefix + " "):
+            mode = candidate
+            value = value[len(prefix):].strip(" ：:，,;")
+            break
+    topics = split_inspiration_topics(value)
+    if not topics:
+        return {"action": "invalid", "reply": "请发送：#interest 研究兴趣；也可用 #interest replace 新兴趣。"}
+    settings = update_group_inspiration(path, chat, topics, mode=mode, enabled=True)
+    return {
+        "action": "updated",
+        "topics": settings["topics"],
+        "reply": f"已更新群组灵感关注：{'；'.join(settings['topics'])}。群组安静满三小时后，我会基于群内完整上下文发送一条启发点。",
+    }
 
 
 def set_preference(path: Path, chat: str, sender_hash: str, topic: str) -> list[str]:
@@ -557,6 +723,374 @@ def run_due_cycle(
         "checked_chats": len(chats),
         "actions": actions,
     }
+
+
+def run_scheduler_cycle(
+    *,
+    state_db: Path = DEFAULT_STATE_DB,
+    history_db: Path = DEFAULT_STATE_DB,
+    queue: Path = DEFAULT_QUEUE,
+    now: datetime | None = None,
+    force: bool = False,
+    append_func: Callable[[Path, dict[str, Any]], bool] | None = None,
+    send_func: Callable[[str, str, str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    daily = run_due_cycle(
+        state_db=state_db,
+        history_db=history_db,
+        queue=queue,
+        now=now,
+        force=force,
+        append_func=append_func,
+        send_func=send_func,
+    )
+    inspiration = run_inspiration_cycle(
+        state_db=state_db,
+        history_db=history_db,
+        queue=queue,
+        now=now,
+        force=force,
+        append_func=append_func,
+    )
+    return {
+        **daily,
+        "actions": [*(daily.get("actions") or []), *(inspiration.get("actions") or [])],
+        "inspiration": inspiration,
+    }
+
+
+def parse_task_datetime(value: str, timezone: ZoneInfo) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or ""))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone) if parsed.tzinfo is None else parsed.astimezone(timezone)
+
+
+def last_group_human_activity(path: Path, chat: str, timezone: ZoneInfo) -> datetime | None:
+    if not path.is_file():
+        return None
+    try:
+        with sqlite3.connect(path) as conn:
+            row = conn.execute(
+                "SELECT created_at FROM messages WHERE chat = ? AND direction = 'inbound' "
+                "ORDER BY id DESC LIMIT 1",
+                (chat,),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    return parse_task_datetime(str(row[0] or ""), timezone) if row else None
+
+
+def active_inspiration_task(queue: Path, chat: str) -> bool:
+    if not queue.is_file():
+        return False
+    try:
+        rows = queue.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    for line in rows:
+        try:
+            task = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        source = task.get("source") if isinstance(task.get("source"), dict) else {}
+        if str(task.get("chat") or "") != chat:
+            continue
+        if str(source.get("local_type") or "") != "scheduled_group_inspiration":
+            continue
+        if str(task.get("status") or "pending") not in INSPIRATION_FINAL_STATUSES:
+            return True
+    return False
+
+
+def previous_inspiration_outputs(queue: Path, chat: str, *, limit: int = 5) -> list[str]:
+    if not queue.is_file():
+        return []
+    outputs: list[str] = []
+    try:
+        rows = queue.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    for line in rows:
+        try:
+            task = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        source = task.get("source") if isinstance(task.get("source"), dict) else {}
+        result = task.get("result") if isinstance(task.get("result"), dict) else {}
+        if str(task.get("chat") or "") != chat or str(source.get("local_type") or "") != "scheduled_group_inspiration":
+            continue
+        text = str(result.get("message") or "").strip()
+        if text:
+            outputs.append(text[:900])
+    return outputs[-limit:]
+
+
+def previous_group_research_outputs(queue: Path, chat: str, *, limit: int = 6) -> list[str]:
+    """Return bounded prior research results as leads for the next inspiration turn."""
+    if not queue.is_file():
+        return []
+    outputs: list[str] = []
+    try:
+        rows = queue.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    for line in rows:
+        try:
+            task = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        source = task.get("source") if isinstance(task.get("source"), dict) else {}
+        result = task.get("result") if isinstance(task.get("result"), dict) else {}
+        if str(task.get("chat") or "") != chat:
+            continue
+        if str(source.get("local_type") or "") not in {"scheduled_daily_research", "immediate_daily_research"}:
+            continue
+        text = str(result.get("message") or "").strip()
+        if text:
+            outputs.append(text[:1400])
+    return outputs[-limit:]
+
+
+def build_group_inspiration_task(
+    *,
+    chat: str,
+    account_id: str,
+    chat_id: str,
+    chat_type: str,
+    transport_channel: str,
+    topics: list[str],
+    context: list[dict[str, Any]],
+    previous: list[str],
+    prior_research: list[str],
+    now: datetime,
+    queue: Path,
+    interval_seconds: int,
+    source_suffix: str = "",
+) -> dict[str, Any]:
+    topic_text = "；".join(topics) or "未指定；从群内长期讨论、问题、研究兴趣和近期方向中发现连接"
+    context_text = "\n".join(
+        f"- {item.get('direction', 'inbound')}: {str(item.get('content') or '')[:900]}"
+        for item in context[-60:]
+    ) or "- 群内还没有足够的历史讨论。"
+    previous_text = "\n".join(f"- {item}" for item in previous) or "- 暂无历史灵感提示。"
+    research_text = "\n".join(f"- {item}" for item in prior_research) or "- 暂无历史研究结果。"
+    slot = now.strftime("%Y%m%d%H%M")
+    source_id = f"inspiration:{slot}:{short_hash(chat)}{':' + source_suffix if source_suffix else ''}"
+    task_id = f"wecom-inspiration-{slot}-{short_hash(chat)}{('-' + short_hash(source_suffix) if source_suffix else '')}"
+    request_text = f"""Create one concise, genuinely useful inspiration point for this WeCom group after a quiet period.
+
+Group steering interests:
+{topic_text}
+
+Recent and accumulated public group context (use all relevant threads, not only the last line):
+{context_text}
+
+Previous inspiration points; avoid repeating them:
+{previous_text}
+
+Prior group research results and paper leads:
+{research_text}
+
+Requirements:
+- Respond as a thoughtful human collaborator, not a template or status report.
+- Find one meaningful connection, question, experiment, design direction, writing angle, or research opportunity that could inspire this group.
+- Explore adjacent topics when they illuminate the group's direction, but explain the connection instead of drifting into a generic news list.
+- Base it on the group context and interests. When a paper, report, or source has already appeared, inspect its substantive content when available: identify the actual result, method or evidence, limitation, and an unresolved question. Do not merely repeat its title or abstract.
+- If a current factual claim is needed, verify it with reliable sources and include at most two compact links; do not invent citations.
+- Keep it concise enough for a group message, but include why it matters and one possible next step.
+- Clearly separate a sourced fact from your own proposed idea.
+- Do not create a PDF, image, or other artifact unless the group has explicitly requested one.
+- Do not publish publicly, spend money, change credentials, or take irreversible actions.
+""".strip()
+    task = {
+        "id": task_id,
+        "chat": chat,
+        "request": request_text,
+        "original_request": request_text,
+        "route_plan": "Use the persistent LabCanvas worker to synthesize one non-repetitive group inspiration point.",
+        "status": "pending",
+        "created_at": now.isoformat(timespec="seconds"),
+        "agent_backend": os.environ.get("WECOM_AGENT_BACKEND", "codex"),
+        "agent_backend_config": {
+            "agent_fallbacks": {
+                "enabled": True,
+                "quota_fallback_model": "gpt-5.6-sol",
+                "quota_fallback_reasoning_effort": "low",
+                "fallback_to_aginti": True,
+                "fallback_on_timeout": True,
+            }
+        },
+        "agent_bridge_mode": True,
+        "route": {"chat": chat, "transport": "wecom", "transport_channel": transport_channel, "account_id": account_id},
+        "route_decision": {
+            "route_kind": "research_or_summary",
+            "worker_needed": True,
+            "public_publish_allowed": False,
+            "transport": "wecom",
+            "transport_channel": transport_channel,
+            "scheduled_group_inspiration": True,
+            "no_fixed_deadline": True,
+        },
+        "instruction_contract": {
+            "current_request_authoritative": True,
+            "same_chat_source_isolation": True,
+            "no_keyword_shrink": True,
+            "use_agent_reasoning": "resume_exact_chat_route_and_worker_sessions",
+            "irreversible_actions_require_current_message_intent": True,
+        },
+        "execution_contract": {
+            "transport_role": "message_transport_only",
+            "transport": transport_channel,
+            "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
+            "agent_entrypoint": "wechat_agent_backend.run_agent_session",
+            "session": {"chat": chat, "role": "worker", "reuse": True},
+            "required_artifacts": [],
+            "queue_mode": "single_worker_sequential",
+        },
+        "source": {
+            "transport": "wecom",
+            "wecom_transport_channel": transport_channel,
+            "chat": chat,
+            "wecom_chat_id": chat_id,
+            "wecom_chat_type": chat_type,
+            "wecom_account_id": account_id,
+            "server_id": source_id,
+            "local_id": int(short_hash(source_id), 16),
+            "local_type": "scheduled_group_inspiration",
+            "create_time": int(now.timestamp()),
+            "sender": "labcanvas-inspiration-scheduler",
+            "sender_display": "LabAgent group inspiration",
+            "kind": "scheduled_group_inspiration",
+            "authorization_role": "system_safe_read_only",
+        },
+        "context": context[-60:],
+        "group_inspiration": {
+            "topics": topics,
+            "interval_seconds": interval_seconds,
+            "previous_outputs": previous,
+            "prior_research_outputs": prior_research,
+            "source_context_count": len(context),
+        },
+        "transport_preflight": {},
+        "queue_path": str(queue),
+    }
+    ensure_task_routine_contract(task)
+    if isinstance(task.get("routine"), dict):
+        task["routine"]["default_effort"] = "medium"
+    return task
+
+
+def enqueue_initial_group_inspiration(
+    *,
+    state_db: Path,
+    history_db: Path,
+    queue: Path,
+    event: dict[str, Any],
+    chat: str,
+    now: datetime | None = None,
+    append_func: Callable[[Path, dict[str, Any]], bool] | None = None,
+) -> dict[str, Any]:
+    """Queue one immediate inspiration after the group explicitly changes focus."""
+    init_daily_state(state_db)
+    settings = group_inspiration_settings(state_db, chat)
+    if not settings["enabled"] or active_inspiration_task(queue, chat):
+        return {"queued": False, "already_queued": True, "task_id": ""}
+    timezone = configured_timezone()
+    current = now.astimezone(timezone) if now and now.tzinfo else (now.replace(tzinfo=timezone) if now else datetime.now(timezone))
+    topics = split_inspiration_topics("\n".join([*settings["topics"], *active_topics(state_db, chat)]))
+    task = build_group_inspiration_task(
+        chat=chat,
+        account_id=str(event.get("account_id") or "default"),
+        chat_id=str(event.get("chat_id") or ""),
+        chat_type=str(event.get("chat_type") or "group"),
+        transport_channel=str(event.get("transport_channel") or "wecom_bot_websocket"),
+        topics=topics,
+        context=recent_group_context(history_db, chat, limit=60),
+        previous=previous_inspiration_outputs(queue, chat),
+        prior_research=previous_group_research_outputs(queue, chat),
+        now=current,
+        queue=queue,
+        interval_seconds=settings["interval_seconds"],
+        source_suffix=f"immediate:{short_hash(event.get('message_id'))}",
+    )
+    appended = (append_func or append_task_once)(queue, task)
+    with sqlite3.connect(state_db) as conn:
+        conn.execute(
+            "UPDATE inspiration_settings SET last_enqueued_at = ? WHERE chat = ?",
+            (current.isoformat(timespec="seconds"), chat),
+        )
+    return {"queued": appended, "already_queued": not appended, "task_id": task["id"]}
+
+
+def run_inspiration_cycle(
+    *,
+    state_db: Path = DEFAULT_STATE_DB,
+    history_db: Path = DEFAULT_STATE_DB,
+    queue: Path = DEFAULT_QUEUE,
+    now: datetime | None = None,
+    force: bool = False,
+    append_func: Callable[[Path, dict[str, Any]], bool] | None = None,
+) -> dict[str, Any]:
+    init_daily_state(state_db)
+    timezone = configured_timezone()
+    current = now.astimezone(timezone) if now and now.tzinfo else (now.replace(tzinfo=timezone) if now else datetime.now(timezone))
+    append = append_func or append_task_once
+    actions: list[dict[str, Any]] = []
+    with sqlite3.connect(state_db) as conn:
+        settings_rows = conn.execute(
+            "SELECT s.chat, c.account_id, c.chat_id, c.chat_type, c.transport_channel, s.topics_json, "
+            "s.enabled, s.interval_seconds, s.last_enqueued_at, s.updated_at "
+            "FROM inspiration_settings s JOIN daily_chats c ON c.chat = s.chat "
+            "WHERE s.enabled = 1 ORDER BY s.chat"
+        ).fetchall()
+    for chat, account_id, chat_id, chat_type, transport_channel, raw_topics, enabled, interval, last_enqueued, updated_at in settings_rows:
+        try:
+            parsed_topics = json.loads(str(raw_topics or "[]"))
+        except json.JSONDecodeError:
+            parsed_topics = []
+        topics = split_inspiration_topics("\n".join(str(item) for item in parsed_topics if item)) if isinstance(parsed_topics, list) else []
+        topics = split_inspiration_topics("\n".join([*topics, *active_topics(state_db, chat)]))
+        try:
+            interval_seconds = max(900, min(604800, int(interval or 10800)))
+        except (TypeError, ValueError):
+            interval_seconds = 10800
+        last_activity = last_group_human_activity(history_db, chat, timezone)
+        baseline_values = [item for item in [last_activity, parse_task_datetime(updated_at, timezone), parse_task_datetime(last_enqueued, timezone)] if item]
+        baseline = max(baseline_values) if baseline_values else current
+        idle_seconds = max(0.0, (current - baseline).total_seconds())
+        if not force and idle_seconds < interval_seconds:
+            continue
+        if active_inspiration_task(queue, chat):
+            actions.append({"kind": "inspiration_waiting", "chat": chat, "reason": "previous_inspiration_still_active"})
+            continue
+        context = recent_group_context(history_db, chat, limit=60)
+        previous = previous_inspiration_outputs(queue, chat)
+        prior_research = previous_group_research_outputs(queue, chat)
+        task = build_group_inspiration_task(
+            chat=chat,
+            account_id=account_id,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            transport_channel=transport_channel,
+            topics=topics,
+            context=context,
+            previous=previous,
+            prior_research=prior_research,
+            now=current,
+            queue=queue,
+            interval_seconds=interval_seconds,
+        )
+        appended = append(queue, task)
+        stamp = current.isoformat(timespec="seconds")
+        with sqlite3.connect(state_db) as conn:
+            conn.execute(
+                "UPDATE inspiration_settings SET last_enqueued_at = ? WHERE chat = ?",
+                (stamp, chat),
+            )
+        actions.append({"kind": "inspiration", "chat": chat, "task_id": task["id"], "queued": appended, "idle_seconds": int(idle_seconds)})
+    return {"ok": True, "checked": len(settings_rows), "actions": actions}
 
 
 def build_daily_research_task(

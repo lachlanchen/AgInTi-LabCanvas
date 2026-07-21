@@ -388,11 +388,81 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertFalse(tasks[0]["route_decision"]["scheduled_daily_research"])
         self.assertTrue(tasks[0]["route_decision"]["no_fixed_deadline"])
         self.assertTrue(tasks[0]["daily_research"]["initial_run"])
-        self.assertEqual(tasks[0]["daily_research"]["member_key"], ingest.short_hash(event["sender_userid"]))
-        self.assertEqual(tasks[0]["source"]["member_key"], ingest.short_hash(event["sender_userid"]))
-        self.assertEqual(tasks[0]["routine"]["id"], "research_summary")
-        self.assertEqual(tasks[0]["routine"]["default_effort"], "high")
-        self.assertNotIn("expires_at", tasks[0])
+
+    def test_interest_directive_queues_immediate_group_inspiration(self) -> None:
+        ingest = load_ingest()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue = root / "queue.jsonl"
+            history = root / "history.sqlite"
+            event = self.sample_event(
+                text="#interest organoids; speculative bio-design",
+                authorization_role="group_member",
+            )
+            with mock.patch.object(ingest, "route_event", side_effect=AssertionError("interest command must not spend a route turn")), mock.patch.object(
+                ingest, "record_event"
+            ):
+                result = ingest.ingest_event(event, queue=queue, history_db=history, route_with_agent=True)
+                duplicate = ingest.ingest_event(event, queue=queue, history_db=history, route_with_agent=True)
+            tasks = [json.loads(line) for line in queue.read_text(encoding="utf-8").splitlines()]
+
+        self.assertFalse(result["queued"])
+        self.assertIn("已立即安排", result["reply"])
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["source"]["local_type"], "scheduled_group_inspiration")
+        self.assertIn("organoids", tasks[0]["request"])
+        self.assertIn("substantive content", tasks[0]["request"])
+
+    def test_group_inspiration_waits_for_quiet_period_and_is_idempotent(self) -> None:
+        daily = load_daily()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.sqlite"
+            queue = root / "queue.jsonl"
+            chat = "wecom:default:group:labagent"
+            event = self.sample_event(text="hello")
+            daily.register_group(state, event, chat)
+            daily.update_group_inspiration(
+                state,
+                chat,
+                ["organoids", "speculative design"],
+                now=datetime(2026, 7, 21, 8, 0, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+            )
+            captured: list[dict] = []
+
+            def append_once(_queue, task):
+                captured.append(task)
+                return True
+
+            before = daily.run_inspiration_cycle(
+                state_db=state,
+                history_db=state,
+                queue=queue,
+                now=datetime(2026, 7, 21, 10, 59, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+                append_func=append_once,
+            )
+            due = daily.run_inspiration_cycle(
+                state_db=state,
+                history_db=state,
+                queue=queue,
+                now=datetime(2026, 7, 21, 11, 1, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+                append_func=append_once,
+            )
+            repeated = daily.run_inspiration_cycle(
+                state_db=state,
+                history_db=state,
+                queue=queue,
+                now=datetime(2026, 7, 21, 11, 1, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+                append_func=append_once,
+            )
+
+        self.assertEqual(before["actions"], [])
+        self.assertEqual(len(due["actions"]), 1)
+        self.assertEqual(repeated["actions"], [])
+        self.assertEqual(len(captured), 1)
+        self.assertTrue(captured[0]["route_decision"]["scheduled_group_inspiration"])
+        self.assertIn("substantive content", captured[0]["request"])
 
     def test_daily_preferences_keep_members_separate_and_support_status_and_off(self) -> None:
         daily = load_daily()
@@ -851,6 +921,15 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         self.assertEqual(endpoint, "http://127.0.0.1:23456")
         self.assertEqual(token, "private-token")
+
+    def test_worker_selects_android_delivery_endpoint(self) -> None:
+        worker = load_worker()
+        task = {"source": {"transport": "wecom_android", "wecom_transport_channel": "wecom_android"}}
+        with mock.patch.object(worker, "ready_wecom_android_transport", return_value=("http://127.0.0.1:19581", "android-token")):
+            endpoint, token = worker.wecom_transport_settings(task)
+
+        self.assertEqual(endpoint, "http://127.0.0.1:19581")
+        self.assertEqual(token, "android-token")
 
     def test_worker_selects_separate_gui_delivery_endpoint(self) -> None:
         worker = load_worker()

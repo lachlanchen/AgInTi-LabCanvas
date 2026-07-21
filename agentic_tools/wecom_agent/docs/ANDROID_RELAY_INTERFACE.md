@@ -46,12 +46,41 @@ pushed to `/sdcard/Download/LabCanvas`, selected by exact filename, and sent
 only after the confirmation dialog contains both the exact target chat and
 artifact name.
 
-Idle polling reads only chats with native unread badges. First contact seeds
-the visible tail instead of replaying old messages, preventing restart floods.
+Idle polling uses native unread badges for the fast path and reconciles every
+allowlisted chat at a bounded interval (20 seconds by default). Opening a chat
+manually or for diagnostics can clear its unread badge, but cannot permanently
+hide the message from the relay. First contact still seeds the visible tail
+instead of replaying old messages, preventing restart floods. Snapshot overlap,
+the ingest history, and delivery component hashes suppress duplicate work and
+replies. A failure in one allowlisted chat does not block reconciliation of the
+others.
+
 Inbound events retain the exact visible sender name and enter the normal WeCom
 ingest/worker queue with same-chat isolation. The route agent's natural direct
 reply or queued-task acknowledgement is checkpointed, then sent immediately
 with the same native sender mention; long work continues independently.
+
+## Group Inspiration
+
+LabAgent can maintain a low-frequency group inspiration routine. The routine
+waits until the group has been quiet for three hours, then queues one concise
+agent-written knowledge point or useful connection. It uses the accumulated
+same-group discussion, active member `#daily` interests, explicit group
+interests, and prior inspiration outputs; it does not send a canned heartbeat.
+The first point is queued immediately when a group explicitly changes focus.
+
+```text
+#interest organoids; biomanufacturing; speculative design
+#interest replace event cameras; scientific imaging
+#interest status
+#interest off
+#interest on
+```
+
+The default interval is three hours and can be changed locally with
+`WECOM_INSPIRATION_INTERVAL_SECONDS`. A pending or running inspiration task is
+never duplicated. Group interests are public group-scoped settings; they do
+not merge private member records or authorize public posting.
 
 ## Native Mentions
 

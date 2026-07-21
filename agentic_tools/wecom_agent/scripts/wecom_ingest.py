@@ -27,10 +27,13 @@ from wechat_agent_backend import run_agent_session  # noqa: E402
 from wechat_mirror import record_event  # noqa: E402
 from wechat_routines import ensure_task_routine_contract  # noqa: E402
 from wecom_daily_research import (  # noqa: E402
+    enqueue_initial_group_inspiration,
     enqueue_initial_daily_research,
+    handle_inspiration_interest_directive_result,
     handle_daily_directive_result,
     mark_inline_topic_prompt,
     register_group,
+    update_group_inspiration,
     set_group_enabled,
     set_preference,
 )
@@ -154,6 +157,33 @@ def ingest_event(
         attachments=normalized_attachments(event),
     )
     first_group_event = register_group(history_db, event, chat)
+    inspiration_result = handle_inspiration_interest_directive_result(history_db, event, chat)
+    if inspiration_result is not None:
+        if inspiration_result.get("action") in {"updated", "on"}:
+            immediate = enqueue_initial_group_inspiration(
+                state_db=history_db,
+                history_db=history_db,
+                queue=queue,
+                event=event,
+                chat=chat,
+            )
+            if immediate.get("queued"):
+                inspiration_result["reply"] = (
+                    str(inspiration_result.get("reply") or "").rstrip()
+                    + "\n已立即安排一条基于当前群内上下文的灵感提示；以后群组安静满三小时再自动更新。"
+                )
+            elif immediate.get("already_queued"):
+                inspiration_result["reply"] = (
+                    str(inspiration_result.get("reply") or "").rstrip()
+                    + "\n当前已有一条灵感任务在处理中，不重复创建。"
+                )
+        return complete_direct_reply(
+            history_db,
+            event,
+            chat,
+            inspiration_result.get("reply") or "已更新群组灵感设置。",
+            action="wecom_inspiration_interest",
+        )
     daily_result = handle_daily_directive_result(history_db, event, chat)
     if daily_result is not None:
         immediate: dict[str, Any] | None = None
@@ -222,11 +252,29 @@ def ingest_event(
     if daily_topic and str(event.get("chat_type") or "") == "group":
         set_preference(history_db, chat, short_hash(event.get("sender_userid")), daily_topic)
         set_group_enabled(history_db, chat, True)
+    inspiration_interest = str(route.get("inspiration_interest") or "").strip()[:1000]
+    inspiration_mode = str(route.get("inspiration_interest_mode") or "none").strip().casefold()
+    inspiration_note = ""
+    if inspiration_mode != "none" and str(event.get("chat_type") or "") == "group":
+        if inspiration_mode == "disable":
+            settings = update_group_inspiration(history_db, chat, [], enabled=False)
+            inspiration_note = "已暂停群组灵感提示。"
+        elif inspiration_interest:
+            settings = update_group_inspiration(
+                history_db,
+                chat,
+                [inspiration_interest],
+                mode=inspiration_mode,
+                enabled=True,
+            )
+            inspiration_note = f"已更新群组灵感关注：{'；'.join(settings['topics'])}。"
 
     if not bool(route.get("worker_needed")) and str(route.get("response") or "").strip():
         response = str(route["response"])
         if daily_topic:
             response = f"已设置每日研究主题：{daily_topic}\n\n{response}"
+        if inspiration_note:
+            response = f"{inspiration_note}\n\n{response}"
         if first_group_event:
             response = f"{response.rstrip()}\n\n{labagent_welcome_message()}"
             mark_inline_topic_prompt(history_db, chat)
@@ -261,6 +309,8 @@ def ingest_event(
     ack = sanitize_chat_response(route.get("ack")) or "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。"
     if daily_topic:
         ack = f"已设置每日研究主题：{daily_topic}\n{ack}"
+    if inspiration_note:
+        ack = f"{inspiration_note}\n{ack}"
     if first_group_event:
         ack = "当前请求已进入 LabCanvas 队列。\n\n" + labagent_welcome_message()
         if daily_topic:
@@ -392,6 +442,8 @@ Return one strict JSON object and no prose:
   "task": "complete worker instruction when worker_needed is true",
   "ack": "short natural acknowledgement for queued work",
   "daily_topic": "persistent topic only when the current message explicitly requests recurring daily research, otherwise empty",
+  "inspiration_interest": "group-scoped inspiration interest only when the current message explicitly sets or updates it, otherwise empty",
+  "inspiration_interest_mode": "none|add|replace|remove|disable",
   "memory_items": [{{"kind": "idea|insight|intuition|interest|hypothesis|decision|preference|question|note", "title": "short title", "content": "durable user-authored knowledge", "tags": ["optional"]}}],
   "public_publish_allowed": false
 }}
@@ -414,6 +466,7 @@ Rules:
 - The task field is advisory planning only. Never replace the user's wording with a new factual assumption, a mandatory clarification, or a refusal to investigate an uncertain name. The worker receives the exact message and owns evidence gathering.
 - When a scientific name or identifier may contain OCR, speech, capitalization, or character ambiguity, route it to research. Tell the worker to search plausible candidates and authoritative sources before asking the user to clarify.
 - Set daily_topic only for an explicit recurring/daily research request. Extract a concise durable topic rather than the whole command.
+- Set inspiration_interest only when the current message explicitly asks the group to set, update, add, remove, or disable its three-hour inspiration focus. Do not infer it from an ordinary research question.
 - Put only durable user-authored knowledge in memory_items: ideas, insights, intuitions, hypotheses, decisions, preferences, research interests, and questions worth retaining. Do not store greetings, acknowledgements, secrets, credentials, or content merely quoted from an attachment as the user's belief.
 - Use the private member memory only as same-user context. Never mention another member's records or infer that two member keys are the same person.
 - Make the direct response natural and concise, not a fixed template.
@@ -473,6 +526,10 @@ Private same-member knowledge context:
         worker_needed = True
     task_text = str(payload.get("task") or "").strip() or request
     daily_topic = " ".join(str(payload.get("daily_topic") or "").split())[:1000]
+    inspiration_interest = " ".join(str(payload.get("inspiration_interest") or "").split())[:1000]
+    inspiration_interest_mode = str(payload.get("inspiration_interest_mode") or "none").strip().casefold()
+    if inspiration_interest_mode not in {"none", "add", "replace", "remove", "disable"}:
+        inspiration_interest_mode = "none"
     return {
         "worker_needed": worker_needed,
         "route_kind": route_kind,
@@ -480,6 +537,8 @@ Private same-member knowledge context:
         "task": task_text,
         "ack": sanitize_chat_response(payload.get("ack")),
         "daily_topic": daily_topic,
+        "inspiration_interest": inspiration_interest,
+        "inspiration_interest_mode": inspiration_interest_mode,
         "memory_items": normalize_memory_items(payload.get("memory_items")),
         "public_publish_allowed": False,
     }
@@ -493,6 +552,8 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         "task": request,
         "ack": "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。",
         "daily_topic": "",
+        "inspiration_interest": "",
+        "inspiration_interest_mode": "none",
         "memory_items": [],
         "public_publish_allowed": False,
     }
@@ -548,6 +609,8 @@ def build_task(
             "sender_authorization_role": str(event.get("authorization_role") or "unknown"),
             "labagent_scope": "research_drawing_and_design_without_publication",
             "daily_topic": str(route.get("daily_topic") or ""),
+            "inspiration_interest": str(route.get("inspiration_interest") or ""),
+            "inspiration_interest_mode": str(route.get("inspiration_interest_mode") or "none"),
             "worker_plan": str(route.get("task") or "").strip(),
         },
         "instruction_contract": {

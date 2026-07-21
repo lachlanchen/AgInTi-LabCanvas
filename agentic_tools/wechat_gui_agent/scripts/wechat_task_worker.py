@@ -1072,6 +1072,11 @@ def send_errors_indicate_wecom_auth_required(errors: list[str]) -> bool:
     return "wecom_gui_auth_required" in text or "device_environment_abnormal" in text
 
 
+def send_errors_indicate_stale_android_worker(errors: list[str]) -> bool:
+    text = "\n".join(str(error) for error in errors).lower()
+    return "unsupported wecom transport channel: wecom_android" in text
+
+
 def send_errors_indicate_gui_busy(errors: list[str]) -> bool:
     text = "\n".join(str(error) for error in errors).lower()
     return "wechat_send_busy" in text or "serialized gui sender is already sending" in text
@@ -1115,6 +1120,7 @@ def send_errors_indicate_deferable(errors: list[str]) -> bool:
     return (
         send_errors_indicate_wechat_locked(errors)
         or send_errors_indicate_wecom_auth_required(errors)
+        or send_errors_indicate_stale_android_worker(errors)
         or send_errors_indicate_gui_busy(errors)
         or send_errors_indicate_gui_timeout(errors)
         or send_errors_indicate_wechat_entry_required(errors)
@@ -1126,6 +1132,8 @@ def send_errors_indicate_deferable(errors: list[str]) -> bool:
 def send_deferred_reason_from_errors(errors: list[str]) -> str:
     if send_errors_indicate_wecom_auth_required(errors):
         return "wecom_auth_required"
+    if send_errors_indicate_stale_android_worker(errors):
+        return "wecom_android_code_stale"
     if send_errors_indicate_gui_busy(errors):
         return "gui_send_busy"
     if send_errors_indicate_gui_timeout(errors):
@@ -3370,7 +3378,9 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
     if not send_errors_indicate_deferable(errors) and not verified_publish_send_completion(task):
         return False
     reason = send_deferred_reason_from_errors(errors)
-    if reason == "gui_compose_verification":
+    if reason == "wecom_android_code_stale":
+        max_retries = int(os.environ.get("WECOM_ANDROID_STALE_WORKER_RETRIES", "2"))
+    elif reason == "gui_compose_verification":
         max_retries = int(os.environ.get("WECOM_GUI_COMPOSE_MAX_RETRIES", "2"))
     elif verified_publish_send_completion(task):
         max_retries = int(
@@ -3426,6 +3436,7 @@ def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
         "wechat_entry_required",
         "title_guard_blank",
         "gui_compose_verification",
+        "wecom_android_code_stale",
     }:
         return False
     if reason == "gui_compose_verification":

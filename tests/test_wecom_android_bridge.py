@@ -6,6 +6,7 @@ from pathlib import Path
 import stat
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 from xml.etree import ElementTree as ET
@@ -235,7 +236,99 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertNotIn("local_api_token", result)
             self.assertTrue(payload["local_api_token"])
+            self.assertEqual(payload["reconcile_seconds"], 20.0)
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_poll_cycle_reconciles_all_chats_without_unread_badges(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent", "AgentTest"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                    "reconcile_seconds": 20,
+                }
+            )
+            runtime.lock_path = Path(tmp) / "bridge.lock"
+            runtime._next_reconcile_at = 0.0
+            with mock.patch.object(runtime, "load_snapshot", return_value=["old"]), mock.patch.object(
+                runtime, "open_chat_list", return_value=ET.fromstring("<hierarchy />")
+            ), mock.patch.object(runtime, "unread_target_chats", return_value=[]), mock.patch.object(
+                runtime,
+                "snapshot",
+                side_effect=lambda chat, enqueue: {
+                    "ok": True,
+                    "chat": chat,
+                    "processed": 0,
+                },
+            ) as snapshot:
+                result = runtime.poll_cycle()
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["reconciliation"])
+        self.assertEqual(result["unread_chats"], [])
+        self.assertEqual(result["due_chats"], ["LabAgent", "AgentTest"])
+        self.assertEqual(
+            [call.args[0] for call in snapshot.call_args_list],
+            ["LabAgent", "AgentTest"],
+        )
+
+    def test_poll_cycle_uses_unread_only_between_reconciliations(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent", "AgentTest"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.lock_path = Path(tmp) / "bridge.lock"
+            runtime._next_reconcile_at = time.monotonic() + 300
+            with mock.patch.object(runtime, "load_snapshot", return_value=["old"]), mock.patch.object(
+                runtime, "open_chat_list", return_value=ET.fromstring("<hierarchy />")
+            ), mock.patch.object(
+                runtime, "unread_target_chats", return_value=["AgentTest"]
+            ), mock.patch.object(
+                runtime,
+                "snapshot",
+                return_value={"ok": True, "chat": "AgentTest", "processed": 1},
+            ) as snapshot:
+                result = runtime.poll_cycle()
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["reconciliation"])
+        self.assertEqual(result["due_chats"], ["AgentTest"])
+        snapshot.assert_called_once_with("AgentTest", enqueue=True)
+
+    def test_one_chat_failure_does_not_block_other_reconciliation(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent", "AgentTest"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.lock_path = Path(tmp) / "bridge.lock"
+            with mock.patch.object(runtime, "load_snapshot", return_value=None), mock.patch.object(
+                runtime, "open_chat_list", return_value=ET.fromstring("<hierarchy />")
+            ), mock.patch.object(
+                runtime,
+                "snapshot",
+                side_effect=[RuntimeError("first chat unavailable"), {"ok": True, "processed": 1}],
+            ) as snapshot:
+                result = runtime.poll_cycle()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(snapshot.call_count, 2)
+        self.assertIn("first chat unavailable", result["results"][0]["error"])
+        self.assertEqual(result["processed"], 1)
 
     def test_worker_prefers_healthy_mobile_send_endpoint(self) -> None:
         worker = load_worker()

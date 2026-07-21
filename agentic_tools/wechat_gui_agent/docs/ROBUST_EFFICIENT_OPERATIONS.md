@@ -581,7 +581,7 @@ The stable interface and recovery commands are documented in
 | Generated video | Queue orchestrator | `GENERATED_VIDEO_ROUTINES.md` | Store route contract, wait via queue/CDP, deliver MP4 before poststage. |
 | Exact video publish | Worker | `wechat_autopublish_video.py`, same-chat artifact ledger, LazyEdit CLI | Resolve exact WeChat message IDs/cache first; use the same-chat artifact ledger only when it matches the current/source video row MD5 or byte length. |
 | GUI send | Sender | `wechat_gui_send.py` | Serialize with lock, OCR/title guard, screenshots, deferred outbox. |
-| WeCom Android relay | WeCom sender/monitor | `wecom_android_bridge.py` | Poll native unread allowlisted groups, enqueue exact sender context, send idempotent text/files, and select native per-sender mentions without desktop login. |
+| WeCom Android relay | WeCom sender/monitor | `wecom_android_bridge.py` | Use unread badges for low-latency hints and periodically reconcile every allowlisted group, enqueue exact sender context, send idempotent text/files, and select native per-sender mentions without desktop login. |
 | Android text fallback | Worker outbox | `send_result_with_retries()` | For verified publish-completion text only, if desktop GUI send fails with a deferable guard/timeout, ADB may send a sanitized ASCII completion after screenshot OCR proves the phone is already open to the exact target chat. |
 | Browser assist | Human + worker | `wechat_browser_assist.py` | Use only for login/CAPTCHA/download confirmation or blocked web UI. |
 
@@ -622,6 +622,13 @@ evidence for local artifacts, not chat-facing content.
 ## Token And Latency Policy
 
 - Idle polling is local-only and should not spend model tokens.
+- LabAgent group inspiration is a separate low-frequency routine: after three
+  hours without human group activity, enqueue at most one concise, agent-written
+  knowledge point using same-group history, active `#daily` interests, explicit
+  `#interest` settings, and prior inspiration outputs. An explicit interest
+  update queues one immediate point, then the three-hour quiet-period schedule
+  resumes. It must be idempotent and must not merge private member context or
+  create a public-posting permission.
 - Use fast-router Codex only for new actionable messages, ambiguous routing, or
   immediate lightweight replies.
 - For the isolated WeCom transport, use `gpt-5.6-sol` low for route/chat turns

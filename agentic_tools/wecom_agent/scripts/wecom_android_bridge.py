@@ -244,6 +244,9 @@ def initialize_config(
         "staging_dir": str(existing.get("staging_dir") or DEFAULT_STAGING),
         "initial_backfill": "seed",
         "poll_seconds": bounded_float(existing.get("poll_seconds"), 6.0, 2.0, 120.0),
+        "reconcile_seconds": bounded_float(
+            existing.get("reconcile_seconds"), 20.0, 5.0, 600.0
+        ),
         "max_send_file_bytes": bounded_int(
             existing.get("max_send_file_bytes"), 100 * 1024 * 1024, 1, 1024 * 1024 * 1024
         ),
@@ -334,6 +337,10 @@ class AndroidBridge:
         self.history_db = Path(str(config.get("history_db") or DEFAULT_HISTORY_DB)).expanduser().resolve()
         self.staging_dir = Path(str(config.get("staging_dir") or DEFAULT_STAGING)).expanduser().resolve()
         self.lock_path = PRIVATE / "wecom_android_bridge.lock"
+        self.reconcile_seconds = bounded_float(
+            config.get("reconcile_seconds"), 20.0, 5.0, 600.0
+        )
+        self._next_reconcile_at = 0.0
         self._stop = threading.Event()
         self.init_state()
 
@@ -1128,22 +1135,49 @@ class AndroidBridge:
             }
 
     def poll_cycle(self) -> dict[str, Any]:
+        now = time.monotonic()
         due = [chat for chat in self.target_groups if self.load_snapshot(chat) is None]
+        unread: list[str] = []
         if not due:
             with self.serialized():
                 chat_list = self.open_chat_list()
-                due = self.unread_target_chats(chat_list)
+                unread = self.unread_target_chats(chat_list)
+            due = list(unread)
+        reconciliation = now >= self._next_reconcile_at
+        if reconciliation:
+            # Opening a chat manually or for diagnostics clears WeCom's unread
+            # badge. Periodic exact-chat reconciliation makes that badge a
+            # latency hint rather than the sole source of ingress truth.
+            due = unique_nonempty([*due, *self.target_groups])
+            self._next_reconcile_at = now + self.reconcile_seconds
         results: list[dict[str, Any]] = []
         for chat in due:
-            results.append(self.snapshot(chat, enqueue=True))
+            try:
+                results.append(self.snapshot(chat, enqueue=True))
+            except Exception as exc:
+                results.append(
+                    {
+                        "ok": False,
+                        "chat": chat,
+                        "processed": 0,
+                        "error": f"{type(exc).__name__}: {str(exc)[:500]}",
+                    }
+                )
+        restore_error = ""
         if due:
-            with self.serialized():
-                self.open_chat_list()
+            try:
+                with self.serialized():
+                    self.open_chat_list()
+            except Exception as exc:
+                restore_error = f"{type(exc).__name__}: {str(exc)[:500]}"
         return {
-            "ok": all(result.get("ok") for result in results),
+            "ok": all(result.get("ok") for result in results) and not restore_error,
             "due_chats": due,
+            "unread_chats": unread,
+            "reconciliation": reconciliation,
             "processed": sum(int(result.get("processed") or 0) for result in results),
             "results": results,
+            "restore_error": restore_error,
         }
 
     def list_chats(self) -> dict[str, Any]:
