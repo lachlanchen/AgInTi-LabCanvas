@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sys
 import time
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
@@ -21,6 +22,9 @@ from wechat_agent_backend import run_agent_session  # noqa: E402
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
 STATE = PRIVATE / "echomind-language-schedule.state.json"
 INTERVAL = 60 * 60
+LOCAL_TZ = ZoneInfo("Asia/Hong_Kong")
+QUIET_START = 20
+QUIET_END = 6
 TOPICS = (
     "food, cooking, and ordering at a restaurant",
     "clothes, shopping, sizes, and prices",
@@ -49,6 +53,15 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     STATE.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def quiet_seconds() -> float:
+    """Return remaining quiet-hours time, or zero during allowed hours."""
+    now = datetime.now(LOCAL_TZ)
+    if QUIET_END <= now.hour < QUIET_START:
+        return 0.0
+    wake = (now + timedelta(days=1)).replace(hour=QUIET_END, minute=0, second=0, microsecond=0)
+    return max(60.0, (wake - now).total_seconds())
 
 
 def build_row() -> dict:
@@ -141,6 +154,13 @@ def main() -> int:
     if not args.once and not args.loop:
         parser.error("use --once or --loop")
     while True:
+        quiet = quiet_seconds()
+        if quiet:
+            print(json.dumps({"ok": True, "status": "quiet_hours", "resume_in_seconds": int(quiet)}, ensure_ascii=False), flush=True)
+            if not args.loop:
+                return 0
+            time.sleep(quiet)
+            continue
         try:
             print(json.dumps(run_once(deliver=not args.no_send), ensure_ascii=False), flush=True)
         except Exception as exc:

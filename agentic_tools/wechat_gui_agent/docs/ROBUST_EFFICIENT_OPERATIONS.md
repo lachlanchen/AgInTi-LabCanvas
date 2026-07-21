@@ -530,6 +530,10 @@ The stable interface and recovery commands are documented in
   internal-only runs must use an explicit `--no-send` or equivalent mode. A
   failed sender records a durable deferred state instead of silently dropping
   the result or replaying a stale burst after restart.
+- Scheduled EchoMind lessons and LabAgent research/inspiration jobs observe
+  local `Asia/Hong_Kong` quiet hours from 20:00 through 06:00. The scheduler
+  sleeps until 06:00 and then resumes; explicit user requests and interactive
+  replies remain available overnight.
 - WeCom GUI reconnect is a narrow exception, not backlog replay. Do not infer
   authentication from window geometry. Recovery begins only after the normal
   poll successfully opens and title-verifies the exact allowlisted chats; a

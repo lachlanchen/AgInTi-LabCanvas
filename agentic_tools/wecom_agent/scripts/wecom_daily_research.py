@@ -44,6 +44,14 @@ OFF_WORDS = {"off", "clear", "remove", "取消", "清除", "关闭", "關閉"}
 PAUSE_WORDS = {"pause", "disable", "stop", "暂停", "暫停", "停用"}
 ON_WORDS = {"on", "enable", "start", "开启", "開啟", "启用", "啟用"}
 INSPIRATION_FINAL_STATUSES = {"done", "failed", "cancelled", "expired", "rejected"}
+QUIET_START_HOUR = 20
+QUIET_END_HOUR = 6
+
+
+def in_scheduled_quiet_hours() -> bool:
+    """Keep automatic LabAgent research/inspiration quiet overnight in HKT."""
+    hour = datetime.now(configured_timezone()).hour
+    return hour >= QUIET_START_HOUR or hour < QUIET_END_HOUR
 
 
 def main() -> int:
@@ -81,6 +89,9 @@ def main() -> int:
     interval = max(5.0, min(3600.0, float(args.poll_seconds)))
     while True:
         try:
+            if in_scheduled_quiet_hours():
+                time.sleep(min(interval, 300.0))
+                continue
             payload = run_scheduler_cycle(
                 state_db=args.state_db,
                 history_db=args.history_db,
