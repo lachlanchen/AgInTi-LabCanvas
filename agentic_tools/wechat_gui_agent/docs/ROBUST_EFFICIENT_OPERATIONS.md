@@ -404,6 +404,10 @@ The stable interface and recovery commands are documented in
   ignore AutoPublish-cache files and other chats, then return the MP4 through
   the required artifact delivery gate.
 - GUI file delivery is a first-class state, not a best-effort afterthought.
+- Image and media analysis is multilingual by default: explain the verified
+  source in Chinese, English, and Japanese. When the source contains readable
+  language material, add pinyin, kana/furigana, romaji, pronunciation, grammar,
+  and vocabulary as useful; keep OCR and parser diagnostics private.
 - WeCom GUI artifacts use a private one-file C-drive staging directory and the
   visible `More -> File -> Local File` picker. Navigate to the directory, select
   the verified sole row, stage it, then send it from the composer. Long labels
