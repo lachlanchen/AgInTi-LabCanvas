@@ -403,6 +403,12 @@ ROUTINES: dict[str, RoutineDefinition] = {
                 "success": "readable audio has a timestamped transcript/caption artifact before the video task is complete; zero-audio media is explicitly marked silent",
             },
             {
+                "id": "multilingual_language_teaching_pack",
+                "owner": "worker_agent",
+                "entrypoint": "Codex worker over the verified transcript, with LazyEdit subtitle context",
+                "success": "source-scoped Chinese/English/Japanese teaching material includes translations, pronunciation, pinyin, kana/furigana, romaji, grammar, and vocabulary",
+            },
+            {
                 "id": "wechat_artifact_delivery_gate",
                 "owner": "queue_orchestrator",
                 "entrypoint": "send_result_with_retries -> apply_send_outcome",

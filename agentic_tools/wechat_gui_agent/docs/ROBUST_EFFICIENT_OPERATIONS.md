@@ -943,6 +943,12 @@ artifact and pass the same source-scoped context to LazyEdit for correction,
 translation, and burn. A verified zero-audio source is the only reason to skip
 captions; record that as `silent_verified` rather than treating it as a failed
 transcription.
+For readable-audio teaching videos, the worker also writes a source-scoped
+teaching pack beside the transcript. It must cover the original/corrected
+lines in Chinese, English, and Japanese, with pinyin, Japanese kana/furigana
+and romaji, pronunciation guidance, grammar, and useful vocabulary. Keep the
+pack detailed enough to study from, but do not invent dialogue that is absent
+from the verified audio.
 The resumed Codex worker agent owns LazyEdit context selection and command
 invocation. Deterministic code is allowed for source isolation, duplicate
 guards, short probes, queue state, and terminal verification, but it must not
