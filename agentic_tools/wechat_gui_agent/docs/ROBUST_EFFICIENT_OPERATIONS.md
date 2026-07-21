@@ -408,6 +408,11 @@ The stable interface and recovery commands are documented in
   source in Chinese, English, and Japanese. When the source contains readable
   language material, add pinyin, kana/furigana, romaji, pronunciation, grammar,
   and vocabulary as useful; keep OCR and parser diagnostics private.
+- EchoMind compiles one previous-day language review at 08:00 HKT using
+  XeLaTeX. The PDF contains balanced Chinese, English, and Japanese teaching
+  sections, pinyin, Japanese ruby furigana, pronunciation, grammar, and
+  exercises, and is delivered through the normal verified file gate with a
+  date-based deduplication record.
 - WeCom GUI artifacts use a private one-file C-drive staging directory and the
   visible `More -> File -> Local File` picker. Navigate to the directory, select
   the verified sole row, stage it, then send it from the composer. Long labels

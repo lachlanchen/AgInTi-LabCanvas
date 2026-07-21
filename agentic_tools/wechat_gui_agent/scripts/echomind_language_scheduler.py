@@ -7,6 +7,7 @@ import argparse
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
+import subprocess
 import sys
 import time
 from zoneinfo import ZoneInfo
@@ -18,6 +19,7 @@ if str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts") not in sys.path:
 
 import wechat_direct_chatops as direct  # noqa: E402
 from wechat_agent_backend import run_agent_session  # noqa: E402
+from wechat_task_worker import send_file  # noqa: E402
 
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
 STATE = PRIVATE / "echomind-language-schedule.state.json"
@@ -62,6 +64,58 @@ def quiet_seconds() -> float:
         return 0.0
     wake = (now + timedelta(days=1)).replace(hour=QUIET_END, minute=0, second=0, microsecond=0)
     return max(60.0, (wake - now).total_seconds())
+
+
+def run_daily_pdf(config: dict, state: dict) -> dict | None:
+    """Create and deliver one previous-day EchoMind teaching PDF at 08:00 HKT."""
+    now = datetime.now(LOCAL_TZ)
+    if now.hour != 8 or state.get("last_daily_pdf_date") == (now - timedelta(days=1)).date().isoformat():
+        return None
+    yesterday = (now - timedelta(days=1)).date().isoformat()
+    context = direct.read_recent_history(config, 10**18, limit=240)
+    history = "\n".join(f"{item.get('sender_display', 'member')}: {direct.visible_message_text(item)}" for item in context)
+    prompt = f"""Create a beautiful previous-day EchoMind language tutorial for {yesterday}.
+Use the source messages and previous lessons below as evidence, but do not invent dialogue or claim content that is absent.
+Return ONLY the LaTeX body, not a preamble. Use \\ruby{{漢字}}{{かな}} for Japanese furigana where useful.
+The report must be substantial and study-ready, with sections for Chinese, English, and Japanese. For every important example include natural wording, meaning, pinyin, pronunciation, Japanese kanji plus furigana and romaji, grammar, vocabulary, common mistakes, and exercises. Compare how the same idea is expressed across the three languages. Include a short review and practice section. Do not write a shallow chat summary.
+
+Previous-day EchoMind source material:
+{history}
+"""
+    result = run_agent_session(prompt, backend="codex", chat_name="EchoMind", role="daily_language_pdf", model="gpt-5.6-sol", reasoning_effort="low", sandbox="read-only", timeout_seconds=900, reuse=True, backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})})
+    body = str(result.get("message") or "").strip()
+    if not body:
+        raise RuntimeError("daily EchoMind PDF agent returned no LaTeX body")
+    out_dir = ROOT / "output" / "wechat_gui_agent" / "echomind_daily" / yesterday
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tex = out_dir / f"echomind-language-review-{yesterday}.tex"
+    pdf = out_dir / f"echomind-language-review-{yesterday}.pdf"
+    document = r"""\documentclass[11pt]{article}
+\usepackage{fontspec}
+\usepackage{xeCJK}
+\usepackage{ruby}
+\usepackage[a4paper,margin=19mm]{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\setmainfont{Noto Serif}
+\setCJKmainfont{Noto Serif CJK SC}
+\title{EchoMind Daily Language Review}
+\date{%s}
+\begin{document}
+\maketitle
+\small
+%s
+\end{document}
+""" % (yesterday, body)
+    tex.write_text(document, encoding="utf-8")
+    engine = os.environ.get("ECHOMIND_LATEX_ENGINE", "xelatex")
+    proc = subprocess.run([engine, "-interaction=nonstopmode", "-halt-on-error", tex.name], cwd=out_dir, capture_output=True, text=True, timeout=240, check=False)
+    if proc.returncode != 0 or not pdf.is_file() or pdf.stat().st_size <= 0:
+        raise RuntimeError(f"daily EchoMind PDF compilation failed: {proc.stderr[-800:]}")
+    send_file(pdf, config["chat_name"], CONFIG, target=config.get("send_target"))
+    state["last_daily_pdf_date"] = yesterday
+    state["last_daily_pdf"] = str(pdf)
+    return {"date": yesterday, "pdf": str(pdf), "status": "sent_verified"}
 
 
 def build_row() -> dict:
@@ -143,8 +197,11 @@ Previous scheduled lesson (avoid repeating its topic):
         "topic": topic,
         "topic_index": (topic_index + 1) % len(TOPICS),
     })
+    daily_pdf = run_daily_pdf(config, state)
+    if daily_pdf:
+        state["last_daily_pdf_delivery"] = daily_pdf
     save_state(state)
-    return {"ok": True, "chat": config["chat_name"], "sent_at": now, "message": message, "delivery": delivery}
+    return {"ok": True, "chat": config["chat_name"], "sent_at": now, "message": message, "delivery": delivery, "daily_pdf": daily_pdf}
 
 
 def main() -> int:
