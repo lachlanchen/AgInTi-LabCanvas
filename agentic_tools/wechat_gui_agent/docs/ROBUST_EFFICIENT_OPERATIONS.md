@@ -937,6 +937,12 @@ cover extraction, browser-safe MP4/ZIP packaging, and local publish job
 creation. AutoPublish owns platform browser/API posting. LabCanvas owns source
 isolation, current-message permissions, queue state, terminal verification, and
 WeChat artifact delivery.
+For every video workflow, probe the exact source audio before completion. If an
+audio stream is readable, create a timestamped transcript and caption/subtitle
+artifact and pass the same source-scoped context to LazyEdit for correction,
+translation, and burn. A verified zero-audio source is the only reason to skip
+captions; record that as `silent_verified` rather than treating it as a failed
+transcription.
 The resumed Codex worker agent owns LazyEdit context selection and command
 invocation. Deterministic code is allowed for source isolation, duplicate
 guards, short probes, queue state, and terminal verification, but it must not

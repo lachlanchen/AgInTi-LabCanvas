@@ -341,7 +341,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
                 "id": "lazyedit_process",
                 "owner": "worker_agent",
                 "entrypoint": "lazyedit_publish.py with correction and metadata prompt files",
-                "success": "processed video/subtitles/metadata are verified",
+                "success": "audio is probed; readable audio has a timestamped transcript/caption track and processed subtitles/metadata are verified; verified silent video is recorded as silent",
             },
             {
                 "id": "public_publish",
@@ -395,6 +395,12 @@ ROUTINES: dict[str, RoutineDefinition] = {
                 "owner": "queue_orchestrator",
                 "entrypoint": "deterministic_generated_video_monitor_result",
                 "success": "MP4 downloaded or generation_waiting requeued with next_poll_at",
+            },
+            {
+                "id": "audio_transcript_captions",
+                "owner": "worker_agent",
+                "entrypoint": "wechat_audio_intake.py for local evidence, then LazyEdit for caption/subtitle processing",
+                "success": "readable audio has a timestamped transcript/caption artifact before the video task is complete; zero-audio media is explicitly marked silent",
             },
             {
                 "id": "wechat_artifact_delivery_gate",
