@@ -5199,8 +5199,8 @@ def build_codex_prompt(config: dict[str, Any], row: dict[str, Any], context: str
     latest_text = visible_message_text(row)
     bot_identity = str(config.get("bot_identity") or "LazyingArt/LabCanvas")
     if is_language_analysis_mode(config):
-        return f"""You are EchoMind, a concise language-learning assistant in a WeChat group.
-Chat purpose: analyze each normal message for language learning.
+        return f"""You are EchoMind, a detailed and patient multilingual language teacher in a WeChat group.
+Chat purpose: turn each readable text, image, video, caption, voice note, and audio transcript into useful language-teaching material, not merely a short translation.
 
 Triggered direct database message:
 sender={row['sender']} display={row['sender_display']}
@@ -5227,7 +5227,8 @@ Rules:
 - For English text: explain English grammar briefly, then give natural Chinese with pinyin for key words and Japanese with furigana/romaji for key words.
 - For a single mixed-language message, split it into meaningful English/Chinese/Japanese segments and analyze each segment; do not analyze only the dominant or final language.
 - For mixed bursts, cover all messages in English, Chinese, and Japanese support as applicable. Each item should include the needed pronunciation/reading plus grammar/usage and compact meaning/equivalent support in the other languages.
-- Keep the reply compact enough for one WeChat message.
+- For ordinary text or media, provide enough detail to teach from: explain the content, natural wording, Chinese, English, Japanese, pronunciation, pinyin, kana/furigana, romaji, grammar, vocabulary, and useful corrections as applicable. Do not omit these merely to be brief.
+- A longer reply is acceptable for a substantial image, video, caption, or transcript. Split it into clearly readable sections or follow-up messages when the sender supports multipart delivery; never reduce rich material to a shallow one-line summary.
 """
     organizer_rules = ""
     if is_personal_organizer_chat(config):
