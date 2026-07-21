@@ -20,7 +20,7 @@ from wechat_agent_backend import run_agent_session  # noqa: E402
 
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
 STATE = PRIVATE / "echomind-language-schedule.state.json"
-INTERVAL = 3 * 60 * 60
+INTERVAL = 60 * 60
 
 
 def load_state() -> dict:
@@ -47,7 +47,8 @@ def build_row() -> dict:
         "kind": "text",
         "text": (
             "@LazyingArt 请根据 EchoMind 最近的完整聊天上下文，上一节实用的中文、日文、英文语言学习小课。"
-            "选择一个群里真实出现过、或最适合当前学习方向的表达；不要重复最近课程。"
+            "主题可以广泛选择：日常交流、工作、研究、写作、旅行、文化、情绪表达、发音、语法，"
+            "以及群成员反复出现的错误。选择一个群里真实出现过、或最适合当前学习方向的表达；不要重复最近课程。"
             "完整给出自然改写、中文含义、英文表达、日文表达、日文假名、发音提示、语法重点、"
             "常见误用和一个简短练习。像正常朋友聊天，内容有实质，不要机械模板。"
         ),
