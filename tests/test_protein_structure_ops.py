@@ -41,6 +41,10 @@ class ProteinStructureOpsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             fasta = Path(tmp) / "target.fasta"
             fasta.write_text(">target\nACDEFG\n", encoding="utf-8")
+            script_root = Path(tmp) / "alphafold_server"
+            script_root.mkdir()
+            submit_script = script_root / "submit_jobs.py"
+            submit_script.write_text("# test fixture\n", encoding="utf-8")
             completed = subprocess.CompletedProcess([], 0, stdout="validated\n", stderr="")
             args = argparse.Namespace(
                 workspace=tmp,
@@ -49,14 +53,16 @@ class ProteinStructureOpsTests(unittest.TestCase):
                 dry_run=True,
                 log="",
             )
-            with mock.patch.object(protein, "_ensure_layout"), mock.patch.object(
+            with mock.patch.object(protein, "SCRIPT_ROOT", script_root), mock.patch.object(
+                protein, "_ensure_layout"
+            ), mock.patch.object(
                 protein.subprocess, "run", return_value=completed
             ) as runner, mock.patch("builtins.print"):
                 result = protein.cmd_submit(args)
 
         self.assertEqual(result, 0)
         command = runner.call_args.args[0]
-        self.assertEqual(Path(command[1]), protein.SCRIPT_ROOT / "submit_jobs.py")
+        self.assertEqual(Path(command[1]), submit_script)
         self.assertIn(str(fasta.resolve()), command)
         self.assertIn("--dry-run", command)
         self.assertEqual(runner.call_args.kwargs["cwd"], Path(tmp).resolve())
