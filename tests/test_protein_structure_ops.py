@@ -49,9 +49,9 @@ class ProteinStructureOpsTests(unittest.TestCase):
                 dry_run=True,
                 log="",
             )
-            with mock.patch.object(protein.subprocess, "run", return_value=completed) as runner, mock.patch(
-                "builtins.print"
-            ):
+            with mock.patch.object(protein, "_ensure_layout"), mock.patch.object(
+                protein.subprocess, "run", return_value=completed
+            ) as runner, mock.patch("builtins.print"):
                 result = protein.cmd_submit(args)
 
         self.assertEqual(result, 0)
@@ -62,6 +62,8 @@ class ProteinStructureOpsTests(unittest.TestCase):
         self.assertEqual(runner.call_args.kwargs["cwd"], Path(tmp).resolve())
 
     def test_source_gitignore_keeps_outputs_local(self) -> None:
+        if not (protein.SOURCE_ROOT / ".gitignore").is_file():
+            self.skipTest("private ProteinStructure submodule is not initialized")
         content = (protein.SOURCE_ROOT / ".gitignore").read_text(encoding="utf-8")
 
         self.assertIn("/alphafold-results/", content)
@@ -70,13 +72,20 @@ class ProteinStructureOpsTests(unittest.TestCase):
         self.assertIn("*_full_data_*.json", content)
 
     def test_runbook_points_into_submodule(self) -> None:
-        args = argparse.Namespace(workspace=str(protein.DEFAULT_WORKSPACE), json=True)
-        with mock.patch("builtins.print") as printer:
-            result = protein.cmd_runbook(args)
+        with tempfile.TemporaryDirectory() as tmp:
+            source_root = Path(tmp) / "ProteinStructure"
+            runbook = source_root / "references" / "alphafold_server_jobs" / "browser_automation_runbook.md"
+            runbook.parent.mkdir(parents=True)
+            runbook.write_text("# Runbook\n", encoding="utf-8")
+            args = argparse.Namespace(workspace=str(protein.DEFAULT_WORKSPACE), json=True)
+            with mock.patch.object(protein, "SOURCE_ROOT", source_root), mock.patch(
+                "builtins.print"
+            ) as printer:
+                result = protein.cmd_runbook(args)
 
         self.assertEqual(result, 0)
         payload = json.loads(printer.call_args.args[0])
-        self.assertIn("external/ProteinStructure", payload["runbook"])
+        self.assertEqual(payload["runbook"], str(runbook))
 
 
 if __name__ == "__main__":
