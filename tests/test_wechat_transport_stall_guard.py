@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +89,117 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertTrue(result["running"])
         self.assertEqual(set(result["windows"]), {"worker", "direct-name.with-dot-"})
 
+    def test_officially_unsupported_wecom_cli_is_optional(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            state = Path(tmp) / "state.json"
+            config.write_text('{"enabled": true}\n', encoding="utf-8")
+            state.write_text(
+                json.dumps(
+                    {
+                        "state": "message_permission_unavailable",
+                        "msg_permission": False,
+                        "last_error": "当前企业暂不支持授权机器人消息使用权限",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = guard.cli_transport_health(config, state)
+
+        self.assertTrue(result["enabled"])
+        self.assertFalse(result["required"])
+        self.assertFalse(result["official_message_permission"])
+
+    def test_direct_monitor_health_uses_loop_heartbeat_not_message_age(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            healthy_state = private / "healthy.state.json"
+            stale_state = private / "stale.state.json"
+            healthy_state.write_text('{"last_loop_at":"2026-07-22T11:59:50+00:00"}', encoding="utf-8")
+            stale_state.write_text('{"last_loop_at":"2026-07-22T11:00:00+00:00"}', encoding="utf-8")
+            (private / "healthy-direct-chatops.local.json").write_text(
+                json.dumps({"state_path": str(healthy_state), "poll_seconds": 0.8}),
+                encoding="utf-8",
+            )
+            (private / "stale-direct-chatops.local.json").write_text(
+                json.dumps({"state_path": str(stale_state), "poll_seconds": 0.8}),
+                encoding="utf-8",
+            )
+
+            result = guard.direct_monitor_health(private_dir=private, now=now)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["configured"], 2)
+        self.assertEqual(result["healthy"], 1)
+        self.assertEqual(result["stale_configs"], ["stale-direct-chatops.local.json"])
+
+    def test_quota_alert_requires_terminal_exhaustion_not_successful_fallback(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            rows = [
+                {
+                    "id": "fallback-succeeded",
+                    "status": "done",
+                    "completed_at": "2026-07-22T11:59:30+00:00",
+                    "worker_result_exhausted": False,
+                    "agent_session": {
+                        "backend_attempts": [
+                            {"backend": "codex", "failure_kind": "quota"},
+                            {"backend": "aginti", "ok": True},
+                        ]
+                    },
+                },
+                {
+                    "id": "all-fallbacks-exhausted",
+                    "status": "worker_failed",
+                    "completed_at": "2026-07-22T11:59:40+00:00",
+                    "worker_result_exhausted": True,
+                    "worker_policy_attempts": [{"result_excerpt": "out of quota"}],
+                },
+            ]
+            queue.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+            result = guard.recent_terminal_agent_failures((queue,), now=now)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["quota_failure_ids"], ["all-fallbacks-exhausted"])
+
+    def test_serious_alert_is_state_transition_deduplicated(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "code": "wechat_direct_monitor_stalled",
+                    "severity": "critical",
+                    "detail": "one stale monitor",
+                }
+            ]
+        }
+        state = {"fault_counts": {"wechat_direct_monitor_stalled": 3}}
+        with mock.patch.object(guard, "send_health_alert", return_value={"ok": True}) as sender:
+            first = guard.maybe_alert(
+                snapshot,
+                state,
+                transport="wecom-android",
+                chat="LabAgent",
+                consecutive_failures=3,
+                cooldown_seconds=0,
+            )
+            second = guard.maybe_alert(
+                snapshot,
+                state,
+                transport="wecom-android",
+                chat="LabAgent",
+                consecutive_failures=3,
+                cooldown_seconds=0,
+            )
+
+        self.assertEqual(first["status"], "sent")
+        self.assertEqual(second["status"], "deduplicated")
+        sender.assert_called_once()
+
     def test_repair_requires_repeated_fault_and_respects_cooldown(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
         state = {"fault_counts": {"android_endpoint_down": 1}}
@@ -137,11 +249,25 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertIn("ensure_runtime_windows", wechat)
         self.assertIn("window_id_by_name", wechat)
         self.assertIn("Started missing window", wechat)
+        self.assertIn("reload-monitors", wechat)
+        self.assertIn("reload_monitor_windows", wechat)
         self.assertIn("wechat_transport_stall_guard.py", wecom)
         self.assertIn("--loop --repair", wecom)
         self.assertIn("window_exists health", wecom)
         self.assertIn("kill_window_if_present", wecom)
+        self.assertIn("external_required", wecom)
+        self.assertIn("message_permission_unavailable", wecom)
         self.assertNotIn('tmux kill-window -t "$SESSION:external"', wecom)
+
+        stack = (
+            ROOT
+            / "agentic_tools"
+            / "wechat_gui_agent"
+            / "scripts"
+            / "wechat_stack_tmux.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("echomind_language_scheduler_tmux.sh", stack)
+        self.assertIn("start_echomind", stack)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import redirect_stdout
+from datetime import datetime, timezone
 import io
 import json
 import os
@@ -44,6 +45,56 @@ class WeChatOpsHealthTests(unittest.TestCase):
         self.assertEqual(payload["ready_groups"], 0)
         self.assertEqual(payload["stale_source_groups"], 1)
         self.assertIn("ready also requires", payload["notes"][-1])
+
+    def test_cli_health_uses_transport_heartbeats_for_exit_status(self) -> None:
+        original_direct = wechat_ops.direct_monitor_health
+        original_transport = wechat_ops.persistent_transport_health
+        try:
+            wechat_ops.direct_monitor_health = lambda: {  # type: ignore[assignment]
+                "ok": False,
+                "ready_groups": 0,
+                "group_count": 1,
+                "stale_source_groups": 1,
+                "queue": {"attention": {"needs_attention": False}},
+            }
+            wechat_ops.persistent_transport_health = lambda: {  # type: ignore[assignment]
+                "ok": True,
+                "severity": "ok",
+                "direct_monitors": {"healthy": 1, "configured": 1},
+            }
+            with redirect_stdout(io.StringIO()) as stdout:
+                rc = wechat_ops.cmd_health(argparse.Namespace(json=True))
+        finally:
+            wechat_ops.direct_monitor_health = original_direct  # type: ignore[assignment]
+            wechat_ops.persistent_transport_health = original_transport  # type: ignore[assignment]
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 0)
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["diagnostic_ok"])
+        self.assertTrue(payload["transport_health"]["ok"])
+
+    def test_persistent_transport_health_reuses_fresh_snapshot(self) -> None:
+        original = wechat_ops.TRANSPORT_HEALTH_SNAPSHOT
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / "latest.json"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                wechat_ops.TRANSPORT_HEALTH_SNAPSHOT = snapshot
+                payload = wechat_ops.persistent_transport_health(max_age_seconds=90)
+            finally:
+                wechat_ops.TRANSPORT_HEALTH_SNAPSHOT = original
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["source"], "persistent_guard")
 
 
 class WeChatOpsSendApiTests(unittest.TestCase):

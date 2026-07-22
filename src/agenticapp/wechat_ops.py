@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -26,6 +26,8 @@ DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 DEFAULT_DISPLAY = ":97"
 DEFAULT_VNC_PORT = 5917
 DEFAULT_NOVNC_PORT = 6107
+TRANSPORT_HEALTH_GUARD = SCRIPTS / "wechat_transport_stall_guard.py"
+TRANSPORT_HEALTH_SNAPSHOT = PACKAGE_ROOT / "output" / "transport-health" / "latest.json"
 CODEX_SESSION_KEY_RE = re.compile(r"^v2:[0-9a-z_.-]+-[0-9a-f]{12}:[0-9a-z_.-]+$")
 QUEUE_ACTIVE_STATUSES = {
     "pending",
@@ -701,7 +703,19 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_health(args: argparse.Namespace) -> int:
     payload = direct_monitor_health()
-    summary = f"wechat health: {payload['ready_groups']}/{payload['group_count']} ready"
+    transport = persistent_transport_health()
+    payload["transport_health"] = transport
+    if transport:
+        payload["diagnostic_ok"] = payload.get("ok")
+        payload["ok"] = bool(transport.get("ok"))
+        monitor_status = transport.get("direct_monitors") or {}
+        summary = (
+            "wechat health: "
+            f"{monitor_status.get('healthy', 0)}/{monitor_status.get('configured', 0)} "
+            "monitor heartbeats healthy"
+        )
+    else:
+        summary = f"wechat health: {payload['ready_groups']}/{payload['group_count']} ready"
     if payload.get("stale_source_groups"):
         summary += f", {payload['stale_source_groups']} stale source"
     queue_attention = (payload.get("queue") or {}).get("attention") if isinstance(payload.get("queue"), dict) else None
@@ -715,6 +729,52 @@ def cmd_health(args: argparse.Namespace) -> int:
         summary += " (attention needed)"
     print_payload(payload, args.json, summary)
     return 0 if payload["ok"] else 1
+
+
+def persistent_transport_health(*, max_age_seconds: float = 90.0) -> dict[str, Any]:
+    """Read the persistent guard snapshot, probing directly when it is stale."""
+
+    cached = load_json_file(TRANSPORT_HEALTH_SNAPSHOT)
+    checked_at = parse_health_timestamp(cached.get("checked_at"))
+    age = (
+        max(0.0, (datetime.now(timezone.utc) - checked_at).total_seconds())
+        if checked_at is not None
+        else None
+    )
+    if cached and age is not None and age <= max_age_seconds:
+        return {**cached, "source": "persistent_guard", "snapshot_age_seconds": int(age)}
+    if not TRANSPORT_HEALTH_GUARD.is_file():
+        return {}
+    with tempfile.TemporaryDirectory(prefix="labcanvas-health-") as tmp:
+        proc = run_command(
+            [
+                sys.executable,
+                str(TRANSPORT_HEALTH_GUARD),
+                "--json",
+                "--state-path",
+                str(Path(tmp) / "state.json"),
+                "--snapshot-path",
+                str(Path(tmp) / "snapshot.json"),
+            ],
+            capture=True,
+        )
+    payload = parse_json_object(proc.stdout) or {}
+    if payload:
+        payload["source"] = "direct_probe"
+    return payload
+
+
+def parse_health_timestamp(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    return parsed.astimezone(timezone.utc)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:

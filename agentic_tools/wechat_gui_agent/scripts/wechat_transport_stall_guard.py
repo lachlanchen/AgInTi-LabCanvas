@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import sys
 import time
 from typing import Any
 from urllib import error, request
@@ -36,6 +37,39 @@ WECOM_SUPERVISOR = ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_t
 ANDROID_CONFIG = WECOM_PRIVATE / "wecom_android_bridge.local.json"
 GUI_CONFIG = WECOM_PRIVATE / "wecom_gui_bridge.local.json"
 CLI_CONFIG = WECOM_PRIVATE / "wecom_cli_bridge.local.json"
+CLI_TRANSPORT_STATE = WECOM_PRIVATE / "wecom_cli_transport.local.json"
+ECHOMIND_SCHEDULE_STATE = WECHAT_PRIVATE / "echomind-language-schedule.state.json"
+ECHOMIND_SCHEDULE_HELPER = (
+    ROOT
+    / "agentic_tools"
+    / "wechat_gui_agent"
+    / "scripts"
+    / "echomind_language_scheduler_tmux.sh"
+)
+WECHAT_STACK = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_stack_tmux.sh"
+ECHOMIND_SCHEDULE_SESSION = "labcanvas-echomind-language"
+CAREER_SCHEDULE_SESSION = "labcanvas-career-daily"
+ECHOMIND_INTERVAL_SECONDS = 3 * 60 * 60
+TERMINAL_FAILURE_STATUSES = {"failed", "worker_failed"}
+QUOTA_FAILURE_MARKERS = (
+    "billing hard limit",
+    "credits exhausted",
+    "insufficient_quota",
+    "model quota",
+    "out of quota",
+    "quota exceeded",
+    "rate limit",
+    "rate_limit",
+    "resource_exhausted",
+    "too many requests",
+    "usage limit",
+)
+ALERTABLE_DEGRADED_CODES = {
+    "schedule_career_missing",
+    "schedule_echomind_cadence",
+    "schedule_echomind_missing",
+    "wechat_direct_monitor_stalled",
+}
 
 ACTIVE_STATUSES = {
     "claimed",
@@ -68,6 +102,14 @@ def run_command(command: list[str], *, timeout: float = 20.0) -> subprocess.Comp
             capture_output=True,
             check=False,
             timeout=timeout,
+            env={
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(
+                    item
+                    for item in (str(ROOT / "src"), os.environ.get("PYTHONPATH", ""))
+                    if item
+                ),
+            },
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return subprocess.CompletedProcess(command, 124, "", f"{type(exc).__name__}: {exc}")
@@ -194,9 +236,41 @@ def config_enabled(path: Path, *, default: bool = False) -> bool:
     return bool(payload.get("enabled", True)) if isinstance(payload, dict) else False
 
 
+def read_json(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def cli_transport_health(
+    config_path: Path = CLI_CONFIG,
+    state_path: Path = CLI_TRANSPORT_STATE,
+) -> dict[str, Any]:
+    """Distinguish an unavailable optional CLI route from a failed required route."""
+
+    enabled = config_enabled(config_path)
+    state = read_json(state_path)
+    state_name = str(state.get("state") or "")
+    permission_unavailable = (
+        state_name == "message_permission_unavailable"
+        or state.get("msg_permission") is False
+        and "暂不支持" in str(state.get("last_error") or "")
+    )
+    return {
+        "enabled": enabled,
+        "required": bool(enabled and not permission_unavailable),
+        "state": state_name or ("configured" if enabled else "disabled"),
+        "official_message_permission": not permission_unavailable,
+    }
+
+
 def expected_wechat_windows(snapshot: dict[str, Any]) -> tuple[list[str], list[str]]:
     windows = snapshot.get("windows", {})
     required = ["desktop", "media-sync"]
+    if os.environ.get("WECHAT_CHAT_SYNC_WATCHDOG", "1") != "0":
+        required.append("chat-sync")
     missing = [name for name in required if not window_live(snapshot, name)]
     if not any(name == "worker" or name.startswith("worker-") for name in windows):
         missing.append("worker*")
@@ -211,7 +285,7 @@ def expected_wecom_windows(snapshot: dict[str, Any]) -> tuple[list[str], list[st
         required.append("android-relay")
     if config_enabled(GUI_CONFIG):
         required.extend(["wecom-client", "external-gui"])
-    if config_enabled(CLI_CONFIG):
+    if cli_transport_health()["required"]:
         required.append("external")
     missing = [name for name in required if not window_live(snapshot, name)]
     return required, missing
@@ -252,6 +326,166 @@ def parse_timestamp(value: object) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
     return parsed.astimezone(timezone.utc)
+
+
+def resolve_private_path(value: object, *, fallback: Path) -> Path:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    path = Path(text).expanduser()
+    return path if path.is_absolute() else ROOT / path
+
+
+def direct_monitor_health(
+    *,
+    private_dir: Path = WECHAT_PRIVATE,
+    now: datetime | None = None,
+    minimum_stale_seconds: float = 30.0,
+    poll_multiplier: float = 30.0,
+) -> dict[str, Any]:
+    """Check process heartbeats without treating an inactive chat as stale."""
+
+    current = now or utc_now()
+    configs = sorted(private_dir.glob("*direct-chatops.local.json"))
+    monitors: list[dict[str, Any]] = []
+    for config_path in configs:
+        config = read_json(config_path)
+        if config.get("enabled") is False:
+            continue
+        try:
+            poll_seconds = max(0.1, float(config.get("poll_seconds") or 0.8))
+        except (TypeError, ValueError):
+            poll_seconds = 0.8
+        threshold = max(minimum_stale_seconds, poll_seconds * poll_multiplier)
+        state_path = resolve_private_path(
+            config.get("state_path"),
+            fallback=config_path.with_name(config_path.name.replace(".local.json", ".state.json")),
+        )
+        state = read_json(state_path)
+        heartbeat = parse_timestamp(state.get("last_loop_at"))
+        age = max(0.0, (current - heartbeat).total_seconds()) if heartbeat else None
+        healthy = heartbeat is not None and age is not None and age <= threshold
+        monitors.append(
+            {
+                "config": config_path.name,
+                "ok": healthy,
+                "heartbeat_age_seconds": int(age) if age is not None else None,
+                "stale_after_seconds": int(threshold),
+            }
+        )
+    stale = [item["config"] for item in monitors if not item["ok"]]
+    return {
+        "ok": bool(monitors) and not stale,
+        "configured": len(monitors),
+        "healthy": sum(1 for item in monitors if item["ok"]),
+        "stale_configs": stale,
+        "monitors": monitors,
+    }
+
+
+def tmux_session_live(name: str) -> bool:
+    return run_command(["tmux", "has-session", "-t", name], timeout=3).returncode == 0
+
+
+def schedule_health() -> dict[str, Any]:
+    echo_state = read_json(ECHOMIND_SCHEDULE_STATE)
+    try:
+        interval = int(echo_state.get("interval_seconds") or 0)
+    except (TypeError, ValueError):
+        interval = 0
+    echomind_running = tmux_session_live(
+        os.environ.get("ECHOMIND_LANGUAGE_TMUX_SESSION", ECHOMIND_SCHEDULE_SESSION)
+    )
+    career_running = tmux_session_live(
+        os.environ.get("WECHAT_CAREER_SESSION", CAREER_SCHEDULE_SESSION)
+    )
+    return {
+        "ok": echomind_running and career_running and interval == ECHOMIND_INTERVAL_SECONDS,
+        "echomind": {
+            "running": echomind_running,
+            "interval_seconds": interval,
+            "expected_interval_seconds": ECHOMIND_INTERVAL_SECONDS,
+        },
+        "career_daily": {"running": career_running},
+    }
+
+
+def task_failure_text(task: dict[str, Any]) -> str:
+    fragments: list[str] = []
+    worker_error = task.get("worker_error")
+    if isinstance(worker_error, dict):
+        fragments.extend(str(worker_error.get(key) or "") for key in ("type", "message"))
+    else:
+        fragments.append(str(worker_error or ""))
+    for key in ("worker_policy_attempts",):
+        attempts = task.get(key)
+        if isinstance(attempts, list):
+            for attempt in attempts:
+                if isinstance(attempt, dict):
+                    fragments.extend(
+                        str(attempt.get(field) or "")
+                        for field in ("result_excerpt", "error", "failure_kind")
+                    )
+    session = task.get("agent_session")
+    if isinstance(session, dict):
+        attempts = session.get("backend_attempts")
+        if isinstance(attempts, list):
+            for attempt in attempts:
+                if isinstance(attempt, dict):
+                    fragments.extend(str(value or "") for value in attempt.values())
+    return " ".join(fragments).lower()
+
+
+def recent_terminal_agent_failures(
+    paths: tuple[Path, ...] = (WECHAT_QUEUE, WECOM_QUEUE),
+    *,
+    now: datetime | None = None,
+    window_seconds: float = 3600.0,
+) -> dict[str, Any]:
+    """Report recent terminal quota failures only after all configured fallbacks failed."""
+
+    current = now or utc_now()
+    quota_failure_ids: list[str] = []
+    terminal_failures = 0
+    for path in paths:
+        if not path.exists():
+            continue
+        latest: dict[str, dict[str, Any]] = {}
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                task = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(task, dict):
+                continue
+            task_id = str(task.get("id") or task.get("task_id") or "")
+            if task_id:
+                latest[task_id] = task
+        for task_id, task in latest.items():
+            if str(task.get("status") or "") not in TERMINAL_FAILURE_STATUSES:
+                continue
+            completed = parse_timestamp(
+                task.get("completed_at") or task.get("updated_at") or task.get("created_at")
+            )
+            if completed is None or (current - completed).total_seconds() > window_seconds:
+                continue
+            terminal_failures += 1
+            if task.get("worker_result_exhausted") is not True:
+                continue
+            text = task_failure_text(task)
+            if any(marker in text for marker in QUOTA_FAILURE_MARKERS):
+                quota_failure_ids.append(task_id)
+    return {
+        "ok": not quota_failure_ids,
+        "window_seconds": int(window_seconds),
+        "terminal_failures": terminal_failures,
+        "quota_failure_count": len(quota_failure_ids),
+        "quota_failure_ids": quota_failure_ids[:20],
+    }
 
 
 def queue_health(
@@ -340,6 +574,10 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         else {"ok": True, "enabled": False}
     )
     sender = sender_lock_health(max_holder_seconds=max_sender_seconds)
+    direct_monitors = direct_monitor_health()
+    schedules = schedule_health()
+    cli_transport = cli_transport_health()
+    agent_failures = recent_terminal_agent_failures()
     queues = {
         "wechat": queue_health(WECHAT_QUEUE),
         "wecom": queue_health(WECOM_QUEUE),
@@ -353,6 +591,12 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         issue("wechat_session_missing", "critical", "WeChat tmux session is absent")
     elif wechat_missing:
         issue("wechat_windows_missing", "degraded", ",".join(wechat_missing))
+    if not direct_monitors.get("ok"):
+        issue(
+            "wechat_direct_monitor_stalled",
+            "critical",
+            f"{len(direct_monitors.get('stale_configs') or [])} direct monitor heartbeat(s) stale",
+        )
     if not wecom["running"]:
         issue("wecom_session_missing", "critical", "WeCom tmux session is absent")
     elif wecom_missing:
@@ -361,6 +605,22 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         issue("android_endpoint_down", "degraded", "Android relay health endpoint is unavailable")
     if not sender.get("ok"):
         issue("sender_lock_stuck", "degraded", str(sender.get("state") or "unknown"))
+    if not schedules["echomind"]["running"]:
+        issue("schedule_echomind_missing", "degraded", "EchoMind language scheduler is absent")
+    elif schedules["echomind"]["interval_seconds"] != ECHOMIND_INTERVAL_SECONDS:
+        issue(
+            "schedule_echomind_cadence",
+            "degraded",
+            f"expected {ECHOMIND_INTERVAL_SECONDS}s cadence",
+        )
+    if not schedules["career_daily"]["running"]:
+        issue("schedule_career_missing", "degraded", "career daily scheduler is absent")
+    if not agent_failures.get("ok"):
+        issue(
+            "agent_quota_exhausted",
+            "critical",
+            f"{agent_failures['quota_failure_count']} recent task(s) exhausted all backend fallbacks",
+        )
     for name, status in queues.items():
         if status.get("stale_ids"):
             issue(f"{name}_queue_stale", "critical", f"{len(status['stale_ids'])} stale active task(s)")
@@ -389,6 +649,10 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
             },
         },
         "android": android,
+        "cli_transport": cli_transport,
+        "direct_monitors": direct_monitors,
+        "schedules": schedules,
+        "agent_failures": agent_failures,
         "sender_lock": sender,
         "queues": queues,
         "processes": process_counts(wechat, wecom),
@@ -467,6 +731,17 @@ def perform_repairs(
         for code in wechat_faults
     ):
         repairs.append(run_repair("wechat_missing_runtime", [str(WECHAT_SUPERVISOR), "ensure"]))
+    if (
+        "wechat_direct_monitor_stalled" in issue_codes
+        and repair_due(
+            "wechat_direct_monitor_stalled",
+            state,
+            consecutive_failures=consecutive_failures,
+            cooldown_seconds=cooldown_seconds,
+            now=now,
+        )
+    ):
+        repairs.append(run_repair("wechat_stalled_monitors", [str(WECHAT_SUPERVISOR), "reload-monitors"]))
     repaired_wecom = False
     if any(
         code in issue_codes
@@ -514,6 +789,29 @@ def perform_repairs(
                 "terminated": result.get("terminated_orphans", []),
             }
         )
+    if any(
+        code in issue_codes
+        and repair_due(
+            code,
+            state,
+            consecutive_failures=consecutive_failures,
+            cooldown_seconds=cooldown_seconds,
+            now=now,
+        )
+        for code in {"schedule_echomind_missing", "schedule_echomind_cadence"}
+    ):
+        repairs.append(run_repair("echomind_schedule", [str(ECHOMIND_SCHEDULE_HELPER), "restart"]))
+    if (
+        "schedule_career_missing" in issue_codes
+        and repair_due(
+            "schedule_career_missing",
+            state,
+            consecutive_failures=consecutive_failures,
+            cooldown_seconds=cooldown_seconds,
+            now=now,
+        )
+    ):
+        repairs.append(run_repair("career_schedule", [str(WECHAT_STACK), "start"]))
     return repairs
 
 
@@ -534,6 +832,9 @@ def snapshot_signature(snapshot: dict[str, Any]) -> str:
         "issues": snapshot.get("issues"),
         "tmux": snapshot.get("tmux"),
         "android": snapshot.get("android"),
+        "direct_monitors": snapshot.get("direct_monitors"),
+        "schedules": snapshot.get("schedules"),
+        "agent_failures": snapshot.get("agent_failures"),
         "sender_lock": {
             "state": (snapshot.get("sender_lock") or {}).get("state"),
             "unknown_holder": (snapshot.get("sender_lock") or {}).get("unknown_holder"),
@@ -542,6 +843,131 @@ def snapshot_signature(snapshot: dict[str, Any]) -> str:
     }
     raw = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def alertable_issue_codes(
+    snapshot: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    consecutive_failures: int,
+) -> list[str]:
+    counts = state.get("fault_counts") if isinstance(state.get("fault_counts"), dict) else {}
+    codes: list[str] = []
+    for issue in snapshot.get("issues", []):
+        code = str(issue.get("code") or "")
+        serious = issue.get("severity") == "critical" or code in ALERTABLE_DEGRADED_CODES
+        if serious and int(counts.get(code, 0)) >= consecutive_failures:
+            codes.append(code)
+    return sorted(set(codes))
+
+
+def health_alert_message(codes: list[str], *, recovered: bool = False) -> str:
+    if recovered:
+        return "LabCanvas 健康恢复：WeChat/WeCom 传输、任务队列和定时任务已恢复正常。"
+    descriptions = {
+        "agent_quota_exhausted": "代理额度耗尽，且备用后端也未能完成任务",
+        "android_endpoint_down": "WeCom Android 中继不可用",
+        "schedule_career_missing": "每日分析定时任务未运行",
+        "schedule_echomind_cadence": "EchoMind 教学周期不是 3 小时",
+        "schedule_echomind_missing": "EchoMind 教学定时任务未运行",
+        "wechat_direct_monitor_stalled": "WeChat 群消息监视器心跳停止",
+        "wechat_queue_stale": "WeChat 有长期停滞任务",
+        "wechat_session_missing": "WeChat 自动化会话未运行",
+        "wecom_queue_stale": "WeCom 有长期停滞任务",
+        "wecom_session_missing": "WeCom 自动化会话未运行",
+    }
+    details = "；".join(descriptions.get(code, code) for code in codes)
+    return f"LabCanvas 严重健康告警：{details}。系统已尝试自动修复；请查看本机 transport-health 状态。"
+
+
+def send_health_alert(
+    *,
+    transport: str,
+    chat: str,
+    message: str,
+    task_id: str,
+) -> dict[str, Any]:
+    if transport != "wecom-android":
+        return {"ok": False, "error": f"unsupported alert transport: {transport}"}
+    proc = run_command(
+        [
+            sys.executable,
+            "-m",
+            "agenticapp",
+            "wecom",
+            "android",
+            "send",
+            "--chat",
+            chat,
+            "--message",
+            message,
+            "--task-id",
+            task_id,
+            "--live",
+            "--json",
+        ],
+        timeout=180,
+    )
+    payload = read_json_text(proc.stdout)
+    return {
+        "ok": proc.returncode == 0 and bool(payload.get("ok")),
+        "returncode": proc.returncode,
+        "error": str(payload.get("error") or proc.stderr or "")[:300],
+    }
+
+
+def read_json_text(value: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def maybe_alert(
+    snapshot: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    transport: str,
+    chat: str,
+    consecutive_failures: int,
+    cooldown_seconds: float,
+) -> dict[str, Any] | None:
+    if not transport or not chat:
+        return None
+    now = utc_now()
+    codes = alertable_issue_codes(
+        snapshot,
+        state,
+        consecutive_failures=consecutive_failures,
+    )
+    signature = hashlib.sha256("\n".join(codes).encode("utf-8")).hexdigest() if codes else ""
+    active_signature = str(state.get("active_alert_signature") or "")
+    if signature and signature == active_signature:
+        return {"status": "deduplicated", "codes": codes}
+    recovered = bool(active_signature and not signature)
+    if not signature and not recovered:
+        return None
+    last_attempt = parse_timestamp(state.get("last_alert_attempt_at"))
+    if last_attempt and (now - last_attempt).total_seconds() < cooldown_seconds:
+        return {"status": "cooldown", "codes": codes, "recovered": recovered}
+    sequence = int(state.get("alert_sequence") or 0) + 1
+    event_signature = signature or f"recovered:{active_signature}"
+    task_id = f"labcanvas-health-{sequence}-{hashlib.sha256(event_signature.encode()).hexdigest()[:12]}"
+    state["last_alert_attempt_at"] = now.isoformat(timespec="seconds")
+    result = send_health_alert(
+        transport=transport,
+        chat=chat,
+        message=health_alert_message(codes, recovered=recovered),
+        task_id=task_id,
+    )
+    state["alert_sequence"] = sequence
+    state["last_alert_result"] = result
+    if result.get("ok"):
+        state["active_alert_signature"] = signature
+        state["last_alert_at"] = now.isoformat(timespec="seconds")
+        state["last_alert_codes"] = codes
+    return {"status": "sent" if result.get("ok") else "failed", "codes": codes, "recovered": recovered, **result}
 
 
 def one_cycle(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
@@ -573,6 +999,23 @@ def one_cycle(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 repaired_at[code] = snapshot["checked_at"]
             if code == "sender_lock_stuck" and any(item["label"] == "orphaned_sender" for item in repairs):
                 repaired_at[code] = snapshot["checked_at"]
+            if code == "wechat_direct_monitor_stalled" and any(item["label"] == "wechat_stalled_monitors" for item in repairs):
+                repaired_at[code] = snapshot["checked_at"]
+            if code.startswith("schedule_echomind_") and any(item["label"] == "echomind_schedule" for item in repairs):
+                repaired_at[code] = snapshot["checked_at"]
+            if code == "schedule_career_missing" and any(item["label"] == "career_schedule" for item in repairs):
+                repaired_at[code] = snapshot["checked_at"]
+    repair_succeeded = any(item.get("ok") for item in repairs)
+    alert = None if repair_succeeded else maybe_alert(
+        snapshot,
+        state,
+        transport=args.alert_transport,
+        chat=args.alert_chat,
+        consecutive_failures=args.alert_after_failures,
+        cooldown_seconds=args.alert_cooldown_seconds,
+    )
+    if alert:
+        snapshot["alert"] = alert
     signature = snapshot_signature(snapshot)
     changed = signature != state.get("last_signature")
     state["last_signature"] = signature
@@ -606,6 +1049,16 @@ def main() -> int:
     parser.add_argument("--repair-after-failures", type=int, default=2)
     parser.add_argument("--repair-cooldown-seconds", type=float, default=300.0)
     parser.add_argument(
+        "--alert-transport",
+        default=os.environ.get("LABCANVAS_HEALTH_ALERT_TRANSPORT", ""),
+    )
+    parser.add_argument(
+        "--alert-chat",
+        default=os.environ.get("LABCANVAS_HEALTH_ALERT_CHAT", ""),
+    )
+    parser.add_argument("--alert-after-failures", type=int, default=3)
+    parser.add_argument("--alert-cooldown-seconds", type=float, default=1800.0)
+    parser.add_argument(
         "--state-path",
         type=Path,
         default=ROOT / "output" / "transport-health" / "state.json",
@@ -617,6 +1070,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     args.repair_after_failures = max(1, args.repair_after_failures)
+    args.alert_after_failures = max(1, args.alert_after_failures)
     final: dict[str, Any] = {}
     while True:
         final, changed = one_cycle(args)

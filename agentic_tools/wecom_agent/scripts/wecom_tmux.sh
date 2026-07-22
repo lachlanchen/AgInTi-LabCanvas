@@ -22,6 +22,7 @@ DAILY_LOG="$LOG_DIR/daily.log"
 KNOWLEDGE_LOG="$LOG_DIR/knowledge.log"
 KNOWLEDGE_INDEXER="$TOOL_ROOT/scripts/wecom_member_knowledge.py"
 CLI_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_cli_bridge.local.json"
+CLI_TRANSPORT_STATE="$TOOL_ROOT/.private/wecom_cli_transport.local.json"
 CLI_BRIDGE_LOG="$LOG_DIR/external-cli.log"
 CLI_TRANSPORT_GUARD="$TOOL_ROOT/scripts/wecom_cli_transport_guard.py"
 GUI_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_gui_bridge.local.json"
@@ -135,7 +136,7 @@ ensure_core_windows() {
   remove_dead_window health
   if ! window_exists health; then
     tmux new-window -t "$SESSION" -n health \
-      "cd '$ROOT' && exec python3 -u '$HEALTH_GUARD' --loop --repair --json-lines --changes-only --state-path '$HEALTH_STATE' --snapshot-path '$HEALTH_SNAPSHOT' >> '$HEALTH_LOG' 2>&1"
+      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 -u '$HEALTH_GUARD' --loop --repair --json-lines --changes-only --state-path '$HEALTH_STATE' --snapshot-path '$HEALTH_SNAPSHOT' >> '$HEALTH_LOG' 2>&1"
   fi
 }
 
@@ -211,6 +212,26 @@ external_enabled() {
     && python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("enabled", True) else 1)' "$CLI_BRIDGE_CONFIG"
 }
 
+external_required() {
+  external_enabled || return 1
+  [[ -f "$CLI_TRANSPORT_STATE" ]] || return 0
+  python3 - "$CLI_TRANSPORT_STATE" <<'PY'
+import json
+import sys
+
+try:
+    state = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(0)
+unsupported = (
+    state.get("state") == "message_permission_unavailable"
+    or state.get("msg_permission") is False
+    and "暂不支持" in str(state.get("last_error") or "")
+)
+raise SystemExit(1 if unsupported else 0)
+PY
+}
+
 start_external_window() {
   if ! external_enabled; then
     echo "External WeCom transport is not configured or is disabled."
@@ -234,7 +255,7 @@ start_stack() {
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     require_runtime
     ensure_core_windows
-    if external_enabled && ! window_exists external; then
+    if external_required && ! window_exists external; then
       start_external_window
     fi
     if gui_enabled; then
@@ -249,7 +270,11 @@ start_stack() {
   tmux new-session -d -s "$SESSION" -n gateway \
     "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec node '$TOOL_ROOT/src/bridge.mjs' >> '$GATEWAY_LOG' 2>&1"
   ensure_core_windows
-  start_external_window
+  if external_required; then
+    start_external_window
+  else
+    echo "Skipping optional WeCom CLI transport: tenant message permission is unavailable."
+  fi
   start_gui_window
   start_android_window
   echo "Started $SESSION"

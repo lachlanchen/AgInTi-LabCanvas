@@ -1150,7 +1150,33 @@ labcanvas wechat health --json
 labcanvas wechat control-map --json
 labcanvas wechat queue --json
 tmux list-windows -t labcanvas-wechat
+PYTHONPATH=src python agentic_tools/wechat_gui_agent/scripts/wechat_transport_stall_guard.py --json
 ```
+
+The persistent guard runs in `labcanvas-wecom:health`. It checks the WeChat and
+WeCom tmux runtimes, all configured direct-monitor `last_loop_at` heartbeats,
+`chat-sync`, sender-lock ownership, active queue clocks, the Android relay,
+the three-hour EchoMind scheduler, and the daily career scheduler. A configured
+official WeCom CLI route is optional when its private state says
+`message_permission_unavailable`; the healthy GUI/Android routes must not be
+reported as degraded merely because the tenant does not grant that permission.
+
+Repairs require repeated observations and preserve the logged-in clients. A
+stalled direct monitor reloads only monitor/chat-sync windows; a missing runtime
+uses the idempotent supervisor `ensure` path. EchoMind is managed by
+`echomind_language_scheduler_tmux.sh`, which reuses its ignored state and waits
+the remainder of the three-hour interval after restart instead of sending a
+duplicate lesson. `wechat_stack_tmux.sh start` restores both EchoMind and the
+daily career scheduler after reboot.
+
+Set `LABCANVAS_HEALTH_ALERT_TRANSPORT=wecom-android` and
+`LABCANVAS_HEALTH_ALERT_CHAT=<allowlisted-group>` only in the ignored WeCom env.
+Serious alerts are sent after three consecutive failed checks, keyed by the
+fault-set transition, and are cooldown/delivery-ledger deduplicated. A transient
+Codex quota error that succeeds through GPT-5.6 SOL or AgInTi fallback is not an
+alert; only a recent terminal task where every configured backend is exhausted
+is. Alert text contains health codes only, never chat text, raw IDs, secrets, or
+private paths.
 
 Expected signs:
 
@@ -1188,6 +1214,8 @@ Expected signs:
   `attention.recommended_commands`;
 - no unexpected `pending`, stale `in_progress`, stale `send_retrying`, or
   wrong-chat send errors.
+- `direct_monitors.healthy` equals `direct_monitors.configured`, schedules report
+  EchoMind at `10800` seconds, and `agent_failures.quota_failure_count` is zero.
 
 ### Black noVNC Canvas
 

@@ -90,7 +90,7 @@ fi
 usage() {
   cat <<'EOF'
 Usage:
-  wechat_supervisor_tmux.sh start|ensure|stop|restart|reload-workers|restart-all|status
+  wechat_supervisor_tmux.sh start|ensure|stop|restart|reload-workers|reload-monitors|restart-all|status
 
 Notes:
   restart/reload-workers keeps the WeChat GUI desktop alive and only reloads
@@ -325,6 +325,24 @@ reload_worker_windows() {
   echo "Logs: $LOG_DIR"
 }
 
+reload_monitor_windows() {
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    exec "$0" start
+  fi
+  IFS=',' read -r -a DIRECT_CONFIGS <<< "$CONFIGS"
+  for direct_config in "${DIRECT_CONFIGS[@]}"; do
+    direct_config="$(echo "$direct_config" | xargs)"
+    [[ -n "$direct_config" ]] || continue
+    direct_name="$(basename "$direct_config" .json | tr -c 'A-Za-z0-9_.-' '-')"
+    respawn_or_new_window "direct-$direct_name" \
+      "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt --poll-seconds '$DIRECT_POLL_SECONDS' --catchup-poll-seconds '$DIRECT_CATCHUP_POLL_SECONDS' >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
+  done
+  if [[ "$CHAT_SYNC_WATCHDOG" != "0" ]]; then
+    respawn_or_new_window "chat-sync" "$(chat_sync_command)"
+  fi
+  echo "Reloaded direct monitors and chat sync without touching workers or WeChat desktop."
+}
+
 action="${1:-start}"
 case "$action" in
   start)
@@ -380,6 +398,9 @@ case "$action" in
     ;;
   reload-workers|restart)
     reload_worker_windows
+    ;;
+  reload-monitors)
+    reload_monitor_windows
     ;;
   restart-all)
     "$0" stop || true
