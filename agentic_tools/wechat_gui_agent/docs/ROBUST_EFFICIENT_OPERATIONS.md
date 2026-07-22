@@ -635,6 +635,10 @@ The stable interface and recovery commands are documented in
   local `Asia/Hong_Kong` quiet hours from 20:00 through 08:00. The scheduler
   sleeps until 08:00 and then resumes; explicit user requests and interactive
   replies remain available overnight.
+- EchoMind's periodic multilingual teaching cadence is three hours
+  (`10800` seconds), not one hour. The scheduler records the last successful
+  delivery and waits out the remaining interval after a restart, preventing a
+  reboot or tmux recovery from sending an extra lesson.
 - LabAgent inspiration is opportunistic. If that exact chat has a pending or
   running question, report, confirmation, or artifact send, defer inspiration
   without enqueueing a backlog item or emitting a status message. The next

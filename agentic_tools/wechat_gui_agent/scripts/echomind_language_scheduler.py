@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -23,7 +24,7 @@ from wechat_task_worker import send_file  # noqa: E402
 
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
 STATE = PRIVATE / "echomind-language-schedule.state.json"
-INTERVAL = 60 * 60
+INTERVAL = 3 * 60 * 60
 LOCAL_TZ = ZoneInfo("Asia/Hong_Kong")
 QUIET_START = 20
 QUIET_END = 8
@@ -55,6 +56,24 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     STATE.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def seconds_until_due(state: dict, interval_seconds: int, *, now: datetime | None = None) -> float:
+    """Return the remaining interval without duplicating a lesson after restart."""
+    raw = str(state.get("last_run_at") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        last_run = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if last_run.tzinfo is None:
+        last_run = last_run.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    due_at = last_run.astimezone(timezone.utc) + timedelta(seconds=interval_seconds)
+    return max(0.0, (due_at - current.astimezone(timezone.utc)).total_seconds())
 
 
 def quiet_seconds() -> float:
@@ -141,7 +160,7 @@ def build_row() -> dict:
     }
 
 
-def run_once(*, deliver: bool = True) -> dict:
+def run_once(*, deliver: bool = True, interval_seconds: int = INTERVAL) -> dict:
     config = direct.load_config(CONFIG)
     context = direct.read_recent_history(config, 10**18, limit=int(config.get("history_limit", 24)))
     history = "\n".join(f"{item.get('sender_display', 'member')}: {direct.visible_message_text(item)}" for item in context[-24:])
@@ -191,7 +210,7 @@ Previous scheduled lesson (avoid repeating its topic):
     state.update({
         "last_run_at": now,
         "last_message": message,
-        "interval_seconds": INTERVAL,
+        "interval_seconds": interval_seconds,
         "last_agent": result.get("backend", "codex"),
         "last_delivery": delivery,
         "topic": topic,
@@ -207,13 +226,21 @@ Previous scheduled lesson (avoid repeating its topic):
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="Run immediately once.")
-    parser.add_argument("--loop", action="store_true", help="Run immediately, then every hour.")
+    parser.add_argument("--loop", action="store_true", help="Resume the durable schedule, then run every three hours.")
     parser.add_argument("--no-send", action="store_true", help="Keep the lesson internal instead of sending it to EchoMind.")
-    parser.add_argument("--interval-seconds", type=int, default=INTERVAL)
+    parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=int(os.environ.get("ECHOMIND_LANGUAGE_INTERVAL_SECONDS", str(INTERVAL))),
+    )
     args = parser.parse_args()
     interval = max(300, args.interval_seconds)
     if not args.once and not args.loop:
         parser.error("use --once or --loop")
+    state = load_state()
+    if state.get("interval_seconds") != interval:
+        state["interval_seconds"] = interval
+        save_state(state)
     while True:
         quiet = quiet_seconds()
         if quiet:
@@ -222,15 +249,38 @@ def main() -> int:
                 return 0
             time.sleep(quiet)
             continue
+        if args.loop:
+            remaining = seconds_until_due(load_state(), interval)
+            if remaining:
+                print(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "status": "waiting_for_three_hour_interval",
+                            "interval_seconds": interval,
+                            "resume_in_seconds": int(remaining),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                time.sleep(remaining)
+                continue
         try:
-            print(json.dumps(run_once(deliver=not args.no_send), ensure_ascii=False), flush=True)
+            print(
+                json.dumps(
+                    run_once(deliver=not args.no_send, interval_seconds=interval),
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
         except Exception as exc:
             print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False), flush=True)
             if not args.loop:
                 return 1
+            time.sleep(min(interval, 300))
         if not args.loop:
             return 0
-        time.sleep(interval)
 
 
 if __name__ == "__main__":
