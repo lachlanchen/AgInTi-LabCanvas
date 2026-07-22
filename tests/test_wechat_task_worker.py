@@ -5539,6 +5539,19 @@ stderr: noisy internal trace
             "gui_compose_verification",
         )
 
+    def test_wecom_nonempty_draft_is_deferred_without_overwrite(self) -> None:
+        worker = load_worker()
+        errors = [
+            "attempt 1: WeCom delivery errors: "
+            "BridgeError: refusing to overwrite a non-empty WeCom draft"
+        ]
+
+        self.assertTrue(worker.send_errors_indicate_deferable(errors))
+        self.assertEqual(
+            worker.send_deferred_reason_from_errors(errors),
+            "gui_compose_verification",
+        )
+
     def test_wecom_gui_post_send_uncertainty_is_not_automatically_retried(self) -> None:
         worker = load_worker()
         errors = [
@@ -6872,6 +6885,61 @@ stderr: noisy internal trace
         self.assertEqual(payload["files"], [str(second.resolve())])
         self.assertEqual(set(task["sent_file_paths"]), {str(first.resolve()), str(second.resolve())})
 
+    def test_wecom_send_exposes_transport_error_before_generic_missing_artifact(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "structure.png"
+            image.write_bytes(b"png")
+            chat = "wecom:default:group:abc"
+            task = {
+                "id": "protein-task",
+                "chat": chat,
+                "source": {
+                    "transport": "wecom",
+                    "chat": chat,
+                    "wecom_chat_id": "private-chat-id",
+                },
+                "route_decision": {"route_kind": "design_or_render", "require_file_delivery": True},
+            }
+            result = {"message": "done", "confirmation": "", "files": [str(image)]}
+            response = mock.MagicMock()
+            response.__enter__.return_value.read.return_value = json.dumps(
+                {
+                    "ok": False,
+                    "sent_messages": [],
+                    "sent_files": [],
+                    "errors": [
+                        {
+                            "kind": "file",
+                            "path": str(image),
+                            "error": "BridgeError: exact allowlisted WeCom chat is not visible: LabAgent",
+                        }
+                    ],
+                }
+            ).encode("utf-8")
+            pending = {
+                "ok": False,
+                "complete": False,
+                "sent_messages": [],
+                "pending_messages": ["done"],
+                "sent_files": [],
+                "pending_files": [str(image.resolve())],
+            }
+
+            def reconcile(_endpoint, _token, _payload, current_task):
+                worker.record_wecom_delivery_payload(current_task, pending, source="component_ledger")
+                return pending
+
+            with mock.patch.object(worker, "wecom_transport_settings", return_value=("http://relay", "token")), mock.patch.object(
+                worker, "wecom_native_reply_mentions", return_value=[]
+            ), mock.patch.object(worker, "query_wecom_delivery_status", side_effect=[None, pending]), mock.patch.object(
+                worker.urllib.request, "urlopen", return_value=response
+            ):
+                with self.assertRaisesRegex(RuntimeError, "exact allowlisted WeCom chat is not visible"):
+                    worker.send_result_once_wecom(result, chat, task)
+
+        self.assertEqual(task["wecom_transport_errors"][0]["kind"], "file")
+
     def test_research_summary_files_are_best_effort_unless_explicitly_required(self) -> None:
         worker = load_worker()
         task = {"route_decision": {"route_kind": "research_or_summary"}}
@@ -7143,6 +7211,105 @@ stderr: noisy internal trace
         self.assertIsNone(claimed)
         self.assertEqual(stored["status"], "send_expired")
         self.assertEqual(stored["expire_reason"], "deferred_send_ttl_exceeded")
+
+    def test_required_artifact_outbox_precedes_ordinary_deferred_text(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            worker.os.environ,
+            {
+                "WECHAT_WORKER_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS": "0",
+                "WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS": "0",
+            },
+            clear=False,
+        ):
+            queue = Path(tmp) / "queue.jsonl"
+            image = Path(tmp) / "structure.png"
+            image.write_bytes(b"png")
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "old-text",
+                        "chat": "LabAgent",
+                        "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                        "last_send_attempt_at": "2000-01-01T00:00:00",
+                        "result": {"message": "old scheduled note", "files": []},
+                    },
+                    {
+                        "id": "current-artifact",
+                        "chat": "LabAgent",
+                        "status": worker.SEND_DEFERRED_ARTIFACT_STATUS,
+                        "last_send_attempt_at": "2000-01-01T00:00:00",
+                        "route_decision": {"route_kind": "design_or_render"},
+                        "result": {"message": "structure ready", "files": [str(image)]},
+                    },
+                ],
+            )
+
+            claimed = worker.claim_next_deferred_send(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], "current-artifact")
+
+    def test_wecom_supervisor_namespace_flushes_deferred_outbox(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            worker.os.environ,
+            {"WECHAT_WORKER_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS": "0"},
+            clear=False,
+        ):
+            queue = Path(tmp) / "wecom.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "wecom-artifact",
+                        "chat": "wecom:external-gui:group:abc",
+                        "status": worker.SEND_DEFERRED_ARTIFACT_STATUS,
+                        "last_send_attempt_at": "2000-01-01T00:00:00",
+                        "result": {"message": "ready", "files": []},
+                    }
+                ],
+            )
+            with mock.patch.object(worker, "send_result_with_retries", return_value=[]), mock.patch.object(
+                worker, "record_event"
+            ), mock.patch.object(worker, "log_worker_event"):
+                handled = worker.flush_one_deferred_send(queue, "wecom", log_idle=False)
+
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertTrue(handled)
+        self.assertEqual(stored["status"], "done")
+
+    def test_process_one_persists_worker_result_before_transport_send(self) -> None:
+        worker = load_worker()
+        observed: list[dict[str, object]] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [{"id": "task-ready", "chat": "LabAgent", "request": "render", "status": "pending"}],
+            )
+
+            def inspect_persisted_result(_result, _chat, _targets, *, task=None):
+                stored = worker.find_task(queue, "task-ready")
+                assert stored is not None
+                observed.append(stored)
+                return []
+
+            with mock.patch.object(
+                worker,
+                "run_worker_codex",
+                return_value=json.dumps({"message": "finished", "files": []}),
+            ), mock.patch.object(
+                worker, "send_result_with_retries", side_effect=inspect_persisted_result
+            ), mock.patch.object(worker, "record_event"), mock.patch.object(worker, "log_worker_event"):
+                handled = worker.process_one(queue, "LabAgent", send=True, log_idle=False)
+
+        self.assertTrue(handled)
+        self.assertEqual(observed[0]["result"]["message"], "finished")
+        self.assertIn("worker_result_ready_at", observed[0])
 
     def test_deferred_send_global_cooldown_prevents_restart_burst(self) -> None:
         worker = load_worker()

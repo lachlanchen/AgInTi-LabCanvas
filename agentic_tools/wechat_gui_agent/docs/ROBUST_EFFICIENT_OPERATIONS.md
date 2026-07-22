@@ -462,6 +462,46 @@ The stable interface and recovery commands are documented in
   confirmation surfaces back to the exact chat composer, and submit only the
   ledger-confirmed pending components. A partial response must not cause a
   whole-batch retry or duplicate a PDF already visible in chat.
+- For a mixed artifact-and-text result, send all artifacts before completion
+  text. Native mention selection is a best-effort notification layer and must
+  not be allowed to disturb the exact chat before required files reach it.
+- Keep authorship and transport separate. The resumed route/worker agent owns
+  the natural immediate acknowledgement, final explanation, file selection,
+  and task-specific judgment. The deterministic routine owns exact-chat
+  locking, sender attribution, staging, checksums, artifact-first ordering,
+  native mentions, retries, deduplication, and the component ledger. Do not
+  replace normal agent replies with canned keyword responses; deterministic
+  text is only a bounded failure/safety fallback when every configured agent
+  backend is unavailable.
+- Treat the agent result as one delivery contract: every selected file and the
+  contextual final message are separate ledger components. A partial batch is
+  not complete. Backfill only the missing components from the stored result,
+  without rerunning research, regenerating artifacts, or resending components
+  already marked `sent`.
+- Before native mention composition, persist a private `composing` component.
+  If the process stops, the next guarded send may clear a draft only when that
+  ledger proves bridge ownership or the composer contains only WeCom's native
+  mention markers plus a dangling `@`. Preserve any unowned human prose draft.
+  Mark recovered ownership `abandoned`, then retry the original text component
+  and mention instead of creating a new message task.
+- After tapping an external-group row, tolerate the official client's bounded
+  loading transition and wait for the exact title (including a member-count
+  suffix such as `LabAgent(6)`). A transitional hierarchy is not proof of a
+  wrong chat; a persistent different title still fails closed.
+- Hold the Android GUI serialization lock only for official-client reads and
+  writes. Release it before calling ingress, routing, or any backend agent, then
+  reacquire it for each reply send. A long research turn must never monopolize
+  the GUI lane and starve an unrelated artifact delivery.
+- Persist the structured worker result and exact artifact list before entering
+  any GUI sender. If the picker, relay, or worker process stops, recovery must
+  resume delivery from that stored result without rerunning expensive tools.
+  In the deferred outbox, verified publication completion remains first,
+  required artifact deliveries come next, and ordinary text follows. Preserve
+  concrete relay errors before applying the generic missing-artifact gate so
+  operators can repair the actual transport failure.
+- The WeCom worker's `--chat wecom` value is a transport namespace, not a chat
+  filter. Its idle loop must scan the WeCom queue's deferred outbox and retry
+  the highest-priority required artifact automatically.
 - Official WeCom voice, quoted voice, and mixed-message voice must be downloaded
   by the SDK into the exact message directory and exposed as
   `transport_preflight.wecom_media`. The worker passes only those exact files to

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import importlib.util
 import json
 from pathlib import Path
@@ -341,6 +342,82 @@ class WeComAndroidBridgeTests(unittest.TestCase):
 
         runtime.stage_file.assert_called_once_with(artifact)
 
+    def test_batch_send_delivers_artifacts_before_completion_text(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "structure.png"
+            artifact.write_bytes(b"png")
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            order: list[str] = []
+
+            def send_file(*_args, **_kwargs):
+                order.append("file")
+                return {"sent_files": [str(artifact.resolve())]}
+
+            def send_text(*_args, **_kwargs):
+                order.append("text")
+                return {"sent_messages": ["done"], "mentioned_users": []}
+
+            with mock.patch.object(runtime, "serialized", return_value=nullcontext()), mock.patch.object(
+                runtime, "send_file_locked", side_effect=send_file
+            ), mock.patch.object(runtime, "send_text_resilient_locked", side_effect=send_text):
+                result = runtime.send(
+                    "LabAgent",
+                    "done",
+                    [artifact],
+                    task_id="protein-task",
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(order, ["file", "text"])
+        self.assertEqual(result["sent_files"], [str(artifact.resolve())])
+
+    def test_open_chat_waits_through_transitional_hierarchy(self) -> None:
+        bridge = load_bridge()
+        chat_list = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="LabAgent" resource-id="com.tencent.wework:id/iql"
+                    package="com.tencent.wework" clickable="true" bounds="[0,0][100,100]" />
+            </node></hierarchy>
+            """
+        )
+        loading = ET.fromstring('<hierarchy><node package="com.tencent.wework" /></hierarchy>')
+        opened = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/n5i"
+                    package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            with mock.patch.object(runtime, "launch_wecom"), mock.patch.object(
+                runtime, "dump_hierarchy", side_effect=[chat_list, loading, opened]
+            ), mock.patch.object(runtime, "tap_node") as tap, mock.patch.object(
+                runtime, "current_package", return_value=runtime.package
+            ), mock.patch.object(bridge.time, "sleep"):
+                result = runtime.open_chat("LabAgent")
+
+        tap.assert_called_once()
+        self.assertEqual(bridge.visible_chat_title(result), "LabAgent(6)")
+
     def test_normalize_chat_surface_dismisses_stale_attachment_choice(self) -> None:
         bridge = load_bridge()
         stale = ET.fromstring(
@@ -377,6 +454,98 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertIs(result, composer)
         runtime.press_back.assert_called_once_with()
 
+    def test_normalize_chat_surface_restores_text_composer_from_voice_mode(self) -> None:
+        bridge = load_bridge()
+        voice_mode = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/n5i"
+                    package="com.tencent.wework" />
+              <node text="按住 说话" resource-id="com.tencent.wework:id/j26"
+                    package="com.tencent.wework" />
+              <node text="" resource-id="com.tencent.wework:id/hvp"
+                    package="com.tencent.wework" clickable="true" bounds="[0,0][100,100]" />
+            </node></hierarchy>
+            """
+        )
+        composer = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/n5i"
+                    package="com.tencent.wework" />
+              <node text="" resource-id="com.tencent.wework:id/j28"
+                    package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.current_package = mock.Mock(return_value=bridge.PACKAGE)
+            runtime.open_chat = mock.Mock(return_value=voice_mode)
+            runtime.dump_hierarchy = mock.Mock(return_value=composer)
+            runtime.tap_node = mock.Mock()
+            runtime.press_back = mock.Mock()
+
+            with mock.patch.object(bridge.time, "sleep"):
+                result = runtime.normalize_chat_surface("LabAgent")
+
+        self.assertIs(result, composer)
+        runtime.tap_node.assert_called_once()
+        runtime.press_back.assert_not_called()
+
+    def test_open_file_action_retries_after_first_tap_only_hides_keyboard(self) -> None:
+        bridge = load_bridge()
+        composer = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/n5i"
+                    package="com.tencent.wework" />
+              <node text="" resource-id="com.tencent.wework:id/j1v"
+                    package="com.tencent.wework" clickable="true" bounds="[0,0][100,100]" />
+            </node></hierarchy>
+            """
+        )
+        menu = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="LabAgent(6)" resource-id="com.tencent.wework:id/n5i"
+                    package="com.tencent.wework" />
+              <node text="文件" package="com.tencent.wework" clickable="true"
+                    bounds="[0,0][100,100]" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.ensure_chat_identity = mock.Mock(side_effect=[composer, menu])
+            runtime.tap_node = mock.Mock()
+
+            with mock.patch.object(bridge.time, "sleep"):
+                found_menu, action = runtime.open_file_action(
+                    "LabAgent",
+                    composer,
+                    attempts=2,
+                    polls_per_attempt=1,
+                )
+
+        self.assertIs(found_menu, menu)
+        self.assertEqual(action.attrib.get("text"), "文件")
+        self.assertEqual(runtime.tap_node.call_count, 2)
+
     def test_send_text_normalizes_chat_surface_before_composing(self) -> None:
         bridge = load_bridge()
         root = ET.fromstring(
@@ -411,6 +580,93 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         runtime.normalize_chat_surface.assert_called_once_with("LabAgent")
         runtime.open_chat.assert_not_called()
+
+    def test_incomplete_native_mention_draft_is_structural_not_human_text(self) -> None:
+        bridge = load_bridge()
+
+        self.assertTrue(bridge.incomplete_native_mention_draft("\ufff37881300683907109\ufff0@"))
+        self.assertTrue(
+            bridge.incomplete_native_mention_draft(
+                "\ufff37881300683907109\ufff0 \ufff312345\ufff0＠"
+            )
+        )
+        self.assertFalse(bridge.incomplete_native_mention_draft("@sunnyyty please review"))
+        self.assertFalse(
+            bridge.incomplete_native_mention_draft(
+                "\ufff37881300683907109\ufff0 this is a human-authored draft"
+            )
+        )
+
+    def test_recovers_ledger_owned_draft_and_marks_it_abandoned(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            key = runtime.component_key("old-task", "LabAgent", "text", "old-hash")
+            runtime.mark_component(
+                key,
+                task_id="old-task",
+                chat="LabAgent",
+                kind="text",
+                value_hash="old-hash",
+                status="composing",
+                details={"draft_owner": "wecom_android_bridge"},
+            )
+            with mock.patch.object(runtime, "clear_automation_draft", return_value=True) as clear:
+                recovered = runtime.recover_stale_automation_draft(
+                    "LabAgent", "a complete prior automation draft"
+                )
+
+            record = runtime.component_record(key)
+
+        self.assertTrue(recovered)
+        clear.assert_called_once_with("LabAgent")
+        self.assertEqual(record["status"], "abandoned")
+        self.assertEqual(record["details"]["abandoned_reason"], "recovered_owned_draft")
+
+    def test_recovers_legacy_native_mention_residue_without_ledger_marker(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            with mock.patch.object(runtime, "clear_automation_draft", return_value=True) as clear:
+                recovered = runtime.recover_stale_automation_draft(
+                    "LabAgent", "\ufff37881300683907109\ufff0@"
+                )
+
+        self.assertTrue(recovered)
+        clear.assert_called_once_with("LabAgent")
+
+    def test_preserves_unowned_human_draft(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            with mock.patch.object(runtime, "clear_automation_draft", return_value=True) as clear:
+                recovered = runtime.recover_stale_automation_draft(
+                    "LabAgent", "human draft: do not overwrite"
+                )
+
+        self.assertFalse(recovered)
+        clear.assert_not_called()
 
     def test_serialized_lock_has_bounded_busy_failure(self) -> None:
         bridge = load_bridge()
@@ -750,6 +1006,63 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         save_snapshot.assert_called_once_with("LabAgent", ["old", "new"])
         send_text.assert_called_once()
         self.assertEqual(send_text.call_args.kwargs["mentions"], ["sunnyyty@微信", "陈苗"])
+
+    def test_snapshot_releases_gui_lock_while_ingest_runs(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.lock_path = Path(tmp) / "bridge.lock"
+            runtime.save_snapshot("LabAgent", ["old"])
+            runtime.mark_observed_message(
+                "LabAgent",
+                {"fingerprint": "old", "direction": "outbound", "body": "old"},
+                "seeded",
+            )
+            lock_active = False
+
+            @bridge.contextmanager
+            def tracked_serialized(*, timeout_seconds=None):
+                nonlocal lock_active
+                self.assertFalse(lock_active)
+                lock_active = True
+                try:
+                    yield
+                finally:
+                    lock_active = False
+
+            def ingest_without_gui_lock(_event):
+                self.assertFalse(lock_active)
+                return {"queued": True, "ack": "收到。"}
+
+            records = [
+                {"fingerprint": "old", "direction": "outbound", "sender": "", "body": "old"},
+                {
+                    "fingerprint": "new",
+                    "direction": "inbound",
+                    "sender": "sunnyyty",
+                    "mention_name": "sunnyyty@微信",
+                    "body": "请查这个结构。",
+                },
+            ]
+            with mock.patch.object(runtime, "serialized", side_effect=tracked_serialized), mock.patch.object(
+                runtime, "open_chat", return_value=ET.fromstring("<hierarchy />")
+            ), mock.patch.object(runtime, "parse_messages", return_value=records), mock.patch.object(
+                runtime, "invoke_ingest", side_effect=ingest_without_gui_lock
+            ), mock.patch.object(
+                runtime, "send_text_resilient_locked", return_value={"sent_messages": ["收到。"]}
+            ):
+                result = runtime.snapshot("LabAgent", enqueue=True)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(result["replied"], 1)
 
     def test_read_only_snapshot_does_not_consume_pending_inbound(self) -> None:
         bridge = load_bridge()

@@ -237,6 +237,21 @@ def composer_text(node: ET.Element) -> str:
     return value
 
 
+def incomplete_native_mention_draft(value: Any) -> bool:
+    """Return whether a composer contains only interrupted native mentions.
+
+    WeCom exposes selected mentions as private marker tokens. If the process is
+    interrupted while opening the next mention picker, the composer can be
+    left as ``<mention-token>@``. That residue is automation-owned structure,
+    not human prose, and is safe to clear on the next guarded send.
+    """
+    raw = str(value or "")
+    if not MENTION_TOKEN_RE.search(raw):
+        return False
+    residue = MENTION_TOKEN_RE.sub("", raw)
+    return bool(re.fullmatch(r"[\s@＠,，、:：;；]*", residue))
+
+
 def chat_title_matches(title: str, chat: str) -> bool:
     return bool(re.fullmatch(re.escape(chat) + r"(?:\(\d+\))?", normalize_visible_text(title)))
 
@@ -727,6 +742,39 @@ class AndroidBridge:
             composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
             if composers:
                 return root
+            voice_prompts = find_nodes(
+                root,
+                resource_id=f"{self.package}:id/j26",
+                package=self.package,
+            )
+            voice_toggles = [
+                node
+                for node in find_nodes(
+                    root,
+                    resource_id=f"{self.package}:id/hvp",
+                    package=self.package,
+                )
+                if node.attrib.get("clickable") == "true"
+            ]
+            if voice_prompts and voice_toggles:
+                # A valid chat can reopen in voice-input mode. Switch the same
+                # exact chat back to its text composer instead of backing out to
+                # the conversation list and losing the attachment target.
+                self.tap_node(root, voice_toggles[-1])
+                deadline = time.monotonic() + 4.0
+                while time.monotonic() < deadline:
+                    time.sleep(0.25)
+                    restored = self.dump_hierarchy(attempts=2)
+                    if not chat_title_matches(visible_chat_title(restored), chat):
+                        break
+                    composers = find_nodes(
+                        restored,
+                        resource_id=f"{self.package}:id/j28",
+                        package=self.package,
+                    )
+                    if composers:
+                        return restored
+                continue
             self.press_back()
         raise BridgeError("WeCom exact chat composer could not be restored")
 
@@ -741,11 +789,22 @@ class AndroidBridge:
             rows = find_nodes(root, text=chat, resource_id=f"{self.package}:id/iql", package=self.package)
             if rows:
                 self.tap_node(root, rows[0])
-                time.sleep(1.0)
-                opened = self.dump_hierarchy()
-                if chat_title_matches(visible_chat_title(opened), chat):
-                    return opened
-                raise BridgeError(f"visible WeCom chat title did not match {chat!r}")
+                # External-group chats can take several seconds to replace the
+                # message list on older Android devices. Wait for the exact
+                # title instead of treating the first transitional hierarchy
+                # as a wrong-chat selection.
+                deadline = time.monotonic() + 6.0
+                while time.monotonic() < deadline:
+                    time.sleep(0.4)
+                    opened = self.dump_hierarchy(attempts=2)
+                    if chat_title_matches(visible_chat_title(opened), chat):
+                        return opened
+                    if self.current_package() != self.package:
+                        break
+                # Fail closed on a genuinely wrong chat, but return to the
+                # list and retry rather than abandoning the whole send.
+                self.press_back()
+                continue
             if self.current_package() != self.package:
                 self.press_back()
                 self.launch_wecom()
@@ -841,7 +900,7 @@ class AndroidBridge:
             process.terminate()
             process.wait(timeout=2)
 
-    def clear_automation_draft(self, chat: str) -> None:
+    def clear_automation_draft(self, chat: str) -> bool:
         """Leave the chat with an empty composer after our own failed write."""
         for _ in range(4):
             root = self.dump_hierarchy()
@@ -849,10 +908,10 @@ class AndroidBridge:
                 break
             self.press_back()
         else:
-            return
+            return False
         composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
         if not composers or not composer_text(composers[-1]):
-            return
+            return True
         self.tap_node(root, composers[-1])
         env, window = self.scrcpy_window_id()
         self.run(
@@ -870,6 +929,12 @@ class AndroidBridge:
             env=env,
         )
         time.sleep(0.4)
+        try:
+            cleared = self.ensure_chat_identity(chat)
+        except BridgeError:
+            return False
+        composers = find_nodes(cleared, resource_id=f"{self.package}:id/j28", package=self.package)
+        return bool(composers and not composer_text(composers[-1]))
 
     def mention_picker(self, *, timeout: float = 5.0) -> ET.Element:
         deadline = time.monotonic() + timeout
@@ -954,6 +1019,67 @@ class AndroidBridge:
 
     def component_sent(self, key: str) -> bool:
         return self.component_record(key).get("status") in {"sent", "deduplicated"}
+
+    def composing_text_components(self, chat: str) -> list[dict[str, Any]]:
+        """Return interrupted bridge-owned composer records for one chat."""
+        with sqlite3.connect(self.state_db) as conn:
+            rows = conn.execute(
+                "SELECT component_key, task_id, details_json, updated_at FROM components "
+                "WHERE chat = ? AND kind = 'text' AND status = 'composing' "
+                "ORDER BY updated_at DESC",
+                (chat,),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for component_key, task_id, details_json, updated_at in rows:
+            try:
+                details = json.loads(str(details_json or "{}"))
+            except json.JSONDecodeError:
+                details = {}
+            result.append(
+                {
+                    "component_key": str(component_key or ""),
+                    "task_id": str(task_id or ""),
+                    "details": details if isinstance(details, dict) else {},
+                    "updated_at": str(updated_at or ""),
+                }
+            )
+        return result
+
+    def abandon_composing_text_components(self, chat: str, *, reason: str) -> None:
+        """Close stale draft ownership after the composer is proven empty."""
+        with sqlite3.connect(self.state_db) as conn:
+            rows = conn.execute(
+                "SELECT component_key, details_json FROM components "
+                "WHERE chat = ? AND kind = 'text' AND status = 'composing'",
+                (chat,),
+            ).fetchall()
+            for component_key, details_json in rows:
+                try:
+                    details = json.loads(str(details_json or "{}"))
+                except json.JSONDecodeError:
+                    details = {}
+                if not isinstance(details, dict):
+                    details = {}
+                details.update({"abandoned_reason": reason, "abandoned_at": now_iso()})
+                conn.execute(
+                    "UPDATE components SET status = 'abandoned', details_json = ?, updated_at = ? "
+                    "WHERE component_key = ?",
+                    (json.dumps(details, ensure_ascii=False, sort_keys=True), now_iso(), component_key),
+                )
+
+    def recover_stale_automation_draft(self, chat: str, draft: str) -> bool:
+        """Clear only a ledger-owned or unambiguous interrupted mention draft."""
+        owned = bool(self.composing_text_components(chat))
+        legacy_mention_residue = incomplete_native_mention_draft(draft)
+        if not owned and not legacy_mention_residue:
+            return False
+        if not self.clear_automation_draft(chat):
+            raise BridgeError("WeCom stale automation draft could not be cleared safely")
+        self.abandon_composing_text_components(
+            chat,
+            reason="recovered_owned_draft" if owned else "recovered_legacy_mention_residue",
+        )
+        return True
 
     def sent_file_content_record(
         self,
@@ -1060,8 +1186,23 @@ class AndroidBridge:
         composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
         if not composers:
             raise BridgeError("WeCom composer is not visible")
-        if composer_text(composers[-1]):
-            raise BridgeError("refusing to overwrite a non-empty WeCom draft")
+        draft = composer_text(composers[-1])
+        if draft:
+            if not self.recover_stale_automation_draft(chat, draft):
+                raise BridgeError("refusing to overwrite a non-empty WeCom draft")
+            root = self.normalize_chat_surface(chat)
+            composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
+            if not composers or composer_text(composers[-1]):
+                raise BridgeError("WeCom composer remained non-empty after automation-draft recovery")
+        self.mark_component(
+            key,
+            task_id=task_id,
+            chat=chat,
+            kind="text",
+            value_hash=value_hash,
+            status="composing",
+            details={"draft_owner": "wecom_android_bridge", "mentioned_users": exact_mentions},
+        )
         self.tap_node(root, composers[-1])
         try:
             time.sleep(0.4)
@@ -1097,8 +1238,25 @@ class AndroidBridge:
             if not send_buttons:
                 raise BridgeError("WeCom text send button is unavailable")
             self.tap_node(root, send_buttons[-1])
-        except Exception:
-            self.clear_automation_draft(chat)
+        except Exception as exc:
+            try:
+                cleared = self.clear_automation_draft(chat)
+            except Exception:
+                cleared = False
+            self.mark_component(
+                key,
+                task_id=task_id,
+                chat=chat,
+                kind="text",
+                value_hash=value_hash,
+                status="retryable" if cleared else "composing",
+                details={
+                    "draft_owner": "wecom_android_bridge",
+                    "mentioned_users": exact_mentions,
+                    "last_error": f"{type(exc).__name__}: {str(exc)[:300]}",
+                    "composer_cleared": cleared,
+                },
+            )
             raise
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -1294,6 +1452,49 @@ class AndroidBridge:
             time.sleep(0.4)
         raise BridgeError(f"Android package did not become active: {package}")
 
+    def open_file_action(
+        self,
+        chat: str,
+        root: ET.Element,
+        *,
+        attempts: int = 2,
+        polls_per_attempt: int = 16,
+    ) -> tuple[ET.Element, ET.Element]:
+        """Open the attachment sheet and return its exact File action.
+
+        On the authorized older Android client, the first attachment tap can
+        only dismiss the soft keyboard. Keep the exact-chat title guard while
+        waiting, then retry the same attachment control once if needed.
+        """
+        current = root
+        for _ in range(max(1, attempts)):
+            plus: list[ET.Element] = []
+            # ``j1v`` is the attachment control. ``hvp`` is retained only for
+            # older layouts where it genuinely served that role.
+            for resource_name in ("j1v", "hvp"):
+                candidates = [
+                    node
+                    for node in find_nodes(
+                        current,
+                        resource_id=f"{self.package}:id/{resource_name}",
+                        package=self.package,
+                    )
+                    if node.attrib.get("clickable") == "true"
+                ]
+                if candidates:
+                    plus = candidates
+                    break
+            if not plus:
+                raise BridgeError("WeCom attachment menu button is unavailable")
+            self.tap_node(current, plus[-1])
+            for _ in range(max(1, polls_per_attempt)):
+                time.sleep(0.25)
+                current = self.ensure_chat_identity(chat)
+                file_nodes = find_nodes(current, text="文件", package=self.package)
+                if file_nodes:
+                    return current, file_nodes[-1]
+        raise BridgeError("WeCom file action is unavailable after attachment-menu retry")
+
     def send_file_locked(
         self,
         chat: str,
@@ -1368,32 +1569,8 @@ class AndroidBridge:
                 "sent_files": [str(resolved)],
                 "errors": [],
             }
-        plus: list[ET.Element] = []
-        # Prefer the right-side attachment control. Some builds reuse ``hvp``
-        # for the left-side voice/keyboard toggle while ``j1v`` remains the
-        # actual attachment button, so only use ``hvp`` as a true fallback.
-        for resource_name in ("j1v", "hvp"):
-            candidates = [
-                node
-                for node in find_nodes(
-                    root,
-                    resource_id=f"{self.package}:id/{resource_name}",
-                    package=self.package,
-                )
-                if node.attrib.get("clickable") == "true"
-            ]
-            if candidates:
-                plus = candidates
-                break
-        if not plus:
-            raise BridgeError("WeCom attachment menu button is unavailable")
-        self.tap_node(root, plus[-1])
-        time.sleep(0.7)
-        menu = self.ensure_chat_identity(chat)
-        file_nodes = find_nodes(menu, text="文件", package=self.package)
-        if not file_nodes:
-            raise BridgeError("WeCom file action is unavailable")
-        self.tap_node(menu, file_nodes[-1])
+        menu, file_action = self.open_file_action(chat, root)
+        self.tap_node(menu, file_action)
         time.sleep(0.7)
         choice = self.dump_hierarchy()
         local = find_nodes(choice, text="从本地文件选择", package=self.package)
@@ -1542,18 +1719,9 @@ class AndroidBridge:
             sent_files: list[str] = []
             mentioned_users: list[str] = []
             errors: list[dict[str, str]] = []
-            if message.strip():
-                try:
-                    result = self.send_text_resilient_locked(
-                        chat,
-                        message,
-                        task_id=task_id,
-                        mentions=exact_mentions,
-                    )
-                    sent_messages.extend(result.get("sent_messages") or [])
-                    mentioned_users.extend(result.get("mentioned_users") or [])
-                except Exception as exc:
-                    errors.append({"kind": "text", "error": f"{type(exc).__name__}: {str(exc)[:500]}"})
+            # Artifacts are the durable result. Deliver them before optional
+            # completion text so a brittle native mention picker cannot move
+            # the client away from the exact chat and starve file delivery.
             for path in files:
                 try:
                     result = self.send_file_locked(
@@ -1573,6 +1741,18 @@ class AndroidBridge:
                     except Exception:
                         pass
                     break
+            if message.strip() and not errors:
+                try:
+                    result = self.send_text_resilient_locked(
+                        chat,
+                        message,
+                        task_id=task_id,
+                        mentions=exact_mentions,
+                    )
+                    sent_messages.extend(result.get("sent_messages") or [])
+                    mentioned_users.extend(result.get("mentioned_users") or [])
+                except Exception as exc:
+                    errors.append({"kind": "text", "error": f"{type(exc).__name__}: {str(exc)[:500]}"})
             return {
                 "ok": not errors,
                 "transport": "wecom_android",
@@ -1837,6 +2017,9 @@ class AndroidBridge:
             event_path.unlink(missing_ok=True)
 
     def snapshot(self, chat: str, *, enqueue: bool = False) -> dict[str, Any]:
+        # Hold the GUI lock only while reading or writing the official client.
+        # Routing/ingest may invoke an agent and must never block unrelated
+        # artifact delivery for the duration of that backend turn.
         with self.serialized(timeout_seconds=30.0):
             root = self.open_chat(chat)
             records = self.parse_messages(root)
@@ -1886,63 +2069,65 @@ class AndroidBridge:
                 ):
                     pending_by_fingerprint[fingerprint] = record
             pending_inbound = list(pending_by_fingerprint.values())
-            ingested: list[dict[str, Any]] = []
-            pending_replies: list[tuple[str, list[str], str]] = []
-            if enqueue:
-                for record in pending_inbound:
-                    event = self.build_event(chat, record)
-                    result = self.invoke_ingest(event)
-                    ingested.append(result)
-                    self.mark_observed_message(chat, record, "ingested")
-                    statuses[str(record.get("fingerprint") or "")] = "ingested"
-                    response = str(result.get("reply") or result.get("ack") or "").strip()
-                    if response:
-                        reply_mentions = result.get("reply_mentions")
-                        if not isinstance(reply_mentions, list):
-                            fallback_mention = str(
-                                record.get("mention_name") or record.get("sender") or ""
-                            )
-                            reply_mentions = [fallback_mention] if fallback_mention else []
-                        pending_replies.append(
-                            (
-                                response,
-                                [str(value) for value in reply_mentions if str(value).strip()],
-                                f"ingress:{event['message_id']}",
-                            )
-                        )
-            # Checkpoint ingress before any write. An uncertain reply send must
-            # never replay the original request after restart.
+            # Checkpoint the observed viewport before releasing GUI ownership.
+            # Pending rows remain durable and are retried if ingest itself fails.
             self.save_snapshot(chat, sequence)
-            sent_replies: list[str] = []
-            reply_errors: list[dict[str, str]] = []
-            for response, mentions, task_id in pending_replies:
-                try:
+
+        ingested: list[dict[str, Any]] = []
+        pending_replies: list[tuple[str, list[str], str]] = []
+        if enqueue:
+            for record in pending_inbound:
+                event = self.build_event(chat, record)
+                result = self.invoke_ingest(event)
+                ingested.append(result)
+                self.mark_observed_message(chat, record, "ingested")
+                response = str(result.get("reply") or result.get("ack") or "").strip()
+                if response:
+                    reply_mentions = result.get("reply_mentions")
+                    if not isinstance(reply_mentions, list):
+                        fallback_mention = str(
+                            record.get("mention_name") or record.get("sender") or ""
+                        )
+                        reply_mentions = [fallback_mention] if fallback_mention else []
+                    pending_replies.append(
+                        (
+                            response,
+                            [str(value) for value in reply_mentions if str(value).strip()],
+                            f"ingress:{event['message_id']}",
+                        )
+                    )
+
+        sent_replies: list[str] = []
+        reply_errors: list[dict[str, str]] = []
+        for response, mentions, task_id in pending_replies:
+            try:
+                with self.serialized(timeout_seconds=30.0):
                     sent = self.send_text_resilient_locked(
                         chat,
                         response,
                         task_id=task_id,
                         mentions=mentions,
                     )
-                    sent_replies.extend(sent.get("sent_messages") or [])
-                except Exception as exc:
-                    reply_errors.append(
-                        {
-                            "sender": ", ".join(mentions),
-                            "error": f"{type(exc).__name__}: {str(exc)[:500]}",
-                        }
-                    )
-            return {
-                "ok": not reply_errors,
-                "chat": chat,
-                "overlap": overlap,
-                "viewport_changed_without_overlap": bool(overlap == 0 and previous and sequence),
-                "processed": len(ingested),
-                "pending": 0 if enqueue else len(pending_inbound),
-                "messages": pending_inbound,
-                "ingested": ingested,
-                "replied": len(sent_replies),
-                "reply_errors": reply_errors,
-            }
+                sent_replies.extend(sent.get("sent_messages") or [])
+            except Exception as exc:
+                reply_errors.append(
+                    {
+                        "sender": ", ".join(mentions),
+                        "error": f"{type(exc).__name__}: {str(exc)[:500]}",
+                    }
+                )
+        return {
+            "ok": not reply_errors,
+            "chat": chat,
+            "overlap": overlap,
+            "viewport_changed_without_overlap": bool(overlap == 0 and previous and sequence),
+            "processed": len(ingested),
+            "pending": 0 if enqueue else len(pending_inbound),
+            "messages": pending_inbound,
+            "ingested": ingested,
+            "replied": len(sent_replies),
+            "reply_errors": reply_errors,
+        }
 
     def poll_cycle(self) -> dict[str, Any]:
         now = time.monotonic()

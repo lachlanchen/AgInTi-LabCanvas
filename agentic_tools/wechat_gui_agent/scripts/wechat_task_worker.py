@@ -458,6 +458,12 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     if requeue_if_task_interrupted_during_run(queue, task):
         log_worker_event("stale-result-suppressed-for-interruption", task)
         return True
+    # Persist the completed agent turn before touching a GUI transport. A slow
+    # picker or crashed sender can then resume delivery without rerunning the
+    # expensive worker or losing its exact artifact list.
+    task["result"] = result
+    task["worker_result_ready_at"] = datetime.now().isoformat(timespec="seconds")
+    persist_task_progress(task)
     target_chat = str(task.get("chat") or chat)
     has_delivery_content = worker_result_has_delivery_content(result)
     if task.get("worker_result_exhausted"):
@@ -530,7 +536,10 @@ def flush_one_deferred_send(
     send_targets: Path = DEFAULT_SEND_TARGETS,
     log_idle: bool = True,
 ) -> bool:
-    chat_filter = chat if chat and chat != "wechat-chat" else None
+    # Supervisors use transport namespace labels rather than real chat IDs.
+    # Treat them as an unfiltered outbox so WeCom deferred sends are actually
+    # retried after the worker starts or recovers.
+    chat_filter = chat if chat and chat not in {"wechat-chat", "wecom"} else None
     task = claim_next_deferred_send(queue, chat_filter=chat_filter)
     if not task:
         if log_idle:
@@ -1278,6 +1287,9 @@ def send_errors_indicate_gui_compose_verification(errors: list[str]) -> bool:
         "wecom_gui_compose_unverified" in text
         or "wecom composer did not contain the exact unicode message" in text
         or "wecom did not compose the exact staged artifact" in text
+        or "refusing to overwrite a non-empty wecom draft" in text
+        or "wecom stale automation draft could not be cleared safely" in text
+        or "wecom composer remained non-empty after automation-draft recovery" in text
     )
 
 
@@ -1688,9 +1700,13 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
     record_wecom_delivery_payload(task, response_payload, source="send_response")
     errors = response_payload.get("errors") if isinstance(response_payload.get("errors"), list) else []
     if errors:
+        task["wecom_transport_errors"] = errors[-8:]
         reconciled = query_wecom_delivery_status(endpoint, token, status_payload, task)
         if wecom_delivery_components_complete(task, files_to_send, combined_message, reconciled):
+            task.pop("wecom_transport_errors", None)
             return
+        raise RuntimeError("WeCom delivery errors: " + json.dumps(errors[:3], ensure_ascii=False))
+    task.pop("wecom_transport_errors", None)
     require_file_delivery = result_requires_file_delivery(task, result)
     if require_file_delivery and not required_file_delivery_complete(task, result):
         sent_files = {
@@ -1699,8 +1715,6 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
         }
         missing = sorted(set(str(path) for path in required_delivery_file_paths(result, task)) - sent_files)
         raise RuntimeError("required WeCom artifact delivery incomplete: " + "; ".join(missing[:3]))
-    if errors:
-        raise RuntimeError("WeCom delivery errors: " + json.dumps(errors[:3], ensure_ascii=False))
 
 
 def wecom_native_reply_mentions(task: dict[str, Any], endpoint: str) -> list[str]:
@@ -3383,8 +3397,8 @@ def deferred_send_priority(task: dict[str, Any]) -> int:
     if verified_publish_send_completion(task):
         return 0
     if result_requires_file_delivery(task, task.get("result") if isinstance(task.get("result"), dict) else {}):
-        return 2
-    return 1
+        return 1
+    return 2
 
 
 def expire_stale_queue_entries(tasks: list[dict[str, Any]], now: datetime) -> bool:
@@ -4059,6 +4073,9 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
         },
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
+    # This heartbeat makes an active routine and its artifact directory
+    # recoverable even when preflight has nothing additional to persist.
+    persist_task_progress(task)
     if task.get("artifact_recovery_only"):
         recovered = recover_completed_research_artifacts(task, force=True)
         if recovered is not None:
