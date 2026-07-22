@@ -809,7 +809,41 @@ class AndroidBridge:
         return short_hash(f"{task_id}\0{chat}\0{kind}\0{value_hash}", 64)
 
     def component_sent(self, key: str) -> bool:
-        return self.component_record(key).get("status") == "sent"
+        return self.component_record(key).get("status") in {"sent", "deduplicated"}
+
+    def sent_file_content_record(
+        self,
+        chat: str,
+        digest: str,
+        *,
+        exclude_key: str = "",
+    ) -> dict[str, Any]:
+        """Find an already delivered copy of the same bytes in one chat."""
+        query = (
+            "SELECT component_key, task_id, value_hash, details_json, updated_at "
+            "FROM components WHERE chat = ? AND kind = 'file' AND status = 'sent' "
+            "AND value_hash LIKE ?"
+        )
+        params: list[str] = [chat, f"{digest}:%"]
+        if exclude_key:
+            query += " AND component_key != ?"
+            params.append(exclude_key)
+        query += " ORDER BY updated_at DESC LIMIT 1"
+        with sqlite3.connect(self.state_db) as conn:
+            row = conn.execute(query, params).fetchone()
+        if not row:
+            return {}
+        try:
+            details = json.loads(str(row[3] or "{}"))
+        except json.JSONDecodeError:
+            details = {}
+        return {
+            "component_key": str(row[0] or ""),
+            "task_id": str(row[1] or ""),
+            "value_hash": str(row[2] or ""),
+            "details": details if isinstance(details, dict) else {},
+            "updated_at": str(row[4] or ""),
+        }
 
     def component_record(self, key: str) -> dict[str, Any]:
         with sqlite3.connect(self.state_db) as conn:
@@ -1028,13 +1062,42 @@ class AndroidBridge:
         *,
         task_id: str,
         allow_visible_recovery: bool = False,
+        force_resend: bool = False,
     ) -> dict[str, Any]:
-        resolved, digest, remote_path = self.stage_file(path)
+        resolved = path.expanduser().resolve()
+        if not resolved.is_file():
+            raise BridgeError(f"artifact does not exist: {resolved}")
+        digest = sha256_file(resolved)
         original_filename = resolved.name
-        filename = Path(remote_path).name
         key = self.component_key(task_id, chat, "file", f"{digest}:{original_filename}")
-        if self.component_sent(key):
+        if not force_resend and self.component_sent(key):
             return {"ok": True, "duplicate": True, "sent_messages": [], "sent_files": [str(resolved)]}
+        prior = self.sent_file_content_record(chat, digest, exclude_key=key)
+        if prior and not force_resend:
+            self.mark_component(
+                key,
+                task_id=task_id,
+                chat=chat,
+                kind="file",
+                value_hash=f"{digest}:{original_filename}",
+                status="deduplicated",
+                details={
+                    "sha256": digest,
+                    "size_bytes": resolved.stat().st_size,
+                    "deduplicated_from_component": prior["component_key"],
+                    "deduplicated_from_task": prior["task_id"],
+                },
+            )
+            return {
+                "ok": True,
+                "duplicate": True,
+                "deduplicated": True,
+                "sent_messages": [],
+                "sent_files": [str(resolved)],
+                "errors": [],
+            }
+        resolved, digest, remote_path = self.stage_file(path)
+        filename = Path(remote_path).name
         root = self.normalize_chat_surface(chat)
         component = self.component_record(key)
         if (
@@ -1207,7 +1270,10 @@ class AndroidBridge:
                 continue
             digest = sha256_file(resolved)
             key = self.component_key(task_id, chat, "file", f"{digest}:{resolved.name}")
-            (sent_files if self.component_sent(key) else pending_files).append(str(resolved))
+            delivered = self.component_sent(key) or bool(
+                self.sent_file_content_record(chat, digest, exclude_key=key)
+            )
+            (sent_files if delivered else pending_files).append(str(resolved))
         return {
             "ok": not pending_messages and not pending_files,
             "complete": not pending_messages and not pending_files,
@@ -1229,6 +1295,7 @@ class AndroidBridge:
         task_id: str,
         mentions: list[str] | None = None,
         allow_visible_file_recovery: bool = False,
+        force_resend: bool = False,
     ) -> dict[str, Any]:
         if chat not in self.target_groups:
             raise BridgeError("refusing non-allowlisted WeCom Android target")
@@ -1261,6 +1328,7 @@ class AndroidBridge:
                         path,
                         task_id=task_id,
                         allow_visible_recovery=allow_visible_file_recovery,
+                        force_resend=force_resend,
                     )
                     sent_files.extend(result.get("sent_files") or [])
                 except Exception as exc:
@@ -1658,6 +1726,7 @@ def make_api_handler(bridge: AndroidBridge):
                         task_id=str(payload.get("task_id") or "api")[:256] or "api",
                         mentions=mentions,
                         allow_visible_file_recovery=bool(payload.get("allow_visible_file_recovery")),
+                        force_resend=bool(payload.get("force_resend")),
                     )
                 # A partial send is a valid transport response. The caller uses
                 # the component ledger to retry only missing components.
@@ -1722,6 +1791,11 @@ def main() -> int:
     send.add_argument("--file", action="append", dest="files", type=Path, default=[])
     send.add_argument("--task-id", default="manual")
     send.add_argument("--live", action="store_true")
+    send.add_argument(
+        "--force-resend",
+        action="store_true",
+        help="Deliberately resend identical file bytes already delivered to this chat.",
+    )
     send.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
@@ -1764,6 +1838,7 @@ def main() -> int:
                         args.files,
                         task_id=args.task_id,
                         mentions=args.mentions,
+                        force_resend=args.force_resend,
                     )
             else:
                 bridge.serve_forever()

@@ -2,6 +2,14 @@ import path from 'node:path';
 
 const IMAGE_SUFFIXES = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
 const VIDEO_SUFFIXES = new Set(['.mp4', '.mov', '.m4v']);
+const INBOUND_ATTACHMENT_KINDS = Object.freeze(['image', 'file', 'video', 'voice']);
+
+export function inboundAttachmentPayloads(message) {
+  if (!message || typeof message !== 'object') return [];
+  return INBOUND_ATTACHMENT_KINDS.flatMap((kind) => (
+    message[kind]?.url ? [{ kind, payload: message[kind] }] : []
+  ));
+}
 
 export function sanitizeFilename(value, fallback = 'attachment') {
   const base = path.basename(String(value || '').replaceAll('\\', '/'));
@@ -21,7 +29,12 @@ export function inferExtension(buffer, fallback = '.bin') {
   if (buffer.subarray(0, 4).toString('ascii') === 'GIF8') return '.gif';
   if (buffer.subarray(0, 4).toString('ascii') === '%PDF') return '.pdf';
   if (buffer.subarray(0, 4).toString('hex') === '504b0304') return '.zip';
+  if (buffer.subarray(0, 6).toString('ascii') === '#!AMR\n') return '.amr';
+  if (buffer.subarray(0, 4).toString('ascii') === 'OggS') return '.ogg';
+  if (buffer.subarray(0, 4).toString('ascii') === 'fLaC') return '.flac';
+  if (buffer.subarray(0, 3).toString('ascii') === 'ID3') return '.mp3';
   if (buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp') return '.mp4';
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WAVE') return '.wav';
   if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return '.webp';
   return fallback;
 }

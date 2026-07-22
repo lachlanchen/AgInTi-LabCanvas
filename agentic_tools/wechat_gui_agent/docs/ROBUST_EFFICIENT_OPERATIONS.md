@@ -462,6 +462,15 @@ The stable interface and recovery commands are documented in
   confirmation surfaces back to the exact chat composer, and submit only the
   ledger-confirmed pending components. A partial response must not cause a
   whole-batch retry or duplicate a PDF already visible in chat.
+- Official WeCom voice, quoted voice, and mixed-message voice must be downloaded
+  by the SDK into the exact message directory and exposed as
+  `transport_preflight.wecom_media`. The worker passes only those exact files to
+  `wechat_audio_intake.py`, reads its `agent-context.md`, and never falls back
+  to a personal-WeChat database or nearby media file.
+- Deduplicate Android WeCom files by SHA-256 within the exact destination chat,
+  not only by task ID or filename. A renamed artifact or supplemental task must
+  reuse the prior delivery record instead of uploading the same bytes again.
+  Only an explicit operator `--force` resend may bypass this content guard.
 - Ordinary link/read-later research should send a concise chat answer by
   default, not Markdown/PDF/image attachments. Save local notes under the task
   artifact directory. Attach reports or images only when the current request
@@ -866,6 +875,29 @@ evidence for local artifacts, not chat-facing content.
   isolated WeCom worker is explicitly GPT-5.6 SOL: low/medium for bounded work,
   high for daily research and execution, and xhigh/max/ultra only when the
   agent's incomplete result requires escalation.
+
+## Grant Goal Workflow
+
+- Route grant applications, funding proposals, and specific-aims packages to
+  `grant_proposal` before generic career, document, or research heuristics.
+- Initialize one ignored `grant_project/` under the exact task artifact
+  directory. `goal.json`, `current_request.md`, source and figure manifests,
+  proposal sources, and validation state are the durable source of truth for
+  the resumed per-chat agent.
+- Use Codex `create_goal` when the worker surface exposes it. If not, continue
+  from `goal.json` without claiming that a goal tool was called. Never call
+  `update_goal` until evidence, editable figures, compilation, validation, and
+  source-chat delivery all pass.
+- Prefer authenticated BioRender MCP/browser assets for scientific figures,
+  while preserving atomic source parts and an assembly manifest. An editable
+  SVG/TeX fallback is mandatory when BioRender is unavailable.
+- `proposal.pdf` is a required delivery artifact. The sender recovers it from
+  the canonical grant workspace even when the model omits the path. An invalid
+  workspace silently resumes the same agent session up to the bounded repair
+  limit instead of sending progress chatter or marking the task done.
+- Grant drafting never authorizes public submission, payment, credential
+  changes, or fabricated evidence, citations, people, facilities, eligibility,
+  deadlines, approvals, or budgets.
 
 ## State Machine
 

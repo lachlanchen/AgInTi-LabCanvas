@@ -13,6 +13,7 @@ import AiBot, { generateReqId } from '@wecom/aibot-node-sdk';
 import {
   chunkUtf8,
   decideInboundAuthorization,
+  inboundAttachmentPayloads,
   inferExtension,
   mediaTypeForPath,
   sanitizeFilename,
@@ -178,13 +179,23 @@ async function normalizeInboundMessage(body, eventDir, authorization) {
   if (Array.isArray(body.mixed?.msg_item)) {
     for (const item of body.mixed.msg_item) {
       if (item?.msgtype === 'text' && item.text?.content) textParts.push(String(item.text.content));
-      if (item?.msgtype === 'image' && item.image?.url) {
-        attachments.push(await downloadAttachment(item.image, 'image', eventDir, attachments.length + 1));
+      for (const attachment of inboundAttachmentPayloads(item)) {
+        attachments.push(await downloadAttachment(
+          attachment.payload,
+          attachment.kind,
+          eventDir,
+          attachments.length + 1,
+        ));
       }
     }
   }
-  for (const kind of ['image', 'file', 'video']) {
-    if (body[kind]?.url) attachments.push(await downloadAttachment(body[kind], kind, eventDir, attachments.length + 1));
+  for (const attachment of inboundAttachmentPayloads(body)) {
+    attachments.push(await downloadAttachment(
+      attachment.payload,
+      attachment.kind,
+      eventDir,
+      attachments.length + 1,
+    ));
   }
 
   const quote = normalizeQuote(body.quote);
@@ -220,9 +231,12 @@ function normalizeQuote(quote) {
       if (item?.msgtype === 'text' && item.text?.content) textParts.push(String(item.text.content));
     }
   }
-  for (const kind of ['image', 'file']) {
-    if (quote[kind]?.url) return { text: textParts.join('\n').trim(), attachment: { kind, payload: quote[kind] } };
+  for (const item of Array.isArray(quote.mixed?.msg_item) ? quote.mixed.msg_item : []) {
+    const [attachment] = inboundAttachmentPayloads(item);
+    if (attachment) return { text: textParts.join('\n').trim(), attachment };
   }
+  const [attachment] = inboundAttachmentPayloads(quote);
+  if (attachment) return { text: textParts.join('\n').trim(), attachment };
   return { text: textParts.join('\n').trim(), attachment: null };
 }
 
@@ -230,8 +244,9 @@ async function downloadAttachment(payload, kind, eventDir, index, prefix = 'atta
   const { buffer, filename } = await client.downloadFile(String(payload.url), payload.aeskey ? String(payload.aeskey) : undefined);
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error(`Downloaded ${kind} is empty.`);
   if (buffer.length > MAX_INBOUND_BYTES) throw new Error(`Inbound ${kind} exceeds ${MAX_INBOUND_BYTES} bytes.`);
-  let cleanName = sanitizeFilename(filename, `${prefix}-${index}${inferExtension(buffer)}`);
-  if (!path.extname(cleanName)) cleanName += inferExtension(buffer);
+  const fallbackExtension = inferExtension(buffer, kind === 'voice' ? '.amr' : '.bin');
+  let cleanName = sanitizeFilename(filename, `${prefix}-${index}${fallbackExtension}`);
+  if (!path.extname(cleanName)) cleanName += fallbackExtension;
   const target = uniquePath(eventDir, cleanName);
   atomicWrite(target, buffer, 0o600);
   return { kind, filename: path.basename(target), path: target, size_bytes: buffer.length };

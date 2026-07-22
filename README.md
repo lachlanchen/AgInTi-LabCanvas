@@ -36,6 +36,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | Workspace agent | Persistent direct chat, dynamic GPT-5.6 SOL/Ultra routing, durable tasks, cancellation, and artifact return across all lab tools | [docs/WORKSPACE_AGENT.md](docs/WORKSPACE_AGENT.md) |
 | Web studio | Agent chat, bright UI, artifact canvas, backend settings, multilingual UI | `labcanvas web --port 8787 --open` |
 | Paper figures | Exact `NxM` SVG grids, AgInTi image dry-run payloads, editable artifact manifest | [docs/EDITABLE_FIGURE_PIPELINE.md](docs/EDITABLE_FIGURE_PIPELINE.md) |
+| Grant projects | Durable Codex goal workspace, traceable evidence, editable BioRender/SVG/TeX figures, checked LaTeX/PDF, and mandatory chat delivery | `labcanvas grant init`, `labcanvas grant run`, [BioRender bridge](agentic_tools/biorender_agent/README.md) |
 | 3D setup renders | JSON scene specs to Blender PNG and `.blend` output | [docs/SCENE_SPEC.md](docs/SCENE_SPEC.md) |
 | CAD devices | OpenSCAD exports and C-mount reflector adapter CAD | [cad/README.md](cad/README.md) |
 | Board/CAD tasks | Shared CLI and web-chat workflow for KiCad, OpenSCAD, renders, and manufacturing prep | [docs/BOARD_CAD_TASKS.md](docs/BOARD_CAD_TASKS.md) |
@@ -43,7 +44,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | LabVIEW automation | Linux install probe, MCP candidate research, stdio-to-HTTP bridge | [agentic_tools/labview_mcp_agent](agentic_tools/labview_mcp_agent) |
 | Android control | Dedicated noVNC/scrcpy desktop and ADB wrapper for the Mi MIX 2S real device plus matching AVD profile | [docs/ANDROID_DEVICE_CONTROL.md](docs/ANDROID_DEVICE_CONTROL.md) |
 | WeChat chatops | Isolated Linux GUI, direct local message mirror, fast ACK agent, strict per-chat media isolation, AgInTi figure generation plus CAD/PCB/Blender worker queue, file/PDF/render return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md), [full control manual](agentic_tools/wechat_gui_agent/docs/FULL_CONTROL_MANUAL.md), [robust operations](agentic_tools/wechat_gui_agent/docs/ROBUST_EFFICIENT_OPERATIONS.md) |
-| WeCom bridge | Official AI Bot and `wecom-cli` transports plus an allowlisted external-group GUI relay, verified file sends (including a narrow file-only recovery path for persistent device warnings), per-chat sessions, per-member paper/idea archives, immediate `#daily` research, and LaTeX report recovery | [setup and architecture](docs/WECOM_API_BRIDGE.md), [stable GUI interface](agentic_tools/wecom_agent/docs/GUI_RELAY_INTERFACE.md) |
+| WeCom bridge | Official AI Bot and `wecom-cli` transports plus allowlisted GUI/Android relays, exact voice/media transcription, content-idempotent file sends, per-chat sessions, member archives, immediate `#daily` research, and LaTeX report recovery | [setup and architecture](docs/WECOM_API_BRIDGE.md), [stable GUI interface](agentic_tools/wecom_agent/docs/GUI_RELAY_INTERFACE.md) |
 | LALACHAN video handoff | Story drafting, Xiaoyunque browser generation, MP4 download, repo/Nutstore copy, and LazyEdit permission gates for WeChat workers | [references/lalachan-story-video-handoff-for-wechat.md](references/lalachan-story-video-handoff-for-wechat.md) |
 | Video publish handoff | Agents resolve exact videos and context, then delegate subtitle correction, metadata, logo/subtitle burn, packaging, and public posting to LazyEdit/AutoPublish | [references/lazyedit-agent-integration-handoff.md](references/lazyedit-agent-integration-handoff.md) |
 | Social content agent | Persistent Codex campaigns, source-grounded platform drafts, SQLite history, Postiz/X MCP adapters, and exact-content publication approvals | [agentic_tools/social_content_agent](agentic_tools/social_content_agent) |
@@ -59,6 +60,7 @@ PYTHONPATH=src python -m agenticapp doctor
 PYTHONPATH=src python -m agenticapp web --port 8787 --open
 PYTHONPATH=src python -m agenticapp agent capabilities
 PYTHONPATH=src python -m agenticapp agent chat "Design and render a C-mount sensor holder"
+PYTHONPATH=src python -m agenticapp grant run "Draft specific aims with verified evidence and an editable figure" --title "Research Grant" --dry-run
 PYTHONPATH=src python -m agenticapp studio figure-grid "optical device icons 2x3" --rows 2 --cols 3
 PYTHONPATH=src python -m agenticapp studio lab-task "prepare Lumileds no-resistor PCB and C-mount reflector CAD"
 PYTHONPATH=src python -m agenticapp wechat worker reprocess TASK_ID "recover completed report" --artifact-recovery-only --send --queue agentic_tools/wecom_agent/.private/wecom_task_queue.jsonl
@@ -98,6 +100,9 @@ labcanvas scene-template experiment-setup --output my-setup.scene.json
 labcanvas agent chat "Create a clean Shapr3D-compatible optical holder" --model gpt-5.6-sol --effort ultra
 labcanvas agent chat "Inspect the current KiCad board and report problems" --mode plan
 labcanvas agent tasks
+labcanvas grant init "Draft a proposal grounded in the supplied call and primary literature" --title "Research Grant"
+labcanvas grant run "Complete the proposal, editable figure, and checked PDF" --project-dir output/grants/PROJECT --effort ultra
+labcanvas grant validate --project-dir output/grants/PROJECT --json
 labcanvas render-scene my-setup.scene.json --dry-run
 labcanvas render-scene my-setup.scene.json --output-dir output/scenes
 labcanvas studio openscad examples/paper-optics-setup.scene.json
@@ -118,6 +123,8 @@ scripts/mix2s on --serial <MIX2S_SERIAL>
 scripts/mix2s status --serial <MIX2S_SERIAL>
 scripts/mix2s off --serial <MIX2S_SERIAL>
 agentic_tools/android_device_agent/scripts/android_control.py status --serial <MIX2S_SERIAL>
+agentic_tools/biorender_agent/scripts/start_biorender_stack.sh
+python agentic_tools/biorender_agent/scripts/probe_biorender_mcp.py --json
 ```
 
 For a local Blender bridge test:

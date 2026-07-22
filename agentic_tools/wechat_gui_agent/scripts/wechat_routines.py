@@ -437,6 +437,55 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "For LazyEdit stages, Codex worker supervision owns context selection and command execution; deterministic code is limited to source isolation, duplicate guards, probes, and terminal verification.",
         ),
     ),
+    "grant_proposal": RoutineDefinition(
+        id="grant_proposal",
+        title="Evidence-Grounded Grant Proposal",
+        route_kinds=("grant_proposal",),
+        purpose="Develop a durable grant application with verified evidence, editable scientific figures, LaTeX/PDF outputs, and explicit completion gates.",
+        default_effort="xhigh",
+        stages=(
+            {
+                "id": "goal_workspace",
+                "owner": "queue_orchestrator",
+                "entrypoint": "agenticapp.grants.initialize_grant_workspace",
+                "success": "dedicated goal.json, current request, brief, evidence, and figure workspace exist",
+            },
+            {
+                "id": "scope_and_funder_evidence",
+                "owner": "worker_agent",
+                "entrypoint": "resumed Codex goal session + primary/official source research",
+                "success": "call requirements and scientific claims are traceable without invented data or eligibility rules",
+            },
+            {
+                "id": "proposal_and_editable_figure",
+                "owner": "worker_agent",
+                "entrypoint": "proposal Markdown/LaTeX + authenticated BioRender MCP/browser or editable SVG/TeX fallback",
+                "success": "proposal sources and atomic editable figure parts/manifest/preview are complete",
+            },
+            {
+                "id": "compile_and_validate",
+                "owner": "worker_agent",
+                "entrypoint": "labcanvas grant compile + labcanvas grant validate",
+                "success": "readable PDF and every grant completion gate pass validation",
+            },
+            {
+                "id": "artifact_delivery_gate",
+                "owner": "queue_orchestrator",
+                "entrypoint": "prepare_result_files -> send_result_with_retries",
+                "success": "proposal PDF, useful source files, and figure preview/editable sources reach the exact source chat",
+            },
+        ),
+        required_gates=("compile_and_validate", "artifact_delivery_gate"),
+        artifact_policy="Return proposal.pdf first, then proposal Markdown/TeX, bibliography, editable figure manifest/source, and useful previews.",
+        rules=COMMON_RULES
+        + (
+            "Use the Codex create_goal tool when available; otherwise continue honestly from the durable goal.json contract. Call update_goal only after every gate genuinely passes.",
+            "Never invent pilot data, citations, collaborators, facilities, budgets, approvals, eligibility, deadlines, or funder requirements.",
+            "Separate direct evidence, inference, hypothesis, and proposed work in both prose and figures.",
+            "Use authenticated BioRender for suitable academic assets when available, but preserve atomic editable parts and use SVG/TeX fallback rather than blocking.",
+            "Drafting does not authorize grant submission, credential changes, payment, or another irreversible external action.",
+        ),
+    ),
     "general_worker": RoutineDefinition(
         id="general_worker",
         title="General Worker Supervised Task",
@@ -499,6 +548,8 @@ def routine_id_for_route(route_decision: dict[str, Any] | None, request_text: st
     if route_kind in ROUTE_TO_ROUTINE:
         return ROUTE_TO_ROUTINE[route_kind]
     lowered = str(request_text or "").lower()
+    if any(marker in lowered for marker in ("grant proposal", "grant application", "funding proposal", "基金申请", "基金申請", "项目申请书", "項目申請書")):
+        return "grant_proposal"
     if any(marker in lowered for marker in ("pcb", "kicad", "openscad", "blender", "cad", "gerber", "render", "渲染", "电路板")):
         return "labcanvas_cad_pcb"
     if any(marker in lowered for marker in ("xiaoyunque", "seedance", "小云雀")) or (

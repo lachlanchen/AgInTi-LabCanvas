@@ -62,8 +62,8 @@ INTERRUPTIBLE_TASK_STATUSES = {
     "waiting_confirmation",
 }
 REQUEUE_ON_INTERRUPT_STATUSES = INTERRUPTIBLE_TASK_STATUSES - {"in_progress"}
-INTERRUPTIBLE_ROUTE_KINDS = {"story_or_script", "generate_video", "career_strategy"}
-INTERRUPTIBLE_ROUTINE_IDS = {"story_script_generation", "generated_video", "career_strategy"}
+INTERRUPTIBLE_ROUTE_KINDS = {"story_or_script", "generate_video", "career_strategy", "grant_proposal"}
+INTERRUPTIBLE_ROUTINE_IDS = {"story_script_generation", "generated_video", "career_strategy", "grant_proposal"}
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 
 
@@ -2969,6 +2969,7 @@ Return only JSON. No markdown.
 Allowed route_kind values:
 - chat_only
 - research_or_summary
+- grant_proposal
 - career_strategy
 - story_or_script
 - generate_image
@@ -2987,6 +2988,7 @@ Important distinction:
 - Routines are available tools/contracts for the worker. Pick the closest route_kind so the worker can use the mature routine, but do not shrink the user's intent to a hardcoded routine if another safe tool path is needed.
 - The current coalesced request is authoritative. Preserve every safe explicit instruction and classify toward the closest backend routine instead of dropping stages.
 - In writing_language_money, personal_organizer, and lachlanchan-style DM chats, requests about what to write, career direction, making money, monetization, opportunities, talent/strengths, personal positioning, products to build, GitHub/lazying.art direction, or "what should I do" should route to career_strategy with worker_needed=true.
+- Grant applications, funding proposals, and specific-aims packages should route to grant_proposal. The worker owns evidence-grounded drafting, an editable figure, LaTeX/PDF validation, and artifact return; this route never authorizes submission.
 - If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
 - Every monitored chat, including EchoMind, can ask for backend work such as CAD/PCB, image or figure generation, video generation, video publication, file/media handling, writing, Markdown, LaTeX, PDFs, and other artifact tasks. EchoMind is language-learning by default only when the message is ordinary language practice.
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
@@ -3115,6 +3117,8 @@ def fallback_route_decision(
         route_kind = "file_intake"
     elif link_inbox_summary_task:
         route_kind = "research_or_summary"
+    elif is_grant_proposal_task(text):
+        route_kind = "grant_proposal"
     elif is_career_strategy_task(config, text):
         route_kind = "career_strategy"
     elif is_document_artifact_task(text):
@@ -3143,7 +3147,7 @@ def fallback_route_decision(
         project = "lalachan"
     elif route_kind == "career_strategy":
         project = "career"
-    elif route_kind in {"cad_pcb_labcanvas", "generate_image", "edit_existing_media"}:
+    elif route_kind in {"cad_pcb_labcanvas", "generate_image", "edit_existing_media", "grant_proposal"}:
         project = "labcanvas"
     else:
         project = "unknown"
@@ -3158,7 +3162,7 @@ def fallback_route_decision(
         "external_action_allowed": bool(
             publish_allowed
             or (
-                route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary"}
+                route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary", "grant_proposal"}
                 and not permission_question
             )
             or route_kind == "career_strategy"
@@ -3204,6 +3208,7 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     allowed_kinds = {
         "chat_only",
         "research_or_summary",
+        "grant_proposal",
         "career_strategy",
         "story_or_script",
         "generate_image",
@@ -4102,6 +4107,24 @@ def is_research_or_summary_task(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+def is_grant_proposal_task(text: str) -> bool:
+    """Fallback wake gate; the route agent remains the primary classifier."""
+    lowered = str(text or "").casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "grant proposal",
+            "grant application",
+            "funding proposal",
+            "specific aims",
+            "基金申请",
+            "基金申請",
+            "项目申请书",
+            "項目申請書",
+        )
+    )
+
+
 def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
     lowered = str(text or "").lower()
     keywords = [str(item).lower() for item in config.get("slow_task_keywords", [])]
@@ -4113,6 +4136,7 @@ def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
             or is_story_or_script_task(text)
             or has_public_publish_intent(text)
             or is_image_generation_task(text)
+            or is_grant_proposal_task(text)
             or is_document_artifact_task(text)
             or any(keyword and keyword in lowered for keyword in keywords)
         )
@@ -4124,6 +4148,7 @@ def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
         or has_public_publish_intent(text)
         or is_image_generation_task(text)
         or is_research_or_summary_task(text)
+        or is_grant_proposal_task(text)
         or is_document_artifact_task(text)
         or any(keyword and keyword in lowered for keyword in keywords)
     )

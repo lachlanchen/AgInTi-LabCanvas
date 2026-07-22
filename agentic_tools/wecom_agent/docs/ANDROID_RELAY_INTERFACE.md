@@ -40,8 +40,11 @@ PYTHONPATH=src python -m agenticapp wecom android send \
   --live --json
 ```
 
-Without `--live`, `send` is a dry run. A stable task ID plus content/file hash
-makes retries idempotent. Files are copied to a private staging directory,
+Without `--live`, `send` is a dry run. A stable task ID makes text retries
+idempotent. File delivery also has a chat-scoped SHA-256 guard, so the same
+bytes cannot be uploaded again under another task ID or filename. A deliberate
+operator resend requires `--force` on `labcanvas wecom android send`; routine
+and deferred worker retries never set it. Files are copied to a private staging directory,
 pushed to the Android `/sdcard/Download` root, selected by exact filename, and
 sent only after the confirmation dialog contains both the exact target chat
 and artifact name. Long names are shortened deterministically to at most 36
@@ -83,6 +86,13 @@ with the same native sender mention; long work continues independently. Visible
 quote-preview text is preserved separately from the current message body and
 included in the same task packet. Sender labels, timestamps, and read receipts
 are excluded from quote text.
+
+Official WeCom voice URLs are downloaded with the SDK's authenticated media
+method into the exact message directory. Voice, quoted voice, and mixed-message
+audio then enter the shared `wechat_audio_intake.py` Whisper pipeline through
+`transport_preflight.wecom_media`; the worker reads the generated
+`agent-context.md` before answering. This route never invokes the personal
+WeChat database or substitutes nearby audio/video files.
 
 Scientifically valuable ideas use two tracks. The route agent sends a concise,
 evidence-qualified preliminary answer immediately, then creates a durable deep

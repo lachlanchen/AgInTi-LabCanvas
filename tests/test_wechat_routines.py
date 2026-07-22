@@ -118,6 +118,27 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertIn("writing topics", contract["purpose"])
         self.assertIn("Do not expose private chat logs", " ".join(contract["rules"]))
 
+    def test_grant_routine_requires_goal_validation_and_artifact_delivery(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "grant_proposal", "project": "labcanvas"},
+            "Write an evidence-grounded grant with an editable BioRender figure and PDF.",
+            task_id="task-grant",
+            chat="LabAgent",
+        )
+        stage_ids = [stage["id"] for stage in contract["stages"]]
+
+        self.assertEqual(contract["id"], "grant_proposal")
+        self.assertEqual(contract["default_effort"], "xhigh")
+        self.assertIn("goal_workspace", stage_ids)
+        self.assertIn("compile_and_validate", contract["required_gates"])
+        self.assertIn("artifact_delivery_gate", contract["required_gates"])
+        self.assertIn("proposal.pdf first", contract["artifact_policy"])
+        rules = " ".join(contract["rules"])
+        self.assertIn("create_goal", rules)
+        self.assertIn("Never invent", rules)
+        self.assertIn("BioRender", rules)
+
     def test_file_intake_routine_safely_reads_supported_documents(self) -> None:
         routines = load_routines()
         contract = routines.build_routine_contract(

@@ -523,6 +523,8 @@ def cmd_gui(args: argparse.Namespace) -> int:
                 command.extend(["--file", str(Path(path).expanduser())])
             if args.live:
                 command.append("--live")
+            if args.force:
+                command.append("--force-resend")
         if args.action == "guide" and args.live:
             command.append("--live")
     command.append("--json")

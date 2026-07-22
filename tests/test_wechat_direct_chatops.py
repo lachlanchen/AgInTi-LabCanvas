@@ -2280,6 +2280,19 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertFalse(route["public_publish_allowed"])
         self.assertTrue(route["requires_third_party_publish_confirmation"])
 
+    def test_grant_request_is_kept_on_dedicated_safe_worker_route(self) -> None:
+        text = "Write a grant proposal with specific aims, evidence, editable BioRender figure, and PDF."
+        config = self.backend_chat_config("懒人科研")
+
+        route = direct_chatops.fallback_route_decision(config, text, self.row(text), [self.row(text)])
+        guarded = direct_chatops.enforce_route_safety(dict(route), text, route)
+
+        self.assertTrue(direct_chatops.is_grant_proposal_task(text))
+        self.assertEqual(guarded["route_kind"], "grant_proposal")
+        self.assertEqual(guarded["project"], "labcanvas")
+        self.assertTrue(guarded["worker_needed"])
+        self.assertFalse(guarded["public_publish_allowed"])
+
     def test_third_party_publish_consent_waits_then_activates_same_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "queue.jsonl"

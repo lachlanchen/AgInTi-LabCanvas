@@ -19,6 +19,11 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m agenticapp agent chat "Design and render a C-mount holder"`: run a persistent direct agent turn with dynamic model/effort selection.
 - `PYTHONPATH=src python -m agenticapp agent chat "Rebuild the exact Shapr part" --model gpt-5.6-sol --effort ultra`: explicitly use GPT-5.6 SOL with `xhigh` reasoning.
 - `PYTHONPATH=src python -m agenticapp agent tasks`: list durable agent work and artifact status.
+- `PYTHONPATH=src python -m agenticapp grant init "Draft specific aims" --title "Research Grant"`: create an ignored evidence, figure, LaTeX, PDF, and goal workspace.
+- `PYTHONPATH=src python -m agenticapp grant run "Complete the proposal" --project-dir output/grants/PROJECT --effort ultra`: resume a persistent GPT-5.6 SOL grant agent against one durable workspace.
+- `PYTHONPATH=src python -m agenticapp grant compile --project-dir output/grants/PROJECT && PYTHONPATH=src python -m agenticapp grant validate --project-dir output/grants/PROJECT`: compile and enforce evidence, editability, PDF, and artifact gates.
+- `agentic_tools/biorender_agent/scripts/start_biorender_stack.sh`: reuse the dedicated BioRender browser and authenticated localhost MCP proxy.
+- `python agentic_tools/biorender_agent/scripts/probe_biorender_mcp.py --json`: prove authenticated MCP `initialize` and `tools/list`, rather than relying on an HTTP health check.
 - `PYTHONPATH=src python -m agenticapp social project add --repo ../ZhJpBook --id pocketpolyglot`: register repository evidence for social campaigns.
 - `PYTHONPATH=src python -m agenticapp social campaign create --project pocketpolyglot --name introduction --objective "Introduce the usable open-source Studio" --platform x --platform reddit:r/languagelearning --platform hackernews`: create a platform-specific campaign brief.
 - `PYTHONPATH=src python -m agenticapp social draft generate CAMPAIGN_ID --dry-run --json`: inspect the Codex Ultra drafting contract without quota use or external writes.
@@ -73,6 +78,12 @@ The web and CLI must use the same `workspace_agent.py` runtime. Keep the web cha
 ## Figure Pipeline Rules
 
 Paper figure generation must stay editable and atomic. Do not treat a generated bitmap as the final source of truth. Use image generation for overview concepts, then split figures into named parts with their own prompts, source files, tool settings, previews, and edit history. Prefer BioRender for academic assets, OpenSCAD for device geometry, Blender for rendered setups, LabVIEW for instrument/control workflows, and TeX for clipping and final assembly. Preserve part IDs and rebuild exports from manifests.
+
+## Grant Project Rules
+
+Grant requests use `src/agenticapp/grants.py` and the `grant_proposal` worker routine. Keep one ignored project directory per grant with `goal.json`, `current_request.md`, traceable source metadata, proposal Markdown/LaTeX/PDF, and atomic editable figure sources. Use the Codex `create_goal` tool when the active surface exposes it; otherwise follow the durable `goal.json` contract honestly. Never call `update_goal` or mark the chat task complete until `labcanvas grant validate` passes and `proposal.pdf` is delivered to the exact source chat. BioRender is preferred for suitable authenticated academic assets, but an editable SVG/TeX fallback must keep work moving. Drafting never authorizes submission, payment, credential changes, or invented pilot data, citations, collaborators, facilities, eligibility, deadlines, approvals, or budgets.
+
+BioRender OAuth client data and tokens belong only in `agentic_tools/biorender_agent/.private/` with mode `0600`. Start the dedicated profile/proxy with `start_biorender_stack.sh`; readiness requires the authenticated MCP protocol probe or a visibly logged-in gallery/canvas. Do not depend on dynamic client registration when the upstream edge blocks it, and never print or commit OAuth material.
 
 ## Social Content Rules
 

@@ -228,6 +228,118 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(status["sent_files"], [str(artifact.resolve())])
         self.assertEqual(status["pending_files"], [])
 
+    def test_delivery_status_deduplicates_same_file_bytes_across_tasks(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first-name.pdf"
+            second = root / "renamed-copy.pdf"
+            first.write_bytes(b"%PDF-1.4\nsame bytes\n")
+            second.write_bytes(first.read_bytes())
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            digest = bridge.sha256_file(first)
+            value_hash = f"{digest}:{first.name}"
+            key = runtime.component_key("task-old", "LabAgent", "file", value_hash)
+            runtime.mark_component(
+                key,
+                task_id="task-old",
+                chat="LabAgent",
+                kind="file",
+                value_hash=value_hash,
+                status="sent",
+            )
+
+            status = runtime.delivery_status(
+                "LabAgent", "", [second], task_id="task-new"
+            )
+
+        self.assertTrue(status["complete"])
+        self.assertEqual(status["sent_files"], [str(second.resolve())])
+        self.assertEqual(status["pending_files"], [])
+
+    def test_send_file_skips_cross_task_duplicate_before_android_staging(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first-name.pdf"
+            second = root / "renamed-copy.pdf"
+            first.write_bytes(b"%PDF-1.4\nsame bytes\n")
+            second.write_bytes(first.read_bytes())
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            digest = bridge.sha256_file(first)
+            old_value = f"{digest}:{first.name}"
+            old_key = runtime.component_key("task-old", "LabAgent", "file", old_value)
+            runtime.mark_component(
+                old_key,
+                task_id="task-old",
+                chat="LabAgent",
+                kind="file",
+                value_hash=old_value,
+                status="sent",
+            )
+            runtime.stage_file = mock.Mock(side_effect=AssertionError("must not stage duplicate"))
+
+            result = runtime.send_file_locked(
+                "LabAgent", second, task_id="task-new"
+            )
+            new_key = runtime.component_key(
+                "task-new", "LabAgent", "file", f"{digest}:{second.name}"
+            )
+            new_status = runtime.component_record(new_key)["status"]
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["deduplicated"])
+        self.assertEqual(new_status, "deduplicated")
+        runtime.stage_file.assert_not_called()
+
+    def test_send_file_force_resend_bypasses_cross_task_content_guard(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "report.pdf"
+            artifact.write_bytes(b"%PDF-1.4\nsame bytes\n")
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            digest = bridge.sha256_file(artifact)
+            value_hash = f"{digest}:{artifact.name}"
+            old_key = runtime.component_key("task-old", "LabAgent", "file", value_hash)
+            runtime.mark_component(
+                old_key,
+                task_id="task-old",
+                chat="LabAgent",
+                kind="file",
+                value_hash=value_hash,
+                status="sent",
+            )
+            runtime.stage_file = mock.Mock(side_effect=bridge.BridgeError("staging reached"))
+
+            with self.assertRaisesRegex(bridge.BridgeError, "staging reached"):
+                runtime.send_file_locked(
+                    "LabAgent", artifact, task_id="task-new", force_resend=True
+                )
+
+        runtime.stage_file.assert_called_once_with(artifact)
+
     def test_normalize_chat_surface_dismisses_stale_attachment_choice(self) -> None:
         bridge = load_bridge()
         stale = ET.fromstring(

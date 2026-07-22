@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   chunkUtf8,
   decideInboundAuthorization,
+  inboundAttachmentPayloads,
   inferExtension,
   mediaTypeForPath,
   sanitizeFilename,
@@ -16,6 +17,20 @@ test('sanitizeFilename removes traversal and control characters', () => {
 test('inferExtension recognizes common inbound media', () => {
   assert.equal(inferExtension(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), '.jpg');
   assert.equal(inferExtension(Buffer.from('%PDF-1.7')), '.pdf');
+  assert.equal(inferExtension(Buffer.from('#!AMR\nvoice')), '.amr');
+  assert.equal(inferExtension(Buffer.from('OggSvoice')), '.ogg');
+  assert.equal(inferExtension(Buffer.from('RIFF0000WAVEfmt ')), '.wav');
+});
+
+test('inboundAttachmentPayloads includes exact WeCom voice and media URLs', () => {
+  const payloads = inboundAttachmentPayloads({
+    image: { url: 'image-url' },
+    voice: { url: 'voice-url', aeskey: 'private' },
+    text: { content: 'hello' },
+  });
+
+  assert.deepEqual(payloads.map(({ kind }) => kind), ['image', 'voice']);
+  assert.equal(payloads[1].payload.url, 'voice-url');
 });
 
 test('chunkUtf8 enforces byte limits without splitting characters', () => {

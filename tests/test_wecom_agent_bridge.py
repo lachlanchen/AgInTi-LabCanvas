@@ -296,6 +296,18 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(result["reply"].startswith(route["response"]))
         self.assertIn("#daily", result["reply"])
 
+    def test_grant_request_fallback_uses_dedicated_goal_routine(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(
+            text="Write a grant proposal with specific aims, verified references, an editable figure, and PDF."
+        )
+
+        route = ingest.fallback_route(event, event["text"])
+
+        self.assertTrue(route["worker_needed"])
+        self.assertEqual(route["route_kind"], "grant_proposal")
+        self.assertTrue(route["report_required"])
+
     def test_gui_ingest_suppresses_recent_exact_duplicate_with_changed_sender(self) -> None:
         ingest = load_ingest()
         route = {
@@ -1088,6 +1100,66 @@ class WeComAgentBridgeTests(unittest.TestCase):
             preflight = worker.prepare_worker_preflight(task, Path(tmp))
 
         self.assertEqual(preflight["wecom_media"]["status"], "ready")
+
+    def test_worker_transcribes_exact_official_wecom_voice_without_personal_wechat_resolution(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            voice = root / "inbound" / "voice.amr"
+            voice.parent.mkdir()
+            voice.write_bytes(b"#!AMR\nvoice")
+            agent_context = root / "task" / "audio_intake" / "agent-context.md"
+            agent_context.parent.mkdir(parents=True)
+            agent_context.write_text("# transcript\n\nexact voice\n", encoding="utf-8")
+            task = {
+                "id": "wecom-voice-task",
+                "chat": "wecom:default:group:abc",
+                "source": {
+                    "transport": "wecom",
+                    "wecom_transport_channel": "wecom_official",
+                    "chat": "wecom:default:group:abc",
+                    "local_id": 42,
+                    "local_type": "voice",
+                },
+                "route_decision": {"route_kind": "file_intake"},
+                "routine": {"id": "file_intake"},
+                "transport_preflight": {
+                    "wecom_media": {
+                        "status": "ready",
+                        "copied": [
+                            {
+                                "kind": "voice",
+                                "task_copy_path": str(voice),
+                                "status": "ready",
+                            }
+                        ],
+                    }
+                },
+            }
+            expected = {
+                "status": "transcribed",
+                "input_kind": "local_wechat_media",
+                "agent_context_path": str(agent_context),
+            }
+            with mock.patch.object(
+                worker,
+                "prepare_file_intake_preflight",
+                side_effect=AssertionError("personal WeChat intake should not run"),
+            ), mock.patch.object(
+                worker,
+                "prepare_media_resolution_preflight",
+                side_effect=AssertionError("personal WeChat media resolution should not run"),
+            ), mock.patch.object(
+                worker,
+                "run_audio_intake_transcriber",
+                return_value=expected,
+            ) as transcribe:
+                preflight = worker.prepare_worker_preflight(task, root / "task")
+
+            self.assertEqual(preflight["audio_intake"], expected)
+            transcribe.assert_called_once_with(
+                voice.resolve(), output_dir=root / "task" / "audio_intake", source_local_id=42
+            )
 
     def test_admin_command_reports_launcher_novnc_url(self) -> None:
         wecom_ops = load_wecom_ops()

@@ -170,6 +170,43 @@ def build_parser() -> argparse.ArgumentParser:
     agent_cancel.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     agent_cancel.set_defaults(func=cmd_agent_cancel)
 
+    grant_parser = subparsers.add_parser("grant", help="Create and run durable evidence-grounded grant projects.")
+    grant_subparsers = grant_parser.add_subparsers(dest="grant_command", required=True)
+
+    grant_init = grant_subparsers.add_parser("init", help="Create a dedicated grant goal workspace.")
+    grant_init.add_argument("objective", nargs="+", help="Concrete grant-writing objective.")
+    grant_init.add_argument("--title", default="Research Grant Proposal")
+    grant_init.add_argument("--project-dir", default="", help="Project directory. Defaults under ignored output/grants/.")
+    grant_init.add_argument("--task-id", default="")
+    grant_init.add_argument("--chat", default="")
+    grant_init.add_argument("--json", action="store_true")
+    grant_init.set_defaults(func=cmd_grant_init)
+
+    grant_run = grant_subparsers.add_parser("run", help="Run the persistent Codex grant agent from a goal workspace.")
+    grant_run.add_argument("objective", nargs="+", help="Concrete grant-writing objective.")
+    grant_run.add_argument("--title", default="Research Grant Proposal")
+    grant_run.add_argument("--project-dir", default="", help="Project directory. Defaults under ignored output/grants/.")
+    grant_run.add_argument("--storage-dir", default="output/webapp")
+    grant_run.add_argument("--conversation", default="", help="Stable conversation id. Defaults to the grant project id.")
+    grant_run.add_argument("--model", default="gpt-5.6-sol")
+    grant_run.add_argument("--effort", choices=["high", "ultra", "xhigh"], default="ultra")
+    grant_run.add_argument("--timeout", type=int, default=10800)
+    grant_run.add_argument("--detach", action="store_true")
+    grant_run.add_argument("--dry-run", action="store_true")
+    grant_run.add_argument("--json", action="store_true")
+    grant_run.set_defaults(func=cmd_grant_run)
+
+    grant_compile = grant_subparsers.add_parser("compile", help="Compile proposal.tex in a grant workspace.")
+    grant_compile.add_argument("--project-dir", required=True)
+    grant_compile.add_argument("--timeout", type=int, default=300)
+    grant_compile.add_argument("--json", action="store_true")
+    grant_compile.set_defaults(func=cmd_grant_compile)
+
+    grant_validate = grant_subparsers.add_parser("validate", help="Validate grant source, PDF, and editable figure artifacts.")
+    grant_validate.add_argument("--project-dir", required=True)
+    grant_validate.add_argument("--json", action="store_true")
+    grant_validate.set_defaults(func=cmd_grant_validate)
+
     worker_parser = subparsers.add_parser("_agent-worker", help=argparse.SUPPRESS)
     worker_parser.add_argument("--task-id", required=True)
     worker_parser.add_argument("--storage-dir", required=True)
@@ -504,6 +541,92 @@ def cmd_agent_cancel(args: argparse.Namespace) -> int:
     result = cancel_agent_task(args.task_id, args.storage_dir)
     _print_payload(result, args.json, f"agent task: {result['task']['id']} canceled")
     return 0
+
+
+def cmd_grant_init(args: argparse.Namespace) -> int:
+    from .grants import default_project_dir, initialize_grant_workspace
+
+    objective = " ".join(args.objective).strip()
+    project_dir = Path(args.project_dir).expanduser() if args.project_dir else default_project_dir(args.title, root=Path.cwd())
+    result = initialize_grant_workspace(
+        project_dir,
+        title=args.title,
+        objective=objective,
+        task_id=args.task_id,
+        chat=args.chat,
+    )
+    _print_payload(result, args.json, f"grant workspace: {result['project_dir']}")
+    return 0
+
+
+def cmd_grant_run(args: argparse.Namespace) -> int:
+    from .grants import default_project_dir, initialize_grant_workspace
+    from .workspace_agent import build_agent_prompt, create_agent_task, select_agent_policy, wait_for_task
+
+    objective = " ".join(args.objective).strip()
+    project_dir = Path(args.project_dir).expanduser() if args.project_dir else default_project_dir(args.title, root=Path.cwd())
+    workspace = initialize_grant_workspace(project_dir, title=args.title, objective=objective)
+    goal_prompt = Path(workspace["prompt_path"]).read_text(encoding="utf-8")
+    conversation = args.conversation or f"grant-{workspace['goal'].get('project_id') or project_dir.name}"
+    storage_dir = Path(args.storage_dir)
+    payload = {
+        "message": goal_prompt,
+        "conversation_id": conversation,
+        "backend": "codex",
+        "model": args.model,
+        "effort": args.effort,
+        "mode": "execute",
+        "timeout_seconds": args.timeout,
+        "fallback_to_aginti": True,
+        "context": {"grant_workspace": workspace},
+    }
+    if args.dry_run:
+        policy = select_agent_policy(goal_prompt, model=args.model, effort=args.effort, mode="execute", backend="codex")
+        result = {
+            "ok": True,
+            "dry_run": True,
+            "workspace": workspace,
+            "policy": policy,
+            "prompt": build_agent_prompt(
+                goal_prompt,
+                root=Path.cwd(),
+                task_dir=storage_dir / "agent" / "grant-dry-run",
+                policy=policy,
+                conversation_id=conversation,
+                context={"grant_workspace": workspace},
+            ),
+        }
+    else:
+        result = create_agent_task(payload, storage_dir, root=Path.cwd(), launch=True)
+        result["workspace"] = workspace
+        if not args.detach:
+            result = wait_for_task(result["task"]["id"], storage_dir, timeout=float(args.timeout) + 120)
+            result["workspace"] = workspace
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    elif args.dry_run:
+        print(f"grant dry run: {workspace['project_dir']}")
+    elif args.detach:
+        print(f"grant task: {result['task']['id']} ({result['task']['status']})")
+    else:
+        print(result["task"].get("reply") or result["task"].get("error") or result["task"]["status"])
+    return 0 if result.get("ok") else 1
+
+
+def cmd_grant_compile(args: argparse.Namespace) -> int:
+    from .grants import compile_grant
+
+    result = compile_grant(args.project_dir, timeout=args.timeout)
+    _print_payload(result, args.json, result.get("pdf") or result.get("error") or "grant compile failed")
+    return 0 if result.get("ok") else 1
+
+
+def cmd_grant_validate(args: argparse.Namespace) -> int:
+    from .grants import validate_grant_workspace
+
+    result = validate_grant_workspace(args.project_dir)
+    _print_payload(result, args.json, f"grant validation: {'ok' if result.get('ok') else 'failed'}")
+    return 0 if result.get("ok") else 1
 
 
 def cmd_agent_worker(args: argparse.Namespace) -> int:

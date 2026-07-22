@@ -7233,6 +7233,99 @@ stderr: noisy internal trace
 
         self.assertEqual(env["WECHAT_GUI_SEND_MAX_SECONDS"], "175")
 
+    def test_grant_orchestrator_initializes_durable_workspace(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp) / "task"
+            task = {
+                "id": "grant-task",
+                "chat": "LabAgent",
+                "request": "Write a vascular organoid grant with an editable figure and PDF.",
+                "artifact_dir": str(artifact_dir),
+                "route_decision": {"route_kind": "grant_proposal", "grant_title": "Vascular Organoids"},
+                "routine": {"id": "grant_proposal"},
+            }
+            policy = {
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "xhigh",
+                "timeout_seconds": 10800,
+                "reuse_session": True,
+            }
+            with (
+                mock.patch.object(worker, "prepare_worker_preflight", return_value={}),
+                mock.patch.object(worker, "deterministic_preflight_result", return_value=None),
+                mock.patch.object(worker, "persist_task_progress"),
+                mock.patch.object(worker, "run_worker_agent_session", return_value="agent-result"),
+            ):
+                result = worker.run_task_orchestrator(task, policy)
+
+            project = Path(task["grant_workspace"]["project_dir"])
+            goal_exists = (project / "goal.json").is_file()
+            prompt_exists = (project / "agent_goal_prompt.md").is_file()
+
+        self.assertEqual(result, "agent-result")
+        self.assertTrue(goal_exists)
+        self.assertTrue(prompt_exists)
+        self.assertIn("grant_workspace", worker.worker_agent_task_view(task))
+
+    def test_grant_result_resumes_until_validation_passes(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "grant-task",
+            "route_decision": {"route_kind": "grant_proposal"},
+            "routine": {"id": "grant_proposal"},
+        }
+        result = {
+            "message": "drafted",
+            "confirmation": "",
+            "files": [],
+            "data": {"grant_completion_pending": True, "grant_validation": {"ok": False}},
+        }
+
+        worker.apply_send_outcome(task, result, [])
+
+        self.assertEqual(task["status"], "pending")
+        self.assertEqual(task["grant_validation_attempts"], 1)
+        self.assertFalse(worker.should_send_worker_result(task, result))
+
+    def test_grant_pdf_is_recovered_and_required_for_delivery(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "grant"
+            (project / "figures" / "renders").mkdir(parents=True)
+            pdf = project / "proposal.pdf"
+            pdf.write_bytes(b"%PDF-1.4\nproposal")
+            preview = project / "figures" / "renders" / "overview.png"
+            preview.write_bytes(b"figure preview")
+            (project / "figures" / "figure_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "editable": True,
+                        "overview": "figures/renders/overview.png",
+                        "assembly_source": "figures/figure_assembly.tex",
+                        "parts": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "id": "grant-task",
+                "route_decision": {"route_kind": "grant_proposal"},
+                "routine": {"id": "grant_proposal"},
+                "grant_workspace": {"project_dir": str(project)},
+            }
+
+            prepared = worker.prepare_result_files(
+                {"message": "complete", "confirmation": "", "files": []},
+                "",
+                task=task,
+            )
+
+        self.assertEqual(prepared["files"][0], str(pdf.resolve()))
+        self.assertIn(str(preview.resolve()), prepared["files"])
+        self.assertTrue(worker.result_requires_file_delivery(task, prepared))
+        self.assertEqual(worker.required_delivery_file_paths(prepared, task)[0], pdf.resolve())
+
 
 if __name__ == "__main__":
     unittest.main()

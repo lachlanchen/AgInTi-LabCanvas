@@ -58,6 +58,7 @@ DEFAULT_QUEUE = PRIVATE / "wecom_task_queue.jsonl"
 DEFAULT_HISTORY_DB = PRIVATE / "wecom_messages.local.sqlite"
 ROUTE_KINDS = {
     "research_or_summary",
+    "grant_proposal",
     "career_strategy",
     "generate_image",
     "edit_existing_media",
@@ -454,6 +455,7 @@ Allowed route_kind values:
 
 Rules:
 - LabAgent focuses on normal research, literature, research proposals, lawful paper downloads, Markdown/TeX/PDF reports, editable paper figures, scientific drawing, CAD/PCB/Blender design, and related artifact work.
+- A grant/funding application, specific aims package, or funding proposal should use `grant_proposal` with worker_needed=true and report_required=true. The worker must use a dedicated durable goal workspace, verify the funder/call and scientific evidence, create editable figures plus LaTeX/PDF, and return artifacts without submitting the application.
 - Attachments, links requiring reading, research, file operations, figures, CAD/PCB/Blender, generation, editing, or multi-step design work need the worker.
 - Simple greetings, ordinary questions answerable without tools, and short conversational follow-ups may be answered directly.
 - For a scientifically valuable question, run two tracks: put a concise, useful preliminary answer in `ack`, and set `worker_needed` true so the durable worker performs source-grounded deep research in parallel. The preliminary answer must be framed as provisional when evidence has not yet been checked.
@@ -553,19 +555,37 @@ Private same-member knowledge context:
 
 
 def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
+    grant = looks_like_grant_request(request)
     return {
         "worker_needed": True,
-        "route_kind": "file_intake" if normalized_attachments(event) else "other_worker",
+        "route_kind": "file_intake" if normalized_attachments(event) else ("grant_proposal" if grant else "other_worker"),
         "response": "",
         "task": request,
         "ack": "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。",
         "daily_topic": "",
         "inspiration_interest": "",
         "inspiration_interest_mode": "none",
-        "report_required": False,
+        "report_required": grant,
         "memory_items": [],
         "public_publish_allowed": False,
     }
+
+
+def looks_like_grant_request(request: str) -> bool:
+    lowered = str(request or "").casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "grant proposal",
+            "grant application",
+            "funding proposal",
+            "specific aims",
+            "基金申请",
+            "基金申請",
+            "项目申请书",
+            "項目申請書",
+        )
+    )
 
 
 def build_task(

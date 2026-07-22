@@ -196,7 +196,7 @@ MARKDOWN_PDF_LANGUAGE_LABELS = {
     "en": "English",
 }
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
-AUDIO_SUFFIXES = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".amr", ".opus"}
+AUDIO_SUFFIXES = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".amr", ".opus", ".flac"}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".svg"}
 OCR_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 RAW_WECHAT_MEDIA_SUFFIXES = {".dat"}
@@ -449,7 +449,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         result_text = run_worker_codex(task)
         result = parse_worker_result(result_text)
         result = enforce_worker_result_contract(task, result, result_text)
-        result = prepare_result_files(result, result_text)
+        result = prepare_result_files(result, result_text, task=task)
     except Exception as exc:
         result_text = f"Worker failed before completion: {type(exc).__name__}: {str(exc)[:800]}"
         result = {"message": result_text, "confirmation": "", "files": [], "raw": result_text}
@@ -614,6 +614,22 @@ def refresh_existing_video_publish_deferred_result(task: dict[str, Any], result:
 
 
 def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: list[str]) -> None:
+    if grant_result_is_nonterminal(task, result):
+        attempts = int(task.get("grant_validation_attempts") or 0) + 1
+        maximum = max(1, int(os.environ.get("WECHAT_WORKER_GRANT_VALIDATION_RETRIES", "3")))
+        task["grant_validation_attempts"] = attempts
+        task["grant_validation"] = dict((result.get("data") or {}).get("grant_validation") or {})
+        if attempts < maximum:
+            task["status"] = "pending"
+            task["grant_resume_reason"] = "completion_gates_pending"
+            task["grant_resume_at"] = datetime.now().isoformat(timespec="seconds")
+        else:
+            task["status"] = "worker_failed"
+            task["worker_error"] = {
+                "type": "GrantValidationFailed",
+                "message": "Grant completion gates remained incomplete after resumed-agent repair attempts.",
+            }
+        return
     if existing_video_publish_result_is_nonterminal(task, result):
         if errors:
             task["last_publish_progress_send_errors"] = errors
@@ -682,6 +698,13 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
     task.pop("send_deferred_reason", None)
 
 
+def grant_result_is_nonterminal(task: dict[str, Any], result: dict[str, Any]) -> bool:
+    if not task_is_grant_proposal(task):
+        return False
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    return bool(data.get("grant_completion_pending"))
+
+
 def existing_video_publish_result_is_nonterminal(task: dict[str, Any], result: dict[str, Any]) -> bool:
     if not is_video_publish_task(task):
         return False
@@ -717,6 +740,8 @@ def generated_video_has_file(result: dict[str, Any]) -> bool:
 
 
 def result_requires_file_delivery(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
+    if task is not None and task_is_grant_proposal(task):
+        return True
     if not result.get("files"):
         return False
     if result_is_file_intake_receipt(result):
@@ -765,6 +790,8 @@ def result_allows_chat_artifact_delivery(task: dict[str, Any] | None, result: di
 
 
 def task_contract_requires_file_delivery(task: dict[str, Any]) -> bool:
+    if task_is_grant_proposal(task):
+        return True
     if isinstance(task.get("daily_research"), dict):
         return True
     route = task_route_decision(task)
@@ -775,6 +802,48 @@ def task_contract_requires_file_delivery(task: dict[str, Any]) -> bool:
     if isinstance(required, str):
         required = [required]
     return bool(isinstance(required, list) and any(str(item).strip() for item in required))
+
+
+def task_is_grant_proposal(task: dict[str, Any] | None) -> bool:
+    if not isinstance(task, dict):
+        return False
+    if task_routine_id(task) == "grant_proposal":
+        return True
+    return str(task_route_decision(task).get("route_kind") or "") == "grant_proposal"
+
+
+def grant_project_dir(task: dict[str, Any] | None) -> Path | None:
+    if not task_is_grant_proposal(task):
+        return None
+    workspace = task.get("grant_workspace") if isinstance(task, dict) else None
+    if not isinstance(workspace, dict):
+        return None
+    raw = str(workspace.get("project_dir") or "").strip()
+    return Path(raw).expanduser().resolve() if raw else None
+
+
+def grant_expected_pdf_path(task: dict[str, Any] | None) -> Path | None:
+    project = grant_project_dir(task)
+    return project / "proposal.pdf" if project is not None else None
+
+
+def grant_auto_delivery_files(task: dict[str, Any] | None) -> list[str]:
+    """Recover the canonical grant PDF even when the agent omits its path."""
+    project = grant_project_dir(task)
+    if project is None:
+        return []
+    candidates = [project / "proposal.pdf"]
+    manifest_path = project / "figures" / "figure_manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+        overview = manifest.get("overview") if isinstance(manifest, dict) else ""
+        if overview:
+            overview_path = Path(str(overview))
+            candidates.append(overview_path if overview_path.is_absolute() else project / overview_path)
+    return [str(path.resolve()) for path in candidates if path.is_file()]
 
 
 def task_is_research_summary(task: dict[str, Any]) -> bool:
@@ -894,11 +963,14 @@ def required_delivery_file_paths(
     if not suffixes:
         return []
     candidates: list[Path] = []
+    grant_pdf = grant_expected_pdf_path(task)
+    if grant_pdf is not None:
+        candidates.append(grant_pdf)
     for raw in result.get("files") or []:
         path = Path(str(raw))
         if path.suffix.lower() in suffixes:
             candidates.append(path.expanduser().resolve())
-    return wecom_research_delivery_files(task, candidates)
+    return wecom_research_delivery_files(task, list(dict.fromkeys(candidates)))
 
 
 def required_file_delivery_complete(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
@@ -1240,6 +1312,8 @@ def should_send_worker_result(task: dict[str, Any], result: dict[str, Any]) -> b
         return False
     if result.get("confirmation"):
         return True
+    if grant_result_is_nonterminal(task, result):
+        return os.environ.get("WECHAT_WORKER_SEND_GRANT_PROGRESS", "0") == "1"
     if existing_video_publish_result_is_nonterminal(task, result):
         return os.environ.get("WECHAT_WORKER_SEND_PUBLISH_PROGRESS", "0") == "1"
     if not generated_video_result_is_nonterminal(task, result):
@@ -3889,6 +3963,9 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
     task.setdefault("artifact_dir", str(artifact_dir))
     ensure_task_routine_contract(task)
     task["routine_contract"] = write_routine_contract(task, artifact_dir)
+    if str((task.get("routine") or {}).get("id") or "") == "grant_proposal":
+        task["grant_workspace"] = initialize_grant_task_workspace(task, artifact_dir)
+        persist_task_progress(task)
     task["orchestrator"] = {
         "mode": "routine_supervisor",
         "routine_id": (task.get("routine") or {}).get("id") if isinstance(task.get("routine"), dict) else None,
@@ -3934,6 +4011,27 @@ def task_orchestrator_stage(task: dict[str, Any]) -> str:
     return "routine:unclassified"
 
 
+def initialize_grant_task_workspace(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
+    source_root = ROOT / "src"
+    if str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
+    from agenticapp.grants import initialize_grant_workspace
+
+    route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    title = collapse_context_text(
+        route.get("grant_title") or task.get("grant_title") or "LabCanvas Grant Proposal",
+        max_len=180,
+    )
+    objective = sanitize_worker_agent_text(task_focus_text(task), max_len=7000)
+    return initialize_grant_workspace(
+        artifact_dir / "grant_project",
+        title=title,
+        objective=objective,
+        task_id=str(task.get("id") or ""),
+        chat=str(task.get("chat") or ""),
+    )
+
+
 def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
     """Build the bounded task packet consumed by the resumed backend agent."""
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
@@ -3965,6 +4063,8 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
         "routine_contract": str(task.get("routine_contract") or ""),
         "orchestrator": compact_worker_agent_value(task.get("orchestrator") or {}, key="orchestrator"),
     }
+    if isinstance(task.get("grant_workspace"), dict) and task.get("grant_workspace"):
+        view["grant_workspace"] = compact_worker_agent_value(task["grant_workspace"], key="grant_workspace")
     if isinstance(task.get("member_memory"), dict) and task.get("member_memory"):
         view["member_memory"] = compact_worker_agent_value(task["member_memory"], key="member_memory")
     recent_context: list[dict[str, Any]] = []
@@ -4248,6 +4348,7 @@ Before doing work or composing the final message, check whether the recent conte
 Strict source isolation: the task's `chat`, `source.local_id`, `source.server_id`, `context`, and any explicit source/reference rows embedded in `request` define the only WeChat source. Never use media, files, or generated artifacts from another chat, another direct message, a nearby queue item, or an unrelated old task.
 For official WeCom tasks, `task.member_memory` is a bounded private view of this exact member in this exact chat. Use it only for continuity, personalization, and linking prior papers or ideas. Never expose member keys, database internals, another member's records, or claim two identities are the same without explicit evidence.
 For official WeCom tasks, `task.preflight.wecom_media.copied[*].task_copy_path` contains already decrypted, exact same-message files. Open those files directly; do not run personal-WeChat GUI or decrypted-database recovery for them.
+For `task.routine.id=grant_proposal`, use the dedicated `task.grant_workspace` as the source of truth. Read its `prompt_path` and `current_request.md`; invoke the Codex `create_goal` tool when that surface exposes it, otherwise continue honestly from `goal.json`. Use `update_goal` only after the proposal, traceable evidence, editable figure parts/manifest/preview, compiled PDF, and `labcanvas grant validate` all pass. BioRender is preferred for suitable authenticated academic assets, but every figure must remain atomic/editable and SVG/TeX fallback must keep the task moving. Return `proposal.pdf` plus useful Markdown/TeX, bibliography, figure manifest/source, and preview files. Never submit the grant or invent data, citations, eligibility, deadlines, facilities, collaborators, approvals, or budgets.
 If no exact matching source media is available for "this image", "this PDF", "this video", "last one", or a quoted command, return a source-limited message asking for the exact file/source. Do not synthesize or continue from unrelated media.
 Follow the routine supervisor contract. The contract is saved in `task.routine_contract`; use it as the routine checklist and update task state through the existing queue/status mechanisms instead of inventing an ad hoc workflow.
 Exception for WeChat video-to-AutoPublish requests: if the task asks to copy/download a WeChat video to Nutstore AutoPublish and the recent context contains a same-chat video row, first run:
@@ -4543,6 +4644,7 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     supplied = task.get("transport_preflight") if isinstance(task.get("transport_preflight"), dict) else {}
     preflight: dict[str, Any] = dict(supplied)
     native_wechat_transport = task_transport_kind(task) != "wecom"
+    task["preflight"] = preflight
     interruptions = task_interruptions_manifest(task, artifact_dir)
     if interruptions:
         preflight["interruptions"] = interruptions
@@ -4575,7 +4677,7 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     if should_prepare_shipinhao_media_transcript(task):
         preflight["shipinhao_media_transcript"] = prepare_shipinhao_media_transcript_preflight(task, artifact_dir)
         task["preflight"] = preflight
-    if native_wechat_transport and should_prepare_audio_intake(task):
+    if should_prepare_audio_intake(task):
         preflight["audio_intake"] = prepare_audio_intake_preflight(task, artifact_dir)
         task["preflight"] = preflight
     if should_prepare_shipinhao_comment_intel(task):
@@ -5010,25 +5112,31 @@ def task_voice_transcript_entries(task: dict[str, Any]) -> list[dict[str, Any]]:
 
 def audio_intake_media_candidates(task: dict[str, Any]) -> list[dict[str, Any]]:
     preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    transport_preflight = (
+        task.get("transport_preflight")
+        if isinstance(task.get("transport_preflight"), dict)
+        else {}
+    )
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for section_name in ("media_resolution", "file_intake"):
-        section = preflight.get(section_name) if isinstance(preflight.get(section_name), dict) else {}
-        for item in section.get("copied") or []:
-            if not isinstance(item, dict):
-                continue
-            raw_path = item.get("task_copy_path") or item.get("saved_path")
-            if not raw_path:
-                continue
-            path = Path(str(raw_path)).expanduser()
-            suffix = str(item.get("suffix") or path.suffix).lower()
-            if suffix not in AUDIO_SUFFIXES | VIDEO_SUFFIXES or not path.is_file():
-                continue
-            resolved = str(path.resolve())
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            candidates.append({**item, "task_copy_path": resolved, "suffix": suffix})
+    for source in (preflight, transport_preflight):
+        for section_name in ("wecom_media", "media_resolution", "file_intake"):
+            section = source.get(section_name) if isinstance(source.get(section_name), dict) else {}
+            for item in section.get("copied") or []:
+                if not isinstance(item, dict):
+                    continue
+                raw_path = item.get("task_copy_path") or item.get("saved_path") or item.get("path")
+                if not raw_path:
+                    continue
+                path = Path(str(raw_path)).expanduser()
+                suffix = str(item.get("suffix") or path.suffix).lower()
+                if suffix not in AUDIO_SUFFIXES | VIDEO_SUFFIXES or not path.is_file():
+                    continue
+                resolved = str(path.resolve())
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                candidates.append({**item, "task_copy_path": resolved, "suffix": suffix})
     return candidates[:4]
 
 
@@ -7850,6 +7958,27 @@ def format_generated_video_contract_markdown(contract: dict[str, Any]) -> str:
 def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any], raw_text: str) -> dict[str, Any]:
     if result_is_no_reply(result):
         return result
+    if task_is_grant_proposal(task):
+        guarded = dict(result)
+        validation = validate_grant_task_workspace(task)
+        data = guarded.get("data") if isinstance(guarded.get("data"), dict) else {}
+        guarded["data"] = {**data, "grant_validation": validation}
+        if validation.get("ok"):
+            return guarded
+        failed = [
+            name
+            for name, passed in (validation.get("checks") or {}).items()
+            if passed is not True
+        ]
+        guarded["data"]["grant_completion_pending"] = True
+        guarded["message"] = (
+            "The grant task is still in progress because its completion gates have not passed. "
+            f"Incomplete checks: {', '.join(failed) or validation.get('error') or 'workspace validation'}. "
+            "Continue the same agent session, repair the workspace, compile the PDF, and validate again."
+        )
+        guarded["confirmation"] = ""
+        guarded["contract_guard"] = "grant_completion_gates_pending"
+        return guarded
     preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
     source_recovery = preflight.get("wechat_source_recovery") if isinstance(preflight.get("wechat_source_recovery"), dict) else {}
     if (
@@ -7944,6 +8073,26 @@ def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any],
     guarded["files"] = files
     guarded["contract_guard"] = "missing_generated_video_completion_evidence"
     return guarded
+
+
+def validate_grant_task_workspace(task: dict[str, Any]) -> dict[str, Any]:
+    project = grant_project_dir(task)
+    if project is None:
+        return {"ok": False, "error": "grant workspace is missing", "checks": {}}
+    source_root = ROOT / "src"
+    if str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
+    try:
+        from agenticapp.grants import validate_grant_workspace
+
+        return validate_grant_workspace(project)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {str(exc)[:500]}",
+            "checks": {},
+            "project_dir": str(project),
+        }
 
 
 def filter_generated_video_result_files(files: list[Any]) -> list[str]:
@@ -11573,12 +11722,14 @@ def file_entries_from_json(data: Any) -> list[str]:
     return unique_strings(files)
 
 
-def prepare_result_files(result: dict[str, Any], raw_text: str) -> dict[str, Any]:
+def prepare_result_files(
+    result: dict[str, Any], raw_text: str, *, task: dict[str, Any] | None = None
+) -> dict[str, Any]:
     raw_files = result.get("files") or []
     if not isinstance(raw_files, list):
         raw_files = [raw_files]
     auto_files = [] if suppress_auto_artifact_extraction(result) else extract_artifact_paths(raw_text)
-    candidates = unique_strings([*raw_files, *auto_files])
+    candidates = unique_strings([*grant_auto_delivery_files(task), *raw_files, *auto_files])
     files: list[str] = []
     skipped: list[dict[str, str]] = []
     for candidate in candidates:
