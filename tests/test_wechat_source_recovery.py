@@ -114,6 +114,20 @@ class WeChatSourceRecoveryTests(unittest.TestCase):
         self.assertTrue(cached["cache_hit"])
         self.assertTrue(cached["verification_requested"] is False)
 
+    def test_card_only_article_emits_exact_title_reconstruction_queries(self) -> None:
+        recovery = load_recovery()
+        title = "第一次，我们看到了高自由度灵巧手的另一种可能。"
+        task = {
+            "request": f"公众号文章卡片\n<title>{title}</title>",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            result = recovery.recover_task_sources(task, Path(tmp))
+
+        self.assertEqual(result["status"], "reconstruction_required")
+        self.assertEqual(result["articles"][0]["source_quality"], "card_metadata")
+        self.assertEqual(result["articles"][0]["title"], title)
+        self.assertIn(f'"{title}"', result["articles"][0]["recovery_queries"])
+
     def test_shipinhao_packet_keeps_exact_card_identity(self) -> None:
         recovery = load_recovery()
         packet = recovery.build_shipinhao_recovery_packet(

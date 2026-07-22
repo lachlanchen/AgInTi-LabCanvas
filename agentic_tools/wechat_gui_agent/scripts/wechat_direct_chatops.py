@@ -383,6 +383,9 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         refresh_decrypted_store()
         metrics["decrypt_ms"] = elapsed_ms(started)
 
+    inflight_rows = [] if replay_local_ids else read_inflight_messages(config, state)
+    if inflight_rows:
+        metrics["inflight_rows_recovered"] = len(inflight_rows)
     pending_voice_rows = [] if replay_local_ids else retry_pending_voice_backlog(config, state, metrics)
     started = time.monotonic()
     fresh_rows = read_new_messages(config, state)
@@ -391,7 +394,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         metrics["force_replay_requested"] = len(replay_local_ids)
         metrics["force_replay_found"] = len(fresh_rows)
     metrics["read_ms"] = elapsed_ms(started)
-    new_rows = merge_message_rows(pending_voice_rows, fresh_rows)
+    new_rows = merge_message_rows(inflight_rows, pending_voice_rows, fresh_rows)
     if new_rows:
         started = time.monotonic()
         enrich_voice_rows(config, new_rows, metrics)
@@ -580,6 +583,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
         else:
             state["last_local_id"] = retain_pending_voice_cursor(config, state, new_rows, proposed_last_local_id, metrics)
         state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
+        clear_inflight_messages(state, new_rows)
     finish_force_replay(state, metrics)
     state["last_loop_at"] = datetime.now().isoformat(timespec="seconds")
     metrics["total_ms"] = elapsed_ms(loop_started)
@@ -643,6 +647,14 @@ def checkpoint_inbound_before_route(
         return
     current = int(state.get("last_local_id") or 0)
     proposed = max(current, max(int(row.get("local_id") or 0) for row in rows))
+    existing = inflight_local_ids(state)
+    state["inflight_local_ids"] = sorted(
+        {
+            *existing,
+            *(int(row.get("local_id") or 0) for row in rows if int(row.get("local_id") or 0) > 0),
+        }
+    )[-64:]
+    state.setdefault("inflight_started_at", datetime.now().isoformat(timespec="seconds"))
     state["last_local_id"] = retain_pending_voice_cursor(config, state, rows, proposed, metrics)
     state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
     state["inbound_checkpoint_at"] = state["last_seen_at"]
@@ -652,6 +664,60 @@ def checkpoint_inbound_before_route(
     if raw_path:
         save_state(Path(raw_path), state)
         metrics["inbound_checkpoint_saved"] = 1
+
+
+def inflight_local_ids(state: dict[str, Any]) -> list[int]:
+    values: list[int] = []
+    for item in state.get("inflight_local_ids") or []:
+        try:
+            value = int(item)
+        except (TypeError, ValueError):
+            continue
+        if value > 0 and value not in values:
+            values.append(value)
+    return values[-64:]
+
+
+def read_inflight_messages(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Reload rows checkpointed before a route/send turn that did not finish."""
+    local_ids = inflight_local_ids(state)
+    if not local_ids:
+        return []
+    db_path = DECRYPTED / "message" / "message_0.db"
+    contact_db = DECRYPTED / "contact" / "contact.db"
+    if not db_path.exists():
+        return []
+    name_map = load_name_map(db_path)
+    contact_map = load_contact_map(contact_db)
+    placeholders = ",".join("?" for _ in local_ids)
+    rows: list[dict[str, Any]] = []
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            for row in conn.execute(
+                f"""
+                SELECT local_id, server_id, local_type, real_sender_id, create_time,
+                       status, message_content, compress_content, WCDB_CT_message_content
+                FROM {config['message_table']}
+                WHERE local_id IN ({placeholders})
+                ORDER BY local_id
+                """,
+                local_ids,
+            ):
+                rows.append(row_to_message(row, name_map, contact_map))
+    except sqlite3.Error:
+        return []
+    return rows
+
+
+def clear_inflight_messages(state: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    completed = {int(row.get("local_id") or 0) for row in rows}
+    remaining = [value for value in inflight_local_ids(state) if value not in completed]
+    if remaining:
+        state["inflight_local_ids"] = remaining
+        return
+    state.pop("inflight_local_ids", None)
+    state.pop("inflight_started_at", None)
 
 
 def retry_pending_voice_backlog(

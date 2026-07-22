@@ -135,6 +135,71 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(result["healthy"], 1)
         self.assertEqual(result["stale_configs"], ["stale-direct-chatops.local.json"])
 
+    def test_direct_monitor_health_does_not_kill_bounded_inflight_agent_turn(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            state = private / "processing.state.json"
+            state.write_text(
+                json.dumps(
+                    {
+                        "last_loop_at": "2026-07-22T11:55:00+00:00",
+                        "inflight_local_ids": [710],
+                        "inflight_started_at": "2026-07-22T11:59:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (private / "processing-direct-chatops.local.json").write_text(
+                json.dumps({"state_path": str(state), "poll_seconds": 0.8}),
+                encoding="utf-8",
+            )
+
+            result = guard.direct_monitor_health(
+                private_dir=private,
+                now=now,
+                processing_stale_seconds=600,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["monitors"][0]["state"], "processing")
+        self.assertEqual(result["monitors"][0]["inflight_count"], 1)
+
+    def test_schedule_health_detects_stale_labagent_heartbeat(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=lambda path: (
+                        {"interval_seconds": guard.ECHOMIND_INTERVAL_SECONDS}
+                        if path == guard.ECHOMIND_SCHEDULE_STATE
+                        else json.loads(path.read_text(encoding="utf-8"))
+                    ),
+                ),
+            ):
+                healthy = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                    labagent_stale_seconds=60,
+                )
+                stale = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=datetime(2026, 7, 22, 12, 2, tzinfo=timezone.utc),
+                    labagent_stale_seconds=60,
+                )
+
+        self.assertTrue(healthy["labagent_idle_inspiration"]["ok"])
+        self.assertFalse(stale["labagent_idle_inspiration"]["ok"])
+        self.assertFalse(stale["ok"])
+
     def test_quota_alert_requires_terminal_exhaustion_not_successful_fallback(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

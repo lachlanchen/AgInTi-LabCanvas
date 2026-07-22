@@ -526,6 +526,23 @@ The stable interface and recovery commands are documented in
   a human-confirmation state. Never open/focus a browser or ask the owner to
   verify for read-only research; return an evidence-limited answer if recovery
   remains incomplete.
+- WeCom Android renders ordinary text under resource `j1l`, but a native
+  Gongzhonghao card title under `mww`. Treat that row as
+  `wechat_article_card`, preserve its exact sender and title, and route it to
+  `research_summary`; never discard it merely because no `j1l` node exists.
+- The Android relay performs one bounded, round-robin historical scan at a low
+  cadence. It scans at most the configured number of older viewports, records
+  only unseen exact-row fingerprints, and re-enters through the conversation
+  list so the client returns to the newest viewport. This recovers a card hidden
+  by a long bot response without turning every poll into a history crawl.
+- For a WeCom Android article card with no URL in the event,
+  `wecom_native_article_recovery.py` finds the exact same-chat title, opens that
+  card in the native WeChat reader, uses its `复制链接` action, verifies the
+  copied `mp.weixin.qq.com` article title, and hands the URL to the existing
+  read-only `wechat_source_recovery.py` path. The native client is restored to
+  the WeCom conversation list afterward. If native resolution fails, exact
+  title/account reconstruction remains available and the agent must state the
+  evidence limit rather than asking for browser verification.
 - Group voice, audio, and ordinary video intake is source-scoped and agent-led.
   The monitor transcribes native type-34 voice rows before routing, keeps only
   safe transcript/language/duration fields in the private task, and never loses
@@ -1168,6 +1185,23 @@ uses the idempotent supervisor `ensure` path. EchoMind is managed by
 the remainder of the three-hour interval after restart instead of sending a
 duplicate lesson. `wechat_stack_tmux.sh start` restores both EchoMind and the
 daily career scheduler after reboot.
+- A terminal scheduled-inspiration delivery outcome such as `send_failed`,
+  `send_expired`, `worker_failed`, or `expired_stale` must not block later
+  three-hour LabAgent inspiration cycles. Pending, in-progress, deferred, and
+  retrying deliveries still suppress a new cycle so the group is not flooded.
+- Direct monitors journal exact inbound local IDs before any route-agent or GUI
+  operation. A restart re-reads those rows even though the normal cursor was
+  checkpointed, and the worker queue deduplicates by exact source identity.
+  Health checks treat a bounded journaled agent turn as `processing` for up to
+  15 minutes instead of killing it after the normal 30-second idle-heartbeat
+  threshold. This prevents a health repair from consuming a message without
+  creating its task.
+- LabAgent inspiration uses the latest human inbound activity, preference
+  update, or prior enqueue as its baseline. Bot replies do not reset the idle
+  clock. A private heartbeat is refreshed on every scheduler poll, including
+  overnight quiet hours, so transport health can distinguish ordinary waiting
+  from a stalled loop. Two consecutive stale checks restart only the `daily`
+  scheduler window; they do not restart or log out WeCom clients.
 
 Set `LABCANVAS_HEALTH_ALERT_TRANSPORT=wecom-android` and
 `LABCANVAS_HEALTH_ALERT_CHAT=<allowlisted-group>` only in the ignored WeCom env.

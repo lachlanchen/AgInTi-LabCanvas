@@ -718,6 +718,96 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(records[0]["quote_text"], "")
         self.assertEqual(records[1]["direction"], "outbound")
 
+    def test_parse_messages_recovers_native_gongzhonghao_article_card(self) -> None:
+        bridge = load_bridge()
+        title = "第一次，我们看到了高自由度灵巧手的另一种可能。"
+        xml = f"""
+        <hierarchy><node>
+          <node resource-id="com.tencent.wework:id/eyy" package="com.tencent.wework"
+                clickable="true" bounds="[0,272][1080,849]">
+            <node resource-id="com.tencent.wework:id/ja3" package="com.tencent.wework"
+                  bounds="[28,379][133,484]" />
+            <node text="陈苗" class="android.widget.TextView" package="com.tencent.wework"
+                  bounds="[164,373][230,418]" />
+            <node text="＠微信" class="android.widget.TextView" package="com.tencent.wework"
+                  bounds="[236,373][335,418]" />
+            <node text="{title}" resource-id="com.tencent.wework:id/mww"
+                  class="android.widget.TextView" package="com.tencent.wework"
+                  bounds="[202,460][805,586]" />
+          </node>
+        </node></hierarchy>
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            record = runtime.parse_messages(ET.fromstring(xml))[0]
+            event = runtime.build_event("LabAgent", record)
+
+        self.assertEqual(record["direction"], "inbound")
+        self.assertEqual(record["sender"], "陈苗")
+        self.assertEqual(record["source_kind"], "wechat_article_card")
+        self.assertEqual(record["source_title"], title)
+        self.assertEqual(record["body"], f"公众号文章卡片\n<title>{title}</title>")
+        self.assertEqual(event["msgtype"], "wechat_article_card")
+        self.assertEqual(event["source_metadata"]["title"], title)
+
+    def test_article_card_fallback_still_routes_to_research_worker(self) -> None:
+        ingest = load_ingest()
+
+        route = ingest.fallback_route(
+            {"msgtype": "wechat_article_card", "attachments": []},
+            "公众号文章卡片\n<title>Exact title</title>",
+        )
+
+        self.assertTrue(route["worker_needed"])
+        self.assertEqual(route["route_kind"], "research_or_summary")
+
+    def test_bounded_history_scan_recovers_hidden_card_once(self) -> None:
+        bridge = load_bridge()
+        current = {
+            "fingerprint": "current",
+            "direction": "outbound",
+            "sender": "",
+            "body": "long result",
+        }
+        article = {
+            "fingerprint": "article",
+            "direction": "inbound",
+            "sender": "member",
+            "body": "公众号文章卡片",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            chat_root = ET.fromstring(
+                '<hierarchy><node text="LabAgent(6)" resource-id="com.tencent.wework:id/n5i" '
+                'package="com.tencent.wework" /></hierarchy>'
+            )
+            with mock.patch.object(runtime, "adb_shell"), mock.patch.object(
+                runtime, "dump_hierarchy", side_effect=[chat_root, chat_root, chat_root]
+            ), mock.patch.object(
+                runtime, "parse_messages", side_effect=[[article], [article], []]
+            ):
+                records = runtime.scan_older_message_records(
+                    "LabAgent",
+                    [current],
+                    max_pages=3,
+                )
+
+        self.assertEqual(records, [article])
+
     def test_parse_messages_keeps_adjacent_authors_on_their_own_rows(self) -> None:
         bridge = load_bridge()
         xml = """
@@ -1292,6 +1382,8 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             self.assertNotIn("local_api_token", result)
             self.assertTrue(payload["local_api_token"])
             self.assertEqual(payload["reconcile_seconds"], 20.0)
+            self.assertEqual(payload["history_scan_seconds"], 180.0)
+            self.assertEqual(payload["history_scan_pages"], 3)
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_poll_cycle_reconciles_all_chats_without_unread_badges(self) -> None:
@@ -1313,7 +1405,7 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             ), mock.patch.object(runtime, "unread_target_chats", return_value=[]), mock.patch.object(
                 runtime,
                 "snapshot",
-                side_effect=lambda chat, enqueue: {
+                side_effect=lambda chat, enqueue, history_pages=0: {
                     "ok": True,
                     "chat": chat,
                     "processed": 0,
@@ -1343,6 +1435,7 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             )
             runtime.lock_path = Path(tmp) / "bridge.lock"
             runtime._next_reconcile_at = time.monotonic() + 300
+            runtime._next_history_scan_at = time.monotonic() + 300
             with mock.patch.object(runtime, "load_snapshot", return_value=["old"]), mock.patch.object(
                 runtime, "open_chat_list", return_value=ET.fromstring("<hierarchy />")
             ), mock.patch.object(
@@ -1357,7 +1450,7 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertFalse(result["reconciliation"])
         self.assertEqual(result["due_chats"], ["AgentTest"])
-        snapshot.assert_called_once_with("AgentTest", enqueue=True)
+        snapshot.assert_called_once_with("AgentTest", enqueue=True, history_pages=0)
 
     def test_one_chat_failure_does_not_block_other_reconciliation(self) -> None:
         bridge = load_bridge()

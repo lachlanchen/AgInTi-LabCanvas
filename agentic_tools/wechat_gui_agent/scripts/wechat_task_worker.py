@@ -37,7 +37,12 @@ from shipinhao_media_transcribe import (
     extract_shipinhao_media_profile,
     load_verified_capture_manifest,
 )
-from wechat_source_recovery import recover_task_sources, task_needs_source_recovery, task_source_text as source_recovery_task_text
+from wechat_source_recovery import (
+    extract_article_card_profile,
+    recover_task_sources,
+    task_needs_source_recovery,
+    task_source_text as source_recovery_task_text,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -57,6 +62,9 @@ SHIPINHAO_GUI_AUDIO_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent"
 SHIPINHAO_NATIVE_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_native_capture.py"
 WECHAT_AUDIO_INTAKE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_audio_intake.py"
 WECHAT_SOURCE_RECOVERY_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_source_recovery.py"
+WECOM_NATIVE_ARTICLE_RECOVERY_SCRIPT = (
+    ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_native_article_recovery.py"
+)
 NATURE_REPORT_LATEX_HEADER = (
     ROOT / "agentic_tools" / "wechat_gui_agent" / "templates" / "nature_research_report_header.tex"
 )
@@ -4891,7 +4899,29 @@ def prepare_wechat_source_recovery_preflight(task: dict[str, Any], artifact_dir:
     output_dir = artifact_dir / "wechat_source_recovery"
     try:
         timeout = max(4.0, float(os.environ.get("WECHAT_SOURCE_RECOVERY_TIMEOUT_SECONDS", "18") or 18))
-        return recover_task_sources(task, output_dir, timeout=timeout)
+        recovery_task = task
+        native = prepare_wecom_native_article_recovery(task, output_dir)
+        native_url = str(native.get("url") or "") if native.get("ok") else ""
+        if native_url:
+            recovery_task = dict(task)
+            recovery_task["request"] = (
+                str(task.get("request") or "").rstrip()
+                + f"\n\n<url>{native_url}</url>"
+            )
+        result = recover_task_sources(recovery_task, output_dir, timeout=timeout)
+        if native:
+            result["native_wecom_article"] = {
+                key: value
+                for key, value in native.items()
+                if key not in {"url"}
+            }
+            manifest_path = Path(str(result.get("manifest_json") or ""))
+            if manifest_path.is_file():
+                manifest_path.write_text(
+                    json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+        return result
     except Exception as exc:
         output_dir.mkdir(parents=True, exist_ok=True)
         result = {
@@ -4909,6 +4939,55 @@ def prepare_wechat_source_recovery_preflight(task: dict[str, Any], artifact_dir:
         result["manifest_json"] = str(manifest_path)
         manifest_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return result
+
+
+def prepare_wecom_native_article_recovery(
+    task: dict[str, Any],
+    output_dir: Path,
+) -> dict[str, Any]:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    if str(source.get("wecom_transport_channel") or "").casefold() != "wecom_android":
+        return {}
+    source_text = source_recovery_task_text(task)
+    if "mp.weixin.qq.com" in source_text.casefold():
+        return {}
+    profile = extract_article_card_profile(source_text)
+    title = str(profile.get("title") or "").strip()
+    chat_id = str(source.get("wecom_chat_id") or "")
+    chat = chat_id.removeprefix("gui:") if chat_id.startswith("gui:") else ""
+    if not title or not chat:
+        return {}
+    command = [
+        sys.executable,
+        str(WECOM_NATIVE_ARTICLE_RECOVERY_SCRIPT),
+        "--chat",
+        chat,
+        "--title",
+        title,
+        "--output-dir",
+        str(output_dir / "native_wecom"),
+        "--max-pages",
+        os.environ.get("WECOM_NATIVE_ARTICLE_MAX_PAGES", "12"),
+        "--json",
+    ]
+    process = subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=max(30, int(os.environ.get("WECOM_NATIVE_ARTICLE_TIMEOUT_SECONDS", "120"))),
+        check=False,
+    )
+    try:
+        payload = json.loads(process.stdout)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "error": "native WeCom article resolver returned invalid JSON",
+        }
+    if process.returncode != 0 and payload.get("ok"):
+        payload["ok"] = False
+    return payload
 
 
 def should_prepare_shipinhao_comment_intel(task: dict[str, Any]) -> bool:

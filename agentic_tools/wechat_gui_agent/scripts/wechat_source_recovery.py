@@ -201,6 +201,21 @@ def recover_task_sources(
                 cache_dir=cache_dir,
             )
         )
+    if not articles and card.get("title") and any(
+        marker in source_text.casefold()
+        for marker in ("公众号", "公眾號", "gongzhonghao", "mp.weixin")
+    ):
+        card_only = {
+            "status": "reconstruction_required",
+            "source_quality": "card_metadata",
+            "title": card.get("title", ""),
+            "author": card.get("author", ""),
+            "description": card.get("description", ""),
+            "article_chars": 0,
+            "verification_requested": False,
+        }
+        card_only["recovery_queries"] = article_recovery_queries(card_only, card, {})
+        articles.append(card_only)
 
     shipinhao = build_shipinhao_recovery_packet(source_text)
     qualities = [str(item.get("source_quality") or "") for item in articles]

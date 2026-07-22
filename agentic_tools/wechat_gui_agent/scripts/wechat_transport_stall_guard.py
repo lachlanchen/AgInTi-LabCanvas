@@ -39,6 +39,7 @@ GUI_CONFIG = WECOM_PRIVATE / "wecom_gui_bridge.local.json"
 CLI_CONFIG = WECOM_PRIVATE / "wecom_cli_bridge.local.json"
 CLI_TRANSPORT_STATE = WECOM_PRIVATE / "wecom_cli_transport.local.json"
 ECHOMIND_SCHEDULE_STATE = WECHAT_PRIVATE / "echomind-language-schedule.state.json"
+LABAGENT_SCHEDULE_HEARTBEAT = WECOM_PRIVATE / "wecom_daily_research.health.json"
 ECHOMIND_SCHEDULE_HELPER = (
     ROOT
     / "agentic_tools"
@@ -68,6 +69,7 @@ ALERTABLE_DEGRADED_CODES = {
     "schedule_career_missing",
     "schedule_echomind_cadence",
     "schedule_echomind_missing",
+    "schedule_labagent_stalled",
     "wechat_direct_monitor_stalled",
 }
 
@@ -342,6 +344,7 @@ def direct_monitor_health(
     now: datetime | None = None,
     minimum_stale_seconds: float = 30.0,
     poll_multiplier: float = 30.0,
+    processing_stale_seconds: float = 900.0,
 ) -> dict[str, Any]:
     """Check process heartbeats without treating an inactive chat as stale."""
 
@@ -364,13 +367,34 @@ def direct_monitor_health(
         state = read_json(state_path)
         heartbeat = parse_timestamp(state.get("last_loop_at"))
         age = max(0.0, (current - heartbeat).total_seconds()) if heartbeat else None
-        healthy = heartbeat is not None and age is not None and age <= threshold
+        inflight = [item for item in state.get("inflight_local_ids") or [] if str(item).isdigit()]
+        processing_started = parse_timestamp(state.get("inflight_started_at"))
+        processing_age = (
+            max(0.0, (current - processing_started).total_seconds())
+            if processing_started
+            else None
+        )
+        processing = bool(inflight)
+        within_processing_deadline = (
+            processing
+            and processing_age is not None
+            and processing_age <= processing_stale_seconds
+        )
+        healthy = (
+            heartbeat is not None
+            and age is not None
+            and (age <= threshold or within_processing_deadline)
+        )
         monitors.append(
             {
                 "config": config_path.name,
                 "ok": healthy,
+                "state": "processing" if within_processing_deadline else "polling",
                 "heartbeat_age_seconds": int(age) if age is not None else None,
                 "stale_after_seconds": int(threshold),
+                "inflight_count": len(inflight),
+                "processing_age_seconds": int(processing_age) if processing_age is not None else None,
+                "processing_stale_after_seconds": int(processing_stale_seconds),
             }
         )
     stale = [item["config"] for item in monitors if not item["ok"]]
@@ -387,7 +411,12 @@ def tmux_session_live(name: str) -> bool:
     return run_command(["tmux", "has-session", "-t", name], timeout=3).returncode == 0
 
 
-def schedule_health() -> dict[str, Any]:
+def schedule_health(
+    *,
+    labagent_heartbeat: Path = LABAGENT_SCHEDULE_HEARTBEAT,
+    now: datetime | None = None,
+    labagent_stale_seconds: float = 120.0,
+) -> dict[str, Any]:
     echo_state = read_json(ECHOMIND_SCHEDULE_STATE)
     try:
         interval = int(echo_state.get("interval_seconds") or 0)
@@ -399,14 +428,29 @@ def schedule_health() -> dict[str, Any]:
     career_running = tmux_session_live(
         os.environ.get("WECHAT_CAREER_SESSION", CAREER_SCHEDULE_SESSION)
     )
+    heartbeat = read_json(labagent_heartbeat)
+    heartbeat_at = parse_timestamp(heartbeat.get("checked_at"))
+    current = now or utc_now()
+    heartbeat_age = (
+        max(0.0, (current - heartbeat_at).total_seconds())
+        if heartbeat_at
+        else None
+    )
+    labagent_ok = heartbeat_age is not None and heartbeat_age <= labagent_stale_seconds
     return {
-        "ok": echomind_running and career_running and interval == ECHOMIND_INTERVAL_SECONDS,
+        "ok": echomind_running and career_running and interval == ECHOMIND_INTERVAL_SECONDS and labagent_ok,
         "echomind": {
             "running": echomind_running,
             "interval_seconds": interval,
             "expected_interval_seconds": ECHOMIND_INTERVAL_SECONDS,
         },
         "career_daily": {"running": career_running},
+        "labagent_idle_inspiration": {
+            "ok": labagent_ok,
+            "status": str(heartbeat.get("status") or "missing"),
+            "heartbeat_age_seconds": int(heartbeat_age) if heartbeat_age is not None else None,
+            "stale_after_seconds": int(labagent_stale_seconds),
+        },
     }
 
 
@@ -615,6 +659,8 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         )
     if not schedules["career_daily"]["running"]:
         issue("schedule_career_missing", "degraded", "career daily scheduler is absent")
+    if not schedules["labagent_idle_inspiration"]["ok"]:
+        issue("schedule_labagent_stalled", "degraded", "LabAgent idle-inspiration scheduler heartbeat is stale")
     if not agent_failures.get("ok"):
         issue(
             "agent_quota_exhausted",
@@ -812,6 +858,17 @@ def perform_repairs(
         )
     ):
         repairs.append(run_repair("career_schedule", [str(WECHAT_STACK), "start"]))
+    if (
+        "schedule_labagent_stalled" in issue_codes
+        and repair_due(
+            "schedule_labagent_stalled",
+            state,
+            consecutive_failures=consecutive_failures,
+            cooldown_seconds=cooldown_seconds,
+            now=now,
+        )
+    ):
+        repairs.append(run_repair("labagent_schedule", [str(WECOM_SUPERVISOR), "daily-restart"]))
     return repairs
 
 
@@ -870,6 +927,7 @@ def health_alert_message(codes: list[str], *, recovered: bool = False) -> str:
         "schedule_career_missing": "每日分析定时任务未运行",
         "schedule_echomind_cadence": "EchoMind 教学周期不是 3 小时",
         "schedule_echomind_missing": "EchoMind 教学定时任务未运行",
+        "schedule_labagent_stalled": "LabAgent 三小时空闲灵感任务心跳停止",
         "wechat_direct_monitor_stalled": "WeChat 群消息监视器心跳停止",
         "wechat_queue_stale": "WeChat 有长期停滞任务",
         "wechat_session_missing": "WeChat 自动化会话未运行",

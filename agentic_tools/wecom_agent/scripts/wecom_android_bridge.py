@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from datetime import datetime
 import fcntl
 import hashlib
+import html
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -66,6 +67,8 @@ MESSAGE_CHROME_TEXT = {
     "重新发送",
     "撤回",
 }
+ARTICLE_CARD_RESOURCE_SUFFIX = ":id/mww"
+ARTICLE_CARD_KIND = "wechat_article_card"
 
 
 class BridgeError(RuntimeError):
@@ -330,6 +333,12 @@ def initialize_config(
         "reconcile_seconds": bounded_float(
             existing.get("reconcile_seconds"), 20.0, 5.0, 600.0
         ),
+        "history_scan_seconds": bounded_float(
+            existing.get("history_scan_seconds"), 180.0, 60.0, 3600.0
+        ),
+        "history_scan_pages": bounded_int(
+            existing.get("history_scan_pages"), 3, 0, 8
+        ),
         "max_send_file_bytes": bounded_int(
             existing.get("max_send_file_bytes"), 100 * 1024 * 1024, 1, 1024 * 1024 * 1024
         ),
@@ -540,7 +549,15 @@ class AndroidBridge:
         self.reconcile_seconds = bounded_float(
             config.get("reconcile_seconds"), 20.0, 5.0, 600.0
         )
+        self.history_scan_seconds = bounded_float(
+            config.get("history_scan_seconds"), 180.0, 60.0, 3600.0
+        )
+        self.history_scan_pages = bounded_int(
+            config.get("history_scan_pages"), 3, 0, 8
+        )
         self._next_reconcile_at = 0.0
+        self._next_history_scan_at = 0.0
+        self._history_scan_cursor = 0
         self._stop = threading.Event()
         self.init_state()
 
@@ -1767,17 +1784,28 @@ class AndroidBridge:
         rows = find_nodes(root, resource_id=f"{self.package}:id/eyy", package=self.package)
         records: list[dict[str, str]] = []
         for row in rows:
-            body_nodes: list[ET.Element] = []
-            for node in row.iter("node"):
-                text = node_text(node)
-                if not text:
-                    continue
-                resource = node.attrib.get("resource-id", "")
-                if resource.endswith(":id/j1l"):
-                    body_nodes.append(node)
+            body_nodes = [
+                node
+                for node in row.iter("node")
+                if node_text(node) and node.attrib.get("resource-id", "").endswith(":id/j1l")
+            ]
+            source_kind = "text"
+            source_title = ""
+            if not body_nodes:
+                body_nodes = [
+                    node
+                    for node in row.iter("node")
+                    if node_text(node)
+                    and node.attrib.get("resource-id", "").endswith(ARTICLE_CARD_RESOURCE_SUFFIX)
+                ]
+                if body_nodes:
+                    source_kind = ARTICLE_CARD_KIND
+                    source_title = " ".join(unique_nonempty(node_text(node) for node in body_nodes))
             body = "\n".join(unique_nonempty(node_text(node) for node in body_nodes))
             if not body:
                 continue
+            if source_kind == ARTICLE_CARD_KIND:
+                body = f"公众号文章卡片\n<title>{html.escape(source_title)}</title>"
             sender, sender_evidence = message_row_sender(row, body_nodes)
             sender_is_wechat = sender_evidence["sender_external_marker"] == "true"
             quote_text = quoted_message_text(row, sender=sender, body_nodes=body_nodes)
@@ -1789,7 +1817,9 @@ class AndroidBridge:
             except BridgeError:
                 pass
             direction = "inbound" if sender or avatar_on_left else "outbound"
-            fingerprint = short_hash(f"{direction}\0{sender}\0{body}\0{quote_text}", 64)
+            fingerprint = short_hash(
+                f"{direction}\0{sender}\0{source_kind}\0{body}\0{quote_text}", 64
+            )
             records.append(
                 {
                     "fingerprint": fingerprint,
@@ -1798,10 +1828,42 @@ class AndroidBridge:
                     "mention_name": f"{sender}@微信" if sender and sender_is_wechat else sender,
                     "body": body,
                     "quote_text": quote_text,
+                    "source_kind": source_kind,
+                    "source_title": source_title,
                     **sender_evidence,
                 }
             )
         return records
+
+    def scan_older_message_records(
+        self,
+        chat: str,
+        current_records: list[dict[str, str]],
+        *,
+        max_pages: int,
+    ) -> list[dict[str, str]]:
+        """Read a bounded number of older viewports without changing task semantics."""
+        pages = bounded_int(max_pages, 0, 0, 8)
+        if pages == 0:
+            return []
+        recovered: list[dict[str, str]] = []
+        seen = {record["fingerprint"] for record in current_records}
+        for _ in range(pages):
+            self.adb_shell("input", "swipe", "520", "350", "520", "1450", "500")
+            time.sleep(0.55)
+            root = self.dump_hierarchy(attempts=3)
+            if not chat_title_matches(visible_chat_title(root), chat):
+                break
+            page_records = self.parse_messages(root)
+            if not page_records:
+                break
+            for record in page_records:
+                fingerprint = record["fingerprint"]
+                if fingerprint in seen:
+                    continue
+                seen.add(fingerprint)
+                recovered.append(record)
+        return recovered
 
     def load_snapshot(self, chat: str) -> list[str] | None:
         with sqlite3.connect(self.state_db) as conn:
@@ -1950,6 +2012,7 @@ class AndroidBridge:
         sender = str(record.get("sender") or "unknown")
         sender_confidence = str(record.get("sender_identity_confidence") or "unknown")
         sender_identity = sender if sender_confidence == "visible_row_label" else f"unattributed:{event_key}"
+        source_kind = str(record.get("source_kind") or "text")
         return {
             "transport": "wecom",
             "transport_channel": "wecom_android",
@@ -1975,9 +2038,13 @@ class AndroidBridge:
                 )
             },
             "create_time": int(time.time()),
-            "msgtype": "text",
+            "msgtype": source_kind,
             "text": str(record.get("body") or ""),
             "quote_text": str(record.get("quote_text") or ""),
+            "source_metadata": {
+                "kind": source_kind,
+                "title": str(record.get("source_title") or ""),
+            },
             "attachments": [],
         }
 
@@ -2016,14 +2083,34 @@ class AndroidBridge:
         finally:
             event_path.unlink(missing_ok=True)
 
-    def snapshot(self, chat: str, *, enqueue: bool = False) -> dict[str, Any]:
+    def snapshot(
+        self,
+        chat: str,
+        *,
+        enqueue: bool = False,
+        history_pages: int = 0,
+    ) -> dict[str, Any]:
         # Hold the GUI lock only while reading or writing the official client.
         # Routing/ingest may invoke an agent and must never block unrelated
         # artifact delivery for the duration of that backend turn.
         with self.serialized(timeout_seconds=30.0):
             root = self.open_chat(chat)
-            records = self.parse_messages(root)
-            sequence = [record["fingerprint"] for record in records]
+            current_records = self.parse_messages(root)
+            sequence = [record["fingerprint"] for record in current_records]
+            history_records: list[dict[str, str]] = []
+            if history_pages:
+                try:
+                    history_records = self.scan_older_message_records(
+                        chat,
+                        current_records,
+                        max_pages=history_pages,
+                    )
+                finally:
+                    # Re-entering through the conversation list reliably lands
+                    # at the newest viewport after a bounded backward scan.
+                    self.open_chat_list()
+                    self.open_chat(chat)
+            records = [*current_records, *history_records]
             previous = self.load_snapshot(chat)
             if previous is None:
                 for record in records:
@@ -2127,6 +2214,8 @@ class AndroidBridge:
             "ingested": ingested,
             "replied": len(sent_replies),
             "reply_errors": reply_errors,
+            "history_pages": int(history_pages),
+            "history_records": len(history_records),
         }
 
     def poll_cycle(self) -> dict[str, Any]:
@@ -2145,10 +2234,30 @@ class AndroidBridge:
             # latency hint rather than the sole source of ingress truth.
             due = unique_nonempty([*due, *self.target_groups])
             self._next_reconcile_at = now + self.reconcile_seconds
+        history_scan_chat = ""
+        if (
+            self.history_scan_pages > 0
+            and self.target_groups
+            and now >= self._next_history_scan_at
+        ):
+            history_scan_chat = self.target_groups[
+                self._history_scan_cursor % len(self.target_groups)
+            ]
+            self._history_scan_cursor += 1
+            self._next_history_scan_at = now + self.history_scan_seconds
+            due = unique_nonempty([*due, history_scan_chat])
         results: list[dict[str, Any]] = []
         for chat in due:
             try:
-                results.append(self.snapshot(chat, enqueue=True))
+                results.append(
+                    self.snapshot(
+                        chat,
+                        enqueue=True,
+                        history_pages=(
+                            self.history_scan_pages if chat == history_scan_chat else 0
+                        ),
+                    )
+                )
             except Exception as exc:
                 results.append(
                     {
@@ -2170,6 +2279,7 @@ class AndroidBridge:
             "due_chats": due,
             "unread_chats": unread,
             "reconciliation": reconciliation,
+            "history_scan_chat": history_scan_chat,
             "processed": sum(int(result.get("processed") or 0) for result in results),
             "results": results,
             "restore_error": restore_error,

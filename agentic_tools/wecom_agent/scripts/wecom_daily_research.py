@@ -32,6 +32,7 @@ from wecom_member_knowledge import knowledge_db_for_history, member_context  # n
 
 DEFAULT_QUEUE = PRIVATE / "wecom_task_queue.jsonl"
 DEFAULT_STATE_DB = PRIVATE / "wecom_messages.local.sqlite"
+DEFAULT_HEALTH_PATH = PRIVATE / "wecom_daily_research.health.json"
 DEFAULT_API_URL = "http://127.0.0.1:19578"
 DEFAULT_CLI_CONFIG = PRIVATE / "wecom_cli_bridge.local.json"
 DEFAULT_GUI_CONFIG = PRIVATE / "wecom_gui_bridge.local.json"
@@ -43,7 +44,19 @@ STATUS_WORDS = {"status", "show", "list", "状态", "狀態", "查看", "列表"
 OFF_WORDS = {"off", "clear", "remove", "取消", "清除", "关闭", "關閉"}
 PAUSE_WORDS = {"pause", "disable", "stop", "暂停", "暫停", "停用"}
 ON_WORDS = {"on", "enable", "start", "开启", "開啟", "启用", "啟用"}
-INSPIRATION_FINAL_STATUSES = {"done", "failed", "cancelled", "expired", "rejected"}
+INSPIRATION_FINAL_STATUSES = {
+    "done",
+    "failed",
+    "worker_failed",
+    "send_failed",
+    "send_expired",
+    "cancelled",
+    "canceled",
+    "canceled_superseded",
+    "expired",
+    "expired_stale",
+    "rejected",
+}
 CHAT_BUSY_STATUSES = {
     "pending",
     "in_progress",
@@ -65,6 +78,31 @@ def in_scheduled_quiet_hours() -> bool:
     return hour >= QUIET_START_HOUR or hour < QUIET_END_HOUR
 
 
+def write_scheduler_heartbeat(
+    path: Path,
+    *,
+    status: str,
+    payload: dict[str, Any] | None = None,
+    error_text: str = "",
+) -> None:
+    """Publish transport-safe liveness without chat content or raw identifiers."""
+    body = payload if isinstance(payload, dict) else {}
+    heartbeat = {
+        "checked_at": datetime.now(configured_timezone()).isoformat(timespec="seconds"),
+        "status": status,
+        "daily_checked": int(body.get("checked") or 0),
+        "inspiration_checked": int((body.get("inspiration") or {}).get("checked") or 0),
+        "action_count": len(body.get("actions") or []),
+        "inspiration_action_count": len((body.get("inspiration") or {}).get("actions") or []),
+        "busy_chat_count": len((body.get("inspiration") or {}).get("busy_chats") or []),
+        "error": error_text[:500],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(heartbeat, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -76,6 +114,11 @@ def main() -> int:
     loop = subparsers.add_parser("loop", help="Run the durable daily scheduler loop.")
     add_common_arguments(loop)
     loop.add_argument("--poll-seconds", type=float, default=float(os.environ.get("WECOM_DAILY_POLL_SECONDS", "30")))
+    loop.add_argument(
+        "--health-path",
+        type=Path,
+        default=Path(os.environ.get("WECOM_DAILY_HEALTH_PATH", DEFAULT_HEALTH_PATH)),
+    )
 
     status = subparsers.add_parser("status", help="Show enrolled chats and daily topics without raw chat IDs.")
     status.add_argument("--state-db", type=Path, default=Path(os.environ.get("WECOM_DAILY_STATE_DB", DEFAULT_STATE_DB)))
@@ -101,6 +144,7 @@ def main() -> int:
     while True:
         try:
             if in_scheduled_quiet_hours():
+                write_scheduler_heartbeat(args.health_path, status="quiet_hours")
                 time.sleep(min(interval, 300.0))
                 continue
             payload = run_scheduler_cycle(
@@ -108,11 +152,14 @@ def main() -> int:
                 history_db=args.history_db,
                 queue=args.queue,
             )
+            write_scheduler_heartbeat(args.health_path, status="ok", payload=payload)
             if payload.get("actions"):
                 print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
         except Exception as exc:  # Keep the scheduler alive across transient API/DB failures.
+            error_text = f"{type(exc).__name__}: {str(exc)[:500]}"
+            write_scheduler_heartbeat(args.health_path, status="error", error_text=error_text)
             print(
-                json.dumps({"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:500]}"}, ensure_ascii=False),
+                json.dumps({"ok": False, "error": error_text}, ensure_ascii=False),
                 file=sys.stderr,
                 flush=True,
             )

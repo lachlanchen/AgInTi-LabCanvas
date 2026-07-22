@@ -2967,6 +2967,72 @@ stderr: noisy internal trace
         self.assertEqual(guarded["contract_guard"], "read_only_source_never_waits_for_verification")
         self.assertTrue(worker.should_send_worker_result(task, guarded))
 
+    def test_wecom_android_article_preflight_uses_native_exact_card_resolver(self) -> None:
+        worker = load_worker()
+        title = "第一次，我们看到了高自由度灵巧手的另一种可能。"
+        task = {
+            "request": f"公众号文章卡片\n<title>{title}</title>",
+            "source": {
+                "wecom_transport_channel": "wecom_android",
+                "wecom_chat_id": "gui:LabAgent",
+            },
+        }
+        process = mock.MagicMock(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "url": "https://mp.weixin.qq.com/s/demo",
+                    "title": title,
+                    "identity_verified": True,
+                }
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            worker.subprocess, "run", return_value=process
+        ) as run:
+            result = worker.prepare_wecom_native_article_recovery(task, Path(tmp))
+
+        self.assertTrue(result["ok"])
+        command = run.call_args.args[0]
+        self.assertIn("--chat", command)
+        self.assertEqual(command[command.index("--chat") + 1], "LabAgent")
+        self.assertEqual(command[command.index("--title") + 1], title)
+
+    def test_source_recovery_injects_native_url_without_exposing_it_in_native_packet(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "公众号文章卡片\n<title>Exact title</title>",
+            "source": {
+                "wecom_transport_channel": "wecom_android",
+                "wecom_chat_id": "gui:LabAgent",
+            },
+        }
+        captured: dict[str, object] = {}
+
+        def recover(augmented, output_dir, timeout):
+            captured["request"] = augmented["request"]
+            manifest = output_dir / "manifest.json"
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text("{}", encoding="utf-8")
+            return {"status": "ok", "manifest_json": str(manifest), "articles": []}
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            worker,
+            "prepare_wecom_native_article_recovery",
+            return_value={
+                "ok": True,
+                "url": "https://mp.weixin.qq.com/s/demo",
+                "title": "Exact title",
+                "identity_verified": True,
+            },
+        ), mock.patch.object(worker, "recover_task_sources", side_effect=recover):
+            result = worker.prepare_wechat_source_recovery_preflight(task, Path(tmp))
+
+        self.assertIn("https://mp.weixin.qq.com/s/demo", str(captured["request"]))
+        self.assertNotIn("url", result["native_wecom_article"])
+        self.assertTrue(result["native_wecom_article"]["identity_verified"])
+
     def test_unreadable_large_image_candidate_still_requests_gui_probe(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

@@ -19,6 +19,7 @@ GATEWAY_LOG="$LOG_DIR/gateway.log"
 WORKER_LOG="$LOG_DIR/worker.log"
 WECOM_WORKER="$TOOL_ROOT/scripts/wecom_worker_loop.sh"
 DAILY_LOG="$LOG_DIR/daily.log"
+DAILY_HEALTH="$TOOL_ROOT/.private/wecom_daily_research.health.json"
 KNOWLEDGE_LOG="$LOG_DIR/knowledge.log"
 KNOWLEDGE_INDEXER="$TOOL_ROOT/scripts/wecom_member_knowledge.py"
 CLI_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_cli_bridge.local.json"
@@ -40,7 +41,7 @@ MUTATION_LOCK="${WECOM_TMUX_MUTATION_LOCK:-$TOOL_ROOT/.private/wecom_tmux.lock}"
 mkdir -p "$LOG_DIR"
 
 usage() {
-  echo "Usage: wecom_tmux.sh start|stop|restart|worker-restart|external-restart|gui-restart|android-start|android-restart|status"
+  echo "Usage: wecom_tmux.sh start|stop|restart|worker-restart|daily-restart|external-restart|gui-restart|android-start|android-restart|status"
 }
 
 android_enabled() {
@@ -145,6 +146,13 @@ start_worker_window() {
   tmux new-window -t "$SESSION" -n worker \
     "cd '$ROOT' && exec '$WECOM_WORKER' >> '$WORKER_LOG' 2>&1"
   echo "Restarted WeCom LabCanvas worker without restarting the logged-in clients."
+}
+
+start_daily_window() {
+  kill_window_if_present daily
+  tmux new-window -t "$SESSION" -n daily \
+    "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_daily_research.py' loop --queue '$QUEUE' --health-path '$DAILY_HEALTH' >> '$DAILY_LOG' 2>&1"
+  echo "Restarted WeCom daily and idle-inspiration scheduler."
 }
 
 gui_enabled() {
@@ -309,6 +317,14 @@ case "$action" in
     acquire_mutation_lock
     if tmux has-session -t "$SESSION" 2>/dev/null; then
       start_worker_window
+    else
+      start_stack
+    fi
+    ;;
+  daily-restart)
+    acquire_mutation_lock
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      start_daily_window
     else
       start_stack
     fi

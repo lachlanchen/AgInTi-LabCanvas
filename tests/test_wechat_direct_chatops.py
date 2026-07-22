@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -116,6 +117,58 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         saved = json.loads(state_path.read_text(encoding="utf-8"))
         self.assertEqual(saved["last_local_id"], 42)
         self.assertEqual(saved["inbound_checkpoint_count"], 1)
+        self.assertEqual(saved["inflight_local_ids"], [42])
+
+    def test_inflight_checkpoint_clears_only_completed_rows(self) -> None:
+        state: dict[str, object] = {
+            "inflight_local_ids": [40, 41, 42],
+            "inflight_started_at": "2026-07-22T12:00:00",
+        }
+
+        direct_chatops.clear_inflight_messages(
+            state,
+            [self.row("done", local_id=41), self.row("done", local_id=42)],
+        )
+        self.assertEqual(state["inflight_local_ids"], [40])
+        self.assertIn("inflight_started_at", state)
+
+        direct_chatops.clear_inflight_messages(state, [self.row("done", local_id=40)])
+        self.assertNotIn("inflight_local_ids", state)
+        self.assertNotIn("inflight_started_at", state)
+
+    def test_restart_recovers_exact_inflight_database_row(self) -> None:
+        root = Path(self._tmpdir.name) / "decrypted"
+        message_dir = root / "message"
+        message_dir.mkdir(parents=True)
+        db_path = message_dir / "message_0.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("CREATE TABLE Name2Id (user_name TEXT)")
+            conn.execute("INSERT INTO Name2Id(rowid, user_name) VALUES (7, 'friend')")
+            conn.execute(
+                "CREATE TABLE Msg_test ("
+                "local_id INTEGER, server_id TEXT, local_type INTEGER, "
+                "real_sender_id INTEGER, create_time INTEGER, status INTEGER, "
+                "message_content BLOB, compress_content BLOB, "
+                "WCDB_CT_message_content INTEGER)"
+            )
+            conn.execute(
+                "INSERT INTO Msg_test VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (710, "srv-710", 1, 7, 1234, 0, "shared source", None, 0),
+            )
+
+        config = self.base_config()
+        config["message_table"] = "Msg_test"
+        state: dict[str, object] = {
+            "last_local_id": 710,
+            "inflight_local_ids": [710],
+        }
+        with mock.patch.object(direct_chatops, "DECRYPTED", root):
+            rows = direct_chatops.read_inflight_messages(config, state)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["local_id"], 710)
+        self.assertEqual(rows[0]["server_id"], "srv-710")
+        self.assertEqual(rows[0]["content"], "shared source")
 
     def test_echomind_routes_explicit_backend_requests(self) -> None:
         config = self.base_config()

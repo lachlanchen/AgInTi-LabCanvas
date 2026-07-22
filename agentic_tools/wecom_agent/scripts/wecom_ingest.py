@@ -633,9 +633,14 @@ Private same-member knowledge context:
 
 def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
     grant = looks_like_grant_request(request)
+    article_card = str(event.get("msgtype") or "").strip() == "wechat_article_card"
     return {
         "worker_needed": True,
-        "route_kind": "file_intake" if normalized_attachments(event) else ("grant_proposal" if grant else "other_worker"),
+        "route_kind": (
+            "file_intake"
+            if normalized_attachments(event)
+            else ("research_or_summary" if article_card else ("grant_proposal" if grant else "other_worker"))
+        ),
         "response": "",
         "task": request,
         "ack": "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。",

@@ -661,6 +661,72 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(len(resumed["actions"]), 1)
         self.assertEqual(len(captured), 1)
 
+    def test_terminal_send_failure_does_not_block_next_group_inspiration(self) -> None:
+        daily = load_daily()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.sqlite"
+            queue = root / "queue.jsonl"
+            chat = "wecom:default:group:labagent"
+            event = self.sample_event(text="hello")
+            daily.register_group(state, event, chat)
+            daily.update_group_inspiration(
+                state,
+                chat,
+                ["organoids"],
+                now=datetime(2026, 7, 21, 8, 0, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+            )
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "failed-delivery",
+                        "chat": chat,
+                        "status": "send_failed",
+                        "source": {"local_type": "scheduled_group_inspiration"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            captured: list[dict] = []
+
+            result = daily.run_inspiration_cycle(
+                state_db=state,
+                history_db=state,
+                queue=queue,
+                now=datetime(2026, 7, 21, 11, 1, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+                append_func=lambda _queue, task: captured.append(task) or True,
+            )
+
+        self.assertEqual(len(result["actions"]), 1)
+        self.assertEqual(result["actions"][0]["kind"], "inspiration")
+        self.assertEqual(len(captured), 1)
+
+    def test_scheduler_heartbeat_contains_only_bounded_health_counts(self) -> None:
+        daily = load_daily()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scheduler.health.json"
+            daily.write_scheduler_heartbeat(
+                path,
+                status="ok",
+                payload={
+                    "checked": 2,
+                    "actions": [{"chat": "private-chat-id"}],
+                    "inspiration": {
+                        "checked": 1,
+                        "actions": [{"chat": "private-chat-id"}],
+                        "busy_chats": ["private-chat-id"],
+                    },
+                },
+            )
+            heartbeat = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(heartbeat["status"], "ok")
+        self.assertEqual(heartbeat["daily_checked"], 2)
+        self.assertEqual(heartbeat["inspiration_checked"], 1)
+        self.assertEqual(heartbeat["inspiration_action_count"], 1)
+        self.assertNotIn("chat", heartbeat)
+
     def test_daily_preferences_keep_members_separate_and_support_status_and_off(self) -> None:
         daily = load_daily()
         with tempfile.TemporaryDirectory() as tmp:
