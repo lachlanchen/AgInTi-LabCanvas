@@ -42,9 +42,30 @@ PYTHONPATH=src python -m agenticapp wecom android send \
 
 Without `--live`, `send` is a dry run. A stable task ID plus content/file hash
 makes retries idempotent. Files are copied to a private staging directory,
-pushed to `/sdcard/Download/LabCanvas`, selected by exact filename, and sent
-only after the confirmation dialog contains both the exact target chat and
-artifact name.
+pushed to the Android `/sdcard/Download` root, selected by exact filename, and
+sent only after the confirmation dialog contains both the exact target chat
+and artifact name. Long names are shortened deterministically to at most 36
+characters with an eight-character content digest; the ledger retains the
+original path, size, and full SHA-256. Before committing, the bridge records a
+`committing` component. Confirmation accepts a stable full or middle-ellipsized
+same-chat file card, preventing a successful upload from being retried merely
+because WeCom truncated its visible name. Artifact-only recovery may reconcile
+that exact visible digest card without uploading it again.
+
+`POST /v1/delivery-status` reads the text/file component ledger without
+opening or changing the phone UI. The worker calls it before every retry with
+the stable task ID and complete desired batch. `POST /v1/send` may return an
+HTTP 200 response with `ok: false` when an earlier component was committed but
+a later one failed. That is a valid partial result: persist `sent_messages` and
+`sent_files`, restore the exact chat composer from any stale picker or
+confirmation overlay, and retry only `pending_messages`/`pending_files`. Never
+repeat the entire batch after a timeout or partial response.
+
+For WeCom research tasks, send the polished PDF by default. Keep Markdown,
+LaTeX, BibTeX, evidence papers, and render audits in the private task folder
+unless the current request explicitly asks for those source files. The
+execution contract limits which artifact suffixes are mandatory; a PDF-only
+contract must not become a Markdown/TeX delivery requirement.
 
 Idle polling uses native unread badges for the fast path and reconciles every
 allowlisted chat at a bounded interval (20 seconds by default). Opening a chat
@@ -58,7 +79,19 @@ others.
 Inbound events retain the exact visible sender name and enter the normal WeCom
 ingest/worker queue with same-chat isolation. The route agent's natural direct
 reply or queued-task acknowledgement is checkpointed, then sent immediately
-with the same native sender mention; long work continues independently.
+with the same native sender mention; long work continues independently. Visible
+quote-preview text is preserved separately from the current message body and
+included in the same task packet. Sender labels, timestamps, and read receipts
+are excluded from quote text.
+
+Scientifically valuable ideas use two tracks. The route agent sends a concise,
+evidence-qualified preliminary answer immediately, then creates a durable deep
+research task. Mechanism, hypothesis, experimental-design, literature-comparison,
+roadmap, and quoted scientific follow-up questions normally require a polished
+LaTeX PDF. The task contract records that PDF as required: completion needs a
+verified same-chat file component, a durable deferred state, or an explicit
+transport blocker. Existing exact-task reports can be delivered later through
+artifact-only supplemental recovery without repeating the research.
 
 ## Group Inspiration
 
@@ -79,8 +112,10 @@ The first point is queued immediately when a group explicitly changes focus.
 
 The default interval is three hours and can be changed locally with
 `WECOM_INSPIRATION_INTERVAL_SECONDS`. A pending or running inspiration task is
-never duplicated. Group interests are public group-scoped settings; they do
-not merge private member records or authorize public posting.
+never duplicated. Inspiration also yields whenever that exact group has active
+interactive work, research, confirmation, or artifact delivery; it does not
+create a delayed chat burst. Group interests are public group-scoped settings;
+they do not merge private member records or authorize public posting.
 
 ## Native Mentions
 

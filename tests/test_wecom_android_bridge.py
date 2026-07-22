@@ -93,6 +93,177 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         )
         self.assertFalse(bridge.validate_file_confirmation(root, "AgentTest", "other.pdf"))
 
+    def test_file_confirmation_accepts_exact_chat_with_member_count(self) -> None:
+        bridge = load_bridge()
+        root = ET.fromstring(
+            """
+            <hierarchy><node text="">
+              <node text="发送给：" package="com.tencent.wework" />
+              <node text="LabAgent(6)" package="com.tencent.wework" />
+              <node text="[文件] report.pdf (227K)" package="com.tencent.wework" />
+              <node text="发送" package="com.tencent.wework" clickable="true" bounds="[1,1][2,2]" />
+            </node></hierarchy>
+            """
+        )
+
+        self.assertTrue(bridge.validate_file_confirmation(root, "LabAgent", "report.pdf"))
+        self.assertFalse(bridge.validate_file_confirmation(root, "Lab", "report.pdf"))
+
+    def test_document_file_match_excludes_search_editor(self) -> None:
+        bridge = load_bridge()
+        root = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="report.pdf" package="com.google.android.documentsui"
+                    class="android.widget.EditText"
+                    resource-id="com.google.android.documentsui:id/search_src_text" />
+              <node text="report.pdf" package="com.google.android.documentsui"
+                    class="android.widget.TextView"
+                    resource-id="android:id/title" />
+            </node></hierarchy>
+            """
+        )
+
+        matches = bridge.exact_document_file_nodes(root, "report.pdf")
+
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].attrib["resource-id"], "android:id/title")
+
+    def test_picker_filename_is_short_deterministic_and_keeps_extension(self) -> None:
+        bridge = load_bridge()
+        original = "2026-07-22-organoid-biomanufacturing-scifi-briefing.pdf"
+
+        shortened = bridge.picker_safe_filename(original, "0123456789abcdef")
+
+        self.assertLessEqual(len(shortened), 36)
+        self.assertTrue(shortened.endswith("-01234567.pdf"))
+        self.assertEqual(bridge.picker_safe_filename("short.pdf", "deadbeef"), "short.pdf")
+
+    def test_file_card_match_accepts_middle_ellipsis_but_not_wrong_suffix(self) -> None:
+        bridge = load_bridge()
+        filename = "brain_organoid_vascular_integra-557240a2.pdf"
+
+        self.assertTrue(
+            bridge.filename_display_matches(
+                "brain_organoid_vas\ncular_integra...2.pdf",
+                filename,
+            )
+        )
+        self.assertFalse(
+            bridge.filename_display_matches(
+                "brain_organoid_vas\ncular_integra...3.pdf",
+                filename,
+            )
+        )
+
+    def test_visible_file_card_match_is_limited_to_wecom_nodes(self) -> None:
+        bridge = load_bridge()
+        root = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="brain_organoid_vas...2.pdf" package="com.google.android.documentsui" />
+              <node text="brain_organoid_vas...2.pdf" package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+
+        self.assertTrue(
+            bridge.visible_file_card_matches(
+                root,
+                "brain_organoid_vascular_integra-557240a2.pdf",
+            )
+        )
+
+    def test_visible_file_recovery_accepts_legacy_long_filename(self) -> None:
+        bridge = load_bridge()
+        root = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="brain_organoid_vas\ncular_integra...2.pdf" package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+
+        self.assertFalse(
+            bridge.visible_file_card_matches(root, "brain_organoid_vas-557240a2.pdf")
+        )
+        self.assertTrue(
+            bridge.visible_file_card_matches(
+                root,
+                "brain_organoid_vascular_integration_deep_report_2026-07-22.pdf",
+            )
+        )
+
+    def test_delivery_status_reads_exact_task_component_without_gui(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "report.pdf"
+            artifact.write_bytes(b"%PDF-1.4\n")
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            digest = bridge.sha256_file(artifact)
+            value_hash = f"{digest}:{artifact.name}"
+            key = runtime.component_key("task-1", "LabAgent", "file", value_hash)
+            runtime.mark_component(
+                key,
+                task_id="task-1",
+                chat="LabAgent",
+                kind="file",
+                value_hash=value_hash,
+                status="sent",
+            )
+
+            status = runtime.delivery_status(
+                "LabAgent", "", [artifact], task_id="task-1"
+            )
+
+        self.assertTrue(status["complete"])
+        self.assertEqual(status["sent_files"], [str(artifact.resolve())])
+        self.assertEqual(status["pending_files"], [])
+
+    def test_normalize_chat_surface_dismisses_stale_attachment_choice(self) -> None:
+        bridge = load_bridge()
+        stale = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="从本地文件选择" package="com.tencent.wework" />
+              <node text="从微盘选择" package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        composer = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="" resource-id="com.tencent.wework:id/j28"
+                    package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.current_package = mock.Mock(return_value=bridge.PACKAGE)
+            runtime.open_chat = mock.Mock(side_effect=[stale, composer])
+            runtime.press_back = mock.Mock()
+
+            result = runtime.normalize_chat_surface("LabAgent")
+
+        self.assertIs(result, composer)
+        runtime.press_back.assert_called_once_with()
+
     def test_parse_messages_distinguishes_inbound_and_own_rows(self) -> None:
         bridge = load_bridge()
         xml = """
@@ -121,7 +292,48 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(records[0]["sender"], "sunnyyty")
         self.assertEqual(records[0]["mention_name"], "sunnyyty@微信")
         self.assertEqual(records[0]["body"], "请帮我查论文")
+        self.assertEqual(records[0]["quote_text"], "")
         self.assertEqual(records[1]["direction"], "outbound")
+
+    def test_parse_messages_preserves_quote_preview_in_agent_event(self) -> None:
+        bridge = load_bridge()
+        xml = """
+        <hierarchy><node>
+          <node resource-id="com.tencent.wework:id/eyy" package="com.tencent.wework">
+            <node text="megamonster" package="com.tencent.wework" />
+            <node text="＠微信" package="com.tencent.wework" />
+            <node text="Prof Ma" resource-id="com.tencent.wework:id/quote_author"
+                  class="android.widget.TextView" package="com.tencent.wework" />
+            <node text="脑类器官排斥血管类器官细胞浸润，如何解决？"
+                  resource-id="com.tencent.wework:id/quote_content"
+                  class="android.widget.TextView" package="com.tencent.wework" />
+            <node text="解释清楚这段内容是什么意思。"
+                  resource-id="com.tencent.wework:id/j1l"
+                  class="android.widget.TextView" package="com.tencent.wework" />
+            <node text="07:15" resource-id="com.tencent.wework:id/time"
+                  class="android.widget.TextView" package="com.tencent.wework" />
+            <node text="已读" resource-id="com.tencent.wework:id/read"
+                  class="android.widget.TextView" package="com.tencent.wework" />
+          </node>
+        </node></hierarchy>
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            record = runtime.parse_messages(ET.fromstring(xml))[0]
+            event = runtime.build_event("LabAgent", record)
+
+        self.assertEqual(
+            record["quote_text"],
+            "Prof Ma\n脑类器官排斥血管类器官细胞浸润，如何解决？",
+        )
+        self.assertEqual(event["quote_text"], record["quote_text"])
 
     def test_native_mention_contract_is_exact_and_non_broadcast(self) -> None:
         bridge = load_bridge()

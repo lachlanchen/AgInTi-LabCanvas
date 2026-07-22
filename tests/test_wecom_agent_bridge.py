@@ -464,6 +464,59 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(captured[0]["route_decision"]["scheduled_group_inspiration"])
         self.assertIn("substantive content", captured[0]["request"])
 
+    def test_group_inspiration_defers_while_exact_chat_has_active_work(self) -> None:
+        daily = load_daily()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.sqlite"
+            queue = root / "queue.jsonl"
+            chat = "wecom:default:group:labagent"
+            other_chat = "wecom:default:group:other"
+            event = self.sample_event(text="hello")
+            daily.register_group(state, event, chat)
+            daily.update_group_inspiration(
+                state,
+                chat,
+                ["organoids"],
+                now=datetime(2026, 7, 21, 8, 0, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+            )
+            queue.write_text(
+                "\n".join(
+                    json.dumps(task)
+                    for task in (
+                        {"id": "same", "chat": chat, "status": "in_progress", "source": {"local_type": "text"}},
+                        {"id": "other", "chat": other_chat, "status": "pending", "source": {"local_type": "text"}},
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            captured: list[dict] = []
+
+            blocked = daily.run_inspiration_cycle(
+                state_db=state,
+                history_db=state,
+                queue=queue,
+                now=datetime(2026, 7, 21, 11, 1, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+                append_func=lambda _queue, task: captured.append(task) or True,
+            )
+            queue.write_text(
+                json.dumps({"id": "same", "chat": chat, "status": "done", "source": {"local_type": "text"}}) + "\n",
+                encoding="utf-8",
+            )
+            resumed = daily.run_inspiration_cycle(
+                state_db=state,
+                history_db=state,
+                queue=queue,
+                now=datetime(2026, 7, 21, 11, 2, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+                append_func=lambda _queue, task: captured.append(task) or True,
+            )
+
+        self.assertEqual(blocked["actions"], [])
+        self.assertEqual(blocked["busy_chats"], [chat])
+        self.assertEqual(len(resumed["actions"]), 1)
+        self.assertEqual(len(captured), 1)
+
     def test_daily_preferences_keep_members_separate_and_support_status_and_off(self) -> None:
         daily = load_daily()
         with tempfile.TemporaryDirectory() as tmp:
@@ -601,6 +654,11 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("polished LaTeX source", task["request"])
         self.assertIn("Render and inspect the compiled pages", task["request"])
         self.assertIn("Nature-style", task["request"])
+        self.assertIn("not a teaser or status line", task["request"])
+        self.assertIn("scientific anchor", task["request"])
+        self.assertIn("private task directory", task["request"])
+        self.assertIn("return the polished PDF", task["request"])
+        self.assertNotIn("transport sends both", task["request"])
         self.assertTrue(task["route_decision"]["no_fixed_deadline"])
         self.assertFalse(task["agent_backend_config"]["agent_fallbacks"]["fallback_on_timeout"])
 
@@ -789,6 +847,42 @@ class WeComAgentBridgeTests(unittest.TestCase):
             route = ingest.route_event(event, ingest.event_request(event), [])
 
         self.assertFalse(route["public_publish_allowed"])
+
+    def test_route_report_decision_becomes_required_delivery_contract(self) -> None:
+        ingest = load_ingest()
+        response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": True,
+                    "route_kind": "research_or_summary",
+                    "response": "",
+                    "task": "Deeply research this question and return a LaTeX PDF.",
+                    "ack": "先给初步判断，完整报告正在整理。",
+                    "report_required": True,
+                    "public_publish_allowed": False,
+                }
+            ),
+        }
+        event = self.sample_event(text="这个机制应当如何验证？")
+        with mock.patch.object(ingest, "run_agent_session", return_value=response):
+            route = ingest.route_event(event, ingest.event_request(event), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            task = ingest.build_task(
+                event,
+                ingest.canonical_chat_name(event),
+                ingest.event_request(event),
+                [],
+                route,
+                Path(tmp) / "queue.jsonl",
+            )
+
+        self.assertTrue(route["report_required"])
+        self.assertTrue(task["route_decision"]["require_file_delivery"])
+        self.assertEqual(task["execution_contract"]["required_artifacts"], ["pdf"])
+        evidence = task["execution_contract"]["research_evidence"]
+        self.assertEqual(evidence["minimum_traceable_sources"], 2)
+        self.assertTrue(evidence["separate_direct_indirect_hypothesis"])
 
     def test_incomplete_ingest_can_retry_same_message(self) -> None:
         ingest = load_ingest()

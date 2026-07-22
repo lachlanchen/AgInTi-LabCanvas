@@ -44,6 +44,17 @@ OFF_WORDS = {"off", "clear", "remove", "取消", "清除", "关闭", "關閉"}
 PAUSE_WORDS = {"pause", "disable", "stop", "暂停", "暫停", "停用"}
 ON_WORDS = {"on", "enable", "start", "开启", "開啟", "启用", "啟用"}
 INSPIRATION_FINAL_STATUSES = {"done", "failed", "cancelled", "expired", "rejected"}
+CHAT_BUSY_STATUSES = {
+    "pending",
+    "in_progress",
+    "generation_waiting",
+    "generation_poststage_pending",
+    "publish_poststage_pending",
+    "send_deferred_artifact",
+    "send_deferred_locked",
+    "send_retrying",
+    "waiting_confirmation",
+}
 QUIET_START_HOUR = 20
 QUIET_END_HOUR = 8
 
@@ -815,6 +826,34 @@ def active_inspiration_task(queue: Path, chat: str) -> bool:
     return False
 
 
+def active_chat_work_task(queue: Path, chat: str) -> bool:
+    """Return whether normal work is active for this exact group.
+
+    Scheduled inspiration is opportunistic. It must not compete with a live
+    question, report, artifact delivery, confirmation, or long-running task.
+    Failed/finished work does not block the next quiet-period attempt.
+    """
+    if not queue.is_file():
+        return False
+    try:
+        rows = queue.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    for line in rows:
+        try:
+            task = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if str(task.get("chat") or "") != chat:
+            continue
+        source = task.get("source") if isinstance(task.get("source"), dict) else {}
+        if str(source.get("local_type") or "") == "scheduled_group_inspiration":
+            continue
+        if str(task.get("status") or "pending") in CHAT_BUSY_STATUSES:
+            return True
+    return False
+
+
 def previous_inspiration_outputs(queue: Path, chat: str, *, limit: int = 5) -> list[str]:
     if not queue.is_file():
         return []
@@ -1049,6 +1088,7 @@ def run_inspiration_cycle(
     current = now.astimezone(timezone) if now and now.tzinfo else (now.replace(tzinfo=timezone) if now else datetime.now(timezone))
     append = append_func or append_task_once
     actions: list[dict[str, Any]] = []
+    busy_chats: list[str] = []
     with sqlite3.connect(state_db) as conn:
         settings_rows = conn.execute(
             "SELECT s.chat, c.account_id, c.chat_id, c.chat_type, c.transport_channel, s.topics_json, "
@@ -1076,6 +1116,9 @@ def run_inspiration_cycle(
         if active_inspiration_task(queue, chat):
             actions.append({"kind": "inspiration_waiting", "chat": chat, "reason": "previous_inspiration_still_active"})
             continue
+        if active_chat_work_task(queue, chat):
+            busy_chats.append(chat)
+            continue
         context = recent_group_context(history_db, chat, limit=60)
         previous = previous_inspiration_outputs(queue, chat)
         prior_research = previous_group_research_outputs(queue, chat)
@@ -1101,7 +1144,12 @@ def run_inspiration_cycle(
                 (stamp, chat),
             )
         actions.append({"kind": "inspiration", "chat": chat, "task_id": task["id"], "queued": appended, "idle_seconds": int(idle_seconds)})
-    return {"ok": True, "checked": len(settings_rows), "actions": actions}
+    return {
+        "ok": True,
+        "checked": len(settings_rows),
+        "actions": actions,
+        "busy_chats": busy_chats,
+    }
 
 
 def build_daily_research_task(
@@ -1138,8 +1186,9 @@ Requirements:
 - Use current web and scholarly research, prioritizing recent primary papers, preprints, datasets, and official project repositories. Verify publication dates and distinguish peer-reviewed work from preprints.
 - Keep this job separate from other members' daily topics. Same-group context is supporting evidence, not permission to merge another job into this report.
 - Synthesize the topics with the group's recent questions instead of producing a generic news list.
-- Return a concise Chinese chat digest with the most important findings, why they matter, limitations, and concrete next research steps.
-- Create a source-grounded Markdown report and a polished LaTeX source, then compile a restrained Nature-style research PDF with clear hierarchy, citations/DOIs/links, embedded fonts, and no clipped or overflowing content. Render and inspect the compiled pages before returning the Markdown and PDF so the transport sends both to this group.
+- Return a substantial but readable Chinese group explanation, not a teaser or status line. Explain the important findings, essential terms, evidence, limitations, and concrete next research steps clearly enough that members can understand the result without opening the attachment; keep the PDF for the full analysis and references.
+- If a topic includes science-fiction ideas, develop the strongest idea in useful detail: scientific anchor, premise, conflict, human stakes, originality, uncertainty, and a plausible story or research direction. Do not return only titles or disconnected knowledge points.
+- Create a source-grounded Markdown report and a polished LaTeX source, then compile a restrained Nature-style research PDF with clear hierarchy, citations/DOIs/links, embedded fonts, and no clipped or overflowing content. Render and inspect the compiled pages. Keep Markdown, TeX, evidence papers, and render audits in the private task directory; return the polished PDF for group delivery unless the current request explicitly asks for source files.
 - When an explanatory paper figure materially helps, create an editable source (SVG/TeX or a LabCanvas atomic figure manifest) plus a preview; do not use a generated bitmap as the sole source of truth.
 - Download requested or directly relevant papers only from lawful open-access sources. Do not bypass paywalls or access controls.
 - Never fabricate a paper, citation, benchmark, or claim. State evidence gaps plainly.

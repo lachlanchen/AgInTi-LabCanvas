@@ -52,6 +52,20 @@ MAX_MENTIONS = 4
 # WeCom exposes the same rich mention span with or without a literal leading
 # `@` depending on keyboard/composer state.
 MENTION_TOKEN_RE = re.compile(r"@?\ufff3[^\ufff0]+\ufff0")
+MESSAGE_TIME_RE = re.compile(
+    r"^(?:\d{1,2}:\d{2}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2})?|"
+    r"(?:(?:今天|昨天|星期[一二三四五六日天]|周[一二三四五六日天])\s*)?"
+    r"(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*\d{1,2}:\d{2})$"
+)
+MESSAGE_CHROME_TEXT = {
+    "＠微信",
+    "@微信",
+    "已读",
+    "未读",
+    "发送中",
+    "重新发送",
+    "撤回",
+}
 
 
 class BridgeError(RuntimeError):
@@ -120,6 +134,33 @@ def normalize_visible_text(value: Any) -> str:
 
 def normalize_filename_text(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "")).replace("\u200b", "")
+
+
+def filename_display_matches(value: Any, filename: str) -> bool:
+    """Match a WeCom file card even when Android ellipsizes its middle."""
+    visible = normalize_filename_text(value)
+    expected = normalize_filename_text(filename)
+    if not visible or not expected:
+        return False
+    if expected == visible or expected in visible:
+        return True
+    for marker in ("...", "\u2026"):
+        if marker not in visible:
+            continue
+        prefix, suffix = visible.split(marker, 1)
+        prefix = prefix.removeprefix("[文件]")
+        suffix = re.split(r"(?:\(|\s)\d+(?:\.\d+)?\s*(?:[KMG]?B|[KMG])", suffix, maxsplit=1)[0]
+        if len(prefix) >= 8 and len(suffix) >= 4 and expected.startswith(prefix) and expected.endswith(suffix):
+            return True
+    return False
+
+
+def visible_file_card_matches(root: ET.Element, filename: str) -> bool:
+    return any(
+        node.attrib.get("package") == PACKAGE
+        and filename_display_matches(node_text(node), filename)
+        for node in root.iter("node")
+    )
 
 
 def normalize_mention_name(value: Any) -> str:
@@ -319,11 +360,71 @@ def visible_chat_title(root: ET.Element) -> str:
 
 def validate_file_confirmation(root: ET.Element, chat: str, filename: str) -> bool:
     texts = [node_text(node) for node in root.iter("node") if node_text(node)]
-    target_ok = chat in texts
+    target_ok = any(chat_title_matches(text, chat) for text in texts)
     expected = normalize_filename_text(filename)
     file_ok = any(expected in normalize_filename_text(text) for text in texts)
     send_ok = bool(find_nodes(root, text="发送", package=PACKAGE))
     return target_ok and file_ok and send_ok
+
+
+def exact_document_file_nodes(root: ET.Element, filename: str) -> list[ET.Element]:
+    """Return real DocumentsUI file rows, never the filename search field."""
+    expected = normalize_filename_text(filename)
+    matches: list[ET.Element] = []
+    for node in root.iter("node"):
+        if node.attrib.get("package") != DOCUMENTS_PACKAGE:
+            continue
+        if normalize_filename_text(node_text(node)) != expected:
+            continue
+        resource_id = node.attrib.get("resource-id", "").lower()
+        if node.attrib.get("class") == "android.widget.EditText" or "search" in resource_id:
+            continue
+        matches.append(node)
+    return matches
+
+
+def picker_safe_filename(filename: str, digest: str, *, max_chars: int = 36) -> str:
+    """Keep Android/WeCom file-card names short enough for exact verification."""
+    name = safe_file_name(Path(filename))
+    if len(name) <= max_chars:
+        return name
+    suffix = Path(name).suffix[:12]
+    stem_limit = max(8, max_chars - len(suffix) - 9)
+    stem = Path(name).stem[:stem_limit].rstrip(" ._-") or "artifact"
+    return f"{stem}-{digest[:8]}{suffix}"
+
+
+def quoted_message_text(
+    row: ET.Element,
+    *,
+    sender: str,
+    body_nodes: list[ET.Element],
+) -> str:
+    """Recover visible quote-preview text without guessing from chat history.
+
+    WeCom renders the current message in ``j1l`` and quote previews as other
+    TextView descendants in the same message row. Resource IDs vary between
+    Android releases, so this intentionally relies on that stable structural
+    boundary while excluding sender, timestamps, read receipts, and the main
+    message body.
+    """
+    body_texts = {node_text(node) for node in body_nodes if node_text(node)}
+    skipped_unresourced_sender = False
+    candidates: list[str] = []
+    for node in row.iter("node"):
+        text = node_text(node)
+        if not text or text in body_texts or text in MESSAGE_CHROME_TEXT:
+            continue
+        resource = node.attrib.get("resource-id", "")
+        if not resource and not skipped_unresourced_sender and text == sender:
+            skipped_unresourced_sender = True
+            continue
+        if text == sender or MESSAGE_TIME_RE.fullmatch(text):
+            continue
+        if node.attrib.get("class") not in {"", "android.widget.TextView"}:
+            continue
+        candidates.append(text)
+    return "\n".join(unique_nonempty(candidates))[:4000]
 
 
 class AndroidBridge:
@@ -485,6 +586,36 @@ class AndroidBridge:
     def press_back(self) -> None:
         self.adb_shell("input", "keyevent", "4", check=False)
         time.sleep(0.6)
+
+    def normalize_chat_surface(self, chat: str) -> ET.Element:
+        """Return to the exact chat composer from a stale picker or attachment sheet."""
+        if chat not in self.target_groups:
+            raise BridgeError("refusing non-allowlisted WeCom Android chat")
+        for _ in range(6):
+            package = self.current_package()
+            if package == DOCUMENTS_PACKAGE:
+                self.press_back()
+                continue
+            root = self.open_chat(chat)
+            visible = {
+                normalize_visible_text(node_text(node))
+                for node in root.iter("node")
+                if normalize_visible_text(node_text(node))
+            }
+            local_choice_open = "从本地文件选择" in visible or "从微盘选择" in visible
+            confirmation_open = "发送给：" in visible and "发送" in visible
+            attachment_sheet_open = (
+                "文件" in visible
+                and len(visible.intersection({"图片", "拍摄", "文档", "文件"})) >= 2
+            )
+            if local_choice_open or confirmation_open or attachment_sheet_open:
+                self.press_back()
+                continue
+            composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
+            if composers:
+                return root
+            self.press_back()
+        raise BridgeError("WeCom exact chat composer could not be restored")
 
     def open_chat(self, chat: str) -> ET.Element:
         if chat not in self.target_groups:
@@ -678,9 +809,25 @@ class AndroidBridge:
         return short_hash(f"{task_id}\0{chat}\0{kind}\0{value_hash}", 64)
 
     def component_sent(self, key: str) -> bool:
+        return self.component_record(key).get("status") == "sent"
+
+    def component_record(self, key: str) -> dict[str, Any]:
         with sqlite3.connect(self.state_db) as conn:
-            row = conn.execute("SELECT status FROM components WHERE component_key = ?", (key,)).fetchone()
-        return bool(row and row[0] == "sent")
+            row = conn.execute(
+                "SELECT status, details_json, updated_at FROM components WHERE component_key = ?",
+                (key,),
+            ).fetchone()
+        if not row:
+            return {}
+        try:
+            details = json.loads(str(row[1] or "{}"))
+        except json.JSONDecodeError:
+            details = {}
+        return {
+            "status": str(row[0] or ""),
+            "details": details if isinstance(details, dict) else {},
+            "updated_at": str(row[2] or ""),
+        }
 
     def mark_component(
         self,
@@ -813,9 +960,58 @@ class AndroidBridge:
         # DocumentsUI search does not reliably index nested directories on
         # this device. Keep the picker-visible copy at the Download root;
         # the local hash directory remains the collision/deduplication guard.
-        remote_path = f"{REMOTE_STAGING}/{name}"
+        remote_name = picker_safe_filename(name, digest)
+        remote_path = f"{REMOTE_STAGING}/{remote_name}"
         self.adb("push", str(local_copy), remote_path, timeout=180)
+        self.adb_shell(
+            "am",
+            "broadcast",
+            "-a",
+            "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+            "-d",
+            f"file://{remote_path}",
+            timeout=20,
+            check=False,
+        )
         return resolved, digest, remote_path
+
+    def wait_for_document_file(self, filename: str, *, timeout: float = 20.0) -> ET.Element:
+        """Wait for DocumentsUI indexing, then use exact-name search as fallback."""
+        deadline = time.monotonic() + timeout
+        search_started = False
+        while time.monotonic() < deadline:
+            root = self.dump_hierarchy(attempts=2)
+            matches = exact_document_file_nodes(root, filename)
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                raise BridgeError(f"expected one exact file in Android Download, found {len(matches)}")
+            if not search_started and time.monotonic() + 3 < deadline:
+                search_nodes = [
+                    node
+                    for node in root.iter("node")
+                    if node.attrib.get("package") == DOCUMENTS_PACKAGE
+                    and (
+                        normalize_visible_text(node.attrib.get("content-desc")) in {"搜索", "Search"}
+                        or "menu_search" in node.attrib.get("resource-id", "")
+                    )
+                ]
+                if search_nodes:
+                    self.tap_node(root, search_nodes[-1])
+                    time.sleep(0.4)
+                    search_root = self.dump_hierarchy(attempts=2)
+                    editors = [
+                        node
+                        for node in search_root.iter("node")
+                        if node.attrib.get("package") == DOCUMENTS_PACKAGE
+                        and node.attrib.get("class") == "android.widget.EditText"
+                    ]
+                    if editors:
+                        self.tap_node(search_root, editors[-1])
+                        self.paste_text(filename)
+                        search_started = True
+            time.sleep(1.0)
+        raise BridgeError("exact artifact did not appear in Android DocumentsUI after indexing/search")
 
     def wait_for_package(self, package: str, *, timeout: float = 15) -> None:
         deadline = time.monotonic() + timeout
@@ -825,14 +1021,68 @@ class AndroidBridge:
             time.sleep(0.4)
         raise BridgeError(f"Android package did not become active: {package}")
 
-    def send_file_locked(self, chat: str, path: Path, *, task_id: str) -> dict[str, Any]:
-        resolved, digest, _remote_path = self.stage_file(path)
-        filename = resolved.name
-        key = self.component_key(task_id, chat, "file", f"{digest}:{filename}")
+    def send_file_locked(
+        self,
+        chat: str,
+        path: Path,
+        *,
+        task_id: str,
+        allow_visible_recovery: bool = False,
+    ) -> dict[str, Any]:
+        resolved, digest, remote_path = self.stage_file(path)
+        original_filename = resolved.name
+        filename = Path(remote_path).name
+        key = self.component_key(task_id, chat, "file", f"{digest}:{original_filename}")
         if self.component_sent(key):
             return {"ok": True, "duplicate": True, "sent_messages": [], "sent_files": [str(resolved)]}
-        root = self.open_chat(chat)
-        plus = find_nodes(root, resource_id=f"{self.package}:id/j1v", package=self.package)
+        root = self.normalize_chat_surface(chat)
+        component = self.component_record(key)
+        if (
+            component.get("status") == "committing" or allow_visible_recovery
+        ) and (
+            visible_file_card_matches(root, filename)
+            or visible_file_card_matches(root, original_filename)
+        ):
+            self.mark_component(
+                key,
+                task_id=task_id,
+                chat=chat,
+                kind="file",
+                value_hash=f"{digest}:{original_filename}",
+                status="sent",
+                details={
+                    "size_bytes": resolved.stat().st_size,
+                    "sha256": digest,
+                    "display_name": filename,
+                    "recovered_from_visible_card": True,
+                    "legacy_display_name_checked": original_filename,
+                },
+            )
+            return {
+                "ok": True,
+                "duplicate": True,
+                "recovered": True,
+                "sent_messages": [],
+                "sent_files": [str(resolved)],
+                "errors": [],
+            }
+        plus: list[ET.Element] = []
+        # Prefer the right-side attachment control. Some builds reuse ``hvp``
+        # for the left-side voice/keyboard toggle while ``j1v`` remains the
+        # actual attachment button, so only use ``hvp`` as a true fallback.
+        for resource_name in ("j1v", "hvp"):
+            candidates = [
+                node
+                for node in find_nodes(
+                    root,
+                    resource_id=f"{self.package}:id/{resource_name}",
+                    package=self.package,
+                )
+                if node.attrib.get("clickable") == "true"
+            ]
+            if candidates:
+                plus = candidates
+                break
         if not plus:
             raise BridgeError("WeCom attachment menu button is unavailable")
         self.tap_node(root, plus[-1])
@@ -850,49 +1100,60 @@ class AndroidBridge:
         self.tap_node(choice, local[-1])
         self.wait_for_package(DOCUMENTS_PACKAGE)
         picker = self.dump_hierarchy()
-        search = find_nodes(
-            picker,
-            resource_id=f"{DOCUMENTS_PACKAGE}:id/option_menu_search",
-            package=DOCUMENTS_PACKAGE,
-        )
-        if not search:
-            raise BridgeError("Android document search is unavailable")
-        self.tap_node(picker, search[-1])
-        time.sleep(0.4)
-        self.paste_text(filename)
-        self.adb_shell("input", "keyevent", "66")
-        time.sleep(1.2)
-        results = self.dump_hierarchy()
-        # DocumentsUI uses android:id/title on some Android builds, but MIUI's
-        # provider may expose the same exact filename through text1 or a
-        # provider-specific row. Keep the filename exact while accepting the
-        # alternate row resource.
-        matches = find_nodes(results, text=filename, package=DOCUMENTS_PACKAGE)
+        roots = [
+            node
+            for node in picker.iter("node")
+            if node.attrib.get("package") == DOCUMENTS_PACKAGE
+            and node.attrib.get("content-desc") == "显示根目录"
+        ]
+        if not roots:
+            raise BridgeError("Android document root menu is unavailable")
+        self.tap_node(picker, roots[-1])
+        time.sleep(0.5)
+        drawer = self.dump_hierarchy()
+        downloads = find_nodes(drawer, text="下载内容", package=DOCUMENTS_PACKAGE)
+        if len(downloads) != 1:
+            raise BridgeError("Android Download root is unavailable or ambiguous")
+        self.tap_node(drawer, downloads[0])
+        time.sleep(0.8)
+        self.wait_for_document_file(filename)
+        current = self.dump_hierarchy(attempts=2)
+        matches = exact_document_file_nodes(current, filename)
         if len(matches) != 1:
-            raise BridgeError(f"expected one exact staged file result, found {len(matches)}")
-        self.tap_node(results, matches[0])
+            raise BridgeError("exact artifact changed before picker commit")
+        self.tap_node(current, matches[0])
         self.wait_for_package(self.package)
         time.sleep(1.0)
         confirmation = self.dump_hierarchy()
         if not validate_file_confirmation(confirmation, chat, filename):
             raise BridgeError("WeCom file confirmation did not match exact chat and artifact")
         send = find_nodes(confirmation, text="发送", package=self.package)
+        self.mark_component(
+            key,
+            task_id=task_id,
+            chat=chat,
+            kind="file",
+            value_hash=f"{digest}:{original_filename}",
+            status="committing",
+            details={
+                "size_bytes": resolved.stat().st_size,
+                "sha256": digest,
+                "display_name": filename,
+            },
+        )
         self.tap_node(confirmation, send[-1])
         deadline = time.monotonic() + 120
-        expected = normalize_filename_text(filename)
         while time.monotonic() < deadline:
             time.sleep(1.0)
             current = self.ensure_chat_identity(chat)
-            texts = [normalize_filename_text(node.attrib.get("text")) for node in current.iter("node")]
-            if any(expected == value or expected in value for value in texts):
+            if visible_file_card_matches(current, filename):
                 # A card appears before the upload has necessarily left the
                 # local client. Require a short stable second observation and
                 # reject visible retry/failure states before recording delivery.
                 time.sleep(3.0)
                 current = self.ensure_chat_identity(chat)
                 visible = [normalize_visible_text(node.attrib.get("text")) for node in current.iter("node")]
-                normalized = [normalize_filename_text(value) for value in visible]
-                if not any(expected == value or expected in value for value in normalized):
+                if not visible_file_card_matches(current, filename):
                     continue
                 if any(marker in value for value in visible for marker in ("发送失败", "上传失败", "重试")):
                     raise BridgeError("WeCom reported an artifact upload failure")
@@ -901,12 +1162,63 @@ class AndroidBridge:
                     task_id=task_id,
                     chat=chat,
                     kind="file",
-                    value_hash=f"{digest}:{filename}",
+                    value_hash=f"{digest}:{original_filename}",
                     status="sent",
-                    details={"size_bytes": resolved.stat().st_size, "sha256": digest},
+                    details={
+                        "size_bytes": resolved.stat().st_size,
+                        "sha256": digest,
+                        "display_name": filename,
+                    },
                 )
                 return {"ok": True, "sent_messages": [], "sent_files": [str(resolved)], "errors": []}
         raise BridgeError("WeCom did not expose the uploaded artifact after commit")
+
+    def delivery_status(
+        self,
+        chat: str,
+        message: str,
+        files: list[Path],
+        *,
+        task_id: str,
+        mentions: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Read the durable component ledger without touching the WeCom GUI."""
+        if chat not in self.target_groups:
+            raise BridgeError("refusing non-allowlisted WeCom Android target")
+        exact_mentions = validate_mentions(mentions or [])
+        sent_messages: list[str] = []
+        pending_messages: list[str] = []
+        sent_files: list[str] = []
+        pending_files: list[str] = []
+        if message.strip():
+            value_hash = hashlib.sha256(
+                json.dumps(
+                    {"message": message, "mentions": exact_mentions},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            key = self.component_key(task_id, chat, "text", value_hash)
+            (sent_messages if self.component_sent(key) else pending_messages).append(message)
+        for path in files:
+            resolved = path.expanduser().resolve()
+            if not resolved.is_file():
+                pending_files.append(str(resolved))
+                continue
+            digest = sha256_file(resolved)
+            key = self.component_key(task_id, chat, "file", f"{digest}:{resolved.name}")
+            (sent_files if self.component_sent(key) else pending_files).append(str(resolved))
+        return {
+            "ok": not pending_messages and not pending_files,
+            "complete": not pending_messages and not pending_files,
+            "transport": "wecom_android",
+            "chat_id": f"gui:{chat}",
+            "sent_messages": sent_messages,
+            "pending_messages": pending_messages,
+            "sent_files": sent_files,
+            "pending_files": pending_files,
+            "mentioned_users": exact_mentions if sent_messages else [],
+        }
 
     def send(
         self,
@@ -916,6 +1228,7 @@ class AndroidBridge:
         *,
         task_id: str,
         mentions: list[str] | None = None,
+        allow_visible_file_recovery: bool = False,
     ) -> dict[str, Any]:
         if chat not in self.target_groups:
             raise BridgeError("refusing non-allowlisted WeCom Android target")
@@ -943,12 +1256,21 @@ class AndroidBridge:
                     errors.append({"kind": "text", "error": f"{type(exc).__name__}: {str(exc)[:500]}"})
             for path in files:
                 try:
-                    result = self.send_file_locked(chat, path, task_id=task_id)
+                    result = self.send_file_locked(
+                        chat,
+                        path,
+                        task_id=task_id,
+                        allow_visible_recovery=allow_visible_file_recovery,
+                    )
                     sent_files.extend(result.get("sent_files") or [])
                 except Exception as exc:
                     errors.append(
                         {"kind": "file", "path": str(path), "error": f"{type(exc).__name__}: {str(exc)[:500]}"}
                     )
+                    try:
+                        self.normalize_chat_surface(chat)
+                    except Exception:
+                        pass
                     break
             return {
                 "ok": not errors,
@@ -966,7 +1288,7 @@ class AndroidBridge:
         for row in rows:
             sender = ""
             sender_is_wechat = False
-            bodies: list[str] = []
+            body_nodes: list[ET.Element] = []
             for node in row.iter("node"):
                 text = node_text(node)
                 if not text:
@@ -978,12 +1300,13 @@ class AndroidBridge:
                 if not resource and not sender:
                     sender = text
                 if resource.endswith(":id/j1l"):
-                    bodies.append(text)
-            body = "\n".join(unique_nonempty(bodies))
+                    body_nodes.append(node)
+            body = "\n".join(unique_nonempty(node_text(node) for node in body_nodes))
             if not body:
                 continue
+            quote_text = quoted_message_text(row, sender=sender, body_nodes=body_nodes)
             direction = "inbound" if sender else "outbound"
-            fingerprint = short_hash(f"{direction}\0{sender}\0{body}", 64)
+            fingerprint = short_hash(f"{direction}\0{sender}\0{body}\0{quote_text}", 64)
             records.append(
                 {
                     "fingerprint": fingerprint,
@@ -991,6 +1314,7 @@ class AndroidBridge:
                     "sender": sender,
                     "mention_name": f"{sender}@微信" if sender and sender_is_wechat else sender,
                     "body": body,
+                    "quote_text": quote_text,
                 }
             )
         return records
@@ -1033,7 +1357,7 @@ class AndroidBridge:
             "create_time": int(time.time()),
             "msgtype": "text",
             "text": str(record.get("body") or ""),
-            "quote_text": "",
+            "quote_text": str(record.get("quote_text") or ""),
             "attachments": [],
         }
 
@@ -1290,7 +1614,7 @@ def make_api_handler(bridge: AndroidBridge):
             self.write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != "/v1/send":
+            if self.path not in {"/v1/send", "/v1/delivery-status"}:
                 self.write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
                 return
             if not self.authorized():
@@ -1318,14 +1642,26 @@ def make_api_handler(bridge: AndroidBridge):
                 except BridgeError as exc:
                     self.write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
                     return
-                result = bridge.send(
-                    chat,
-                    str(payload.get("message") or ""),
-                    [Path(str(item)) for item in raw_files],
-                    task_id=str(payload.get("task_id") or "api")[:256] or "api",
-                    mentions=mentions,
-                )
-                self.write_json(HTTPStatus.OK if result.get("ok") else HTTPStatus.INTERNAL_SERVER_ERROR, result)
+                if self.path == "/v1/delivery-status":
+                    result = bridge.delivery_status(
+                        chat,
+                        str(payload.get("message") or ""),
+                        [Path(str(item)) for item in raw_files],
+                        task_id=str(payload.get("task_id") or "api")[:256] or "api",
+                        mentions=mentions,
+                    )
+                else:
+                    result = bridge.send(
+                        chat,
+                        str(payload.get("message") or ""),
+                        [Path(str(item)) for item in raw_files],
+                        task_id=str(payload.get("task_id") or "api")[:256] or "api",
+                        mentions=mentions,
+                        allow_visible_file_recovery=bool(payload.get("allow_visible_file_recovery")),
+                    )
+                # A partial send is a valid transport response. The caller uses
+                # the component ledger to retry only missing components.
+                self.write_json(HTTPStatus.OK, result)
             except Exception as exc:
                 self.write_json(
                     HTTPStatus.INTERNAL_SERVER_ERROR,

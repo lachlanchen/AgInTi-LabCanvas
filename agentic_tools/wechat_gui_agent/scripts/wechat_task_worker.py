@@ -187,6 +187,7 @@ OUTBOUND_SUFFIXES = {
     ".zip",
 }
 DEFAULT_AUTO_SEND_SUFFIXES = set(OUTBOUND_SUFFIXES)
+RESEARCH_SOURCE_SUFFIXES = {".md", ".markdown", ".tex", ".bib"}
 DEFAULT_MAX_OUTBOUND_BYTES = 100 * 1024 * 1024
 MARKDOWN_PDF_COMPANION_SUFFIXES = {".md", ".markdown"}
 MARKDOWN_PDF_DEFAULT_LANGUAGES = ("zh", "en")
@@ -361,7 +362,6 @@ def reprocess_task(
         "orchestrator",
         "worker_policy_attempts",
         "artifact_dir",
-        "execution_contract",
         "skipped_files",
         "send_errors",
         "file_send_errors",
@@ -725,8 +725,14 @@ def result_requires_file_delivery(task: dict[str, Any] | None, result: dict[str,
         return True
     route = task_route_decision(task or {})
     if route and str(route.get("route_kind") or "") == "research_or_summary":
-        return bool((result.get("data") or {}).get("require_file_delivery")) if isinstance(result.get("data"), dict) else False
-    if required_delivery_file_paths(result):
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        return bool(
+            data.get("require_file_delivery")
+            or route.get("require_file_delivery")
+            or task_contract_requires_file_delivery(task or {})
+            or request_explicitly_asks_for_file_delivery(task_focus_text(task or {}))
+        )
+    if required_delivery_file_paths(result, task):
         return True
     if task is not None and is_generate_video_task(task) and generated_video_has_file(result):
         return True
@@ -748,11 +754,27 @@ def result_allows_chat_artifact_delivery(task: dict[str, Any] | None, result: di
     data = result_delivery_data(result)
     if bool(data.get("require_file_delivery")):
         return True
+    route = task_route_decision(task)
+    if bool(route.get("require_file_delivery")) or task_contract_requires_file_delivery(task):
+        return True
     if bool(data.get("send_files_to_wechat") or data.get("send_artifacts_to_wechat")):
         return True
     if bool(data.get("send_report_to_wechat")) and source_read_quality_is_substantive(data):
         return True
     return request_explicitly_asks_for_file_delivery(task_focus_text(task))
+
+
+def task_contract_requires_file_delivery(task: dict[str, Any]) -> bool:
+    if isinstance(task.get("daily_research"), dict):
+        return True
+    route = task_route_decision(task)
+    if bool(route.get("scheduled_daily_research")):
+        return True
+    contract = task.get("execution_contract") if isinstance(task.get("execution_contract"), dict) else {}
+    required = contract.get("required_artifacts")
+    if isinstance(required, str):
+        required = [required]
+    return bool(isinstance(required, list) and any(str(item).strip() for item in required))
 
 
 def task_is_research_summary(task: dict[str, Any]) -> bool:
@@ -801,20 +823,86 @@ def required_delivery_suffixes() -> set[str]:
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
-def required_delivery_file_paths(result: dict[str, Any]) -> list[Path]:
+def request_explicitly_asks_for_research_source_delivery(text: str) -> bool:
+    lowered = str(text or "").casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "send markdown",
+            "send the markdown",
+            "attach markdown",
+            "send source file",
+            "send source files",
+            "attach source",
+            "发送markdown",
+            "发markdown",
+            "发送md",
+            "发md",
+            "发送源文件",
+            "发源文件",
+        )
+    )
+
+
+def wecom_research_delivery_files(task: dict[str, Any] | None, files: list[Path]) -> list[Path]:
+    """Keep research source files local unless the current request asks for them."""
+    if not task or task_transport_kind(task) != "wecom" or not task_is_research_summary(task):
+        return files
+    if request_explicitly_asks_for_research_source_delivery(task_focus_text(task)):
+        return files
+    return [path for path in files if path.suffix.lower() not in RESEARCH_SOURCE_SUFFIXES]
+
+
+def task_required_artifact_suffixes(task: dict[str, Any] | None) -> set[str]:
+    if not task:
+        return set()
+    contract = task.get("execution_contract") if isinstance(task.get("execution_contract"), dict) else {}
+    required = contract.get("required_artifacts")
+    if isinstance(required, str):
+        required = [required]
+    suffixes: set[str] = set()
+    mapping = {
+        "pdf": ".pdf",
+        "compiled_pdf": ".pdf",
+        "report_pdf": ".pdf",
+        "markdown": ".md",
+        "md": ".md",
+        "tex": ".tex",
+        "latex": ".tex",
+        "mp4": ".mp4",
+        "video": ".mp4",
+        "png": ".png",
+        "image": ".png",
+        "step": ".step",
+        "stl": ".stl",
+    }
+    if isinstance(required, list):
+        for item in required:
+            normalized = str(item or "").strip().casefold().lstrip(".")
+            if normalized in mapping:
+                suffixes.add(mapping[normalized])
+    return suffixes
+
+
+def required_delivery_file_paths(
+    result: dict[str, Any], task: dict[str, Any] | None = None
+) -> list[Path]:
     suffixes = required_delivery_suffixes()
+    contract_suffixes = task_required_artifact_suffixes(task)
+    if contract_suffixes:
+        suffixes &= contract_suffixes
     if not suffixes:
         return []
-    required: list[Path] = []
+    candidates: list[Path] = []
     for raw in result.get("files") or []:
         path = Path(str(raw))
         if path.suffix.lower() in suffixes:
-            required.append(path.expanduser().resolve())
-    return required
+            candidates.append(path.expanduser().resolve())
+    return wecom_research_delivery_files(task, candidates)
 
 
 def required_file_delivery_complete(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
-    required = {str(path) for path in required_delivery_file_paths(result)}
+    required = {str(path) for path in required_delivery_file_paths(result, task)}
     if not required:
         return True
     sent = {str(Path(str(path)).expanduser().resolve()) for path in (task or {}).get("sent_file_paths", [])}
@@ -1262,7 +1350,7 @@ def send_result_once(
             detail = "; ".join(f"{item['path']}: {item['error']}" for item in file_errors[:3])
             raise RuntimeError(f"required artifact delivery failed: {detail}")
         if require_file_delivery and task is not None and not required_file_delivery_complete(task, result):
-            missing = sorted(set(str(path) for path in required_delivery_file_paths(result)) - sent_files)
+            missing = sorted(set(str(path) for path in required_delivery_file_paths(result, task)) - sent_files)
             detail = "; ".join(missing[:3])
             raise RuntimeError(f"required artifact delivery incomplete: {detail}")
 
@@ -1282,6 +1370,74 @@ def task_transport_kind(task: dict[str, Any]) -> str:
     return str(source.get("transport") or route.get("transport") or "wechat").strip().casefold()
 
 
+def record_wecom_delivery_payload(
+    task: dict[str, Any], payload: dict[str, Any], *, source: str
+) -> None:
+    delivered = {
+        str(Path(str(path)).expanduser().resolve())
+        for path in payload.get("sent_files") or []
+    }
+    sent_files = {
+        str(Path(str(path)).expanduser().resolve())
+        for path in task.get("sent_file_paths") or []
+    }
+    sent_files.update(delivered)
+    task["sent_file_paths"] = sorted(sent_files)
+    task["wecom_delivery"] = {
+        "status": "sent" if payload.get("complete") or payload.get("ok") else "partial",
+        "source": source,
+        "sent_messages": payload.get("sent_messages") or [],
+        "pending_messages": payload.get("pending_messages") or [],
+        "mentioned_users": payload.get("mentioned_users") or [],
+        "sent_file_count": len(sent_files),
+        "pending_files": payload.get("pending_files") or [],
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def query_wecom_delivery_status(
+    endpoint: str,
+    token: str,
+    payload: dict[str, Any],
+    task: dict[str, Any],
+) -> dict[str, Any] | None:
+    request = urllib.request.Request(
+        endpoint.rstrip("/") + "/v1/delivery-status",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        task["wecom_delivery_reconcile_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+        return None
+    if not isinstance(response_payload, dict):
+        task["wecom_delivery_reconcile_error"] = "invalid delivery-status response"
+        return None
+    task.pop("wecom_delivery_reconcile_error", None)
+    record_wecom_delivery_payload(task, response_payload, source="component_ledger")
+    return response_payload
+
+
+def wecom_delivery_components_complete(
+    task: dict[str, Any],
+    files: list[Path],
+    message: str,
+    status_payload: dict[str, Any] | None,
+) -> bool:
+    sent_files = {
+        str(Path(str(path)).expanduser().resolve())
+        for path in task.get("sent_file_paths") or []
+    }
+    requested_files = {str(path.expanduser().resolve()) for path in files}
+    message_complete = not message or bool(
+        status_payload and message in (status_payload.get("sent_messages") or [])
+    )
+    return requested_files.issubset(sent_files) and message_complete
+
+
 def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[str, Any]) -> None:
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
     task_chat = str(task.get("chat") or "").strip()
@@ -1295,6 +1451,11 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
         raise RuntimeError("Refusing WeCom send without source.wecom_chat_id")
 
     files_to_send, files_to_note = partition_result_files_for_wechat(result.get("files") or [])
+    selected_files = wecom_research_delivery_files(task, files_to_send)
+    suppressed_sources = [path for path in files_to_send if path not in selected_files]
+    files_to_send = selected_files
+    if suppressed_sources:
+        task["wecom_saved_source_files"] = [str(path.expanduser().resolve()) for path in suppressed_sources]
     if files_to_send and not result_allows_chat_artifact_delivery(task, result):
         task["suppressed_chat_files"] = [str(path) for path in files_to_send]
         files_to_send = []
@@ -1307,21 +1468,37 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
     confirmation = "" if is_no_reply_control(raw_confirmation) else raw_confirmation
     text_parts = [part.strip() for part in (message, confirmation) if part.strip()]
     combined_message = "\n\n".join(text_parts)
-    sent_files = {str(Path(str(path)).expanduser().resolve()) for path in task.get("sent_file_paths") or []}
-    pending_files = [path for path in files_to_send if str(path.expanduser().resolve()) not in sent_files]
-    if not combined_message and not pending_files:
-        return
-
     endpoint, token = wecom_transport_settings(task)
     mentions = wecom_native_reply_mentions(task, endpoint) if combined_message else []
-    payload = {
+    status_payload = {
         "task_id": str(task.get("id") or ""),
         "chat_id": chat_id,
         "message": combined_message,
-        "files": [str(path.expanduser().resolve()) for path in pending_files],
+        "files": [str(path.expanduser().resolve()) for path in files_to_send],
+        "allow_visible_file_recovery": bool(task.get("artifact_recovery_only")),
     }
     if mentions:
-        payload["mentions"] = mentions
+        status_payload["mentions"] = mentions
+    ledger = query_wecom_delivery_status(endpoint, token, status_payload, task)
+    if wecom_delivery_components_complete(task, files_to_send, combined_message, ledger):
+        return
+    message_to_send = combined_message
+    if ledger and combined_message in (ledger.get("sent_messages") or []):
+        message_to_send = ""
+    sent_files = {
+        str(Path(str(path)).expanduser().resolve())
+        for path in task.get("sent_file_paths") or []
+    }
+    pending_files = [
+        path for path in files_to_send if str(path.expanduser().resolve()) not in sent_files
+    ]
+    if not message_to_send and not pending_files:
+        return
+    payload = {
+        **status_payload,
+        "message": message_to_send,
+        "files": [str(path.expanduser().resolve()) for path in pending_files],
+    }
     request = urllib.request.Request(
         endpoint.rstrip("/") + "/v1/send",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -1335,26 +1512,37 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
         ) as response:
             response_payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:1000]
+        detail = exc.read().decode("utf-8", errors="replace")[:16000]
+        try:
+            partial = json.loads(detail)
+        except json.JSONDecodeError:
+            partial = None
+        if isinstance(partial, dict):
+            record_wecom_delivery_payload(task, partial, source="partial_send_response")
+        reconciled = query_wecom_delivery_status(endpoint, token, status_payload, task)
+        if wecom_delivery_components_complete(task, files_to_send, combined_message, reconciled):
+            return
         raise RuntimeError(f"WeCom transport HTTP {exc.code}: {detail}") from exc
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        reconciled = query_wecom_delivery_status(endpoint, token, status_payload, task)
+        if wecom_delivery_components_complete(task, files_to_send, combined_message, reconciled):
+            return
         raise RuntimeError(f"WeCom transport failed: {type(exc).__name__}: {str(exc)[:800]}") from exc
     if not isinstance(response_payload, dict):
         raise RuntimeError("WeCom transport returned an invalid response")
-    delivered = {str(Path(str(path)).expanduser().resolve()) for path in response_payload.get("sent_files") or []}
-    sent_files.update(delivered)
-    task["sent_file_paths"] = sorted(sent_files)
-    task["wecom_delivery"] = {
-        "status": "sent" if response_payload.get("ok") else "partial",
-        "sent_messages": response_payload.get("sent_messages") or [],
-        "mentioned_users": response_payload.get("mentioned_users") or [],
-        "sent_file_count": len(delivered),
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-    }
+    record_wecom_delivery_payload(task, response_payload, source="send_response")
     errors = response_payload.get("errors") if isinstance(response_payload.get("errors"), list) else []
+    if errors:
+        reconciled = query_wecom_delivery_status(endpoint, token, status_payload, task)
+        if wecom_delivery_components_complete(task, files_to_send, combined_message, reconciled):
+            return
     require_file_delivery = result_requires_file_delivery(task, result)
     if require_file_delivery and not required_file_delivery_complete(task, result):
-        missing = sorted(set(str(path) for path in required_delivery_file_paths(result)) - sent_files)
+        sent_files = {
+            str(Path(str(path)).expanduser().resolve())
+            for path in task.get("sent_file_paths") or []
+        }
+        missing = sorted(set(str(path) for path in required_delivery_file_paths(result, task)) - sent_files)
         raise RuntimeError("required WeCom artifact delivery incomplete: " + "; ".join(missing[:3]))
     if errors:
         raise RuntimeError("WeCom delivery errors: " + json.dumps(errors[:3], ensure_ascii=False))
@@ -1373,6 +1561,8 @@ def wecom_native_reply_mentions(task: dict[str, Any], endpoint: str) -> list[str
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
     route_decision = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
     if str(source.get("wecom_chat_type") or "") != "group":
+        return []
+    if str(source.get("sender") or "").startswith("local-owner:"):
         return []
     if route_decision.get("scheduled_daily_research") or str(source.get("local_type") or "").startswith("scheduled_"):
         return []
@@ -1947,14 +2137,29 @@ def recover_completed_research_artifacts(
     if report is None:
         return None
     language = detect_markdown_primary_language(read_text_prefix(report, limit=24000))
-    report_pdf = ensure_markdown_pdf_companion_for_language(report, language)
+    report_pdf = preferred_research_report_pdf(report, language)
     if report_pdf is None or not report_pdf.is_file() or report_pdf.stat().st_size <= 0:
         return None
 
-    files = [report_pdf, report]
-    for path in sorted(artifact_dir.glob("*.pdf"), key=lambda item: item.name.casefold()):
-        if path.resolve() != report_pdf.resolve():
-            files.append(path)
+    files = [report_pdf]
+    request_text = task_focus_text(task).casefold()
+    if any(
+        marker in request_text
+        for marker in (
+            "send markdown",
+            "send the markdown",
+            "attach markdown",
+            "send source file",
+            "send source files",
+            "发送markdown",
+            "发markdown",
+            "发送md",
+            "发md",
+            "发送源文件",
+            "发源文件",
+        )
+    ):
+        files.append(report)
     safe_files: list[str] = []
     for path in unique_paths(files):
         ok, _reason = is_safe_outbound_file(path)
@@ -1976,7 +2181,7 @@ def recover_completed_research_artifacts(
     task["worker_result_exhausted"] = False
     task.pop("worker_error", None)
     return {
-        "message": research_report_chat_message(report),
+        "message": "" if task.get("artifact_recovery_only") else research_report_chat_message(report),
         "confirmation": "",
         "files": safe_files,
         "data": {
@@ -1991,9 +2196,73 @@ def recover_completed_research_artifacts(
     }
 
 
+def preferred_research_report_pdf(report: Path, language: str) -> Path | None:
+    """Reuse an agent-rendered PDF before invoking the generic compiler."""
+    exact_sibling = report.with_suffix(".pdf")
+    if exact_sibling.is_file() and exact_sibling.stat().st_size > 0:
+        return exact_sibling.resolve()
+    return ensure_markdown_pdf_companion_for_language(report, language)
+
+
+def research_report_evidence_summary(text: str) -> dict[str, Any]:
+    """Return bounded evidence signals used by supplemental recovery."""
+    dois = {
+        match.rstrip(".,;:)]}").casefold()
+        for match in re.findall(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", text, flags=re.IGNORECASE)
+    }
+    stable_ids = {
+        match.casefold()
+        for match in re.findall(
+            r"\b(?:PMID\s*:?\s*\d+|PMC\d+|arXiv\s*:?\s*\d{4}\.\d{4,5}(?:v\d+)?)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    }
+    urls: set[str] = set()
+    for raw_url in re.findall(r"https?://[^\s)>\]}]+", text, flags=re.IGNORECASE):
+        url = raw_url.rstrip(".,;:'\"").casefold()
+        if "doi.org/10." not in url:
+            urls.add(url)
+    lowered = text.casefold()
+    has_evidence_section = any(
+        marker in lowered
+        for marker in (
+            "## evidence",
+            "## references",
+            "## literature",
+            "## 证据",
+            "## 参考文献",
+            "直接证据",
+            "evidence boundary",
+            "证据边界",
+        )
+    )
+    has_uncertainty = any(
+        marker in lowered
+        for marker in (
+            "limitation",
+            "uncertainty",
+            "hypothesis",
+            "indirect evidence",
+            "局限",
+            "不确定",
+            "假设",
+            "间接证据",
+            "证据边界",
+        )
+    )
+    traceable_sources = dois | stable_ids | urls
+    return {
+        "traceable_sources": sorted(traceable_sources),
+        "traceable_source_count": len(traceable_sources),
+        "has_evidence_section": has_evidence_section,
+        "has_uncertainty": has_uncertainty,
+    }
+
+
 def select_substantive_research_report(artifact_dir: Path) -> Path | None:
     candidates: list[tuple[int, Path]] = []
-    for path in artifact_dir.glob("*.md"):
+    for path in artifact_dir.rglob("*.md"):
         lowered = path.name.casefold()
         if lowered in RESEARCH_REPORT_EXCLUDED_MARKDOWN:
             continue
@@ -2002,16 +2271,15 @@ def select_substantive_research_report(artifact_dir: Path) -> Path | None:
         text = read_text_prefix(path, limit=50000)
         if len(text.strip()) < 500 or len(re.findall(r"^#{1,4}\s+", text, flags=re.MULTILINE)) < 2:
             continue
-        evidence_markers = sum(
-            marker in text.casefold()
-            for marker in ("doi", "http", "reference", "citation", "论文", "研究", "结论", "方法")
-        )
-        if evidence_markers < 2:
+        evidence = research_report_evidence_summary(text)
+        if evidence["traceable_source_count"] < 2 or not evidence["has_evidence_section"]:
             continue
         name_score = sum(
             marker in lowered
             for marker in ("report", "briefing", "research", "summary", "analysis", "review", "简报", "报告")
         )
+        if path.parent.name.casefold() in {"report", "reports"}:
+            name_score += 5
         translated_penalty = 2 if re.search(r"\.(?:en|zh)\.md$", lowered) else 0
         candidates.append((name_score * 100 + min(len(text) // 100, 80) - translated_penalty, path.resolve()))
     if not candidates:
@@ -3097,7 +3365,7 @@ def repair_missing_artifact_deliveries(path: Path) -> dict[str, Any]:
                 continue
             if not result_requires_file_delivery(task, result):
                 continue
-            required = required_delivery_file_paths(result)
+            required = required_delivery_file_paths(result, task)
             if not required or required_file_delivery_complete(task, result):
                 continue
             missing_existing = [str(item) for item in required if item.exists()]
@@ -3213,7 +3481,7 @@ def recover_recent_expired_transport_deliveries(
             result = task["result"]
             unsent_files = [
                 str(path.resolve())
-                for path in required_delivery_file_paths(result)
+                for path in required_delivery_file_paths(result, task)
                 if path.exists() and str(path.resolve()) not in set(task.get("sent_file_paths") or [])
             ]
             previous_status = str(task.get("status") or "")
@@ -11326,7 +11594,11 @@ def prepare_result_files(result: dict[str, Any], raw_text: str) -> dict[str, Any
     result["files"] = unique_strings(files)
     if skipped:
         result["skipped_files"] = skipped
-    if result["files"] and not result.get("message"):
+    if (
+        result["files"]
+        and not result.get("message")
+        and not bool(result_delivery_data(result).get("artifact_recovery"))
+    ):
         result["message"] = f"Generated {len(result['files'])} artifact(s); sending them now."
     return result
 

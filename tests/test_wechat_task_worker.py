@@ -40,7 +40,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             report.write_text(
                 "# Weekly Research Briefing\n\n"
                 "> No exact seven-day match was found; three verified open-access papers are reviewed.\n\n"
-                "## Paper one\n\nDOI: 10.1000/example. https://example.org/paper\n\n"
+                "## Evidence\n\nDOI: 10.1000/example. DOI: 10.1000/example-two.\n\n"
                 "## Methods\n\nResearch evidence and conclusions.\n" + ("Grounded analysis. " * 50),
                 encoding="utf-8",
             )
@@ -65,7 +65,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         assert result is not None
         self.assertTrue(result["data"]["require_file_delivery"])
         self.assertEqual(result["data"]["latex_style"], "nature_research_report")
-        self.assertEqual(result["files"], [str(compiled_pdf), str(report), str(source_pdf)])
+        self.assertEqual(result["files"], [str(compiled_pdf)])
         self.assertFalse(task["worker_result_exhausted"])
         self.assertIn("Weekly Research Briefing", result["message"])
 
@@ -90,6 +90,134 @@ class WeChatTaskWorkerTests(unittest.TestCase):
 
             self.assertIsNone(worker.recover_completed_research_artifacts(research, "timeout"))
             self.assertIsNone(worker.recover_completed_research_artifacts(nonresearch, "timeout", force=True))
+
+    def test_research_artifact_recovery_finds_nested_report_directory(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_dir = root / "report"
+            report_dir.mkdir()
+            report = report_dir / "vascular_integration_report.md"
+            report.write_text(
+                "# Vascular Integration Report\n\n"
+                "## Evidence\n\nDOI: 10.1000/example. DOI: 10.1000/example-two.\n\n"
+                "## Experiments\n\n" + ("Direct evidence and limitations. " * 40),
+                encoding="utf-8",
+            )
+            compiled_pdf = report_dir / "vascular_integration_report.en.pdf"
+
+            def fake_compile(_source: Path, _language: str) -> Path:
+                compiled_pdf.write_bytes(b"%PDF-1.4\nreport")
+                return compiled_pdf
+
+            task = {
+                "id": "nested-report",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "artifact_recovery_only": True,
+                "request": "Generate Markdown and a polished PDF; send the PDF to the group.",
+            }
+            with mock.patch.object(worker, "ensure_markdown_pdf_companion_for_language", side_effect=fake_compile):
+                result = worker.recover_completed_research_artifacts(task, force=True)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["files"], [str(compiled_pdf)])
+        self.assertEqual(result["message"], "")
+
+    def test_research_recovery_sends_markdown_only_when_delivery_is_explicit(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "evidence_report.md"
+            report.write_text(
+                "# Evidence Report\n\n## Evidence\n\n"
+                "DOI: 10.1000/one. DOI: 10.1000/two.\n\n"
+                + ("Evidence and limitations. " * 40),
+                encoding="utf-8",
+            )
+            pdf = report.with_suffix(".pdf")
+            pdf.write_bytes(b"%PDF-1.4\nreport")
+            task = {
+                "id": "source-delivery",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "request": "Please send the Markdown source files too.",
+            }
+
+            result = worker.recover_completed_research_artifacts(task, force=True)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["files"], [str(pdf), str(report)])
+
+    def test_research_recovery_prefers_existing_typeset_sibling_pdf(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "evidence_report.md"
+            report.write_text(
+                "# Evidence Report\n\n"
+                "## Evidence\n\nDOI: 10.1000/one. DOI: 10.1000/two.\n\n"
+                "## Limitations\n\n" + ("Evidence and uncertainty. " * 40),
+                encoding="utf-8",
+            )
+            polished_pdf = report.with_suffix(".pdf")
+            polished_pdf.write_bytes(b"%PDF-1.4\npolished")
+            task = {
+                "id": "polished-report",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "artifact_recovery_only": True,
+            }
+            with mock.patch.object(
+                worker,
+                "ensure_markdown_pdf_companion_for_language",
+                side_effect=AssertionError("generic compiler must not replace a typeset report"),
+            ):
+                result = worker.recover_completed_research_artifacts(task, force=True)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["data"]["report_pdf"], str(polished_pdf))
+        self.assertEqual(result["files"], [str(polished_pdf)])
+
+    def test_research_recovery_rejects_report_without_traceable_sources(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "unsupported_report.md"
+            report.write_text(
+                "# Unsupported Report\n\n## Evidence\n\n"
+                + ("This report makes an unsupported claim. " * 60),
+                encoding="utf-8",
+            )
+            task = {
+                "id": "unsupported-report",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+            }
+
+            result = worker.recover_completed_research_artifacts(task, force=True)
+
+        self.assertIsNone(result)
+
+    def test_android_group_reply_does_not_mention_local_owner(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {
+                "transport": "wecom",
+                "wecom_transport_channel": "wecom_android",
+                "wecom_chat_type": "group",
+                "sender": "local-owner:lachlan",
+                "reply_mentions": ["Lachlan"],
+            }
+        }
+        with mock.patch.object(worker, "ready_wecom_android_transport", return_value=("http://127.0.0.1:19581", "token")):
+            self.assertEqual(
+                worker.wecom_native_reply_mentions(task, "http://127.0.0.1:19581"),
+                [],
+            )
 
     def test_unique_paths_keeps_each_delivery_artifact_once(self) -> None:
         worker = load_worker()
@@ -1466,7 +1594,7 @@ stderr: noisy internal trace
         self.assertNotIn("orchestrator", stored)
         self.assertNotIn("worker_policy_attempts", stored)
         self.assertNotIn("artifact_dir", stored)
-        self.assertNotIn("execution_contract", stored)
+        self.assertEqual(stored["execution_contract"], {"old": True})
         self.assertNotIn("send_errors", stored)
         self.assertNotIn("existing_video_publish_poststage", stored)
         self.assertIn("expires_at", stored)
@@ -1503,6 +1631,31 @@ stderr: noisy internal trace
         self.assertTrue(updated["artifact_recovery_only"])
         self.assertNotIn("worker_error", updated)
         self.assertNotIn("expires_at", updated)
+
+    def test_daily_research_keeps_pdf_delivery_required_after_reprocess(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            report = Path(tmp) / "daily.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "daily-report",
+                        "chat": "wecom:group:labagent",
+                        "status": "done",
+                        "daily_research": {"report_date": "2026-07-22"},
+                        "execution_contract": {"required_artifacts": ["compiled_pdf"]},
+                        "result": {"message": "done", "files": [str(report)]},
+                    }
+                ],
+            )
+
+            updated = worker.reprocess_task(queue, "daily-report", reason="retry transport")
+
+        self.assertEqual(updated["execution_contract"]["required_artifacts"], ["compiled_pdf"])
+        self.assertTrue(worker.task_contract_requires_file_delivery(updated))
 
     def test_video_publish_preflight_uses_same_chat_artifact_ledger_when_wechat_cache_misses(self) -> None:
         worker = load_worker()
@@ -6417,6 +6570,160 @@ stderr: noisy internal trace
 
         self.assertEqual(required, [".md", ".tex", ".png", ".kicad_pcb", ".step", ".mp4"])
 
+    def test_wecom_research_delivery_keeps_sources_local_by_default(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"transport": "wecom"},
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Write Markdown and LaTeX sources, then send the compiled PDF.",
+        }
+        files = [Path("/tmp/report.pdf"), Path("/tmp/report.md"), Path("/tmp/report.tex")]
+
+        selected = worker.wecom_research_delivery_files(task, files)
+
+        self.assertEqual(selected, [Path("/tmp/report.pdf")])
+
+    def test_wecom_research_delivery_allows_explicit_source_request(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"transport": "wecom"},
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Send the PDF and send the Markdown source file too.",
+        }
+        files = [Path("/tmp/report.pdf"), Path("/tmp/report.md"), Path("/tmp/report.tex")]
+
+        selected = worker.wecom_research_delivery_files(task, files)
+
+        self.assertEqual(selected, files)
+
+    def test_required_delivery_respects_pdf_only_execution_contract(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"transport": "wecom"},
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "execution_contract": {"required_artifacts": ["compiled_pdf"]},
+            "request": "Send the report PDF.",
+        }
+        result = {"files": ["/tmp/report.pdf", "/tmp/report.md", "/tmp/report.tex"]}
+
+        required = worker.required_delivery_file_paths(result, task)
+
+        self.assertEqual(required, [Path("/tmp/report.pdf")])
+
+    def test_wecom_delivery_ledger_prevents_resending_complete_batch(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            chat = "wecom:default:group:abc"
+            task = {
+                "id": "task-complete",
+                "chat": chat,
+                "source": {
+                    "transport": "wecom",
+                    "chat": chat,
+                    "wecom_chat_id": "private-chat-id",
+                },
+                "routine": {"id": "research_summary"},
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+                "execution_contract": {"required_artifacts": ["pdf"]},
+                "request": "Send the report PDF.",
+            }
+            result = {"message": "Research complete.", "confirmation": "", "files": [str(report)]}
+            ledger = {
+                "ok": True,
+                "complete": True,
+                "sent_messages": ["Research complete."],
+                "pending_messages": [],
+                "sent_files": [str(report.resolve())],
+                "pending_files": [],
+            }
+
+            def reconcile(_endpoint, _token, _payload, current_task):
+                worker.record_wecom_delivery_payload(current_task, ledger, source="component_ledger")
+                return ledger
+
+            with mock.patch.object(worker, "wecom_transport_settings", return_value=("http://relay", "token")), mock.patch.object(
+                worker, "wecom_native_reply_mentions", return_value=[]
+            ), mock.patch.object(worker, "query_wecom_delivery_status", side_effect=reconcile), mock.patch.object(
+                worker.urllib.request, "urlopen"
+            ) as urlopen:
+                worker.send_result_once_wecom(result, chat, task)
+
+        urlopen.assert_not_called()
+        self.assertEqual(task["sent_file_paths"], [str(report.resolve())])
+
+    def test_wecom_partial_ledger_retries_only_missing_file(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first.pdf"
+            second = Path(tmp) / "second.pdf"
+            first.write_bytes(b"%PDF-1.4\nfirst")
+            second.write_bytes(b"%PDF-1.4\nsecond")
+            chat = "wecom:default:group:abc"
+            task = {
+                "id": "task-partial",
+                "chat": chat,
+                "source": {
+                    "transport": "wecom",
+                    "chat": chat,
+                    "wecom_chat_id": "private-chat-id",
+                },
+                "routine": {"id": "research_summary"},
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+                "execution_contract": {"required_artifacts": ["pdf"]},
+                "request": "Send both PDF reports.",
+            }
+            result = {
+                "message": "Research complete.",
+                "confirmation": "",
+                "files": [str(first), str(second)],
+            }
+            ledger = {
+                "ok": False,
+                "complete": False,
+                "sent_messages": ["Research complete."],
+                "pending_messages": [],
+                "sent_files": [str(first.resolve())],
+                "pending_files": [str(second.resolve())],
+            }
+
+            def reconcile(_endpoint, _token, _payload, current_task):
+                worker.record_wecom_delivery_payload(current_task, ledger, source="component_ledger")
+                return ledger
+
+            response = mock.MagicMock()
+            response.__enter__.return_value.read.return_value = json.dumps(
+                {
+                    "ok": True,
+                    "sent_messages": [],
+                    "sent_files": [str(second.resolve())],
+                    "errors": [],
+                }
+            ).encode("utf-8")
+            with mock.patch.object(worker, "wecom_transport_settings", return_value=("http://relay", "token")), mock.patch.object(
+                worker, "wecom_native_reply_mentions", return_value=[]
+            ), mock.patch.object(worker, "query_wecom_delivery_status", side_effect=reconcile), mock.patch.object(
+                worker.urllib.request, "urlopen", return_value=response
+            ) as urlopen:
+                worker.send_result_once_wecom(result, chat, task)
+
+            request = urlopen.call_args.args[0]
+            payload = json.loads(request.data.decode("utf-8"))
+
+        self.assertEqual(payload["message"], "")
+        self.assertEqual(payload["files"], [str(second.resolve())])
+        self.assertEqual(set(task["sent_file_paths"]), {str(first.resolve()), str(second.resolve())})
+
     def test_research_summary_files_are_best_effort_unless_explicitly_required(self) -> None:
         worker = load_worker()
         task = {"route_decision": {"route_kind": "research_or_summary"}}
@@ -6424,6 +6731,14 @@ stderr: noisy internal trace
 
         self.assertFalse(worker.result_requires_file_delivery(task, result))
         result["data"] = {"require_file_delivery": True}
+        self.assertTrue(worker.result_requires_file_delivery(task, result))
+
+        result["data"] = {}
+        task["route_decision"]["require_file_delivery"] = True
+        self.assertTrue(worker.result_requires_file_delivery(task, result))
+
+        task["route_decision"]["require_file_delivery"] = False
+        task["execution_contract"] = {"required_artifacts": ["pdf"]}
         self.assertTrue(worker.result_requires_file_delivery(task, result))
 
     def test_load_send_target_registry_overrides_direct_coordinates(self) -> None:

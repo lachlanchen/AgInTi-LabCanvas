@@ -440,10 +440,11 @@ Return one strict JSON object and no prose:
   "route_kind": "other_worker",
   "response": "natural direct reply only when worker_needed is false",
   "task": "complete worker instruction when worker_needed is true",
-  "ack": "short natural acknowledgement for queued work",
+  "ack": "short useful first response while queued work continues",
   "daily_topic": "persistent topic only when the current message explicitly requests recurring daily research, otherwise empty",
   "inspiration_interest": "group-scoped inspiration interest only when the current message explicitly sets or updates it, otherwise empty",
   "inspiration_interest_mode": "none|add|replace|remove|disable",
+  "report_required": false,
   "memory_items": [{{"kind": "idea|insight|intuition|interest|hypothesis|decision|preference|question|note", "title": "short title", "content": "durable user-authored knowledge", "tags": ["optional"]}}],
   "public_publish_allowed": false
 }}
@@ -455,6 +456,12 @@ Rules:
 - LabAgent focuses on normal research, literature, research proposals, lawful paper downloads, Markdown/TeX/PDF reports, editable paper figures, scientific drawing, CAD/PCB/Blender design, and related artifact work.
 - Attachments, links requiring reading, research, file operations, figures, CAD/PCB/Blender, generation, editing, or multi-step design work need the worker.
 - Simple greetings, ordinary questions answerable without tools, and short conversational follow-ups may be answered directly.
+- For a scientifically valuable question, run two tracks: put a concise, useful preliminary answer in `ack`, and set `worker_needed` true so the durable worker performs source-grounded deep research in parallel. The preliminary answer must be framed as provisional when evidence has not yet been checked.
+- When the deep track is started, say naturally in `ack` that deeper research and a report are underway so the requester knows a second, fuller response will follow.
+- When a valuable question benefits from methods, evidence comparison, an experimental decision tree, or durable reference material, tell the worker in `task` to create a polished LaTeX PDF plus its Markdown/TeX sources and return the PDF to this exact chat. Do not create a report for routine small talk or a question adequately answered in a few lines.
+- Set `report_required` true exactly when the worker is required to create and return that report. This structured flag is the artifact-delivery contract; do not rely on the user literally writing "PDF".
+- Treat a mechanism question, research hypothesis, experimental-design problem, literature comparison, roadmap request, or quoted scientific follow-up as a research idea unless the context clearly makes it a small factual query. Such ideas normally require the two-track response and a report.
+- Judge value from the actual research question and same-chat context, not from a keyword such as "paper" or "PDF". Deep reports must cite traceable primary or authoritative sources, separate direct evidence from indirect evidence and hypotheses, state uncertainty, and analyze mechanisms, limitations, and actionable experiments rather than merely list knowledge points.
 - Decide naturally whether to reply from the full recent conversation. Always answer direct questions, requests, mentions, and useful follow-ups. It is valid to stay silent when people are talking to each other and an AI reply would interrupt or add no value. Never emit a mechanical acknowledgement merely to prove receipt.
 - Reply to several consecutive messages from the same sender as one coherent turn using all of them; do not emit one mechanical response per fragment.
 - Do not claim an attachment was read in the acknowledgement.
@@ -539,6 +546,7 @@ Private same-member knowledge context:
         "daily_topic": daily_topic,
         "inspiration_interest": inspiration_interest,
         "inspiration_interest_mode": inspiration_interest_mode,
+        "report_required": bool(payload.get("report_required")) and worker_needed,
         "memory_items": normalize_memory_items(payload.get("memory_items")),
         "public_publish_allowed": False,
     }
@@ -554,6 +562,7 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         "daily_topic": "",
         "inspiration_interest": "",
         "inspiration_interest_mode": "none",
+        "report_required": False,
         "memory_items": [],
         "public_publish_allowed": False,
     }
@@ -611,6 +620,7 @@ def build_task(
             "daily_topic": str(route.get("daily_topic") or ""),
             "inspiration_interest": str(route.get("inspiration_interest") or ""),
             "inspiration_interest_mode": str(route.get("inspiration_interest_mode") or "none"),
+            "require_file_delivery": bool(route.get("report_required")),
             "worker_plan": str(route.get("task") or "").strip(),
         },
         "instruction_contract": {
@@ -633,6 +643,15 @@ def build_task(
             "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
             "agent_entrypoint": "wechat_agent_backend.run_agent_session",
             "session": {"chat": chat, "role": "worker", "reuse": True},
+            "required_artifacts": ["pdf"] if route.get("report_required") else [],
+            "research_evidence": {
+                "required": bool(route.get("report_required")),
+                "target_primary_or_authoritative_sources": 3 if route.get("report_required") else 0,
+                "minimum_traceable_sources": 2 if route.get("report_required") else 0,
+                "separate_direct_indirect_hypothesis": bool(route.get("report_required")),
+                "state_uncertainty_and_limitations": bool(route.get("report_required")),
+                "include_actionable_next_steps": bool(route.get("report_required")),
+            },
         },
         "source": {
             "transport": "wecom",

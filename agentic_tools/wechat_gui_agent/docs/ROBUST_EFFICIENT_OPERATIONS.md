@@ -114,6 +114,22 @@ For the restricted LabAgent research group:
 
 - The paired owner enrolls the exact group; trusted members then share the
   private LazyResearch worker's research, drawing, and design routines.
+- A scientifically valuable idea uses a two-track response. The route agent
+  promptly sends a concise, useful preliminary answer, explicitly provisional
+  when evidence has not yet been checked. In parallel it queues one durable
+  source-grounded task. Mechanism questions, hypotheses, experimental-design
+  problems, literature comparisons, roadmaps, and quoted scientific follow-ups
+  normally require a polished LaTeX PDF even when the sender did not type
+  `PDF`; routine factual questions and small talk do not.
+- A deep report is evidence work, not a longer knowledge point. It must cite
+  traceable primary or authoritative sources, distinguish direct evidence,
+  indirect evidence, hypotheses, and unknowns, state limitations, and provide
+  actionable experiments or decisions. The fast answer and deep task retain
+  the exact sender, chat, current text, quote preview, and bounded same-chat
+  context.
+- The delivery gate requires at least two traceable sources in a recovered deep
+  report and targets three or more primary/authoritative sources when the
+  literature permits. A PDF without source evidence is not completion.
 - Video publication and other public posting are disabled. Other dangerous
   requests are assessed by the route agent and retain the existing approval
   gates.
@@ -138,6 +154,19 @@ For the restricted LabAgent research group:
   source PDFs but loses its final response, recover from that task directory,
   compile the report PDF, and require one source-chat delivery. Exclude routine
   contracts, manifests, and notes; never salvage another task's artifacts.
+- If the report already has an exact-name sibling PDF rendered from its TeX
+  source, recovery sends that designed PDF. Generic Markdown-to-PDF compilation
+  is fallback only and must not replace a polished report or drop its figures.
+- Send only that polished PDF to the group by default. Keep Markdown, TeX,
+  evidence papers, and rendered-page audits in the private task directory;
+  deliver source files only when the current request explicitly asks for them.
+- `route_decision.require_file_delivery` and
+  `execution_contract.required_artifacts` are authoritative delivery gates.
+  Reprocessing preserves the execution contract. A report task cannot become
+  `done` merely because its chat summary was sent; the PDF needs a verified
+  transport ledger entry. Use artifact-only reprocessing for supplemental or
+  backfill delivery so completed research is not rerun and the summary is not
+  repeated.
 - Maintain the private per-member knowledge store with
   `wecom_member_knowledge.py`. Inbound attachments are archived at ingest;
   completed task artifacts and structured ideas/insights are indexed by the
@@ -419,6 +448,20 @@ The stable interface and recovery commands are documented in
   may be ellipsized; exact picker readback plus the visible attachment prefix
   and a new history card form the identity proof. Do not use a Wine Explorer
   drag fallback or treat a closed picker as proof of delivery.
+- Android WeCom artifacts use the native DocumentsUI `Download` root. Use a
+  deterministic short display name with a content digest, verify the exact row
+  and pre-send confirmation, and write a `committing` ledger component before
+  tapping Send. A stable full or middle-ellipsized same-chat history card
+  completes the component. On timeout, reconcile that component before any
+  retry; never upload the same file twice merely because the card text was
+  truncated.
+- Treat Android WeCom text and files as independent delivery components. Before
+  a send or deferred retry, query `/v1/delivery-status` with the stable task ID
+  and full desired batch. Persist every confirmed component even when the batch
+  response contains later errors, normalize stale DocumentsUI/attachment/
+  confirmation surfaces back to the exact chat composer, and submit only the
+  ledger-confirmed pending components. A partial response must not cause a
+  whole-batch retry or duplicate a PDF already visible in chat.
 - Ordinary link/read-later research should send a concise chat answer by
   default, not Markdown/PDF/image attachments. Save local notes under the task
   artifact directory. Attach reports or images only when the current request
@@ -543,6 +586,10 @@ The stable interface and recovery commands are documented in
   local `Asia/Hong_Kong` quiet hours from 20:00 through 08:00. The scheduler
   sleeps until 08:00 and then resumes; explicit user requests and interactive
   replies remain available overnight.
+- LabAgent inspiration is opportunistic. If that exact chat has a pending or
+  running question, report, confirmation, or artifact send, defer inspiration
+  without enqueueing a backlog item or emitting a status message. The next
+  quiet-cycle check may run it after interactive work is terminal.
 - WeCom GUI reconnect is a narrow exception, not backlog replay. Do not infer
   authentication from window geometry. Recovery begins only after the normal
   poll successfully opens and title-verifies the exact allowlisted chats; a
