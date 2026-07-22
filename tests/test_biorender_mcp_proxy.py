@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "agentic_tools" / "biorender_agent" / "scripts" / "biorender_mcp_proxy.py"
 PROBE_SCRIPT = ROOT / "agentic_tools" / "biorender_agent" / "scripts" / "probe_biorender_mcp.py"
 OPEN_SCRIPT = ROOT / "agentic_tools" / "biorender_agent" / "scripts" / "open_biorender_url.py"
+EXPORT_SCRIPT = ROOT / "agentic_tools" / "biorender_agent" / "scripts" / "export_biorender_figure.py"
 
 
 def load_proxy():
@@ -38,6 +39,14 @@ def load_opener():
     return module
 
 
+def load_exporter():
+    spec = importlib.util.spec_from_file_location("biorender_exporter", EXPORT_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 class BioRenderMcpProxyTests(unittest.TestCase):
     def test_browser_opener_identifies_only_private_oauth_callback(self):
         opener = load_opener()
@@ -46,6 +55,13 @@ class BioRenderMcpProxyTests(unittest.TestCase):
         self.assertTrue(opener.is_oauth_callback_url("http://localhost:1455/callback?state=private"))
         self.assertFalse(opener.is_oauth_callback_url("http://127.0.0.1:1455/other"))
         self.assertFalse(opener.is_oauth_callback_url("https://app.biorender.com/gallery/illustrations"))
+
+    def test_print_exporter_accepts_only_biorender_illustration_urls(self):
+        exporter = load_exporter()
+
+        self.assertTrue(exporter.allowed_editor_url("https://app.biorender.com/illustrations/figure-1?slideId=one"))
+        self.assertFalse(exporter.allowed_editor_url("https://app.biorender.com/gallery/illustrations"))
+        self.assertFalse(exporter.allowed_editor_url("https://example.com/illustrations/figure-1"))
 
     def test_probe_parser_accepts_json_and_sse(self):
         probe = load_probe()
@@ -57,6 +73,13 @@ class BioRenderMcpProxyTests(unittest.TestCase):
 
         self.assertEqual(direct["id"], 1)
         self.assertEqual(streamed["id"], 2)
+
+    def test_proxy_defaults_allow_long_figure_generation_calls(self):
+        proxy = load_proxy()
+
+        args = proxy.build_parser().parse_args([])
+
+        self.assertEqual(args.upstream_timeout, 300.0)
 
     def test_protected_resource_document_names_local_resource(self):
         proxy = load_proxy()

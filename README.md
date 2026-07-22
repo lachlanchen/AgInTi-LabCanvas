@@ -37,6 +37,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | Web studio | Agent chat, bright UI, artifact canvas, backend settings, multilingual UI | `labcanvas web --port 8787 --open` |
 | Paper figures | Exact `NxM` SVG grids, AgInTi image dry-run payloads, editable artifact manifest | [docs/EDITABLE_FIGURE_PIPELINE.md](docs/EDITABLE_FIGURE_PIPELINE.md) |
 | Grant projects | Durable Codex goal workspace, traceable evidence, editable BioRender/SVG/TeX figures, checked LaTeX/PDF, and mandatory chat delivery | `labcanvas grant init`, `labcanvas grant run`, [BioRender bridge](agentic_tools/biorender_agent/README.md) |
+| Protein structures | Reused ProteinStructure AlphaFold Server pipeline, persistent logged-in CDP/noVNC browser, downloads, metrics, plots, and screenshots | `labcanvas protein start`, [handoff](references/proteinstructure-alphafold-labcanvas-handoff.md) |
 | 3D setup renders | JSON scene specs to Blender PNG and `.blend` output | [docs/SCENE_SPEC.md](docs/SCENE_SPEC.md) |
 | CAD devices | OpenSCAD exports and C-mount reflector adapter CAD | [cad/README.md](cad/README.md) |
 | Board/CAD tasks | Shared CLI and web-chat workflow for KiCad, OpenSCAD, renders, and manufacturing prep | [docs/BOARD_CAD_TASKS.md](docs/BOARD_CAD_TASKS.md) |
@@ -61,6 +62,10 @@ PYTHONPATH=src python -m agenticapp web --port 8787 --open
 PYTHONPATH=src python -m agenticapp agent capabilities
 PYTHONPATH=src python -m agenticapp agent chat "Design and render a C-mount sensor holder"
 PYTHONPATH=src python -m agenticapp grant run "Draft specific aims with verified evidence and an editable figure" --title "Research Grant" --dry-run
+PYTHONPATH=src python -m agenticapp studio biorender-figure "Three-panel mechanism figure" --panel "A: mechanism" --panel "B: intervention" --panel "C: validation" --json
+PYTHONPATH=src python -m agenticapp protein start --json
+PYTHONPATH=src python -m agenticapp protein status --json
+PYTHONPATH=src python -m agenticapp protein submit references/target.fasta --dry-run
 PYTHONPATH=src python -m agenticapp studio figure-grid "optical device icons 2x3" --rows 2 --cols 3
 PYTHONPATH=src python -m agenticapp studio lab-task "prepare Lumileds no-resistor PCB and C-mount reflector CAD"
 PYTHONPATH=src python -m agenticapp wechat worker reprocess TASK_ID "recover completed report" --artifact-recovery-only --send --queue agentic_tools/wecom_agent/.private/wecom_task_queue.jsonl

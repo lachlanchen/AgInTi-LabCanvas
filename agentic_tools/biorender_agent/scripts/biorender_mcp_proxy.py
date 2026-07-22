@@ -265,7 +265,10 @@ class BioRenderProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def write_json(self, status: int, payload: dict[str, object]) -> None:
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -273,7 +276,10 @@ class BioRenderProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def log_message(self, fmt: str, *args: object) -> None:
         if self.server.verbose:
@@ -315,7 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--authority", default=DEFAULT_AUTHORITY)
     parser.add_argument("--token-file", type=Path, default=DEFAULT_TOKEN_FILE)
     parser.add_argument("--client-file", type=Path, default=DEFAULT_CLIENT_FILE)
-    parser.add_argument("--upstream-timeout", type=float, default=60.0)
+    parser.add_argument("--upstream-timeout", type=float, default=300.0)
     parser.add_argument("--verbose", action="store_true")
     return parser
 

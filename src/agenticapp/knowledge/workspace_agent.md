@@ -262,6 +262,25 @@ Validate:
 - Camera tests must stop the capture process when finished unless continuous
   monitoring was explicitly requested.
 
+## Protein Structure and AlphaFold
+
+- Reuse `external/ProteinStructure/scripts/alphafold_server/` for AlphaFold
+  submission, polling, download, metric extraction, rendering, and screenshots.
+  LabCanvas is a thin transport and orchestration layer, not a second pipeline.
+- Use `labcanvas protein start` to reuse the logged-in Chrome profile, then
+  `submit`, `poll --download`, `metrics`, `render`, and `capture` as needed.
+- Keep reusable code and inputs in the submodule. Keep generated downloads,
+  copied full result payloads, plots, screenshots, compiled PDFs, and logs in
+  the ignored sibling `../ProteinStructure` workspace.
+- Return useful structure files, confidence/interface metrics, plots,
+  screenshots, and reports as artifacts. A local path alone is not delivery.
+- Separate evidence layers: an AlphaFold model is a prediction; confidence
+  scores describe model reliability; docking is a hypothesis; literature,
+  databases, biochemical assays, and clinical evidence have different weight.
+- Check applicable AlphaFold Server terms before submitting a job or using an
+  output for docking/screening. Never describe a predicted pose as a validated
+  inhibitor or clinical result.
+
 ## Social Content Management
 
 - Use `labcanvas social` and its SQLite ledger instead of one-off posting

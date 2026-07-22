@@ -111,6 +111,29 @@ def build_parser() -> argparse.ArgumentParser:
     studio_figure.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     studio_figure.set_defaults(func=cmd_studio_figure_grid)
 
+    studio_biorender = studio_subparsers.add_parser(
+        "biorender-figure",
+        parents=[studio_common],
+        help="Plan or generate an editable publication figure through BioRender MCP.",
+    )
+    studio_biorender.add_argument("prompt", nargs="+", help="Scientific purpose and content of the figure.")
+    studio_biorender.add_argument("--title", default="Publication figure")
+    studio_biorender.add_argument("--panel", action="append", default=[], help="Panel as 'A: description'. Repeatable.")
+    studio_biorender.add_argument("--template-id", default="", help="Optional BioRender template id used as editable canvas context.")
+    studio_biorender.add_argument("--mcp-url", default="http://127.0.0.1:19682/mcp")
+    studio_biorender.add_argument("--run-id", default="", help="Stable run id for idempotent artifact paths.")
+    studio_biorender.add_argument("--live", action="store_true", help="Create the real BioRender figure; otherwise write a dry-run manifest and prompt.")
+    studio_biorender.add_argument("--timeout", type=float, default=900.0)
+    studio_biorender.add_argument("--request-timeout", type=float, default=330.0, help="Per-MCP-request timeout for slow BioRender generation calls.")
+    studio_biorender.add_argument("--poll-seconds", type=float, default=5.0)
+    studio_biorender.add_argument("--min-width", type=int, default=1200)
+    studio_biorender.add_argument("--min-height", type=int, default=700)
+    studio_biorender.add_argument("--no-cdp-export", action="store_true", help="Keep the MCP preview and skip visible 300-DPI browser export.")
+    studio_biorender.add_argument("--cdp-url", default="http://127.0.0.1:9389")
+    studio_biorender.add_argument("--export-timeout", type=float, default=240.0)
+    studio_biorender.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    studio_biorender.set_defaults(func=cmd_studio_biorender_figure)
+
     studio_openscad = studio_subparsers.add_parser("openscad", parents=[studio_common], help="Export a scene spec to OpenSCAD and register the artifact.")
     studio_openscad.add_argument("spec", help="Path to a scene spec JSON file.")
     studio_openscad.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -216,10 +239,12 @@ def build_parser() -> argparse.ArgumentParser:
     from .wechat_ops import add_wechat_parser
     from .wecom_ops import add_wecom_parser
     from .social_ops import add_social_parser
+    from .protein_structure_ops import add_protein_structure_parser
 
     add_wechat_parser(subparsers)
     add_wecom_parser(subparsers)
     add_social_parser(subparsers)
+    add_protein_structure_parser(subparsers)
     return parser
 
 
@@ -404,6 +429,34 @@ def cmd_studio_figure_grid(args: argparse.Namespace) -> int:
         payload["cols"] = args.cols
     result = generate_web_figure_grid(payload, storage_dir, load_backend_settings(storage_dir / "settings.json"))
     _print_payload(result, args.json, f"figure-grid: {result['figure_url']} rows={result['rows']} cols={result['cols']}")
+    return 0 if result.get("ok") else 1
+
+
+def cmd_studio_biorender_figure(args: argparse.Namespace) -> int:
+    from .biorender_figures import run_biorender_figure
+
+    result = run_biorender_figure(
+        {
+            "prompt": " ".join(args.prompt),
+            "title": args.title,
+            "panels": args.panel,
+            "template_id": args.template_id,
+            "mcp_url": args.mcp_url,
+            "run_id": args.run_id,
+            "live": args.live,
+            "timeout_seconds": args.timeout,
+            "request_timeout": args.request_timeout,
+            "poll_seconds": args.poll_seconds,
+            "min_width": args.min_width,
+            "min_height": args.min_height,
+            "cdp_export": not args.no_cdp_export,
+            "cdp_url": args.cdp_url,
+            "export_timeout": args.export_timeout,
+        },
+        Path(args.storage_dir),
+    )
+    artifact = result.get("artifact") or {}
+    _print_payload(result, args.json, f"biorender-figure: {result['status']} -> {artifact.get('url', '')}")
     return 0 if result.get("ok") else 1
 
 

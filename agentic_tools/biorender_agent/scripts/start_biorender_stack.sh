@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 SESSION="${BIORENDER_MCP_TMUX_SESSION:-labcanvas-biorender-mcp}"
 HOST="${BIORENDER_MCP_HOST:-127.0.0.1}"
 PORT="${BIORENDER_MCP_PORT:-19682}"
+UPSTREAM_TIMEOUT="${BIORENDER_MCP_UPSTREAM_TIMEOUT:-300}"
 TOKEN_FILE="${BIORENDER_TOKEN_FILE:-$ROOT/agentic_tools/biorender_agent/.private/oauth-token.local.json}"
 START_URL="${BIORENDER_START_URL:-https://app.biorender.com/gallery/illustrations}"
 
@@ -14,7 +15,7 @@ START_URL="${BIORENDER_START_URL:-https://app.biorender.com/gallery/illustration
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   tmux new-session -d -s "$SESSION" \
-    "cd '$ROOT' && exec python agentic_tools/biorender_agent/scripts/biorender_mcp_proxy.py --host '$HOST' --port '$PORT'"
+    "cd '$ROOT' && exec python agentic_tools/biorender_agent/scripts/biorender_mcp_proxy.py --host '$HOST' --port '$PORT' --upstream-timeout '$UPSTREAM_TIMEOUT'"
 fi
 
 for _ in $(seq 1 40); do

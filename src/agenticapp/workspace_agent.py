@@ -106,6 +106,20 @@ def select_agent_policy(
     lowered = text.casefold()
     selected_model = normalize_model(model)
     model_was_auto = selected_model == "auto"
+    protein_structure_work = any(
+        term in lowered
+        for term in (
+            "alphafold",
+            "protein structure",
+            "protein folding",
+            "molecular docking",
+            "蛋白结构",
+            "蛋白质结构",
+            "结构预测",
+            "分子对接",
+            "抑制剂",
+        )
+    )
 
     selected_effort = normalize_effort(effort)
     reason = "explicit user selection"
@@ -163,7 +177,7 @@ def select_agent_policy(
             "比较",
             "文档",
         )
-        if any(term in lowered for term in exact_terms) or len(text) > 1800:
+        if protein_structure_work or any(term in lowered for term in exact_terms) or len(text) > 1800:
             selected_effort = "xhigh"
         elif any(term in lowered for term in tool_terms):
             selected_effort = "high"
@@ -180,6 +194,8 @@ def select_agent_policy(
             "xhigh": os.environ.get("LABCANVAS_AGENT_ULTRA_MODEL", "gpt-5.5"),
         }
         selected_model = default_by_effort[selected_effort]
+        if protein_structure_work:
+            selected_model = os.environ.get("LABCANVAS_PROTEIN_MODEL", DEFAULT_MODEL)
 
     selected_mode = str(mode or "execute").strip().lower()
     if selected_mode not in {"execute", "plan"}:
@@ -241,6 +257,26 @@ def capability_catalog(root: str | Path) -> list[dict[str, Any]]:
             "commands": ["latexmk -pdf", "pdflatex"],
             "paths": ["docs", "references", "cad/reports"],
             "outputs": ["TeX", "PDF", "SVG", "PNG"],
+        },
+        {
+            "id": "protein-structure",
+            "title": "ProteinStructure AlphaFold browser, metrics, and evidence workflow",
+            "ready": (
+                project_root / "external" / "ProteinStructure" / "scripts" / "alphafold_server"
+            ).is_dir(),
+            "commands": [
+                "labcanvas protein start",
+                "labcanvas protein submit",
+                "labcanvas protein poll",
+                "labcanvas protein metrics",
+                "labcanvas protein render",
+            ],
+            "paths": [
+                "external/ProteinStructure",
+                "agentic_tools/protein_structure_agent",
+                "references/proteinstructure-alphafold-labcanvas-handoff.md",
+            ],
+            "outputs": ["FASTA", "CIF/PDB", "metrics", "PNG", "PDF", "browser screenshots"],
         },
         {
             "id": "wechat-chatops",
@@ -415,6 +451,10 @@ def selected_packaged_knowledge(message: str) -> str:
         "TeX, Papers, and Figures": ("tex", "latex", "paper", "figure", "pdf", "report", "论文", "图"),
         "WeChat": ("wechat", "微信", "group chat", "chatops"),
         "LabVIEW and Instrument Control": ("labview", "instrument", "camera", "vi ", "仪器"),
+        "Protein Structure and AlphaFold": (
+            "alphafold", "protein structure", "protein folding", "molecular docking", "inhibitor",
+            "蛋白结构", "蛋白质结构", "结构预测", "分子对接", "抑制剂",
+        ),
         "Social Content Management": (
             "social media", "reddit", "hacker news", "hackernews", "postiz", "mastodon", "bluesky", "linkedin",
             "x.com", "twitter", "campaign", "promote", "publicize", "社交媒体", "推广",

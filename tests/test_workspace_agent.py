@@ -43,6 +43,13 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertEqual(policy["effort_label"], "ultra")
         self.assertEqual(policy["sandbox"], "read-only")
 
+    def test_protein_structure_work_uses_sol_ultra(self):
+        policy = select_agent_policy("Use AlphaFold to predict COL1A1 and assess inhibitor evidence")
+
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["reasoning_effort"], "xhigh")
+        self.assertEqual(policy["effort_label"], "ultra")
+
     def test_capability_catalog_covers_integrated_lab_tools(self):
         ids = {item["id"] for item in capability_catalog(ROOT)}
 
@@ -54,6 +61,7 @@ class WorkspaceAgentTests(unittest.TestCase):
                 "tex-paper",
                 "wechat-chatops",
                 "labview-control",
+                "protein-structure",
             }.issubset(ids)
         )
 
@@ -82,10 +90,12 @@ class WorkspaceAgentTests(unittest.TestCase):
     def test_packaged_knowledge_is_selected_by_domain(self):
         short = selected_packaged_knowledge("Reply with the current status")
         cad = selected_packaged_knowledge("Design a Shapr3D C-mount holder")
+        protein = selected_packaged_knowledge("Use AlphaFold for this protein structure")
 
         self.assertNotIn("## KiCad and PCB", short)
         self.assertNotIn("## CAD and Shapr3D-Compatible Design", short)
         self.assertIn("## CAD and Shapr3D-Compatible Design", cad)
+        self.assertIn("## Protein Structure and AlphaFold", protein)
         self.assertLess(len(short), len(cad))
 
     def test_task_runner_registers_declared_artifact(self):

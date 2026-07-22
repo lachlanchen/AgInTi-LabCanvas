@@ -1,0 +1,4 @@
+[submodule "external/ProteinStructure"]
+	path = external/ProteinStructure
+	url = git@github.com:lachlanchen/ProteinStructure.git
+	branch = master
