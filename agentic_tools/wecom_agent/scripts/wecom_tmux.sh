@@ -31,11 +31,15 @@ WINDOWS_CLIENT="$TOOL_ROOT/scripts/wecom_windows_client.sh"
 ANDROID_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_android_bridge.local.json"
 ANDROID_BRIDGE="$TOOL_ROOT/scripts/wecom_android_bridge.py"
 ANDROID_BRIDGE_LOG="$LOG_DIR/android-relay.log"
+HEALTH_GUARD="$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_transport_stall_guard.py"
+HEALTH_LOG="$LOG_DIR/transport-health.log"
+HEALTH_STATE="$ROOT/output/transport-health/state.json"
+HEALTH_SNAPSHOT="$ROOT/output/transport-health/latest.json"
 MUTATION_LOCK="${WECOM_TMUX_MUTATION_LOCK:-$TOOL_ROOT/.private/wecom_tmux.lock}"
 mkdir -p "$LOG_DIR"
 
 usage() {
-  echo "Usage: wecom_tmux.sh start|stop|restart|external-restart|gui-restart|android-start|android-restart|status"
+  echo "Usage: wecom_tmux.sh start|stop|restart|worker-restart|external-restart|gui-restart|android-start|android-restart|status"
 }
 
 android_enabled() {
@@ -55,20 +59,47 @@ start_android_window() {
   local serial
   serial="$(android_serial)"
   [[ -n "$serial" ]] || { echo "Android WeCom relay serial is empty." >&2; return 1; }
-  tmux kill-window -t "$SESSION:android-relay" 2>/dev/null || true
+  kill_window_if_present android-relay
   tmux new-window -t "$SESSION" -n android-relay \
     "cd '$ROOT' && '$ROOT/scripts/mix2s' on --serial '$serial' >> '$ANDROID_BRIDGE_LOG' 2>&1 && exec python3 '$ANDROID_BRIDGE' --config '$ANDROID_BRIDGE_CONFIG' serve >> '$ANDROID_BRIDGE_LOG' 2>&1"
   echo "Started allowlisted Android WeCom relay window."
 }
 
 ensure_android_window() {
+  remove_dead_window android-relay
   if android_enabled && ! window_exists android-relay; then
     start_android_window
   fi
 }
 
+window_id_by_name() {
+  local name="$1"
+  tmux list-windows -t "$SESSION" -F '#{window_id}|#{window_name}' 2>/dev/null |
+    awk -F '|' -v name="$name" '$2 == name { print $1; exit }'
+}
+
 window_exists() {
-  tmux has-session -t "$SESSION:$1" 2>/dev/null
+  local window_id
+  window_id="$(window_id_by_name "$1")"
+  [[ -n "$window_id" ]] || return 1
+  tmux list-panes -t "$window_id" -F '#{pane_dead}' 2>/dev/null | grep -qx '0'
+}
+
+window_present() {
+  [[ -n "$(window_id_by_name "$1")" ]]
+}
+
+remove_dead_window() {
+  local name="$1"
+  if window_present "$name" && ! window_exists "$name"; then
+    tmux kill-window -t "$(window_id_by_name "$name")" 2>/dev/null || true
+  fi
+}
+
+kill_window_if_present() {
+  local window_id
+  window_id="$(window_id_by_name "$1")"
+  [[ -z "$window_id" ]] || tmux kill-window -t "$window_id" 2>/dev/null || true
 }
 
 acquire_mutation_lock() {
@@ -81,22 +112,38 @@ acquire_mutation_lock() {
 }
 
 ensure_core_windows() {
+  remove_dead_window gateway
   if ! window_exists gateway; then
     tmux new-window -t "$SESSION" -n gateway \
       "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec node '$TOOL_ROOT/src/bridge.mjs' >> '$GATEWAY_LOG' 2>&1"
   fi
+  remove_dead_window worker
   if ! window_exists worker; then
     tmux new-window -t "$SESSION" -n worker \
       "cd '$ROOT' && exec '$WECOM_WORKER' >> '$WORKER_LOG' 2>&1"
   fi
+  remove_dead_window daily
   if ! window_exists daily; then
     tmux new-window -t "$SESSION" -n daily \
       "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_daily_research.py' loop --queue '$QUEUE' >> '$DAILY_LOG' 2>&1"
   fi
+  remove_dead_window knowledge
   if ! window_exists knowledge; then
     tmux new-window -t "$SESSION" -n knowledge \
       "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$KNOWLEDGE_INDEXER' loop --queue '$QUEUE' >> '$KNOWLEDGE_LOG' 2>&1"
   fi
+  remove_dead_window health
+  if ! window_exists health; then
+    tmux new-window -t "$SESSION" -n health \
+      "cd '$ROOT' && exec python3 -u '$HEALTH_GUARD' --loop --repair --json-lines --changes-only --state-path '$HEALTH_STATE' --snapshot-path '$HEALTH_SNAPSHOT' >> '$HEALTH_LOG' 2>&1"
+  fi
+}
+
+start_worker_window() {
+  kill_window_if_present worker
+  tmux new-window -t "$SESSION" -n worker \
+    "cd '$ROOT' && exec '$WECOM_WORKER' >> '$WORKER_LOG' 2>&1"
+  echo "Restarted WeCom LabCanvas worker without restarting the logged-in clients."
 }
 
 gui_enabled() {
@@ -105,6 +152,7 @@ gui_enabled() {
 }
 
 ensure_gui_client_window() {
+  remove_dead_window wecom-client
   if ! window_exists wecom-client; then
     tmux new-window -t "$SESSION" -n wecom-client \
       "cd '$ROOT' && exec '$WINDOWS_CLIENT' supervise >> '$GUI_BRIDGE_LOG' 2>&1"
@@ -112,7 +160,7 @@ ensure_gui_client_window() {
 }
 
 start_gui_bridge_window() {
-  tmux kill-window -t "$SESSION:external-gui" 2>/dev/null || true
+  kill_window_if_present external-gui
   tmux new-window -t "$SESSION" -n external-gui \
     "cd '$ROOT' && exec python3 '$GUI_BRIDGE' --config '$GUI_BRIDGE_CONFIG' loop >> '$GUI_BRIDGE_LOG' 2>&1"
 }
@@ -127,6 +175,7 @@ ensure_gui_windows() {
     return 1
   fi
   ensure_gui_client_window
+  remove_dead_window external-gui
   if ! window_exists external-gui; then
     start_gui_bridge_window
   fi
@@ -171,7 +220,7 @@ start_external_window() {
     echo "Main WeCom session is not running: $SESSION" >&2
     return 1
   fi
-  tmux kill-window -t "$SESSION:external" 2>/dev/null || true
+  kill_window_if_present external
   if [[ ! -f "$TOOL_ROOT/.private/wecom-cli-message-config/bot.enc" ]] \
     || [[ ! -f "$TOOL_ROOT/.private/wecom-cli-message-config/mcp_config.enc" ]]; then
     "$TOOL_ROOT/scripts/wecom_admin_browser.sh" >/dev/null
@@ -230,6 +279,14 @@ case "$action" in
     acquire_mutation_lock
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     start_stack
+    ;;
+  worker-restart)
+    acquire_mutation_lock
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      start_worker_window
+    else
+      start_stack
+    fi
     ;;
   external-restart)
     acquire_mutation_lock

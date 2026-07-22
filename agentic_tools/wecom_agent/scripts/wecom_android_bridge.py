@@ -192,6 +192,30 @@ def validate_mentions(values: Any) -> list[str]:
     return mentions
 
 
+def text_component_value_hash(message: str, mentions: list[str]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {"message": message, "mentions": mentions},
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def recoverable_native_mention_error(exc: BaseException) -> bool:
+    text = str(exc).casefold()
+    return any(
+        marker in text
+        for marker in (
+            "mention picker",
+            "mention search",
+            "native mention",
+            "exact wecom member",
+            "native mentions were not reproduced exactly",
+        )
+    )
+
+
 def mention_token_count(value: Any) -> int:
     return len(MENTION_TOKEN_RE.findall(str(value or "")))
 
@@ -421,10 +445,67 @@ def quoted_message_text(
             continue
         if text == sender or MESSAGE_TIME_RE.fullmatch(text):
             continue
-        if node.attrib.get("class") not in {"", "android.widget.TextView"}:
+        if node.attrib.get("class", "") not in {"", "android.widget.TextView"}:
             continue
         candidates.append(text)
     return "\n".join(unique_nonempty(candidates))[:4000]
+
+
+def message_row_sender(
+    row: ET.Element,
+    body_nodes: list[ET.Element],
+) -> tuple[str, dict[str, str]]:
+    """Resolve one message row's author without borrowing an adjacent label."""
+    body_tops: list[int] = []
+    for node in body_nodes:
+        try:
+            _, top, _, _ = parse_bounds(node.attrib.get("bounds", ""))
+        except BridgeError:
+            continue
+        body_tops.append(top)
+    body_top = min(body_tops) if body_tops else None
+    candidates: list[tuple[str, str]] = []
+    external_marker = False
+    avatar_bounds = ""
+    for node in row.iter("node"):
+        resource = node.attrib.get("resource-id", "")
+        text = node_text(node)
+        bounds = node.attrib.get("bounds", "")
+        if resource.endswith(":id/ja3") and not avatar_bounds:
+            avatar_bounds = bounds
+        if text in {"＠微信", "@微信"}:
+            external_marker = True
+            continue
+        if not text or resource or text in MESSAGE_CHROME_TEXT or MESSAGE_TIME_RE.fullmatch(text):
+            continue
+        if node.attrib.get("class", "") not in {"", "android.widget.TextView"}:
+            continue
+        try:
+            _, _, _, bottom = parse_bounds(bounds)
+        except BridgeError:
+            # Some older accessibility dumps omit bounds entirely. A label is
+            # still safe when every body node in this exact row is likewise
+            # unbounded; never accept an unbounded label beside bounded body
+            # content because its geometric ownership cannot be proved.
+            if body_top is not None:
+                continue
+        else:
+            if body_top is not None and bottom > body_top + 2:
+                continue
+        candidate = (text, bounds)
+        if candidate not in candidates:
+            candidates.append(candidate)
+    unique_labels = unique_nonempty(label for label, _ in candidates)
+    sender = unique_labels[0] if len(unique_labels) == 1 else ""
+    sender_bounds = next((bounds for label, bounds in candidates if label == sender), "")
+    evidence = {
+        "sender_identity_confidence": "visible_row_label" if sender else "unattributed_row",
+        "sender_label_bounds": sender_bounds,
+        "sender_avatar_bounds": avatar_bounds,
+        "sender_external_marker": "true" if external_marker else "false",
+        "sender_candidate_count": str(len(unique_labels)),
+    }
+    return sender, evidence
 
 
 class AndroidBridge:
@@ -463,12 +544,44 @@ class AndroidBridge:
                 "CREATE TABLE IF NOT EXISTS snapshots ("
                 "chat TEXT PRIMARY KEY, sequence_json TEXT NOT NULL, updated_at TEXT NOT NULL)"
             )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS observed_messages ("
+                "chat TEXT NOT NULL, fingerprint TEXT NOT NULL, direction TEXT NOT NULL, "
+                "status TEXT NOT NULL, record_json TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL, "
+                "PRIMARY KEY(chat, fingerprint))"
+            )
+            observed_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(observed_messages)")
+            }
+            if "record_json" not in observed_columns:
+                conn.execute(
+                    "ALTER TABLE observed_messages ADD COLUMN "
+                    "record_json TEXT NOT NULL DEFAULT '{}'"
+                )
 
     @contextmanager
-    def serialized(self) -> Iterator[None]:
+    def serialized(self, *, timeout_seconds: float | None = None) -> Iterator[None]:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with self.lock_path.open("w", encoding="utf-8") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+        timeout = max(
+            0.1,
+            float(
+                timeout_seconds
+                if timeout_seconds is not None
+                else self.config.get("serialization_timeout_seconds", 30.0)
+            ),
+        )
+        deadline = time.monotonic() + timeout
+        with self.lock_path.open("a+", encoding="utf-8") as handle:
+            while True:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError as exc:
+                    if time.monotonic() >= deadline:
+                        raise BridgeError(
+                            f"WECOM_ANDROID_BUSY: serialized GUI control exceeded {timeout:.1f}s"
+                        ) from exc
+                    time.sleep(0.1)
             try:
                 yield
             finally:
@@ -774,19 +887,46 @@ class AndroidBridge:
             time.sleep(0.25)
         raise BridgeError("WeCom native mention picker did not open")
 
-    def exact_mention_rows(self, root: ET.Element, mention: str) -> list[ET.Element]:
-        return [
+    def exact_mention_rows(
+        self,
+        root: ET.Element,
+        mention: str,
+        *,
+        prefer_exact_decoration: bool = True,
+    ) -> list[ET.Element]:
+        matches = [
             node
             for node in root.iter("node")
             if node.attrib.get("package") == self.package
             and node.attrib.get("resource-id") == f"{self.package}:id/ic1"
             and mention_row_matches(node.attrib.get("text"), mention)
         ]
+        if prefer_exact_decoration and len(matches) > 1:
+            requested = normalize_mention_name(mention)
+            exact = [
+                node
+                for node in matches
+                if normalize_mention_name(node.attrib.get("text")) == requested
+            ]
+            if exact:
+                return exact
+        return matches
 
-    def select_native_mention(self, chat: str, mention: str, *, expected_count: int) -> None:
+    def select_native_mention(
+        self,
+        chat: str,
+        mention: str,
+        *,
+        expected_count: int,
+        prefer_exact_decoration: bool = True,
+    ) -> None:
         self.adb_shell("input", "text", "@")
         picker = self.mention_picker()
-        matches = self.exact_mention_rows(picker, mention)
+        matches = self.exact_mention_rows(
+            picker,
+            mention,
+            prefer_exact_decoration=prefer_exact_decoration,
+        )
         if len(matches) != 1:
             search = find_nodes(picker, resource_id=f"{self.package}:id/g7i", package=self.package)
             if not search:
@@ -795,7 +935,11 @@ class AndroidBridge:
             self.paste_text(mention)
             time.sleep(0.7)
             picker = self.mention_picker()
-            matches = self.exact_mention_rows(picker, mention)
+            matches = self.exact_mention_rows(
+                picker,
+                mention,
+                prefer_exact_decoration=prefer_exact_decoration,
+            )
         if len(matches) != 1:
             raise BridgeError(f"expected one exact WeCom member named {mention!r}, found {len(matches)}")
         self.tap_node(picker, matches[0])
@@ -902,13 +1046,7 @@ class AndroidBridge:
         mentions: list[str] | None = None,
     ) -> dict[str, Any]:
         exact_mentions = validate_mentions(mentions or [])
-        value_hash = hashlib.sha256(
-            json.dumps(
-                {"message": text, "mentions": exact_mentions},
-                ensure_ascii=False,
-                sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest()
+        value_hash = text_component_value_hash(text, exact_mentions)
         key = self.component_key(task_id, chat, "text", value_hash)
         if self.component_sent(key):
             return {
@@ -918,7 +1056,7 @@ class AndroidBridge:
                 "sent_files": [],
                 "mentioned_users": exact_mentions,
             }
-        root = self.open_chat(chat)
+        root = self.normalize_chat_surface(chat)
         composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
         if not composers:
             raise BridgeError("WeCom composer is not visible")
@@ -927,17 +1065,33 @@ class AndroidBridge:
         self.tap_node(root, composers[-1])
         try:
             time.sleep(0.4)
-            for index, mention in enumerate(exact_mentions, start=1):
-                self.select_native_mention(chat, mention, expected_count=index)
-            self.paste_text((" " if exact_mentions else "") + text)
-            time.sleep(0.5)
-            root = self.ensure_chat_identity(chat)
-            composer = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
-            if not composer or not composer_matches_message(
-                composer_text(composer[-1]),
+            selected_mentions: list[str] = []
+            for index, mention in enumerate(exact_mentions):
+                try:
+                    self.select_native_mention(
+                        chat,
+                        mention,
+                        expected_count=len(selected_mentions) + 1,
+                        # The first name is the exact current sender. Context
+                        # mentions without a transport decoration are optional
+                        # and must remain ambiguous rather than tag the wrong
+                        # internal/external identity.
+                        prefer_exact_decoration=index == 0 or mention.endswith("@微信"),
+                    )
+                except BridgeError:
+                    if index == 0:
+                        raise
+                    self.press_back()
+                    self.ensure_chat_identity(chat)
+                    continue
+                selected_mentions.append(mention)
+            self.paste_text((" " if selected_mentions else "") + text)
+            root = self.wait_for_composer_message(
+                chat,
                 text,
-                mention_count=len(exact_mentions),
-            ):
+                mention_count=len(selected_mentions),
+            )
+            if root is None:
                 raise BridgeError("text and native mentions were not reproduced exactly in the WeCom composer")
             send_buttons = find_nodes(root, text="发送", resource_id=f"{self.package}:id/j24", package=self.package)
             if not send_buttons:
@@ -964,16 +1118,101 @@ class AndroidBridge:
                     kind="text",
                     value_hash=value_hash,
                     status="sent",
-                    details={"mentioned_users": exact_mentions},
+                    details={"mentioned_users": selected_mentions},
                 )
                 return {
                     "ok": True,
                     "sent_messages": [text],
                     "sent_files": [],
-                    "mentioned_users": exact_mentions,
+                    "mentioned_users": selected_mentions,
                     "errors": [],
                 }
         raise BridgeError("WeCom did not expose the sent text after commit")
+
+    def send_text_resilient_locked(
+        self,
+        chat: str,
+        text: str,
+        *,
+        task_id: str,
+        mentions: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Deliver text even when WeCom's native mention UI is temporarily brittle.
+
+        The exact current sender is always attempted first. Optional secondary
+        mentions are dropped before the primary mention, and plain text is the
+        final fallback. Only failures proven to occur before send commit are
+        eligible, preventing an uncertain post-commit retry from duplicating a
+        message.
+        """
+        requested = validate_mentions(mentions or [])
+        attempts: list[list[str]] = [requested]
+        if len(requested) > 1:
+            attempts.append(requested[:1])
+        if requested:
+            attempts.append([])
+        unique_attempts: list[list[str]] = []
+        for candidate in attempts:
+            if candidate not in unique_attempts:
+                unique_attempts.append(candidate)
+
+        warnings: list[str] = []
+        for candidate in unique_attempts:
+            try:
+                result = self.send_text_locked(
+                    chat,
+                    text,
+                    task_id=task_id,
+                    mentions=candidate,
+                )
+            except BridgeError as exc:
+                if not candidate or not recoverable_native_mention_error(exc):
+                    raise
+                warnings.append(f"{type(exc).__name__}: {str(exc)[:300]}")
+                continue
+            if candidate != requested:
+                requested_hash = text_component_value_hash(text, requested)
+                requested_key = self.component_key(task_id, chat, "text", requested_hash)
+                self.mark_component(
+                    requested_key,
+                    task_id=task_id,
+                    chat=chat,
+                    kind="text",
+                    value_hash=requested_hash,
+                    status="sent",
+                    details={
+                        "mentioned_users": candidate,
+                        "requested_mentions": requested,
+                        "mention_fallback": True,
+                        "mention_warnings": warnings,
+                    },
+                )
+            result["mention_warnings"] = warnings
+            result["requested_mentions"] = requested
+            return result
+        raise BridgeError("WeCom text delivery exhausted native-mention fallbacks")
+
+    def wait_for_composer_message(
+        self,
+        chat: str,
+        text: str,
+        *,
+        mention_count: int = 0,
+        timeout: float = 3.0,
+    ) -> ET.Element | None:
+        """Wait until accessibility exposes the exact Unicode clipboard paste."""
+        deadline = time.monotonic() + max(0.1, timeout)
+        while time.monotonic() < deadline:
+            root = self.ensure_chat_identity(chat)
+            composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
+            if composers and composer_matches_message(
+                composer_text(composers[-1]),
+                text,
+                mention_count=mention_count,
+            ):
+                return root
+            time.sleep(0.2)
+        return None
 
     def stage_file(self, path: Path) -> tuple[Path, str, str]:
         resolved = path.expanduser().resolve()
@@ -1254,13 +1493,7 @@ class AndroidBridge:
         sent_files: list[str] = []
         pending_files: list[str] = []
         if message.strip():
-            value_hash = hashlib.sha256(
-                json.dumps(
-                    {"message": message, "mentions": exact_mentions},
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ).encode("utf-8")
-            ).hexdigest()
+            value_hash = text_component_value_hash(message, exact_mentions)
             key = self.component_key(task_id, chat, "text", value_hash)
             (sent_messages if self.component_sent(key) else pending_messages).append(message)
         for path in files:
@@ -1304,14 +1537,14 @@ class AndroidBridge:
             raise BridgeError("mentions require a text message")
         if not message.strip() and not files:
             raise BridgeError("send requires a message and/or artifact")
-        with self.serialized():
+        with self.serialized(timeout_seconds=60.0):
             sent_messages: list[str] = []
             sent_files: list[str] = []
             mentioned_users: list[str] = []
             errors: list[dict[str, str]] = []
             if message.strip():
                 try:
-                    result = self.send_text_locked(
+                    result = self.send_text_resilient_locked(
                         chat,
                         message,
                         task_id=task_id,
@@ -1354,26 +1587,28 @@ class AndroidBridge:
         rows = find_nodes(root, resource_id=f"{self.package}:id/eyy", package=self.package)
         records: list[dict[str, str]] = []
         for row in rows:
-            sender = ""
-            sender_is_wechat = False
             body_nodes: list[ET.Element] = []
             for node in row.iter("node"):
                 text = node_text(node)
                 if not text:
                     continue
                 resource = node.attrib.get("resource-id", "")
-                if text in {"＠微信", "@微信"}:
-                    sender_is_wechat = True
-                    continue
-                if not resource and not sender:
-                    sender = text
                 if resource.endswith(":id/j1l"):
                     body_nodes.append(node)
             body = "\n".join(unique_nonempty(node_text(node) for node in body_nodes))
             if not body:
                 continue
+            sender, sender_evidence = message_row_sender(row, body_nodes)
+            sender_is_wechat = sender_evidence["sender_external_marker"] == "true"
             quote_text = quoted_message_text(row, sender=sender, body_nodes=body_nodes)
-            direction = "inbound" if sender else "outbound"
+            avatar_bounds = sender_evidence.get("sender_avatar_bounds", "")
+            avatar_on_left = False
+            try:
+                left, _, right, _ = parse_bounds(avatar_bounds)
+                avatar_on_left = (left + right) // 2 < 540
+            except BridgeError:
+                pass
+            direction = "inbound" if sender or avatar_on_left else "outbound"
             fingerprint = short_hash(f"{direction}\0{sender}\0{body}\0{quote_text}", 64)
             records.append(
                 {
@@ -1383,6 +1618,7 @@ class AndroidBridge:
                     "mention_name": f"{sender}@微信" if sender and sender_is_wechat else sender,
                     "body": body,
                     "quote_text": quote_text,
+                    **sender_evidence,
                 }
             )
         return records
@@ -1407,11 +1643,133 @@ class AndroidBridge:
                 (chat, json.dumps(sequence), now_iso()),
             )
 
+    def observed_message_statuses(self, chat: str) -> dict[str, str]:
+        with sqlite3.connect(self.state_db) as conn:
+            rows = conn.execute(
+                "SELECT fingerprint, status FROM observed_messages WHERE chat = ?",
+                (chat,),
+            ).fetchall()
+        return {str(fingerprint): str(status) for fingerprint, status in rows}
+
+    def mark_observed_message(self, chat: str, record: dict[str, str], status: str) -> None:
+        if status not in {"seeded", "observed", "pending", "ingested"}:
+            raise BridgeError(f"invalid observed-message status: {status}")
+        fingerprint = str(record.get("fingerprint") or "")
+        if not fingerprint:
+            raise BridgeError("observed message is missing a fingerprint")
+        with sqlite3.connect(self.state_db) as conn:
+            conn.execute(
+                "INSERT INTO observed_messages("
+                "chat, fingerprint, direction, status, record_json, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chat, fingerprint) DO UPDATE SET "
+                "direction = excluded.direction, "
+                "status = CASE WHEN observed_messages.status = 'ingested' "
+                "THEN 'ingested' ELSE excluded.status END, "
+                "record_json = CASE WHEN excluded.record_json = '{}' "
+                "THEN observed_messages.record_json ELSE excluded.record_json END, "
+                "updated_at = excluded.updated_at",
+                (
+                    chat,
+                    fingerprint,
+                    str(record.get("direction") or "unknown"),
+                    status,
+                    json.dumps(record, ensure_ascii=False, sort_keys=True),
+                    now_iso(),
+                ),
+            )
+
+    def seed_observed_fingerprints(self, chat: str, fingerprints: list[str]) -> None:
+        timestamp = now_iso()
+        with sqlite3.connect(self.state_db) as conn:
+            conn.executemany(
+                "INSERT OR IGNORE INTO observed_messages("
+                "chat, fingerprint, direction, status, record_json, updated_at) "
+                "VALUES (?, ?, 'unknown', 'seeded', '{}', ?)",
+                [(chat, fingerprint, timestamp) for fingerprint in fingerprints if fingerprint],
+            )
+
+    def pending_observed_records(self, chat: str) -> list[dict[str, str]]:
+        with sqlite3.connect(self.state_db) as conn:
+            rows = conn.execute(
+                "SELECT fingerprint, record_json FROM observed_messages "
+                "WHERE chat = ? AND status = 'pending' ORDER BY updated_at, rowid",
+                (chat,),
+            ).fetchall()
+        result: list[dict[str, str]] = []
+        for fingerprint, raw_record in rows:
+            try:
+                record = json.loads(str(raw_record or "{}"))
+            except json.JSONDecodeError:
+                record = {}
+            if not isinstance(record, dict) or not str(record.get("body") or "").strip():
+                record = self.recover_pending_record_from_history(chat, str(fingerprint)) or {}
+            if not isinstance(record, dict) or not str(record.get("body") or "").strip():
+                continue
+            record["fingerprint"] = str(fingerprint)
+            result.append({str(key): str(value) for key, value in record.items()})
+        return result
+
+    def recover_pending_record_from_history(
+        self, chat: str, fingerprint: str
+    ) -> dict[str, str] | None:
+        if not self.history_db.is_file():
+            return None
+        account = str(self.config.get("account_id") or "external-gui").strip() or "external-gui"
+        canonical_chat = f"wecom:{account}:group:{short_hash(f'gui:{chat}', 12)}"
+        try:
+            with sqlite3.connect(self.history_db) as conn:
+                rows = conn.execute(
+                    "SELECT sender_display, body FROM messages WHERE chat = ? "
+                    "AND direction = 'inbound' AND processed_at IS NULL ORDER BY id",
+                    (canonical_chat,),
+                ).fetchall()
+        except sqlite3.Error:
+            return None
+        separator = "\n\nQuoted message:\n"
+        for sender_value, request_value in rows:
+            sender = str(sender_value or "").strip()
+            request = str(request_value or "").strip()
+            body, separator_found, quote = request.partition(separator)
+            quote_text = quote if separator_found else ""
+            candidate = short_hash(f"inbound\0{sender}\0{body}\0{quote_text}", 64)
+            if candidate != fingerprint:
+                continue
+            return {
+                "fingerprint": fingerprint,
+                "direction": "inbound",
+                "sender": sender,
+                "mention_name": sender,
+                "body": body,
+                "quote_text": quote_text,
+            }
+        return None
+
+    def record_exists_in_history(self, chat: str, record: dict[str, str]) -> bool:
+        if not self.history_db.is_file():
+            return False
+        body = str(record.get("body") or "").strip()
+        quote = str(record.get("quote_text") or "").strip()
+        request = f"{body}\n\nQuoted message:\n{quote}" if quote else body
+        sender = str(record.get("sender") or "").strip()
+        account = str(self.config.get("account_id") or "external-gui").strip() or "external-gui"
+        canonical_chat = f"wecom:{account}:group:{short_hash(f'gui:{chat}', 12)}"
+        try:
+            with sqlite3.connect(self.history_db) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM messages WHERE chat = ? AND direction = 'inbound' "
+                    "AND sender_display = ? AND body = ? AND processed_at IS NOT NULL LIMIT 1",
+                    (canonical_chat, sender, request),
+                ).fetchone()
+        except sqlite3.Error:
+            return False
+        return bool(row)
+
     def build_event(self, chat: str, record: dict[str, str]) -> dict[str, Any]:
-        event_key = short_hash(
-            f"{chat}\0{record.get('sender')}\0{record.get('body')}\0{time.time_ns()}", 24
-        )
+        # Stable IDs let pending ingress retry without creating a second task.
+        event_key = short_hash(f"{chat}\0{record.get('fingerprint')}", 24)
         sender = str(record.get("sender") or "unknown")
+        sender_confidence = str(record.get("sender_identity_confidence") or "unknown")
+        sender_identity = sender if sender_confidence == "visible_row_label" else f"unattributed:{event_key}"
         return {
             "transport": "wecom",
             "transport_channel": "wecom_android",
@@ -1419,9 +1777,23 @@ class AndroidBridge:
             "message_id": f"android:{event_key}",
             "chat_id": f"gui:{chat}",
             "chat_type": "group",
-            "sender_userid": f"android-member:{short_hash(sender, 24)}",
+            "sender_userid": f"android-member:{short_hash(sender_identity, 24)}",
             "sender_display": sender,
-            "sender_mention": str(record.get("mention_name") or sender),
+            "sender_mention": (
+                str(record.get("mention_name") or sender)
+                if sender_confidence == "visible_row_label"
+                else ""
+            ),
+            "sender_identity_confidence": sender_confidence,
+            "sender_evidence": {
+                key: str(record.get(key) or "")
+                for key in (
+                    "sender_label_bounds",
+                    "sender_avatar_bounds",
+                    "sender_external_marker",
+                    "sender_candidate_count",
+                )
+            },
             "create_time": int(time.time()),
             "msgtype": "text",
             "text": str(record.get("body") or ""),
@@ -1465,40 +1837,76 @@ class AndroidBridge:
             event_path.unlink(missing_ok=True)
 
     def snapshot(self, chat: str, *, enqueue: bool = False) -> dict[str, Any]:
-        with self.serialized():
+        with self.serialized(timeout_seconds=30.0):
             root = self.open_chat(chat)
             records = self.parse_messages(root)
             sequence = [record["fingerprint"] for record in records]
             previous = self.load_snapshot(chat)
             if previous is None:
+                for record in records:
+                    self.mark_observed_message(chat, record, "seeded")
                 self.save_snapshot(chat, sequence)
                 return {"ok": True, "chat": chat, "seeded": len(sequence), "messages": [], "processed": 0}
+
+            statuses = self.observed_message_statuses(chat)
+            migrating = not statuses and bool(previous)
+            if migrating:
+                self.seed_observed_fingerprints(chat, previous)
+                statuses = self.observed_message_statuses(chat)
+                # Sequence-only versions could checkpoint a changed viewport
+                # before enqueueing it. Recover only exact inbound rows absent
+                # from the durable history database.
+                for record in records:
+                    fingerprint = str(record.get("fingerprint") or "")
+                    if record.get("direction") != "inbound" or fingerprint not in statuses:
+                        continue
+                    status = "ingested" if self.record_exists_in_history(chat, record) else "pending"
+                    self.mark_observed_message(chat, record, status)
+                    statuses[fingerprint] = status
             delta, overlap = sequence_delta(previous, sequence)
-            if overlap == 0 and previous and sequence:
-                self.save_snapshot(chat, sequence)
-                return {
-                    "ok": True,
-                    "chat": chat,
-                    "seeded": len(sequence),
-                    "messages": [],
-                    "processed": 0,
-                    "reason": "viewport_changed_without_overlap",
-                }
-            new_records = records[-len(delta) :] if delta else []
-            inbound = [record for record in new_records if record.get("direction") == "inbound"]
+            for record in records:
+                fingerprint = str(record.get("fingerprint") or "")
+                if fingerprint in statuses:
+                    continue
+                status = "pending" if record.get("direction") == "inbound" else "observed"
+                self.mark_observed_message(chat, record, status)
+                statuses[fingerprint] = status
+            pending_by_fingerprint = {
+                str(record.get("fingerprint") or ""): record
+                for record in self.pending_observed_records(chat)
+            }
+            # Prefer the fresh UI record when it is still visible because it
+            # carries the exact native mention spelling. Persisted records keep
+            # the message actionable after overlapping rows scroll off-screen.
+            for record in records:
+                fingerprint = str(record.get("fingerprint") or "")
+                if (
+                    record.get("direction") == "inbound"
+                    and statuses.get(fingerprint) == "pending"
+                ):
+                    pending_by_fingerprint[fingerprint] = record
+            pending_inbound = list(pending_by_fingerprint.values())
             ingested: list[dict[str, Any]] = []
-            pending_replies: list[tuple[str, str, str]] = []
+            pending_replies: list[tuple[str, list[str], str]] = []
             if enqueue:
-                for record in inbound:
+                for record in pending_inbound:
                     event = self.build_event(chat, record)
                     result = self.invoke_ingest(event)
                     ingested.append(result)
+                    self.mark_observed_message(chat, record, "ingested")
+                    statuses[str(record.get("fingerprint") or "")] = "ingested"
                     response = str(result.get("reply") or result.get("ack") or "").strip()
                     if response:
+                        reply_mentions = result.get("reply_mentions")
+                        if not isinstance(reply_mentions, list):
+                            fallback_mention = str(
+                                record.get("mention_name") or record.get("sender") or ""
+                            )
+                            reply_mentions = [fallback_mention] if fallback_mention else []
                         pending_replies.append(
                             (
                                 response,
-                                str(record.get("mention_name") or record.get("sender") or ""),
+                                [str(value) for value in reply_mentions if str(value).strip()],
                                 f"ingress:{event['message_id']}",
                             )
                         )
@@ -1507,19 +1915,19 @@ class AndroidBridge:
             self.save_snapshot(chat, sequence)
             sent_replies: list[str] = []
             reply_errors: list[dict[str, str]] = []
-            for response, sender, task_id in pending_replies:
+            for response, mentions, task_id in pending_replies:
                 try:
-                    sent = self.send_text_locked(
+                    sent = self.send_text_resilient_locked(
                         chat,
                         response,
                         task_id=task_id,
-                        mentions=[sender] if sender else [],
+                        mentions=mentions,
                     )
                     sent_replies.extend(sent.get("sent_messages") or [])
                 except Exception as exc:
                     reply_errors.append(
                         {
-                            "sender": sender,
+                            "sender": ", ".join(mentions),
                             "error": f"{type(exc).__name__}: {str(exc)[:500]}",
                         }
                     )
@@ -1527,8 +1935,10 @@ class AndroidBridge:
                 "ok": not reply_errors,
                 "chat": chat,
                 "overlap": overlap,
-                "processed": len(inbound),
-                "messages": inbound,
+                "viewport_changed_without_overlap": bool(overlap == 0 and previous and sequence),
+                "processed": len(ingested),
+                "pending": 0 if enqueue else len(pending_inbound),
+                "messages": pending_inbound,
                 "ingested": ingested,
                 "replied": len(sent_replies),
                 "reply_errors": reply_errors,
@@ -1539,7 +1949,7 @@ class AndroidBridge:
         due = [chat for chat in self.target_groups if self.load_snapshot(chat) is None]
         unread: list[str] = []
         if not due:
-            with self.serialized():
+            with self.serialized(timeout_seconds=5.0):
                 chat_list = self.open_chat_list()
                 unread = self.unread_target_chats(chat_list)
             due = list(unread)
@@ -1566,7 +1976,7 @@ class AndroidBridge:
         restore_error = ""
         if due:
             try:
-                with self.serialized():
+                with self.serialized(timeout_seconds=5.0):
                     self.open_chat_list()
             except Exception as exc:
                 restore_error = f"{type(exc).__name__}: {str(exc)[:500]}"
@@ -1752,7 +2162,10 @@ def make_api_handler(bridge: AndroidBridge):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
         def log_message(self, _format: str, *_args: Any) -> None:
             return

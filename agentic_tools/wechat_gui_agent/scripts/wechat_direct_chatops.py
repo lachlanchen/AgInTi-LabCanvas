@@ -1771,6 +1771,27 @@ def is_language_analysis_mode(config: dict[str, Any]) -> bool:
     return str(config.get("analysis_mode") or "").strip().lower() in {"echomind_language", "language_learning"}
 
 
+def build_chat_response_policy(config: dict[str, Any]) -> dict[str, Any]:
+    """Keep response behavior explicit and scoped to one configured chat."""
+    language_teaching = is_language_analysis_mode(config)
+    return {
+        "scope": "exact_chat_only",
+        "chat": str(config.get("chat_name") or "wechat-chat"),
+        "chat_purpose": str(config.get("chat_purpose") or "research"),
+        "language_mode": (
+            "echomind_multilingual_teaching" if language_teaching else "match_requester_language"
+        ),
+        "automatic_multilingual": language_teaching,
+        "cross_chat_context_allowed": False,
+        "cross_chat_artifacts_allowed": False,
+        "sender_attribution": "preserve_each_message_author",
+        "multi_sender_policy": (
+            "Related messages may inform one answer, but every statement, request, and "
+            "preference remains attributed to its original sender."
+        ),
+    }
+
+
 def is_research_chat(config: dict[str, Any]) -> bool:
     return str(config.get("chat_purpose") or "").strip().lower() in {"research", "lab", "paper", "science"}
 
@@ -5371,6 +5392,7 @@ def enqueue_worker_task(
         "agent_bridge_mode": agent_bridge_mode(config),
         "route": build_route_contract(config),
         "route_decision": route_decision or {},
+        "response_policy": build_chat_response_policy(config),
         "instruction_contract": build_instruction_contract(config, route_decision or {}),
         "execution_contract": build_execution_contract(config, route_decision or {}),
         "source": {
@@ -5899,6 +5921,7 @@ def build_execution_contract(config: dict[str, Any], route_decision: dict[str, A
             "reuse": True,
         },
         "route_kind": str(route_decision.get("route_kind") or "other_worker"),
+        "response_policy": build_chat_response_policy(config),
         "instruction_contract": instruction_contract,
         "rules": [
             "WeChat receives messages and returns artifacts; it does not own backend reasoning.",
@@ -5961,6 +5984,7 @@ def enqueue_deferred_reply(
         "send_deferred_reason": reason,
         "route": build_route_contract(config),
         "route_decision": route_decision or {"route_kind": "other_worker", "reason": reason},
+        "response_policy": build_chat_response_policy(config),
         "source": {
             "chat": config["chat_name"],
             "config_id": config.get("config_id") or "",

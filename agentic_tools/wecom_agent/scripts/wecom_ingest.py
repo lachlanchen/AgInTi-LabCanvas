@@ -133,6 +133,7 @@ def ingest_event(
         history_db,
         chat,
         request,
+        exclude_message_id=str(event["message_id"]),
     ):
         # OCR sender labels can vary between adjacent captures of the same
         # bubble. Exact same-chat text inside a short window is a transport
@@ -270,8 +271,18 @@ def ingest_event(
             )
             inspiration_note = f"已更新群组灵感关注：{'；'.join(settings['topics'])}。"
 
-    if not bool(route.get("worker_needed")) and str(route.get("response") or "").strip():
-        response = str(route["response"])
+    if not bool(route.get("worker_needed")):
+        response = str(route.get("response") or "").strip()
+        if not response:
+            mark_message_processed(history_db, str(event["message_id"]))
+            return {
+                "duplicate": False,
+                "queued": False,
+                "chat": chat,
+                "reply": "",
+                "no_reply": True,
+                "message_role": str(route.get("message_role") or "peer_conversation"),
+            }
         if daily_topic:
             response = f"已设置每日研究主题：{daily_topic}\n\n{response}"
         if inspiration_note:
@@ -279,7 +290,9 @@ def ingest_event(
         if first_group_event:
             response = f"{response.rstrip()}\n\n{labagent_welcome_message()}"
             mark_inline_topic_prompt(history_db, chat)
-        return complete_direct_reply(history_db, event, chat, response)
+        result = complete_direct_reply(history_db, event, chat, response)
+        result["reply_mentions"] = route_reply_mentions(event, context, route)
+        return result
 
     task = build_task(
         event,
@@ -323,6 +336,7 @@ def ingest_event(
         "task_id": task["id"],
         "chat": chat,
         "ack": ack,
+        "reply_mentions": route_reply_mentions(event, context, route),
     }
 
 
@@ -348,6 +362,40 @@ def event_reply_mentions(event: dict[str, Any]) -> list[str]:
     if not display or display in {"unknown", "所有人", "MaLabAgent", "LabAgent"}:
         return []
     return [display]
+
+
+def route_reply_mentions(
+    event: dict[str, Any],
+    context: list[dict[str, Any]],
+    route: dict[str, Any],
+) -> list[str]:
+    """Resolve agent-selected mentions only from exact same-chat senders."""
+    current = event_reply_mentions(event)
+    if not current:
+        return []
+    allowed: dict[str, str] = {}
+    current_display = " ".join(str(event.get("sender_display") or "").split())
+    if current_display:
+        allowed[current_display.casefold()] = current[0]
+    for item in context[-12:]:
+        if not isinstance(item, dict) or bool(item.get("is_self")):
+            continue
+        display = " ".join(str(item.get("sender_display") or "").split())
+        if display and display not in {"unknown", "所有人", "MaLabAgent", "LabAgent"}:
+            exact_mention = " ".join(str(item.get("sender_mention") or display).split())
+            allowed.setdefault(display.casefold(), exact_mention)
+    selected = list(current)
+    requested = route.get("reply_to_senders")
+    if not isinstance(requested, list):
+        return selected
+    for value in requested:
+        candidate = " ".join(str(value or "").split())
+        mention = allowed.get(candidate.casefold())
+        if mention and mention not in selected:
+            selected.append(mention)
+        if len(selected) >= 4:
+            break
+    return selected
 
 
 def complete_direct_reply(
@@ -446,6 +494,9 @@ Return one strict JSON object and no prose:
   "inspiration_interest": "group-scoped inspiration interest only when the current message explicitly sets or updates it, otherwise empty",
   "inspiration_interest_mode": "none|add|replace|remove|disable",
   "report_required": false,
+  "message_role": "research_request|artifact_instruction|system_guidance|peer_conversation|ordinary_chat",
+  "reply_mode": "reply|ack_then_work|silent",
+  "reply_to_senders": ["exact sender_display names only when one reply materially addresses their related messages"],
   "memory_items": [{{"kind": "idea|insight|intuition|interest|hypothesis|decision|preference|question|note", "title": "short title", "content": "durable user-authored knowledge", "tags": ["optional"]}}],
   "public_publish_allowed": false
 }}
@@ -466,9 +517,15 @@ Rules:
 - Judge value from the actual research question and same-chat context, not from a keyword such as "paper" or "PDF". Deep reports must cite traceable primary or authoritative sources, separate direct evidence from indirect evidence and hypotheses, state uncertainty, and analyze mechanisms, limitations, and actionable experiments rather than merely list knowledge points.
 - Decide naturally whether to reply from the full recent conversation. Always answer direct questions, requests, mentions, and useful follow-ups. It is valid to stay silent when people are talking to each other and an AI reply would interrupt or add no value. Never emit a mechanical acknowledgement merely to prove receipt.
 - Reply to several consecutive messages from the same sender as one coherent turn using all of them; do not emit one mechanical response per fragment.
+- Sender attribution is message-level evidence. Never describe one person's statement, criticism, preference, or request as coming from another person. Related messages from different people may inform one task, but their authors must remain distinct.
+- Distinguish scientific discussion from instructions addressed to LabCanvas itself. A request to research a mechanism is `research_request`; feedback about how the agent should draw, use image generation, use BioRender, revise an artifact, or improve its workflow is `artifact_instruction` or `system_guidance`, not a research question.
+- When recent same-chat context contains several fragments of one instruction, use all fragments as one intent. Apply concrete guidance to the active artifact or tool workflow instead of saying that you are waiting for another person after that guidance has already arrived.
+- Never drop a visible contribution merely because another sender posted at nearly the same time. If one coherent response materially addresses related messages from multiple people, put their exact `sender_display` values in `reply_to_senders`; otherwise leave it empty and reply only to the current sender.
+- Messages clearly directed from one human to another are `peer_conversation`. Use `reply_mode=silent` when an AI response would add no value. Direct guidance, questions, and commands addressed to the agent use `reply` or `ack_then_work`.
 - Do not claim an attachment was read in the acknowledgement.
 - Soft-filter dangerous or clearly out-of-scope requests with a concise natural refusal or a safer research/design alternative. Do not mechanically refuse ordinary scientific work.
 - LabAgent does not perform video publication or other public posting. Set public_publish_allowed to false.
+- LabAgent replies in the requester's natural language by default. Do not append English/Japanese translations or EchoMind-style language teaching unless the current LabAgent message explicitly asks for translation or multilingual analysis.
 - Do not authorize payment, purchase, deletion, credential changes, device takeover, bypassing access controls, or another irreversible action from group context.
 - Preserve existing explicit approval gates for any sensitive action that remains within scope.
 - Preserve the whole current request; do not shrink it to one keyword.
@@ -531,7 +588,21 @@ Private same-member knowledge context:
     attachments = normalized_attachments(event)
     worker_needed = bool(payload.get("worker_needed")) or bool(attachments)
     response = sanitize_chat_response(payload.get("response"))
-    if not worker_needed and not response:
+    message_role = str(payload.get("message_role") or "ordinary_chat").strip().casefold()
+    if message_role not in {
+        "research_request",
+        "artifact_instruction",
+        "system_guidance",
+        "peer_conversation",
+        "ordinary_chat",
+    }:
+        message_role = "ordinary_chat"
+    reply_mode = str(
+        payload.get("reply_mode") or ("ack_then_work" if worker_needed else "reply")
+    ).strip().casefold()
+    if reply_mode not in {"reply", "ack_then_work", "silent"}:
+        reply_mode = "ack_then_work" if worker_needed else "reply"
+    if not worker_needed and not response and reply_mode != "silent":
         worker_needed = True
     task_text = str(payload.get("task") or "").strip() or request
     daily_topic = " ".join(str(payload.get("daily_topic") or "").split())[:1000]
@@ -539,6 +610,9 @@ Private same-member knowledge context:
     inspiration_interest_mode = str(payload.get("inspiration_interest_mode") or "none").strip().casefold()
     if inspiration_interest_mode not in {"none", "add", "replace", "remove", "disable"}:
         inspiration_interest_mode = "none"
+    reply_to_senders = payload.get("reply_to_senders")
+    if not isinstance(reply_to_senders, list):
+        reply_to_senders = []
     return {
         "worker_needed": worker_needed,
         "route_kind": route_kind,
@@ -549,6 +623,9 @@ Private same-member knowledge context:
         "inspiration_interest": inspiration_interest,
         "inspiration_interest_mode": inspiration_interest_mode,
         "report_required": bool(payload.get("report_required")) and worker_needed,
+        "message_role": message_role,
+        "reply_mode": reply_mode,
+        "reply_to_senders": [" ".join(str(value or "").split()) for value in reply_to_senders[:4]],
         "memory_items": normalize_memory_items(payload.get("memory_items")),
         "public_publish_allowed": False,
     }
@@ -566,6 +643,9 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         "inspiration_interest": "",
         "inspiration_interest_mode": "none",
         "report_required": grant,
+        "message_role": "research_request" if grant else "ordinary_chat",
+        "reply_mode": "ack_then_work",
+        "reply_to_senders": [],
         "memory_items": [],
         "public_publish_allowed": False,
     }
@@ -586,6 +666,26 @@ def looks_like_grant_request(request: str) -> bool:
             "項目申請書",
         )
     )
+
+
+def wecom_response_policy(chat: str) -> dict[str, Any]:
+    """Return the fixed LabAgent policy for one exact official-WeCom chat."""
+    return {
+        "scope": "exact_chat_only",
+        "chat": chat,
+        "chat_purpose": "labagent_research_drawing_and_design",
+        "language_mode": "match_requester_language",
+        "automatic_multilingual": False,
+        "multilingual_only_when_explicitly_requested": True,
+        "cross_chat_context_allowed": False,
+        "cross_chat_artifacts_allowed": False,
+        "sender_attribution": "preserve_each_message_author",
+        "native_reply_notification": "mention_current_sender",
+        "multi_sender_policy": (
+            "Related messages may inform one task, but every statement, request, and "
+            "preference remains attributed to its original sender."
+        ),
+    }
 
 
 def build_task(
@@ -642,7 +742,10 @@ def build_task(
             "inspiration_interest_mode": str(route.get("inspiration_interest_mode") or "none"),
             "require_file_delivery": bool(route.get("report_required")),
             "worker_plan": str(route.get("task") or "").strip(),
+            "message_role": str(route.get("message_role") or "ordinary_chat"),
+            "reply_mode": str(route.get("reply_mode") or "ack_then_work"),
         },
+        "response_policy": wecom_response_policy(chat),
         "instruction_contract": {
             "current_request_authoritative": True,
             "same_chat_interruptions_authoritative": True,
@@ -656,6 +759,10 @@ def build_task(
             "router_plan_is_advisory": True,
             "resolve_uncertain_entities_with_evidence_before_clarifying": True,
             "research_requests_use_live_web_search": True,
+            "distinguish_research_from_agent_guidance": True,
+            "combine_consecutive_instruction_fragments": True,
+            "preserve_per_message_sender_attribution": True,
+            "cross_chat_context_forbidden": True,
         },
         "execution_contract": {
             "transport_role": "message_transport_only",
@@ -663,6 +770,7 @@ def build_task(
             "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
             "agent_entrypoint": "wechat_agent_backend.run_agent_session",
             "session": {"chat": chat, "role": "worker", "reuse": True},
+            "response_policy": wecom_response_policy(chat),
             "required_artifacts": ["pdf"] if route.get("report_required") else [],
             "research_evidence": {
                 "required": bool(route.get("report_required")),
@@ -687,7 +795,10 @@ def build_task(
             "sender": str(event["sender_userid"]),
             "sender_display": str(event.get("sender_display") or event["sender_userid"]),
             "wecom_sender_display": str(event.get("sender_display") or event["sender_userid"]),
-            "reply_mentions": event_reply_mentions(event),
+            "sender_mention": str(
+                event.get("sender_mention") or event.get("sender_display") or event["sender_userid"]
+            ),
+            "reply_mentions": route_reply_mentions(event, context, route),
             "member_key": task_source_member_key(event),
             "sender_identity_confidence": str(
                 event.get("sender_identity_confidence") or "transport_userid"
@@ -754,6 +865,9 @@ def init_history_db(path: Path) -> None:
                 direction TEXT NOT NULL,
                 sender TEXT,
                 sender_display TEXT,
+                sender_mention TEXT,
+                sender_identity_confidence TEXT,
+                sender_evidence_json TEXT,
                 body TEXT NOT NULL,
                 create_time INTEGER,
                 created_at TEXT NOT NULL,
@@ -766,6 +880,12 @@ def init_history_db(path: Path) -> None:
             conn.execute("ALTER TABLE messages ADD COLUMN processed_at TEXT")
         if "sender_display" not in columns:
             conn.execute("ALTER TABLE messages ADD COLUMN sender_display TEXT")
+        if "sender_mention" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN sender_mention TEXT")
+        if "sender_identity_confidence" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN sender_identity_confidence TEXT")
+        if "sender_evidence_json" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN sender_evidence_json TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_wecom_messages_chat_id ON messages(chat, id)")
 
 
@@ -789,6 +909,7 @@ def recent_equivalent_gui_inbound(
     chat: str,
     body: str,
     *,
+    exclude_message_id: str = "",
     window_seconds: int = 90,
 ) -> bool:
     normalized = str(body or "").strip()
@@ -800,8 +921,9 @@ def recent_equivalent_gui_inbound(
     with sqlite3.connect(path) as conn:
         row = conn.execute(
             "SELECT 1 FROM messages WHERE chat = ? AND direction = 'inbound' "
-            "AND body = ? AND created_at >= ? ORDER BY id DESC LIMIT 1",
-            (chat, normalized, cutoff),
+            "AND body = ? AND created_at >= ? AND processed_at IS NOT NULL "
+            "AND message_id != ? ORDER BY id DESC LIMIT 1",
+            (chat, normalized, cutoff, str(exclude_message_id or "")),
         ).fetchone()
     return bool(row)
 
@@ -826,8 +948,9 @@ def record_history_message(
         conn.execute(
             """
             INSERT OR IGNORE INTO messages(
-                message_id, chat, direction, sender, sender_display, body, create_time, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                message_id, chat, direction, sender, sender_display, sender_mention,
+                sender_identity_confidence, sender_evidence_json, body, create_time, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(event.get("message_id") or ""),
@@ -839,6 +962,23 @@ def record_history_message(
                     if direction == "inbound"
                     else "LabAgent"
                 ),
+                (
+                    str(event.get("sender_mention") or event.get("sender_display") or "")
+                    if direction == "inbound"
+                    else ""
+                ),
+                (
+                    str(event.get("sender_identity_confidence") or "transport_userid")
+                    if direction == "inbound"
+                    else "self"
+                ),
+                json.dumps(
+                    event.get("sender_evidence")
+                    if direction == "inbound" and isinstance(event.get("sender_evidence"), dict)
+                    else {},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
                 body,
                 int(event.get("create_time") or 0),
                 datetime.now().isoformat(timespec="seconds"),
@@ -849,18 +989,36 @@ def record_history_message(
 def recent_history(path: Path, chat: str, *, limit: int) -> list[dict[str, Any]]:
     with sqlite3.connect(path) as conn:
         rows = conn.execute(
-            "SELECT id, direction, sender, sender_display, body, create_time "
+            "SELECT id, direction, sender, sender_display, sender_mention, "
+            "sender_identity_confidence, sender_evidence_json, body, create_time "
             "FROM messages WHERE chat = ? ORDER BY id DESC LIMIT ?",
             (chat, limit),
         ).fetchall()
     result = []
-    for row_id, direction, sender, sender_display, body, create_time in reversed(rows):
+    for (
+        row_id,
+        direction,
+        sender,
+        sender_display,
+        sender_mention,
+        sender_identity_confidence,
+        sender_evidence_json,
+        body,
+        create_time,
+    ) in reversed(rows):
+        try:
+            sender_evidence = json.loads(str(sender_evidence_json or "{}"))
+        except json.JSONDecodeError:
+            sender_evidence = {}
         result.append(
             {
                 "local_id": row_id,
                 "server_id": f"history:{row_id}",
                 "sender": sender or "",
                 "sender_display": sender_display or sender or "",
+                "sender_mention": sender_mention or sender_display or sender or "",
+                "sender_identity_confidence": sender_identity_confidence or "unknown",
+                "sender_evidence": sender_evidence if isinstance(sender_evidence, dict) else {},
                 "local_type": "text",
                 "create_time": create_time or 0,
                 "kind": "text",

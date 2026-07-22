@@ -32,6 +32,123 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_worker_response_policy_is_exact_chat_and_transport_scoped(self) -> None:
+        worker = load_worker()
+        echomind = worker.worker_response_policy({"chat": "EchoMind", "route": {"transport": "wechat"}})
+        labagent = worker.worker_response_policy(
+            {
+                "chat": "wecom:external:group:abc",
+                "route": {"transport": "wecom"},
+                "response_policy": {
+                    "automatic_multilingual": False,
+                    "language_mode": "match_requester_language",
+                },
+            }
+        )
+
+        self.assertTrue(echomind["automatic_multilingual"])
+        self.assertFalse(labagent["automatic_multilingual"])
+        self.assertFalse(labagent["cross_chat_context_allowed"])
+        self.assertEqual(labagent["sender_attribution"], "preserve_each_message_author")
+
+    def test_worker_prompt_preserves_authors_without_labagent_language_tail(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+        task = {
+            "id": "wecom-attribution",
+            "chat": "wecom:external:group:abc",
+            "request": "请根据两位成员的反馈修改图。",
+            "route": {"transport": "wecom"},
+            "response_policy": {
+                "scope": "exact_chat_only",
+                "automatic_multilingual": False,
+                "language_mode": "match_requester_language",
+            },
+            "source": {
+                "sender": "member-a",
+                "sender_display": "megamonster",
+                "sender_mention": "megamonster@微信",
+                "sender_identity_confidence": "visible_row_label",
+            },
+            "context": [
+                {
+                    "sender_display": "megamonster",
+                    "sender_identity_confidence": "visible_row_label",
+                    "content": "思想上还不够高级",
+                },
+                {
+                    "sender_display": "sunnyyty",
+                    "sender_identity_confidence": "visible_row_label",
+                    "content": "字太多",
+                },
+            ],
+        }
+
+        def fake_run(prompt: str, **kwargs: object) -> dict[str, object]:
+            calls.append({"prompt": prompt, **kwargs})
+            return {"ok": True, "message": "done", "thread_id": "worker-thread"}
+
+        with mock.patch.object(worker, "run_codex_session", side_effect=fake_run):
+            self.assertEqual(
+                worker.run_worker_agent_session(
+                    task,
+                    {
+                        "model": "gpt-5.6-sol",
+                        "reasoning_effort": "low",
+                        "sandbox": "danger-full-access",
+                        "timeout_seconds": 300,
+                    },
+                ),
+                "done",
+            )
+
+        prompt = str(calls[0]["prompt"])
+        self.assertIn("Never transfer one person's statement", prompt)
+        self.assertIn("Do not append English/Japanese translations", prompt)
+        self.assertIn('"sender_display": "megamonster"', prompt)
+        self.assertIn('"sender_display": "sunnyyty"', prompt)
+        self.assertNotIn("This exact chat is a multilingual language-teaching chat", prompt)
+
+    def test_wecom_delivery_guard_removes_only_unsolicited_language_tail(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "wecom:external:group:abc",
+            "request": "请把论文图发回来。",
+            "route": {"transport": "wecom"},
+            "response_policy": {"automatic_multilingual": False},
+        }
+        result = {
+            "message": "图和可编辑源文件已经完成。\n\nEnglish: Figure completed.\n日本語：図が完成しました。",
+            "confirmation": "",
+            "files": [],
+            "data": {"message": "图和可编辑源文件已经完成。\n\nEnglish: Figure completed.\n日本語：図が完成しました。"},
+        }
+
+        worker.enforce_worker_result_response_policy(task, result)
+
+        self.assertEqual(result["message"], "图和可编辑源文件已经完成。")
+        self.assertEqual(result["data"]["message"], result["message"])
+        self.assertEqual(
+            task["response_policy_adjustments"][0]["kind"],
+            "removed_unsolicited_multilingual_tail",
+        )
+
+    def test_response_guard_preserves_explicit_translation_request(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "wecom:external:group:abc",
+            "request": "请翻译成中英日三语。",
+            "route": {"transport": "wecom"},
+            "response_policy": {"automatic_multilingual": False},
+        }
+        message = "中文内容。\n\nEnglish: English text.\n日本語：日本語。"
+        result = {"message": message, "confirmation": "", "files": []}
+
+        worker.enforce_worker_result_response_policy(task, result)
+
+        self.assertEqual(result["message"], message)
+        self.assertNotIn("response_policy_adjustments", task)
+
     def test_research_timeout_recovers_exact_task_report_and_latex_pdf(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -312,6 +429,37 @@ stderr: noisy internal trace
         self.assertEqual(policy["model"], "gpt-5.5")
         self.assertEqual(policy["reasoning_effort"], "xhigh")
         self.assertEqual(policy["timeout_seconds"], 1200)
+
+    def test_worker_policy_uses_gpt56_ultra_for_protein_structure_tasks(self) -> None:
+        worker = load_worker()
+        with mock.patch.dict(
+            worker.os.environ,
+            {
+                "WECHAT_WORKER_CODEX_MODEL": "gpt-5.5",
+                "WECHAT_WORKER_MIN_EFFORT": "high",
+                "WECHAT_WORKER_MAX_EFFORT": "high",
+                "WECHAT_WORKER_TIMEOUT_ULTRA_SECONDS": "86400",
+            },
+            clear=False,
+        ):
+            policy = worker.choose_worker_policy(
+                {"request": "用 AlphaFold 算出 COL1A1 的蛋白结构，并查找靶向这个分子的抑制剂"}
+            )
+
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["reasoning_effort"], "ultra")
+        self.assertEqual(policy["timeout_seconds"], 86400)
+
+    def test_worker_tool_context_reuses_protein_structure_pipeline(self) -> None:
+        worker = load_worker()
+
+        context = worker.build_worker_tool_context(
+            {"id": "protein-task", "chat": "LabAgent", "request": "Predict a protein structure"}
+        )
+
+        self.assertIn("external/ProteinStructure", context)
+        self.assertIn("python -m agenticapp protein start", context)
+        self.assertIn("Do not recreate its browser or analysis pipeline", context)
 
     def test_worker_policy_uses_medium_for_literature_summary(self) -> None:
         worker = load_worker()
@@ -7210,6 +7358,65 @@ stderr: noisy internal trace
         self.assertIn("/tmp/private/audio-agent-context.md", calls[0])
         self.assertIn("Deterministic code owns exact same-chat media resolution", calls[0])
         self.assertIn("请设计一个支架", calls[0])
+
+    def test_verified_voice_transcript_is_returned_beside_agent_answer(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {
+                "local_id": 93,
+                "local_type": 34,
+                "voice_transcript": "请把这个实验方案画成图。",
+            },
+            "preflight": {"audio_intake": {"status": "transcribed"}},
+        }
+
+        result = worker.attach_audio_transcript_reference(
+            task,
+            {"message": "我会先整理机制和对照组。", "confirmation": "", "files": []},
+        )
+
+        self.assertEqual(
+            result["message"],
+            "🎙️ 转写：请把这个实验方案画成图。\n\n我会先整理机制和对照组。",
+        )
+        self.assertFalse(result["no_reply"])
+        self.assertEqual(result["data"]["audio_transcript_reference"]["source_local_id"], 93)
+
+    def test_downloaded_wecom_voice_transcript_is_returned_once(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"local_id": 94, "local_type": "voice", "kind": "voice"},
+            "preflight": {
+                "audio_intake": {
+                    "status": "cached",
+                    "text": "Could you compare these two protocols?",
+                    "agent_context_path": "/tmp/private/audio-agent-context.md",
+                    "model": "private-model-name",
+                }
+            },
+        }
+        original = {"message": "Yes. I will compare the controls first.", "confirmation": "", "files": []}
+
+        first = worker.attach_audio_transcript_reference(task, original)
+        second = worker.attach_audio_transcript_reference(task, first)
+
+        self.assertEqual(first, second)
+        self.assertEqual(first["message"].count("🎙️ 转写："), 1)
+        self.assertNotIn("/tmp/private", first["message"])
+        self.assertNotIn("private-model-name", first["message"])
+
+    def test_unverified_audio_does_not_create_transcript_reference(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"local_id": 95, "local_type": "voice", "kind": "voice"},
+            "preflight": {"audio_intake": {"status": "failed", "text": "unverified words"}},
+        }
+        original = {"message": "Audio recovery is still pending.", "confirmation": "", "files": []}
+
+        result = worker.attach_audio_transcript_reference(task, original)
+
+        self.assertIs(result, original)
+        self.assertNotIn("转写", result["message"])
 
     def test_wechat_send_env_extends_gui_alarm_to_worker_timeout(self) -> None:
         worker = load_worker()

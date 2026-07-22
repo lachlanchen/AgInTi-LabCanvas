@@ -296,6 +296,92 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(result["reply"].startswith(route["response"]))
         self.assertIn("#daily", result["reply"])
 
+    def test_peer_conversation_can_be_silent_without_worker_queue(self) -> None:
+        ingest = load_ingest()
+        route = {
+            "worker_needed": False,
+            "route_kind": "other_worker",
+            "response": "",
+            "task": "",
+            "ack": "",
+            "message_role": "peer_conversation",
+            "reply_mode": "silent",
+            "public_publish_allowed": False,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(ingest, "route_event", return_value=route), mock.patch.object(
+                ingest, "record_event"
+            ):
+                result = ingest.ingest_event(
+                    self.sample_event(text="师姐你教一下他"),
+                    queue=root / "queue.jsonl",
+                    history_db=root / "history.sqlite",
+                    route_with_agent=True,
+                )
+
+        self.assertFalse(result["queued"])
+        self.assertTrue(result["no_reply"])
+        self.assertFalse((root / "queue.jsonl").exists())
+
+    def test_router_preserves_artifact_guidance_role_and_context(self) -> None:
+        ingest = load_ingest()
+        response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": True,
+                    "route_kind": "paper_figure",
+                    "response": "",
+                    "task": "Use the concept image as a brief, then rebuild an editable BioRender figure.",
+                    "ack": "明白，我会按这个两阶段方法调整。",
+                    "message_role": "artifact_instruction",
+                    "reply_mode": "ack_then_work",
+                    "reply_to_senders": ["陈苗", "sunnyyty"],
+                    "public_publish_allowed": False,
+                }
+            ),
+        }
+        event = self.sample_event(
+            text="先生成样本图，再用 BioRender 复刻成可编辑图",
+            sender_display="sunnyyty",
+            sender_mention="sunnyyty@微信",
+        )
+        captured: list[str] = []
+
+        def fake_agent(prompt: str, **_kwargs: object) -> dict[str, object]:
+            captured.append(prompt)
+            return response
+
+        with mock.patch.object(ingest, "run_agent_session", side_effect=fake_agent):
+            route = ingest.route_event(
+                event,
+                ingest.event_request(event),
+                [{"sender_display": "陈苗", "content": "这是它调 BioRender 画的图"}],
+            )
+
+        self.assertEqual(route["message_role"], "artifact_instruction")
+        self.assertEqual(route["reply_mode"], "ack_then_work")
+        self.assertEqual(route["reply_to_senders"], ["陈苗", "sunnyyty"])
+        self.assertIn("instructions addressed to LabCanvas itself", captured[0])
+        self.assertIn("这是它调 BioRender 画的图", captured[0])
+
+    def test_combined_reply_mentions_only_exact_same_chat_senders(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(
+            sender_display="sunnyyty",
+            sender_mention="sunnyyty@微信",
+        )
+        context = [
+            {"sender_display": "陈苗", "content": "先学习 NCS 图", "is_self": False},
+            {"sender_display": "LabAgent", "content": "old reply", "is_self": True},
+        ]
+        route = {"reply_to_senders": ["陈苗", "sunnyyty", "not-in-this-chat"]}
+
+        mentions = ingest.route_reply_mentions(event, context, route)
+
+        self.assertEqual(mentions, ["sunnyyty@微信", "陈苗"])
+
     def test_grant_request_fallback_uses_dedicated_goal_routine(self) -> None:
         ingest = load_ingest()
         event = self.sample_event(
@@ -358,6 +444,52 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(duplicate["reply"], "")
         self.assertEqual(duplicate["suppressed"], "recent_exact_wecom_gui_duplicate")
         self.assertEqual(route_agent.call_count, 1)
+
+    def test_gui_ingest_retries_same_unprocessed_event_instead_of_suppressing_it(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(
+            message_id="android:stable-message",
+            account_id="external-gui",
+            chat_id="gui:LabAgent",
+            transport_channel="wecom_android",
+            sender_userid="android-member:sunnyyty",
+            text="@陈喵瞄秒妙 要学习CNS顶刊风格绘图",
+        )
+        route = {
+            "worker_needed": False,
+            "route_kind": "other_worker",
+            "response": "收到，我会把这条标准用于当前绘图流程。",
+            "task": "",
+            "ack": "",
+            "daily_topic": "",
+            "public_publish_allowed": False,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "history.sqlite"
+            ingest.init_history_db(history)
+            ingest.record_history_message(
+                history,
+                event,
+                ingest.canonical_chat_name(event),
+                ingest.event_request(event),
+                direction="inbound",
+            )
+            with mock.patch.object(ingest, "route_event", return_value=route) as route_agent, mock.patch.object(
+                ingest,
+                "record_event",
+            ):
+                result = ingest.ingest_event(
+                    event,
+                    queue=root / "queue.jsonl",
+                    history_db=history,
+                    route_with_agent=True,
+                )
+
+        self.assertFalse(result["duplicate"])
+        self.assertTrue(result["reply"].startswith(route["response"]))
+        route_agent.assert_called_once()
 
     def test_daily_directive_queues_one_immediate_report_without_route_turn(self) -> None:
         ingest = load_ingest()
@@ -895,6 +1027,72 @@ class WeComAgentBridgeTests(unittest.TestCase):
         evidence = task["execution_contract"]["research_evidence"]
         self.assertEqual(evidence["minimum_traceable_sources"], 2)
         self.assertTrue(evidence["separate_direct_indirect_hypothesis"])
+
+    def test_wecom_task_preserves_sender_and_exact_chat_response_policy(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(
+            transport_channel="wecom_android",
+            sender_userid="android-member:prof-ma",
+            sender_display="megamonster",
+            sender_mention="megamonster@微信",
+            sender_identity_confidence="visible_row_label",
+            sender_evidence={"sender_label_bounds": "[80,100][260,130]"},
+        )
+        route = {
+            "worker_needed": True,
+            "route_kind": "research_or_summary",
+            "response": "",
+            "task": "Research the exact question.",
+            "ack": "",
+            "report_required": True,
+            "reply_to_senders": [],
+            "public_publish_allowed": False,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            task = ingest.build_task(
+                event,
+                ingest.canonical_chat_name(event),
+                ingest.event_request(event),
+                [],
+                route,
+                Path(tmp) / "queue.jsonl",
+            )
+
+        policy = task["response_policy"]
+        self.assertEqual(policy["scope"], "exact_chat_only")
+        self.assertFalse(policy["automatic_multilingual"])
+        self.assertEqual(policy["language_mode"], "match_requester_language")
+        self.assertFalse(policy["cross_chat_context_allowed"])
+        self.assertEqual(task["source"]["sender_display"], "megamonster")
+        self.assertEqual(task["source"]["sender_mention"], "megamonster@微信")
+        self.assertEqual(task["source"]["sender_identity_confidence"], "visible_row_label")
+        self.assertEqual(task["source"]["reply_mentions"], ["megamonster@微信"])
+
+    def test_wecom_history_migrates_and_retains_sender_evidence(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(
+            sender_display="sunnyyty",
+            sender_mention="sunnyyty@微信",
+            sender_identity_confidence="visible_row_label",
+            sender_evidence={"sender_candidate_count": "1"},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            history = Path(tmp) / "history.sqlite"
+            with sqlite3.connect(history) as conn:
+                conn.execute(
+                    "CREATE TABLE messages (id INTEGER PRIMARY KEY, message_id TEXT NOT NULL UNIQUE, "
+                    "chat TEXT NOT NULL, direction TEXT NOT NULL, sender TEXT, sender_display TEXT, "
+                    "body TEXT NOT NULL, create_time INTEGER, created_at TEXT NOT NULL, processed_at TEXT)"
+                )
+            ingest.init_history_db(history)
+            chat = ingest.canonical_chat_name(event)
+            ingest.record_history_message(history, event, chat, event["text"], direction="inbound")
+            rows = ingest.recent_history(history, chat, limit=4)
+
+        self.assertEqual(rows[0]["sender_display"], "sunnyyty")
+        self.assertEqual(rows[0]["sender_mention"], "sunnyyty@微信")
+        self.assertEqual(rows[0]["sender_identity_confidence"], "visible_row_label")
+        self.assertEqual(rows[0]["sender_evidence"]["sender_candidate_count"], "1")
 
     def test_incomplete_ingest_can_retry_same_message(self) -> None:
         ingest = load_ingest()

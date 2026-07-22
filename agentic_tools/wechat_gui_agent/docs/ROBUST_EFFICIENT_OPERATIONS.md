@@ -1172,6 +1172,36 @@ Xvfb, x11vnc, websockify, the profile, queue, and monitors. Set
 
 ## Recovery Playbooks
 
+### ProteinStructure and AlphaFold
+
+Protein-structure requests are agent-owned worker tasks. The transport ACKs and
+queues them; the worker resumes the exact chat session with `gpt-5.6-sol` and
+Ultra effort, then calls the existing `ProteinStructure` routines through the
+thin LabCanvas CLI. Do not duplicate AlphaFold browser logic in the worker.
+
+```bash
+labcanvas protein start --json
+labcanvas protein status --json
+labcanvas protein submit path/to/job.fasta --dry-run
+labcanvas protein poll --download --all-pages
+labcanvas protein metrics --detailed
+labcanvas protein render all
+labcanvas protein screenshot
+```
+
+The source submodule is `external/ProteinStructure`; the default artifact
+workspace is the sibling `../ProteinStructure`. The browser reuses
+`~/.cache/alphafold-server-chrome`, CDP `127.0.0.1:9222`, and localhost noVNC
+`127.0.0.1:6187`. Generated downloads, figures, PDFs, screenshots, and logs
+remain ignored in the sibling workspace. Results returned to chat must include
+the useful model/metrics/plot/report artifacts, not merely local paths.
+
+Treat structure prediction and inhibitor identification as separate evidence
+stages. AlphaFold confidence does not prove binding, docking is a hypothesis,
+and literature/database evidence must remain distinguishable from experimental
+validation. Respect AlphaFold Server terms and do not represent its output as
+clinical or screening validation.
+
 No reply:
 
 ```bash

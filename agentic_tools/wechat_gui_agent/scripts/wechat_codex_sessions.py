@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import errno
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ import signal
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import Any
 
 from file_lock import fcntl_compat as fcntl
@@ -44,12 +46,15 @@ def run_codex_session(
     if os.environ.get("WECHAT_CODEX_REUSE_SESSIONS", "1") == "0":
         reuse = False
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
-    lock_path = registry_path.with_suffix(".lock")
     key = session_key(chat_name, role)
-    with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        registry = load_registry(registry_path)
-        previous_id = str(registry.get(key, {}).get("thread_id") or "") if reuse else ""
+    execution_lock_path = session_execution_lock_path(registry_path, key)
+    execution_lock_path.parent.mkdir(parents=True, exist_ok=True)
+    # Serialize one exact chat/role thread, while allowing unrelated chats and
+    # lightweight router turns to run concurrently. The registry lock below is
+    # deliberately held only for short read/write transactions.
+    with execution_lock_path.open("w", encoding="utf-8") as execution_lock:
+        fcntl.flock(execution_lock, fcntl.LOCK_EX)
+        previous_id = read_registered_thread_id(registry_path, key) if reuse else ""
         result = run_codex_once(
             prompt,
             thread_id=previous_id,
@@ -78,10 +83,90 @@ def run_codex_session(
             result["resumed"] = bool(previous_id)
             result["fallback_started"] = False
         if result.get("ok") and result.get("thread_id"):
-            update_registry(registry, key, chat_name, role, result, model, reasoning_effort, sandbox, workdir)
-            save_registry(registry_path, registry)
-        fcntl.flock(lock, fcntl.LOCK_UN)
+            result["registry_persisted"] = persist_session_result(
+                registry_path,
+                key,
+                chat_name,
+                role,
+                result,
+                model,
+                reasoning_effort,
+                sandbox,
+                workdir,
+            )
+        fcntl.flock(execution_lock, fcntl.LOCK_UN)
     return result
+
+
+def registry_lock_path(registry_path: Path) -> Path:
+    return registry_path.with_suffix(".lock")
+
+
+def session_execution_lock_path(registry_path: Path, key: str) -> Path:
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+    return registry_path.parent / "execution-locks" / f"{digest}.lock"
+
+
+def read_registered_thread_id(registry_path: Path, key: str) -> str:
+    lock_path = registry_lock_path(registry_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lock:
+        if not acquire_exclusive_lock(lock):
+            return ""
+        registry = load_registry(registry_path)
+        thread_id = str(registry.get(key, {}).get("thread_id") or "")
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    return thread_id
+
+
+def persist_session_result(
+    registry_path: Path,
+    key: str,
+    chat_name: str,
+    role: str,
+    result: dict[str, Any],
+    model: str,
+    reasoning_effort: str,
+    sandbox: str,
+    workdir: Path,
+) -> bool:
+    lock_path = registry_lock_path(registry_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lock:
+        if not acquire_exclusive_lock(lock):
+            return False
+        registry = load_registry(registry_path)
+        update_registry(
+            registry,
+            key,
+            chat_name,
+            role,
+            result,
+            model,
+            reasoning_effort,
+            sandbox,
+            workdir,
+        )
+        save_registry(registry_path, registry)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    return True
+
+
+def acquire_exclusive_lock(handle: Any, *, timeout_seconds: float | None = None) -> bool:
+    """Acquire a short registry lock without stalling incoming chat messages."""
+    if timeout_seconds is None:
+        timeout_seconds = float(os.environ.get("WECHAT_CODEX_REGISTRY_LOCK_TIMEOUT_SECONDS", "2"))
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except (BlockingIOError, OSError) as exc:
+            if isinstance(exc, OSError) and exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                raise
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
 
 
 def run_codex_once(

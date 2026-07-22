@@ -90,7 +90,7 @@ fi
 usage() {
   cat <<'EOF'
 Usage:
-  wechat_supervisor_tmux.sh start|stop|restart|reload-workers|restart-all|status
+  wechat_supervisor_tmux.sh start|ensure|stop|restart|reload-workers|restart-all|status
 
 Notes:
   restart/reload-workers keeps the WeChat GUI desktop alive and only reloads
@@ -126,6 +126,46 @@ list_session_panes() {
       [[ -n "$window_id" ]] || continue
       tmux list-panes -t "$window_id" -F "${window_name}.#{pane_index}: #{pane_current_command} #{pane_pid}"
     done
+}
+
+window_id_by_name() {
+  local name="$1"
+  tmux list-windows -t "$SESSION" -F '#{window_id}|#{window_name}' 2>/dev/null |
+    awk -F '|' -v name="$name" '$2 == name { print $1; exit }'
+}
+
+window_live() {
+  local window_id
+  window_id="$(window_id_by_name "$1")"
+  [[ -n "$window_id" ]] || return 1
+  tmux list-panes -t "$window_id" -F '#{pane_dead}' 2>/dev/null | grep -qx '0'
+}
+
+window_present() {
+  [[ -n "$(window_id_by_name "$1")" ]]
+}
+
+remove_dead_window() {
+  local name="$1"
+  if window_present "$name" && ! window_live "$name"; then
+    tmux kill-window -t "$(window_id_by_name "$name")" 2>/dev/null || true
+  fi
+}
+
+start_missing_window() {
+  local name="$1"
+  local command="$2"
+  remove_dead_window "$name"
+  if ! window_live "$name"; then
+    tmux new-window -t "$SESSION" -n "$name" "$command"
+    echo "Started missing window: $name"
+  fi
+}
+
+pane_start_command_exists() {
+  local needle="$1"
+  tmux list-panes -a -F '#{session_name}|#{pane_start_command}' 2>/dev/null |
+    awk -F '|' -v session="$SESSION" -v needle="$needle" '$1 == session && index($2, needle) { found=1 } END { exit !found }'
 }
 
 respawn_or_new_window() {
@@ -196,6 +236,43 @@ worker_command() {
   label="$(worker_window_name "$index")"
   printf "cd %q && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh %q agentic_tools/wechat_gui_agent/scripts/wechat_worker_guarded_loop.sh --queue %q --loop --send >> %q 2>&1" \
     "$ROOT" "$label" "$QUEUE" "$LOG_DIR/supervisor-$label.log"
+}
+
+ensure_runtime_windows() {
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "Session not running: $SESSION" >&2
+    return 2
+  fi
+  start_missing_window desktop \
+    "cd '$ROOT' && while true; do agentic_tools/wechat_gui_agent/scripts/wechat_virtual_desktop.sh; sleep 60; done >> '$LOG_DIR/supervisor-desktop.log' 2>&1"
+  if ! pane_start_command_exists "wechat_decrypt_refresh_loop.sh"; then
+    tmux split-window -h -t "$SESSION:desktop" \
+      "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh decrypt-refresh agentic_tools/wechat_gui_agent/scripts/wechat_decrypt_refresh_loop.sh >> '$LOG_DIR/supervisor-decrypt-refresh.log' 2>&1"
+    echo "Started missing pane: decrypt-refresh"
+  fi
+  IFS=',' read -r -a DIRECT_CONFIGS <<< "$CONFIGS"
+  for direct_config in "${DIRECT_CONFIGS[@]}"; do
+    direct_config="$(echo "$direct_config" | xargs)"
+    [[ -n "$direct_config" ]] || continue
+    direct_name="$(basename "$direct_config" .json | tr -c 'A-Za-z0-9_.-' '-')"
+    start_missing_window "direct-$direct_name" \
+      "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt --poll-seconds '$DIRECT_POLL_SECONDS' --catchup-poll-seconds '$DIRECT_CATCHUP_POLL_SECONDS' >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
+  done
+  for worker_index in $(seq 1 "$WORKER_COUNT"); do
+    worker_label="$(worker_window_name "$worker_index")"
+    start_missing_window "$worker_label" "$(worker_command "$worker_index")"
+  done
+  start_missing_window media-sync \
+    "cd '$ROOT' && WECHAT_CHAT_NAME='$CHAT_NAME' WECHAT_MEDIA_CHATS='$MEDIA_CHATS' agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh media-sync agentic_tools/wechat_gui_agent/scripts/wechat_media_sync_loop.sh >> '$LOG_DIR/supervisor-media-sync.log' 2>&1"
+  if [[ "$UNLOCK_WATCHDOG" != "0" ]]; then
+    start_missing_window unlock-watchdog "$(unlock_watchdog_command)"
+  fi
+  if [[ "$CHAT_SYNC_WATCHDOG" != "0" ]]; then
+    start_missing_window chat-sync "$(chat_sync_command)"
+  fi
+  tmux select-layout -t "$SESSION:desktop" tiled >/dev/null 2>&1 || true
+  tmux select-window -t "$SESSION:desktop" >/dev/null 2>&1 || true
+  echo "Session running and missing windows repaired: $SESSION"
 }
 
 stop_gui_senders_for_reload() {
@@ -285,6 +362,13 @@ case "$action" in
     echo "Started tmux session: $SESSION"
     echo "Logs: $LOG_DIR"
     echo "Attach: tmux attach -t $SESSION"
+    ;;
+  ensure)
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      ensure_runtime_windows
+    else
+      exec "$0" start
+    fi
     ;;
   stop)
     if tmux has-session -t "$SESSION" 2>/dev/null; then

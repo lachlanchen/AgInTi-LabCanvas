@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -162,6 +163,95 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertEqual(result["returncode"], 124)
         self.assertEqual(len(calls), 1)
         self.assertIn("resume", calls[0])
+
+    def test_unrelated_chat_sessions_do_not_share_a_long_running_lock(self) -> None:
+        sessions = load_sessions()
+        first_entered = threading.Event()
+        second_entered = threading.Event()
+        release = threading.Event()
+        results: dict[str, dict[str, object]] = {}
+
+        def fake_run(prompt: str, **_kwargs: object) -> dict[str, object]:
+            if prompt == "first":
+                first_entered.set()
+            else:
+                second_entered.set()
+            release.wait(timeout=3)
+            return {
+                "ok": True,
+                "message": prompt,
+                "thread_id": f"thread-{prompt}",
+                "returncode": 0,
+                "stderr_tail": "",
+                "stdout_tail": "",
+            }
+
+        def invoke(name: str, prompt: str, registry: Path) -> None:
+            results[name] = sessions.run_codex_session(
+                prompt,
+                chat_name=name,
+                role="fast",
+                model="gpt-5.6-sol",
+                reasoning_effort="low",
+                sandbox="read-only",
+                timeout_seconds=30,
+                registry_path=registry,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            sessions, "run_codex_once", side_effect=fake_run
+        ):
+            registry = Path(tmp) / "sessions.local.json"
+            first = threading.Thread(target=invoke, args=("LabAgent", "first", registry))
+            second = threading.Thread(target=invoke, args=("EchoMind", "second", registry))
+            first.start()
+            self.assertTrue(first_entered.wait(timeout=1))
+            second.start()
+            try:
+                self.assertTrue(
+                    second_entered.wait(timeout=1),
+                    "an unrelated chat was blocked by the first chat's Codex turn",
+                )
+            finally:
+                release.set()
+                first.join(timeout=3)
+                second.join(timeout=3)
+            saved = json.loads(registry.read_text(encoding="utf-8"))
+
+        self.assertTrue(results["LabAgent"]["ok"])
+        self.assertTrue(results["EchoMind"]["ok"])
+        self.assertEqual(len(saved), 2)
+
+    def test_busy_registry_lock_does_not_block_agent_turn(self) -> None:
+        sessions = load_sessions()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            sessions, "acquire_exclusive_lock", return_value=False
+        ), mock.patch.object(
+            sessions,
+            "run_codex_once",
+            return_value={
+                "ok": True,
+                "message": "handled",
+                "thread_id": "thread-new",
+                "returncode": 0,
+                "stderr_tail": "",
+                "stdout_tail": "",
+            },
+        ):
+            result = sessions.run_codex_session(
+                "new message",
+                chat_name="LabAgent",
+                role="route",
+                model="gpt-5.6-sol",
+                reasoning_effort="low",
+                sandbox="read-only",
+                timeout_seconds=30,
+                registry_path=Path(tmp) / "sessions.local.json",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["resumed"])
+        self.assertFalse(result["registry_persisted"])
 
     def test_worker_session_enables_native_web_search(self) -> None:
         sessions = load_sessions()

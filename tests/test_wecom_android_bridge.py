@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import sqlite3
 import stat
 import sys
 import tempfile
@@ -376,6 +377,60 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertIs(result, composer)
         runtime.press_back.assert_called_once_with()
 
+    def test_send_text_normalizes_chat_surface_before_composing(self) -> None:
+        bridge = load_bridge()
+        root = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="" resource-id="com.tencent.wework:id/j28" package="com.tencent.wework" />
+              <node text="发送" resource-id="com.tencent.wework:id/j24" package="com.tencent.wework" clickable="true" />
+              <node text="正在处理" resource-id="com.tencent.wework:id/j1l" package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.normalize_chat_surface = mock.Mock(return_value=root)
+            runtime.open_chat = mock.Mock(side_effect=AssertionError("open_chat should not bypass normalization"))
+            runtime.tap_node = mock.Mock()
+            runtime.paste_text = mock.Mock()
+            runtime.wait_for_composer_message = mock.Mock(return_value=root)
+            runtime.ensure_chat_identity = mock.Mock(return_value=root)
+            with mock.patch.object(bridge.time, "sleep"):
+                result = runtime.send_text_locked(
+                    "LabAgent", "正在处理", task_id="task-normalize"
+                )
+
+        self.assertTrue(result["ok"])
+        runtime.normalize_chat_surface.assert_called_once_with("LabAgent")
+        runtime.open_chat.assert_not_called()
+
+    def test_serialized_lock_has_bounded_busy_failure(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.lock_path = Path(tmp) / "bridge.lock"
+            with mock.patch.object(
+                bridge.fcntl, "flock", side_effect=BlockingIOError
+            ), mock.patch.object(bridge.time, "monotonic", side_effect=[0.0, 1.0]):
+                with self.assertRaisesRegex(bridge.BridgeError, "WECOM_ANDROID_BUSY"):
+                    with runtime.serialized(timeout_seconds=0.1):
+                        self.fail("busy lock must not be entered")
+
     def test_parse_messages_distinguishes_inbound_and_own_rows(self) -> None:
         bridge = load_bridge()
         xml = """
@@ -406,6 +461,73 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(records[0]["body"], "请帮我查论文")
         self.assertEqual(records[0]["quote_text"], "")
         self.assertEqual(records[1]["direction"], "outbound")
+
+    def test_parse_messages_keeps_adjacent_authors_on_their_own_rows(self) -> None:
+        bridge = load_bridge()
+        xml = """
+        <hierarchy><node>
+          <node resource-id="com.tencent.wework:id/eyy" package="com.tencent.wework">
+            <node text="megamonster" class="android.widget.TextView" bounds="[90,100][300,130]" package="com.tencent.wework" />
+            <node text="思想上还不够高级" resource-id="com.tencent.wework:id/j1l"
+                  class="android.widget.TextView" bounds="[90,140][850,200]" package="com.tencent.wework" />
+          </node>
+          <node resource-id="com.tencent.wework:id/eyy" package="com.tencent.wework">
+            <node text="sunnyyty" class="android.widget.TextView" bounds="[90,220][300,250]" package="com.tencent.wework" />
+            <node text="这个需要改进的地方是字太多" resource-id="com.tencent.wework:id/j1l"
+                  class="android.widget.TextView" bounds="[90,260][850,320]" package="com.tencent.wework" />
+          </node>
+        </node></hierarchy>
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            records = runtime.parse_messages(ET.fromstring(xml))
+
+        self.assertEqual(
+            [(row["sender"], row["body"]) for row in records],
+            [
+                ("megamonster", "思想上还不够高级"),
+                ("sunnyyty", "这个需要改进的地方是字太多"),
+            ],
+        )
+        self.assertTrue(all(row["sender_identity_confidence"] == "visible_row_label" for row in records))
+
+    def test_ambiguous_row_stays_unattributed_and_never_mentions_a_guess(self) -> None:
+        bridge = load_bridge()
+        xml = """
+        <hierarchy><node>
+          <node resource-id="com.tencent.wework:id/eyy" package="com.tencent.wework">
+            <node resource-id="com.tencent.wework:id/ja3" bounds="[20,100][70,150]" package="com.tencent.wework" />
+            <node text="person-a" class="android.widget.TextView" bounds="[90,100][220,125]" package="com.tencent.wework" />
+            <node text="person-b" class="android.widget.TextView" bounds="[240,100][370,125]" package="com.tencent.wework" />
+            <node text="需要进一步分析" resource-id="com.tencent.wework:id/j1l"
+                  class="android.widget.TextView" bounds="[90,140][850,200]" package="com.tencent.wework" />
+          </node>
+        </node></hierarchy>
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            record = runtime.parse_messages(ET.fromstring(xml))[0]
+            event = runtime.build_event("LabAgent", record)
+
+        self.assertEqual(record["direction"], "inbound")
+        self.assertEqual(record["sender"], "")
+        self.assertEqual(record["sender_identity_confidence"], "unattributed_row")
+        self.assertEqual(event["sender_mention"], "")
+        self.assertNotEqual(event["sender_userid"], "android-member:unknown")
 
     def test_parse_messages_preserves_quote_preview_in_agent_event(self) -> None:
         bridge = load_bridge()
@@ -464,6 +586,84 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(bridge.composer_text(placeholder), "")
         with self.assertRaises(bridge.BridgeError):
             bridge.validate_mentions(["所有人"])
+
+    def test_resilient_text_send_drops_secondary_mention_before_primary(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            with mock.patch.object(
+                runtime,
+                "send_text_locked",
+                side_effect=[
+                    bridge.BridgeError("expected one exact WeCom member named '陈苗', found 2"),
+                    {
+                        "ok": True,
+                        "sent_messages": ["正在处理"],
+                        "sent_files": [],
+                        "mentioned_users": ["megamonster@微信"],
+                    },
+                ],
+            ) as sender:
+                result = runtime.send_text_resilient_locked(
+                    "LabAgent",
+                    "正在处理",
+                    task_id="task-1",
+                    mentions=["megamonster@微信", "陈苗"],
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["mentioned_users"], ["megamonster@微信"])
+        self.assertEqual(sender.call_args_list[0].kwargs["mentions"], ["megamonster@微信", "陈苗"])
+        self.assertEqual(sender.call_args_list[1].kwargs["mentions"], ["megamonster@微信"])
+
+    def test_resilient_text_send_delivers_plain_text_when_primary_mention_breaks(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            with mock.patch.object(
+                runtime,
+                "send_text_locked",
+                side_effect=[
+                    bridge.BridgeError("text and native mentions were not reproduced exactly in the WeCom composer"),
+                    {
+                        "ok": True,
+                        "sent_messages": ["完整结果已完成"],
+                        "sent_files": [],
+                        "mentioned_users": [],
+                    },
+                ],
+            ) as sender:
+                result = runtime.send_text_resilient_locked(
+                    "LabAgent",
+                    "完整结果已完成",
+                    task_id="task-2",
+                    mentions=["megamonster@微信"],
+                )
+                requested_hash = bridge.text_component_value_hash(
+                    "完整结果已完成", ["megamonster@微信"]
+                )
+                record = runtime.component_record(
+                    runtime.component_key("task-2", "LabAgent", "text", requested_hash)
+                )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(sender.call_args_list[1].kwargs["mentions"], [])
+        self.assertEqual(record["status"], "sent")
+        self.assertTrue(record["details"]["mention_fallback"])
 
     def test_exact_mention_rows_preserve_visible_case_and_spelling(self) -> None:
         bridge = load_bridge()
@@ -531,7 +731,13 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             ), mock.patch.object(runtime, "load_snapshot", return_value=["old"]), mock.patch.object(
                 runtime, "save_snapshot"
             ) as save_snapshot, mock.patch.object(
-                runtime, "invoke_ingest", return_value={"queued": True, "ack": "我会查证后回复。"}
+                runtime,
+                "invoke_ingest",
+                return_value={
+                    "queued": True,
+                    "ack": "我会查证后回复。",
+                    "reply_mentions": ["sunnyyty@微信", "陈苗"],
+                },
             ), mock.patch.object(
                 runtime,
                 "send_text_locked",
@@ -543,7 +749,219 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(result["replied"], 1)
         save_snapshot.assert_called_once_with("LabAgent", ["old", "new"])
         send_text.assert_called_once()
-        self.assertEqual(send_text.call_args.kwargs["mentions"], ["sunnyyty@微信"])
+        self.assertEqual(send_text.call_args.kwargs["mentions"], ["sunnyyty@微信", "陈苗"])
+
+    def test_read_only_snapshot_does_not_consume_pending_inbound(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "history_db": str(Path(tmp) / "history.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.lock_path = Path(tmp) / "bridge.lock"
+            old = {"fingerprint": "old", "direction": "outbound", "sender": "", "body": "old"}
+            new = {
+                "fingerprint": "new",
+                "direction": "inbound",
+                "sender": "sunnyyty",
+                "mention_name": "sunnyyty@微信",
+                "body": "请按 CNS 顶刊风格调整图。",
+            }
+            runtime.save_snapshot("LabAgent", ["old"])
+            runtime.mark_observed_message("LabAgent", old, "seeded")
+            with mock.patch.object(runtime, "open_chat", return_value=ET.fromstring("<hierarchy />")), mock.patch.object(
+                runtime, "parse_messages", return_value=[old, new]
+            ), mock.patch.object(
+                runtime, "invoke_ingest", return_value={"queued": True, "ack": "会按这个标准调整。"}
+            ) as ingest, mock.patch.object(
+                runtime, "send_text_locked", return_value={"sent_messages": ["会按这个标准调整。"]}
+            ):
+                inspected = runtime.snapshot("LabAgent", enqueue=False)
+                processed = runtime.snapshot("LabAgent", enqueue=True)
+
+        self.assertEqual(inspected["pending"], 1)
+        self.assertEqual(inspected["processed"], 0)
+        self.assertEqual(processed["processed"], 1)
+        ingest.assert_called_once()
+
+    def test_viewport_change_without_overlap_ingests_unseen_message(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "history_db": str(Path(tmp) / "history.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.lock_path = Path(tmp) / "bridge.lock"
+            runtime.save_snapshot("LabAgent", ["old-viewport"])
+            runtime.seed_observed_fingerprints("LabAgent", ["old-viewport"])
+            new = {
+                "fingerprint": "new-viewport",
+                "direction": "inbound",
+                "sender": "sunnyyty",
+                "mention_name": "sunnyyty@微信",
+                "body": "不要漏掉和上一条重叠的指导。",
+            }
+            with mock.patch.object(runtime, "open_chat", return_value=ET.fromstring("<hierarchy />")), mock.patch.object(
+                runtime, "parse_messages", return_value=[new]
+            ), mock.patch.object(
+                runtime, "invoke_ingest", return_value={"queued": True, "ack": "收到。"}
+            ) as ingest, mock.patch.object(
+                runtime, "send_text_locked", return_value={"sent_messages": ["收到。"]}
+            ):
+                result = runtime.snapshot("LabAgent", enqueue=True)
+
+        self.assertTrue(result["viewport_changed_without_overlap"])
+        self.assertEqual(result["processed"], 1)
+        ingest.assert_called_once()
+
+    def test_pending_message_remains_actionable_after_it_scrolls_offscreen(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "history_db": str(Path(tmp) / "history.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.lock_path = Path(tmp) / "bridge.lock"
+            pending = {
+                "fingerprint": "pending-sunnyyty",
+                "direction": "inbound",
+                "sender": "sunnyyty",
+                "mention_name": "sunnyyty@微信",
+                "body": "要学习 CNS 顶刊风格绘图",
+                "quote_text": "",
+            }
+            latest = {
+                "fingerprint": "latest-outbound",
+                "direction": "outbound",
+                "sender": "",
+                "body": "newer result",
+            }
+            runtime.save_snapshot("LabAgent", [pending["fingerprint"]])
+            runtime.mark_observed_message("LabAgent", pending, "pending")
+            with mock.patch.object(runtime, "open_chat", return_value=ET.fromstring("<hierarchy />")), mock.patch.object(
+                runtime, "parse_messages", return_value=[latest]
+            ), mock.patch.object(
+                runtime,
+                "invoke_ingest",
+                return_value={"queued": True, "ack": "收到。"},
+            ) as ingest, mock.patch.object(
+                runtime, "send_text_locked", return_value={"sent_messages": ["收到。"]}
+            ):
+                result = runtime.snapshot("LabAgent", enqueue=True)
+
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(ingest.call_args.args[0]["text"], pending["body"])
+
+    def test_legacy_pending_fingerprint_recovers_unprocessed_history_payload(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.sqlite"
+            history = Path(tmp) / "history.sqlite"
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "account_id": "external-gui",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(state),
+                    "history_db": str(history),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            sender = "sunnyyty"
+            body = "@陈喵瞄秒妙 要学习CNS顶刊风格绘图"
+            fingerprint = bridge.short_hash(f"inbound\0{sender}\0{body}\0", 64)
+            canonical_chat = (
+                "wecom:external-gui:group:"
+                + bridge.short_hash("gui:LabAgent", 12)
+            )
+            with sqlite3.connect(state) as conn:
+                conn.execute(
+                    "INSERT INTO observed_messages("
+                    "chat,fingerprint,direction,status,record_json,updated_at"
+                    ") VALUES (?,?,?,?,?,?)",
+                    ("LabAgent", fingerprint, "inbound", "pending", "{}", "2026-07-22T00:00:00"),
+                )
+            with sqlite3.connect(history) as conn:
+                conn.execute(
+                    "CREATE TABLE messages (id INTEGER PRIMARY KEY, message_id TEXT, chat TEXT, "
+                    "direction TEXT, sender TEXT, sender_display TEXT, body TEXT, create_time INTEGER, "
+                    "created_at TEXT, processed_at TEXT)"
+                )
+                conn.execute(
+                    "INSERT INTO messages(message_id,chat,direction,sender,sender_display,body,"
+                    "create_time,created_at,processed_at) VALUES (?,?,?,?,?,?,?,?,NULL)",
+                    ("android:stable", canonical_chat, "inbound", "member", sender, body, 0, "2026-07-22T00:00:00"),
+                )
+
+            recovered = runtime.pending_observed_records("LabAgent")
+
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(recovered[0]["body"], body)
+        self.assertEqual(recovered[0]["sender"], sender)
+
+    def test_android_event_id_is_stable_for_pending_ingress_retry(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            record = {
+                "fingerprint": "exact-visible-message",
+                "direction": "inbound",
+                "sender": "sunnyyty",
+                "body": "请调整图。",
+            }
+
+            first = runtime.build_event("LabAgent", record)
+            second = runtime.build_event("LabAgent", record)
+
+        self.assertEqual(first["message_id"], second["message_id"])
+
+    def test_composer_waits_for_exact_accessibility_refresh(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            stale = ET.fromstring(
+                '<hierarchy><node text="partial" resource-id="com.tencent.wework:id/j28" '
+                'package="com.tencent.wework" /></hierarchy>'
+            )
+            exact = ET.fromstring(
+                '<hierarchy><node text="完整消息" resource-id="com.tencent.wework:id/j28" '
+                'package="com.tencent.wework" /></hierarchy>'
+            )
+            with mock.patch.object(runtime, "ensure_chat_identity", side_effect=[stale, exact]), mock.patch.object(
+                bridge.time, "sleep"
+            ):
+                result = runtime.wait_for_composer_message("LabAgent", "完整消息", timeout=1)
+
+        self.assertIs(result, exact)
 
     def test_config_is_private_and_redacts_token(self) -> None:
         bridge = load_bridge()

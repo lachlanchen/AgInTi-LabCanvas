@@ -83,6 +83,20 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             )
         )
 
+    def test_response_policy_limits_multilingual_teaching_to_echomind(self) -> None:
+        echomind = direct_chatops.build_chat_response_policy(self.base_config())
+        research = direct_chatops.build_chat_response_policy(
+            self.backend_chat_config("懒人科研")
+        )
+
+        self.assertEqual(echomind["scope"], "exact_chat_only")
+        self.assertTrue(echomind["automatic_multilingual"])
+        self.assertEqual(echomind["language_mode"], "echomind_multilingual_teaching")
+        self.assertFalse(echomind["cross_chat_context_allowed"])
+        self.assertFalse(research["automatic_multilingual"])
+        self.assertEqual(research["language_mode"], "match_requester_language")
+        self.assertEqual(research["chat"], "懒人科研")
+
     def test_monitor_checkpoints_inbound_cursor_before_agent_failure(self) -> None:
         config = self.base_config()
         state_path = Path(self._tmpdir.name) / "direct.state.json"
