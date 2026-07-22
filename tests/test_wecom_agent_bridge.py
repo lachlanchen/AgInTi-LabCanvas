@@ -971,6 +971,41 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(early["actions"], [])
         self.assertEqual(len(due["actions"]), 1)
 
+    def test_daily_scheduler_runs_at_six_while_periodic_inspiration_sleeps(self) -> None:
+        daily = load_daily()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.sqlite"
+            queue = root / "queue.jsonl"
+            chat = "wecom:default:group:labagent"
+            daily.handle_daily_directive(
+                state,
+                self.sample_event(text="organoid imaging #daily"),
+                chat,
+            )
+            captured: list[dict] = []
+
+            def append_once(_queue, task):
+                captured.append(task)
+                return True
+
+            now = datetime(2026, 7, 23, 6, 0, tzinfo=ZoneInfo("Asia/Hong_Kong"))
+            with mock.patch.object(daily, "run_inspiration_cycle") as inspiration:
+                result = daily.run_scheduler_cycle(
+                    state_db=state,
+                    history_db=state,
+                    queue=queue,
+                    now=now,
+                    include_inspiration=False,
+                    append_func=append_once,
+                )
+
+        inspiration.assert_not_called()
+        self.assertEqual(len(result["actions"]), 1)
+        self.assertEqual(result["actions"][0]["kind"], "report")
+        self.assertEqual(result["inspiration"]["status"], "quiet_hours")
+        self.assertEqual(len(captured), 1)
+
     def test_immediate_daily_run_does_not_consume_the_scheduled_report(self) -> None:
         daily = load_daily()
         with tempfile.TemporaryDirectory() as tmp:

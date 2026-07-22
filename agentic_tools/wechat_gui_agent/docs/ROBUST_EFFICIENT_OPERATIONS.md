@@ -441,7 +441,9 @@ The stable interface and recovery commands are documented in
   XeLaTeX. The PDF contains balanced Chinese, English, and Japanese teaching
   sections, pinyin, Japanese ruby furigana, pronunciation, grammar, and
   exercises, and is delivered through the normal verified file gate with a
-  date-based deduplication record.
+  date-based deduplication record. This daily transaction is independent of the
+  three-hour lesson and catches up after 08:00 or a scheduler restart. Recover
+  it explicitly with `echomind_language_scheduler.py --daily-pdf-now`.
 - WeCom GUI artifacts use a private one-file C-drive staging directory and the
   visible `More -> File -> Local File` picker. Navigate to the directory, select
   the verified sole row, stage it, then send it from the composer. Long labels
@@ -648,10 +650,12 @@ The stable interface and recovery commands are documented in
   internal-only runs must use an explicit `--no-send` or equivalent mode. A
   failed sender records a durable deferred state instead of silently dropping
   the result or replaying a stale burst after restart.
-- Scheduled EchoMind lessons and LabAgent research/inspiration jobs observe
-  local `Asia/Hong_Kong` quiet hours from 20:00 through 08:00. The scheduler
-  sleeps until 08:00 and then resumes; explicit user requests and interactive
-  replies remain available overnight.
+- Scheduled EchoMind conversational lessons and LabAgent idle-inspiration jobs
+  observe local `Asia/Hong_Kong` quiet hours from 20:00 through 08:00. Only
+  those periodic conversational jobs sleep. LabAgent's 06:00 daily research and
+  EchoMind's 08:00 daily PDF remain active, retain date-based deduplication, and
+  catch up after a missed clock or restart. Explicit user requests and
+  interactive replies also remain available overnight.
 - EchoMind's periodic multilingual teaching cadence is three hours
   (`10800` seconds), not one hour. The scheduler records the last successful
   delivery and waits out the remaining interval after a restart, preventing a

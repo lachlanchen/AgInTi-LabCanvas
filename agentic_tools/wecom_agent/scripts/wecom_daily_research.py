@@ -72,9 +72,11 @@ QUIET_START_HOUR = 20
 QUIET_END_HOUR = 8
 
 
-def in_scheduled_quiet_hours() -> bool:
-    """Keep automatic LabAgent research/inspiration quiet overnight in HKT."""
-    hour = datetime.now(configured_timezone()).hour
+def in_scheduled_quiet_hours(now: datetime | None = None) -> bool:
+    """Keep only periodic LabAgent inspiration quiet overnight in HKT."""
+    timezone = configured_timezone()
+    current = now.astimezone(timezone) if now and now.tzinfo else (now.replace(tzinfo=timezone) if now else datetime.now(timezone))
+    hour = current.hour
     return hour >= QUIET_START_HOUR or hour < QUIET_END_HOUR
 
 
@@ -90,7 +92,7 @@ def write_scheduler_heartbeat(
     heartbeat = {
         "checked_at": datetime.now(configured_timezone()).isoformat(timespec="seconds"),
         "status": status,
-        "daily_checked": int(body.get("checked") or 0),
+        "daily_checked": int(body.get("checked_chats") or body.get("checked") or 0),
         "inspiration_checked": int((body.get("inspiration") or {}).get("checked") or 0),
         "action_count": len(body.get("actions") or []),
         "inspiration_action_count": len((body.get("inspiration") or {}).get("actions") or []),
@@ -131,11 +133,13 @@ def main() -> int:
         return 0
 
     if args.command == "run":
+        quiet = in_scheduled_quiet_hours()
         payload = run_scheduler_cycle(
             state_db=args.state_db,
             history_db=args.history_db,
             queue=args.queue,
             force=args.force,
+            include_inspiration=not quiet,
         )
         print_result(payload, args.json)
         return 0 if payload.get("ok") else 1
@@ -143,16 +147,15 @@ def main() -> int:
     interval = max(5.0, min(3600.0, float(args.poll_seconds)))
     while True:
         try:
-            if in_scheduled_quiet_hours():
-                write_scheduler_heartbeat(args.health_path, status="quiet_hours")
-                time.sleep(min(interval, 300.0))
-                continue
+            quiet = in_scheduled_quiet_hours()
             payload = run_scheduler_cycle(
                 state_db=args.state_db,
                 history_db=args.history_db,
                 queue=args.queue,
+                include_inspiration=not quiet,
             )
-            write_scheduler_heartbeat(args.health_path, status="ok", payload=payload)
+            status = "quiet_hours_periodic_only" if quiet else "ok"
+            write_scheduler_heartbeat(args.health_path, status=status, payload=payload)
             if payload.get("actions"):
                 print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
         except Exception as exc:  # Keep the scheduler alive across transient API/DB failures.
@@ -801,6 +804,7 @@ def run_scheduler_cycle(
     queue: Path = DEFAULT_QUEUE,
     now: datetime | None = None,
     force: bool = False,
+    include_inspiration: bool = True,
     append_func: Callable[[Path, dict[str, Any]], bool] | None = None,
     send_func: Callable[[str, str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -813,14 +817,23 @@ def run_scheduler_cycle(
         append_func=append_func,
         send_func=send_func,
     )
-    inspiration = run_inspiration_cycle(
-        state_db=state_db,
-        history_db=history_db,
-        queue=queue,
-        now=now,
-        force=force,
-        append_func=append_func,
-    )
+    if include_inspiration:
+        inspiration = run_inspiration_cycle(
+            state_db=state_db,
+            history_db=history_db,
+            queue=queue,
+            now=now,
+            force=force,
+            append_func=append_func,
+        )
+    else:
+        inspiration = {
+            "ok": True,
+            "status": "quiet_hours",
+            "checked": 0,
+            "actions": [],
+            "busy_chats": [],
+        }
     return {
         **daily,
         "actions": [*(daily.get("actions") or []), *(inspiration.get("actions") or [])],
