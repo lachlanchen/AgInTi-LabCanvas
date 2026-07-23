@@ -816,12 +816,14 @@ evidence for local artifacts, not chat-facing content.
   `codex_quota_status.py` selects the normal `codex` bucket, ignores independent
   model buckets such as Spark, writes only a private cached percentage/reset
   snapshot, and spends no model tokens. The WeCom tmux `quota` window refreshes
-  it once per minute. When the normal Codex rolling window has strictly less
-  than 5% remaining, each actionable LabAgent request receives one concise
-  warning in its normal direct reply or queue acknowledgement; the task still
-  runs and existing backend fallback remains active. Duplicate transport rows,
-  silent peer conversation, idle polls, and final worker delivery do not emit
-  an additional warning. The threshold and poll cadence are configurable with
+  the snapshot once per minute. Reset times render in `Asia/Hong_Kong` by
+  default on every host; override this with `LABCANVAS_CODEX_QUOTA_TIMEZONE`.
+  When the normal Codex rolling window has strictly less than 5% remaining,
+  each actionable LabAgent request receives one concise warning in its normal
+  direct reply or queue acknowledgement; the task still runs and existing
+  backend fallback remains active. Duplicate transport rows, silent peer
+  conversation, idle polls, and final worker delivery do not emit an additional
+  warning. The threshold and poll cadence are configurable with
   `LABCANVAS_CODEX_QUOTA_WARNING_THRESHOLD_PERCENT` and
   `LABCANVAS_CODEX_QUOTA_POLL_SECONDS`.
 - The default AgInTi fallback uses the backward-compatible one-shot form

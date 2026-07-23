@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 from typing import Any, Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -28,6 +29,7 @@ DEFAULT_CACHE = Path(
 ).expanduser().resolve()
 DEFAULT_THRESHOLD_PERCENT = 5.0
 DEFAULT_CACHE_MAX_AGE_SECONDS = 180.0
+DEFAULT_DISPLAY_TIMEZONE = "Asia/Hong_Kong"
 
 
 class QuotaProbeError(RuntimeError):
@@ -336,6 +338,17 @@ def request_uses_cjk(text: str) -> bool:
     )
 
 
+def display_timezone() -> tuple[timezone | ZoneInfo, str]:
+    timezone_name = (
+        os.environ.get("LABCANVAS_CODEX_QUOTA_TIMEZONE")
+        or DEFAULT_DISPLAY_TIMEZONE
+    )
+    try:
+        return ZoneInfo(timezone_name), timezone_name
+    except ZoneInfoNotFoundError:
+        return timezone.utc, "UTC"
+
+
 def format_warning(status: dict[str, Any], *, request_text: str = "") -> str:
     if not status.get("ok") or not status.get("warning"):
         return ""
@@ -344,9 +357,14 @@ def format_warning(status: dict[str, Any], *, request_text: str = "") -> str:
     reset_at = (status.get("window") or {}).get("resets_at")
     reset_text = ""
     if isinstance(reset_at, (int, float)) and reset_at > 0:
-        reset_text = datetime.fromtimestamp(reset_at).astimezone().strftime(
-            "%Y-%m-%d %H:%M %Z"
+        target_timezone, timezone_name = display_timezone()
+        reset_value = datetime.fromtimestamp(reset_at, target_timezone).strftime(
+            "%Y-%m-%d %H:%M"
         )
+        timezone_label = (
+            "HKT" if timezone_name == "Asia/Hong_Kong" else timezone_name
+        )
+        reset_text = f"{reset_value} {timezone_label}"
     remaining_text = f"{remaining:g}%"
     threshold_text = f"{threshold:g}%"
     if request_uses_cjk(request_text):
