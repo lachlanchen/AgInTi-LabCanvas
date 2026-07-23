@@ -460,16 +460,19 @@ def normalized_attachments(event: dict[str, Any]) -> list[dict[str, Any]]:
         path = Path(str(item.get("path") or "")).expanduser().resolve()
         if not path.is_file():
             continue
-        result.append(
-            {
-                "kind": str(item.get("kind") or "file"),
-                "filename": str(item.get("filename") or path.name),
-                "path": str(path),
-                "size_bytes": int(item.get("size_bytes") or path.stat().st_size),
-                "status": "ready",
-                "task_copy_path": str(path),
-            }
-        )
+        normalized = {
+            "kind": str(item.get("kind") or "file"),
+            "filename": str(item.get("filename") or path.name),
+            "path": str(path),
+            "size_bytes": int(item.get("size_bytes") or path.stat().st_size),
+            "status": "ready",
+            "task_copy_path": str(path),
+        }
+        for key in ("sha256", "width", "height", "capture_kind"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                normalized[key] = value
+        result.append(normalized)
     return result
 
 

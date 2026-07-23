@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 import fcntl
 import hashlib
@@ -23,6 +24,7 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -31,6 +33,7 @@ import time
 from typing import Any, Iterator
 from urllib import parse
 from xml.etree import ElementTree as ET
+import zlib
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -69,10 +72,20 @@ MESSAGE_CHROME_TEXT = {
 }
 ARTICLE_CARD_RESOURCE_SUFFIX = ":id/mww"
 ARTICLE_CARD_KIND = "wechat_article_card"
+IMAGE_BUBBLE_RESOURCE_SUFFIX = ":id/kfb"
+IMAGE_KIND = "image"
+IMAGE_VIEWER_RESOURCE_SUFFIX = ":id/nxh"
 
 
 class BridgeError(RuntimeError):
     """A fail-closed Android transport error."""
+
+
+@dataclass(frozen=True)
+class RawScreenshot:
+    width: int
+    height: int
+    rgba: bytes
 
 
 def now_iso() -> str:
@@ -114,6 +127,113 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def parse_raw_screencap(payload: bytes) -> RawScreenshot:
+    """Decode Android's dependency-free raw RGBA screencap format."""
+    if len(payload) < 12:
+        raise BridgeError("Android raw screenshot is truncated")
+    width, height, pixel_format = struct.unpack_from("<III", payload, 0)
+    if width <= 0 or height <= 0 or width > 10000 or height > 10000:
+        raise BridgeError("Android raw screenshot dimensions are invalid")
+    if pixel_format not in {1, 2}:
+        raise BridgeError(f"unsupported Android screenshot pixel format: {pixel_format}")
+    pixel_bytes = width * height * 4
+    if len(payload) == pixel_bytes + 12:
+        header_bytes = 12
+    elif len(payload) == pixel_bytes + 16:
+        # Newer Android builds add a four-byte color-space field.
+        header_bytes = 16
+    else:
+        raise BridgeError(
+            f"Android raw screenshot has unexpected size: {len(payload)} for {width}x{height}"
+        )
+    return RawScreenshot(width=width, height=height, rgba=payload[header_bytes:])
+
+
+def crop_raw_screenshot(
+    screenshot: RawScreenshot,
+    bounds: str | tuple[int, int, int, int],
+) -> RawScreenshot:
+    x1, y1, x2, y2 = parse_bounds(bounds) if isinstance(bounds, str) else bounds
+    x1 = max(0, min(screenshot.width, x1))
+    x2 = max(0, min(screenshot.width, x2))
+    y1 = max(0, min(screenshot.height, y1))
+    y2 = max(0, min(screenshot.height, y2))
+    if x2 <= x1 or y2 <= y1:
+        raise BridgeError("image bubble lies outside the Android screenshot")
+    row_bytes = screenshot.width * 4
+    cropped_row_bytes = (x2 - x1) * 4
+    rows = []
+    for y in range(y1, y2):
+        start = y * row_bytes + x1 * 4
+        rows.append(screenshot.rgba[start : start + cropped_row_bytes])
+    return RawScreenshot(width=x2 - x1, height=y2 - y1, rgba=b"".join(rows))
+
+
+def screenshot_region_sha256(screenshot: RawScreenshot, bounds: str) -> str:
+    cropped = crop_raw_screenshot(screenshot, bounds)
+    digest = hashlib.sha256()
+    digest.update(struct.pack("<II", cropped.width, cropped.height))
+    digest.update(cropped.rgba)
+    return digest.hexdigest()
+
+
+def screenshot_region_visual_id(screenshot: RawScreenshot, bounds: str) -> str:
+    """Return a compact visual identity tolerant of viewport repositioning."""
+    cropped = crop_raw_screenshot(screenshot, bounds)
+    columns = 17
+    rows = 16
+    luminance: list[list[int]] = []
+    coarse_color = bytearray()
+    for row in range(rows):
+        y = min(cropped.height - 1, ((row * 2 + 1) * cropped.height) // (rows * 2))
+        values: list[int] = []
+        for column in range(columns):
+            x = min(
+                cropped.width - 1,
+                ((column * 2 + 1) * cropped.width) // (columns * 2),
+            )
+            offset = (y * cropped.width + x) * 4
+            red, green, blue = cropped.rgba[offset : offset + 3]
+            values.append((299 * red + 587 * green + 114 * blue) // 1000)
+            coarse_color.extend((red >> 4, green >> 4, blue >> 4))
+        luminance.append(values)
+    bits = [
+        luminance[row][column] > luminance[row][column + 1]
+        for row in range(rows)
+        for column in range(columns - 1)
+    ]
+    packed = bytearray()
+    for offset in range(0, len(bits), 8):
+        value = 0
+        for bit_index, enabled in enumerate(bits[offset : offset + 8]):
+            if enabled:
+                value |= 1 << (7 - bit_index)
+        packed.append(value)
+    color_digest = hashlib.sha256(bytes(coarse_color)).hexdigest()[:16]
+    return f"{packed.hex()}-{color_digest}"
+
+
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    checksum = zlib.crc32(kind)
+    checksum = zlib.crc32(payload, checksum) & 0xFFFFFFFF
+    return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
+
+
+def encode_rgba_png(screenshot: RawScreenshot) -> bytes:
+    row_bytes = screenshot.width * 4
+    scanlines = b"".join(
+        b"\x00" + screenshot.rgba[offset : offset + row_bytes]
+        for offset in range(0, len(screenshot.rgba), row_bytes)
+    )
+    header = struct.pack(">IIBBBBB", screenshot.width, screenshot.height, 8, 6, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", header)
+        + _png_chunk(b"IDAT", zlib.compress(scanlines, 6))
+        + _png_chunk(b"IEND", b"")
+    )
 
 
 def parse_bounds(value: str) -> tuple[int, int, int, int]:
@@ -281,6 +401,21 @@ def write_private_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
+def write_private_bytes(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.NamedTemporaryFile(
+        mode="wb",
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+        delete=False,
+    ) as handle:
+        handle.write(payload)
+        temporary = Path(handle.name)
     os.chmod(temporary, 0o600)
     temporary.replace(path)
 
@@ -650,6 +785,15 @@ class AndroidBridge:
 
     def adb_shell(self, *args: str, timeout: float = 30, check: bool = True) -> str:
         return self.adb("shell", *args, timeout=timeout, check=check).stdout
+
+    def capture_raw_screenshot(self) -> RawScreenshot:
+        process = self.run(
+            ["adb", "-s", self.serial, "exec-out", "screencap"],
+            timeout=30,
+            check=True,
+            text=False,
+        )
+        return parse_raw_screencap(bytes(process.stdout))
 
     def disable_host_automount(self) -> None:
         if not bool(self.config.get("disable_host_media_automount", True)):
@@ -1780,7 +1924,12 @@ class AndroidBridge:
                 "errors": errors,
             }
 
-    def parse_messages(self, root: ET.Element) -> list[dict[str, str]]:
+    def parse_messages(
+        self,
+        root: ET.Element,
+        *,
+        screenshot: RawScreenshot | None = None,
+    ) -> list[dict[str, str]]:
         rows = find_nodes(root, resource_id=f"{self.package}:id/eyy", package=self.package)
         records: list[dict[str, str]] = []
         for row in rows:
@@ -1791,6 +1940,9 @@ class AndroidBridge:
             ]
             source_kind = "text"
             source_title = ""
+            image_bounds = ""
+            image_preview_sha256 = ""
+            image_visual_id = ""
             if not body_nodes:
                 body_nodes = [
                     node
@@ -1801,8 +1953,35 @@ class AndroidBridge:
                 if body_nodes:
                     source_kind = ARTICLE_CARD_KIND
                     source_title = " ".join(unique_nonempty(node_text(node) for node in body_nodes))
+            if not body_nodes:
+                body_nodes = [
+                    node
+                    for node in row.iter("node")
+                    if node.attrib.get("package") == self.package
+                    and node.attrib.get("class") == "android.widget.ImageView"
+                    and node.attrib.get("resource-id", "").endswith(
+                        IMAGE_BUBBLE_RESOURCE_SUFFIX
+                    )
+                    and node.attrib.get("bounds")
+                ]
+                if body_nodes:
+                    source_kind = IMAGE_KIND
+                    image_bounds = str(body_nodes[0].attrib.get("bounds") or "")
+                    if screenshot is not None:
+                        try:
+                            image_preview_sha256 = screenshot_region_sha256(
+                                screenshot, image_bounds
+                            )
+                            image_visual_id = screenshot_region_visual_id(
+                                screenshot, image_bounds
+                            )
+                        except BridgeError:
+                            image_preview_sha256 = ""
+                            image_visual_id = ""
             body = "\n".join(unique_nonempty(node_text(node) for node in body_nodes))
-            if not body:
+            if source_kind == IMAGE_KIND:
+                body = "[图片]"
+            elif not body:
                 continue
             if source_kind == ARTICLE_CARD_KIND:
                 body = f"公众号文章卡片\n<title>{html.escape(source_title)}</title>"
@@ -1817,9 +1996,16 @@ class AndroidBridge:
             except BridgeError:
                 pass
             direction = "inbound" if sender or avatar_on_left else "outbound"
-            fingerprint = short_hash(
-                f"{direction}\0{sender}\0{source_kind}\0{body}\0{quote_text}", 64
-            )
+            if source_kind == IMAGE_KIND:
+                image_identity = image_visual_id or image_preview_sha256 or image_bounds
+                fingerprint_material = (
+                    f"{direction}\0{sender}\0{source_kind}\0{image_identity}\0{quote_text}"
+                )
+            else:
+                fingerprint_material = (
+                    f"{direction}\0{sender}\0{source_kind}\0{body}\0{quote_text}"
+                )
+            fingerprint = short_hash(fingerprint_material, 64)
             records.append(
                 {
                     "fingerprint": fingerprint,
@@ -1830,10 +2016,140 @@ class AndroidBridge:
                     "quote_text": quote_text,
                     "source_kind": source_kind,
                     "source_title": source_title,
+                    "row_bounds": str(row.attrib.get("bounds") or ""),
+                    "image_bounds": image_bounds,
+                    "image_preview_sha256": image_preview_sha256,
+                    "image_visual_id": image_visual_id,
                     **sender_evidence,
                 }
             )
         return records
+
+    def image_node_for_record(
+        self,
+        root: ET.Element,
+        screenshot: RawScreenshot,
+        record: dict[str, str],
+    ) -> ET.Element:
+        expected_sender = str(record.get("sender") or "")
+        expected_visual_id = str(record.get("image_visual_id") or "")
+        expected_bounds = str(record.get("image_bounds") or "")
+        visual_matches: list[ET.Element] = []
+        bounds_matches: list[ET.Element] = []
+        rows = find_nodes(root, resource_id=f"{self.package}:id/eyy", package=self.package)
+        for row in rows:
+            image_nodes = [
+                node
+                for node in row.iter("node")
+                if node.attrib.get("package") == self.package
+                and node.attrib.get("class") == "android.widget.ImageView"
+                and node.attrib.get("resource-id", "").endswith(
+                    IMAGE_BUBBLE_RESOURCE_SUFFIX
+                )
+                and node.attrib.get("bounds")
+            ]
+            if len(image_nodes) != 1:
+                continue
+            node = image_nodes[0]
+            sender, _ = message_row_sender(row, image_nodes)
+            if expected_sender and sender != expected_sender:
+                continue
+            bounds = str(node.attrib.get("bounds") or "")
+            try:
+                visual_id = screenshot_region_visual_id(screenshot, bounds)
+            except BridgeError:
+                visual_id = ""
+            if expected_visual_id and visual_id == expected_visual_id:
+                visual_matches.append(node)
+            if expected_bounds and bounds == expected_bounds:
+                bounds_matches.append(node)
+        if len(visual_matches) == 1:
+            return visual_matches[0]
+        if len(bounds_matches) == 1:
+            return bounds_matches[0]
+        raise BridgeError("exact inbound WeCom image bubble is not uniquely visible")
+
+    def wait_for_image_viewer(self, *, timeout_seconds: float = 8.0) -> ET.Element:
+        deadline = time.monotonic() + max(1.0, timeout_seconds)
+        last_title = ""
+        while time.monotonic() < deadline:
+            root = self.dump_hierarchy(attempts=2)
+            last_title = visible_chat_title(root)
+            viewer_nodes = [
+                node
+                for node in root.iter("node")
+                if node.attrib.get("package") == self.package
+                and node.attrib.get("resource-id", "").endswith(
+                    IMAGE_VIEWER_RESOURCE_SUFFIX
+                )
+            ]
+            if viewer_nodes and not last_title:
+                return root
+            time.sleep(0.25)
+        raise BridgeError(
+            f"WeCom image viewer did not open from the exact bubble (visible title: {last_title!r})"
+        )
+
+    def materialize_image_record(
+        self,
+        chat: str,
+        record: dict[str, str],
+    ) -> dict[str, str]:
+        """Capture one exact same-chat image through WeCom's native full viewer."""
+        if chat not in self.target_groups:
+            raise BridgeError("refusing non-allowlisted WeCom Android image source")
+        if str(record.get("direction") or "") != "inbound":
+            raise BridgeError("refusing to materialize an outbound WeCom image")
+        if str(record.get("source_kind") or "") != IMAGE_KIND:
+            return dict(record)
+        fingerprint = str(record.get("fingerprint") or "")
+        if not fingerprint:
+            raise BridgeError("WeCom image record is missing its visual fingerprint")
+        target = (
+            self.staging_dir
+            / "inbound-media"
+            / short_hash(chat, 16)
+            / f"wecom-image-{fingerprint[:32]}.png"
+        )
+        capture: RawScreenshot | None = None
+        if not (target.is_file() and target.stat().st_size > 64 and target.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"):
+            root = self.open_chat(chat)
+            chat_screenshot = self.capture_raw_screenshot()
+            node = self.image_node_for_record(root, chat_screenshot, record)
+            viewer_open = False
+            try:
+                self.tap_node(root, node)
+                self.wait_for_image_viewer()
+                viewer_open = True
+                time.sleep(
+                    bounded_float(
+                        self.config.get("inbound_image_capture_wait_seconds"),
+                        1.25,
+                        0.25,
+                        5.0,
+                    )
+                )
+                capture = self.capture_raw_screenshot()
+                write_private_bytes(target, encode_rgba_png(capture))
+            finally:
+                if viewer_open:
+                    self.press_back()
+                restored = self.open_chat(chat)
+                if not chat_title_matches(visible_chat_title(restored), chat):
+                    raise BridgeError("WeCom did not return to the exact image source chat")
+        result = dict(record)
+        result.update(
+            {
+                "attachment_path": str(target),
+                "attachment_filename": target.name,
+                "attachment_size_bytes": str(target.stat().st_size),
+                "attachment_sha256": sha256_file(target),
+                "attachment_width": str(capture.width if capture else ""),
+                "attachment_height": str(capture.height if capture else ""),
+                "attachment_capture_kind": "wecom_android_native_full_view",
+            }
+        )
+        return result
 
     def scan_older_message_records(
         self,
@@ -2013,6 +2329,32 @@ class AndroidBridge:
         sender_confidence = str(record.get("sender_identity_confidence") or "unknown")
         sender_identity = sender if sender_confidence == "visible_row_label" else f"unattributed:{event_key}"
         source_kind = str(record.get("source_kind") or "text")
+        attachments: list[dict[str, Any]] = []
+        if source_kind == IMAGE_KIND:
+            attachment = Path(
+                str(record.get("attachment_path") or "")
+            ).expanduser().resolve()
+            if not attachment.is_file():
+                raise BridgeError("inbound WeCom image has not been materialized")
+            expected_sha256 = str(record.get("attachment_sha256") or "")
+            actual_sha256 = sha256_file(attachment)
+            if expected_sha256 and expected_sha256 != actual_sha256:
+                raise BridgeError("inbound WeCom image checksum changed before ingest")
+            attachments.append(
+                {
+                    "kind": IMAGE_KIND,
+                    "filename": str(record.get("attachment_filename") or attachment.name),
+                    "path": str(attachment),
+                    "size_bytes": attachment.stat().st_size,
+                    "sha256": actual_sha256,
+                    "width": str(record.get("attachment_width") or ""),
+                    "height": str(record.get("attachment_height") or ""),
+                    "capture_kind": str(
+                        record.get("attachment_capture_kind")
+                        or "wecom_android_native_full_view"
+                    ),
+                }
+            )
         return {
             "transport": "wecom",
             "transport_channel": "wecom_android",
@@ -2044,8 +2386,12 @@ class AndroidBridge:
             "source_metadata": {
                 "kind": source_kind,
                 "title": str(record.get("source_title") or ""),
+                "image_preview_sha256": str(
+                    record.get("image_preview_sha256") or ""
+                ),
+                "image_visual_id": str(record.get("image_visual_id") or ""),
             },
-            "attachments": [],
+            "attachments": attachments,
         }
 
     def invoke_ingest(self, event: dict[str, Any]) -> dict[str, Any]:
@@ -2093,9 +2439,17 @@ class AndroidBridge:
         # Hold the GUI lock only while reading or writing the official client.
         # Routing/ingest may invoke an agent and must never block unrelated
         # artifact delivery for the duration of that backend turn.
+        media_materialization_errors: list[dict[str, str]] = []
         with self.serialized(timeout_seconds=30.0):
             root = self.open_chat(chat)
             current_records = self.parse_messages(root)
+            if any(
+                record.get("source_kind") == IMAGE_KIND for record in current_records
+            ):
+                current_records = self.parse_messages(
+                    root,
+                    screenshot=self.capture_raw_screenshot(),
+                )
             sequence = [record["fingerprint"] for record in current_records]
             history_records: list[dict[str, str]] = []
             if history_pages:
@@ -2156,6 +2510,26 @@ class AndroidBridge:
                 ):
                     pending_by_fingerprint[fingerprint] = record
             pending_inbound = list(pending_by_fingerprint.values())
+            for index, record in enumerate(pending_inbound):
+                if record.get("source_kind") != IMAGE_KIND:
+                    continue
+                attachment_path = Path(
+                    str(record.get("attachment_path") or "")
+                ).expanduser()
+                if attachment_path.is_file():
+                    continue
+                try:
+                    materialized = self.materialize_image_record(chat, record)
+                except Exception as exc:
+                    media_materialization_errors.append(
+                        {
+                            "fingerprint": str(record.get("fingerprint") or "")[:16],
+                            "error": f"{type(exc).__name__}: {str(exc)[:500]}",
+                        }
+                    )
+                    continue
+                pending_inbound[index] = materialized
+                self.mark_observed_message(chat, materialized, "pending")
             # Checkpoint the observed viewport before releasing GUI ownership.
             # Pending rows remain durable and are retried if ingest itself fails.
             self.save_snapshot(chat, sequence)
@@ -2164,6 +2538,11 @@ class AndroidBridge:
         pending_replies: list[tuple[str, list[str], str]] = []
         if enqueue:
             for record in pending_inbound:
+                if (
+                    record.get("source_kind") == IMAGE_KIND
+                    and not Path(str(record.get("attachment_path") or "")).is_file()
+                ):
+                    continue
                 event = self.build_event(chat, record)
                 result = self.invoke_ingest(event)
                 ingested.append(result)
@@ -2204,16 +2583,21 @@ class AndroidBridge:
                     }
                 )
         return {
-            "ok": not reply_errors,
+            "ok": not reply_errors and not media_materialization_errors,
             "chat": chat,
             "overlap": overlap,
             "viewport_changed_without_overlap": bool(overlap == 0 and previous and sequence),
             "processed": len(ingested),
-            "pending": 0 if enqueue else len(pending_inbound),
+            "pending": (
+                len(media_materialization_errors)
+                if enqueue
+                else len(pending_inbound)
+            ),
             "messages": pending_inbound,
             "ingested": ingested,
             "replied": len(sent_replies),
             "reply_errors": reply_errors,
+            "media_materialization_errors": media_materialization_errors,
             "history_pages": int(history_pages),
             "history_records": len(history_records),
         }

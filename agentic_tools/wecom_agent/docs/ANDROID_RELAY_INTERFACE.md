@@ -87,6 +87,16 @@ quote-preview text is preserved separately from the current message body and
 included in the same task packet. Sender labels, timestamps, and read receipts
 are excluded from quote text.
 
+Native image bubbles are materialized before ingest. The relay identifies the
+exact same-chat bubble from its sender, row geometry, and visual fingerprint,
+opens that bubble in WeCom's full-image viewer, captures a private PNG, records
+its SHA-256 and dimensions, and returns to the verified source chat. Only that
+captured attachment enters `transport_preflight.wecom_media`; the worker's
+vision-capable agent explains the image naturally from the current conversation.
+If the bubble is ambiguous, the viewer does not open, or the source chat cannot
+be restored, the message remains pending. The relay never substitutes an
+avatar, article thumbnail, nearby image, or OCR-only reconstruction.
+
 Official WeCom voice URLs are downloaded with the SDK's authenticated media
 method into the exact message directory. Voice, quoted voice, and mixed-message
 audio then enter the shared `wechat_audio_intake.py` Whisper pipeline through

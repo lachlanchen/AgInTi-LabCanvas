@@ -74,6 +74,24 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(overlap, 2)
         self.assertEqual(delta, ["b"])
 
+    def test_raw_android_screencap_round_trips_to_png(self) -> None:
+        bridge = load_bridge()
+        width, height = 4, 3
+        rgba = bytes(
+            value
+            for pixel in range(width * height)
+            for value in (pixel * 7 % 256, pixel * 11 % 256, pixel * 13 % 256, 255)
+        )
+        payload = bridge.struct.pack("<IIII", width, height, 1, 1) + rgba
+
+        screenshot = bridge.parse_raw_screencap(payload)
+        cropped = bridge.crop_raw_screenshot(screenshot, "[1,1][4,3]")
+        png = bridge.encode_rgba_png(cropped)
+
+        self.assertEqual((screenshot.width, screenshot.height), (4, 3))
+        self.assertEqual((cropped.width, cropped.height), (3, 2))
+        self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+
     def test_file_confirmation_requires_exact_chat_file_and_send(self) -> None:
         bridge = load_bridge()
         root = ET.fromstring(
@@ -757,6 +775,72 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(event["msgtype"], "wechat_article_card")
         self.assertEqual(event["source_metadata"]["title"], title)
 
+    def test_parse_messages_materializes_native_inbound_image_event(self) -> None:
+        bridge = load_bridge()
+        xml = """
+        <hierarchy><node>
+          <node resource-id="com.tencent.wework:id/eyy" package="com.tencent.wework"
+                clickable="true" bounds="[0,20][120,190]">
+            <node resource-id="com.tencent.wework:id/ja3" package="com.tencent.wework"
+                  class="android.widget.ImageView" bounds="[2,24][14,36]" />
+            <node text="陈苗" class="android.widget.TextView" package="com.tencent.wework"
+                  bounds="[18,24][42,34]" />
+            <node text="＠微信" class="android.widget.TextView" package="com.tencent.wework"
+                  bounds="[44,24][66,34]" />
+            <node resource-id="com.tencent.wework:id/kfb" package="com.tencent.wework"
+                  class="android.widget.ImageView" clickable="true" bounds="[18,40][100,170]" />
+          </node>
+        </node></hierarchy>
+        """
+        width, height = 120, 200
+        rgba = bytearray(b"\xff\xff\xff\xff" * width * height)
+        for y in range(40, 170):
+            for x in range(18, 100):
+                offset = (y * width + x) * 4
+                rgba[offset : offset + 4] = bytes((x * 2 % 256, y % 256, (x + y) % 256, 255))
+        screenshot = bridge.RawScreenshot(width, height, bytes(rgba))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            record = runtime.parse_messages(
+                ET.fromstring(xml), screenshot=screenshot
+            )[0]
+            image = root / "staging" / "inbound-media" / "source.png"
+            image.parent.mkdir(parents=True)
+            image.write_bytes(bridge.encode_rgba_png(screenshot))
+            record.update(
+                {
+                    "attachment_path": str(image),
+                    "attachment_filename": image.name,
+                    "attachment_size_bytes": str(image.stat().st_size),
+                    "attachment_sha256": bridge.sha256_file(image),
+                    "attachment_width": str(width),
+                    "attachment_height": str(height),
+                    "attachment_capture_kind": "wecom_android_native_full_view",
+                }
+            )
+            event = runtime.build_event("LabAgent", record)
+
+        self.assertEqual(record["direction"], "inbound")
+        self.assertEqual(record["sender"], "陈苗")
+        self.assertEqual(record["source_kind"], "image")
+        self.assertEqual(record["body"], "[图片]")
+        self.assertTrue(record["image_preview_sha256"])
+        self.assertTrue(record["image_visual_id"])
+        self.assertEqual(event["msgtype"], "image")
+        self.assertEqual(event["attachments"][0]["path"], str(image))
+        self.assertEqual(
+            event["attachments"][0]["capture_kind"],
+            "wecom_android_native_full_view",
+        )
+
     def test_article_card_fallback_still_routes_to_research_worker(self) -> None:
         ingest = load_ingest()
 
@@ -1096,6 +1180,76 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         save_snapshot.assert_called_once_with("LabAgent", ["old", "new"])
         send_text.assert_called_once()
         self.assertEqual(send_text.call_args.kwargs["mentions"], ["sunnyyty@微信", "陈苗"])
+
+    def test_snapshot_materializes_image_before_wecom_ingest(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            runtime.lock_path = root / "bridge.lock"
+            old = {
+                "fingerprint": "old",
+                "direction": "outbound",
+                "sender": "",
+                "body": "old",
+            }
+            image_record = {
+                "fingerprint": "new-image",
+                "direction": "inbound",
+                "sender": "陈苗",
+                "mention_name": "陈苗@微信",
+                "sender_identity_confidence": "visible_row_label",
+                "body": "[图片]",
+                "source_kind": "image",
+                "image_bounds": "[18,40][100,170]",
+                "image_visual_id": "visual-image-id",
+            }
+            runtime.save_snapshot("LabAgent", ["old"])
+            runtime.mark_observed_message("LabAgent", old, "seeded")
+            image = root / "staging" / "inbound-media" / "source.png"
+            image.parent.mkdir(parents=True)
+            image.write_bytes(b"\x89PNG\r\n\x1a\nsource")
+            materialized = {
+                **image_record,
+                "attachment_path": str(image),
+                "attachment_filename": image.name,
+                "attachment_size_bytes": str(image.stat().st_size),
+                "attachment_sha256": bridge.sha256_file(image),
+                "attachment_capture_kind": "wecom_android_native_full_view",
+            }
+            captured_events = []
+
+            def ingest(event):
+                captured_events.append(event)
+                return {"queued": True, "ack": ""}
+
+            with mock.patch.object(
+                runtime, "open_chat", return_value=ET.fromstring("<hierarchy />")
+            ), mock.patch.object(
+                runtime, "parse_messages", return_value=[old, image_record]
+            ), mock.patch.object(
+                runtime,
+                "capture_raw_screenshot",
+                return_value=bridge.RawScreenshot(1, 1, b"\x00\x00\x00\xff"),
+            ), mock.patch.object(
+                runtime, "materialize_image_record", return_value=materialized
+            ) as materialize, mock.patch.object(
+                runtime, "invoke_ingest", side_effect=ingest
+            ):
+                result = runtime.snapshot("LabAgent", enqueue=True)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["processed"], 1)
+        materialize.assert_called_once()
+        self.assertEqual(captured_events[0]["msgtype"], "image")
+        self.assertEqual(captured_events[0]["attachments"][0]["path"], str(image))
 
     def test_snapshot_releases_gui_lock_while_ingest_runs(self) -> None:
         bridge = load_bridge()

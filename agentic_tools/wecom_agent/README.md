@@ -151,7 +151,10 @@ Outbound replies verify the exact native title and can select the original
 sender through WeCom's real member picker. Plain `@name` text is not treated as
 a mention. External member rows may carry WeCom's native `@微信` suffix; the
 bridge accepts that one exact suffix while preserving case and rejecting
-ambiguous or broadcast matches. See
+ambiguous or broadcast matches. Inbound image bubbles are opened in WeCom's
+native full-image viewer and captured into ignored private staging before the
+vision-capable worker runs; ambiguous or unverifiable media remains pending
+instead of using a nearby thumbnail. See
 [`docs/ANDROID_RELAY_INTERFACE.md`](docs/ANDROID_RELAY_INTERFACE.md).
 
 On Linux, the official download page does not provide a native desktop build.

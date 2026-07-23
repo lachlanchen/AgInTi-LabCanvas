@@ -705,6 +705,15 @@ The stable interface and recovery commands are documented in
   the relay selects one native mention-picker row and verifies a rich mention
   span before Send. The only accepted row normalization is WeCom's `@微信`
   suffix. Missing, ambiguous, broadcast, or wrong-chat targets fail closed.
+- For inbound WeCom Android images, identify the native image bubble by exact
+  chat, sender, row geometry, and a viewport-independent visual fingerprint.
+  Open that bubble in WeCom's native full-image viewer and persist the captured
+  PNG, checksum, and dimensions in ignored private staging before enqueueing.
+  Feed only this exact attachment through `transport_preflight.wecom_media` to
+  the vision-capable worker, which should answer naturally rather than expose
+  OCR or capture diagnostics. If identity, viewer opening, or return-to-chat
+  verification fails, retain the row as pending; never use an avatar, article
+  thumbnail, nearby media, or screenshot of a later bot response as fallback.
 - Do not use packet interception, private-protocol replay, credential/session
   extraction, lock bypass, or traffic decryption for control.
 
@@ -721,7 +730,7 @@ The stable interface and recovery commands are documented in
 | Generated video | Queue orchestrator | `GENERATED_VIDEO_ROUTINES.md` | Store route contract, wait via queue/CDP, deliver MP4 before poststage. |
 | Exact video publish | Worker | `wechat_autopublish_video.py`, same-chat artifact ledger, LazyEdit CLI | Resolve exact WeChat message IDs/cache first; use the same-chat artifact ledger only when it matches the current/source video row MD5 or byte length. |
 | GUI send | Sender | `wechat_gui_send.py` | Serialize with lock, OCR/title guard, screenshots, deferred outbox. |
-| WeCom Android relay | WeCom sender/monitor | `wecom_android_bridge.py` | Use unread badges for low-latency hints and periodically reconcile every allowlisted group, enqueue exact sender context, send idempotent text/files, and select native per-sender mentions without desktop login. |
+| WeCom Android relay | WeCom sender/monitor | `wecom_android_bridge.py` | Reconcile allowlisted groups, capture exact native image bubbles before ingest, enqueue exact sender context, send idempotent text/files, and select native per-sender mentions without desktop login. |
 | Android text fallback | Worker outbox | `send_result_with_retries()` | For verified publish-completion text only, if desktop GUI send fails with a deferable guard/timeout, ADB may send a sanitized ASCII completion after screenshot OCR proves the phone is already open to the exact target chat. |
 | Browser assist | Human + worker | `wechat_browser_assist.py` | Use only for login/CAPTCHA/download confirmation or blocked web UI. |
 
