@@ -23,6 +23,7 @@ SHARED_AGENT_SCRIPTS = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts"
 if str(SHARED_AGENT_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SHARED_AGENT_SCRIPTS))
 
+from codex_quota_status import quota_warning_for_request  # noqa: E402
 from wechat_agent_backend import run_agent_session  # noqa: E402
 from wechat_mirror import record_event  # noqa: E402
 from wechat_routines import ensure_task_routine_contract  # noqa: E402
@@ -330,6 +331,7 @@ def ingest_event(
         if daily_topic:
             ack = f"已设置每日研究主题：{daily_topic}\n\n{ack}"
         mark_inline_topic_prompt(history_db, chat)
+    ack = prepend_quota_warning(ack, request)
     return {
         "duplicate": not appended,
         "queued": True,
@@ -407,6 +409,7 @@ def complete_direct_reply(
     action: str = "wecom_direct_reply",
 ) -> dict[str, Any]:
     response = sanitize_chat_response(response_value)
+    response = prepend_quota_warning(response, event_request(event))
     record_history_message(
         history_db,
         {**event, "message_id": f"reply:{event['message_id']}"},
@@ -429,6 +432,19 @@ def complete_direct_reply(
     )
     mark_message_processed(history_db, str(event["message_id"]))
     return {"duplicate": False, "queued": False, "chat": chat, "reply": response}
+
+
+def prepend_quota_warning(response: str, request: str) -> str:
+    """Attach one evidence-based warning to an otherwise visible response."""
+    if not response:
+        return ""
+    try:
+        warning = quota_warning_for_request(request)
+    except Exception:
+        return response
+    if not warning or response.startswith(warning):
+        return response
+    return f"{warning}\n\n{response}"
 
 
 def event_request(event: dict[str, Any]) -> str:

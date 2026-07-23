@@ -329,7 +329,8 @@ after checking authoritative evidence. Native-copy context menus are closed
 before the GUI lock is released and outbound compose clears stale transient UI
 before pasting, so reads cannot block later verified delivery.
 
-The tmux stack has `gateway`, `worker`, `daily`, and `knowledge` windows. The
+The tmux stack has `gateway`, `worker`, `daily`, `knowledge`, `health`, and
+`quota` windows. The
 knowledge window incrementally indexes new message rows and changed completed
 tasks without model calls or full-history polling. An `external`
 window is added whenever the external bridge is enabled. Before authorization
@@ -345,6 +346,17 @@ allowlisted chat to remain ready, composer operations use X11 input by default,
 and sends are paced to prevent retry bursts.
 The scheduler only reads local private SQLite state while idle; model quota is
 spent only when a due report is enqueued and executed by the worker.
+The quota window reads `account/rateLimits/read` from the official local Codex
+app server once per minute and caches only the percentage/reset metadata under
+ignored private storage. Below 5% remaining, the next actionable request gets a
+concise warning in its ordinary reply or acknowledgement without blocking the
+task or repeating in the final result.
+
+Inspect the current snapshot without spending model quota:
+
+```bash
+python3 agentic_tools/wechat_gui_agent/scripts/codex_quota_status.py probe --json
+```
 
 `labcanvas-wecom-autostart.service` is the outer recovery boundary. It survives
 ordinary shell and desktop logouts through the user manager, starts the stack

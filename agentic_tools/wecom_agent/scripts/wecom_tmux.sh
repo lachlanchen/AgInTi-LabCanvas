@@ -37,6 +37,8 @@ HEALTH_GUARD="$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_transport_stal
 HEALTH_LOG="$LOG_DIR/transport-health.log"
 HEALTH_STATE="$ROOT/output/transport-health/state.json"
 HEALTH_SNAPSHOT="$ROOT/output/transport-health/latest.json"
+QUOTA_MONITOR="$ROOT/agentic_tools/wechat_gui_agent/scripts/codex_quota_status.py"
+QUOTA_LOG="$LOG_DIR/codex-quota.log"
 MUTATION_LOCK="${WECOM_TMUX_MUTATION_LOCK:-$TOOL_ROOT/.private/wecom_tmux.lock}"
 mkdir -p "$LOG_DIR"
 
@@ -138,6 +140,11 @@ ensure_core_windows() {
   if ! window_exists health; then
     tmux new-window -t "$SESSION" -n health \
       "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 -u '$HEALTH_GUARD' --loop --repair --json-lines --changes-only --state-path '$HEALTH_STATE' --snapshot-path '$HEALTH_SNAPSHOT' >> '$HEALTH_LOG' 2>&1"
+  fi
+  remove_dead_window quota
+  if ! window_exists quota; then
+    tmux new-window -t "$SESSION" -n quota \
+      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 -u '$QUOTA_MONITOR' loop --interval-seconds \"\${LABCANVAS_CODEX_QUOTA_POLL_SECONDS:-60}\" --threshold-percent \"\${LABCANVAS_CODEX_QUOTA_WARNING_THRESHOLD_PERCENT:-5}\" --json >> '$QUOTA_LOG' 2>&1"
   fi
 }
 

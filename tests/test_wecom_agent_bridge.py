@@ -31,10 +31,12 @@ def load_module(name: str, path: Path):
 
 
 def load_ingest():
-    return load_module(
+    module = load_module(
         "wecom_ingest_for_tests",
         ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_ingest.py",
     )
+    module.quota_warning_for_request = lambda _request: ""
+    return module
 
 
 def load_worker():
@@ -295,6 +297,39 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertFalse(result["queued"])
         self.assertTrue(result["reply"].startswith(route["response"]))
         self.assertIn("#daily", result["reply"])
+
+    def test_actionable_request_prepends_live_low_quota_warning(self) -> None:
+        ingest = load_ingest()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            warning = "额度提醒：Codex 当前额度仅剩 3%，低于 5%。"
+            with mock.patch.object(
+                ingest,
+                "quota_warning_for_request",
+                return_value=warning,
+            ), mock.patch.object(ingest, "record_event"):
+                result = ingest.ingest_event(
+                    self.sample_event(text="请设计一个支架"),
+                    queue=root / "queue.jsonl",
+                    history_db=root / "history.sqlite",
+                    route_with_agent=False,
+                )
+
+        self.assertTrue(result["queued"])
+        self.assertTrue(result["ack"].startswith(warning))
+        self.assertEqual(result["ack"].count(warning), 1)
+
+    def test_quota_probe_failure_never_blocks_request(self) -> None:
+        ingest = load_ingest()
+
+        with mock.patch.object(
+            ingest,
+            "quota_warning_for_request",
+            side_effect=RuntimeError("probe unavailable"),
+        ):
+            result = ingest.prepend_quota_warning("继续处理。", "请继续")
+
+        self.assertEqual(result, "继续处理。")
 
     def test_peer_conversation_can_be_silent_without_worker_queue(self) -> None:
         ingest = load_ingest()
@@ -2973,6 +3008,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("ensure_core_windows", tmux_source)
         self.assertIn("wecom_member_knowledge.py", tmux_source)
         self.assertIn("window_exists knowledge", tmux_source)
+        self.assertIn("codex_quota_status.py", tmux_source)
+        self.assertIn("window_exists quota", tmux_source)
         self.assertIn("missing windows repaired", tmux_source)
         self.assertNotIn("xwechat_files", source)
         self.assertNotIn("wechat_gui_agent", source)

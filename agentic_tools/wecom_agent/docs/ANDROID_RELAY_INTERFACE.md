@@ -87,6 +87,14 @@ quote-preview text is preserved separately from the current message body and
 included in the same task packet. Sender labels, timestamps, and read receipts
 are excluded from quote text.
 
+The shared WeCom ingest also reads the private Codex quota cache. If the normal
+Codex rolling window is below the configured 5% threshold, an actionable
+request receives one concise warning in its existing reply or queue
+acknowledgement. The warning does not block execution, become a separate chat
+message, repeat with the final worker result, or appear for duplicate/silent
+rows. Quota polling uses the official read-only app-server method and does not
+consume model tokens.
+
 Native image bubbles are materialized before ingest. The relay identifies the
 exact same-chat bubble from its sender, row geometry, and visual fingerprint,
 opens that bubble in WeCom's full-image viewer, captures a private PNG, records
