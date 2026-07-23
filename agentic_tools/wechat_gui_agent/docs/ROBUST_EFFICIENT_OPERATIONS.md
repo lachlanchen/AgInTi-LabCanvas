@@ -71,9 +71,11 @@ destructive access, MCP, package installation, wrappers, SCS, or unrelated
 profiles behind the role policy.
 
 Normal Codex rolling quota and purchased credits are separate signals. A low
-or empty weekly window raises a notice, but a positive purchased-credit balance
-keeps Codex enabled. After a real Codex quota response, retry the same normal
-Codex model once when purchased credits are available before trying AgInTi.
+or empty weekly window raises a notice only when purchased credits are below
+`LABCANVAS_CODEX_QUOTA_CREDIT_WARNING_FLOOR` (default `1000`); a larger or
+unlimited balance suppresses repetitive chat warnings while keeping private
+quota telemetry. After a real Codex quota response, retry the same normal Codex
+model once when purchased credits are available before trying AgInTi.
 
 The worker must not dump the whole queue row into the backend prompt. Build a
 bounded task packet containing the current request, exact source IDs, at most 12

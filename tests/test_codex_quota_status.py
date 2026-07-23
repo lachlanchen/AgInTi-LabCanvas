@@ -117,7 +117,7 @@ class CodexQuotaStatusTests(unittest.TestCase):
         self.assertIn("2026-07-29", chinese)
         self.assertIn("3% remaining", english)
 
-    def test_purchased_credits_keep_codex_available_after_weekly_exhaustion(self) -> None:
+    def test_large_purchased_balance_suppresses_weekly_warning(self) -> None:
         module = load_module()
         status = module.normalize_rate_limit_response(
             self.sample_response(
@@ -131,8 +131,41 @@ class CodexQuotaStatusTests(unittest.TestCase):
         self.assertFalse(status["weekly_quota_available"])
         self.assertTrue(status["credits_available"])
         self.assertTrue(status["codex_available"])
-        self.assertIn("已购额度余额 5000", module.format_warning(status, request_text="继续"))
-        self.assertIn("Codex 会继续执行", module.format_warning(status, request_text="继续"))
+        self.assertEqual(module.format_warning(status, request_text="继续"), "")
+
+    def test_small_purchased_balance_keeps_weekly_warning(self) -> None:
+        module = load_module()
+        status = module.normalize_rate_limit_response(
+            self.sample_response(
+                codex_used=100,
+                has_credits=True,
+                credit_balance="999.5",
+            )
+        )
+
+        warning = module.format_warning(status, request_text="继续")
+
+        self.assertIn("已购额度余额 999.5", warning)
+        self.assertIn("Codex 会继续执行", warning)
+
+    def test_credit_warning_floor_is_configurable(self) -> None:
+        module = load_module()
+        status = module.normalize_rate_limit_response(
+            self.sample_response(
+                codex_used=100,
+                has_credits=True,
+                credit_balance="1500",
+            )
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {"LABCANVAS_CODEX_QUOTA_CREDIT_WARNING_FLOOR": "2000"},
+            clear=False,
+        ):
+            warning = module.format_warning(status, request_text="继续")
+
+        self.assertIn("已购额度余额 1500", warning)
 
     def test_fresh_cache_avoids_another_app_server_probe(self) -> None:
         module = load_module()

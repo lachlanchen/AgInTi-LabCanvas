@@ -29,6 +29,7 @@ DEFAULT_CACHE = Path(
     / "codex_quota_status.json"
 ).expanduser().resolve()
 DEFAULT_THRESHOLD_PERCENT = 5.0
+DEFAULT_CREDIT_WARNING_FLOOR = Decimal("1000")
 DEFAULT_CACHE_MAX_AGE_SECONDS = 180.0
 DEFAULT_DISPLAY_TIMEZONE = "Asia/Hong_Kong"
 
@@ -53,6 +54,23 @@ def codex_credits_available(status: dict[str, Any]) -> bool:
             or credit_balance_number(credits.get("balance")) > 0
         )
     )
+
+
+def credit_warning_floor() -> Decimal:
+    configured = os.environ.get(
+        "LABCANVAS_CODEX_QUOTA_CREDIT_WARNING_FLOOR",
+        str(DEFAULT_CREDIT_WARNING_FLOOR),
+    )
+    return credit_balance_number(configured)
+
+
+def purchased_credits_suppress_warning(status: dict[str, Any]) -> bool:
+    credits = status.get("credits") if isinstance(status.get("credits"), dict) else {}
+    if not credits.get("has_credits"):
+        return False
+    if credits.get("unlimited"):
+        return True
+    return credit_balance_number(credits.get("balance")) >= credit_warning_floor()
 
 
 def add_availability_fields(status: dict[str, Any]) -> dict[str, Any]:
@@ -380,6 +398,8 @@ def display_timezone() -> tuple[timezone | ZoneInfo, str]:
 
 def format_warning(status: dict[str, Any], *, request_text: str = "") -> str:
     if not status.get("ok") or not status.get("warning"):
+        return ""
+    if purchased_credits_suppress_warning(status):
         return ""
     remaining = float(status.get("remaining_percent") or 0)
     threshold = float(status.get("threshold_percent") or DEFAULT_THRESHOLD_PERCENT)
