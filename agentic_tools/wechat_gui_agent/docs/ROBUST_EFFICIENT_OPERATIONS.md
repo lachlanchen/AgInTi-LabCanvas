@@ -55,6 +55,26 @@ Routines are callable contracts and cheat sheets for mature work such as
 LazyEdit, Xiaoyunque, CAD/PCB, media sync, PDFs, and artifact sending. They
 should speed the agent up, not replace agent reasoning.
 
+## Strict AgInTi Fallback
+
+AgInTi fallback uses `aginti run --stdin --json --task-profile chatops
+--no-scs`. Only the single JSON `result` field may enter chat delivery.
+Interactive headers, plans, validator reports, malformed JSON, empty output,
+and stderr are backend failures, not user messages. Route and fast turns run
+without shell, file, MCP, or auxiliary tools. Worker turns use a Docker
+read-only or workspace sandbox, block package installation, and never receive
+unattended danger/host permissions. Files returned by AgInTi must live under
+the current task artifact directory; stale workspace artifacts are withheld.
+Safety-managed command options are stripped from local command/extra-argument
+overrides and reapplied last, so a stale config cannot enable host shell,
+destructive access, MCP, package installation, wrappers, SCS, or unrelated
+profiles behind the role policy.
+
+Normal Codex rolling quota and purchased credits are separate signals. A low
+or empty weekly window raises a notice, but a positive purchased-credit balance
+keeps Codex enabled. After a real Codex quota response, retry the same normal
+Codex model once when purchased credits are available before trying AgInTi.
+
 The worker must not dump the whole queue row into the backend prompt. Build a
 bounded task packet containing the current request, exact source IDs, at most 12
 recent same-chat rows, interruptions, route/routine state, and readable context

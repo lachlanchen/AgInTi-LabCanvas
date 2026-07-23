@@ -17,6 +17,10 @@ import subprocess
 import uuid
 from typing import Any
 
+from codex_quota_status import (
+    codex_credits_available,
+    current_status as current_codex_quota_status,
+)
 from file_lock import exclusive_lock
 from wechat_codex_sessions import (
     DEFAULT_REGISTRY,
@@ -45,6 +49,59 @@ BARE_BACKEND_SESSION_RE = re.compile(
     r"^(?:web-agent-[0-9A-Za-z-]+|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$",
     re.IGNORECASE,
 )
+AGINTI_INTERNAL_REPORT_RE = re.compile(
+    r"(?im)^\s*(?:#{1,6}\s*)?(?:"
+    r"scs(?:\s+hard)?\s+contract|definitive\s+blocker|internal\s+(?:plan|report)|"
+    r"validator\s+(?:report|contract)|runtime\s+(?:report|contract)"
+    r")\b"
+)
+AGINTI_INTERNAL_OUTPUT_LINE_RE = re.compile(
+    r"(?im)^\s*(?:tool|output|artifact|step budget|surgical context)\s*:\s*.+$"
+)
+AGINTI_MANAGED_VALUE_ARGS = {
+    "-s",
+    "--safety",
+    "--permission-mode",
+    "--sandbox-mode",
+    "--package-install-policy",
+    "--task-profile",
+    "--profile",
+    "--cwd",
+    "--scout-count",
+    "--wrapper",
+    "--preferred-wrapper",
+}
+AGINTI_MANAGED_FLAG_ARGS = {
+    "--approve-package-installs",
+    "--allow-shell",
+    "--no-shell",
+    "--allow-destructive",
+    "--trusted-host-shell",
+    "--allow-file-tools",
+    "--allow-files",
+    "--no-file-tools",
+    "--no-files",
+    "--allow-auxiliary-tools",
+    "--allow-auxiliary",
+    "--no-auxiliary-tools",
+    "--no-auxiliary",
+    "--mcp",
+    "--allow-mcp",
+    "--allow-mcp-tools",
+    "--no-mcp",
+    "--no-mcp-tools",
+    "--parallel-scouts",
+    "--no-parallel-scouts",
+    "--allow-wrappers",
+    "--docker-sandbox",
+    "--scs",
+    "--enable-scs",
+    "--disable-scs",
+    "--no-scs",
+    "--web",
+    "--chat",
+    "--interactive",
+}
 QUOTA_FAILURE_MARKERS = (
     "429",
     "billing hard limit",
@@ -134,12 +191,13 @@ def run_agent_session(
         "role": role,
     }
     attempt_summaries: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, bool]] = set()
     while True:
         signature = (
             str(attempt["backend"]),
             str(attempt.get("model") or ""),
             str(attempt.get("reasoning_effort") or ""),
+            bool(attempt.get("credit_retry")),
         )
         if signature in seen:
             result = {
@@ -307,6 +365,18 @@ def next_backend_attempt(
             "reasoning_effort": fallback_reasoning_effort(backend_config),
             "fallback_reason": f"spark_{failure_kind}",
         }
+    if (
+        backend == "codex"
+        and failure_kind == "quota"
+        and not bool(attempt.get("credit_retry"))
+        and codex_credit_retry_enabled(backend_config)
+        and purchased_codex_credits_available()
+    ):
+        return {
+            **attempt,
+            "credit_retry": True,
+            "fallback_reason": "codex_purchased_credit_retry",
+        }
     if backend != "aginti" and failure_kind == "timeout" and not fallback_on_timeout_enabled(backend_config):
         return None
     if backend != "aginti" and fallback_to_aginti_enabled(backend_config):
@@ -351,6 +421,23 @@ def fallback_on_timeout_enabled(config: dict[str, Any]) -> bool:
             fallback_config.get("fallback_on_timeout", True),
         )
     )
+
+
+def codex_credit_retry_enabled(config: dict[str, Any]) -> bool:
+    fallback_config = fallback_config_dict(config)
+    return bool(fallback_config.get("purchased_credit_retry", True))
+
+
+def purchased_codex_credits_available() -> bool:
+    try:
+        return codex_credits_available(
+            current_codex_quota_status(
+                max_age_seconds=300,
+                refresh=True,
+            )
+        )
+    except Exception:
+        return False
 
 
 def fallback_model(config: dict[str, Any]) -> str:
@@ -430,6 +517,7 @@ def summarize_attempt(attempt: dict[str, Any], result: dict[str, Any]) -> dict[s
         "model": str(attempt.get("model") or ""),
         "reasoning_effort": str(attempt.get("reasoning_effort") or ""),
         "fallback_reason": str(attempt.get("fallback_reason") or ""),
+        "credit_retry": bool(attempt.get("credit_retry")),
         "ok": bool(result.get("ok")),
         "failure_kind": classify_backend_failure(result),
         "returncode": result.get("returncode"),
@@ -513,7 +601,12 @@ def run_aginti_session(
     workdir: Path,
     backend_config: dict[str, Any],
 ) -> dict[str, Any]:
-    command = aginti_command(model=model, role=role, backend_config=backend_config)
+    command = aginti_command(
+        model=model,
+        role=role,
+        sandbox=sandbox,
+        backend_config=backend_config,
+    )
     if not command:
         return {
             "ok": False,
@@ -549,6 +642,7 @@ def run_aginti_session(
         sandbox=sandbox,
         backend_config=backend_config,
     )
+    machine_mode = bool(backend_config.get("machine_mode", True))
     configured_prompt_mode = str(
         backend_config.get("prompt_mode") or os.environ.get("WECHAT_AGINTI_PROMPT_MODE") or ""
     ).strip()
@@ -595,18 +689,29 @@ def run_aginti_session(
     message, message_source = extract_aginti_user_message(
         stdout,
         backend_config=backend_config,
-        expected_prompt=wrapped_prompt,
+        expected_prompt=prompt,
         invocation_started_at=invocation_started_at,
     )
-    if not message and proc.returncode != 0:
-        message = user_facing_backend_message(proc.stderr)
+    contract_error = aginti_result_contract_error(message, expected_prompt=prompt) if message else ""
+    if contract_error:
+        message = ""
+        message_source = contract_error
+    ok = proc.returncode == 0 and bool(message)
+    failure_detail = ""
+    if not ok:
+        failure_detail = contract_error or (
+            aginti_machine_failure_reason(stdout)
+            if machine_mode
+            else user_facing_backend_message(proc.stderr)
+        )
+        failure_detail = failure_detail or message_source or "AgInTi returned no valid chat result."
     return {
-        "ok": proc.returncode == 0,
+        "ok": ok,
         "message": message,
         "thread_id": "",
         "returncode": proc.returncode,
-        "stderr_tail": (proc.stderr or "")[-2000:],
-        "stdout_tail": (proc.stdout or "")[-2000:],
+        "stderr_tail": ((proc.stderr or "").strip() or failure_detail)[-2000:],
+        "stdout_tail": "" if machine_mode else (proc.stdout or "")[-2000:],
         "resumed": False,
         "fallback_started": False,
         "backend": "aginti",
@@ -649,7 +754,13 @@ def claude_command(
     return command
 
 
-def aginti_command(*, model: str, role: str, backend_config: dict[str, Any]) -> list[str]:
+def aginti_command(
+    *,
+    model: str,
+    role: str,
+    sandbox: str,
+    backend_config: dict[str, Any],
+) -> list[str]:
     raw_command = (
         backend_config.get("command")
         or backend_config.get("bin")
@@ -662,19 +773,118 @@ def aginti_command(*, model: str, role: str, backend_config: dict[str, Any]) -> 
         command = shlex.split(str(raw_command))
     if not command:
         return []
+    machine_mode = bool(backend_config.get("machine_mode", True))
     raw_args = backend_config.get("args")
     if raw_args is None:
         raw_args = os.environ.get("WECHAT_AGINTI_ARGS") or ""
     if isinstance(raw_args, list):
-        command.extend(str(item) for item in raw_args if str(item).strip())
+        extra_args = [str(item) for item in raw_args if str(item).strip()]
     else:
-        command.extend(shlex.split(str(raw_args)))
+        extra_args = shlex.split(str(raw_args))
+    if machine_mode:
+        command = [command[0], *strip_aginti_managed_args(command[1:])]
+        extra_args = strip_aginti_managed_args(extra_args)
+        if "run" not in command[1:]:
+            command.append("run")
+    command.extend(extra_args)
     if bool(backend_config.get("pass_role", False)):
         command.extend(["--role", role])
     configured_model = str(backend_config.get("model") or model or "").strip()
     if configured_model and bool(backend_config.get("pass_model_arg", False)):
         command.extend(["--model", configured_model])
+    if machine_mode:
+        command.extend(
+            [
+                "--stdin",
+                "--json",
+                "--no-auto-update",
+                "--no-scs",
+                "--task-profile",
+                str(backend_config.get("task_profile") or "chatops"),
+                "--no-parallel-scouts",
+                "--package-install-policy",
+                "block",
+            ]
+        )
+        if not bool(backend_config.get("allow_mcp", False)):
+            command.append("--no-mcp")
+        command.extend(
+            aginti_sandbox_args(
+                role=role,
+                sandbox=sandbox,
+                backend_config=backend_config,
+            )
+        )
     return command
+
+
+def strip_aginti_managed_args(args: list[str]) -> list[str]:
+    """Prevent local extra args from overriding the fallback safety contract."""
+    clean: list[str] = []
+    index = 0
+    while index < len(args):
+        value = str(args[index])
+        normalized = value.casefold()
+        if normalized in AGINTI_MANAGED_VALUE_ARGS:
+            index += 2
+            continue
+        if normalized in AGINTI_MANAGED_FLAG_ARGS:
+            index += 1
+            if normalized in {"--scs", "--enable-scs"} and index < len(args):
+                optional = str(args[index]).strip().casefold()
+                if optional in {
+                    "on",
+                    "off",
+                    "auto",
+                    "smart",
+                    "true",
+                    "false",
+                    "yes",
+                    "no",
+                    "enable",
+                    "disable",
+                    "enabled",
+                    "disabled",
+                    "1",
+                    "0",
+                }:
+                    index += 1
+            continue
+        clean.append(value)
+        index += 1
+    return clean
+
+
+def aginti_sandbox_args(
+    *,
+    role: str,
+    sandbox: str,
+    backend_config: dict[str, Any],
+) -> list[str]:
+    explicit = str(backend_config.get("permission_mode") or "").strip().casefold()
+    allow_danger = bool(backend_config.get("allow_dangerous_host", False))
+    if explicit == "danger" and not allow_danger:
+        explicit = "normal"
+    if role in {"fast", "route"}:
+        return [
+            "--permission-mode",
+            "safe",
+            "--sandbox-mode",
+            "host",
+            "--no-shell",
+            "--no-file-tools",
+            "--no-auxiliary-tools",
+        ]
+    if explicit in {"safe", "normal", "danger"}:
+        permission = explicit
+    elif str(sandbox or "").strip().casefold() == "read-only":
+        permission = "safe"
+    else:
+        permission = "normal"
+    sandbox_mode = "docker-readonly" if permission == "safe" else "docker-workspace"
+    if permission == "danger" and allow_danger:
+        sandbox_mode = "host"
+    return ["--permission-mode", permission, "--sandbox-mode", sandbox_mode]
 
 
 def extract_aginti_user_message(
@@ -686,6 +896,21 @@ def extract_aginti_user_message(
 ) -> tuple[str, str]:
     """Extract the final assistant turn without forwarding AgInTi console logs."""
     text = ANSI_ESCAPE_RE.sub("", str(stdout or ""))
+    machine_mode = bool(backend_config.get("machine_mode", True))
+    if machine_mode:
+        try:
+            payload = json.loads(text.strip())
+        except json.JSONDecodeError:
+            return "", "invalid_machine_json"
+        if not isinstance(payload, dict):
+            return "", "invalid_machine_payload"
+        if payload.get("ok") is not True:
+            reason = " ".join(str(payload.get("reason") or "").split())[:300]
+            return "", f"machine_failure:{reason or 'run_failed'}"
+        message = user_facing_backend_message(payload.get("result"))
+        return (message, "machine_json") if message else ("", "empty_machine_result")
+    if not bool(backend_config.get("allow_legacy_output", False)):
+        return "", "legacy_output_disabled"
     session_match = AGINTI_SESSION_RE.search(text)
     if session_match:
         session_id = session_match.group(1)
@@ -715,6 +940,35 @@ def extract_aginti_user_message(
     if protocol:
         return protocol, "stdout_protocol"
     return "", "unavailable"
+
+
+def aginti_machine_failure_reason(stdout: str) -> str:
+    try:
+        payload = json.loads(ANSI_ESCAPE_RE.sub("", str(stdout or "")).strip())
+    except json.JSONDecodeError:
+        return "AgInTi machine output was not one valid JSON object."
+    if not isinstance(payload, dict):
+        return "AgInTi machine output had an invalid payload."
+    reason = " ".join(str(payload.get("reason") or "").split())[:500]
+    return reason or "AgInTi machine run failed."
+
+
+def aginti_result_contract_error(message: str, *, expected_prompt: str) -> str:
+    text = str(message or "").strip()
+    if not text:
+        return "empty_machine_result"
+    if AGINTI_INTERNAL_REPORT_RE.search(text):
+        return "internal_runtime_report_rejected"
+    if AGINTI_INTERNAL_OUTPUT_LINE_RE.search(text):
+        return "internal_tool_output_rejected"
+    if "Return one strict JSON object and no prose" in str(expected_prompt or ""):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return "strict_json_contract_rejected"
+        if not isinstance(payload, dict):
+            return "strict_json_contract_rejected"
+    return ""
 
 
 def aginti_state_matches_invocation(
@@ -804,9 +1058,11 @@ def aginti_prompt(
     if not bool(backend_config.get("wrap_prompt", True)):
         return prompt
     return f"""You are AgInTi acting as a fallback backend for LabCanvas WeChat automation.
+The exact current request below is the only task. Do not continue an old AgInTi session, reuse an unrelated artifact, or substitute a nearby workspace task.
 Preserve the requested output shape exactly. If the original prompt asks for JSON, return only valid JSON. If it asks for CHAT:/ACK:/TASK:, follow that protocol.
 Use the same source-isolation, safety, artifact-return, and chat-purpose rules in the original prompt. Do not invent unavailable files or claim browser/platform work completed without evidence.
-If you cannot complete the task from the available local tools/context, return a concise blocker and the exact next action.
+Do not expose plans, SCS/validator contracts, runtime metadata, model/sandbox details, tool logs, stack traces, or internal diagnostics. For ordinary chat, answer directly without tools or files. For research, use traceable sources and distinguish evidence from inference. For artifact work, create only the requested current-task artifacts.
+If you cannot complete the task from the available local tools/context, return one concise task-specific limitation and exact safe next action.
 
 Chat: {chat_name}
 Role: {role}

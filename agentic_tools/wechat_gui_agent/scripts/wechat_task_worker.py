@@ -31,7 +31,12 @@ from wechat_document_reader import READABLE_STATUSES as DOCUMENT_READABLE_STATUS
 from wechat_document_reader import analyze_document, is_document_candidate
 from wechat_message_policy import is_no_reply_control
 from wechat_mirror import DEFAULT_DB, record_event
-from wechat_routines import ensure_task_routine_contract, routine_prompt_context, write_routine_contract
+from wechat_routines import (
+    ensure_task_routine_contract,
+    request_has_explicit_research_intent,
+    routine_prompt_context,
+    write_routine_contract,
+)
 from shipinhao_media_transcribe import (
     DEFAULT_CACHE_ROOT as SHIPINHAO_MEDIA_CACHE_ROOT,
     extract_shipinhao_media_profile,
@@ -418,6 +423,7 @@ def reprocess_task(
             task.setdefault("reprocess_history", []).append(previous)
             for field in stale_fields:
                 task.pop(field, None)
+            repair_explicit_research_task_contract(task)
             task["status"] = "pending"
             route_decision = (
                 task.get("route_decision")
@@ -442,6 +448,54 @@ def reprocess_task(
     raise SystemExit(f"No task found with id {task_id}")
 
 
+def repair_explicit_research_task_contract(task: dict[str, Any]) -> bool:
+    """Repair stale/generic routing for an unambiguous evidence request."""
+    request = task_focus_text(task)
+    if not request_has_explicit_research_intent(request):
+        return False
+    route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    current_kind = str(route.get("route_kind") or "").strip()
+    if not current_kind:
+        routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
+        current_kind = str(routine.get("route_kind") or "").strip()
+    if current_kind not in {"", "chat_only", "other_worker"}:
+        return False
+    route = dict(route)
+    route.update(
+        {
+            "route_kind": "research_or_summary",
+            "worker_needed": True,
+            "message_role": "research_request",
+        }
+    )
+    task["route_decision"] = route
+    task.pop("routine", None)
+    instruction = (
+        dict(task.get("instruction_contract"))
+        if isinstance(task.get("instruction_contract"), dict)
+        else {}
+    )
+    instruction["route_kind"] = "research_or_summary"
+    task["instruction_contract"] = instruction
+    execution = (
+        dict(task.get("execution_contract"))
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    execution["research_evidence"] = {
+        "required": True,
+        "target_primary_or_authoritative_sources": 3,
+        "minimum_traceable_sources": 2,
+        "separate_direct_indirect_hypothesis": True,
+        "state_uncertainty_and_limitations": True,
+        "include_actionable_next_steps": False,
+    }
+    task["execution_contract"] = execution
+    task["route_repaired_at"] = datetime.now().isoformat(timespec="seconds")
+    task["route_repair_reason"] = "explicit_research_intent"
+    return True
+
+
 def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
     merged = merge_existing_pending_interruptions(queue)
     if merged:
@@ -460,6 +514,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         return False
     log_worker_event("claimed", task)
     task["queue_path"] = str(queue)
+    repair_explicit_research_task_contract(task)
     ensure_runtime_instruction_contract(task)
     try:
         result_text = run_worker_codex(task)
@@ -12185,6 +12240,9 @@ def prepare_result_files(
         if not ok:
             skipped.append({"path": str(path), "reason": reason})
             continue
+        if task_uses_aginti_fallback(task) and not is_current_task_artifact(path, task):
+            skipped.append({"path": str(path), "reason": "aginti-unscoped-artifact"})
+            continue
         files.append(str(path))
     result["files"] = unique_strings(files)
     if skipped:
@@ -12196,6 +12254,27 @@ def prepare_result_files(
     ):
         result["message"] = f"Generated {len(result['files'])} artifact(s); sending them now."
     return result
+
+
+def task_uses_aginti_fallback(task: dict[str, Any] | None) -> bool:
+    if not isinstance(task, dict):
+        return False
+    session = task.get("agent_session")
+    return isinstance(session, dict) and str(session.get("backend") or "").casefold() == "aginti"
+
+
+def is_current_task_artifact(path: Path, task: dict[str, Any] | None) -> bool:
+    if not isinstance(task, dict):
+        return False
+    raw_root = str(task.get("artifact_dir") or "").strip()
+    if not raw_root:
+        return False
+    try:
+        root = Path(raw_root).expanduser().resolve()
+        resolved = path.expanduser().resolve()
+    except OSError:
+        return False
+    return resolved == root or root in resolved.parents
 
 
 def suppress_auto_artifact_extraction(result: dict[str, Any]) -> bool:

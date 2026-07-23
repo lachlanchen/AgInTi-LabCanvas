@@ -1897,6 +1897,44 @@ stderr: noisy internal trace
         self.assertNotIn("worker_error", updated)
         self.assertNotIn("expires_at", updated)
 
+    def test_reprocess_repairs_stale_generic_route_for_explicit_research(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "stale-research",
+                        "chat": "wecom:group:labagent",
+                        "request": "帮我调研下这段话是否有依据",
+                        "status": "done",
+                        "routine": {
+                            "id": "general_worker",
+                            "route_kind": "other_worker",
+                        },
+                        "execution_contract": {"required_artifacts": []},
+                        "result": {"message": "unrelated fallback output", "files": []},
+                    }
+                ],
+            )
+
+            updated = worker.reprocess_task(
+                queue,
+                "stale-research",
+                reason="rerun with repaired research routing",
+            )
+
+        self.assertEqual(updated["status"], "pending")
+        self.assertEqual(updated["route_decision"]["route_kind"], "research_or_summary")
+        self.assertEqual(updated["instruction_contract"]["route_kind"], "research_or_summary")
+        self.assertTrue(updated["execution_contract"]["research_evidence"]["required"])
+        self.assertEqual(
+            updated["execution_contract"]["research_evidence"]["minimum_traceable_sources"],
+            2,
+        )
+        self.assertEqual(updated["route_repair_reason"], "explicit_research_intent")
+
     def test_daily_research_keeps_pdf_delivery_required_after_reprocess(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -5488,6 +5526,37 @@ stderr: noisy internal trace
 
         self.assertEqual(prepared["files"], [])
         self.assertEqual(prepared["skipped_files"][0]["reason"], "private-path")
+
+    def test_aginti_fallback_can_only_deliver_current_task_artifacts(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact_dir = root / "current-task"
+            artifact_dir.mkdir()
+            current = artifact_dir / "report.pdf"
+            unrelated = root / "old-task.pdf"
+            current.write_bytes(b"%PDF current")
+            unrelated.write_bytes(b"%PDF old")
+            task = {
+                "artifact_dir": str(artifact_dir),
+                "agent_session": {"backend": "aginti"},
+            }
+
+            prepared = worker.prepare_result_files(
+                {
+                    "message": "done",
+                    "confirmation": "",
+                    "files": [str(current), str(unrelated)],
+                },
+                "",
+                task=task,
+            )
+
+        self.assertEqual(prepared["files"], [str(current.resolve())])
+        self.assertEqual(
+            prepared["skipped_files"][0]["reason"],
+            "aginti-unscoped-artifact",
+        )
 
     def test_worker_result_treats_null_files_as_empty(self) -> None:
         worker = load_worker()

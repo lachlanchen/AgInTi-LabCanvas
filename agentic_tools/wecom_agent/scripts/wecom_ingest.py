@@ -26,7 +26,10 @@ if str(SHARED_AGENT_SCRIPTS) not in sys.path:
 from codex_quota_status import quota_warning_for_request  # noqa: E402
 from wechat_agent_backend import run_agent_session  # noqa: E402
 from wechat_mirror import record_event  # noqa: E402
-from wechat_routines import ensure_task_routine_contract  # noqa: E402
+from wechat_routines import (  # noqa: E402
+    ensure_task_routine_contract,
+    request_has_explicit_research_intent,
+)
 from wecom_daily_research import (  # noqa: E402
     enqueue_initial_group_inspiration,
     enqueue_initial_daily_research,
@@ -616,6 +619,10 @@ Private same-member knowledge context:
         "ordinary_chat",
     }:
         message_role = "ordinary_chat"
+    if request_has_explicit_research_intent(request) and route_kind in {"other_worker", "chat_only"}:
+        route_kind = "research_or_summary"
+        message_role = "research_request"
+        worker_needed = True
     reply_mode = str(
         payload.get("reply_mode") or ("ack_then_work" if worker_needed else "reply")
     ).strip().casefold()
@@ -653,12 +660,17 @@ Private same-member knowledge context:
 def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
     grant = looks_like_grant_request(request)
     article_card = str(event.get("msgtype") or "").strip() == "wechat_article_card"
+    research = request_has_explicit_research_intent(request)
     return {
         "worker_needed": True,
         "route_kind": (
             "file_intake"
             if normalized_attachments(event)
-            else ("research_or_summary" if article_card else ("grant_proposal" if grant else "other_worker"))
+            else (
+                "grant_proposal"
+                if grant
+                else ("research_or_summary" if article_card or research else "other_worker")
+            )
         ),
         "response": "",
         "task": request,
@@ -667,7 +679,7 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         "inspiration_interest": "",
         "inspiration_interest_mode": "none",
         "report_required": grant,
-        "message_role": "research_request" if grant else "ordinary_chat",
+        "message_role": "research_request" if grant or research else "ordinary_chat",
         "reply_mode": "ack_then_work",
         "reply_to_senders": [],
         "memory_items": [],
@@ -797,11 +809,11 @@ def build_task(
             "response_policy": wecom_response_policy(chat),
             "required_artifacts": ["pdf"] if route.get("report_required") else [],
             "research_evidence": {
-                "required": bool(route.get("report_required")),
-                "target_primary_or_authoritative_sources": 3 if route.get("report_required") else 0,
-                "minimum_traceable_sources": 2 if route.get("report_required") else 0,
-                "separate_direct_indirect_hypothesis": bool(route.get("report_required")),
-                "state_uncertainty_and_limitations": bool(route.get("report_required")),
+                "required": str(route.get("route_kind") or "") == "research_or_summary",
+                "target_primary_or_authoritative_sources": 3 if str(route.get("route_kind") or "") == "research_or_summary" else 0,
+                "minimum_traceable_sources": 2 if str(route.get("route_kind") or "") == "research_or_summary" else 0,
+                "separate_direct_indirect_hypothesis": str(route.get("route_kind") or "") == "research_or_summary",
+                "state_uncertainty_and_limitations": str(route.get("route_kind") or "") == "research_or_summary",
                 "include_actionable_next_steps": bool(route.get("report_required")),
             },
         },

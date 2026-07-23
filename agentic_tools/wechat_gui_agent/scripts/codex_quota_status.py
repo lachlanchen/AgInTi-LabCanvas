@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 import json
 import os
 from pathlib import Path
@@ -34,6 +35,34 @@ DEFAULT_DISPLAY_TIMEZONE = "Asia/Hong_Kong"
 
 class QuotaProbeError(RuntimeError):
     """The local Codex rate-limit snapshot could not be read safely."""
+
+
+def credit_balance_number(value: Any) -> Decimal:
+    try:
+        return max(Decimal("0"), Decimal(str(value or "0")))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+
+def codex_credits_available(status: dict[str, Any]) -> bool:
+    credits = status.get("credits") if isinstance(status.get("credits"), dict) else {}
+    return bool(
+        credits.get("has_credits")
+        and (
+            credits.get("unlimited")
+            or credit_balance_number(credits.get("balance")) > 0
+        )
+    )
+
+
+def add_availability_fields(status: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(status)
+    credits_available = codex_credits_available(enriched)
+    remaining = float(enriched.get("remaining_percent") or 0)
+    enriched["credits_available"] = credits_available
+    enriched["weekly_quota_available"] = remaining > 0
+    enriched["codex_available"] = remaining > 0 or credits_available
+    return enriched
 
 
 def now_epoch() -> float:
@@ -256,7 +285,7 @@ def normalize_rate_limit_response(
     credits = snapshot.get("credits")
     credits = credits if isinstance(credits, dict) else {}
     remaining = float(active["remaining_percent"])
-    return {
+    return add_availability_fields({
         "ok": True,
         "source": "codex_app_server_account_rate_limits",
         "observed_at_epoch": observed,
@@ -277,7 +306,7 @@ def normalize_rate_limit_response(
             "unlimited": bool(credits.get("unlimited")),
             "balance": str(credits.get("balance") or ""),
         },
-    }
+    })
 
 
 def probe_status(
@@ -321,7 +350,7 @@ def current_status(
         remaining = float(cached.get("remaining_percent") or 0)
         cached["threshold_percent"] = float(threshold_percent)
         cached["warning"] = remaining < float(threshold_percent)
-        return cached
+        return add_availability_fields(cached)
     if not refresh:
         return {}
     return probe_status(
@@ -367,13 +396,29 @@ def format_warning(status: dict[str, Any], *, request_text: str = "") -> str:
         reset_text = f"{reset_value} {timezone_label}"
     remaining_text = f"{remaining:g}%"
     threshold_text = f"{threshold:g}%"
+    credits = status.get("credits") if isinstance(status.get("credits"), dict) else {}
+    credits_available = codex_credits_available(status)
+    balance = credit_balance_number(credits.get("balance"))
+    balance_text = format(balance.normalize(), "f") if balance else "0"
     if request_uses_cjk(request_text):
         reset_clause = f"，预计 {reset_text} 重置" if reset_text else ""
+        if credits_available:
+            credit_clause = "已购额度不限量" if credits.get("unlimited") else f"已购额度余额 {balance_text}"
+            return (
+                f"额度提醒：Codex 周期额度剩 {remaining_text}，低于 "
+                f"{threshold_text}{reset_clause}；{credit_clause}仍可用，Codex 会继续执行。"
+            )
         return (
             f"额度提醒：Codex 当前额度仅剩 {remaining_text}，低于 "
             f"{threshold_text}{reset_clause}。本次任务仍会继续，额度耗尽时会尝试备用后端。"
         )
     reset_clause = f"; expected reset: {reset_text}" if reset_text else ""
+    if credits_available:
+        credit_clause = "purchased credits are unlimited" if credits.get("unlimited") else f"purchased-credit balance is {balance_text}"
+        return (
+            f"Quota notice: Codex weekly quota has {remaining_text} remaining, below "
+            f"{threshold_text}{reset_clause}; {credit_clause}, so Codex remains enabled."
+        )
     return (
         f"Quota notice: Codex has {remaining_text} remaining, below "
         f"{threshold_text}{reset_clause}. This request will continue and the "

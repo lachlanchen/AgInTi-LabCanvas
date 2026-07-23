@@ -140,7 +140,10 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 workdir=ROOT,
                 backend_config={
                     "_backends": {"aginti": {"model": "aginti-auto", "reasoning_effort": "low"}},
-                    "agent_fallbacks": {"fallback_to_aginti": True},
+                    "agent_fallbacks": {
+                        "fallback_to_aginti": True,
+                        "purchased_credit_retry": False,
+                    },
                 },
             )
         finally:
@@ -244,19 +247,78 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertFalse(backend.backend_result_has_content({"message": "web-agent-4a6d272a-b13d-4a16-ab2e-5fcdececdd12"}))
         self.assertEqual(backend.user_facing_backend_message("CHAT: useful answer"), "CHAT: useful answer")
 
-    def test_default_aginti_command_uses_backward_compatible_one_shot(self) -> None:
+    def test_default_aginti_command_uses_strict_machine_chatops_mode(self) -> None:
         backend = load_backend()
 
-        command = backend.aginti_command(model="aginti", role="fast", backend_config={})
+        command = backend.aginti_command(
+            model="aginti",
+            role="fast",
+            sandbox="read-only",
+            backend_config={},
+        )
 
-        self.assertEqual(command, ["aginti"])
+        self.assertEqual(command[:4], ["aginti", "run", "--stdin", "--json"])
+        self.assertIn("chatops", command)
+        self.assertIn("--no-scs", command)
+        self.assertIn("--no-shell", command)
+        self.assertIn("--no-file-tools", command)
+        self.assertIn("--no-mcp", command)
+        self.assertIn("host", command)
 
-    def test_default_aginti_run_passes_the_wrapped_prompt_as_one_argument(self) -> None:
+    def test_aginti_machine_command_cannot_override_managed_sandbox_args(self) -> None:
+        backend = load_backend()
+
+        command = backend.aginti_command(
+            model="aginti",
+            role="worker",
+            sandbox="read-only",
+            backend_config={
+                "command": [
+                    "aginti",
+                    "run",
+                    "--permission-mode",
+                    "danger",
+                    "--trusted-host-shell",
+                    "--mcp",
+                ],
+                "args": [
+                    "--sandbox-mode",
+                    "host",
+                    "--package-install-policy",
+                    "allow",
+                    "--allow-shell",
+                    "--allow-file-tools",
+                    "--allow-auxiliary-tools",
+                    "--allow-wrappers",
+                    "--scs",
+                    "auto",
+                    "--provider",
+                    "deepseek",
+                ],
+            },
+        )
+
+        self.assertEqual(command.count("run"), 1)
+        self.assertEqual(command[command.index("--permission-mode") + 1], "safe")
+        self.assertEqual(command[command.index("--sandbox-mode") + 1], "docker-readonly")
+        self.assertEqual(command[command.index("--package-install-policy") + 1], "block")
+        self.assertIn("--no-scs", command)
+        self.assertIn("--no-mcp", command)
+        self.assertNotIn("danger", command)
+        self.assertNotIn("--trusted-host-shell", command)
+        self.assertNotIn("--allow-shell", command)
+        self.assertNotIn("--allow-file-tools", command)
+        self.assertNotIn("--allow-auxiliary-tools", command)
+        self.assertNotIn("--allow-wrappers", command)
+        self.assertIn("--provider", command)
+        self.assertIn("deepseek", command)
+
+    def test_default_aginti_run_uses_stdin_and_extracts_only_machine_result(self) -> None:
         backend = load_backend()
         completed = subprocess.CompletedProcess(
-            ["aginti", "original prompt"],
+            ["aginti", "run", "--stdin", "--json"],
             0,
-            stdout="CHAT: actual answer",
+            stdout='{"ok":true,"sessionId":"test","result":"CHAT: actual answer","failed":false}',
             stderr="",
         )
         with (
@@ -276,10 +338,12 @@ class WeChatAgentBackendTests(unittest.TestCase):
             )
 
         command = run.call_args.args[0]
-        self.assertEqual(command, ["aginti", "original prompt"])
-        self.assertIsNone(run.call_args.kwargs["input"])
+        self.assertEqual(command[:4], ["aginti", "run", "--stdin", "--json"])
+        self.assertEqual(run.call_args.kwargs["input"], "original prompt")
         self.assertTrue(result["ok"])
         self.assertEqual(result["message"], "CHAT: actual answer")
+        self.assertEqual(result["message_source"], "machine_json")
+        self.assertEqual(result["stdout_tail"], "")
 
     def test_aginti_message_comes_from_final_session_assistant_turn(self) -> None:
         backend = load_backend()
@@ -296,7 +360,11 @@ class WeChatAgentBackendTests(unittest.TestCase):
             )
             message, source = backend.extract_aginti_user_message(
                 f"Session: {session_id}\nProvider: test\nPlan:\n1. internal plan\n",
-                backend_config={"sessions_dir": tmp},
+                backend_config={
+                    "sessions_dir": tmp,
+                    "machine_mode": False,
+                    "allow_legacy_output": True,
+                },
                 expected_prompt="exact current prompt",
             )
 
@@ -318,12 +386,95 @@ class WeChatAgentBackendTests(unittest.TestCase):
             )
             message, source = backend.extract_aginti_user_message(
                 f"Session: {session_id}\nProvider: test\n",
-                backend_config={"sessions_dir": tmp},
+                backend_config={
+                    "sessions_dir": tmp,
+                    "machine_mode": False,
+                    "allow_legacy_output": True,
+                },
                 expected_prompt="exact current prompt",
             )
 
         self.assertEqual(message, "")
         self.assertEqual(source, "unavailable")
+
+    def test_aginti_machine_mode_rejects_console_pollution(self) -> None:
+        backend = load_backend()
+
+        message, source = backend.extract_aginti_user_message(
+            'Session: old\n{"ok":true,"result":"CHAT: answer"}',
+            backend_config={},
+        )
+
+        self.assertEqual(message, "")
+        self.assertEqual(source, "invalid_machine_json")
+
+    def test_aginti_contract_rejects_internal_runtime_report(self) -> None:
+        backend = load_backend()
+
+        reason = backend.aginti_result_contract_error(
+            "## SCS Hard Contract\nValidator report: unrelated output",
+            expected_prompt="Answer the current question.",
+        )
+
+        self.assertEqual(reason, "internal_runtime_report_rejected")
+
+        tool_reason = backend.aginti_result_contract_error(
+            "CHAT: answer\nTool: web_search\nOutput: internal trace",
+            expected_prompt="Answer the current question.",
+        )
+        self.assertEqual(tool_reason, "internal_tool_output_rejected")
+
+    def test_codex_quota_retries_once_when_purchased_credits_are_available(self) -> None:
+        backend = load_backend()
+        calls: list[dict[str, object]] = []
+        original = backend.run_codex_session
+        try:
+            def fake_run_codex_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                calls.append({"prompt": prompt, **kwargs})
+                if len(calls) == 1:
+                    return {
+                        "ok": False,
+                        "message": "quota exceeded",
+                        "thread_id": "",
+                        "returncode": 1,
+                        "stderr_tail": "quota exceeded",
+                    }
+                return {
+                    "ok": True,
+                    "message": "CHAT: paid-credit retry worked",
+                    "thread_id": "paid-credit",
+                    "returncode": 0,
+                }
+
+            backend.run_codex_session = fake_run_codex_session
+            with mock.patch.object(backend, "purchased_codex_credits_available", return_value=True):
+                result = backend.run_agent_session(
+                    "hello",
+                    backend="codex",
+                    chat_name="LabAgent",
+                    role="worker",
+                    model="gpt-5.6-sol",
+                    reasoning_effort="medium",
+                    sandbox="read-only",
+                    timeout_seconds=30,
+                    workdir=ROOT,
+                    backend_config={
+                        "agent_fallbacks": {
+                            "fallback_to_aginti": False,
+                            "purchased_credit_retry": True,
+                        }
+                    },
+                )
+        finally:
+            backend.run_codex_session = original
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(result["backend_attempts"][1]["credit_retry"])
+        self.assertEqual(
+            result["backend_attempts"][1]["fallback_reason"],
+            "codex_purchased_credit_retry",
+        )
 
     def test_metadata_only_aginti_fallback_is_rejected(self) -> None:
         backend = load_backend()

@@ -52,6 +52,18 @@ AUTONOMY_CHEAT_SHEET = (
 )
 
 
+def request_has_explicit_research_intent(request: str) -> bool:
+    """Recognize an explicit evidence-seeking request, not a broad topic mention."""
+    text = " ".join(str(request or "").casefold().split())
+    patterns = (
+        r"\b(?:research|investigate|fact[\s-]?check|literature review)\b",
+        r"\b(?:is|are|was|were)\s+there\s+(?:any\s+)?evidence\b",
+        r"(?:帮我|請|请)?(?:调研|調研|查证|查證|核实|核實|研究一下)",
+        r"(?:是否|有无|有無).{0,12}(?:依据|依據|证据|證據)",
+    )
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
 ROUTINES: dict[str, RoutineDefinition] = {
     "research_summary": RoutineDefinition(
         id="research_summary",

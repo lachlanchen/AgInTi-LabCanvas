@@ -1165,6 +1165,44 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(evidence["minimum_traceable_sources"], 2)
         self.assertTrue(evidence["separate_direct_indirect_hypothesis"])
 
+    def test_explicit_evidence_check_cannot_degrade_to_other_worker(self) -> None:
+        ingest = load_ingest()
+        response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": True,
+                    "route_kind": "other_worker",
+                    "response": "",
+                    "task": "Answer the question.",
+                    "ack": "我会核对。",
+                    "report_required": False,
+                    "message_role": "ordinary_chat",
+                    "public_publish_allowed": False,
+                }
+            ),
+        }
+        event = self.sample_event(text="帮我调研这个机制是否有研究依据")
+        with mock.patch.object(ingest, "run_agent_session", return_value=response):
+            route = ingest.route_event(event, ingest.event_request(event), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            task = ingest.build_task(
+                event,
+                ingest.canonical_chat_name(event),
+                ingest.event_request(event),
+                [],
+                route,
+                Path(tmp) / "queue.jsonl",
+            )
+
+        self.assertEqual(route["route_kind"], "research_or_summary")
+        self.assertEqual(route["message_role"], "research_request")
+        self.assertTrue(task["execution_contract"]["research_evidence"]["required"])
+        self.assertEqual(
+            task["execution_contract"]["research_evidence"]["minimum_traceable_sources"],
+            2,
+        )
+
     def test_wecom_task_preserves_sender_and_exact_chat_response_policy(self) -> None:
         ingest = load_ingest()
         event = self.sample_event(

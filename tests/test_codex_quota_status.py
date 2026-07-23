@@ -33,7 +33,13 @@ def load_module():
 
 
 class CodexQuotaStatusTests(unittest.TestCase):
-    def sample_response(self, *, codex_used: int = 97) -> dict:
+    def sample_response(
+        self,
+        *,
+        codex_used: int = 97,
+        has_credits: bool = False,
+        credit_balance: str = "0",
+    ) -> dict:
         return {
             "rateLimits": {
                 "limitId": "codex",
@@ -43,9 +49,9 @@ class CodexQuotaStatusTests(unittest.TestCase):
                     "resetsAt": 1785258202,
                 },
                 "credits": {
-                    "hasCredits": False,
+                    "hasCredits": has_credits,
                     "unlimited": False,
-                    "balance": "0",
+                    "balance": credit_balance,
                 },
                 "planType": "pro",
             },
@@ -66,9 +72,9 @@ class CodexQuotaStatusTests(unittest.TestCase):
                         "resetsAt": 1785258202,
                     },
                     "credits": {
-                        "hasCredits": False,
+                        "hasCredits": has_credits,
                         "unlimited": False,
-                        "balance": "0",
+                        "balance": credit_balance,
                     },
                     "planType": "pro",
                 },
@@ -88,6 +94,7 @@ class CodexQuotaStatusTests(unittest.TestCase):
         self.assertEqual(status["remaining_percent"], 3)
         self.assertEqual(status["window"]["window_duration_mins"], 10080)
         self.assertEqual(status["limit_id"], "codex")
+        self.assertTrue(status["codex_available"])
 
     def test_threshold_is_strictly_below_five_percent(self) -> None:
         module = load_module()
@@ -109,6 +116,23 @@ class CodexQuotaStatusTests(unittest.TestCase):
         self.assertIn("仅剩 3%", chinese)
         self.assertIn("2026-07-29", chinese)
         self.assertIn("3% remaining", english)
+
+    def test_purchased_credits_keep_codex_available_after_weekly_exhaustion(self) -> None:
+        module = load_module()
+        status = module.normalize_rate_limit_response(
+            self.sample_response(
+                codex_used=100,
+                has_credits=True,
+                credit_balance="5000.0000000000",
+            )
+        )
+
+        self.assertTrue(status["warning"])
+        self.assertFalse(status["weekly_quota_available"])
+        self.assertTrue(status["credits_available"])
+        self.assertTrue(status["codex_available"])
+        self.assertIn("已购额度余额 5000", module.format_warning(status, request_text="继续"))
+        self.assertIn("Codex 会继续执行", module.format_warning(status, request_text="继续"))
 
     def test_fresh_cache_avoids_another_app_server_probe(self) -> None:
         module = load_module()
