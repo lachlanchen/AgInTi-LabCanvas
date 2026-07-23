@@ -368,7 +368,14 @@ def reprocess_task(
         "routine",
         "routine_contract",
         "orchestrator",
+        "worker_policy",
+        "worker_policy_selected_attempt",
         "worker_policy_attempts",
+        "worker_result_exhausted",
+        "worker_result_ready_at",
+        "worker_retry_context",
+        "agent_session",
+        "codex_session",
         "artifact_dir",
         "skipped_files",
         "send_errors",
@@ -388,6 +395,7 @@ def reprocess_task(
         "publish_poststage_last_outcome",
         "send_suppressed_reason",
         "send_suppressed_at",
+        "wecom_delivery",
         "expires_at",
         "send_expires_at",
     ]
@@ -4009,7 +4017,13 @@ def run_worker_codex(task: dict[str, Any]) -> str:
     best_score = -10_000
     best_attempt = 0
     max_attempts = max(1, int(os.environ.get("WECHAT_WORKER_MAX_CODEX_ATTEMPTS", str(len(EFFORT_ORDER)))))
-    for attempt_index in range(max_attempts):
+    max_tool_repair_retries = max(
+        0,
+        int(os.environ.get("WECHAT_WORKER_MAX_TOOL_REPAIR_RETRIES", "1")),
+    )
+    tool_repair_retries = 0
+    attempt_budget = max_attempts + max_tool_repair_retries
+    for attempt_index in range(attempt_budget):
         task["worker_policy"] = policy
         result = run_worker_codex_once(task, policy)
         recovered = recover_completed_research_artifacts(task, result)
@@ -4029,6 +4043,8 @@ def run_worker_codex(task: dict[str, Any]) -> str:
                 "reasoning_effort": policy.get("reasoning_effort"),
                 "timeout_seconds": policy.get("timeout_seconds"),
                 "escalated_from": policy.get("escalated_from"),
+                "tool_repair_retry": bool(policy.get("tool_repair_retry")),
+                "tool_repair_retry_index": policy.get("tool_repair_retry_index"),
                 "result_quality": score,
                 "result_excerpt": collapse_context_text(result, max_len=280),
                 "artifact_recovered": artifact_recovered,
@@ -4036,9 +4052,35 @@ def run_worker_codex(task: dict[str, Any]) -> str:
         )
         if artifact_recovered:
             break
+        if (
+            worker_result_is_repairable_tool_failure(result)
+            and tool_repair_retries < max_tool_repair_retries
+        ):
+            tool_repair_retries += 1
+            task["worker_retry_context"] = {
+                "kind": "repairable_tool_invocation_failure",
+                "retry_index": tool_repair_retries,
+                "artifact_dir": str(worker_artifact_dir(task)),
+                "instruction": (
+                    "Continue this exact task from its existing artifacts and evidence. "
+                    "The previous turn failed while constructing a local tool command. "
+                    "Inspect and reuse completed downloads, use simple direct commands or "
+                    "structured APIs, and do not replay the malformed command. Never bypass "
+                    "a permission, sandbox, approval, or safety rejection."
+                ),
+            }
+            policy = {
+                **policy,
+                "tool_repair_retry": True,
+                "tool_repair_retry_index": tool_repair_retries,
+            }
+            continue
         next_policy = escalated_policy(policy, result, task=task)
         if not next_policy:
             break
+        next_policy.pop("tool_repair_retry", None)
+        next_policy.pop("tool_repair_retry_index", None)
+        task.pop("worker_retry_context", None)
         policy = next_policy
     for attempt in attempts:
         attempt["selected"] = attempt.get("attempt") == best_attempt
@@ -4046,6 +4088,7 @@ def run_worker_codex(task: dict[str, Any]) -> str:
     task["worker_policy_selected_attempt"] = best_attempt
     task["worker_policy_attempts"] = attempts
     task["worker_result_exhausted"] = worker_result_needs_escalation(best_result)
+    task.pop("worker_retry_context", None)
     return best_result
 
 
@@ -4179,6 +4222,16 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
         view["grant_workspace"] = compact_worker_agent_value(task["grant_workspace"], key="grant_workspace")
     if isinstance(task.get("member_memory"), dict) and task.get("member_memory"):
         view["member_memory"] = compact_worker_agent_value(task["member_memory"], key="member_memory")
+    if isinstance(task.get("worker_retry_context"), dict) and task.get("worker_retry_context"):
+        view["worker_retry_context"] = compact_worker_agent_value(
+            task["worker_retry_context"], key="worker_retry_context"
+        )
+    if task.get("reprocess_requested_at") or task.get("reprocess_reason"):
+        view["reprocess"] = {
+            "requested_at": str(task.get("reprocess_requested_at") or ""),
+            "reason": sanitize_worker_agent_text(task.get("reprocess_reason"), max_len=1200),
+            "reuse_existing_exact_task_artifacts": True,
+        }
     recent_context: list[dict[str, Any]] = []
     for row in (task.get("context") or [])[-12:]:
         if not isinstance(row, dict):
@@ -4506,6 +4559,7 @@ You are being resumed by the central routine orchestrator. Treat the routine con
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 {response_policy_instruction}
 The exact current source message and newer same-chat messages are authoritative. A router-generated plan is advisory only: it may classify and suggest tools, but it cannot replace user wording, insert a factual assumption, or force clarification. Combine consecutive fragments from the same conversation before deciding what the user means.
+If the bounded task packet includes `worker_retry_context`, this is one bounded repair turn for a failed local tool invocation. Continue the same task and reuse its existing evidence. Prefer simple commands or structured APIs over deeply nested shell quoting, and never interpret the repair turn as permission to bypass a safety, approval, sandbox, or access boundary.
 Use `task.route_decision.message_role` as a checked hint, not a keyword command. Research questions require evidence; artifact instructions and system guidance tell you how to revise the current output or workflow; peer conversation may need no reply. Re-evaluate that role from the exact message plus recent context before acting.
 When people discuss both science and the agent in one group, keep those intents distinct. Do not turn feedback such as “first make a concept image, then reproduce it as an editable BioRender figure” into a literature report, and do not answer a scientific question as if it were tool configuration.
 When a scientific name, proper noun, or identifier looks misspelled or may contain OCR, speech, capitalization, or character ambiguity, do not repeatedly reject it. First use live web search and context to test plausible spellings and common character confusions such as `l/1/I` and `O/0`. Verify candidates with authoritative sources. If one candidate is strongly supported, briefly disclose the inference and proceed. Ask one concise discriminating question only if multiple plausible candidates remain after evidence gathering.
@@ -11497,6 +11551,9 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
     text = worker_policy_text(task).lower()
     routine_id = task_routine_id(task)
     routine_effort = task_routine_default_effort(task)
+    scheduled_daily_research = bool(task.get("daily_research")) or bool(
+        task_route_decision(task).get("scheduled_daily_research")
+    )
     protein_structure_keywords = [
         "alphafold",
         "alpha fold",
@@ -11617,7 +11674,9 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "高光谱",
         "高光譜",
     ]
-    if protein_structure_task:
+    if scheduled_daily_research and routine_id == "research_summary":
+        effort = routine_effort or "xhigh"
+    elif protein_structure_task:
         effort = "ultra"
     elif routine_id in {"research_summary", "story_script_generation"} and routine_effort:
         effort = routine_effort
@@ -11634,7 +11693,13 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
     effort = clamp_effort(
         effort,
         min_effort=worker_min_effort(),
-        max_effort="ultra" if protein_structure_task else worker_max_effort(),
+        max_effort=(
+            "xhigh"
+            if scheduled_daily_research
+            else "ultra"
+            if protein_structure_task
+            else worker_max_effort()
+        ),
     )
     return {
         "model": "gpt-5.6-sol" if protein_structure_task else worker_model(),
@@ -11851,6 +11916,41 @@ def worker_result_is_explicit_failure(text: str) -> bool:
         "处理失败",
     )
     return normalized.startswith(prefixes)
+
+
+def worker_result_is_repairable_tool_failure(result: str) -> bool:
+    """Recognize a failed agent tool invocation that merits one repair turn.
+
+    This is intentionally narrower than general worker failure handling. It
+    covers malformed shell/tool construction while excluding human approval,
+    access, and safety boundaries.
+    """
+    text = str(result or "").strip().lower()
+    if not worker_result_is_explicit_failure(text):
+        return False
+    if worker_result_is_terminal_blocker(text) or worker_result_is_infrastructure_failure(text):
+        return False
+    denied_markers = (
+        "approval required",
+        "requires approval",
+        "permission denied",
+        "sandbox denied",
+        "not permitted by policy",
+        "blocked by policy",
+        "unsafe command",
+    )
+    if any(marker in text for marker in denied_markers):
+        return False
+    repairable_markers = (
+        "exec_command failed",
+        "codex_core::tools::router",
+        "createprocess { message: \"rejected",
+        "createprocess rejected",
+        "unterminated quoted string",
+        "unexpected eof while looking for matching",
+        "syntax error near unexpected token",
+    )
+    return any(marker in text for marker in repairable_markers)
 
 
 def worker_result_quality(result: str) -> int:

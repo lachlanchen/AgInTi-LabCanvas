@@ -868,6 +868,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("scientific anchor", task["request"])
         self.assertIn("private task directory", task["request"])
         self.assertIn("return the polished PDF", task["request"])
+        self.assertEqual(task["routine"]["default_effort"], "xhigh")
         self.assertNotIn("transport sends both", task["request"])
         self.assertTrue(task["route_decision"]["no_fixed_deadline"])
         self.assertFalse(task["agent_backend_config"]["agent_fallbacks"]["fallback_on_timeout"])

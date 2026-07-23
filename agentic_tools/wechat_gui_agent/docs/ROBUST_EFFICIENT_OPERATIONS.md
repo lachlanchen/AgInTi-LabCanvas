@@ -773,7 +773,7 @@ evidence for local artifacts, not chat-facing content.
   immediate lightweight replies.
 - For the isolated WeCom transport, use `gpt-5.6-sol` low for route/chat turns
   and dynamic `gpt-5.6-sol` effort from low through ultra for durable work;
-  daily research starts at high. Keep those defaults in
+  scheduled daily research is pinned and capped at `xhigh`. Keep those defaults in
   `wecom_worker_loop.sh` and pass its private env via
   `WECHAT_WORKER_ENV_FILE` so the shared guarded entrypoint cannot overwrite
   them with personal-WeChat policy.
@@ -938,8 +938,8 @@ evidence for local artifacts, not chat-facing content.
   stall chat materialization.
 - Personal-WeChat deployments may retain their configured model policy. The
   isolated WeCom worker is explicitly GPT-5.6 SOL: low/medium for bounded work,
-  high for daily research and execution, and xhigh/max/ultra only when the
-  agent's incomplete result requires escalation.
+  `xhigh` for scheduled daily research, and max/ultra only for other explicitly
+  complex work or when an incomplete non-scheduled result requires escalation.
 
 ## Grant Goal Workflow
 
@@ -1427,6 +1427,19 @@ Long Xiaoyunque/LazyEdit work:
 - verify `next_poll_at` or `next_poststage_at`;
 - avoid manual reruns unless the source contract is wrong or the browser state
   is unrecoverable.
+
+Malformed worker tool invocation:
+
+- an explicit Codex tool-router/process-launch failure caused by malformed
+  quoting or command construction gets one bounded repair turn in the same
+  per-chat session, even when the first turn already used Ultra effort;
+- the repair turn reuses exact-task downloads and artifacts, prefers simple
+  commands or structured APIs, and does not replay the rejected command;
+- approval, permission, sandbox, login, CAPTCHA, and safety-policy rejections
+  are not repairable tool failures and must never be bypassed;
+- the retry count is bounded by `WECHAT_WORKER_MAX_TOOL_REPAIR_RETRIES`
+  (default 1), after which normal effort escalation or terminal failure rules
+  apply. This prevents both premature failure and retry loops.
 
 ## Change Checklist
 

@@ -996,6 +996,23 @@ stderr: noisy internal trace
 
         self.assertEqual(policy["reasoning_effort"], "medium")
 
+    def test_scheduled_daily_research_is_capped_at_xhigh_despite_unrelated_protein_context(self) -> None:
+        worker = load_worker()
+        policy = worker.choose_worker_policy(
+            {
+                "request": (
+                    "Prepare today's organoid literature briefing. Recent group context also "
+                    "mentions AlphaFold and COL1A1, but that is not this member's daily topic."
+                ),
+                "daily_research": {"topics": ["recent organoid papers"]},
+                "route_decision": {"scheduled_daily_research": True},
+                "routine": {"id": "research_summary", "default_effort": "xhigh"},
+            }
+        )
+
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["reasoning_effort"], "xhigh")
+
     def test_worker_policy_ignores_boilerplate_length_for_story_edit(self) -> None:
         worker = load_worker()
         boilerplate = (
@@ -1206,6 +1223,90 @@ stderr: noisy internal trace
         self.assertIn("Finished the task", result)
         self.assertEqual(task["worker_policy"]["reasoning_effort"], "xhigh")
         self.assertEqual(len(task["worker_policy_attempts"]), 3)
+
+    def test_worker_detects_repairable_tool_failure_without_bypassing_policy(self) -> None:
+        worker = load_worker()
+
+        self.assertTrue(
+            worker.worker_result_is_repairable_tool_failure(
+                "Worker failed via codex: codex_core::tools::router: "
+                "exec_command failed: CreateProcess { message: \"Rejected(malformed quoting)\" }"
+            )
+        )
+        self.assertFalse(
+            worker.worker_result_is_repairable_tool_failure(
+                "Worker failed via codex: exec_command failed: approval required by policy"
+            )
+        )
+        self.assertFalse(
+            worker.worker_result_is_repairable_tool_failure(
+                "Worker failed via codex: codex executable was not found in PATH"
+            )
+        )
+
+    def test_run_worker_codex_repairs_tool_failure_at_ultra_once(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+
+        def fake_run_worker_codex_once(task: dict[str, object], policy: dict[str, object]) -> str:
+            calls.append(
+                {
+                    "effort": policy["reasoning_effort"],
+                    "repair": bool(policy.get("tool_repair_retry")),
+                    "retry_context": dict(task.get("worker_retry_context") or {}),
+                }
+            )
+            if len(calls) == 1:
+                return (
+                    "Worker failed via codex: codex_core::tools::router: exec_command failed "
+                    "for a malformed shell command: CreateProcess { message: \"Rejected\" }"
+                )
+            return "Finished the exact research report and compiled its PDF from existing evidence."
+
+        task = {"chat": "wecom:group:labagent", "request": "prepare report"}
+        ultra_policy = {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "ultra",
+            "sandbox": "danger-full-access",
+            "timeout_seconds": 86400,
+        }
+        with mock.patch.object(worker, "choose_worker_policy", return_value=ultra_policy), mock.patch.object(
+            worker, "run_worker_codex_once", side_effect=fake_run_worker_codex_once
+        ), mock.patch.object(worker, "recover_completed_research_artifacts", return_value=None):
+            result = worker.run_worker_codex(task)
+
+        self.assertIn("Finished the exact research report", result)
+        self.assertEqual([call["effort"] for call in calls], ["ultra", "ultra"])
+        self.assertEqual([call["repair"] for call in calls], [False, True])
+        self.assertEqual(calls[1]["retry_context"]["kind"], "repairable_tool_invocation_failure")
+        self.assertNotIn("worker_retry_context", task)
+        self.assertTrue(task["worker_policy_attempts"][1]["tool_repair_retry"])
+
+    def test_run_worker_codex_bounds_repeated_tool_repair_failure(self) -> None:
+        worker = load_worker()
+        failure = (
+            "Worker failed via codex: codex_core::tools::router: exec_command failed: "
+            "CreateProcess { message: \"Rejected\" }"
+        )
+        task = {"chat": "wecom:group:labagent", "request": "prepare report"}
+        ultra_policy = {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "ultra",
+            "sandbox": "danger-full-access",
+            "timeout_seconds": 86400,
+        }
+        with mock.patch.object(worker, "choose_worker_policy", return_value=ultra_policy), mock.patch.object(
+            worker, "run_worker_codex_once", return_value=failure
+        ) as run, mock.patch.object(worker, "recover_completed_research_artifacts", return_value=None):
+            result = worker.run_worker_codex(task)
+
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(result, failure)
+        self.assertTrue(task["worker_result_exhausted"])
+        self.assertEqual(
+            sum(bool(item["tool_repair_retry"]) for item in task["worker_policy_attempts"]),
+            1,
+        )
 
     def test_run_worker_codex_stops_after_completed_artifact_recovery(self) -> None:
         worker = load_worker()
@@ -1718,10 +1819,18 @@ stderr: noisy internal trace
                         "routine": {"id": "video_publish_existing", "rules": ["old rule"]},
                         "routine_contract": {"json": "/tmp/old.json"},
                         "orchestrator": {"stage": "old"},
+                        "worker_policy": {"reasoning_effort": "ultra"},
+                        "worker_policy_selected_attempt": 1,
                         "worker_policy_attempts": [{"attempt": 1}],
+                        "worker_result_exhausted": True,
+                        "worker_result_ready_at": "2026-06-25T10:39:56",
+                        "worker_retry_context": {"kind": "old"},
+                        "agent_session": {"thread_id_short": "deadbeef"},
+                        "codex_session": {"thread_id_short": "deadbeef"},
                         "artifact_dir": "/tmp/old-artifacts",
                         "execution_contract": {"old": True},
                         "send_errors": ["timeout"],
+                        "wecom_delivery": {"status": "sent"},
                         "existing_video_publish_poststage": {"video_id": 395},
                         "completed_at": "2026-06-25T10:39:57",
                     }
@@ -1740,10 +1849,18 @@ stderr: noisy internal trace
         self.assertNotIn("routine", stored)
         self.assertNotIn("routine_contract", stored)
         self.assertNotIn("orchestrator", stored)
+        self.assertNotIn("worker_policy", stored)
+        self.assertNotIn("worker_policy_selected_attempt", stored)
         self.assertNotIn("worker_policy_attempts", stored)
+        self.assertNotIn("worker_result_exhausted", stored)
+        self.assertNotIn("worker_result_ready_at", stored)
+        self.assertNotIn("worker_retry_context", stored)
+        self.assertNotIn("agent_session", stored)
+        self.assertNotIn("codex_session", stored)
         self.assertNotIn("artifact_dir", stored)
         self.assertEqual(stored["execution_contract"], {"old": True})
         self.assertNotIn("send_errors", stored)
+        self.assertNotIn("wecom_delivery", stored)
         self.assertNotIn("existing_video_publish_poststage", stored)
         self.assertIn("expires_at", stored)
         self.assertEqual(stored["reprocess_reason"], "source resolver fixed")

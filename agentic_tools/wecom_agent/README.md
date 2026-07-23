@@ -245,8 +245,9 @@ default, the scheduler creates one source-grounded briefing per active member
 subscription. Multiple interests from the same member remain one job, while
 different members are kept separate and run sequentially through the single
 worker queue. Each job returns a concise Chinese digest, Markdown evidence, and
-a LaTeX-compiled Nature-style PDF. Daily research tasks
-have no queue deadline: GPT-5.6 SOL may run from low through ultra effort, and
+a LaTeX-compiled Nature-style PDF. Daily research tasks have no queue deadline:
+scheduled daily research uses GPT-5.6 SOL at `xhigh`
+effort, while other durable work may run from low through ultra effort, and
 completed exact-task reports are recovered and delivered if the final agent
 response is interrupted. Configure the local schedule with
 `WECOM_DAILY_RESEARCH_TIME`, `WECOM_DAILY_TOPIC_PROMPT_TIME`, and
