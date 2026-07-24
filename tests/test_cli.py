@@ -34,7 +34,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(payload["policy"]["model"], "gpt-5.6-sol")
-        self.assertEqual(payload["policy"]["reasoning_effort"], "high")
+        self.assertEqual(payload["policy"]["reasoning_effort"], "medium")
         self.assertIn("Shapr3D", payload["prompt"])
 
     def test_list_reads_config(self):

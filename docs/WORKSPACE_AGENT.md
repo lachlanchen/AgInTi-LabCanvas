@@ -35,8 +35,7 @@ The chat composer provides:
 
 - **Model: Auto** for dynamic model selection;
 - **GPT-5.6 SOL** for an explicit `gpt-5.6-sol` turn;
-- **Effort: Auto**, Low, Medium, High, or Ultra;
-- **Ultra**, which maps to Codex `xhigh` reasoning;
+- **Effort: Auto**, Low, or Medium;
 - **Execute** or **Plan only** mode;
 - cancellation and live durable-task polling.
 
@@ -49,7 +48,7 @@ mixing users or workspaces.
 ```bash
 labcanvas agent capabilities
 labcanvas agent chat "Design and render a C-mount sensor holder"
-labcanvas agent chat "Rebuild this exact Shapr3D part" --model gpt-5.6-sol --effort ultra
+labcanvas agent chat "Rebuild this exact Shapr3D part" --model gpt-5.6-sol --effort medium
 labcanvas agent chat "Inspect the KiCad board" --mode plan
 labcanvas agent chat "Run a long Blender task" --detach --json
 labcanvas agent tasks
@@ -69,13 +68,13 @@ Auto routing classifies only the current request:
 | --- | --- | --- |
 | Short answer or status | low | `gpt-5.6-sol` |
 | Analysis, documentation, or planning | medium | `gpt-5.6-sol` |
-| CAD/PCB/Blender/TeX/tool execution | high | `gpt-5.6-sol` |
-| Exact reconstruction or complex autonomous work | xhigh | `gpt-5.5` |
+| CAD/PCB/Blender/TeX/tool execution | medium | `gpt-5.6-sol` |
+| Exact reconstruction or complex autonomous work | medium | `gpt-5.6-sol` |
 
-An explicit model and effort always win. Environment variables
-`LABCANVAS_AGENT_FAST_MODEL`, `LABCANVAS_AGENT_STANDARD_MODEL`,
-`LABCANVAS_AGENT_TOOL_MODEL`, and `LABCANVAS_AGENT_ULTRA_MODEL` can replace the
-auto tiers. Backend quota/unavailable failures may fall back to AgInTi when the
+Explicit legacy high, xhigh, max, and Ultra effort values normalize to medium.
+Environment variables `LABCANVAS_AGENT_FAST_MODEL` and
+`LABCANVAS_AGENT_STANDARD_MODEL` can replace the auto tiers. Backend
+quota/unavailable failures may fall back to AgInTi when the
 saved setting permits it. New AgInTi versions use the noninteractive
 `aginti run --stdin` contract. Older installed versions receive a short command
 that points to the task's private durable prompt file. The default workspace `.`

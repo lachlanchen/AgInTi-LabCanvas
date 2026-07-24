@@ -17,10 +17,10 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m agenticapp webapp start --port 19473`: start the studio in tmux.
 - `PYTHONPATH=src python -m agenticapp agent capabilities`: inspect integrated CAD, KiCad, Blender, TeX, WeChat, LabVIEW, figure, and bridge readiness.
 - `PYTHONPATH=src python -m agenticapp agent chat "Design and render a C-mount holder"`: run a persistent direct agent turn with dynamic model/effort selection.
-- `PYTHONPATH=src python -m agenticapp agent chat "Rebuild the exact Shapr part" --model gpt-5.6-sol --effort ultra`: explicitly use GPT-5.6 SOL with `xhigh` reasoning.
+- `PYTHONPATH=src python -m agenticapp agent chat "Rebuild the exact Shapr part" --model gpt-5.6-sol --effort medium`: explicitly use GPT-5.6 SOL with medium reasoning.
 - `PYTHONPATH=src python -m agenticapp agent tasks`: list durable agent work and artifact status.
 - `PYTHONPATH=src python -m agenticapp grant init "Draft specific aims" --title "Research Grant"`: create an ignored evidence, figure, LaTeX, PDF, and goal workspace.
-- `PYTHONPATH=src python -m agenticapp grant run "Complete the proposal" --project-dir output/grants/PROJECT --effort ultra`: resume a persistent GPT-5.6 SOL grant agent against one durable workspace.
+- `PYTHONPATH=src python -m agenticapp grant run "Complete the proposal" --project-dir output/grants/PROJECT --effort medium`: resume a persistent GPT-5.6 SOL grant agent against one durable workspace.
 - `PYTHONPATH=src python -m agenticapp grant compile --project-dir output/grants/PROJECT && PYTHONPATH=src python -m agenticapp grant validate --project-dir output/grants/PROJECT`: compile and enforce evidence, editability, PDF, and artifact gates.
 - `agentic_tools/biorender_agent/scripts/start_biorender_stack.sh`: reuse the dedicated BioRender browser and authenticated localhost MCP proxy.
 - `python agentic_tools/biorender_agent/scripts/probe_biorender_mcp.py --json`: prove authenticated MCP `initialize` and `tools/list`, rather than relying on an HTTP health check.
@@ -32,7 +32,7 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m agenticapp protein metrics --detailed && PYTHONPATH=src python -m agenticapp protein render all`: extract metrics and render local plots/backbones from downloaded outputs.
 - `PYTHONPATH=src python -m agenticapp social project add --repo ../ZhJpBook --id pocketpolyglot`: register repository evidence for social campaigns.
 - `PYTHONPATH=src python -m agenticapp social campaign create --project pocketpolyglot --name introduction --objective "Introduce the usable open-source Studio" --platform x --platform reddit:r/languagelearning --platform hackernews`: create a platform-specific campaign brief.
-- `PYTHONPATH=src python -m agenticapp social draft generate CAMPAIGN_ID --dry-run --json`: inspect the Codex Ultra drafting contract without quota use or external writes.
+- `PYTHONPATH=src python -m agenticapp social draft generate CAMPAIGN_ID --dry-run --json`: inspect the medium-effort Codex drafting contract without quota use or external writes.
 - `PYTHONPATH=src python -m agenticapp social maintain CAMPAIGN_ID --integration x=POSTIZ_X_ID --days 30 --dry-run`: inspect the source-grounded analytics and follow-up contract without provider reads or model quota.
 - `PYTHONPATH=src python -m agenticapp studio figure-grid "optical icons 2x3" --rows 2 --cols 3`: run the same artifact action as the web canvas.
 - `PYTHONPATH=src python -m agenticapp studio dispatch blender "Prepare an editable paper figure setup"`: dry-run a configured target and register the envelope as an artifact.
@@ -80,9 +80,9 @@ For workspace-agent changes, mock the backend in unit tests. Test model selectio
 
 ## Workspace Agent Rules
 
-The web and CLI must use the same `workspace_agent.py` runtime. Keep the web chat a direct transport to a persistent agent session; do not replace it with keyword-specific response branches. Domain-specific code remains useful as callable routines. Auto routing uses GPT-5.6 SOL for normal turns and maps the UI's Ultra setting to Codex `xhigh`. Preserve durable task records under ignored `output/`, return real artifacts to the canvas, and require explicit authorization for payment, manufacturing submission, public publication, credential changes, destructive deletion, or another irreversible external action.
+The web and CLI must use the same `workspace_agent.py` runtime. Keep the web chat a direct transport to a persistent agent session; do not replace it with keyword-specific response branches. Domain-specific code remains useful as callable routines. Auto routing uses GPT-5.6 SOL with low effort for simple turns and medium effort for durable or tool-capable work. Legacy high, xhigh, max, and Ultra labels normalize to medium. Preserve durable task records under ignored `output/`, return real artifacts to the canvas, and require explicit authorization for payment, manufacturing submission, public publication, credential changes, destructive deletion, or another irreversible external action.
 
-Protein structure tasks must reuse `external/ProteinStructure` and its sibling runtime workspace `../ProteinStructure`; do not rewrite AlphaFold submission, polling, metric extraction, plotting, or screenshot logic in LabCanvas. Keep generated AlphaFold downloads, figures, compiled PDFs, copied result payloads, screenshots, and runtime logs local and ignored. Track reusable scripts, runbooks, FASTA/JSON job inputs, compact metrics, TeX/Markdown sources, and reference structures. Route nontrivial AlphaFold/protein-structure work to `gpt-5.6-sol` with Ultra effort, preserve the logged-in CDP profile, and distinguish prediction, literature evidence, docking hypotheses, and experimentally validated inhibition.
+Protein structure tasks must reuse `external/ProteinStructure` and its sibling runtime workspace `../ProteinStructure`; do not rewrite AlphaFold submission, polling, metric extraction, plotting, or screenshot logic in LabCanvas. Keep generated AlphaFold downloads, figures, compiled PDFs, copied result payloads, screenshots, and runtime logs local and ignored. Track reusable scripts, runbooks, FASTA/JSON job inputs, compact metrics, TeX/Markdown sources, and reference structures. Route nontrivial AlphaFold/protein-structure work to `gpt-5.6-sol` with medium effort, preserve the logged-in CDP profile, and distinguish prediction, literature evidence, docking hypotheses, and experimentally validated inhibition.
 
 ## Figure Pipeline Rules
 

@@ -46,12 +46,12 @@ export WECHAT_WORKER_DISABLE_AUTOPUBLISH_PREFLIGHT=1
 export WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH=1
 export WECHAT_WORKER_DISABLE_GENERATED_VIDEO_LAZYEDIT=1
 # WeCom uses the low-effort route session for ordinary chat. Durable work uses
-# GPT-5.6 SOL and may escalate from low through ultra. Daily research has no
+# GPT-5.6 SOL at medium effort. Daily research has no
 # queue deadline; these generous per-turn watchdogs only reap a genuinely hung
 # subprocess, while exact-task artifacts remain recoverable and resumable.
 export WECHAT_WORKER_CODEX_MODEL="${WECHAT_WORKER_CODEX_MODEL:-gpt-5.6-sol}"
 export WECHAT_WORKER_MIN_EFFORT="${WECHAT_WORKER_MIN_EFFORT:-low}"
-export WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-ultra}"
+export WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-medium}"
 export WECHAT_WORKER_TIMEOUT_LOW_SECONDS="${WECHAT_WORKER_TIMEOUT_LOW_SECONDS:-900}"
 export WECHAT_WORKER_TIMEOUT_MEDIUM_SECONDS="${WECHAT_WORKER_TIMEOUT_MEDIUM_SECONDS:-3600}"
 export WECHAT_WORKER_TIMEOUT_HIGH_SECONDS="${WECHAT_WORKER_TIMEOUT_HIGH_SECONDS:-21600}"

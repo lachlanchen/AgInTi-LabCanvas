@@ -18,7 +18,7 @@ from .workspace_agent import run_backend_turn, select_agent_policy
 
 DEFAULT_STORAGE_DIR = Path("output/social")
 DEFAULT_MODEL = "gpt-5.6-sol"
-DEFAULT_EFFORT = "ultra"
+DEFAULT_EFFORT = "medium"
 
 PLATFORM_POLICIES: dict[str, dict[str, Any]] = {
     "x": {

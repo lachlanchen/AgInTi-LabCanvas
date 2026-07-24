@@ -413,24 +413,24 @@ stderr: noisy internal trace
         self.assertIn("WECHAT_WORKER_ENV_FILE", wrapper_text)
         self.assertIn('source "$PRIVATE_ENV"', wrapper_text)
 
-    def test_worker_policy_selects_high_for_cad_or_pcb_tasks(self) -> None:
+    def test_worker_policy_caps_cad_or_pcb_tasks_at_medium(self) -> None:
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "design a PCB and render the CAD in Blender"})
 
         self.assertEqual(policy["model"], "gpt-5.5")
-        self.assertEqual(policy["reasoning_effort"], "high")
+        self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["sandbox"], "danger-full-access")
-        self.assertEqual(policy["timeout_seconds"], 600)
+        self.assertEqual(policy["timeout_seconds"], 300)
 
-    def test_worker_policy_selects_xhigh_for_full_autonomous_tasks(self) -> None:
+    def test_worker_policy_caps_full_autonomous_tasks_at_medium(self) -> None:
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "fully implement this WeChat automation, commit and push"})
 
         self.assertEqual(policy["model"], "gpt-5.5")
-        self.assertEqual(policy["reasoning_effort"], "xhigh")
-        self.assertEqual(policy["timeout_seconds"], 1200)
+        self.assertEqual(policy["reasoning_effort"], "medium")
+        self.assertEqual(policy["timeout_seconds"], 300)
 
-    def test_worker_policy_uses_gpt56_ultra_for_protein_structure_tasks(self) -> None:
+    def test_worker_policy_uses_gpt56_medium_for_protein_structure_tasks(self) -> None:
         worker = load_worker()
         with mock.patch.dict(
             worker.os.environ,
@@ -447,8 +447,8 @@ stderr: noisy internal trace
             )
 
         self.assertEqual(policy["model"], "gpt-5.6-sol")
-        self.assertEqual(policy["reasoning_effort"], "ultra")
-        self.assertEqual(policy["timeout_seconds"], 86400)
+        self.assertEqual(policy["reasoning_effort"], "medium")
+        self.assertEqual(policy["timeout_seconds"], 300)
 
     def test_worker_tool_context_reuses_protein_structure_pipeline(self) -> None:
         worker = load_worker()
@@ -1011,7 +1011,7 @@ stderr: noisy internal trace
         )
 
         self.assertEqual(policy["model"], "gpt-5.6-sol")
-        self.assertEqual(policy["reasoning_effort"], "xhigh")
+        self.assertEqual(policy["reasoning_effort"], "medium")
 
     def test_worker_policy_ignores_boilerplate_length_for_story_edit(self) -> None:
         worker = load_worker()
@@ -1042,7 +1042,7 @@ stderr: noisy internal trace
         )
         policy = worker.choose_worker_policy({"request": request})
 
-        self.assertEqual(policy["reasoning_effort"], "xhigh")
+        self.assertEqual(policy["reasoning_effort"], "medium")
 
     def test_worker_policy_escalates_weak_low_result(self) -> None:
         worker = load_worker()
@@ -1064,7 +1064,7 @@ stderr: noisy internal trace
         )
         self.assertFalse(worker.worker_result_needs_escalation("Codex failed: codex executable was not found in PATH."))
 
-    def test_worker_policy_escalates_to_xhigh_for_failed_high_result(self) -> None:
+    def test_worker_policy_normalizes_failed_high_result_to_medium(self) -> None:
         worker = load_worker()
         next_policy = worker.escalated_policy(
             {"model": "gpt-5.5", "reasoning_effort": "high", "sandbox": "danger-full-access", "timeout_seconds": 600},
@@ -1074,10 +1074,10 @@ stderr: noisy internal trace
         self.assertIsNotNone(next_policy)
         assert next_policy is not None
         self.assertEqual(next_policy["model"], "gpt-5.5")
-        self.assertEqual(next_policy["reasoning_effort"], "xhigh")
-        self.assertEqual(next_policy["timeout_seconds"], 1200)
+        self.assertEqual(next_policy["reasoning_effort"], "medium")
+        self.assertEqual(next_policy["timeout_seconds"], 300)
 
-    def test_worker_policy_supports_gpt56_max_and_ultra_escalation(self) -> None:
+    def test_worker_policy_caps_gpt56_escalation_at_medium(self) -> None:
         worker = load_worker()
         with mock.patch.dict(
             worker.os.environ,
@@ -1097,14 +1097,15 @@ stderr: noisy internal trace
                 },
                 "Worker failed: incomplete research task.",
             )
-            assert maximum is not None
-            ultra = worker.escalated_policy(maximum, "Worker failed: incomplete research task.")
-
-        self.assertEqual(maximum["reasoning_effort"], "max")
-        self.assertIsNotNone(ultra)
-        assert ultra is not None
-        self.assertEqual(ultra["reasoning_effort"], "ultra")
-        self.assertEqual(ultra["model"], "gpt-5.6-sol")
+        self.assertIsNotNone(maximum)
+        assert maximum is not None
+        self.assertEqual(maximum["reasoning_effort"], "medium")
+        self.assertIsNone(
+            worker.escalated_policy(
+                maximum,
+                "Worker failed: incomplete research task.",
+            )
+        )
 
     def test_worker_policy_does_not_use_spark_unless_allowed(self) -> None:
         worker = load_worker()
@@ -1200,9 +1201,9 @@ stderr: noisy internal trace
         self.assertIn("Partial answer", result)
         self.assertEqual(task["worker_policy_selected_attempt"], 1)
         self.assertTrue(task["worker_policy_attempts"][0]["selected"])
-        self.assertFalse(task["worker_policy_attempts"][1]["selected"])
+        self.assertEqual(len(task["worker_policy_attempts"]), 1)
 
-    def test_run_worker_codex_retries_until_xhigh_success(self) -> None:
+    def test_run_worker_codex_does_not_retry_above_medium(self) -> None:
         worker = load_worker()
         calls: list[str] = []
         original = worker.run_worker_codex_once
@@ -1219,10 +1220,10 @@ stderr: noisy internal trace
         finally:
             worker.run_worker_codex_once = original
 
-        self.assertEqual(calls, ["medium", "high", "xhigh"])
-        self.assertIn("Finished the task", result)
-        self.assertEqual(task["worker_policy"]["reasoning_effort"], "xhigh")
-        self.assertEqual(len(task["worker_policy_attempts"]), 3)
+        self.assertEqual(calls, ["medium"])
+        self.assertIn("Worker failed", result)
+        self.assertEqual(task["worker_policy"]["reasoning_effort"], "medium")
+        self.assertEqual(len(task["worker_policy_attempts"]), 1)
 
     def test_worker_detects_repairable_tool_failure_without_bypassing_policy(self) -> None:
         worker = load_worker()
@@ -1627,11 +1628,11 @@ stderr: noisy internal trace
         self.assertIn("routine_contract", task)
         self.assertIn("labcanvas_cad_pcb", str(calls[0]["prompt"]))
 
-    def test_worker_policy_selects_high_for_lalachan_video_generation(self) -> None:
+    def test_worker_policy_caps_lalachan_video_generation_at_medium(self) -> None:
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "写 RaraXia AyaChan SasaKun 故事并用小云雀生成视频"})
 
-        self.assertEqual(policy["reasoning_effort"], "high")
+        self.assertEqual(policy["reasoning_effort"], "medium")
 
     def test_lazyedit_publish_skill_is_checked_in(self) -> None:
         skill = ROOT / "agentic_tools" / "wechat_gui_agent" / "skills" / "lazyedit-publish-workflow" / "SKILL.md"

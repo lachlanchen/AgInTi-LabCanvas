@@ -286,7 +286,7 @@ Validate:
 - Use `labcanvas social` and its SQLite ledger instead of one-off posting
   scripts. Register the repository first so every public claim has evidence.
 - Use one persistent Codex conversation per project. Default serious campaign
-  drafting to `gpt-5.6-sol` with Ultra (`xhigh`) reasoning.
+  drafting to `gpt-5.6-sol` with medium reasoning.
 - Adapt copy to each platform and community. Do not mass-cross-post identical
   text, automate engagement, fabricate traction, or send unsolicited outreach.
 - Reddit requires review of the exact community rules before approval.
@@ -303,10 +303,9 @@ Validate:
 
 ## Agent Behavior
 
-- A short question can use low reasoning. Planning/review can use medium.
-  File/tool execution normally uses high. Exact reconstruction, complex
-  multi-tool work, or full autonomous validation can use `xhigh`, exposed as
-  `ultra` in LabCanvas.
+- A short question can use low reasoning. Planning, review, file/tool
+  execution, exact reconstruction, and multi-tool validation use medium.
+  Legacy high, xhigh, max, and Ultra labels are capped at medium.
 - Resume one agent session per LabCanvas conversation so follow-up messages have
   context. Never reuse a session across unrelated users/workspaces.
 - A request may change direction. Re-read the latest message before irreversible

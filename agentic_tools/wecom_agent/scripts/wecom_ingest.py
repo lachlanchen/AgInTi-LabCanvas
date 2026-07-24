@@ -659,7 +659,10 @@ Private same-member knowledge context:
 
 def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
     grant = looks_like_grant_request(request)
-    article_card = str(event.get("msgtype") or "").strip() == "wechat_article_card"
+    source_card = str(event.get("msgtype") or "").strip() in {
+        "wechat_article_card",
+        "merged_chat_history",
+    }
     research = request_has_explicit_research_intent(request)
     return {
         "worker_needed": True,
@@ -669,7 +672,7 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
             else (
                 "grant_proposal"
                 if grant
-                else ("research_or_summary" if article_card or research else "other_worker")
+                else ("research_or_summary" if source_card or research else "other_worker")
             )
         ),
         "response": "",

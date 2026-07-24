@@ -11748,13 +11748,7 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
     effort = clamp_effort(
         effort,
         min_effort=worker_min_effort(),
-        max_effort=(
-            "xhigh"
-            if scheduled_daily_research
-            else "ultra"
-            if protein_structure_task
-            else worker_max_effort()
-        ),
+        max_effort=worker_max_effort(),
     )
     return {
         "model": "gpt-5.6-sol" if protein_structure_task else worker_model(),
@@ -11827,11 +11821,19 @@ def worker_model() -> str:
 
 
 def worker_min_effort() -> str:
-    return normalize_effort(os.environ.get("WECHAT_WORKER_MIN_EFFORT", "medium"), fallback="medium")
+    configured = normalize_effort(
+        os.environ.get("WECHAT_WORKER_MIN_EFFORT", "low"),
+        fallback="low",
+    )
+    return clamp_effort(configured, min_effort="low", max_effort="medium")
 
 
 def worker_max_effort() -> str:
-    return normalize_effort(os.environ.get("WECHAT_WORKER_MAX_EFFORT", "xhigh"), fallback="xhigh")
+    configured = normalize_effort(
+        os.environ.get("WECHAT_WORKER_MAX_EFFORT", "medium"),
+        fallback="medium",
+    )
+    return clamp_effort(configured, min_effort="low", max_effort="medium")
 
 
 def normalize_effort(value: str | None, *, fallback: str) -> str:

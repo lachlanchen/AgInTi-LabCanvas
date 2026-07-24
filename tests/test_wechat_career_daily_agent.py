@@ -25,7 +25,7 @@ def load_wechat_career_daily_agent():
 
 
 class WeChatCareerDailyAgentTests(unittest.TestCase):
-    def test_main_defaults_to_xhigh_reasoning(self):
+    def test_main_defaults_to_medium_reasoning(self):
         module = load_wechat_career_daily_agent()
         captured = {}
         original_argv = sys.argv[:]
@@ -41,7 +41,7 @@ class WeChatCareerDailyAgentTests(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertEqual(captured["model"], "gpt-5.5")
-        self.assertEqual(captured["effort"], "xhigh")
+        self.assertEqual(captured["effort"], "medium")
 
     def test_prompt_requires_three_self_discovery_questions(self):
         module = load_wechat_career_daily_agent()

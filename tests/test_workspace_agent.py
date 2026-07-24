@@ -27,7 +27,7 @@ class WorkspaceAgentTests(unittest.TestCase):
         policy = select_agent_policy("Design and render a clean KiCad PCB and CAD holder")
 
         self.assertEqual(policy["model"], "gpt-5.6-sol")
-        self.assertEqual(policy["reasoning_effort"], "high")
+        self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["sandbox"], "danger-full-access")
 
     def test_ultra_aliases_xhigh_and_plan_is_read_only(self):
@@ -39,16 +39,16 @@ class WorkspaceAgentTests(unittest.TestCase):
         )
 
         self.assertEqual(policy["model"], "gpt-5.6-sol")
-        self.assertEqual(policy["reasoning_effort"], "xhigh")
-        self.assertEqual(policy["effort_label"], "ultra")
+        self.assertEqual(policy["reasoning_effort"], "medium")
+        self.assertEqual(policy["effort_label"], "medium")
         self.assertEqual(policy["sandbox"], "read-only")
 
     def test_protein_structure_work_uses_sol_ultra(self):
         policy = select_agent_policy("Use AlphaFold to predict COL1A1 and assess inhibitor evidence")
 
         self.assertEqual(policy["model"], "gpt-5.6-sol")
-        self.assertEqual(policy["reasoning_effort"], "xhigh")
-        self.assertEqual(policy["effort_label"], "ultra")
+        self.assertEqual(policy["reasoning_effort"], "medium")
+        self.assertEqual(policy["effort_label"], "medium")
 
     def test_capability_catalog_covers_integrated_lab_tools(self):
         ids = {item["id"] for item in capability_catalog(ROOT)}

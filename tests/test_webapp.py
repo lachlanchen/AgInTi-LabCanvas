@@ -175,7 +175,7 @@ class WebAppTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["dry_run"])
         self.assertEqual(result["policy"]["model"], "gpt-5.6-sol")
-        self.assertEqual(result["policy"]["reasoning_effort"], "high")
+        self.assertEqual(result["policy"]["reasoning_effort"], "medium")
         self.assertIn("WeChat", result["prompt"])
 
     def test_next_paragraph_prompt_contains_complete_context(self):

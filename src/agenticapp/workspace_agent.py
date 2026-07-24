@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover
 PACKAGE_DIR = Path(__file__).resolve().parent
 KNOWLEDGE_PATH = PACKAGE_DIR / "knowledge" / "workspace_agent.md"
 DEFAULT_MODEL = "gpt-5.6-sol"
-EFFORTS = ("low", "medium", "high", "xhigh")
+EFFORTS = ("low", "medium")
 ARTIFACT_SUFFIXES = {
     ".3mf",
     ".blend",
@@ -78,8 +78,8 @@ def utc_now() -> str:
 
 def normalize_effort(value: str) -> str:
     normalized = str(value or "auto").strip().lower()
-    if normalized == "ultra":
-        return "xhigh"
+    if normalized in {"high", "xhigh", "max", "ultra"}:
+        return "medium"
     return normalized if normalized in EFFORTS else "auto"
 
 
@@ -177,11 +177,13 @@ def select_agent_policy(
             "比较",
             "文档",
         )
-        if protein_structure_work or any(term in lowered for term in exact_terms) or len(text) > 1800:
-            selected_effort = "xhigh"
-        elif any(term in lowered for term in tool_terms):
-            selected_effort = "high"
-        elif any(term in lowered for term in analysis_terms) or len(text) > 500:
+        if (
+            protein_structure_work
+            or any(term in lowered for term in exact_terms)
+            or any(term in lowered for term in tool_terms)
+            or any(term in lowered for term in analysis_terms)
+            or len(text) > 500
+        ):
             selected_effort = "medium"
         else:
             selected_effort = "low"
@@ -190,8 +192,6 @@ def select_agent_policy(
         default_by_effort = {
             "low": os.environ.get("LABCANVAS_AGENT_FAST_MODEL", DEFAULT_MODEL),
             "medium": os.environ.get("LABCANVAS_AGENT_STANDARD_MODEL", DEFAULT_MODEL),
-            "high": os.environ.get("LABCANVAS_AGENT_TOOL_MODEL", DEFAULT_MODEL),
-            "xhigh": os.environ.get("LABCANVAS_AGENT_ULTRA_MODEL", "gpt-5.5"),
         }
         selected_model = default_by_effort[selected_effort]
         if protein_structure_work:
@@ -206,12 +206,12 @@ def select_agent_policy(
     if selected_backend == "auto":
         selected_backend = "codex" if resolve_codex_binary() else "aginti"
 
-    timeout_by_effort = {"low": 300, "medium": 900, "high": 3600, "xhigh": 10800}
+    timeout_by_effort = {"low": 300, "medium": 3600}
     return {
         "backend": selected_backend,
         "model": selected_model,
         "reasoning_effort": selected_effort,
-        "effort_label": "ultra" if selected_effort == "xhigh" else selected_effort,
+        "effort_label": selected_effort,
         "mode": selected_mode,
         "sandbox": "read-only" if selected_mode == "plan" else "danger-full-access",
         "timeout_seconds": timeout_by_effort[selected_effort],

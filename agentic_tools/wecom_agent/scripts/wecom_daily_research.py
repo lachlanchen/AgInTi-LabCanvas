@@ -1344,7 +1344,7 @@ Requirements:
         task["expires_at"] = (now + timedelta(seconds=daily_ttl_seconds)).isoformat(timespec="seconds")
     ensure_task_routine_contract(task)
     if isinstance(task.get("routine"), dict):
-        task["routine"]["default_effort"] = "xhigh"
+        task["routine"]["default_effort"] = "medium"
     return task
 
 

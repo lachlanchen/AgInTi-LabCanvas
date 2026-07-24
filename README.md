@@ -33,7 +33,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 
 | Area | What is ready | Entry point |
 | --- | --- | --- |
-| Workspace agent | Persistent direct chat, dynamic GPT-5.6 SOL/Ultra routing, durable tasks, cancellation, and artifact return across all lab tools | [docs/WORKSPACE_AGENT.md](docs/WORKSPACE_AGENT.md) |
+| Workspace agent | Persistent direct chat, dynamic GPT-5.6 SOL low/medium routing, durable tasks, cancellation, and artifact return across all lab tools | [docs/WORKSPACE_AGENT.md](docs/WORKSPACE_AGENT.md) |
 | Web studio | Agent chat, bright UI, artifact canvas, backend settings, multilingual UI | `labcanvas web --port 8787 --open` |
 | Paper figures | Exact `NxM` SVG grids, AgInTi image dry-run payloads, editable artifact manifest | [docs/EDITABLE_FIGURE_PIPELINE.md](docs/EDITABLE_FIGURE_PIPELINE.md) |
 | Grant projects | Durable Codex goal workspace, traceable evidence, editable BioRender/SVG/TeX figures, checked LaTeX/PDF, and mandatory chat delivery | `labcanvas grant init`, `labcanvas grant run`, [BioRender bridge](agentic_tools/biorender_agent/README.md) |
@@ -93,7 +93,7 @@ For visible end-to-end Studio control, start the isolated LabCanvas browser and 
 
 ```bash
 scripts/launch_labcanvas_studio_novnc.sh start
-scripts/labcanvas_studio_browser.py chat --message "Design and validate a C-mount holder" --effort ultra
+scripts/labcanvas_studio_browser.py chat --message "Design and validate a C-mount holder" --effort medium
 ```
 
 This submits through the real composer, monitors the exact durable task, and saves browser evidence without sharing the WeChat or Xiaoyunque profiles. See [LabCanvas Studio Browser Control](references/labcanvas-studio-browser-control.md).
@@ -102,11 +102,11 @@ This submits through the real composer, monitors the exact durable task, and sav
 
 ```bash
 labcanvas scene-template experiment-setup --output my-setup.scene.json
-labcanvas agent chat "Create a clean Shapr3D-compatible optical holder" --model gpt-5.6-sol --effort ultra
+labcanvas agent chat "Create a clean Shapr3D-compatible optical holder" --model gpt-5.6-sol --effort medium
 labcanvas agent chat "Inspect the current KiCad board and report problems" --mode plan
 labcanvas agent tasks
 labcanvas grant init "Draft a proposal grounded in the supplied call and primary literature" --title "Research Grant"
-labcanvas grant run "Complete the proposal, editable figure, and checked PDF" --project-dir output/grants/PROJECT --effort ultra
+labcanvas grant run "Complete the proposal, editable figure, and checked PDF" --project-dir output/grants/PROJECT --effort medium
 labcanvas grant validate --project-dir output/grants/PROJECT --json
 labcanvas render-scene my-setup.scene.json --dry-run
 labcanvas render-scene my-setup.scene.json --output-dir output/scenes

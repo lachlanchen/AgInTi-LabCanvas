@@ -129,7 +129,7 @@ class WeChatRoutineTests(unittest.TestCase):
         stage_ids = [stage["id"] for stage in contract["stages"]]
 
         self.assertEqual(contract["id"], "grant_proposal")
-        self.assertEqual(contract["default_effort"], "xhigh")
+        self.assertEqual(contract["default_effort"], "medium")
         self.assertIn("goal_workspace", stage_ids)
         self.assertIn("compile_and_validate", contract["required_gates"])
         self.assertIn("artifact_delivery_gate", contract["required_gates"])

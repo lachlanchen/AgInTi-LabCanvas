@@ -36,7 +36,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--message")
     parser.add_argument("--message-file")
     parser.add_argument("--model", choices=("auto", "gpt-5.6-sol", "gpt-5.5"), default="auto")
-    parser.add_argument("--effort", choices=("auto", "low", "medium", "high", "ultra"), default="auto")
+    parser.add_argument("--effort", choices=("auto", "low", "medium"), default="auto")
     parser.add_argument("--mode", choices=("execute", "plan"), default="execute")
     parser.add_argument("--task-id")
     parser.add_argument("--wait-seconds", type=float, default=10800.0)

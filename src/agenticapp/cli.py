@@ -212,7 +212,12 @@ def build_parser() -> argparse.ArgumentParser:
     grant_run.add_argument("--storage-dir", default="output/webapp")
     grant_run.add_argument("--conversation", default="", help="Stable conversation id. Defaults to the grant project id.")
     grant_run.add_argument("--model", default="gpt-5.6-sol")
-    grant_run.add_argument("--effort", choices=["high", "ultra", "xhigh"], default="ultra")
+    grant_run.add_argument(
+        "--effort",
+        choices=["low", "medium", "high", "ultra", "xhigh"],
+        default="medium",
+        help="Reasoning effort; legacy high/ultra/xhigh values are capped at medium.",
+    )
     grant_run.add_argument("--timeout", type=int, default=10800)
     grant_run.add_argument("--detach", action="store_true")
     grant_run.add_argument("--dry-run", action="store_true")

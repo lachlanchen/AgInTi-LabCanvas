@@ -227,7 +227,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
         title="LabCanvas CAD/PCB/Blender Artifact",
         route_kinds=("cad_pcb_labcanvas",),
         purpose="Run LabCanvas CAD, PCB, OpenSCAD, KiCad, Blender, or render routines.",
-        default_effort="high",
+        default_effort="medium",
         stages=(
             {
                 "id": "spec_resolution",
@@ -341,7 +341,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
         title="Existing Video LazyEdit/Publish",
         route_kinds=("process_existing_video", "publish_video"),
         purpose="Process or publish an existing source-scoped video through LazyEdit and requested platforms.",
-        default_effort="high",
+        default_effort="medium",
         stages=(
             {
                 "id": "exact_video_resolution",
@@ -454,7 +454,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
         title="Evidence-Grounded Grant Proposal",
         route_kinds=("grant_proposal",),
         purpose="Develop a durable grant application with verified evidence, editable scientific figures, LaTeX/PDF outputs, and explicit completion gates.",
-        default_effort="xhigh",
+        default_effort="medium",
         stages=(
             {
                 "id": "goal_workspace",

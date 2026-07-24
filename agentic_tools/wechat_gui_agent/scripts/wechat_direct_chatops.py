@@ -3148,7 +3148,12 @@ def select_agent_route_policy(config: dict[str, Any], text: str) -> dict[str, An
     risky = route_needs_stronger_model(text)
     return {
         "model": str(router.get("risky_model" if risky else "default_model") or ("gpt-5.5" if risky else "gpt-5.6-sol")),
-        "reasoning_effort": str(router.get("risky_reasoning_effort" if risky else "default_reasoning_effort") or ("medium" if risky else "high")),
+        "reasoning_effort": str(
+            router.get(
+                "risky_reasoning_effort" if risky else "default_reasoning_effort"
+            )
+            or "medium"
+        ),
         "sandbox": str(router.get("sandbox") or "read-only"),
         "timeout_seconds": int(router.get("timeout_seconds") or 45),
         "reuse_session": bool(router.get("reuse_session", True)),

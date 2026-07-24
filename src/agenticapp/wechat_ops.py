@@ -190,7 +190,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     career.add_argument("--morning-time", default="08:30")
     career.add_argument("--session", default="labcanvas-career-daily")
     career.add_argument("--model", default=os.environ.get("WECHAT_CAREER_AGENT_MODEL", "gpt-5.5"))
-    career.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_CAREER_AGENT_EFFORT", "xhigh"))
+    career.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_CAREER_AGENT_EFFORT", "medium"))
     career.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     career.set_defaults(func=cmd_career_agent)
 
@@ -1170,7 +1170,7 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "agent_route_prefilter": "agent_first",
         "agent_router": {
             "default_model": "gpt-5.3-codex-spark",
-            "default_reasoning_effort": "high",
+            "default_reasoning_effort": "medium",
             "risky_model": "gpt-5.5",
             "risky_reasoning_effort": "medium",
             "sandbox": "read-only",
@@ -1840,7 +1840,7 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         "export WECHAT_CAREER_SEND_CHAT=${WECHAT_CAREER_SEND_CHAT:-lachlanchan}\n"
         "export WECHAT_CAREER_MORNING_TIME=${WECHAT_CAREER_MORNING_TIME:-08:30}\n"
         "export WECHAT_CAREER_AGENT_MODEL=${WECHAT_CAREER_AGENT_MODEL:-gpt-5.5}\n"
-        "export WECHAT_CAREER_AGENT_EFFORT=${WECHAT_CAREER_AGENT_EFFORT:-xhigh}\n"
+        "export WECHAT_CAREER_AGENT_EFFORT=${WECHAT_CAREER_AGENT_EFFORT:-medium}\n"
         "export WECHAT_MARKDOWN_PDF_LANGUAGES=${WECHAT_MARKDOWN_PDF_LANGUAGES:-zh,en}\n"
         "export WECHAT_MARKDOWN_PDF_PANDOC=${WECHAT_MARKDOWN_PDF_PANDOC:-$HOME/miniconda3/bin/pandoc}\n"
         "export WECHAT_MARKDOWN_PDF_ENGINE=${WECHAT_MARKDOWN_PDF_ENGINE:-xelatex}\n"
@@ -1866,7 +1866,7 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         "export WECHAT_CAREER_SEND_CHAT=${WECHAT_CAREER_SEND_CHAT:-lachlanchan}\n"
         "export WECHAT_CAREER_MORNING_TIME=${WECHAT_CAREER_MORNING_TIME:-08:30}\n"
         "export WECHAT_CAREER_AGENT_MODEL=${WECHAT_CAREER_AGENT_MODEL:-gpt-5.5}\n"
-        "export WECHAT_CAREER_AGENT_EFFORT=${WECHAT_CAREER_AGENT_EFFORT:-xhigh}\n"
+        "export WECHAT_CAREER_AGENT_EFFORT=${WECHAT_CAREER_AGENT_EFFORT:-medium}\n"
         "export WECHAT_MARKDOWN_PDF_LANGUAGES=${WECHAT_MARKDOWN_PDF_LANGUAGES:-zh,en}\n"
         "export WECHAT_MARKDOWN_PDF_PANDOC=${WECHAT_MARKDOWN_PDF_PANDOC:-$HOME/miniconda3/bin/pandoc}\n"
         "export WECHAT_MARKDOWN_PDF_ENGINE=${WECHAT_MARKDOWN_PDF_ENGINE:-xelatex}\n"
@@ -1895,7 +1895,7 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         "exec python3 -m agenticapp wechat career-agent start --send --attach-report "
         "--morning-time \"${WECHAT_CAREER_MORNING_TIME:-08:30}\" "
         "--model \"${WECHAT_CAREER_AGENT_MODEL:-gpt-5.5}\" "
-        "--reasoning-effort \"${WECHAT_CAREER_AGENT_EFFORT:-xhigh}\"\n",
+        "--reasoning-effort \"${WECHAT_CAREER_AGENT_EFFORT:-medium}\"\n",
         encoding="utf-8",
     )
     career_wrapper.chmod(0o755)

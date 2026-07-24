@@ -72,6 +72,9 @@ MESSAGE_CHROME_TEXT = {
 }
 ARTICLE_CARD_RESOURCE_SUFFIX = ":id/mww"
 ARTICLE_CARD_KIND = "wechat_article_card"
+MERGED_HISTORY_TITLE_RESOURCE_SUFFIX = ":id/jb2"
+MERGED_HISTORY_BODY_RESOURCE_SUFFIX = ":id/jb1"
+MERGED_HISTORY_KIND = "merged_chat_history"
 IMAGE_BUBBLE_RESOURCE_SUFFIX = ":id/kfb"
 IMAGE_KIND = "image"
 IMAGE_VIEWER_RESOURCE_SUFFIX = ":id/nxh"
@@ -386,6 +389,30 @@ def sequence_delta(previous: list[str], current: list[str]) -> tuple[list[str], 
         if previous[-overlap:] == current[:overlap]:
             return current[overlap:], overlap
     return current, 0
+
+
+def coalesce_sender_records(
+    records: list[dict[str, str]],
+) -> list[list[dict[str, str]]]:
+    """Attach immediate same-sender follow-up text to a forwarded source."""
+    batches: list[list[dict[str, str]]] = []
+    for record in records:
+        sender = str(record.get("sender") or "").strip()
+        if batches:
+            previous_sender = str(batches[-1][-1].get("sender") or "").strip()
+            first_kind = str(batches[-1][0].get("source_kind") or "text")
+            current_kind = str(record.get("source_kind") or "text")
+            if (
+                sender
+                and sender == previous_sender
+                and first_kind != "text"
+                and current_kind == "text"
+                and len(batches[-1]) < 8
+            ):
+                batches[-1].append(record)
+                continue
+        batches.append([record])
+    return batches
 
 
 def safe_file_name(path: Path) -> str:
@@ -1944,6 +1971,29 @@ class AndroidBridge:
             image_preview_sha256 = ""
             image_visual_id = ""
             if not body_nodes:
+                merged_title_nodes = [
+                    node
+                    for node in row.iter("node")
+                    if node_text(node)
+                    and node.attrib.get("resource-id", "").endswith(
+                        MERGED_HISTORY_TITLE_RESOURCE_SUFFIX
+                    )
+                ]
+                merged_body_nodes = [
+                    node
+                    for node in row.iter("node")
+                    if node_text(node)
+                    and node.attrib.get("resource-id", "").endswith(
+                        MERGED_HISTORY_BODY_RESOURCE_SUFFIX
+                    )
+                ]
+                if merged_body_nodes:
+                    source_kind = MERGED_HISTORY_KIND
+                    source_title = " ".join(
+                        unique_nonempty(node_text(node) for node in merged_title_nodes)
+                    )
+                    body_nodes = [*merged_title_nodes, *merged_body_nodes]
+            if not body_nodes:
                 body_nodes = [
                     node
                     for node in row.iter("node")
@@ -1983,7 +2033,22 @@ class AndroidBridge:
                 body = "[图片]"
             elif not body:
                 continue
-            if source_kind == ARTICLE_CARD_KIND:
+            if source_kind == MERGED_HISTORY_KIND:
+                merged_lines = "\n".join(
+                    unique_nonempty(
+                        node_text(node)
+                        for node in body_nodes
+                        if node.attrib.get("resource-id", "").endswith(
+                            MERGED_HISTORY_BODY_RESOURCE_SUFFIX
+                        )
+                    )
+                )
+                body = (
+                    "合并转发的聊天记录\n"
+                    f"<title>{html.escape(source_title)}</title>\n"
+                    f"{merged_lines}"
+                )
+            elif source_kind == ARTICLE_CARD_KIND:
                 body = f"公众号文章卡片\n<title>{html.escape(source_title)}</title>"
             sender, sender_evidence = message_row_sender(row, body_nodes)
             sender_is_wechat = sender_evidence["sender_external_marker"] == "true"
@@ -2394,6 +2459,62 @@ class AndroidBridge:
             "attachments": attachments,
         }
 
+    def build_event_batch(
+        self,
+        chat: str,
+        records: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        """Build one source-preserving event from a contiguous sender burst."""
+        if not records:
+            raise BridgeError("cannot build an event from an empty message batch")
+        events = [self.build_event(chat, record) for record in records]
+        if len(events) == 1:
+            return events[0]
+        senders = {
+            str(record.get("sender") or "").strip()
+            for record in records
+        }
+        if len(senders) != 1:
+            raise BridgeError("combined WeCom messages must have one exact sender")
+        event = dict(events[-1])
+        fingerprints = [
+            str(record.get("fingerprint") or "") for record in records
+        ]
+        event["message_id"] = (
+            "android:"
+            + short_hash(f"{chat}\0" + "\0".join(fingerprints), 24)
+        )
+        event["text"] = "\n\n".join(
+            str(item.get("text") or "").strip()
+            for item in events
+            if str(item.get("text") or "").strip()
+        )
+        event["quote_text"] = "\n\n".join(
+            str(item.get("quote_text") or "").strip()
+            for item in events
+            if str(item.get("quote_text") or "").strip()
+        )
+        event["attachments"] = [
+            attachment
+            for item in events
+            for attachment in item.get("attachments") or []
+        ]
+        source_components = [
+            item.get("source_metadata")
+            for item in events
+            if isinstance(item.get("source_metadata"), dict)
+        ]
+        event["source_metadata"] = {
+            "kind": "combined_forward",
+            "components": source_components,
+            "message_count": len(events),
+        }
+        if any(str(item.get("msgtype") or "") == "wechat_article_card" for item in events):
+            event["msgtype"] = "wechat_article_card"
+        else:
+            event["msgtype"] = "combined_forward"
+        return event
+
     def invoke_ingest(self, event: dict[str, Any]) -> dict[str, Any]:
         runtime = self.staging_dir / "events"
         runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -2537,22 +2658,32 @@ class AndroidBridge:
         ingested: list[dict[str, Any]] = []
         pending_replies: list[tuple[str, list[str], str]] = []
         if enqueue:
-            for record in pending_inbound:
-                if (
-                    record.get("source_kind") == IMAGE_KIND
-                    and not Path(str(record.get("attachment_path") or "")).is_file()
-                ):
+            for batch in coalesce_sender_records(pending_inbound):
+                ready_records = [
+                    record
+                    for record in batch
+                    if not (
+                        record.get("source_kind") == IMAGE_KIND
+                        and not Path(
+                            str(record.get("attachment_path") or "")
+                        ).is_file()
+                    )
+                ]
+                if not ready_records:
                     continue
-                event = self.build_event(chat, record)
+                event = self.build_event_batch(chat, ready_records)
                 result = self.invoke_ingest(event)
                 ingested.append(result)
-                self.mark_observed_message(chat, record, "ingested")
+                for record in ready_records:
+                    self.mark_observed_message(chat, record, "ingested")
                 response = str(result.get("reply") or result.get("ack") or "").strip()
                 if response:
                     reply_mentions = result.get("reply_mentions")
                     if not isinstance(reply_mentions, list):
                         fallback_mention = str(
-                            record.get("mention_name") or record.get("sender") or ""
+                            ready_records[-1].get("mention_name")
+                            or ready_records[-1].get("sender")
+                            or ""
                         )
                         reply_mentions = [fallback_mention] if fallback_mention else []
                     pending_replies.append(

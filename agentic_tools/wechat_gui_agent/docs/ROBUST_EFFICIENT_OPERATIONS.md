@@ -803,11 +803,17 @@ evidence for local artifacts, not chat-facing content.
 - Use fast-router Codex only for new actionable messages, ambiguous routing, or
   immediate lightweight replies.
 - For the isolated WeCom transport, use `gpt-5.6-sol` low for route/chat turns
-  and dynamic `gpt-5.6-sol` effort from low through ultra for durable work;
-  scheduled daily research is pinned and capped at `xhigh`. Keep those defaults in
+  and `gpt-5.6-sol` medium for durable work. Scheduled daily research, protein
+  structure work, and legacy high/Ultra requests use the same medium ceiling. Keep those defaults in
   `wecom_worker_loop.sh` and pass its private env via
   `WECHAT_WORKER_ENV_FILE` so the shared guarded entrypoint cannot overwrite
   them with personal-WeChat policy.
+- Treat native WeCom merged chat-history forwards as structured source
+  containers, not one opaque text bubble. On Android, read the `jb2` title and
+  every `jb1` preview line, preserve each embedded sender prefix, and enqueue
+  the complete merged history as one source-scoped task. A contiguous
+  same-sender text follow-up may join a forwarded card or attachment, but
+  ordinary text bubbles and different senders remain separate.
 - Keep route classification agent-first for triggerable monitored chats:
   `agent_route_enabled=true` with `agent_route_prefilter=agent_first` lets the
   per-chat `route` Codex session choose `route_kind`, project, source policy,
@@ -982,10 +988,10 @@ evidence for local artifacts, not chat-facing content.
   starving real file/message delivery. The sync loop removes malformed,
   expired, or dead-owner reservations immediately so a crashed sender cannot
   stall chat materialization.
-- Personal-WeChat deployments may retain their configured model policy. The
-  isolated WeCom worker is explicitly GPT-5.6 SOL: low/medium for bounded work,
-  `xhigh` for scheduled daily research, and max/ultra only for other explicitly
-  complex work or when an incomplete non-scheduled result requires escalation.
+- Personal-WeChat and WeCom workers use GPT-5.6 SOL with low effort for routing
+  and medium effort for durable work. Legacy high, xhigh, max, and Ultra
+  settings are capped at medium; failed medium turns persist a blocker instead
+  of escalating above the configured ceiling.
 
 ## Grant Goal Workflow
 
@@ -1332,7 +1338,7 @@ Xvfb, x11vnc, websockify, the profile, queue, and monitors. Set
 
 Protein-structure requests are agent-owned worker tasks. The transport ACKs and
 queues them; the worker resumes the exact chat session with `gpt-5.6-sol` and
-Ultra effort, then calls the existing `ProteinStructure` routines through the
+medium effort, then calls the existing `ProteinStructure` routines through the
 thin LabCanvas CLI. Do not duplicate AlphaFold browser logic in the worker.
 
 ```bash
@@ -1478,7 +1484,7 @@ Malformed worker tool invocation:
 
 - an explicit Codex tool-router/process-launch failure caused by malformed
   quoting or command construction gets one bounded repair turn in the same
-  per-chat session, even when the first turn already used Ultra effort;
+  per-chat session, even when the first turn already used medium effort;
 - the repair turn reuses exact-task downloads and artifacts, prefers simple
   commands or structured APIs, and does not replay the rejected command;
 - approval, permission, sandbox, login, CAPTCHA, and safety-policy rejections

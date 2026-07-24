@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>LabCanvas Rooms</title>
+    <link rel="stylesheet" href="/static/rooms.css">
+  </head>
+  <body>
+    <div class="rooms-app" data-testid="rooms-app" data-access-role="loading">
+      <aside class="room-sidebar" id="roomSidebar" aria-label="Rooms">
+        <div class="brand-row">
+          <img src="/static/labcanvas-logo.svg" alt="" class="brand-logo">
+          <div>
+            <strong>LabCanvas</strong>
+            <span>Rooms</span>
+          </div>
+          <button class="icon-button sidebar-close" id="sidebarClose" type="button" title="Close rooms" aria-label="Close rooms">&times;</button>
+        </div>
+        <div class="sidebar-tools">
+          <span class="section-label">Rooms</span>
+          <button class="icon-button" id="createRoomButton" type="button" title="Create room" aria-label="Create room">+</button>
+        </div>
+        <nav class="room-list" id="roomList" aria-label="Room list"></nav>
+        <div class="sidebar-footer">
+          <a href="/" class="studio-link">Open Studio</a>
+          <span>Powered by AgInTi Flow</span>
+          <span>LazyingArt LLC</span>
+        </div>
+      </aside>
+
+      <main class="conversation" aria-label="Conversation">
+        <header class="conversation-header">
+          <button class="icon-button mobile-only" id="sidebarOpen" type="button" title="Open rooms" aria-label="Open rooms">&#9776;</button>
+          <div class="room-heading">
+            <h1 id="roomTitle">LabAgent</h1>
+            <span id="roomStatus" class="room-status" data-state="loading">Connecting</span>
+          </div>
+          <div class="header-actions">
+            <button class="command-button" id="inviteButton" type="button">Invite</button>
+            <button class="icon-button" id="artifactButton" type="button" title="Open artifacts" aria-label="Open artifacts">&#9638;</button>
+            <button class="icon-button" id="refreshButton" type="button" title="Refresh messages" aria-label="Refresh messages">&#8635;</button>
+          </div>
+        </header>
+
+        <section class="message-stream" id="messageStream" data-testid="room-message-stream" aria-live="polite">
+          <div class="empty-state" id="emptyState">No messages yet.</div>
+        </section>
+
+        <form class="composer" id="composer" data-testid="room-composer">
+          <textarea id="messageInput" data-testid="room-message-input" rows="1" maxlength="131072" placeholder="Message LabCanvas" required></textarea>
+          <div class="composer-footer">
+            <div class="agent-controls" id="agentControls">
+              <select id="modelSelect" title="Agent model" aria-label="Agent model">
+                <option value="auto">Auto model</option>
+                <option value="gpt-5.6-sol">GPT-5.6 SOL</option>
+                <option value="gpt-5.5">GPT-5.5</option>
+              </select>
+              <select id="effortSelect" title="Reasoning effort" aria-label="Reasoning effort">
+                <option value="auto">Auto effort</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+              </select>
+            </div>
+            <button class="send-button" id="sendButton" data-testid="room-send" type="submit" title="Send message" aria-label="Send message">&#8593;</button>
+          </div>
+        </form>
+      </main>
+
+      <aside class="artifact-panel" id="artifactPanel" aria-label="Artifacts">
+        <div class="panel-header">
+          <div>
+            <span class="section-label">Room output</span>
+            <h2>Artifacts</h2>
+          </div>
+          <button class="icon-button" id="artifactClose" type="button" title="Close artifacts" aria-label="Close artifacts">&times;</button>
+        </div>
+        <div class="artifact-list" id="artifactList">
+          <p class="panel-empty">No artifacts yet.</p>
+        </div>
+      </aside>
+      <button class="page-scrim" id="pageScrim" type="button" aria-label="Close panel"></button>
+    </div>
+
+    <dialog id="createRoomDialog" class="room-dialog">
+      <form method="dialog" id="createRoomForm">
+        <div class="dialog-header">
+          <h2>Create room</h2>
+          <button class="icon-button" value="cancel" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <label for="roomNameInput">Room name</label>
+        <input id="roomNameInput" name="name" maxlength="80" autocomplete="off" required>
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel" type="button" id="createRoomCancel">Cancel</button>
+          <button class="primary-button" value="default" type="submit">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="inviteDialog" class="room-dialog invite-dialog">
+      <form method="dialog">
+        <div class="dialog-header">
+          <h2>Invite to <span id="inviteRoomName">room</span></h2>
+          <button class="icon-button" value="cancel" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div id="inviteCreateView">
+          <label for="inviteLabel">Invite label</label>
+          <input id="inviteLabel" maxlength="80" value="WeChat invite">
+          <label for="inviteLifetime">Expires</label>
+          <select id="inviteLifetime">
+            <option value="24">24 hours</option>
+            <option value="168" selected>7 days</option>
+            <option value="720">30 days</option>
+          </select>
+          <div class="dialog-actions">
+            <button class="secondary-button" value="cancel">Cancel</button>
+            <button class="primary-button" id="createInviteButton" value="default" type="button">Create link</button>
+          </div>
+        </div>
+        <div id="inviteResultView" hidden>
+          <label for="inviteUrl">Room link</label>
+          <div class="copy-row">
+            <input id="inviteUrl" readonly>
+            <button class="icon-button copy-button" id="copyInviteButton" type="button" title="Copy invite link" aria-label="Copy invite link">&#10697;</button>
+          </div>
+          <p class="security-note" id="inviteExpiry"></p>
+          <p class="security-note">Invitees can chat in this room with read-only agent access.</p>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="identityDialog" class="room-dialog">
+      <form method="dialog" id="identityForm">
+        <div class="dialog-header"><h2>Join room</h2></div>
+        <label for="displayNameInput">Display name</label>
+        <input id="displayNameInput" maxlength="80" autocomplete="name" required>
+        <div class="dialog-actions">
+          <button class="primary-button" value="default" type="submit">Join</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/static/rooms.js" defer></script>
+  </body>
+</html>

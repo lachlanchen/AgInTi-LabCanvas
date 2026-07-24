@@ -736,6 +736,94 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(records[0]["quote_text"], "")
         self.assertEqual(records[1]["direction"], "outbound")
 
+    def test_build_event_batch_keeps_forwarded_card_and_follow_up_together(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            records = [
+                {
+                    "fingerprint": "card",
+                    "direction": "inbound",
+                    "sender": "陈苗",
+                    "sender_identity_confidence": "visible_row_label",
+                    "body": "公众号文章卡片\n<title>高光谱成像技术用于厚度测量</title>",
+                    "source_kind": "wechat_article_card",
+                    "source_title": "高光谱成像技术用于厚度测量",
+                },
+                {
+                    "fingerprint": "follow-up",
+                    "direction": "inbound",
+                    "sender": "陈苗",
+                    "sender_identity_confidence": "visible_row_label",
+                    "body": "这个能用在生物和类器官里面吗",
+                    "source_kind": "text",
+                },
+            ]
+            event = runtime.build_event_batch("LabAgent", records)
+
+        self.assertEqual(event["msgtype"], "wechat_article_card")
+        self.assertEqual(event["source_metadata"]["kind"], "combined_forward")
+        self.assertEqual(event["source_metadata"]["message_count"], 2)
+        self.assertIn("高光谱成像技术用于厚度测量", event["text"])
+        self.assertIn("这个能用在生物和类器官里面吗", event["text"])
+        other = {**records[-1], "fingerprint": "other", "sender": "sunnyyty"}
+        self.assertEqual(
+            bridge.coalesce_sender_records([*records, other]),
+            [records, [other]],
+        )
+
+    def test_parse_messages_recovers_merged_chat_history_with_all_senders(self) -> None:
+        bridge = load_bridge()
+        xml = """
+        <hierarchy><node>
+          <node resource-id="com.tencent.wework:id/eyy"
+                class="android.widget.RelativeLayout"
+                package="com.tencent.wework" clickable="true"
+                bounds="[0,1200][1080,1800]">
+            <node resource-id="com.tencent.wework:id/ja3"
+                  class="android.widget.ImageView"
+                  package="com.tencent.wework" bounds="[28,1210][133,1315]" />
+            <node text="陈苗" class="android.widget.TextView"
+                  package="com.tencent.wework" bounds="[164,1205][230,1250]" />
+            <node text="＠微信" class="android.widget.TextView"
+                  package="com.tencent.wework" bounds="[236,1205][335,1250]" />
+            <node text="Chat History for sunnyyty的聊天记录"
+                  resource-id="com.tencent.wework:id/jb2"
+                  class="android.widget.TextView"
+                  package="com.tencent.wework" bounds="[197,1300][810,1400]" />
+            <node text="sunnyyty: 找个高光谱和血管成像结合的&#10;sunnyyty: 我想聚焦血管&#10;sunnyyty: 我们现在有血管类器官&#10;sunnyyty: 有血管化肿瘤"
+                  resource-id="com.tencent.wework:id/jb1"
+                  class="android.widget.TextView"
+                  package="com.tencent.wework" bounds="[197,1410][793,1700]" />
+          </node>
+        </node></hierarchy>
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            record = runtime.parse_messages(ET.fromstring(xml))[0]
+            event = runtime.build_event("LabAgent", record)
+
+        self.assertEqual(record["sender"], "陈苗")
+        self.assertEqual(record["source_kind"], "merged_chat_history")
+        self.assertIn("Chat History for sunnyyty", record["body"])
+        self.assertIn("sunnyyty: 我们现在有血管类器官", record["body"])
+        self.assertIn("sunnyyty: 有血管化肿瘤", event["text"])
+        self.assertEqual(event["msgtype"], "merged_chat_history")
+
     def test_parse_messages_recovers_native_gongzhonghao_article_card(self) -> None:
         bridge = load_bridge()
         title = "第一次，我们看到了高自由度灵巧手的另一种可能。"

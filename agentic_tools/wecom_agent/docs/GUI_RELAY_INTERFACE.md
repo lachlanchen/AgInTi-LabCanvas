@@ -220,10 +220,9 @@ personal-WeChat database, GUI, or sender.
 
 Model roles are transport-specific. WeCom fast chat and routing use
 `gpt-5.6-sol` with low reasoning. Requests promoted to the durable worker use
-`gpt-5.6-sol` with task-selected effort from low through ultra; daily research
-is explicitly capped at `xhigh` so unrelated high-complexity group context
-cannot silently promote a scheduled member-scoped briefing to Ultra. Daily work
-starts at `xhigh`. The worker launcher reads ignored local overrides but
+`gpt-5.6-sol` with low effort for routing and medium effort for durable work.
+Daily research and legacy high/Ultra requests are capped at medium. The worker
+launcher reads ignored local overrides but
 does not inherit the older personal-WeChat model default. It passes its own
 private env through `WECHAT_WORKER_ENV_FILE` when entering the shared guarded
 worker, preserving transport isolation even though both transports reuse the

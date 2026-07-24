@@ -171,8 +171,8 @@ WECOM_ROUTE_TIMEOUT_SECONDS=35
 # Fast chat and routing stay low-effort. Durable research/design/file tasks use
 # the same model at high reasoning inside the isolated WeCom worker process.
 WECHAT_WORKER_CODEX_MODEL=gpt-5.6-sol
-WECHAT_WORKER_MIN_EFFORT=high
-WECHAT_WORKER_MAX_EFFORT=high
+WECHAT_WORKER_MIN_EFFORT=low
+WECHAT_WORKER_MAX_EFFORT=medium
 WECOM_PENDING_TTL_SECONDS=3600
 WECOM_TASK_QUEUE={TOOL_ROOT / '.private' / 'wecom_task_queue.jsonl'}
 WECOM_MIRROR_DB={PACKAGE_ROOT / 'output' / 'wecom' / 'wecom_mirror.sqlite'}
