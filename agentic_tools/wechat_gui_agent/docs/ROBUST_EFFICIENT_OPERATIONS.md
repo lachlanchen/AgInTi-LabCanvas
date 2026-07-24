@@ -86,6 +86,15 @@ retain the full private evidence on disk.
 
 ## Official WeCom Transport
 
+Before parsing an allowlisted WeCom group, the Android relay must move the
+exact-title chat to its live tail. Seeing the correct title does not prove the
+viewport is current: a long outbound response can leave newer consecutive
+inbound bubbles below the visible area. Retain pending rows durably and use
+bounded backward reconciliation for messages that arrived during a response.
+Pass a contiguous burst from one exact sender to one agent turn in message
+order, including ordinary text bursts, so later follow-ups augment rather than
+displace the first request. A sender change always starts a separate batch.
+
 WeCom AI bot DMs and internal WeCom groups may enter the same routine
 orchestrator through `agentic_tools/wecom_agent/`. This is an alternate
 transport, not a second agent runtime:

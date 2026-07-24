@@ -778,6 +778,51 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             bridge.coalesce_sender_records([*records, other]),
             [records, [other]],
         )
+        consecutive_text = [
+            {
+                "fingerprint": "first-text",
+                "direction": "inbound",
+                "sender": "sunnyyty",
+                "body": "先看血管类器官",
+                "source_kind": "text",
+            },
+            {
+                "fingerprint": "second-text",
+                "direction": "inbound",
+                "sender": "sunnyyty",
+                "body": "然后聚焦血管化肿瘤",
+                "source_kind": "text",
+            },
+        ]
+        self.assertEqual(
+            bridge.coalesce_sender_records(consecutive_text),
+            [consecutive_text],
+        )
+
+    def test_snapshot_moves_to_live_tail_before_parsing(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.lock_path = Path(tmp) / "android.lock"
+            latest = ET.fromstring(
+                '<hierarchy><node text="LabAgent(6)" /></hierarchy>'
+            )
+            runtime.open_chat = mock.Mock(return_value=latest)
+            runtime.move_chat_to_live_tail = mock.Mock(return_value=latest)
+            runtime.parse_messages = mock.Mock(return_value=[])
+
+            result = runtime.snapshot("LabAgent")
+
+        self.assertTrue(result["ok"])
+        runtime.move_chat_to_live_tail.assert_called_once_with("LabAgent", latest)
+        runtime.parse_messages.assert_called_once_with(latest)
 
     def test_parse_messages_recovers_merged_chat_history_with_all_senders(self) -> None:
         bridge = load_bridge()

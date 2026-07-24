@@ -70,6 +70,7 @@ MESSAGE_CHROME_TEXT = {
     "重新发送",
     "撤回",
 }
+MESSAGE_ROW_RESOURCE_SUFFIX = ":id/eyy"
 ARTICLE_CARD_RESOURCE_SUFFIX = ":id/mww"
 ARTICLE_CARD_KIND = "wechat_article_card"
 MERGED_HISTORY_TITLE_RESOURCE_SUFFIX = ":id/jb2"
@@ -394,19 +395,15 @@ def sequence_delta(previous: list[str], current: list[str]) -> tuple[list[str], 
 def coalesce_sender_records(
     records: list[dict[str, str]],
 ) -> list[list[dict[str, str]]]:
-    """Attach immediate same-sender follow-up text to a forwarded source."""
+    """Keep a contiguous same-sender burst in one ordered agent turn."""
     batches: list[list[dict[str, str]]] = []
     for record in records:
         sender = str(record.get("sender") or "").strip()
         if batches:
             previous_sender = str(batches[-1][-1].get("sender") or "").strip()
-            first_kind = str(batches[-1][0].get("source_kind") or "text")
-            current_kind = str(record.get("source_kind") or "text")
             if (
                 sender
                 and sender == previous_sender
-                and first_kind != "text"
-                and current_kind == "text"
                 and len(batches[-1]) < 8
             ):
                 batches[-1].append(record)
@@ -999,6 +996,40 @@ class AndroidBridge:
             else:
                 self.press_back()
         raise BridgeError(f"exact allowlisted WeCom chat is not visible: {chat}")
+
+    def move_chat_to_live_tail(
+        self,
+        chat: str,
+        root: ET.Element,
+        *,
+        max_swipes: int = 4,
+    ) -> ET.Element:
+        """Move an exact chat to its newest viewport before reading messages."""
+        has_message_rows = any(
+            node.attrib.get("resource-id", "").endswith(MESSAGE_ROW_RESOURCE_SUFFIX)
+            for node in root.iter("node")
+        )
+        has_composer = any(
+            node.attrib.get("resource-id") == f"{self.package}:id/j28"
+            for node in root.iter("node")
+        )
+        if not has_message_rows or not has_composer:
+            return root
+        previous = ET.tostring(root, encoding="unicode")
+        for _ in range(max(1, max_swipes)):
+            # This WeCom build advances toward newer rows when the message
+            # surface is pulled downward. Keep both endpoints inside jcp.
+            self.adb_shell("input", "swipe", "520", "400", "520", "1600", "280")
+            time.sleep(0.35)
+            current = self.dump_hierarchy(attempts=3)
+            if not chat_title_matches(visible_chat_title(current), chat):
+                raise BridgeError("WeCom changed chat while moving to the live tail")
+            serialized = ET.tostring(current, encoding="unicode")
+            root = current
+            if serialized == previous:
+                break
+            previous = serialized
+        return root
 
     def open_chat_list(self) -> ET.Element:
         self.launch_wecom()
@@ -2230,7 +2261,8 @@ class AndroidBridge:
         recovered: list[dict[str, str]] = []
         seen = {record["fingerprint"] for record in current_records}
         for _ in range(pages):
-            self.adb_shell("input", "swipe", "520", "350", "520", "1450", "500")
+            # The inverse gesture walks backward through older rows.
+            self.adb_shell("input", "swipe", "520", "1450", "520", "350", "500")
             time.sleep(0.55)
             root = self.dump_hierarchy(attempts=3)
             if not chat_title_matches(visible_chat_title(root), chat):
@@ -2563,6 +2595,7 @@ class AndroidBridge:
         media_materialization_errors: list[dict[str, str]] = []
         with self.serialized(timeout_seconds=30.0):
             root = self.open_chat(chat)
+            root = self.move_chat_to_live_tail(chat, root)
             current_records = self.parse_messages(root)
             if any(
                 record.get("source_kind") == IMAGE_KIND for record in current_records
@@ -2584,7 +2617,8 @@ class AndroidBridge:
                     # Re-entering through the conversation list reliably lands
                     # at the newest viewport after a bounded backward scan.
                     self.open_chat_list()
-                    self.open_chat(chat)
+                    restored = self.open_chat(chat)
+                    self.move_chat_to_live_tail(chat, restored)
             records = [*current_records, *history_records]
             previous = self.load_snapshot(chat)
             if previous is None:
