@@ -901,6 +901,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("Nature-style", task["request"])
         self.assertIn("not a teaser or status line", task["request"])
         self.assertIn("scientific anchor", task["request"])
+        self.assertIn("If the member's topic is about organoids, NCS/CNS papers", task["request"])
+        self.assertIn("LLM/agent systems, AI, robotics, sensors, chips", task["request"])
         self.assertIn("private task directory", task["request"])
         self.assertIn("return the polished PDF", task["request"])
         self.assertEqual(task["routine"]["default_effort"], "medium")
