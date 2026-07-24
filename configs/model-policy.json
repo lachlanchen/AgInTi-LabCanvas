@@ -1,0 +1,21 @@
+{
+  "chat": {
+    "model": "auto-code-review",
+    "reasoning_effort": "low"
+  },
+  "task": {
+    "model": "auto-code-review",
+    "reasoning_effort": "medium"
+  },
+  "fallback": {
+    "chat": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "low"
+    },
+    "task": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium"
+    }
+  },
+  "notes": "auto-code-review is preferred; retain gpt-5.6-sol as the current-model fallback if the alias is unavailable."
+}

@@ -57,6 +57,19 @@ should speed the agent up, not replace agent reasoning.
 
 ## Strict AgInTi Fallback
 
+## Central Model Policy
+
+LabCanvas and the WeChat/WeCom worker read the repository-level
+`configs/model-policy.json`. Normal chat uses `auto-code-review` at low reasoning;
+durable research, CAD/PCB, media, PDF, and other artifact tasks use the same alias at
+medium reasoning. The matching `gpt-5.6-sol` low/medium entries are retained as the
+preferred-model fallback. If the alias is rejected as unknown, invalid, unsupported, or
+missing, the worker retries the same task/session lane with that fallback before using
+AgInTi. Explicit model/effort settings and approval gates remain authoritative.
+
+This is model routing only: it does not replace the per-chat session, source isolation,
+routine contracts, interruption timeline, or artifact delivery gate.
+
 AgInTi fallback uses `aginti run --stdin --json --task-profile chatops
 --no-scs`. Only the single JSON `result` field may enter chat delivery.
 Interactive headers, plans, validator reports, malformed JSON, empty output,

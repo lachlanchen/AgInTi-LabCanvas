@@ -33,7 +33,7 @@ class CliTests(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
 
         self.assertEqual(code, 0)
-        self.assertEqual(payload["policy"]["model"], "gpt-5.6-sol")
+        self.assertEqual(payload["policy"]["model"], "auto-code-review")
         self.assertEqual(payload["policy"]["reasoning_effort"], "medium")
         self.assertIn("Shapr3D", payload["prompt"])
 

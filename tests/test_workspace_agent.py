@@ -17,16 +17,24 @@ from agenticapp.workspace_agent import (
     selected_packaged_knowledge,
 )
 from agenticapp.artifacts import artifact_kind_for_path, content_type_for_path
+from agenticapp.backends import load_model_policy
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class WorkspaceAgentTests(unittest.TestCase):
-    def test_dynamic_policy_uses_sol_and_high_for_tool_work(self):
+    def test_shared_model_policy_uses_low_chat_medium_task_and_sol_fallback(self):
+        policy = load_model_policy(ROOT / "configs" / "model-policy.json")
+        self.assertEqual(policy["chat"], {"model": "auto-code-review", "reasoning_effort": "low"})
+        self.assertEqual(policy["task"], {"model": "auto-code-review", "reasoning_effort": "medium"})
+        self.assertEqual(policy["fallback"]["chat"]["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["fallback"]["task"]["model"], "gpt-5.6-sol")
+
+    def test_dynamic_policy_uses_auto_review_and_medium_for_tool_work(self):
         policy = select_agent_policy("Design and render a clean KiCad PCB and CAD holder")
 
-        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["model"], "auto-code-review")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["sandbox"], "danger-full-access")
 
@@ -43,10 +51,10 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertEqual(policy["effort_label"], "medium")
         self.assertEqual(policy["sandbox"], "read-only")
 
-    def test_protein_structure_work_uses_sol_ultra(self):
+    def test_protein_structure_work_uses_auto_review_medium(self):
         policy = select_agent_policy("Use AlphaFold to predict COL1A1 and assess inhibitor evidence")
 
-        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["model"], "auto-code-review")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["effort_label"], "medium")
 

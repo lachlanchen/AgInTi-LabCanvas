@@ -18,7 +18,7 @@ import uuid
 from typing import Any, Callable, Iterator
 
 from .artifacts import ArtifactStore, artifact_kind_for_path
-from .backends import load_backend_settings
+from .backends import load_backend_settings, load_model_policy, model_policy_for_effort
 
 
 try:  # pragma: no cover - Windows uses atomic writes without advisory locking.
@@ -69,6 +69,10 @@ QUOTA_MARKERS = (
     "rate limit",
     "rate_limit",
     "usage limit",
+    "unknown model",
+    "model not found",
+    "invalid model",
+    "unsupported model",
 )
 
 
@@ -101,6 +105,7 @@ def select_agent_policy(
     effort: str = "auto",
     mode: str = "execute",
     backend: str = "auto",
+    model_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = " ".join(str(message or "").split())
     lowered = text.casefold()
@@ -189,13 +194,11 @@ def select_agent_policy(
             selected_effort = "low"
 
     if model_was_auto:
-        default_by_effort = {
-            "low": os.environ.get("LABCANVAS_AGENT_FAST_MODEL", DEFAULT_MODEL),
-            "medium": os.environ.get("LABCANVAS_AGENT_STANDARD_MODEL", DEFAULT_MODEL),
-        }
-        selected_model = default_by_effort[selected_effort]
-        if protein_structure_work:
-            selected_model = os.environ.get("LABCANVAS_PROTEIN_MODEL", DEFAULT_MODEL)
+        configured = model_policy_for_effort(selected_effort, policy=model_policy or load_model_policy())
+        selected_model = os.environ.get(
+            "LABCANVAS_AGENT_FAST_MODEL" if selected_effort == "low" else "LABCANVAS_AGENT_STANDARD_MODEL",
+            configured["model"],
+        )
 
     selected_mode = str(mode or "execute").strip().lower()
     if selected_mode not in {"execute", "plan"}:
@@ -217,6 +220,8 @@ def select_agent_policy(
         "timeout_seconds": timeout_by_effort[selected_effort],
         "selection_reason": reason,
         "dynamic_model": model_was_auto,
+        "fallback_model": configured["fallback_model"] if model_was_auto else DEFAULT_MODEL,
+        "fallback_reasoning_effort": configured["fallback_reasoning_effort"] if model_was_auto else selected_effort,
     }
 
 
@@ -580,6 +585,7 @@ def create_agent_task(
         effort=str(payload.get("effort") or payload.get("reasoning_effort") or "auto"),
         mode=str(payload.get("mode") or "execute"),
         backend=str(payload.get("backend") or "auto"),
+        model_policy=load_backend_settings(Path(storage_dir) / "settings.json").get("model_policy"),
     )
     if payload.get("timeout_seconds"):
         policy["timeout_seconds"] = max(1, int(payload["timeout_seconds"]))
@@ -807,6 +813,31 @@ def run_codex_turn(
                 pid_callback=pid_callback,
             )
             result["fallback_started"] = True
+        fallback_model = str(policy.get("fallback_model") or "").strip()
+        current_model = str(policy.get("model") or "").strip()
+        if (
+            not result.get("ok")
+            and fallback_model
+            and fallback_model != current_model
+            and model_unavailable_result(result)
+        ):
+            fallback_policy = {
+                **policy,
+                "model": fallback_model,
+                "reasoning_effort": str(policy.get("fallback_reasoning_effort") or policy.get("reasoning_effort") or "low"),
+            }
+            result = _run_codex_process(
+                prompt,
+                codex_bin=codex_bin,
+                thread_id="",
+                policy=fallback_policy,
+                task_dir=task_dir,
+                root=root,
+                pid_callback=pid_callback,
+            )
+            policy = fallback_policy
+            result["model_fallback_used"] = True
+            result["fallback_reason"] = "preferred_model_unavailable"
         if result.get("ok") and result.get("thread_id"):
             previous = registry.get(key, {}) if isinstance(registry.get(key), dict) else {}
             registry[key] = {
@@ -821,6 +852,11 @@ def run_codex_turn(
             _write_json_atomic(registry_path, registry)
         result["resumed"] = bool(previous_id)
         return result
+
+
+def model_unavailable_result(result: dict[str, Any]) -> bool:
+    text = " ".join(str(result.get(key) or "") for key in ("message", "stderr_tail", "stdout_tail", "error")).casefold()
+    return any(marker in text for marker in ("unknown model", "model not found", "invalid model", "unsupported model"))
 
 
 def _run_codex_process(

@@ -26,6 +26,35 @@ def load_backend():
 
 
 class WeChatAgentBackendTests(unittest.TestCase):
+    def test_unknown_preferred_model_retries_configured_codex_fallback(self) -> None:
+        backend = load_backend()
+        calls: list[dict[str, object]] = []
+        original = backend.run_codex_session
+        try:
+            def fake_run_codex_session(prompt: str, **kwargs: object) -> dict[str, object]:
+                calls.append(kwargs)
+                if len(calls) == 1:
+                    return {"ok": False, "message": "Unknown model: auto-code-review", "returncode": 1}
+                return {"ok": True, "message": "recovered", "thread_id": "fallback-thread"}
+            backend.run_codex_session = fake_run_codex_session
+            result = backend.run_agent_session(
+                "hello",
+                backend="codex",
+                chat_name="EchoMind",
+                role="fast",
+                model="auto-code-review",
+                reasoning_effort="low",
+                sandbox="read-only",
+                timeout_seconds=30,
+                workdir=ROOT,
+                backend_config={"agent_fallbacks": {"fallback_to_aginti": False}},
+                fallback_model="gpt-5.6-sol",
+                fallback_reasoning_effort="low",
+            )
+        finally:
+            backend.run_codex_session = original
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls[1]["model"], "gpt-5.6-sol")
     def test_select_backend_defaults_to_codex_and_accepts_aliases(self) -> None:
         backend = load_backend()
 

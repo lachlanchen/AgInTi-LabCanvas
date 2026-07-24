@@ -417,7 +417,7 @@ stderr: noisy internal trace
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "design a PCB and render the CAD in Blender"})
 
-        self.assertEqual(policy["model"], "gpt-5.5")
+        self.assertEqual(policy["model"], "auto-code-review")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["sandbox"], "danger-full-access")
         self.assertEqual(policy["timeout_seconds"], 300)
@@ -426,7 +426,7 @@ stderr: noisy internal trace
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "fully implement this WeChat automation, commit and push"})
 
-        self.assertEqual(policy["model"], "gpt-5.5")
+        self.assertEqual(policy["model"], "auto-code-review")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["timeout_seconds"], 300)
 
@@ -1073,7 +1073,7 @@ stderr: noisy internal trace
 
         self.assertIsNotNone(next_policy)
         assert next_policy is not None
-        self.assertEqual(next_policy["model"], "gpt-5.5")
+        self.assertEqual(next_policy["model"], "auto-code-review")
         self.assertEqual(next_policy["reasoning_effort"], "medium")
         self.assertEqual(next_policy["timeout_seconds"], 300)
 
@@ -3061,7 +3061,7 @@ stderr: noisy internal trace
         policy = worker.choose_worker_policy(task)
         next_policy = worker.escalated_policy(policy, "已提交 Xiaoyunque 生成，正在生成中。", task=task)
 
-        self.assertEqual(policy["model"], "gpt-5.5")
+        self.assertEqual(policy["model"], "auto-code-review")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertIsNone(next_policy)
 

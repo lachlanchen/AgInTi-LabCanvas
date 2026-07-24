@@ -118,6 +118,12 @@ QUOTA_FAILURE_MARKERS = (
     "too many requests",
     "usage limit",
 )
+MODEL_FAILURE_MARKERS = (
+    "unknown model",
+    "model not found",
+    "invalid model",
+    "unsupported model",
+)
 UNAVAILABLE_FAILURE_MARKERS = (
     "command not found",
     "connection refused",
@@ -178,6 +184,8 @@ def run_agent_session(
     reuse: bool = True,
     registry_path: Path = DEFAULT_REGISTRY,
     backend_config: dict[str, Any] | None = None,
+    fallback_model: str = "",
+    fallback_reasoning_effort: str = "",
 ) -> dict[str, Any]:
     """Run one backend turn with system-level quota/unavailable fallback."""
     selected = normalize_backend(backend)
@@ -189,6 +197,8 @@ def run_agent_session(
         "sandbox": sandbox,
         "timeout_seconds": int(timeout_seconds),
         "role": role,
+        "fallback_model": fallback_model,
+        "fallback_reasoning_effort": fallback_reasoning_effort,
     }
     attempt_summaries: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, bool]] = set()
@@ -354,9 +364,20 @@ def next_backend_attempt(
     if not backend_fallbacks_enabled(backend_config):
         return None
     failure_kind = classify_backend_failure(result)
-    if failure_kind not in {"quota", "unavailable", "timeout", "empty"}:
+    if failure_kind not in {"quota", "unavailable", "timeout", "empty", "model_unavailable"}:
         return None
     backend = normalize_backend(str(attempt.get("backend") or "codex"))
+    if backend == "codex" and failure_kind == "model_unavailable":
+        preferred_fallback = str(attempt.get("fallback_model") or fallback_model(backend_config))
+        if preferred_fallback and preferred_fallback != str(attempt.get("model") or ""):
+            return {
+                **attempt,
+                "backend": "codex",
+                "model": preferred_fallback,
+                "reasoning_effort": str(attempt.get("fallback_reasoning_effort") or attempt.get("reasoning_effort") or "low"),
+                "fallback_reason": "preferred_model_unavailable",
+                "model_fallback_used": True,
+            }
     if backend == "codex" and is_spark_model(str(attempt.get("model") or "")) and failure_kind in {"quota", "empty"}:
         return {
             **attempt,
@@ -485,6 +506,8 @@ def classify_backend_failure(result: dict[str, Any]) -> str:
     ).casefold()
     if any(marker in text for marker in QUOTA_FAILURE_MARKERS):
         return "quota"
+    if any(marker in text for marker in MODEL_FAILURE_MARKERS):
+        return "model_unavailable"
     if int(result.get("returncode") or 0) == 127 or any(marker in text for marker in UNAVAILABLE_FAILURE_MARKERS):
         return "unavailable"
     return "other"

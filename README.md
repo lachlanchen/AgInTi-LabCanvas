@@ -53,6 +53,13 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 
 ## Quick Start
 
+### Model Policy
+
+Automatic LabCanvas turns use the shared [`configs/model-policy.json`](configs/model-policy.json):
+`auto-code-review` with low reasoning for ordinary chat and medium reasoning for durable tasks,
+research, and artifact work. The file keeps `gpt-5.6-sol` at the matching effort as the fallback
+when the preferred alias is unavailable. Explicit `--model` and `--effort` selections still win.
+
 Run from a source checkout:
 
 ```bash

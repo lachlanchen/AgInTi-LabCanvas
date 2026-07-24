@@ -10,6 +10,15 @@ from typing import Any
 
 
 BIORENDER_MCP_URL = "https://mcp.services.biorender.com/mcp"
+MODEL_POLICY_PATH = Path(__file__).resolve().parents[2] / "configs" / "model-policy.json"
+DEFAULT_MODEL_POLICY: dict[str, Any] = {
+    "chat": {"model": "auto-code-review", "reasoning_effort": "low"},
+    "task": {"model": "auto-code-review", "reasoning_effort": "medium"},
+    "fallback": {
+        "chat": {"model": "gpt-5.6-sol", "reasoning_effort": "low"},
+        "task": {"model": "gpt-5.6-sol", "reasoning_effort": "medium"},
+    },
+}
 
 DEFAULT_BACKEND_SETTINGS: dict[str, Any] = {
     "agent": {
@@ -86,7 +95,35 @@ def save_backend_settings(path: str | Path, settings: dict[str, Any]) -> dict[st
 
 
 def default_backend_settings() -> dict[str, Any]:
-    return json.loads(json.dumps(DEFAULT_BACKEND_SETTINGS))
+    settings = json.loads(json.dumps(DEFAULT_BACKEND_SETTINGS))
+    settings["model_policy"] = load_model_policy()
+    return settings
+
+
+def load_model_policy(path: str | Path | None = None) -> dict[str, Any]:
+    """Load the shared LabCanvas model policy with a safe built-in fallback."""
+    configured = os.environ.get("LABCANVAS_MODEL_POLICY")
+    policy_path = Path(path or configured or MODEL_POLICY_PATH).expanduser()
+    try:
+        data = json.loads(policy_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        data = {}
+    return merge_settings(DEFAULT_MODEL_POLICY, data if isinstance(data, dict) else {})
+
+
+def model_policy_for_effort(effort: str, *, policy: dict[str, Any] | None = None) -> dict[str, str]:
+    """Return primary and same-effort fallback models from the shared policy."""
+    selected = "low" if str(effort).strip().lower() == "low" else "medium"
+    current = policy if isinstance(policy, dict) else load_model_policy()
+    primary = current.get(selected) if isinstance(current.get(selected), dict) else {}
+    fallback_root = current.get("fallback") if isinstance(current.get("fallback"), dict) else {}
+    fallback = fallback_root.get(selected) if isinstance(fallback_root.get(selected), dict) else {}
+    return {
+        "model": str(primary.get("model") or "auto-code-review"),
+        "reasoning_effort": str(primary.get("reasoning_effort") or selected),
+        "fallback_model": str(fallback.get("model") or "gpt-5.6-sol"),
+        "fallback_reasoning_effort": str(fallback.get("reasoning_effort") or selected),
+    }
 
 
 def merge_settings(base: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:

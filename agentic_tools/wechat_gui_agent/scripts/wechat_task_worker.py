@@ -51,6 +51,7 @@ from wechat_source_recovery import (
 
 
 ROOT = Path(__file__).resolve().parents[3]
+MODEL_POLICY_PATH = ROOT / "configs" / "model-policy.json"
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 LAZYEDIT_PUBLISH_SKILL = ROOT / "agentic_tools" / "wechat_gui_agent" / "skills" / "lazyedit-publish-workflow" / "SKILL.md"
 LAZYEDIT_ROOT = Path(os.environ.get("LAZYEDIT_ROOT", "/home/lachlan/DiskMech/Projects/lazyedit"))
@@ -4727,6 +4728,7 @@ Bounded task packet:
 {task_packet}
 """
     backend = select_agent_backend(task)
+    model_policy = load_worker_model_policy(str(policy["reasoning_effort"]))
     result = run_codex_session(
         prompt,
         backend=backend,
@@ -4739,6 +4741,8 @@ Bounded task packet:
         workdir=ROOT,
         reuse=bool(policy.get("reuse_session", True)),
         backend_config=worker_backend_config(task, backend),
+        fallback_model=model_policy.get("fallback_model", "gpt-5.6-sol"),
+        fallback_reasoning_effort=model_policy.get("fallback_reasoning_effort", str(policy["reasoning_effort"])),
     )
     if not result["ok"]:
         actual_backend = str(result.get("backend") or backend)
@@ -11786,7 +11790,7 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         max_effort=worker_max_effort(),
     )
     return {
-        "model": "gpt-5.6-sol" if protein_structure_task else worker_model(),
+        "model": "gpt-5.6-sol" if protein_structure_task else worker_model(effort),
         "reasoning_effort": effort,
         "sandbox": worker_sandbox(),
         "timeout_seconds": timeout_for_effort(effort),
@@ -11847,9 +11851,27 @@ def extract_current_request_for_policy(request: str) -> str:
     return ""
 
 
-def worker_model() -> str:
-    raw = os.environ.get("WECHAT_WORKER_CODEX_MODEL", DEFAULT_WORKER_MODEL).strip()
-    model = raw or DEFAULT_WORKER_MODEL
+def load_worker_model_policy(effort: str = "medium") -> dict[str, str]:
+    """Read the shared model policy for the standalone WeChat worker."""
+    try:
+        data = json.loads(MODEL_POLICY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    section = "chat" if str(effort).strip().lower() == "low" else "task"
+    primary = data.get(section) if isinstance(data, dict) and isinstance(data.get(section), dict) else {}
+    fallback_root = data.get("fallback") if isinstance(data, dict) and isinstance(data.get("fallback"), dict) else {}
+    fallback = fallback_root.get(section) if isinstance(fallback_root.get(section), dict) else {}
+    return {
+        "model": str(primary.get("model") or DEFAULT_WORKER_MODEL),
+        "reasoning_effort": str(primary.get("reasoning_effort") or section),
+        "fallback_model": str(fallback.get("model") or "gpt-5.6-sol"),
+        "fallback_reasoning_effort": str(fallback.get("reasoning_effort") or section),
+    }
+
+
+def worker_model(effort: str = "medium") -> str:
+    raw = os.environ.get("WECHAT_WORKER_CODEX_MODEL", "").strip()
+    model = raw or load_worker_model_policy(effort).get("model", DEFAULT_WORKER_MODEL)
     if "spark" in model.lower() and os.environ.get("WECHAT_ALLOW_SPARK_WORKER", "0") != "1":
         return DEFAULT_WORKER_MODEL
     return model
@@ -11928,7 +11950,7 @@ def escalated_policy(policy: dict[str, Any], result: str, *, task: dict[str, Any
         return None
     return {
         **policy,
-        "model": worker_model(),
+        "model": worker_model(next_effort),
         "reasoning_effort": next_effort,
         "timeout_seconds": timeout_for_effort(next_effort),
         "escalated_from": effort,
