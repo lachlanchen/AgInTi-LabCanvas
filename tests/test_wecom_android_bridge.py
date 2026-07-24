@@ -1586,6 +1586,41 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(result["processed"], 1)
         self.assertEqual(ingest.call_args.args[0]["text"], pending["body"])
 
+    def test_failed_image_capture_is_backed_off_without_losing_the_pending_row(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            record = {
+                "fingerprint": "image-that-scrolled-away",
+                "direction": "inbound",
+                "sender": "sunnyyty",
+                "body": "[图片]",
+                "source_kind": bridge.IMAGE_KIND,
+            }
+            runtime.mark_observed_message("LabAgent", record, "pending")
+            runtime.defer_observed_message(
+                "LabAgent", record["fingerprint"], "exact bubble not visible"
+            )
+
+            self.assertEqual(runtime.pending_observed_records("LabAgent"), [])
+            with sqlite3.connect(runtime.state_db) as conn:
+                conn.execute(
+                    "UPDATE observed_messages SET retry_after = '' "
+                    "WHERE chat = 'LabAgent' AND fingerprint = ?",
+                    (record["fingerprint"],),
+                )
+            self.assertEqual(
+                runtime.pending_observed_records("LabAgent")[0]["fingerprint"],
+                record["fingerprint"],
+            )
+
     def test_legacy_pending_fingerprint_recovers_unprocessed_history_payload(self) -> None:
         bridge = load_bridge()
         with tempfile.TemporaryDirectory() as tmp:

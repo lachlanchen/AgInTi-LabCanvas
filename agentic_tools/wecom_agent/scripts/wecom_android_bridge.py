@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import html
@@ -775,6 +775,8 @@ class AndroidBridge:
                 "CREATE TABLE IF NOT EXISTS observed_messages ("
                 "chat TEXT NOT NULL, fingerprint TEXT NOT NULL, direction TEXT NOT NULL, "
                 "status TEXT NOT NULL, record_json TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL, "
+                "retry_after TEXT NOT NULL DEFAULT '', failure_count INTEGER NOT NULL DEFAULT 0, "
+                "last_error TEXT NOT NULL DEFAULT '', "
                 "PRIMARY KEY(chat, fingerprint))"
             )
             observed_columns = {
@@ -784,6 +786,21 @@ class AndroidBridge:
                 conn.execute(
                     "ALTER TABLE observed_messages ADD COLUMN "
                     "record_json TEXT NOT NULL DEFAULT '{}'"
+                )
+            if "retry_after" not in observed_columns:
+                conn.execute(
+                    "ALTER TABLE observed_messages ADD COLUMN "
+                    "retry_after TEXT NOT NULL DEFAULT ''"
+                )
+            if "failure_count" not in observed_columns:
+                conn.execute(
+                    "ALTER TABLE observed_messages ADD COLUMN "
+                    "failure_count INTEGER NOT NULL DEFAULT 0"
+                )
+            if "last_error" not in observed_columns:
+                conn.execute(
+                    "ALTER TABLE observed_messages ADD COLUMN "
+                    "last_error TEXT NOT NULL DEFAULT ''"
                 )
 
     @contextmanager
@@ -2358,6 +2375,12 @@ class AndroidBridge:
                 "THEN 'ingested' ELSE excluded.status END, "
                 "record_json = CASE WHEN excluded.record_json = '{}' "
                 "THEN observed_messages.record_json ELSE excluded.record_json END, "
+                "retry_after = CASE WHEN excluded.status = 'pending' "
+                "THEN '' ELSE observed_messages.retry_after END, "
+                "failure_count = CASE WHEN excluded.status = 'pending' "
+                "THEN 0 ELSE observed_messages.failure_count END, "
+                "last_error = CASE WHEN excluded.status = 'pending' "
+                "THEN '' ELSE observed_messages.last_error END, "
                 "updated_at = excluded.updated_at",
                 (
                     chat,
@@ -2366,6 +2389,41 @@ class AndroidBridge:
                     status,
                     json.dumps(record, ensure_ascii=False, sort_keys=True),
                     now_iso(),
+                ),
+            )
+
+    def defer_observed_message(
+        self,
+        chat: str,
+        fingerprint: str,
+        error: str,
+        *,
+        base_seconds: float = 30.0,
+        max_seconds: float = 900.0,
+    ) -> None:
+        """Back off a recoverable native-media failure without losing the row."""
+        if not fingerprint:
+            return
+        with sqlite3.connect(self.state_db) as conn:
+            row = conn.execute(
+                "SELECT failure_count FROM observed_messages "
+                "WHERE chat = ? AND fingerprint = ?",
+                (chat, fingerprint),
+            ).fetchone()
+            count = int(row[0] or 0) if row else 0
+            next_count = count + 1
+            delay = min(float(max_seconds), float(base_seconds) * (2 ** min(count, 5)))
+            retry_after = datetime.now(timezone.utc) + timedelta(seconds=delay)
+            conn.execute(
+                "UPDATE observed_messages SET retry_after = ?, failure_count = ?, "
+                "last_error = ?, updated_at = ? WHERE chat = ? AND fingerprint = ?",
+                (
+                    retry_after.isoformat(timespec="seconds"),
+                    next_count,
+                    str(error)[:500],
+                    now_iso(),
+                    chat,
+                    fingerprint,
                 ),
             )
 
@@ -2382,12 +2440,15 @@ class AndroidBridge:
     def pending_observed_records(self, chat: str) -> list[dict[str, str]]:
         with sqlite3.connect(self.state_db) as conn:
             rows = conn.execute(
-                "SELECT fingerprint, record_json FROM observed_messages "
+                "SELECT fingerprint, record_json, retry_after FROM observed_messages "
                 "WHERE chat = ? AND status = 'pending' ORDER BY updated_at, rowid",
                 (chat,),
             ).fetchall()
         result: list[dict[str, str]] = []
-        for fingerprint, raw_record in rows:
+        current_time = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for fingerprint, raw_record, retry_after in rows:
+            if str(retry_after or "") and str(retry_after) > current_time:
+                continue
             try:
                 record = json.loads(str(raw_record or "{}"))
             except json.JSONDecodeError:
@@ -2698,6 +2759,7 @@ class AndroidBridge:
                 if (
                     record.get("direction") == "inbound"
                     and statuses.get(fingerprint) == "pending"
+                    and fingerprint in pending_by_fingerprint
                 ):
                     pending_by_fingerprint[fingerprint] = record
             pending_inbound = list(pending_by_fingerprint.values())
@@ -2712,6 +2774,11 @@ class AndroidBridge:
                 try:
                     materialized = self.materialize_image_record(chat, record)
                 except Exception as exc:
+                    self.defer_observed_message(
+                        chat,
+                        str(record.get("fingerprint") or ""),
+                        f"{type(exc).__name__}: {str(exc)[:500]}",
+                    )
                     media_materialization_errors.append(
                         {
                             "fingerprint": str(record.get("fingerprint") or "")[:16],

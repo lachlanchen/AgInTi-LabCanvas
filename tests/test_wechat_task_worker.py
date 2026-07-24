@@ -5740,6 +5740,32 @@ stderr: noisy internal trace
         self.assertEqual(task["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
         self.assertEqual(task["send_deferred_reason"], "gui_send_timeout")
 
+    def test_android_transport_disconnect_is_retried(self) -> None:
+        worker = load_worker()
+        errors = [
+            "attempt 1: Remote end closed connection without response",
+            "attempt 2: WeCom Android transport is unavailable",
+        ]
+
+        self.assertTrue(worker.send_errors_indicate_transient_transport(errors))
+        self.assertTrue(worker.send_errors_indicate_deferable(errors))
+        self.assertEqual(
+            worker.send_deferred_reason_from_errors(errors),
+            "wecom_transport_transient",
+        )
+
+        task = {
+            "status": "send_failed",
+            "send_errors": errors,
+            "completed_at": "2026-01-01T00:00:00",
+        }
+        with mock.patch.dict(
+            worker.os.environ,
+            {"WECOM_TRANSPORT_SEND_MAX_RETRIES": "3"},
+            clear=False,
+        ):
+            self.assertTrue(worker.failed_send_retryable(task, worker.datetime.now()))
+
     def test_reaper_kills_orphaned_gui_sender_after_short_timeout(self) -> None:
         worker = load_worker()
         run_calls = [

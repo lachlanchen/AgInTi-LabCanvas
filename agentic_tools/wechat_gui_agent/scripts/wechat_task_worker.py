@@ -1375,6 +1375,22 @@ def send_errors_indicate_deferable(errors: list[str]) -> bool:
         or send_errors_indicate_wechat_entry_required(errors)
         or send_errors_indicate_blank_title_guard(errors)
         or send_errors_indicate_gui_compose_verification(errors)
+        or send_errors_indicate_transient_transport(errors)
+    )
+
+
+def send_errors_indicate_transient_transport(errors: list[str]) -> bool:
+    """Recognize recoverable localhost/Android transport disconnects."""
+    text = " ".join(str(error).casefold() for error in errors)
+    return any(
+        marker in text
+        for marker in (
+            "remote end closed connection without response",
+            "wecom android transport is unavailable",
+            "wecom android transport temporarily unavailable",
+            "connection reset by peer",
+            "connection refused",
+        )
     )
 
 
@@ -1393,6 +1409,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
         return "title_guard_blank"
     if send_errors_indicate_gui_compose_verification(errors):
         return "gui_compose_verification"
+    if send_errors_indicate_transient_transport(errors):
+        return "wecom_transport_transient"
     return "wechat_locked"
 
 
@@ -3891,6 +3909,16 @@ def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
         if not last:
             return True
         return (now - last).total_seconds() >= backoff
+    if reason == "wecom_transport_transient":
+        backoff = int(os.environ.get("WECOM_TRANSPORT_SEND_BACKOFF_SECONDS", "20"))
+        if backoff <= 0:
+            return True
+        last = parse_iso_datetime(
+            str(task.get("last_send_attempt_at") or task.get("resent_at") or task.get("completed_at") or "")
+        )
+        if not last:
+            return True
+        return (now - last).total_seconds() >= backoff
     backoff = int(os.environ.get("WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS", DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS))
     if backoff <= 0:
         return True
@@ -3924,6 +3952,8 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
     reason = send_deferred_reason_from_errors(errors)
     if reason == "wecom_android_code_stale":
         max_retries = int(os.environ.get("WECOM_ANDROID_STALE_WORKER_RETRIES", "2"))
+    elif reason == "wecom_transport_transient":
+        max_retries = int(os.environ.get("WECOM_TRANSPORT_SEND_MAX_RETRIES", "3"))
     elif reason == "gui_compose_verification":
         max_retries = int(os.environ.get("WECOM_GUI_COMPOSE_MAX_RETRIES", "2"))
     elif verified_publish_send_completion(task):
@@ -3981,6 +4011,7 @@ def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
         "title_guard_blank",
         "gui_compose_verification",
         "wecom_android_code_stale",
+        "wecom_transport_transient",
     }:
         return False
     if reason == "gui_compose_verification":

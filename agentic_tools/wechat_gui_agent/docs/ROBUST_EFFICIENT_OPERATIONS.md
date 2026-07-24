@@ -107,6 +107,13 @@ bounded backward reconciliation for messages that arrived during a response.
 Pass a contiguous burst from one exact sender to one agent turn in message
 order, including ordinary text bursts, so later follow-ups augment rather than
 displace the first request. A sender change always starts a separate batch.
+Native image capture is a separate recoverable stage. If an old image bubble is
+no longer uniquely visible, keep its exact pending row and record the failure,
+but back off the next capture attempt exponentially (bounded to 15 minutes).
+Do not reopen that chat on every six-second poll: text rows must continue
+through while media waits for a uniquely identifiable native bubble. A later
+retry may capture the image without substituting a nearby image or marking the
+row complete prematurely.
 The worker applies the same interruption protocol to research, CAD/PCB, figure,
 document, and other durable tasks, not only story/video work. A newer exact
 same-chat task is appended to the active task's interruption packet, the stale
