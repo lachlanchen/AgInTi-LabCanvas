@@ -61,6 +61,7 @@ MESSAGE_TIME_RE = re.compile(
     r"(?:(?:今天|昨天|星期[一二三四五六日天]|周[一二三四五六日天])\s*)?"
     r"(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*\d{1,2}:\d{2})$"
 )
+QUOTE_RESOURCE_RE = re.compile(r"(?:quote|reply|refer|引用|回复)", re.IGNORECASE)
 MESSAGE_CHROME_TEXT = {
     "＠微信",
     "@微信",
@@ -616,10 +617,45 @@ def quoted_message_text(
     message body.
     """
     body_texts = {node_text(node) for node in body_nodes if node_text(node)}
+
+    def visible_text(node: ET.Element) -> str:
+        # Some WeCom builds expose the quote preview through content-desc
+        # instead of text, especially after a quoted card is collapsed.
+        return normalize_visible_text(
+            node.attrib.get("text") or node.attrib.get("content-desc")
+        )
+
+    def usable(text: str) -> bool:
+        return bool(
+            text
+            and text not in body_texts
+            and text not in MESSAGE_CHROME_TEXT
+            and text != sender
+            and not MESSAGE_TIME_RE.fullmatch(text)
+        )
+
+    # Prefer explicitly marked quote/reply subtrees. This prevents a
+    # collapsed quote from being mistaken for unrelated row chrome and keeps
+    # the author/content order emitted by the native client.
+    explicit: list[str] = []
+    for node in row.iter("node"):
+        resource = node.attrib.get("resource-id", "")
+        if not QUOTE_RESOURCE_RE.search(resource):
+            continue
+        text = visible_text(node)
+        if usable(text):
+            explicit.append(text)
+        for child in node.iter("node"):
+            child_text = visible_text(child)
+            if usable(child_text):
+                explicit.append(child_text)
+    if explicit:
+        return "\n".join(unique_nonempty(explicit))[:4000]
+
     skipped_unresourced_sender = False
     candidates: list[str] = []
     for node in row.iter("node"):
-        text = node_text(node)
+        text = visible_text(node)
         if not text or text in body_texts or text in MESSAGE_CHROME_TEXT:
             continue
         resource = node.attrib.get("resource-id", "")

@@ -102,6 +102,15 @@ is resumed with all updates before its next execution turn. The current CLI
 `codex exec` call is one request/response turn; it cannot inject bytes into a
 tool call already running, so the durable queue is the interruption boundary.
 
+For WeCom quoted messages, the transport preserves two separate fields: the
+new outer message and `quote_text`. The parser accepts native quote author and
+content nodes, collapsed `reply`/`refer`/`quote` nodes, and Android
+`content-desc` previews. The ingest request presents both as `message` followed
+by `Quoted message:` so the agent can answer the new request using the quoted
+context. If a quote preview is visible but has no readable content, the task
+must record that limitation rather than silently treating the outer message as
+complete.
+
 WeCom AI bot DMs and internal WeCom groups may enter the same routine
 orchestrator through `agentic_tools/wecom_agent/`. This is an alternate
 transport, not a second agent runtime:

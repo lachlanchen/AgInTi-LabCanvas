@@ -1132,6 +1132,35 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         )
         self.assertEqual(event["quote_text"], record["quote_text"])
 
+    def test_parse_messages_recovers_collapsed_quote_from_content_description(self) -> None:
+        bridge = load_bridge()
+        xml = """
+        <hierarchy><node>
+          <node resource-id="com.tencent.wework:id/eyy" package="com.tencent.wework">
+            <node text="陈苗" package="com.tencent.wework" />
+            <node resource-id="com.tencent.wework:id/reply_preview"
+                  content-desc="引用：请比较事件相机和高光谱的优势"
+                  class="android.view.View" package="com.tencent.wework" />
+            <node text="请提出更直接的生物学测量方法"
+                  resource-id="com.tencent.wework:id/j1l"
+                  class="android.widget.TextView" package="com.tencent.wework" />
+          </node>
+        </node></hierarchy>
+        """
+        runtime = bridge.AndroidBridge(
+            {
+                "serial": "test",
+                "target_groups": ["LabAgent"],
+                "state_db": str(Path(tempfile.mkdtemp()) / "state.sqlite"),
+            }
+        )
+        record = runtime.parse_messages(ET.fromstring(xml))[0]
+
+        self.assertIn("请比较事件相机和高光谱的优势", record["quote_text"])
+        self.assertEqual(record["body"], "请提出更直接的生物学测量方法")
+        event = runtime.build_event("LabAgent", record)
+        self.assertIn("请比较事件相机和高光谱的优势", event["quote_text"])
+
     def test_native_mention_contract_is_exact_and_non_broadcast(self) -> None:
         bridge = load_bridge()
         token = "@\ufff31688857361779939\ufff0"
