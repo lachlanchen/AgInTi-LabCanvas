@@ -94,6 +94,13 @@ bounded backward reconciliation for messages that arrived during a response.
 Pass a contiguous burst from one exact sender to one agent turn in message
 order, including ordinary text bursts, so later follow-ups augment rather than
 displace the first request. A sender change always starts a separate batch.
+The worker applies the same interruption protocol to research, CAD/PCB, figure,
+document, and other durable tasks, not only story/video work. A newer exact
+same-chat task is appended to the active task's interruption packet, the stale
+turn result is suppressed when necessary, and the exact per-chat Codex session
+is resumed with all updates before its next execution turn. The current CLI
+`codex exec` call is one request/response turn; it cannot inject bytes into a
+tool call already running, so the durable queue is the interruption boundary.
 
 WeCom AI bot DMs and internal WeCom groups may enter the same routine
 orchestrator through `agentic_tools/wecom_agent/`. This is an alternate

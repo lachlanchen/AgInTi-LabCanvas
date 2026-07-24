@@ -3754,6 +3754,42 @@ stderr: noisy internal trace
         self.assertEqual(tasks[0]["interruptions"][0]["source"]["local_id"], 202)
         self.assertEqual(tasks[1]["status"], "canceled_superseded")
 
+    def test_worker_merges_consecutive_research_followup_into_active_session(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "research-201",
+                        "chat": "LabAgent",
+                        "status": worker.CLAIMED_STATUS,
+                        "request": "Current coalesced request:\nCompare organoids and optical phenotyping.",
+                        "route_decision": {"route_kind": "research_or_summary"},
+                        "execution_contract": {"transport": "wecom"},
+                        "source": {"message_table": "MSG", "sender_userid": "chen", "server_id": "srv-201", "local_id": 201},
+                    },
+                    {
+                        "id": "research-202",
+                        "chat": "LabAgent",
+                        "status": "pending",
+                        "request": "Current coalesced request:\nNow find a simpler direct quantitative biology tool.",
+                        "route_decision": {"route_kind": "research_or_summary"},
+                        "execution_contract": {"transport": "wecom"},
+                        "source": {"message_table": "MSG", "sender_userid": "chen", "server_id": "srv-202", "local_id": 202},
+                    },
+                ],
+            )
+
+            merged = worker.merge_existing_pending_interruptions(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(merged, 1)
+        self.assertTrue(tasks[0]["interruption_pending"])
+        self.assertIn("simpler direct quantitative biology tool", tasks[0]["request"])
+        self.assertEqual(tasks[1]["status"], "canceled_superseded")
+
     def test_worker_promotes_story_row_when_followup_confirms_video_generation(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

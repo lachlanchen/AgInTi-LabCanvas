@@ -2583,11 +2583,11 @@ def next_pending(path: Path) -> dict[str, Any] | None:
 
 
 def merge_existing_pending_interruptions(path: Path) -> int:
-    """Fold queued same-chat follow-ups into the active story/video task.
+    """Fold queued same-chat follow-ups into the active worker task.
 
     This handles follow-ups that were queued before the latest monitor code was
     loaded, and keeps one per-chat worker session responsible for the evolving
-    story/video workflow.
+    task while preserving sender and source isolation.
     """
     if not path.exists():
         return 0
@@ -2598,7 +2598,7 @@ def merge_existing_pending_interruptions(path: Path) -> int:
         fcntl.flock(lock, fcntl.LOCK_EX)
         tasks = read_tasks(path)
         for incoming_index, incoming in enumerate(list(tasks)):
-            if str(incoming.get("status") or "") != "pending" or not is_interruptible_story_video_task(incoming):
+            if str(incoming.get("status") or "") != "pending" or not is_interruptible_worker_task(incoming):
                 continue
             target_index = find_interruption_target_index(tasks, incoming_index)
             if target_index is None:
@@ -2614,7 +2614,12 @@ def merge_existing_pending_interruptions(path: Path) -> int:
                 merged += 1
                 continue
             interruption = build_task_interruption(target, incoming)
-            if is_manual_generated_video_handoff_update(interruption.get("request") or interruption.get("request_excerpt") or ""):
+            if (
+                is_interruptible_story_video_task(target)
+                and is_manual_generated_video_handoff_update(
+                    interruption.get("request") or interruption.get("request_excerpt") or ""
+                )
+            ):
                 apply_manual_generated_video_handoff(target, incoming, interruption)
                 incoming["status"] = "canceled_superseded"
                 incoming["completed_at"] = now_text
@@ -2631,9 +2636,10 @@ def merge_existing_pending_interruptions(path: Path) -> int:
             target["interruption_count"] = len(target["interruptions"])
             target["last_interruption_at"] = interruption["at"]
             target["last_interruption_source"] = interruption["source"]
-            target["interruption_policy"] = story_video_interruption_policy()
+            target["interruption_policy"] = interruption_policy_for_task(target)
             target["request"] = append_interruption_notice_to_request(target.get("request"), interruption)
-            promote_story_target_for_generation_interruption(target, interruption)
+            if is_interruptible_story_video_task(target):
+                promote_story_target_for_generation_interruption(target, interruption)
             status = str(target.get("status") or "")
             if status in REQUEUE_ON_INTERRUPT_STATUSES:
                 target["status"] = "pending"
@@ -2678,7 +2684,7 @@ def find_interruption_target_index(tasks: list[dict[str, Any]], incoming_index: 
 
 
 def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, Any]) -> bool:
-    if not is_interruptible_story_video_task(target):
+    if not is_interruptible_worker_task(target):
         return False
     if str(target.get("status") or "") not in INTERRUPTIBLE_TASK_STATUSES:
         return False
@@ -2690,6 +2696,14 @@ def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, An
         return False
     if not same_optional_field(target_source, incoming_source, "config_id"):
         return False
+    target_sender = str(
+        target_source.get("sender_userid") or target_source.get("sender") or ""
+    ).strip()
+    incoming_sender = str(
+        incoming_source.get("sender_userid") or incoming_source.get("sender") or ""
+    ).strip()
+    if target_sender and incoming_sender and target_sender != incoming_sender:
+        return False
     if not interruption_target_recent_enough(target, incoming):
         return False
     target_local_id = int_or_none(target_source.get("local_id"))
@@ -2697,6 +2711,15 @@ def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, An
     if target_local_id is None or incoming_local_id is None or incoming_local_id <= target_local_id:
         return False
     return True
+
+
+def is_interruptible_worker_task(task: dict[str, Any]) -> bool:
+    """Allow newer exact-chat worker messages to steer the active session."""
+    route = task_route_decision(task)
+    route_kind = str(route.get("route_kind") or "").strip()
+    if route_kind in {"chat_only", "peer_conversation", "ordinary_chat"}:
+        return False
+    return bool(task.get("routine") or task.get("execution_contract") or route_kind)
 
 
 def same_optional_field(left: dict[str, Any], right: dict[str, Any], key: str) -> bool:
@@ -3063,6 +3086,18 @@ def story_video_interruption_policy() -> dict[str, Any]:
         "monitor_role": "append_only_transport",
         "agent_role": "draft_or_revise_from_full_context_then_choose_next_stage",
         "confirmation_gate": "story_must_be_sent_to_group_and_confirmed_before_xiaoyunque_submit_or_continue",
+    }
+
+
+def interruption_policy_for_task(task: dict[str, Any]) -> dict[str, Any]:
+    """Return the task-specific interruption contract without overfitting routes."""
+    if is_interruptible_story_video_task(task):
+        return story_video_interruption_policy()
+    return {
+        "mode": "agent_adjusts_existing_routine",
+        "monitor_role": "append_only_transport",
+        "agent_role": "read_full_same_chat_context_then_revise_plan_or_answer",
+        "confirmation_gate": "none_added_by_transport; follow_the_current_request_and_existing_routine_gates",
     }
 
 
