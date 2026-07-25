@@ -1476,6 +1476,60 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         self.assertEqual(preflight["wecom_media"]["status"], "ready")
 
+    def test_worker_preflight_reads_exact_wecom_pdf_before_agent_turn(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paper = root / "incoming" / "exact-paper.pdf"
+            paper.parent.mkdir()
+            paper.write_bytes(b"%PDF-1.4\nexact")
+            context = root / "task" / "document_read" / "01-exact-paper" / "agent-context.md"
+            context.parent.mkdir(parents=True)
+            context.write_text("# Exact paper\n\nReadable evidence.\n", encoding="utf-8")
+            task = {
+                "id": "wecom-document-task",
+                "chat": "wecom:default:group:abc",
+                "source": {
+                    "transport": "wecom",
+                    "wecom_transport_channel": "wecom_android",
+                    "chat": "wecom:default:group:abc",
+                },
+                "route_decision": {"route_kind": "file_intake"},
+                "routine": {"id": "file_intake"},
+                "transport_preflight": {
+                    "wecom_media": {
+                        "status": "ready",
+                        "copied": [
+                            {
+                                "kind": "document",
+                                "filename": paper.name,
+                                "task_copy_path": str(paper),
+                                "status": "ready",
+                            }
+                        ],
+                    }
+                },
+            }
+            document_read = {
+                "status": "readable",
+                "source_path": str(paper),
+                "agent_context_path": str(context),
+            }
+            with mock.patch.object(
+                worker,
+                "prepare_file_intake_preflight",
+                side_effect=AssertionError("personal WeChat intake should not run"),
+            ), mock.patch.object(
+                worker,
+                "analyze_document",
+                return_value=document_read,
+            ) as analyze:
+                preflight = worker.prepare_worker_preflight(task, root / "task")
+
+        copied = preflight["wecom_media"]["copied"][0]
+        self.assertEqual(copied["document_read"], document_read)
+        analyze.assert_called_once()
+
     def test_worker_transcribes_exact_official_wecom_voice_without_personal_wechat_resolution(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

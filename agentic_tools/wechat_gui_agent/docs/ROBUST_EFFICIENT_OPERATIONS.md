@@ -104,6 +104,10 @@ exact-title chat to its live tail. Seeing the correct title does not prove the
 viewport is current: a long outbound response can leave newer consecutive
 inbound bubbles below the visible area. Retain pending rows durably and use
 bounded backward reconciliation for messages that arrived during a response.
+The live-tail gesture swipes upward from lower Y to upper Y; bounded history
+recovery uses the inverse downward gesture. Regression tests assert these ADB
+coordinates because reversing them leaves new attachments visible in the chat
+list while repeatedly parsing old rows.
 Pass a contiguous burst from one exact sender to one agent turn in message
 order, including ordinary text bursts, so later follow-ups augment rather than
 displace the first request. A sender change always starts a separate batch.
@@ -781,6 +785,23 @@ The stable interface and recovery commands are documented in
   OCR or capture diagnostics. If identity, viewer opening, or return-to-chat
   verification fails, retain the row as pending; never use an avatar, article
   thumbnail, nearby media, or screenshot of a later bot response as fallback.
+- For inbound WeCom Android documents, parse the native `j2k` filename and
+  `j2g` displayed size as one exact-card identity. Click that same sender/card,
+  let the official phone client populate its private `filecache`, then pull the
+  exact basename back through ADB. Require bounded size, agreement with the
+  rounded native size label, a stable completed cache size, and SHA-256; require
+  `%PDF-` for PDF files. Store the original bytes only under ignored private
+  staging and pass them through `transport_preflight.wecom_media`. Before the
+  resumed agent turn, run the existing bounded document reader in place so the
+  agent receives `document_read.agent_context_path` together with adjacent
+  same-sender text. Do not substitute a DOI/web copy for the native attachment
+  or stop after acknowledging its filename.
+- If a document arrives while a same-chat worker task is active, interruption
+  merging must preserve the incoming `transport_preflight.wecom_media` payload.
+  The resumed task folds those exact source-scoped copies into its preflight,
+  runs the document reader, and exposes the parsed context to the agent.
+  Canceling the redundant follow-up queue row must never discard its attachment
+  bytes or document context.
 - Do not use packet interception, private-protocol replay, credential/session
   extraction, lock bypass, or traffic decryption for control.
 

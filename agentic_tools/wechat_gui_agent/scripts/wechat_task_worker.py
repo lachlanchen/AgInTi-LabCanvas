@@ -3070,7 +3070,7 @@ def interruption_already_recorded(task: dict[str, Any], incoming_source: dict[st
 
 def build_task_interruption(target: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
-    return {
+    interruption = {
         "at": datetime.now().isoformat(timespec="seconds"),
         "mode": "same_chat_interruption",
         "target_task_id": target.get("id"),
@@ -3082,6 +3082,16 @@ def build_task_interruption(target: dict[str, Any], incoming: dict[str, Any]) ->
         "context": incoming.get("context")[-8:] if isinstance(incoming.get("context"), list) else [],
         "instruction": "Newer same-chat user messages override stale story/video plan details.",
     }
+    transport_preflight = (
+        incoming.get("transport_preflight")
+        if isinstance(incoming.get("transport_preflight"), dict)
+        else {}
+    )
+    if transport_preflight:
+        # Preserve exact source-scoped attachments when the incoming task is
+        # folded into an active same-chat worker turn.
+        interruption["transport_preflight"] = transport_preflight
+    return interruption
 
 
 def append_interruption_notice_to_request(request: Any, interruption: dict[str, Any]) -> str:
@@ -5004,12 +5014,94 @@ def worker_artifact_dir(task: dict[str, Any]) -> Path:
     return ROOT / "output" / "wechat_worker" / task_id
 
 
+def merge_interruption_wecom_media(
+    task: dict[str, Any],
+    preflight: dict[str, Any],
+) -> dict[str, Any]:
+    """Carry exact WeCom attachments from same-chat interruptions into preflight."""
+    base = (
+        dict(preflight.get("wecom_media"))
+        if isinstance(preflight.get("wecom_media"), dict)
+        else {}
+    )
+    copies = [
+        dict(item)
+        for item in base.get("copied") or []
+        if isinstance(item, dict)
+    ]
+    seen = {
+        (
+            str(item.get("sha256") or ""),
+            str(item.get("task_copy_path") or item.get("path") or ""),
+        )
+        for item in copies
+    }
+    for interruption in task_interruptions(task):
+        transport_preflight = (
+            interruption.get("transport_preflight")
+            if isinstance(interruption.get("transport_preflight"), dict)
+            else {}
+        )
+        media = (
+            transport_preflight.get("wecom_media")
+            if isinstance(transport_preflight.get("wecom_media"), dict)
+            else {}
+        )
+        source = (
+            interruption.get("source")
+            if isinstance(interruption.get("source"), dict)
+            else {}
+        )
+        for item in media.get("copied") or []:
+            if not isinstance(item, dict):
+                continue
+            copied = dict(item)
+            key = (
+                str(copied.get("sha256") or ""),
+                str(copied.get("task_copy_path") or copied.get("path") or ""),
+            )
+            if key in seen:
+                continue
+            copied["interruption_source"] = {
+                "incoming_task_id": interruption.get("incoming_task_id"),
+                "server_id": source.get("server_id"),
+                "local_id": source.get("local_id"),
+                "sender_display": source.get("sender_display"),
+            }
+            copies.append(copied)
+            seen.add(key)
+    if not copies:
+        return {}
+    base["status"] = "ready"
+    base["source_transport"] = base.get("source_transport") or "wecom_interruption"
+    base["copied"] = copies
+    base["agent_next_action"] = (
+        "Open and use these exact source-scoped files and their document-read "
+        "context before answering the same-chat request."
+    )
+    preflight["wecom_media"] = base
+    return base
+
+
 def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     supplied = task.get("transport_preflight") if isinstance(task.get("transport_preflight"), dict) else {}
     preflight: dict[str, Any] = dict(supplied)
     native_wechat_transport = task_transport_kind(task) != "wecom"
     task["preflight"] = preflight
+    wecom_media = merge_interruption_wecom_media(task, preflight)
+    wecom_copies = [
+        item
+        for item in wecom_media.get("copied") or []
+        if isinstance(item, dict)
+    ]
+    if wecom_copies:
+        # Official WeCom transports already provide exact decrypted files.
+        # Enrich those files in place; never invoke personal-WeChat recovery.
+        enrich_copies_with_document_read(
+            wecom_copies,
+            artifact_dir / "document_read",
+        )
     interruptions = task_interruptions_manifest(task, artifact_dir)
     if interruptions:
         preflight["interruptions"] = interruptions

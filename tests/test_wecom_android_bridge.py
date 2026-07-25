@@ -824,6 +824,59 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         runtime.move_chat_to_live_tail.assert_called_once_with("LabAgent", latest)
         runtime.parse_messages.assert_called_once_with(latest)
 
+    def test_move_chat_to_live_tail_swipes_up_toward_newer_rows(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            root = ET.fromstring(
+                """
+                <hierarchy>
+                  <node text="LabAgent(6)"
+                        resource-id="com.tencent.wework:id/n5i"
+                        package="com.tencent.wework" />
+                  <node resource-id="com.tencent.wework:id/eyy" />
+                  <node resource-id="com.tencent.wework:id/j28" />
+                </hierarchy>
+                """
+            )
+            runtime.adb_shell = mock.Mock(return_value="")
+            runtime.dump_hierarchy = mock.Mock(return_value=root)
+
+            runtime.move_chat_to_live_tail("LabAgent", root, max_swipes=1)
+
+        runtime.adb_shell.assert_called_once_with(
+            "input", "swipe", "520", "1600", "520", "400", "280"
+        )
+
+    def test_history_scan_swipes_down_toward_older_rows(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            root = ET.fromstring('<hierarchy><node text="LabAgent(6)" /></hierarchy>')
+            runtime.adb_shell = mock.Mock(return_value="")
+            runtime.dump_hierarchy = mock.Mock(return_value=root)
+            runtime.parse_messages = mock.Mock(return_value=[])
+
+            runtime.scan_older_message_records("LabAgent", [], max_pages=1)
+
+        runtime.adb_shell.assert_called_once_with(
+            "input", "swipe", "520", "350", "520", "1450", "500"
+        )
+
     def test_parse_messages_recovers_merged_chat_history_with_all_senders(self) -> None:
         bridge = load_bridge()
         xml = """
@@ -973,6 +1026,72 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             event["attachments"][0]["capture_kind"],
             "wecom_android_native_full_view",
         )
+
+    def test_parse_messages_recovers_native_inbound_document_event(self) -> None:
+        bridge = load_bridge()
+        xml = """
+        <hierarchy><node>
+          <node resource-id="com.tencent.wework:id/eyy" package="com.tencent.wework"
+                clickable="true" bounds="[0,1049][1080,1402]">
+            <node resource-id="com.tencent.wework:id/ja3" package="com.tencent.wework"
+                  class="android.widget.ImageView" bounds="[28,1070][133,1175]" />
+            <node text="陈苗" class="android.widget.TextView" package="com.tencent.wework"
+                  bounds="[164,1049][230,1094]" />
+            <node text="＠微信" class="android.widget.TextView" package="com.tencent.wework"
+                  bounds="[236,1049][335,1094]" />
+            <node text="s44460-026-00087&#10;-3.pdf"
+                  resource-id="com.tencent.wework:id/j2k"
+                  class="android.widget.TextView" package="com.tencent.wework"
+                  bounds="[202,1131][623,1248]" />
+            <node text="5.7M" resource-id="com.tencent.wework:id/j2g"
+                  class="android.widget.TextView" package="com.tencent.wework"
+                  bounds="[202,1259][282,1308]" />
+          </node>
+        </node></hierarchy>
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            record = runtime.parse_messages(ET.fromstring(xml))[0]
+            document = root / "staging" / "s44460-026-00087-3.pdf"
+            document.parent.mkdir(parents=True, exist_ok=True)
+            document.write_bytes(b"%PDF-1.4\nexact paper")
+            record.update(
+                {
+                    "attachment_path": str(document),
+                    "attachment_filename": document.name,
+                    "attachment_size_bytes": str(document.stat().st_size),
+                    "attachment_sha256": bridge.sha256_file(document),
+                    "attachment_capture_kind": "wecom_android_native_document_card",
+                }
+            )
+            event = runtime.build_event("LabAgent", record)
+
+        self.assertEqual(record["direction"], "inbound")
+        self.assertEqual(record["sender"], "陈苗")
+        self.assertEqual(record["source_kind"], "document")
+        self.assertEqual(record["document_filename"], "s44460-026-00087-3.pdf")
+        self.assertEqual(record["document_size_text"], "5.7M")
+        self.assertEqual(record["body"], "[文件] s44460-026-00087-3.pdf (5.7M)")
+        self.assertEqual(event["msgtype"], "document")
+        self.assertEqual(event["attachments"][0]["path"], str(document))
+        self.assertEqual(
+            event["attachments"][0]["capture_kind"],
+            "wecom_android_native_document_card",
+        )
+
+    def test_native_document_display_size_accepts_rounded_card_value(self) -> None:
+        bridge = load_bridge()
+
+        self.assertTrue(bridge.display_size_matches(5_948_623, "5.7M"))
+        self.assertFalse(bridge.display_size_matches(2_000_000, "5.7M"))
 
     def test_article_card_fallback_still_routes_to_research_worker(self) -> None:
         ingest = load_ingest()
@@ -1412,6 +1531,75 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         materialize.assert_called_once()
         self.assertEqual(captured_events[0]["msgtype"], "image")
         self.assertEqual(captured_events[0]["attachments"][0]["path"], str(image))
+
+    def test_snapshot_materializes_document_before_wecom_ingest(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            runtime.lock_path = root / "bridge.lock"
+            old = {
+                "fingerprint": "old",
+                "direction": "outbound",
+                "sender": "",
+                "body": "old",
+            }
+            document_record = {
+                "fingerprint": "new-document",
+                "direction": "inbound",
+                "sender": "陈苗",
+                "mention_name": "陈苗@微信",
+                "sender_identity_confidence": "visible_row_label",
+                "body": "[文件] exact-paper.pdf (5.7M)",
+                "source_kind": "document",
+                "document_filename": "exact-paper.pdf",
+                "document_size_text": "5.7M",
+                "document_bounds": "[202,1131][623,1248]",
+            }
+            runtime.save_snapshot("LabAgent", ["old"])
+            runtime.mark_observed_message("LabAgent", old, "seeded")
+            document = root / "staging" / "inbound-media" / "exact-paper.pdf"
+            document.parent.mkdir(parents=True)
+            document.write_bytes(b"%PDF-1.4\nsource")
+            materialized = {
+                **document_record,
+                "attachment_path": str(document),
+                "attachment_filename": document.name,
+                "attachment_size_bytes": str(document.stat().st_size),
+                "attachment_sha256": bridge.sha256_file(document),
+                "attachment_capture_kind": "wecom_android_native_document_card",
+            }
+            captured_events = []
+
+            def ingest(event):
+                captured_events.append(event)
+                return {"queued": True, "ack": ""}
+
+            with mock.patch.object(
+                runtime, "open_chat", return_value=ET.fromstring("<hierarchy />")
+            ), mock.patch.object(
+                runtime, "parse_messages", return_value=[old, document_record]
+            ), mock.patch.object(
+                runtime,
+                "materialize_document_record",
+                return_value=materialized,
+            ) as materialize, mock.patch.object(
+                runtime, "invoke_ingest", side_effect=ingest
+            ):
+                result = runtime.snapshot("LabAgent", enqueue=True)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["processed"], 1)
+        materialize.assert_called_once()
+        self.assertEqual(captured_events[0]["msgtype"], "document")
+        self.assertEqual(captured_events[0]["attachments"][0]["path"], str(document))
 
     def test_snapshot_releases_gui_lock_while_ingest_runs(self) -> None:
         bridge = load_bridge()

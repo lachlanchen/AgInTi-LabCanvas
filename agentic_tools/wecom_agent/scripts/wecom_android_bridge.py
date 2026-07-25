@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shlex
 import sqlite3
 import struct
 import subprocess
@@ -80,6 +81,10 @@ MERGED_HISTORY_KIND = "merged_chat_history"
 IMAGE_BUBBLE_RESOURCE_SUFFIX = ":id/kfb"
 IMAGE_KIND = "image"
 IMAGE_VIEWER_RESOURCE_SUFFIX = ":id/nxh"
+DOCUMENT_FILENAME_RESOURCE_SUFFIX = ":id/j2k"
+DOCUMENT_SIZE_RESOURCE_SUFFIX = ":id/j2g"
+DOCUMENT_KIND = "document"
+INBOUND_FILECACHE_ROOT = "/sdcard/Android/data/com.tencent.wework/files/filecache"
 
 
 class BridgeError(RuntimeError):
@@ -420,6 +425,32 @@ def safe_file_name(path: Path) -> str:
     if any(character in name for character in ("/", "\\", "\x00", "\n", "\r")):
         raise BridgeError("artifact filename contains unsafe characters")
     return name
+
+
+def approximate_display_size_bytes(value: Any) -> int | None:
+    """Convert a compact native file-card size such as ``5.7M`` to bytes."""
+    text = normalize_visible_text(value).upper().replace("IB", "B")
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([KMGT]?)(?:B)?", text)
+    if not match:
+        return None
+    number = float(match.group(1))
+    multiplier = {
+        "": 1,
+        "K": 1024,
+        "M": 1024**2,
+        "G": 1024**3,
+        "T": 1024**4,
+    }[match.group(2)]
+    return int(number * multiplier)
+
+
+def display_size_matches(actual_bytes: int, displayed: Any) -> bool:
+    expected = approximate_display_size_bytes(displayed)
+    if expected is None:
+        return True
+    # Native cards round aggressively (for example 5.7M for 5,948,623 bytes).
+    tolerance = max(64 * 1024, int(expected * 0.12))
+    return abs(int(actual_bytes) - expected) <= tolerance
 
 
 def write_private_json(path: Path, payload: dict[str, Any]) -> None:
@@ -1070,9 +1101,9 @@ class AndroidBridge:
             return root
         previous = ET.tostring(root, encoding="unicode")
         for _ in range(max(1, max_swipes)):
-            # This WeCom build advances toward newer rows when the message
-            # surface is pulled downward. Keep both endpoints inside jcp.
-            self.adb_shell("input", "swipe", "520", "400", "520", "1600", "280")
+            # Swipe the viewport upward to advance toward newer rows. Keep
+            # both endpoints inside the message surface (jcp).
+            self.adb_shell("input", "swipe", "520", "1600", "520", "400", "280")
             time.sleep(0.35)
             current = self.dump_hierarchy(attempts=3)
             if not chat_title_matches(visible_chat_title(current), chat):
@@ -2054,6 +2085,9 @@ class AndroidBridge:
             image_bounds = ""
             image_preview_sha256 = ""
             image_visual_id = ""
+            document_filename = ""
+            document_size_text = ""
+            document_bounds = ""
             if not body_nodes:
                 merged_title_nodes = [
                     node
@@ -2088,6 +2122,32 @@ class AndroidBridge:
                     source_kind = ARTICLE_CARD_KIND
                     source_title = " ".join(unique_nonempty(node_text(node) for node in body_nodes))
             if not body_nodes:
+                document_nodes = [
+                    node
+                    for node in row.iter("node")
+                    if node_text(node)
+                    and node.attrib.get("resource-id", "").endswith(
+                        DOCUMENT_FILENAME_RESOURCE_SUFFIX
+                    )
+                ]
+                if document_nodes:
+                    source_kind = DOCUMENT_KIND
+                    document_filename = normalize_filename_text(node_text(document_nodes[0]))
+                    document_bounds = str(document_nodes[0].attrib.get("bounds") or "")
+                    size_nodes = [
+                        node
+                        for node in row.iter("node")
+                        if node_text(node)
+                        and node.attrib.get("resource-id", "").endswith(
+                            DOCUMENT_SIZE_RESOURCE_SUFFIX
+                        )
+                    ]
+                    body_nodes = [*document_nodes, *size_nodes]
+                    document_size_text = (
+                        normalize_visible_text(node_text(size_nodes[0])) if size_nodes else ""
+                    )
+                    source_title = document_filename
+            if not body_nodes:
                 body_nodes = [
                     node
                     for node in row.iter("node")
@@ -2115,6 +2175,10 @@ class AndroidBridge:
             body = "\n".join(unique_nonempty(node_text(node) for node in body_nodes))
             if source_kind == IMAGE_KIND:
                 body = "[图片]"
+            elif source_kind == DOCUMENT_KIND:
+                body = f"[文件] {document_filename}"
+                if document_size_text:
+                    body += f" ({document_size_text})"
             elif not body:
                 continue
             if source_kind == MERGED_HISTORY_KIND:
@@ -2169,10 +2233,271 @@ class AndroidBridge:
                     "image_bounds": image_bounds,
                     "image_preview_sha256": image_preview_sha256,
                     "image_visual_id": image_visual_id,
+                    "document_filename": document_filename,
+                    "document_size_text": document_size_text,
+                    "document_bounds": document_bounds,
                     **sender_evidence,
                 }
             )
         return records
+
+    def document_node_for_record(
+        self,
+        root: ET.Element,
+        record: dict[str, str],
+    ) -> ET.Element:
+        expected_sender = str(record.get("sender") or "")
+        expected_filename = str(record.get("document_filename") or "")
+        expected_size = normalize_visible_text(record.get("document_size_text"))
+        expected_bounds = str(record.get("document_bounds") or "")
+        matches: list[ET.Element] = []
+        rows = find_nodes(
+            root,
+            resource_id=f"{self.package}:id/eyy",
+            package=self.package,
+        )
+        for row in rows:
+            filename_nodes = [
+                node
+                for node in row.iter("node")
+                if node_text(node)
+                and node.attrib.get("resource-id", "").endswith(
+                    DOCUMENT_FILENAME_RESOURCE_SUFFIX
+                )
+                and normalize_filename_text(node_text(node))
+                == normalize_filename_text(expected_filename)
+            ]
+            if len(filename_nodes) != 1:
+                continue
+            sender, _ = message_row_sender(row, filename_nodes)
+            if expected_sender and sender != expected_sender:
+                continue
+            if expected_size:
+                size_values = {
+                    normalize_visible_text(node_text(node))
+                    for node in row.iter("node")
+                    if node_text(node)
+                    and node.attrib.get("resource-id", "").endswith(
+                        DOCUMENT_SIZE_RESOURCE_SUFFIX
+                    )
+                }
+                if expected_size not in size_values:
+                    continue
+            node = filename_nodes[0]
+            bounds = str(node.attrib.get("bounds") or "")
+            if expected_bounds and bounds == expected_bounds:
+                return node
+            matches.append(node)
+        if len(matches) == 1:
+            return matches[0]
+        raise BridgeError("exact inbound WeCom document bubble is not uniquely visible")
+
+    def find_document_node_for_record(
+        self,
+        chat: str,
+        record: dict[str, str],
+    ) -> tuple[ET.Element, ET.Element]:
+        root = self.open_chat(chat)
+        root = self.move_chat_to_live_tail(chat, root)
+        pages = bounded_int(
+            self.config.get("inbound_document_search_pages"),
+            8,
+            0,
+            8,
+        )
+        last_error = ""
+        for page in range(pages + 1):
+            try:
+                return root, self.document_node_for_record(root, record)
+            except BridgeError as exc:
+                last_error = str(exc)
+            if page >= pages:
+                break
+            self.adb_shell("input", "swipe", "520", "350", "520", "1450", "500")
+            time.sleep(0.55)
+            root = self.dump_hierarchy(attempts=3)
+            if not chat_title_matches(visible_chat_title(root), chat):
+                raise BridgeError("WeCom changed chat while locating the document bubble")
+        raise BridgeError(last_error or "exact inbound WeCom document bubble is not visible")
+
+    def remote_document_candidates(self, filename: str) -> list[str]:
+        safe_name = safe_file_name(Path(filename))
+        command = (
+            f"find {shlex.quote(INBOUND_FILECACHE_ROOT)} -type f "
+            f"-name {shlex.quote(safe_name)} 2>/dev/null"
+        )
+        output = self.adb_shell(command, timeout=30, check=False)
+        prefix = INBOUND_FILECACHE_ROOT.rstrip("/") + "/"
+        return unique_nonempty(
+            line
+            for line in output.splitlines()
+            if line.startswith(prefix) and Path(line).name == safe_name
+        )[:8]
+
+    def remote_file_size(self, path: str) -> int:
+        output = self.adb_shell(
+            f"wc -c < {shlex.quote(path)} 2>/dev/null",
+            timeout=30,
+            check=False,
+        ).strip()
+        try:
+            return int(output)
+        except ValueError:
+            return 0
+
+    def wait_for_exact_document_surface(
+        self,
+        filename: str,
+        *,
+        timeout_seconds: float = 10.0,
+    ) -> ET.Element:
+        deadline = time.monotonic() + max(1.0, timeout_seconds)
+        while time.monotonic() < deadline:
+            root = self.dump_hierarchy(attempts=2)
+            if any(
+                filename_display_matches(node_text(node), filename)
+                for node in root.iter("node")
+                if node_text(node)
+            ):
+                return root
+            time.sleep(0.25)
+        raise BridgeError("WeCom did not open the exact native document surface")
+
+    def wait_for_document_download(
+        self,
+        filename: str,
+        displayed_size: str,
+        *,
+        timeout_seconds: float,
+    ) -> tuple[str, int]:
+        deadline = time.monotonic() + max(5.0, timeout_seconds)
+        stable: dict[str, tuple[int, int]] = {}
+        maximum = bounded_int(
+            self.config.get("max_inbound_file_bytes"),
+            200 * 1024 * 1024,
+            1,
+            1024 * 1024 * 1024,
+        )
+        while time.monotonic() < deadline:
+            for remote_path in self.remote_document_candidates(filename):
+                size = self.remote_file_size(remote_path)
+                if size <= 0 or size > maximum or not display_size_matches(size, displayed_size):
+                    continue
+                previous_size, count = stable.get(remote_path, (0, 0))
+                stable[remote_path] = (
+                    size,
+                    count + 1 if previous_size == size else 1,
+                )
+            ready = [
+                (path, size)
+                for path, (size, count) in stable.items()
+                if count >= 2
+            ]
+            if ready:
+                # Multiple exact-name entries are resolved after pull by content
+                # checksum. Return one here only when the cache identity is unique.
+                if len(ready) == 1:
+                    return ready[0]
+                sizes = {size for _, size in ready}
+                if len(sizes) == 1:
+                    return ready[-1]
+                raise BridgeError(
+                    "multiple different exact-name WeCom document cache entries are visible"
+                )
+            time.sleep(0.75)
+        raise BridgeError("WeCom document download did not complete before the configured timeout")
+
+    def materialize_document_record(
+        self,
+        chat: str,
+        record: dict[str, str],
+    ) -> dict[str, str]:
+        """Download one exact same-chat native document card into private staging."""
+        if chat not in self.target_groups:
+            raise BridgeError("refusing non-allowlisted WeCom Android document source")
+        if str(record.get("direction") or "") != "inbound":
+            raise BridgeError("refusing to materialize an outbound WeCom document")
+        if str(record.get("source_kind") or "") != DOCUMENT_KIND:
+            return dict(record)
+        filename = safe_file_name(Path(str(record.get("document_filename") or "")))
+        fingerprint = str(record.get("fingerprint") or "")
+        if not fingerprint:
+            raise BridgeError("WeCom document record is missing its fingerprint")
+        target = (
+            self.staging_dir
+            / "inbound-media"
+            / short_hash(chat, 16)
+            / fingerprint[:32]
+            / filename
+        )
+        if not target.is_file():
+            root, node = self.find_document_node_for_record(chat, record)
+            opened = False
+            try:
+                self.tap_node(root, node)
+                self.wait_for_exact_document_surface(filename)
+                opened = True
+                remote_path, expected_bytes = self.wait_for_document_download(
+                    filename,
+                    str(record.get("document_size_text") or ""),
+                    timeout_seconds=bounded_float(
+                        self.config.get("inbound_document_download_timeout_seconds"),
+                        180.0,
+                        10.0,
+                        1800.0,
+                    ),
+                )
+                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                with tempfile.NamedTemporaryFile(
+                    prefix=f".{target.name}.",
+                    suffix=".tmp",
+                    dir=target.parent,
+                    delete=False,
+                ) as handle:
+                    temporary = Path(handle.name)
+                try:
+                    self.adb("pull", remote_path, str(temporary), timeout=300)
+                    if temporary.stat().st_size != expected_bytes:
+                        raise BridgeError("downloaded WeCom document size changed during pull")
+                    if filename.lower().endswith(".pdf"):
+                        with temporary.open("rb") as handle:
+                            if handle.read(5) != b"%PDF-":
+                                raise BridgeError("native WeCom PDF has an invalid signature")
+                    os.chmod(temporary, 0o600)
+                    temporary.replace(target)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            finally:
+                if opened:
+                    self.press_back()
+                restored = self.open_chat(chat)
+                restored = self.move_chat_to_live_tail(chat, restored)
+                if not chat_title_matches(visible_chat_title(restored), chat):
+                    raise BridgeError("WeCom did not return to the exact document source chat")
+        if (
+            not target.is_file()
+            or target.stat().st_size <= 0
+            or not display_size_matches(
+                target.stat().st_size,
+                record.get("document_size_text"),
+            )
+        ):
+            raise BridgeError("materialized WeCom document failed its identity checks")
+        if filename.lower().endswith(".pdf"):
+            with target.open("rb") as handle:
+                if handle.read(5) != b"%PDF-":
+                    raise BridgeError("materialized WeCom PDF signature is invalid")
+        result = dict(record)
+        result.update(
+            {
+                "attachment_path": str(target),
+                "attachment_filename": filename,
+                "attachment_size_bytes": str(target.stat().st_size),
+                "attachment_sha256": sha256_file(target),
+                "attachment_capture_kind": "wecom_android_native_document_card",
+            }
+        )
+        return result
 
     def image_node_for_record(
         self,
@@ -2314,8 +2639,8 @@ class AndroidBridge:
         recovered: list[dict[str, str]] = []
         seen = {record["fingerprint"] for record in current_records}
         for _ in range(pages):
-            # The inverse gesture walks backward through older rows.
-            self.adb_shell("input", "swipe", "520", "1450", "520", "350", "500")
+            # Pull the viewport downward to walk backward through older rows.
+            self.adb_shell("input", "swipe", "520", "350", "520", "1450", "500")
             time.sleep(0.55)
             root = self.dump_hierarchy(attempts=3)
             if not chat_title_matches(visible_chat_title(root), chat):
@@ -2524,31 +2849,40 @@ class AndroidBridge:
         sender_identity = sender if sender_confidence == "visible_row_label" else f"unattributed:{event_key}"
         source_kind = str(record.get("source_kind") or "text")
         attachments: list[dict[str, Any]] = []
-        if source_kind == IMAGE_KIND:
+        if source_kind in {IMAGE_KIND, DOCUMENT_KIND}:
             attachment = Path(
                 str(record.get("attachment_path") or "")
             ).expanduser().resolve()
             if not attachment.is_file():
-                raise BridgeError("inbound WeCom image has not been materialized")
+                raise BridgeError(
+                    f"inbound WeCom {source_kind} has not been materialized"
+                )
             expected_sha256 = str(record.get("attachment_sha256") or "")
             actual_sha256 = sha256_file(attachment)
             if expected_sha256 and expected_sha256 != actual_sha256:
-                raise BridgeError("inbound WeCom image checksum changed before ingest")
-            attachments.append(
-                {
-                    "kind": IMAGE_KIND,
-                    "filename": str(record.get("attachment_filename") or attachment.name),
-                    "path": str(attachment),
-                    "size_bytes": attachment.stat().st_size,
-                    "sha256": actual_sha256,
-                    "width": str(record.get("attachment_width") or ""),
-                    "height": str(record.get("attachment_height") or ""),
-                    "capture_kind": str(
-                        record.get("attachment_capture_kind")
-                        or "wecom_android_native_full_view"
-                    ),
-                }
-            )
+                raise BridgeError(
+                    f"inbound WeCom {source_kind} checksum changed before ingest"
+                )
+            attachment_payload = {
+                "kind": source_kind,
+                "filename": str(record.get("attachment_filename") or attachment.name),
+                "path": str(attachment),
+                "size_bytes": attachment.stat().st_size,
+                "sha256": actual_sha256,
+                "capture_kind": str(record.get("attachment_capture_kind") or ""),
+            }
+            if source_kind == IMAGE_KIND:
+                attachment_payload.update(
+                    {
+                        "width": str(record.get("attachment_width") or ""),
+                        "height": str(record.get("attachment_height") or ""),
+                        "capture_kind": str(
+                            record.get("attachment_capture_kind")
+                            or "wecom_android_native_full_view"
+                        ),
+                    }
+                )
+            attachments.append(attachment_payload)
         return {
             "transport": "wecom",
             "transport_channel": "wecom_android",
@@ -2584,6 +2918,8 @@ class AndroidBridge:
                     record.get("image_preview_sha256") or ""
                 ),
                 "image_visual_id": str(record.get("image_visual_id") or ""),
+                "document_filename": str(record.get("document_filename") or ""),
+                "document_size_text": str(record.get("document_size_text") or ""),
             },
             "attachments": attachments,
         }
@@ -2764,7 +3100,8 @@ class AndroidBridge:
                     pending_by_fingerprint[fingerprint] = record
             pending_inbound = list(pending_by_fingerprint.values())
             for index, record in enumerate(pending_inbound):
-                if record.get("source_kind") != IMAGE_KIND:
+                source_kind = record.get("source_kind")
+                if source_kind not in {IMAGE_KIND, DOCUMENT_KIND}:
                     continue
                 attachment_path = Path(
                     str(record.get("attachment_path") or "")
@@ -2772,7 +3109,11 @@ class AndroidBridge:
                 if attachment_path.is_file():
                     continue
                 try:
-                    materialized = self.materialize_image_record(chat, record)
+                    materialized = (
+                        self.materialize_image_record(chat, record)
+                        if source_kind == IMAGE_KIND
+                        else self.materialize_document_record(chat, record)
+                    )
                 except Exception as exc:
                     self.defer_observed_message(
                         chat,
@@ -2800,7 +3141,7 @@ class AndroidBridge:
                     record
                     for record in batch
                     if not (
-                        record.get("source_kind") == IMAGE_KIND
+                        record.get("source_kind") in {IMAGE_KIND, DOCUMENT_KIND}
                         and not Path(
                             str(record.get("attachment_path") or "")
                         ).is_file()

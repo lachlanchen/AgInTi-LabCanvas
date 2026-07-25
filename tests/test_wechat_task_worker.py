@@ -3790,6 +3790,83 @@ stderr: noisy internal trace
         self.assertIn("simpler direct quantitative biology tool", tasks[0]["request"])
         self.assertEqual(tasks[1]["status"], "canceled_superseded")
 
+    def test_worker_preserves_and_reads_wecom_pdf_from_merged_interruption(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paper = root / "paper.pdf"
+            paper.write_bytes(b"%PDF-1.4\nexact attachment")
+            queue = root / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "research-301",
+                        "chat": "LabAgent",
+                        "status": worker.CLAIMED_STATUS,
+                        "request": "Can this measurement become fully optical?",
+                        "route_decision": {"route_kind": "research_or_summary"},
+                        "execution_contract": {"transport": "wecom"},
+                        "source": {
+                            "sender": "member-a",
+                            "server_id": "srv-301",
+                            "local_id": 301,
+                        },
+                    },
+                    {
+                        "id": "research-302",
+                        "chat": "LabAgent",
+                        "status": "pending",
+                        "request": "[file] paper.pdf",
+                        "route_decision": {"route_kind": "file_intake"},
+                        "execution_contract": {"transport": "wecom"},
+                        "source": {
+                            "sender": "member-a",
+                            "server_id": "srv-302",
+                            "local_id": 302,
+                            "sender_display": "Member A",
+                        },
+                        "transport_preflight": {
+                            "wecom_media": {
+                                "status": "ready",
+                                "source_transport": "wecom_android",
+                                "copied": [
+                                    {
+                                        "kind": "document",
+                                        "filename": "paper.pdf",
+                                        "path": str(paper),
+                                        "task_copy_path": str(paper),
+                                        "sha256": "exact-paper-sha",
+                                    }
+                                ],
+                            }
+                        },
+                    },
+                ],
+            )
+
+            merged = worker.merge_existing_pending_interruptions(queue)
+            tasks = worker.read_tasks(queue)
+            document_read = {
+                "status": "readable",
+                "agent_context_path": str(root / "agent-context.md"),
+            }
+            with mock.patch.object(
+                worker,
+                "analyze_document",
+                return_value=document_read,
+            ) as reader:
+                preflight = worker.prepare_worker_preflight(tasks[0], root / "task")
+
+        self.assertEqual(merged, 1)
+        self.assertEqual(tasks[1]["status"], "canceled_superseded")
+        self.assertIn("transport_preflight", tasks[0]["interruptions"][0])
+        copied = preflight["wecom_media"]["copied"][0]
+        self.assertEqual(copied["task_copy_path"], str(paper))
+        self.assertEqual(copied["document_read"], document_read)
+        self.assertEqual(copied["interruption_source"]["server_id"], "srv-302")
+        reader.assert_called_once()
+
     def test_worker_promotes_story_row_when_followup_confirms_video_generation(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
