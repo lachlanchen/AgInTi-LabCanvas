@@ -298,6 +298,59 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             )
         )
 
+    def test_android_poll_stall_uses_android_relay_repair(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "code": "android_poll_stalled",
+                    "severity": "degraded",
+                    "detail": "surface=anr, failures=2",
+                }
+            ]
+        }
+        state = {"fault_counts": {"android_poll_stalled": 2}}
+        with mock.patch.object(
+            guard,
+            "run_repair",
+            return_value={"label": "android_relay", "ok": True},
+        ) as repair:
+            result = guard.perform_repairs(
+                snapshot,
+                state,
+                consecutive_failures=2,
+                cooldown_seconds=300,
+                max_sender_seconds=180,
+            )
+
+        self.assertEqual(result, [{"label": "android_relay", "ok": True}])
+        repair.assert_called_once_with(
+            "android_relay",
+            [str(guard.WECOM_SUPERVISOR), "android-restart"],
+        )
+
+    def test_android_health_probe_preserves_poll_failure_evidence(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "ok": False,
+                "transport": "wecom_android",
+                "device_authorized": True,
+                "wecom_foreground": True,
+                "surface_state": "anr",
+                "poll_healthy": False,
+                "consecutive_poll_failures": 7,
+                "last_poll_error": "BridgeError: WeCom chat list is not visible",
+            }
+        ).encode()
+        with mock.patch.object(guard.request, "urlopen", return_value=response):
+            result = guard.probe_json_url("http://127.0.0.1:19581/health")
+
+        self.assertTrue(result["endpoint_reachable"])
+        self.assertFalse(result["poll_healthy"])
+        self.assertEqual(result["surface_state"], "anr")
+        self.assertEqual(result["consecutive_poll_failures"], 7)
+        self.assertIn("chat list", result["last_poll_error"])
+
     def test_supervisors_use_idempotent_missing_window_repair(self) -> None:
         wechat = (
             ROOT

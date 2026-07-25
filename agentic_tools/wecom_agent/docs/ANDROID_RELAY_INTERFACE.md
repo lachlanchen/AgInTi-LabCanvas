@@ -79,6 +79,18 @@ the ingest history, and delivery component hashes suppress duplicate work and
 replies. A failure in one allowlisted chat does not block reconciliation of the
 others.
 
+The health endpoint includes `last_poll_attempt_at`, `last_poll_success_at`,
+`consecutive_poll_failures`, `last_poll_error`, `surface_state`, and the last
+bounded recovery action. A live process and authorized ADB device are not
+enough to report healthy. If WeCom is left in its native article/document
+viewer, the relay returns with bounded Back navigation. If Android shows
+“企业微信没有响应,” it selects **等待** rather than closing or reporting the app.
+When those steps cannot restore a readable chat surface, it may force-stop and
+relaunch the WeCom process once; it never clears app data, logs out, changes
+accounts, or bypasses a login/security gate. Repeated poll failures are exposed
+to `wechat_transport_stall_guard.py` as `android_poll_stalled` instead of a
+false green status.
+
 Inbound events retain the exact visible sender name and enter the normal WeCom
 ingest/worker queue with same-chat isolation. The route agent's natural direct
 reply or queued-task acknowledgement is checkpointed, then sent immediately

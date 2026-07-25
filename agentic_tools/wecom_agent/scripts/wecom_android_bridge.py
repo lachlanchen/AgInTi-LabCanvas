@@ -48,6 +48,7 @@ DEFAULT_STAGING = PRIVATE / "android-staging"
 INGEST = TOOL_ROOT / "scripts" / "wecom_ingest.py"
 PACKAGE = "com.tencent.wework"
 DOCUMENTS_PACKAGE = "com.google.android.documentsui"
+WECOM_LAUNCH_COMPONENT = ".launch.LaunchSplashActivity"
 # WeCom's Android document picker indexes the top-level Download provider
 # reliably, but can omit files staged under nested application directories.
 # The local hash directory still prevents collisions and preserves isolation.
@@ -85,6 +86,23 @@ DOCUMENT_FILENAME_RESOURCE_SUFFIX = ":id/j2k"
 DOCUMENT_SIZE_RESOURCE_SUFFIX = ":id/j2g"
 DOCUMENT_KIND = "document"
 INBOUND_FILECACHE_ROOT = "/sdcard/Android/data/com.tencent.wework/files/filecache"
+ANR_MESSAGE_MARKERS = ("没有响应", "isn't responding", "is not responding")
+ANR_WAIT_LABELS = {"等待", "Wait", "WAIT"}
+SECURITY_GATE_LABELS = {
+    "登录企业微信",
+    "扫码登录",
+    "安全验证",
+    "设备验证",
+    "请完成验证",
+}
+SURFACE_ERROR_MARKERS = (
+    "chat list is not visible",
+    "exact allowlisted wecom chat is not visible",
+    "exact chat composer could not be restored",
+    "could not read android ui hierarchy",
+    "wecom did not reach the foreground",
+    "wecom changed chat",
+)
 
 
 class BridgeError(RuntimeError):
@@ -298,6 +316,35 @@ def visible_file_card_matches(root: ET.Element, filename: str) -> bool:
 
 def normalize_mention_name(value: Any) -> str:
     return normalize_visible_text(value).replace("\ufffc", "").strip()
+
+
+def hierarchy_visible_texts(root: ET.Element) -> set[str]:
+    return {
+        text
+        for node in root.iter("node")
+        if (text := normalize_visible_text(node_text(node)))
+    }
+
+
+def hierarchy_packages(root: ET.Element) -> set[str]:
+    return {
+        package
+        for node in root.iter("node")
+        if (package := str(node.attrib.get("package") or "").strip())
+    }
+
+
+def is_anr_dialog(root: ET.Element) -> bool:
+    texts = hierarchy_visible_texts(root)
+    return any(
+        marker.casefold() in text.casefold()
+        for marker in ANR_MESSAGE_MARKERS
+        for text in texts
+    ) and bool(texts.intersection(ANR_WAIT_LABELS))
+
+
+def is_security_gate(root: ET.Element) -> bool:
+    return bool(hierarchy_visible_texts(root).intersection(SECURITY_GATE_LABELS))
 
 
 def mention_row_matches(row_text: Any, requested_name: str) -> bool:
@@ -782,9 +829,22 @@ class AndroidBridge:
             config.get("history_scan_pages"), 3, 0, 8
         )
         self._next_reconcile_at = 0.0
-        self._next_history_scan_at = 0.0
+        # Reconcile both chat tails immediately, but defer the more expensive
+        # multi-page history walk so a restart becomes responsive quickly.
+        self._next_history_scan_at = time.monotonic() + self.history_scan_seconds
         self._history_scan_cursor = 0
         self._stop = threading.Event()
+        self._health_lock = threading.Lock()
+        self._poll_health: dict[str, Any] = {
+            "started_at": now_iso(),
+            "last_poll_attempt_at": "",
+            "last_poll_success_at": "",
+            "last_poll_error": "",
+            "poll_in_progress": False,
+            "consecutive_poll_failures": 0,
+            "last_recovery_at": "",
+            "last_recovery_action": "",
+        }
         self.init_state()
 
     def init_state(self) -> None:
@@ -944,14 +1004,28 @@ class AndroidBridge:
 
     def launch_wecom(self) -> None:
         self.prepare_device()
-        if self.current_package() == self.package:
+        try:
+            root = self.dump_hierarchy(attempts=1)
+        except BridgeError:
+            root = None
+        if root is not None and self.package in hierarchy_packages(root) and not is_anr_dialog(root):
             return
-        self.adb_shell(
-            "monkey", "-p", self.package, "-c", "android.intent.category.LAUNCHER", "1", timeout=30
+        component = str(
+            self.config.get("launch_component")
+            or f"{self.package}/{WECOM_LAUNCH_COMPONENT}"
         )
+        self.adb_shell("am", "start", "-n", component, timeout=30)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if self.current_package() == self.package:
+            try:
+                root = self.dump_hierarchy(attempts=1)
+            except BridgeError:
+                time.sleep(0.5)
+                continue
+            if is_anr_dialog(root):
+                self.dismiss_anr_dialog(root)
+                continue
+            if self.package in hierarchy_packages(root):
                 return
             time.sleep(0.5)
         raise BridgeError("WeCom did not reach the foreground")
@@ -983,6 +1057,148 @@ class AndroidBridge:
     def press_back(self) -> None:
         self.adb_shell("input", "keyevent", "4", check=False)
         time.sleep(0.6)
+
+    def dismiss_anr_dialog(self, root: ET.Element) -> bool:
+        """Choose Android's non-destructive Wait action for a WeCom ANR."""
+        if not is_anr_dialog(root):
+            return False
+        wait_nodes = [
+            node
+            for node in root.iter("node")
+            if normalize_visible_text(node_text(node)) in ANR_WAIT_LABELS
+            and node.attrib.get("clickable") == "true"
+        ]
+        if len(wait_nodes) != 1:
+            raise BridgeError("WeCom ANR dialog does not expose one exact Wait action")
+        self.tap_node(root, wait_nodes[0])
+        self.record_recovery("anr_wait")
+        time.sleep(2.0)
+        return True
+
+    def restart_wecom_preserving_session(self, *, reason: str) -> ET.Element:
+        """Restart only the app process; never clear data or alter the account."""
+        self.adb_shell("am", "force-stop", self.package, check=False)
+        time.sleep(1.0)
+        component = str(
+            self.config.get("launch_component")
+            or f"{self.package}/{WECOM_LAUNCH_COMPONENT}"
+        )
+        self.adb_shell("am", "start", "-n", component, timeout=30)
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            try:
+                root = self.dump_hierarchy(attempts=1)
+            except BridgeError:
+                time.sleep(0.6)
+                continue
+            if is_anr_dialog(root):
+                self.dismiss_anr_dialog(root)
+                continue
+            if is_security_gate(root):
+                raise BridgeError("WeCom restart reached a login or security-verification gate")
+            if self.package in hierarchy_packages(root):
+                self.record_recovery(f"app_restart:{reason}")
+                return root
+            time.sleep(0.6)
+        raise BridgeError("WeCom app restart did not restore a readable native surface")
+
+    def record_poll_attempt(self) -> None:
+        with self._health_lock:
+            self._poll_health.update(
+                {
+                    "last_poll_attempt_at": now_iso(),
+                    "poll_in_progress": True,
+                }
+            )
+
+    def record_poll_success(self) -> None:
+        with self._health_lock:
+            self._poll_health.update(
+                {
+                    "last_poll_attempt_at": now_iso(),
+                    "last_poll_success_at": now_iso(),
+                    "last_poll_error": "",
+                    "poll_in_progress": False,
+                    "consecutive_poll_failures": 0,
+                }
+            )
+
+    def record_poll_failure(self, error: str) -> None:
+        with self._health_lock:
+            self._poll_health.update(
+                {
+                    "last_poll_attempt_at": now_iso(),
+                    "last_poll_error": normalize_visible_text(error)[:500],
+                    "poll_in_progress": False,
+                    "consecutive_poll_failures": int(
+                        self._poll_health.get("consecutive_poll_failures") or 0
+                    )
+                    + 1,
+                }
+            )
+
+    def record_recovery(self, action: str) -> None:
+        with self._health_lock:
+            self._poll_health.update(
+                {
+                    "last_recovery_at": now_iso(),
+                    "last_recovery_action": normalize_visible_text(action)[:160],
+                }
+            )
+
+    def poll_health_snapshot(self) -> dict[str, Any]:
+        with self._health_lock:
+            health = dict(self._poll_health)
+        interval = bounded_float(self.config.get("poll_seconds"), 6.0, 2.0, 120.0)
+        reference = (
+            health.get("last_poll_attempt_at")
+            or health.get("started_at")
+            or ""
+        )
+        stale = False
+        try:
+            reference_time = datetime.fromisoformat(str(reference))
+        except ValueError:
+            reference_time = None
+        if reference_time is not None:
+            stale = (datetime.now() - reference_time).total_seconds() > max(
+                180.0,
+                interval * 20.0,
+            )
+        failures = int(health.get("consecutive_poll_failures") or 0)
+        health["poll_stale"] = stale
+        health["poll_healthy"] = failures < 2 and not stale
+        return health
+
+    @staticmethod
+    def surface_failure_text(payload: Any) -> str:
+        text = (
+            payload
+            if isinstance(payload, str)
+            else json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        )
+        lowered = text.casefold()
+        return (
+            text
+            if any(marker.casefold() in lowered for marker in SURFACE_ERROR_MARKERS)
+            else ""
+        )
+
+    def recover_transport_surface(self, *, reason: str) -> dict[str, Any]:
+        """Return to the chat list, restarting WeCom once if navigation is wedged."""
+        try:
+            root = self.open_chat_list(allow_restart=False)
+            self.record_recovery(f"navigation:{reason}")
+            return {"ok": True, "action": "navigation", "visible_chat": visible_chat_title(root)}
+        except BridgeError as first_error:
+            self.restart_wecom_preserving_session(reason=reason)
+            root = self.open_chat_list(allow_restart=False)
+            return {
+                "ok": True,
+                "action": "app_restart",
+                "first_error": str(first_error)[:300],
+                "visible_chat": visible_chat_title(root),
+            }
 
     def normalize_chat_surface(self, chat: str) -> ET.Element:
         """Return to the exact chat composer from a stale picker or attachment sheet."""
@@ -1050,35 +1266,54 @@ class AndroidBridge:
     def open_chat(self, chat: str) -> ET.Element:
         if chat not in self.target_groups:
             raise BridgeError("refusing non-allowlisted WeCom Android chat")
-        self.launch_wecom()
-        for _ in range(6):
-            root = self.dump_hierarchy()
-            if chat_title_matches(visible_chat_title(root), chat):
-                return root
-            rows = find_nodes(root, text=chat, resource_id=f"{self.package}:id/iql", package=self.package)
-            if rows:
-                self.tap_node(root, rows[0])
-                # External-group chats can take several seconds to replace the
-                # message list on older Android devices. Wait for the exact
-                # title instead of treating the first transitional hierarchy
-                # as a wrong-chat selection.
-                deadline = time.monotonic() + 6.0
-                while time.monotonic() < deadline:
-                    time.sleep(0.4)
-                    opened = self.dump_hierarchy(attempts=2)
-                    if chat_title_matches(visible_chat_title(opened), chat):
-                        return opened
-                    if self.current_package() != self.package:
-                        break
-                # Fail closed on a genuinely wrong chat, but return to the
-                # list and retry rather than abandoning the whole send.
-                self.press_back()
-                continue
-            if self.current_package() != self.package:
-                self.press_back()
-                self.launch_wecom()
-            else:
-                self.press_back()
+        for phase in range(2):
+            self.launch_wecom()
+            for _ in range(8):
+                root = self.dump_hierarchy()
+                if self.dismiss_anr_dialog(root):
+                    continue
+                if is_security_gate(root):
+                    raise BridgeError("WeCom is waiting at a login or security-verification gate")
+                if chat_title_matches(visible_chat_title(root), chat):
+                    return root
+                rows = find_nodes(
+                    root,
+                    text=chat,
+                    resource_id=f"{self.package}:id/iql",
+                    package=self.package,
+                )
+                if rows:
+                    self.tap_node(root, rows[0])
+                    # External-group chats can take several seconds to replace
+                    # the message list on older Android devices.
+                    deadline = time.monotonic() + 6.0
+                    while time.monotonic() < deadline:
+                        time.sleep(0.4)
+                        opened = self.dump_hierarchy(attempts=2)
+                        if self.dismiss_anr_dialog(opened):
+                            continue
+                        if is_security_gate(opened):
+                            raise BridgeError(
+                                "WeCom is waiting at a login or security-verification gate"
+                            )
+                        if chat_title_matches(visible_chat_title(opened), chat):
+                            return opened
+                        if self.package not in hierarchy_packages(opened):
+                            break
+                    # Fail closed on a genuinely wrong chat, but return to the
+                    # list and retry rather than abandoning the whole send.
+                    self.press_back()
+                    continue
+                if DOCUMENTS_PACKAGE in hierarchy_packages(root):
+                    self.press_back()
+                    continue
+                if self.package not in hierarchy_packages(root):
+                    self.launch_wecom()
+                else:
+                    # This also closes the native article/document viewer.
+                    self.press_back()
+            if phase == 0:
+                self.restart_wecom_preserving_session(reason=f"open_chat:{chat}")
         raise BridgeError(f"exact allowlisted WeCom chat is not visible: {chat}")
 
     def move_chat_to_live_tail(
@@ -1115,22 +1350,35 @@ class AndroidBridge:
             previous = serialized
         return root
 
-    def open_chat_list(self) -> ET.Element:
-        self.launch_wecom()
-        for _ in range(6):
-            root = self.dump_hierarchy()
-            title_nodes = find_nodes(
-                root,
-                text="消息",
-                resource_id=f"{self.package}:id/n5i",
-                package=self.package,
-            )
-            if title_nodes and any(
-                find_nodes(root, text=chat, resource_id=f"{self.package}:id/iql", package=self.package)
-                for chat in self.target_groups
-            ):
-                return root
-            self.press_back()
+    def open_chat_list(self, *, allow_restart: bool = True) -> ET.Element:
+        phases = 2 if allow_restart else 1
+        for phase in range(phases):
+            self.launch_wecom()
+            for _ in range(8):
+                root = self.dump_hierarchy()
+                if self.dismiss_anr_dialog(root):
+                    continue
+                if is_security_gate(root):
+                    raise BridgeError("WeCom is waiting at a login or security-verification gate")
+                title_nodes = find_nodes(
+                    root,
+                    text="消息",
+                    resource_id=f"{self.package}:id/n5i",
+                    package=self.package,
+                )
+                if title_nodes and any(
+                    find_nodes(
+                        root,
+                        text=target,
+                        resource_id=f"{self.package}:id/iql",
+                        package=self.package,
+                    )
+                    for target in self.target_groups
+                ):
+                    return root
+                self.press_back()
+            if allow_restart and phase == 0:
+                self.restart_wecom_preserving_session(reason="open_chat_list")
         raise BridgeError("WeCom chat list is not visible")
 
     def unread_target_chats(self, root: ET.Element) -> list[str]:
@@ -3291,21 +3539,48 @@ class AndroidBridge:
     def status(self) -> dict[str, Any]:
         device = self.run(["adb", "devices"], timeout=10, check=False).stdout
         authorized = bool(self.serial and re.search(rf"^{re.escape(self.serial)}\s+device$", device, re.M))
+        health = self.poll_health_snapshot()
         package = ""
         title = ""
-        if authorized:
-            package = self.current_package()
+        surface_state = "unavailable"
+        if authorized and health.get("poll_in_progress"):
+            # Health probes must not race UIAutomator against the active poll.
+            package = self.package
+            surface_state = "polling"
+        elif authorized:
             try:
-                title = visible_chat_title(self.dump_hierarchy(attempts=2)) if package == self.package else ""
-            except BridgeError:
-                title = ""
+                with self.serialized(timeout_seconds=0.2):
+                    root = self.dump_hierarchy(attempts=2)
+            except (BridgeError, OSError):
+                root = None
+            if root is not None:
+                packages = hierarchy_packages(root)
+                package = self.package if self.package in packages else self.current_package()
+                title = visible_chat_title(root) if self.package in packages else ""
+                if is_anr_dialog(root):
+                    surface_state = "anr"
+                elif title:
+                    surface_state = "chat"
+                elif self.package in packages:
+                    surface_state = "wecom_other"
+                else:
+                    surface_state = "other_app"
+            else:
+                package = self.current_package()
+        healthy = bool(
+            authorized
+            and health.get("poll_healthy")
+            and surface_state != "anr"
+        )
         return {
-            "ok": authorized,
+            "ok": healthy,
             "enabled": bool(self.config.get("enabled", True)),
             "transport": "wecom_android",
             "device_authorized": authorized,
-            "wecom_foreground": package == self.package,
+            "wecom_foreground": surface_state in {"chat", "wecom_other", "polling"},
             "visible_chat": title,
+            "surface_state": surface_state,
+            **health,
             "target_groups": self.target_groups,
             "novnc_url": str(self.config.get("novnc_url") or ""),
             "local_api_url": f"http://127.0.0.1:{bounded_int(self.config.get('local_api_port'), 19581, 1024, 65535)}",
@@ -3321,17 +3596,57 @@ class AndroidBridge:
 
         def monitor() -> None:
             while not self._stop.wait(interval):
+                self.record_poll_attempt()
                 try:
                     result = self.poll_cycle()
                 except Exception as exc:
+                    error_text = f"{type(exc).__name__}: {str(exc)[:500]}"
+                    self.record_poll_failure(error_text)
+                    recovery: dict[str, Any] | None = None
+                    if self.surface_failure_text(error_text):
+                        try:
+                            with self.serialized(timeout_seconds=30.0):
+                                recovery = self.recover_transport_surface(reason="poll_exception")
+                        except Exception as recovery_exc:
+                            recovery = {
+                                "ok": False,
+                                "error": (
+                                    f"{type(recovery_exc).__name__}: "
+                                    f"{str(recovery_exc)[:500]}"
+                                ),
+                            }
                     print(
                         json.dumps(
-                            {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:500]}"},
+                            {"ok": False, "error": error_text, "recovery": recovery},
                             ensure_ascii=False,
                         ),
                         flush=True,
                     )
                     continue
+                surface_error = self.surface_failure_text(result)
+                if surface_error:
+                    self.record_poll_failure(surface_error)
+                    try:
+                        with self.serialized(timeout_seconds=30.0):
+                            recovery = self.recover_transport_surface(reason="poll_result")
+                    except Exception as recovery_exc:
+                        recovery = {
+                            "ok": False,
+                            "error": (
+                                f"{type(recovery_exc).__name__}: "
+                                f"{str(recovery_exc)[:500]}"
+                            ),
+                        }
+                    print(
+                        json.dumps(
+                            {"ok": False, "result": result, "recovery": recovery},
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        flush=True,
+                    )
+                    continue
+                self.record_poll_success()
                 if result.get("processed"):
                     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")), flush=True)
 

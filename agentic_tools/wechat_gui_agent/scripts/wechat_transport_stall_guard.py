@@ -66,6 +66,7 @@ QUOTA_FAILURE_MARKERS = (
     "usage limit",
 )
 ALERTABLE_DEGRADED_CODES = {
+    "android_poll_stalled",
     "schedule_career_missing",
     "schedule_echomind_cadence",
     "schedule_echomind_missing",
@@ -306,14 +307,24 @@ def probe_json_url(url: str, *, timeout: float = 4.0, attempts: int = 2) -> dict
             if attempt + 1 < max(1, attempts):
                 time.sleep(0.2)
     else:
-        return {"ok": False, "error": last_error}
+        return {"ok": False, "endpoint_reachable": False, "error": last_error}
     if not isinstance(payload, dict):
-        return {"ok": False, "error": "invalid_payload"}
+        return {"ok": False, "endpoint_reachable": True, "error": "invalid_payload"}
     return {
         "ok": bool(payload.get("ok")),
+        "endpoint_reachable": True,
         "device_authorized": bool(payload.get("device_authorized")),
         "wecom_foreground": bool(payload.get("wecom_foreground")),
         "transport": str(payload.get("transport") or ""),
+        "surface_state": str(payload.get("surface_state") or ""),
+        "poll_healthy": bool(payload.get("poll_healthy", payload.get("ok"))),
+        "poll_stale": bool(payload.get("poll_stale")),
+        "poll_in_progress": bool(payload.get("poll_in_progress")),
+        "consecutive_poll_failures": int(payload.get("consecutive_poll_failures") or 0),
+        "last_poll_success_at": str(payload.get("last_poll_success_at") or ""),
+        "last_poll_error": str(payload.get("last_poll_error") or "")[:300],
+        "last_recovery_at": str(payload.get("last_recovery_at") or ""),
+        "last_recovery_action": str(payload.get("last_recovery_action") or "")[:160],
     }
 
 
@@ -645,8 +656,21 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         issue("wecom_session_missing", "critical", "WeCom tmux session is absent")
     elif wecom_missing:
         issue("wecom_windows_missing", "degraded", ",".join(wecom_missing))
-    if android_expected and not android.get("ok"):
+    if android_expected and not android.get("endpoint_reachable"):
         issue("android_endpoint_down", "degraded", "Android relay health endpoint is unavailable")
+    elif android_expected and (
+        not android.get("poll_healthy")
+        or android.get("surface_state") == "anr"
+    ):
+        issue(
+            "android_poll_stalled",
+            "degraded",
+            (
+                f"surface={android.get('surface_state') or 'unknown'}, "
+                f"failures={android.get('consecutive_poll_failures') or 0}, "
+                f"error={android.get('last_poll_error') or 'none'}"
+            ),
+        )
     if not sender.get("ok"):
         issue("sender_lock_stuck", "degraded", str(sender.get("state") or "unknown"))
     if not schedules["echomind"]["running"]:
@@ -804,9 +828,13 @@ def perform_repairs(
         repaired_wecom = True
     if (
         not repaired_wecom
-        and "android_endpoint_down" in issue_codes
+        and issue_codes.intersection({"android_endpoint_down", "android_poll_stalled"})
         and repair_due(
-            "android_endpoint_down",
+            (
+                "android_poll_stalled"
+                if "android_poll_stalled" in issue_codes
+                else "android_endpoint_down"
+            ),
             state,
             consecutive_failures=consecutive_failures,
             cooldown_seconds=cooldown_seconds,
@@ -924,6 +952,7 @@ def health_alert_message(codes: list[str], *, recovered: bool = False) -> str:
     descriptions = {
         "agent_quota_exhausted": "代理额度耗尽，且备用后端也未能完成任务",
         "android_endpoint_down": "WeCom Android 中继不可用",
+        "android_poll_stalled": "WeCom Android 消息轮询或原生界面停滞",
         "schedule_career_missing": "每日分析定时任务未运行",
         "schedule_echomind_cadence": "EchoMind 教学周期不是 3 小时",
         "schedule_echomind_missing": "EchoMind 教学定时任务未运行",
@@ -1054,6 +1083,8 @@ def one_cycle(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             if code.startswith("wecom_") and any(item["label"] == "wecom_missing_runtime" for item in repairs):
                 repaired_at[code] = snapshot["checked_at"]
             if code == "android_endpoint_down" and any(item["label"] == "android_relay" for item in repairs):
+                repaired_at[code] = snapshot["checked_at"]
+            if code == "android_poll_stalled" and any(item["label"] == "android_relay" for item in repairs):
                 repaired_at[code] = snapshot["checked_at"]
             if code == "sender_lock_stuck" and any(item["label"] == "orphaned_sender" for item in repairs):
                 repaired_at[code] = snapshot["checked_at"]

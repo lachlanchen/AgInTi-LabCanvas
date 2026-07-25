@@ -818,7 +818,7 @@ The stable interface and recovery commands are documented in
 | Generated video | Queue orchestrator | `GENERATED_VIDEO_ROUTINES.md` | Store route contract, wait via queue/CDP, deliver MP4 before poststage. |
 | Exact video publish | Worker | `wechat_autopublish_video.py`, same-chat artifact ledger, LazyEdit CLI | Resolve exact WeChat message IDs/cache first; use the same-chat artifact ledger only when it matches the current/source video row MD5 or byte length. |
 | GUI send | Sender | `wechat_gui_send.py` | Serialize with lock, OCR/title guard, screenshots, deferred outbox. |
-| WeCom Android relay | WeCom sender/monitor | `wecom_android_bridge.py` | Reconcile allowlisted groups, capture exact native image bubbles before ingest, enqueue exact sender context, send idempotent text/files, and select native per-sender mentions without desktop login. |
+| WeCom Android relay | WeCom sender/monitor | `wecom_android_bridge.py` | Reconcile allowlisted groups, capture exact native attachments, enqueue exact sender context, send idempotent text/files, select native mentions, and recover boundedly from native viewers or a WeCom ANR without clearing login state. |
 | Android text fallback | Worker outbox | `send_result_with_retries()` | For verified publish-completion text only, if desktop GUI send fails with a deferable guard/timeout, ADB may send a sanitized ASCII completion after screenshot OCR proves the phone is already open to the exact target chat. |
 | Browser assist | Human + worker | `wechat_browser_assist.py` | Use only for login/CAPTCHA/download confirmation or blocked web UI. |
 
@@ -1299,6 +1299,16 @@ the three-hour EchoMind scheduler, and the daily career scheduler. A configured
 official WeCom CLI route is optional when its private state says
 `message_permission_unavailable`; the healthy GUI/Android routes must not be
 reported as degraded merely because the tenant does not grant that permission.
+Android health is not inferred from ADB authorization or a live HTTP process
+alone. The relay reports its last poll attempt/success, consecutive native
+surface failures, current surface class, and last recovery action. Two
+consecutive failures, a stale poll loop, an Android ANR, or the phone being on
+another app becomes `android_poll_stalled`; the guard may then restart only the
+Android relay after repeated observations. The relay itself first chooses the
+non-destructive Android **Wait** action, backs out of WeCom's native
+article/document viewer, and uses one `am force-stop` plus launcher restart only
+when bounded navigation cannot recover. It never clears app data or changes the
+logged-in account.
 
 Repairs require repeated observations and preserve the logged-in clients. A
 stalled direct monitor reloads only monitor/chat-sync windows; a missing runtime

@@ -436,6 +436,142 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         tap.assert_called_once()
         self.assertEqual(bridge.visible_chat_title(result), "LabAgent(6)")
 
+    def test_anr_recovery_chooses_wait_without_closing_wecom(self) -> None:
+        bridge = load_bridge()
+        anr = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="企业微信没有响应" package="android" />
+              <node text="关闭应用" package="android" clickable="true"
+                    bounds="[0,0][100,100]" />
+              <node text="等待" package="android" clickable="true"
+                    bounds="[0,100][100,200]" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.tap_node = mock.Mock()
+            with mock.patch.object(bridge.time, "sleep"):
+                recovered = runtime.dismiss_anr_dialog(anr)
+
+        self.assertTrue(recovered)
+        runtime.tap_node.assert_called_once()
+        tapped = runtime.tap_node.call_args.args[1]
+        self.assertEqual(tapped.attrib["text"], "等待")
+        self.assertEqual(runtime.poll_health_snapshot()["last_recovery_action"], "anr_wait")
+
+    def test_open_chat_list_backs_out_of_internal_article(self) -> None:
+        bridge = load_bridge()
+        article = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="Kimi K3: second only to Fable 5"
+                    package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        chat_list = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="消息" resource-id="com.tencent.wework:id/n5i"
+                    package="com.tencent.wework" />
+              <node text="LabAgent" resource-id="com.tencent.wework:id/iql"
+                    package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.launch_wecom = mock.Mock()
+            runtime.dump_hierarchy = mock.Mock(side_effect=[article, chat_list])
+            runtime.press_back = mock.Mock()
+
+            result = runtime.open_chat_list()
+
+        self.assertIs(result, chat_list)
+        runtime.press_back.assert_called_once_with()
+
+    def test_open_chat_list_restarts_app_once_after_bounded_navigation(self) -> None:
+        bridge = load_bridge()
+        stuck = ET.fromstring(
+            '<hierarchy><node package="com.tencent.wework" text="stuck" /></hierarchy>'
+        )
+        chat_list = ET.fromstring(
+            """
+            <hierarchy><node>
+              <node text="消息" resource-id="com.tencent.wework:id/n5i"
+                    package="com.tencent.wework" />
+              <node text="LabAgent" resource-id="com.tencent.wework:id/iql"
+                    package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.launch_wecom = mock.Mock()
+            runtime.dump_hierarchy = mock.Mock(side_effect=[*[stuck] * 8, chat_list])
+            runtime.press_back = mock.Mock()
+            runtime.restart_wecom_preserving_session = mock.Mock(return_value=stuck)
+
+            result = runtime.open_chat_list()
+
+        self.assertIs(result, chat_list)
+        self.assertEqual(runtime.press_back.call_count, 8)
+        runtime.restart_wecom_preserving_session.assert_called_once_with(
+            reason="open_chat_list"
+        )
+
+    def test_poll_health_fails_after_repeated_surface_errors(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.record_poll_failure("WeCom chat list is not visible")
+            runtime.record_poll_failure("WeCom chat list is not visible")
+
+            health = runtime.poll_health_snapshot()
+
+        self.assertFalse(health["poll_healthy"])
+        self.assertEqual(health["consecutive_poll_failures"], 2)
+        self.assertIn("chat list", health["last_poll_error"])
+
+    def test_surface_failure_matching_is_case_insensitive(self) -> None:
+        bridge = load_bridge()
+
+        error = bridge.AndroidBridge.surface_failure_text(
+            "BridgeError: WeCom changed chat during send"
+        )
+
+        self.assertIn("changed chat", error)
+
     def test_normalize_chat_surface_dismisses_stale_attachment_choice(self) -> None:
         bridge = load_bridge()
         stale = ET.fromstring(
