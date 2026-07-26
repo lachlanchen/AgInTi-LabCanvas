@@ -751,6 +751,77 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             )
         )
 
+    def test_native_mentions_remove_only_matching_plain_leading_copies(self) -> None:
+        bridge = load_bridge()
+
+        self.assertEqual(
+            bridge.strip_redundant_leading_mentions(
+                "@陈苗 这是正文。", ["陈苗@微信"]
+            ),
+            "这是正文。",
+        )
+        self.assertEqual(
+            bridge.strip_redundant_leading_mentions(
+                "＠陈苗＠微信：这是正文。", ["陈苗@微信"]
+            ),
+            "这是正文。",
+        )
+        self.assertEqual(
+            bridge.strip_redundant_leading_mentions(
+                "@陈苗 @megamonster 请一起看。", ["陈苗@微信", "megamonster@微信"]
+            ),
+            "请一起看。",
+        )
+        self.assertEqual(
+            bridge.strip_redundant_leading_mentions(
+                "请和 @陈苗 一起看。", ["陈苗@微信"]
+            ),
+            "请和 @陈苗 一起看。",
+        )
+        self.assertEqual(
+            bridge.strip_redundant_leading_mentions("@陈苗 这是正文。", []),
+            "@陈苗 这是正文。",
+        )
+
+    def test_send_reports_requested_text_but_composes_without_duplicate_mention(
+        self,
+    ) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.lock_path = Path(tmp) / "android.lock"
+            runtime.send_text_resilient_locked = mock.Mock(
+                return_value={
+                    "ok": True,
+                    "sent_messages": ["这是正文。"],
+                    "mentioned_users": ["陈苗@微信"],
+                }
+            )
+
+            result = runtime.send(
+                "LabAgent",
+                "@陈苗 这是正文。",
+                [],
+                task_id="task-no-double-at",
+                mentions=["陈苗@微信"],
+            )
+
+        runtime.send_text_resilient_locked.assert_called_once_with(
+            "LabAgent",
+            "这是正文。",
+            task_id="task-no-double-at",
+            mentions=["陈苗@微信"],
+        )
+        self.assertEqual(result["sent_messages"], ["@陈苗 这是正文。"])
+        self.assertEqual(result["mentioned_users"], ["陈苗@微信"])
+
     def test_recovers_ledger_owned_draft_and_marks_it_abandoned(self) -> None:
         bridge = load_bridge()
         with tempfile.TemporaryDirectory() as tmp:

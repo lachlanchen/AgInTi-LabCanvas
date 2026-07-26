@@ -372,6 +372,42 @@ def validate_mentions(values: Any) -> list[str]:
     return mentions
 
 
+def strip_redundant_leading_mentions(message: str, mentions: list[str]) -> str:
+    """Remove plain leading copies of mentions inserted natively by WeCom."""
+    original = str(message or "")
+    if not original.strip() or not mentions:
+        return original
+    aliases: set[str] = set()
+    for value in mentions:
+        mention = normalize_mention_name(value).lstrip("@＠").strip()
+        if not mention:
+            continue
+        external_base = re.sub(r"[@＠]微信$", "", mention).strip()
+        aliases.add(external_base or mention)
+    if not aliases:
+        return original
+    ordered = sorted(aliases, key=len, reverse=True)
+    cleaned = original
+    removed = False
+    while True:
+        matched = False
+        for alias in ordered:
+            pattern = re.compile(
+                rf"^\s*[@＠]\s*{re.escape(alias)}"
+                r"(?:[@＠]微信)?"
+                r"(?=$|[\s,，:：;；])[\s,，:：;；]*"
+            )
+            updated, count = pattern.subn("", cleaned, count=1)
+            if count:
+                cleaned = updated
+                removed = True
+                matched = True
+                break
+        if not matched:
+            break
+    return cleaned.lstrip() if removed and cleaned.strip() else original
+
+
 def text_component_value_hash(message: str, mentions: list[str]) -> str:
     return hashlib.sha256(
         json.dumps(
@@ -2216,12 +2252,13 @@ class AndroidBridge:
         if chat not in self.target_groups:
             raise BridgeError("refusing non-allowlisted WeCom Android target")
         exact_mentions = validate_mentions(mentions or [])
+        delivery_message = strip_redundant_leading_mentions(message, exact_mentions)
         sent_messages: list[str] = []
         pending_messages: list[str] = []
         sent_files: list[str] = []
         pending_files: list[str] = []
-        if message.strip():
-            value_hash = text_component_value_hash(message, exact_mentions)
+        if delivery_message.strip():
+            value_hash = text_component_value_hash(delivery_message, exact_mentions)
             key = self.component_key(task_id, chat, "text", value_hash)
             (sent_messages if self.component_sent(key) else pending_messages).append(message)
         for path in files:
@@ -2261,9 +2298,10 @@ class AndroidBridge:
         if chat not in self.target_groups:
             raise BridgeError("refusing non-allowlisted WeCom Android target")
         exact_mentions = validate_mentions(mentions or [])
-        if exact_mentions and not message.strip():
+        delivery_message = strip_redundant_leading_mentions(message, exact_mentions)
+        if exact_mentions and not delivery_message.strip():
             raise BridgeError("mentions require a text message")
-        if not message.strip() and not files:
+        if not delivery_message.strip() and not files:
             raise BridgeError("send requires a message and/or artifact")
         with self.serialized(timeout_seconds=60.0):
             sent_messages: list[str] = []
@@ -2292,15 +2330,16 @@ class AndroidBridge:
                     except Exception:
                         pass
                     break
-            if message.strip() and not errors:
+            if delivery_message.strip() and not errors:
                 try:
                     result = self.send_text_resilient_locked(
                         chat,
-                        message,
+                        delivery_message,
                         task_id=task_id,
                         mentions=exact_mentions,
                     )
-                    sent_messages.extend(result.get("sent_messages") or [])
+                    if result.get("sent_messages"):
+                        sent_messages.append(message)
                     mentioned_users.extend(result.get("mentioned_users") or [])
                 except Exception as exc:
                     errors.append({"kind": "text", "error": f"{type(exc).__name__}: {str(exc)[:500]}"})

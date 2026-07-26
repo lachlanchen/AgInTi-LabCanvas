@@ -25,6 +25,12 @@ from urllib import error, request
 
 
 ROOT = Path(__file__).resolve().parents[3]
+SCRIPTS_DIR = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from wechat_agent_backend import run_agent_session  # noqa: E402
+
 WECHAT_PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 WECOM_PRIVATE = ROOT / "agentic_tools" / "wecom_agent" / ".private"
 SEND_LOCK = WECHAT_PRIVATE / "wechat_gui_send.lock"
@@ -51,6 +57,7 @@ WECHAT_STACK = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat
 ECHOMIND_SCHEDULE_SESSION = "labcanvas-echomind-language"
 CAREER_SCHEDULE_SESSION = "labcanvas-career-daily"
 ECHOMIND_INTERVAL_SECONDS = 3 * 60 * 60
+ECHOMIND_HEARTBEAT_STALE_SECONDS = 12 * 60
 TERMINAL_FAILURE_STATUSES = {"failed", "worker_failed"}
 QUOTA_FAILURE_MARKERS = (
     "billing hard limit",
@@ -70,6 +77,7 @@ ALERTABLE_DEGRADED_CODES = {
     "schedule_career_missing",
     "schedule_echomind_cadence",
     "schedule_echomind_missing",
+    "schedule_echomind_stalled",
     "schedule_labagent_stalled",
     "wechat_direct_monitor_stalled",
 }
@@ -86,6 +94,9 @@ ACTIVE_STATUSES = {
     "send_retrying",
 }
 IN_PROGRESS_STATUSES = ACTIVE_STATUSES - {"pending"}
+REPAIR_AGENT_MODEL = "gpt-5.6-sol"
+REPAIR_AGENT_ROLE = "transport_stall_repair"
+REPAIR_AGENT_CHAT = "LabCanvas transport health"
 
 
 def utc_now() -> datetime:
@@ -442,6 +453,16 @@ def schedule_health(
     heartbeat = read_json(labagent_heartbeat)
     heartbeat_at = parse_timestamp(heartbeat.get("checked_at"))
     current = now or utc_now()
+    echo_heartbeat = parse_timestamp(echo_state.get("last_loop_at"))
+    echo_heartbeat_age = (
+        max(0.0, (current - echo_heartbeat).total_seconds())
+        if echo_heartbeat
+        else None
+    )
+    echomind_heartbeat_ok = (
+        echo_heartbeat_age is not None
+        and echo_heartbeat_age <= ECHOMIND_HEARTBEAT_STALE_SECONDS
+    )
     heartbeat_age = (
         max(0.0, (current - heartbeat_at).total_seconds())
         if heartbeat_at
@@ -449,11 +470,22 @@ def schedule_health(
     )
     labagent_ok = heartbeat_age is not None and heartbeat_age <= labagent_stale_seconds
     return {
-        "ok": echomind_running and career_running and interval == ECHOMIND_INTERVAL_SECONDS and labagent_ok,
+        "ok": (
+            echomind_running
+            and echomind_heartbeat_ok
+            and career_running
+            and interval == ECHOMIND_INTERVAL_SECONDS
+            and labagent_ok
+        ),
         "echomind": {
             "running": echomind_running,
+            "ok": echomind_running and echomind_heartbeat_ok,
             "interval_seconds": interval,
             "expected_interval_seconds": ECHOMIND_INTERVAL_SECONDS,
+            "heartbeat_age_seconds": int(echo_heartbeat_age) if echo_heartbeat_age is not None else None,
+            "stale_after_seconds": ECHOMIND_HEARTBEAT_STALE_SECONDS,
+            "phase": str(echo_state.get("scheduler_phase") or "unknown"),
+            "pending_delivery": bool(echo_state.get("pending_lesson")),
         },
         "career_daily": {"running": career_running},
         "labagent_idle_inspiration": {
@@ -675,6 +707,8 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         issue("sender_lock_stuck", "degraded", str(sender.get("state") or "unknown"))
     if not schedules["echomind"]["running"]:
         issue("schedule_echomind_missing", "degraded", "EchoMind language scheduler is absent")
+    elif not schedules["echomind"]["ok"]:
+        issue("schedule_echomind_stalled", "degraded", "EchoMind scheduler heartbeat is stale")
     elif schedules["echomind"]["interval_seconds"] != ECHOMIND_INTERVAL_SECONDS:
         issue(
             "schedule_echomind_cadence",
@@ -872,7 +906,7 @@ def perform_repairs(
             cooldown_seconds=cooldown_seconds,
             now=now,
         )
-        for code in {"schedule_echomind_missing", "schedule_echomind_cadence"}
+        for code in {"schedule_echomind_missing", "schedule_echomind_cadence", "schedule_echomind_stalled"}
     ):
         repairs.append(run_repair("echomind_schedule", [str(ECHOMIND_SCHEDULE_HELPER), "restart"]))
     if (
@@ -898,6 +932,175 @@ def perform_repairs(
     ):
         repairs.append(run_repair("labagent_schedule", [str(WECOM_SUPERVISOR), "daily-restart"]))
     return repairs
+
+
+def repair_agent_issue_codes(
+    snapshot: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    consecutive_failures: int,
+) -> list[str]:
+    counts = state.get("fault_counts") if isinstance(state.get("fault_counts"), dict) else {}
+    return sorted(
+        {
+            str(issue.get("code") or "")
+            for issue in snapshot.get("issues", [])
+            if str(issue.get("code") or "")
+            and (
+                issue.get("severity") == "critical"
+                or str(issue.get("code") or "") in ALERTABLE_DEGRADED_CODES
+            )
+            and int(counts.get(str(issue.get("code") or ""), 0)) >= consecutive_failures
+        }
+    )
+
+
+def repair_agent_due(
+    snapshot: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    consecutive_failures: int,
+    cooldown_seconds: float,
+    now: datetime,
+) -> tuple[bool, str, list[str]]:
+    codes = repair_agent_issue_codes(
+        snapshot,
+        state,
+        consecutive_failures=consecutive_failures,
+    )
+    if not codes:
+        return False, "", []
+    signature = hashlib.sha256("\n".join(codes).encode("utf-8")).hexdigest()
+    attempted_at = parse_timestamp(state.get("last_repair_agent_attempt_at"))
+    same_incident = signature == str(state.get("last_repair_agent_signature") or "")
+    if (
+        same_incident
+        and attempted_at is not None
+        and (now - attempted_at).total_seconds() < cooldown_seconds
+    ):
+        return False, signature, codes
+    return True, signature, codes
+
+
+def bounded_repair_context(
+    snapshot: dict[str, Any],
+    scripted_repairs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "checked_at": snapshot.get("checked_at"),
+        "severity": snapshot.get("severity"),
+        "issues": [
+            {
+                "code": str(item.get("code") or ""),
+                "severity": str(item.get("severity") or ""),
+                "detail": str(item.get("detail") or "")[:500],
+            }
+            for item in snapshot.get("issues", [])[:20]
+        ],
+        "tmux": snapshot.get("tmux"),
+        "android": {
+            key: (snapshot.get("android") or {}).get(key)
+            for key in (
+                "endpoint_reachable",
+                "poll_healthy",
+                "surface_state",
+                "consecutive_poll_failures",
+                "last_poll_error",
+            )
+        },
+        "direct_monitors": snapshot.get("direct_monitors"),
+        "schedules": snapshot.get("schedules"),
+        "queues": snapshot.get("queues"),
+        "scripted_repairs": scripted_repairs,
+    }
+
+
+def run_repair_agent(
+    snapshot: dict[str, Any],
+    scripted_repairs: list[dict[str, Any]],
+    *,
+    reasoning_effort: str = "medium",
+    timeout_seconds: int = 900,
+) -> dict[str, Any]:
+    context = json.dumps(
+        bounded_repair_context(snapshot, scripted_repairs),
+        ensure_ascii=False,
+        indent=2,
+    )
+    prompt = f"""You are the persistent LabCanvas transport repair agent.
+
+The deterministic health guard observed a repeated WeChat/WeCom runtime fault
+that remained after normal scripted recovery. Diagnose and repair the live
+runtime in {ROOT}. Reuse the repository's existing supervisors, health probes,
+queue recovery commands, and tests. Inspect only bounded operational logs needed
+for these issue codes. Do not read or quote chat content.
+
+Allowed actions are local and reversible: inspect status/logs, restart an exact
+dead or stalled tmux window, resume a durable task, clear an orphaned process
+after proving it is orphaned, and run focused tests. Do not send chat messages,
+publish anything, place orders, change credentials/accounts, bypass QR/CAPTCHA,
+delete user data, rewrite unrelated code, or restart a healthy logged-in GUI.
+
+Finish with concise evidence. If the issue is genuinely too complex for medium
+reasoning and still unresolved, include the exact marker ESCALATE_HIGH once.
+
+Health context:
+{context}
+"""
+    result = run_agent_session(
+        prompt,
+        backend="codex",
+        chat_name=REPAIR_AGENT_CHAT,
+        role=REPAIR_AGENT_ROLE,
+        model=REPAIR_AGENT_MODEL,
+        reasoning_effort=reasoning_effort,
+        sandbox="workspace-write",
+        timeout_seconds=timeout_seconds,
+        workdir=ROOT,
+        reuse=True,
+        backend_config={
+            "low_quota_spark": {"enabled": False},
+            "agent_fallbacks": {
+                "purchased_credit_retry": True,
+                "fallback_to_aginti": False,
+            },
+        },
+    )
+    message = str(result.get("message") or "")
+    return {
+        "ok": bool(result.get("ok")),
+        "backend": str(result.get("backend") or "codex"),
+        "model": str(result.get("model") or REPAIR_AGENT_MODEL),
+        "reasoning_effort": reasoning_effort,
+        "thread_id": str(result.get("thread_id") or ""),
+        "returncode": result.get("returncode"),
+        "escalation_requested": "ESCALATE_HIGH" in message,
+        "message_excerpt": message[-2000:],
+        "stderr_tail": str(result.get("stderr_tail") or "")[-1000:],
+    }
+
+
+def run_repair_agent_with_escalation(
+    snapshot: dict[str, Any],
+    scripted_repairs: list[dict[str, Any]],
+    *,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    medium = run_repair_agent(
+        snapshot,
+        scripted_repairs,
+        reasoning_effort="medium",
+        timeout_seconds=timeout_seconds,
+    )
+    if not medium.get("escalation_requested"):
+        return medium
+    high = run_repair_agent(
+        snapshot,
+        scripted_repairs,
+        reasoning_effort="high",
+        timeout_seconds=timeout_seconds,
+    )
+    return {"ok": bool(high.get("ok")), "medium": medium, "high": high, **high}
 
 
 def snapshot_signature(snapshot: dict[str, Any]) -> str:
@@ -956,6 +1159,7 @@ def health_alert_message(codes: list[str], *, recovered: bool = False) -> str:
         "schedule_career_missing": "每日分析定时任务未运行",
         "schedule_echomind_cadence": "EchoMind 教学周期不是 3 小时",
         "schedule_echomind_missing": "EchoMind 教学定时任务未运行",
+        "schedule_echomind_stalled": "EchoMind 教学定时任务心跳停止",
         "schedule_labagent_stalled": "LabAgent 三小时空闲灵感任务心跳停止",
         "wechat_direct_monitor_stalled": "WeChat 群消息监视器心跳停止",
         "wechat_queue_stale": "WeChat 有长期停滞任务",
@@ -1094,8 +1298,43 @@ def one_cycle(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 repaired_at[code] = snapshot["checked_at"]
             if code == "schedule_career_missing" and any(item["label"] == "career_schedule" for item in repairs):
                 repaired_at[code] = snapshot["checked_at"]
-    repair_succeeded = any(item.get("ok") for item in repairs)
-    alert = None if repair_succeeded else maybe_alert(
+        if args.repair_verify_delay_seconds > 0:
+            time.sleep(args.repair_verify_delay_seconds)
+        verified = build_snapshot(max_sender_seconds=args.max_sender_age_seconds)
+        verified["repairs"] = repairs
+        snapshot = verified
+    repair_agent_result: dict[str, Any] | None = None
+    if args.repair_agent and not snapshot.get("ok"):
+        due, agent_signature, agent_codes = repair_agent_due(
+            snapshot,
+            state,
+            consecutive_failures=args.repair_agent_after_failures,
+            cooldown_seconds=args.repair_agent_cooldown_seconds,
+            now=utc_now(),
+        )
+        if due:
+            state["last_repair_agent_attempt_at"] = iso_now()
+            state["last_repair_agent_signature"] = agent_signature
+            state["last_repair_agent_codes"] = agent_codes
+            repair_agent_result = run_repair_agent_with_escalation(
+                snapshot,
+                repairs,
+                timeout_seconds=args.repair_agent_timeout_seconds,
+            )
+            state["last_repair_agent_result"] = repair_agent_result
+            if args.repair_verify_delay_seconds > 0:
+                time.sleep(args.repair_verify_delay_seconds)
+            verified = build_snapshot(max_sender_seconds=args.max_sender_age_seconds)
+            verified["repairs"] = repairs
+            verified["repair_agent"] = repair_agent_result
+            snapshot = verified
+        elif agent_codes:
+            snapshot["repair_agent"] = {
+                "status": "cooldown",
+                "codes": agent_codes,
+            }
+    recovered_after_repair = bool(repairs and snapshot.get("ok"))
+    alert = None if recovered_after_repair else maybe_alert(
         snapshot,
         state,
         transport=args.alert_transport,
@@ -1129,6 +1368,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--repair", action="store_true")
+    parser.add_argument(
+        "--repair-agent",
+        action=argparse.BooleanOptionalAction,
+        default=os.environ.get("WECHAT_STALL_REPAIR_AGENT", "0") == "1",
+        help="Use a bounded persistent Codex repair turn only after repeated scripted recovery fails.",
+    )
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--json-lines", action="store_true")
@@ -1137,6 +1382,10 @@ def main() -> int:
     parser.add_argument("--max-sender-age-seconds", type=float, default=180.0)
     parser.add_argument("--repair-after-failures", type=int, default=2)
     parser.add_argument("--repair-cooldown-seconds", type=float, default=300.0)
+    parser.add_argument("--repair-verify-delay-seconds", type=float, default=2.0)
+    parser.add_argument("--repair-agent-after-failures", type=int, default=4)
+    parser.add_argument("--repair-agent-cooldown-seconds", type=float, default=21600.0)
+    parser.add_argument("--repair-agent-timeout-seconds", type=int, default=900)
     parser.add_argument(
         "--alert-transport",
         default=os.environ.get("LABCANVAS_HEALTH_ALERT_TRANSPORT", ""),
@@ -1159,6 +1408,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     args.repair_after_failures = max(1, args.repair_after_failures)
+    args.repair_agent_after_failures = max(1, args.repair_agent_after_failures)
     args.alert_after_failures = max(1, args.alert_after_failures)
     final: dict[str, Any] = {}
     while True:

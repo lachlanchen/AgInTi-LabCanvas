@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 from zoneinfo import ZoneInfo
 
@@ -33,6 +34,8 @@ QUIET_END = 8
 DAILY_PDF_HOUR = 8
 DAILY_PDF_RETRY_SECONDS = 30 * 60
 SCHEDULER_POLL_SECONDS = 5 * 60
+PERIODIC_MODEL = os.environ.get("ECHOMIND_LANGUAGE_MODEL", "gpt-5.3-codex-spark")
+PERIODIC_EFFORT = os.environ.get("ECHOMIND_LANGUAGE_EFFORT", "low")
 TOPICS = (
     "food, cooking, and ordering at a restaurant",
     "clothes, shopping, sizes, and prices",
@@ -60,7 +63,27 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    STATE.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    STATE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix=f".{STATE.name}.",
+        suffix=".tmp",
+        dir=STATE.parent,
+        delete=False,
+    ) as handle:
+        json.dump(state, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+        temporary = Path(handle.name)
+    os.chmod(temporary, 0o600)
+    temporary.replace(STATE)
+
+
+def scheduler_heartbeat(state: dict, phase: str, **fields: object) -> None:
+    state["last_loop_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    state["scheduler_phase"] = phase
+    state.update(fields)
+    save_state(state)
 
 
 def seconds_until_due(state: dict, interval_seconds: int, *, now: datetime | None = None) -> float:
@@ -173,6 +196,23 @@ def run_daily_pdf(
     if not daily_pdf_due(state, now=current, force=force):
         return None
     yesterday = daily_pdf_target_date(current)
+    pending = state.get("pending_daily_pdf")
+    if isinstance(pending, dict) and str(pending.get("date") or "") == yesterday:
+        pending_pdf = Path(str(pending.get("pdf") or "")).expanduser()
+        if pending_pdf.is_file() and pending_pdf.stat().st_size > 0:
+            if deliver:
+                send_file(pending_pdf, config["chat_name"], CONFIG, target=config.get("send_target"))
+            state["last_daily_pdf_date"] = yesterday
+            state["last_daily_pdf"] = str(pending_pdf)
+            state["last_daily_pdf_delivery"] = {
+                "date": yesterday,
+                "pdf": str(pending_pdf),
+                "status": "sent_verified" if deliver else "generated",
+            }
+            state.pop("pending_daily_pdf", None)
+            state.pop("last_daily_pdf_error", None)
+            save_state(state)
+            return dict(state["last_daily_pdf_delivery"])
     state["last_daily_pdf_attempt_date"] = yesterday
     state["last_daily_pdf_attempt_at"] = current.isoformat(timespec="seconds")
     save_state(state)
@@ -202,10 +242,17 @@ Previous-day EchoMind source material:
     if proc.returncode != 0 or not pdf.is_file() or pdf.stat().st_size <= 0:
         diagnostics = "\n".join([proc.stdout or "", proc.stderr or ""]).strip()
         raise RuntimeError(f"daily EchoMind PDF compilation failed: {diagnostics[-1600:]}")
+    state["pending_daily_pdf"] = {
+        "date": yesterday,
+        "pdf": str(pdf),
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    save_state(state)
     if deliver:
         send_file(pdf, config["chat_name"], CONFIG, target=config.get("send_target"))
     state["last_daily_pdf_date"] = yesterday
     state["last_daily_pdf"] = str(pdf)
+    state.pop("pending_daily_pdf", None)
     state.pop("last_daily_pdf_error", None)
     return {"date": yesterday, "pdf": str(pdf), "status": "sent_verified" if deliver else "generated"}
 
@@ -255,9 +302,18 @@ def build_row() -> dict:
 
 def run_once(*, deliver: bool = True, interval_seconds: int = INTERVAL) -> dict:
     config = direct.load_config(CONFIG)
+    state = load_state()
+    pending = state.get("pending_lesson")
+    if isinstance(pending, dict) and str(pending.get("message") or "").strip():
+        return deliver_pending_lesson(
+            config,
+            state,
+            pending,
+            deliver=deliver,
+            interval_seconds=interval_seconds,
+        )
     context = direct.read_recent_history(config, 10**18, limit=int(config.get("history_limit", 24)))
     history = "\n".join(f"{item.get('sender_display', 'member')}: {direct.visible_message_text(item)}" for item in context[-24:])
-    state = load_state()
     topic_index = int(state.get("topic_index", 0)) % len(TOPICS)
     topic = TOPICS[topic_index]
     previous = state.get("last_message", "")
@@ -283,8 +339,8 @@ Previous scheduled lesson (avoid repeating its topic):
         backend="codex",
         chat_name="EchoMind",
         role="scheduled_language_teacher",
-        model="gpt-5.6-sol",
-        reasoning_effort="low",
+        model=PERIODIC_MODEL,
+        reasoning_effort=PERIODIC_EFFORT,
         sandbox="read-only",
         timeout_seconds=900,
         reuse=True,
@@ -293,22 +349,63 @@ Previous scheduled lesson (avoid repeating its topic):
     message = str(result.get("message") or "").strip()
     if not message:
         raise RuntimeError("EchoMind language teacher returned no lesson")
+    pending = {
+        "message": message,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "agent": result.get("backend", "codex"),
+        "model": result.get("model", PERIODIC_MODEL),
+        "topic": topic,
+        "next_topic_index": (topic_index + 1) % len(TOPICS),
+    }
+    state["pending_lesson"] = pending
+    scheduler_heartbeat(state, "lesson_pending_delivery")
+    return deliver_pending_lesson(
+        config,
+        state,
+        pending,
+        deliver=deliver,
+        interval_seconds=interval_seconds,
+    )
+
+
+def deliver_pending_lesson(
+    config: dict,
+    state: dict,
+    pending: dict,
+    *,
+    deliver: bool,
+    interval_seconds: int,
+) -> dict:
+    message = str(pending.get("message") or "").strip()
+    if not message:
+        raise RuntimeError("pending EchoMind lesson has no message")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     delivery: dict[str, object] = {"requested": deliver, "status": "internal_only"}
     if deliver:
-        screenshot = direct.send_gui_message(config, message)
-        if not screenshot or not Path(screenshot).is_file():
-            raise RuntimeError(f"EchoMind lesson send was not verified: {screenshot or 'no screenshot'}")
-        delivery = {"requested": True, "status": "sent_verified", "screenshot": screenshot}
+        state["last_delivery_attempt_at"] = now
+        scheduler_heartbeat(state, "lesson_delivery_attempt")
+        try:
+            screenshot = direct.send_gui_message(config, message)
+            if not screenshot or not Path(screenshot).is_file():
+                raise RuntimeError(f"EchoMind lesson send was not verified: {screenshot or 'no screenshot'}")
+            delivery = {"requested": True, "status": "sent_verified", "screenshot": screenshot}
+        except Exception as exc:
+            state["last_delivery_error"] = f"{type(exc).__name__}: {exc}"
+            scheduler_heartbeat(state, "lesson_delivery_deferred")
+            raise
     state.update({
         "last_run_at": now,
         "last_message": message,
         "interval_seconds": interval_seconds,
-        "last_agent": result.get("backend", "codex"),
+        "last_agent": pending.get("agent", "codex"),
+        "last_model": pending.get("model", PERIODIC_MODEL),
         "last_delivery": delivery,
-        "topic": topic,
-        "topic_index": (topic_index + 1) % len(TOPICS),
+        "topic": pending.get("topic", ""),
+        "topic_index": int(pending.get("next_topic_index") or 0) % len(TOPICS),
+        "scheduler_phase": "waiting",
     })
+    state.pop("pending_lesson", None)
+    state.pop("last_delivery_error", None)
     save_state(state)
     return {"ok": True, "chat": config["chat_name"], "sent_at": now, "message": message, "delivery": delivery, "daily_pdf": None}
 
@@ -341,6 +438,8 @@ def main() -> int:
         state["interval_seconds"] = interval
         save_state(state)
     while True:
+        state = load_state()
+        scheduler_heartbeat(state, "loop")
         try:
             daily_pdf = run_daily_pdf_if_due(deliver=not args.no_send)
             if daily_pdf:
@@ -349,6 +448,7 @@ def main() -> int:
             print(json.dumps({"ok": False, "daily_pdf_error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False), flush=True)
         quiet = quiet_seconds()
         if quiet:
+            scheduler_heartbeat(load_state(), "quiet_hours", resume_in_seconds=int(quiet))
             print(json.dumps({"ok": True, "status": "quiet_hours", "resume_in_seconds": int(quiet)}, ensure_ascii=False), flush=True)
             if not args.loop:
                 return 0
@@ -357,6 +457,7 @@ def main() -> int:
         if args.loop:
             remaining = seconds_until_due(load_state(), interval)
             if remaining:
+                scheduler_heartbeat(load_state(), "waiting", resume_in_seconds=int(remaining))
                 print(
                     json.dumps(
                         {

@@ -90,7 +90,7 @@ fi
 usage() {
   cat <<'EOF'
 Usage:
-  wechat_supervisor_tmux.sh start|ensure|stop|restart|reload-workers|reload-monitors|restart-all|status
+  wechat_supervisor_tmux.sh start|ensure|stop|restart|reload-workers|reload-monitors|reload-unlock|restart-all|status
 
 Notes:
   restart/reload-workers keeps the WeChat GUI desktop alive and only reloads
@@ -343,6 +343,18 @@ reload_monitor_windows() {
   echo "Reloaded direct monitors and chat sync without touching workers or WeChat desktop."
 }
 
+reload_unlock_watchdog() {
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    exec "$0" start
+  fi
+  if [[ "$UNLOCK_WATCHDOG" == "0" ]]; then
+    echo "Unlock watchdog is disabled."
+    return 0
+  fi
+  respawn_or_new_window "unlock-watchdog" "$(unlock_watchdog_command)"
+  echo "Reloaded only the owner-authorized phone unlock watchdog."
+}
+
 action="${1:-start}"
 case "$action" in
   start)
@@ -401,6 +413,9 @@ case "$action" in
     ;;
   reload-monitors)
     reload_monitor_windows
+    ;;
+  reload-unlock)
+    reload_unlock_watchdog
     ;;
   restart-all)
     "$0" stop || true

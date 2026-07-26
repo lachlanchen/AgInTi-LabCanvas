@@ -26,6 +26,66 @@ def load_backend():
 
 
 class WeChatAgentBackendTests(unittest.TestCase):
+    def test_low_normal_quota_prefers_spark_for_cached_lightweight_turn(self) -> None:
+        backend = load_backend()
+        calls: list[dict[str, object]] = []
+        with (
+            mock.patch.object(
+                backend,
+                "current_codex_quota_status",
+                return_value={"ok": True, "remaining_percent": 24.9},
+            ),
+            mock.patch.object(
+                backend,
+                "run_codex_session",
+                side_effect=lambda prompt, **kwargs: (
+                    calls.append(kwargs)
+                    or {"ok": True, "message": "spark response", "thread_id": "spark"}
+                ),
+            ),
+        ):
+            result = backend.run_agent_session(
+                "hello",
+                backend="codex",
+                chat_name="EchoMind",
+                role="route",
+                model="gpt-5.6-sol",
+                reasoning_effort="medium",
+                sandbox="read-only",
+                timeout_seconds=30,
+                workdir=ROOT,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls[0]["model"], "gpt-5.3-codex-spark")
+        self.assertEqual(calls[0]["reasoning_effort"], "low")
+        self.assertEqual(result["backend_attempts"][0]["model"], "gpt-5.3-codex-spark")
+
+    def test_low_quota_preference_is_strict_cache_only_and_worker_safe(self) -> None:
+        backend = load_backend()
+        unchanged = backend.quota_aware_codex_preference(
+            backend="codex",
+            model="gpt-5.6-sol",
+            reasoning_effort="medium",
+            role="worker",
+            backend_config={},
+        )
+        self.assertEqual(unchanged, ("gpt-5.6-sol", "medium", None))
+        with mock.patch.object(
+            backend,
+            "current_codex_quota_status",
+            return_value={"ok": True, "remaining_percent": 25.0},
+        ) as quota:
+            threshold = backend.quota_aware_codex_preference(
+                backend="codex",
+                model="gpt-5.6-sol",
+                reasoning_effort="low",
+                role="fast",
+                backend_config={},
+            )
+        self.assertEqual(threshold, ("gpt-5.6-sol", "low", None))
+        self.assertFalse(quota.call_args.kwargs["refresh"])
+
     def test_unknown_preferred_model_retries_configured_codex_fallback(self) -> None:
         backend = load_backend()
         calls: list[dict[str, object]] = []

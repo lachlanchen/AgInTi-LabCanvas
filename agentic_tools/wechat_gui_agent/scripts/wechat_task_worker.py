@@ -401,6 +401,9 @@ def reprocess_task(
         "publish_poststage_last_outcome",
         "send_suppressed_reason",
         "send_suppressed_at",
+        "superseded_at",
+        "superseded_by",
+        "superseded_reason",
         "wecom_delivery",
         "expires_at",
         "send_expires_at",
@@ -2705,6 +2708,8 @@ def find_interruption_target_index(tasks: list[dict[str, Any]], incoming_index: 
 def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, Any]) -> bool:
     if not is_interruptible_worker_task(target):
         return False
+    if is_isolated_scheduled_task(target) or is_isolated_scheduled_task(incoming):
+        return False
     if str(target.get("status") or "") not in INTERRUPTIBLE_TASK_STATUSES:
         return False
     if str(target.get("chat") or "") != str(incoming.get("chat") or ""):
@@ -2730,6 +2735,20 @@ def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, An
     if target_local_id is None or incoming_local_id is None or incoming_local_id <= target_local_id:
         return False
     return True
+
+
+def is_isolated_scheduled_task(task: dict[str, Any]) -> bool:
+    """Keep independent scheduled lanes out of conversational interruption merging."""
+    route = task_route_decision(task)
+    daily = task.get("daily_research") if isinstance(task.get("daily_research"), dict) else {}
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    return bool(
+        route.get("scheduled_daily_research")
+        or route.get("serialized_daily_job")
+        or daily.get("serialized")
+        or str(source.get("kind") or "").startswith("scheduled_")
+        or str(source.get("local_type") or "").startswith("scheduled_")
+    )
 
 
 def is_interruptible_worker_task(task: dict[str, Any]) -> bool:

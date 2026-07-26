@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -20,18 +21,32 @@ import sys
 import time
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[3]
+SCRIPTS_DIR = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
 from wechat_gui_send import detect_wechat_locked, find_wechat_window, screenshot
 
 
-ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_OUTPUT = ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F")
 DEFAULT_ANDROID_OUTPUT = ROOT / "output" / "android_device_agent" / datetime.now().strftime("%F")
+DEFAULT_ANDROID_LOCK = (
+    ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom_android_bridge.lock"
+)
+DEFAULT_PROTECTED_PACKAGES = (
+    "art.lazying.echomind",
+    "art.lazying.aimemo",
+)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--display", default=os.environ.get("WECHAT_DISPLAY", ":97"))
-    parser.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL", ""))
+    parser.add_argument(
+        "--serial",
+        default=os.environ.get("WECHAT_UNLOCK_ADB_SERIAL", os.environ.get("ANDROID_SERIAL", "")),
+    )
     parser.add_argument("--adb", default=os.environ.get("ADB", "adb"))
     parser.add_argument("--interval", type=float, default=float(os.environ.get("WECHAT_UNLOCK_INTERVAL", "20")))
     parser.add_argument("--loop", action="store_true", help="Run forever and unlock whenever the desktop is locked.")
@@ -41,7 +56,33 @@ def main() -> int:
     parser.add_argument("--android-output-dir", type=Path, default=DEFAULT_ANDROID_OUTPUT)
     parser.add_argument("--banner-tap", default="505,282", help="MIX 2S chat-list desktop-lock banner tap point.")
     parser.add_argument("--lock-tap", default="540,690", help="MIX 2S logged-in-device lock control tap point.")
+    parser.add_argument(
+        "--android-lock",
+        type=Path,
+        default=Path(os.environ.get("WECHAT_UNLOCK_ANDROID_LOCK", str(DEFAULT_ANDROID_LOCK))),
+        help="Shared phone lease used by the WeCom Android relay.",
+    )
+    parser.add_argument(
+        "--android-lock-timeout",
+        type=float,
+        default=float(os.environ.get("WECHAT_UNLOCK_ANDROID_LOCK_TIMEOUT", "5")),
+        help="Bounded wait for the shared phone lease before deferring.",
+    )
+    parser.add_argument(
+        "--protected-package",
+        action="append",
+        default=[],
+        help="Do not touch the phone while this package is foreground. Repeatable.",
+    )
     args = parser.parse_args()
+    configured_packages = [
+        item.strip()
+        for item in os.environ.get("WECHAT_UNLOCK_PROTECTED_PACKAGES", "").split(",")
+        if item.strip()
+    ]
+    args.protected_package = sorted(
+        set(DEFAULT_PROTECTED_PACKAGES + tuple(configured_packages) + tuple(args.protected_package))
+    )
 
     require_tools("import", "convert", "tesseract", args.adb)
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -70,7 +111,6 @@ def watchdog_once(args: argparse.Namespace) -> dict[str, Any]:
         if args.dry_run:
             payload["action"] = "would_enter_weixin"
             return payload
-        keep_android_awake(args.adb, args.serial)
         entered = enter_weixin_on_desktop(args.display, lock_state)
         time.sleep(3.0)
         after = desktop_lock_state(args.display, args.output_dir)
@@ -80,20 +120,44 @@ def watchdog_once(args: argparse.Namespace) -> dict[str, Any]:
             payload["flush_deferred"] = flush_deferred_once()
         return payload
     if lock_state.get("status") != "locked":
-        keep_android_awake(args.adb, args.serial)
         return payload
     if args.dry_run:
         payload["action"] = "would_unlock"
         return payload
 
     serial = require_serial(args.adb, args.serial)
-    unlock = unlock_desktop_from_mobile(
-        args.adb,
-        serial,
-        parse_point(args.banner_tap),
-        parse_point(args.lock_tap),
-        args.android_output_dir,
+    lease = acquire_android_lease(
+        args.android_lock,
+        timeout_seconds=max(0.0, float(getattr(args, "android_lock_timeout", 5.0))),
     )
+    if lease is None:
+        payload["action"] = "deferred_android_busy"
+        payload["serial"] = redact_serial(serial)
+        return payload
+    try:
+        focus_before = focused_window(args.adb, serial)
+        package_before = focused_package(focus_before)
+        if package_before in set(args.protected_package):
+            payload.update(
+                {
+                    "action": "deferred_protected_app_in_use",
+                    "serial": redact_serial(serial),
+                    "protected_package": package_before,
+                }
+            )
+            return payload
+        unlock = unlock_desktop_from_mobile(
+            args.adb,
+            serial,
+            parse_point(args.banner_tap),
+            parse_point(args.lock_tap),
+            args.android_output_dir,
+        )
+        if package_before == "com.tencent.wework":
+            restore_android_package(args.adb, serial, package_before)
+            unlock["restored_package"] = package_before
+    finally:
+        release_android_lease(lease)
     time.sleep(2.0)
     after = desktop_lock_state(args.display, args.output_dir)
     payload.update({"action": "unlock", "serial": redact_serial(serial), "mobile": unlock, "after": after})
@@ -197,7 +261,7 @@ def unlock_desktop_from_mobile(
     output_dir: Path,
 ) -> dict[str, Any]:
     keep_android_awake(adb, serial)
-    adb_shell(adb, serial, ["monkey", "-p", "com.tencent.mm", "-c", "android.intent.category.LAUNCHER", "1"], check=False)
+    start_android_package(adb, serial, "com.tencent.mm")
     time.sleep(1.0)
     before = mobile_screenshot(adb, serial, output_dir, "before")
     focus_before = focused_window(adb, serial)
@@ -238,6 +302,62 @@ def focused_window(adb: str, serial: str) -> str:
     proc = adb_shell(adb, serial, ["dumpsys", "window"], check=False)
     lines = [line.strip() for line in proc.stdout.splitlines() if "mCurrentFocus" in line or "mFocusedApp" in line]
     return " | ".join(lines)[:1000]
+
+
+def focused_package(focus: str) -> str:
+    for marker in ("u0 ", "u10 "):
+        if marker in focus:
+            candidate = focus.split(marker, 1)[1].split("/", 1)[0].strip()
+            if candidate:
+                return candidate
+    for token in focus.replace("}", " ").split():
+        if "/" in token:
+            candidate = token.split("/", 1)[0].strip()
+            if "." in candidate:
+                return candidate
+    return ""
+
+
+def acquire_android_lease(path: Path, *, timeout_seconds: float = 5.0):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+", encoding="utf-8")
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return handle
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                handle.close()
+                return None
+            time.sleep(0.2)
+
+
+def release_android_lease(handle) -> None:
+    fcntl.flock(handle, fcntl.LOCK_UN)
+    handle.close()
+
+
+def restore_android_package(adb: str, serial: str, package: str) -> None:
+    start_android_package(adb, serial, package)
+
+
+def start_android_package(adb: str, serial: str, package: str) -> None:
+    components = {
+        "com.tencent.mm": "com.tencent.mm/.ui.LauncherUI",
+        "com.tencent.wework": "com.tencent.wework/.launch.WwMainActivity",
+    }
+    component = components.get(package)
+    if component:
+        proc = adb_shell(adb, serial, ["am", "start", "-n", component], check=False)
+        if proc.returncode == 0:
+            return
+    adb_shell(
+        adb,
+        serial,
+        ["monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"],
+        check=False,
+    )
 
 
 def flush_deferred_once() -> dict[str, Any]:

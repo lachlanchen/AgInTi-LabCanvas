@@ -43,7 +43,7 @@ MUTATION_LOCK="${WECOM_TMUX_MUTATION_LOCK:-$TOOL_ROOT/.private/wecom_tmux.lock}"
 mkdir -p "$LOG_DIR"
 
 usage() {
-  echo "Usage: wecom_tmux.sh start|stop|restart|worker-restart|daily-restart|external-restart|gui-restart|android-start|android-restart|status"
+  echo "Usage: wecom_tmux.sh start|stop|restart|worker-restart|daily-restart|health-restart|external-restart|gui-restart|android-start|android-restart|status"
 }
 
 android_enabled() {
@@ -129,7 +129,7 @@ ensure_core_windows() {
   remove_dead_window daily
   if ! window_exists daily; then
     tmux new-window -t "$SESSION" -n daily \
-      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_daily_research.py' loop --queue '$QUEUE' >> '$DAILY_LOG' 2>&1"
+      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_daily_research.py' loop --queue '$QUEUE' --health-path '$DAILY_HEALTH' >> '$DAILY_LOG' 2>&1"
   fi
   remove_dead_window knowledge
   if ! window_exists knowledge; then
@@ -138,8 +138,7 @@ ensure_core_windows() {
   fi
   remove_dead_window health
   if ! window_exists health; then
-    tmux new-window -t "$SESSION" -n health \
-      "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 -u '$HEALTH_GUARD' --loop --repair --json-lines --changes-only --state-path '$HEALTH_STATE' --snapshot-path '$HEALTH_SNAPSHOT' >> '$HEALTH_LOG' 2>&1"
+    start_health_window
   fi
   remove_dead_window quota
   if ! window_exists quota; then
@@ -160,6 +159,13 @@ start_daily_window() {
   tmux new-window -t "$SESSION" -n daily \
     "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$TOOL_ROOT/scripts/wecom_daily_research.py' loop --queue '$QUEUE' --health-path '$DAILY_HEALTH' >> '$DAILY_LOG' 2>&1"
   echo "Restarted WeCom daily and idle-inspiration scheduler."
+}
+
+start_health_window() {
+  kill_window_if_present health
+  tmux new-window -t "$SESSION" -n health \
+    "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 -u '$HEALTH_GUARD' --loop --repair --repair-agent --json-lines --changes-only --state-path '$HEALTH_STATE' --snapshot-path '$HEALTH_SNAPSHOT' >> '$HEALTH_LOG' 2>&1"
+  echo "Restarted shared token-free health guard and bounded repair agent."
 }
 
 gui_enabled() {
@@ -332,6 +338,14 @@ case "$action" in
     acquire_mutation_lock
     if tmux has-session -t "$SESSION" 2>/dev/null; then
       start_daily_window
+    else
+      start_stack
+    fi
+    ;;
+  health-restart)
+    acquire_mutation_lock
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      start_health_window
     else
       start_stack
     fi

@@ -169,7 +169,8 @@ interval. It must:
 - preserve the same private queue, SQLite state, Wine prefix, noVNC display,
   delivery ledgers, and per-chat agent sessions across reboot;
 - independently restore `gateway`, `worker`, `daily`, `knowledge`, optional
-  official external transport, `wecom-client`, and `external-gui` windows;
+  official external transport, `wecom-client`, `external-gui`, and the shared
+  token-free transport-health guard windows;
 - use the tmux mutation lock so the general `create_tmux_session.sh` fallback
   and the dedicated service may start concurrently without duplicate windows;
 - leave healthy windows and the authenticated GUI process untouched;
@@ -818,9 +819,22 @@ The stable interface and recovery commands are documented in
 | Generated video | Queue orchestrator | `GENERATED_VIDEO_ROUTINES.md` | Store route contract, wait via queue/CDP, deliver MP4 before poststage. |
 | Exact video publish | Worker | `wechat_autopublish_video.py`, same-chat artifact ledger, LazyEdit CLI | Resolve exact WeChat message IDs/cache first; use the same-chat artifact ledger only when it matches the current/source video row MD5 or byte length. |
 | GUI send | Sender | `wechat_gui_send.py` | Serialize with lock, OCR/title guard, screenshots, deferred outbox. |
-| WeCom Android relay | WeCom sender/monitor | `wecom_android_bridge.py` | Reconcile allowlisted groups, capture exact native attachments, enqueue exact sender context, send idempotent text/files, select native mentions, and recover boundedly from native viewers or a WeCom ANR without clearing login state. |
+| WeCom Android relay | WeCom sender/monitor | `wecom_android_bridge.py` | Reconcile allowlisted groups, capture exact native attachments, enqueue exact sender context, send idempotent text/files, select native mentions, remove only matching redundant leading plain `@name` text, and recover boundedly from native viewers or a WeCom ANR without clearing login state. |
 | Android text fallback | Worker outbox | `send_result_with_retries()` | For verified publish-completion text only, if desktop GUI send fails with a deferable guard/timeout, ADB may send a sanitized ASCII completion after screenshot OCR proves the phone is already open to the exact target chat. |
 | Browser assist | Human + worker | `wechat_browser_assist.py` | Use only for login/CAPTCHA/download confirmation or blocked web UI. |
+
+Scheduled member jobs are independent lanes even when they share one group. They
+must never be merged as conversational interruptions across `daily_research.job_key`
+or member ownership. EchoMind persists generated lessons before GUI delivery and
+retries only the pending delivery after a lock or transport failure; it does not
+spend another agent turn every five minutes. The transport guard checks the
+EchoMind scheduler heartbeat, not merely the existence of its tmux process.
+
+Automatic lightweight `fast` and `route` turns may prefer
+`gpt-5.3-codex-spark` when the cached normal Codex quota is strictly below 25%.
+This selection is cache-only and never blocks a reply on a live quota probe.
+Worker and explicit model choices remain unchanged; Spark quota or empty-output
+failures retain the GPT-5.6 SOL and AgInTi fallback chain.
 
 ## Target-Scoped Send API
 
@@ -1317,6 +1331,17 @@ uses the idempotent supervisor `ensure` path. EchoMind is managed by
 the remainder of the three-hour interval after restart instead of sending a
 duplicate lesson. `wechat_stack_tmux.sh start` restores both EchoMind and the
 daily career scheduler after reboot.
+- Healthy 30-second health polls read local process, tmux, heartbeat, queue, and
+  localhost endpoint state only and spend no model tokens. After repeated
+  failure, deterministic repairs run first and the guard re-probes the exact
+  fault before calling an agent.
+- A fault that survives four checks and scripted recovery may invoke one
+  persistent `gpt-5.6-sol` medium repair turn. The incident signature has a
+  six-hour cooldown, so a stalled transport cannot create a token-heavy polling
+  loop. The repair agent may request one high-reasoning continuation with the
+  explicit `ESCALATE_HIGH` marker. It may perform bounded local, reversible
+  runtime repair, but may not send chat messages, alter accounts/credentials,
+  publish, order, delete user data, or restart a healthy logged-in client.
 - A terminal scheduled-inspiration delivery outcome such as `send_failed`,
   `send_expired`, `worker_failed`, or `expired_stale` must not block later
   three-hour LabAgent inspiration cycles. Pending, in-progress, deferred, and
@@ -1518,6 +1543,15 @@ WeChat locked:
   an owner-authorized Android phone is attached;
 - the watchdog only uses the normal mobile WeChat `桌面微信已锁定` / `已登录设备`
   controls and refuses to handle phone credential prompts;
+- configure the physical phone explicitly with `WECHAT_UNLOCK_ADB_SERIAL`; never
+  let the watchdog guess when emulators are also attached;
+- the watchdog does not wake or touch the phone while desktop WeChat is healthy.
+  When unlock is required, it acquires the shared WeCom Android lease, defers if
+  WeCom is using the phone, skips the phone while the `../EchoMind` app project
+  package is foreground, and restores WeCom after the bounded unlock action;
+- `EchoMind` without a filesystem path means the multilingual personal-WeChat
+  group in this runbook. `../EchoMind` means the separate app-development
+  project and its foreground phone activity must not be interrupted;
 - if the Linux client restarts to the small `Enter Weixin` gate, the watchdog
   clicks that normal desktop entry button and then flushes one deferred outbox
   item;

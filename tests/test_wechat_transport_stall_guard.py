@@ -179,7 +179,10 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
                     guard,
                     "read_json",
                     side_effect=lambda path: (
-                        {"interval_seconds": guard.ECHOMIND_INTERVAL_SECONDS}
+                        {
+                            "interval_seconds": guard.ECHOMIND_INTERVAL_SECONDS,
+                            "last_loop_at": "2026-07-22T11:59:30+00:00",
+                        }
                         if path == guard.ECHOMIND_SCHEDULE_STATE
                         else json.loads(path.read_text(encoding="utf-8"))
                     ),
@@ -199,6 +202,38 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertTrue(healthy["labagent_idle_inspiration"]["ok"])
         self.assertFalse(stale["labagent_idle_inspiration"]["ok"])
         self.assertFalse(stale["ok"])
+
+    def test_schedule_health_detects_live_tmux_with_stale_echomind_heartbeat(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=lambda path: (
+                        {
+                            "interval_seconds": guard.ECHOMIND_INTERVAL_SECONDS,
+                            "last_loop_at": "2026-07-22T11:30:00+00:00",
+                            "scheduler_phase": "waiting",
+                        }
+                        if path == guard.ECHOMIND_SCHEDULE_STATE
+                        else json.loads(path.read_text(encoding="utf-8"))
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertFalse(result["echomind"]["ok"])
+        self.assertFalse(result["ok"])
 
     def test_quota_alert_requires_terminal_exhaustion_not_successful_fallback(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
@@ -328,6 +363,79 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             [str(guard.WECOM_SUPERVISOR), "android-restart"],
         )
 
+    def test_repair_agent_never_runs_for_healthy_poll(self) -> None:
+        due, signature, codes = guard.repair_agent_due(
+            {"ok": True, "issues": []},
+            {"fault_counts": {}},
+            consecutive_failures=4,
+            cooldown_seconds=3600,
+            now=datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertFalse(due)
+        self.assertEqual(signature, "")
+        self.assertEqual(codes, [])
+
+    def test_repair_agent_requires_repeated_unresolved_incident_and_cooldown(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        snapshot = {
+            "ok": False,
+            "issues": [
+                {
+                    "code": "wechat_direct_monitor_stalled",
+                    "severity": "critical",
+                    "detail": "stale",
+                }
+            ],
+        }
+        state = {"fault_counts": {"wechat_direct_monitor_stalled": 4}}
+        due, signature, codes = guard.repair_agent_due(
+            snapshot,
+            state,
+            consecutive_failures=4,
+            cooldown_seconds=3600,
+            now=now,
+        )
+        self.assertTrue(due)
+        self.assertEqual(codes, ["wechat_direct_monitor_stalled"])
+
+        state.update(
+            {
+                "last_repair_agent_signature": signature,
+                "last_repair_agent_attempt_at": "2026-07-22T11:59:30+00:00",
+            }
+        )
+        due_again, _, _ = guard.repair_agent_due(
+            snapshot,
+            state,
+            consecutive_failures=4,
+            cooldown_seconds=3600,
+            now=now,
+        )
+        self.assertFalse(due_again)
+
+    def test_repair_agent_escalates_only_on_explicit_marker(self) -> None:
+        with mock.patch.object(
+            guard,
+            "run_repair_agent",
+            side_effect=[
+                {"ok": True, "escalation_requested": True, "reasoning_effort": "medium"},
+                {"ok": True, "escalation_requested": False, "reasoning_effort": "high"},
+            ],
+        ) as runner:
+            result = guard.run_repair_agent_with_escalation(
+                {"issues": []},
+                [],
+                timeout_seconds=60,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(runner.call_count, 2)
+        self.assertEqual(
+            [call.kwargs["reasoning_effort"] for call in runner.call_args_list],
+            ["medium", "high"],
+        )
+
     def test_android_health_probe_preserves_poll_failure_evidence(self) -> None:
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps(
@@ -369,9 +477,14 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertIn("Started missing window", wechat)
         self.assertIn("reload-monitors", wechat)
         self.assertIn("reload_monitor_windows", wechat)
+        self.assertIn("reload-unlock", wechat)
+        self.assertIn("reload_unlock_watchdog", wechat)
         self.assertIn("wechat_transport_stall_guard.py", wecom)
         self.assertIn("--loop --repair", wecom)
+        self.assertIn("--repair-agent", wecom)
         self.assertIn("window_exists health", wecom)
+        self.assertIn("health-restart", wecom)
+        self.assertIn("start_health_window", wecom)
         self.assertIn("kill_window_if_present", wecom)
         self.assertIn("external_required", wecom)
         self.assertIn("message_permission_unavailable", wecom)

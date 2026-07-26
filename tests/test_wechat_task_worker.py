@@ -1815,6 +1815,9 @@ stderr: noisy internal trace
                         "source": {"local_id": 58},
                         "context": [{"local_id": 58, "content": "[quoted video]"}],
                         "status": "send_retrying",
+                        "superseded_at": "2026-01-01T00:00:00",
+                        "superseded_by": "wrong-task",
+                        "superseded_reason": "stale merge",
                         "result": {"message": "stale wrong result", "files": []},
                         "preflight": {"autopublish_video": {"status": "artifact-ledger-match"}},
                         "routine": {"id": "video_publish_existing", "rules": ["old rule"]},
@@ -1846,6 +1849,9 @@ stderr: noisy internal trace
         self.assertEqual(stored["source"], {"local_id": 58})
         self.assertEqual(stored["context"], [{"local_id": 58, "content": "[quoted video]"}])
         self.assertNotIn("result", stored)
+        self.assertNotIn("superseded_at", stored)
+        self.assertNotIn("superseded_by", stored)
+        self.assertNotIn("superseded_reason", stored)
         self.assertNotIn("preflight", stored)
         self.assertNotIn("routine", stored)
         self.assertNotIn("routine_contract", stored)
@@ -3789,6 +3795,64 @@ stderr: noisy internal trace
         self.assertTrue(tasks[0]["interruption_pending"])
         self.assertIn("simpler direct quantitative biology tool", tasks[0]["request"])
         self.assertEqual(tasks[1]["status"], "canceled_superseded")
+
+    def test_worker_keeps_member_scoped_scheduled_daily_jobs_independent(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            base = {
+                "chat": "LabAgent",
+                "status": "pending",
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "scheduled_daily_research": True,
+                    "serialized_daily_job": True,
+                },
+                "execution_contract": {"transport": "wecom"},
+            }
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        **base,
+                        "id": "daily-member-a",
+                        "request": "Research member A's topic.",
+                        "source": {
+                            "sender": "labcanvas-daily-scheduler",
+                            "kind": "scheduled_daily_research",
+                            "local_id": 101,
+                            "member_key": "member-a",
+                        },
+                        "daily_research": {
+                            "job_key": "job-a",
+                            "member_key": "member-a",
+                            "serialized": True,
+                        },
+                    },
+                    {
+                        **base,
+                        "id": "daily-member-b",
+                        "request": "Research member B's topic.",
+                        "source": {
+                            "sender": "labcanvas-daily-scheduler",
+                            "kind": "scheduled_daily_research",
+                            "local_id": 102,
+                            "member_key": "member-b",
+                        },
+                        "daily_research": {
+                            "job_key": "job-b",
+                            "member_key": "member-b",
+                            "serialized": True,
+                        },
+                    },
+                ],
+            )
+
+            merged = worker.merge_existing_pending_interruptions(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(merged, 0)
+        self.assertEqual([task["status"] for task in tasks], ["pending", "pending"])
 
     def test_worker_preserves_and_reads_wecom_pdf_from_merged_interruption(self) -> None:
         worker = load_worker()

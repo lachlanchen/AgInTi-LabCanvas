@@ -38,6 +38,9 @@ CLAUDE_REGISTRY = CLAUDE_SESSION_DIR / "sessions.local.json"
 CLAUDE_READONLY_BLOCK = "Bash,Edit,Write,MultiEdit,NotebookEdit"
 DEFAULT_FALLBACK_MODEL = "gpt-5.6-sol"
 DEFAULT_FALLBACK_REASONING_EFFORT = "low"
+DEFAULT_LOW_QUOTA_SPARK_MODEL = "gpt-5.3-codex-spark"
+DEFAULT_LOW_QUOTA_THRESHOLD_PERCENT = 25.0
+LOW_QUOTA_SPARK_ROLES = frozenset({"fast", "route"})
 AGINTI_SESSION_RE = re.compile(r"^Session:\s*(web-agent-[0-9A-Za-z-]+)\s*$", re.MULTILINE)
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 BACKEND_METADATA_LINE_RE = re.compile(
@@ -190,16 +193,25 @@ def run_agent_session(
     """Run one backend turn with system-level quota/unavailable fallback."""
     selected = normalize_backend(backend)
     config = backend_config or {}
+    preferred_model, preferred_effort, quota_preference = quota_aware_codex_preference(
+        backend=selected,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        role=role,
+        backend_config=config,
+    )
     attempt = {
         "backend": selected,
-        "model": str(model or ""),
-        "reasoning_effort": str(reasoning_effort or ""),
+        "model": preferred_model,
+        "reasoning_effort": preferred_effort,
         "sandbox": sandbox,
         "timeout_seconds": int(timeout_seconds),
         "role": role,
         "fallback_model": fallback_model,
         "fallback_reasoning_effort": fallback_reasoning_effort,
     }
+    if quota_preference:
+        attempt["quota_preference"] = quota_preference
     attempt_summaries: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, bool]] = set()
     while True:
@@ -353,6 +365,74 @@ def backend_specific_config(config: dict[str, Any], backend: str, *, primary_bac
         if key in config:
             merged.setdefault(key, config[key])
     return merged
+
+
+def quota_aware_codex_preference(
+    *,
+    backend: str,
+    model: str,
+    reasoning_effort: str,
+    role: str,
+    backend_config: dict[str, Any],
+) -> tuple[str, str, dict[str, Any] | None]:
+    """Prefer Spark for automatic lightweight turns when normal quota is low.
+
+    The decision is cache-only. A stale or missing quota snapshot leaves the
+    caller's model unchanged, so routing never waits for a quota probe.
+    """
+    selected_model = str(model or "")
+    selected_effort = str(reasoning_effort or "")
+    if normalize_backend(backend) != "codex" or is_spark_model(selected_model):
+        return selected_model, selected_effort, None
+    fallback_config = fallback_config_dict(backend_config)
+    enabled = fallback_config.get("prefer_spark_below_normal_quota")
+    if enabled is None:
+        enabled = str(role or "") in LOW_QUOTA_SPARK_ROLES
+    if not bool(enabled):
+        return selected_model, selected_effort, None
+    configured_roles = fallback_config.get("low_quota_spark_roles")
+    if isinstance(configured_roles, (list, tuple, set)):
+        allowed_roles = {str(value).strip() for value in configured_roles if str(value).strip()}
+        if allowed_roles and str(role or "") not in allowed_roles:
+            return selected_model, selected_effort, None
+    try:
+        threshold = float(
+            fallback_config.get("low_quota_threshold_percent")
+            or os.environ.get("WECHAT_CODEX_SPARK_THRESHOLD_PERCENT")
+            or DEFAULT_LOW_QUOTA_THRESHOLD_PERCENT
+        )
+        status = current_codex_quota_status(
+            max_age_seconds=float(
+                fallback_config.get("low_quota_cache_max_age_seconds") or 600
+            ),
+            threshold_percent=threshold,
+            refresh=False,
+        )
+        remaining = float(status.get("remaining_percent"))
+    except (TypeError, ValueError, OSError):
+        return selected_model, selected_effort, None
+    if not status.get("ok") or remaining >= threshold:
+        return selected_model, selected_effort, None
+    spark_model = str(
+        fallback_config.get("low_quota_spark_model")
+        or os.environ.get("WECHAT_CODEX_LOW_QUOTA_MODEL")
+        or DEFAULT_LOW_QUOTA_SPARK_MODEL
+    )
+    spark_effort = str(
+        fallback_config.get("low_quota_spark_reasoning_effort")
+        or os.environ.get("WECHAT_CODEX_LOW_QUOTA_EFFORT")
+        or "low"
+    )
+    return (
+        spark_model,
+        spark_effort,
+        {
+            "reason": "normal_codex_quota_below_threshold",
+            "remaining_percent": remaining,
+            "threshold_percent": threshold,
+            "requested_model": selected_model,
+        },
+    )
 
 
 def next_backend_attempt(
