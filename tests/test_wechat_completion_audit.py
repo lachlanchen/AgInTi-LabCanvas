@@ -29,7 +29,9 @@ SPEC.loader.exec_module(audit)
 class WeChatCompletionAuditTests(unittest.TestCase):
     def test_audit_prompt_distinguishes_local_sources_from_outbound_files(self) -> None:
         task = self.task()
-        with tempfile.TemporaryDirectory(dir=audit.ROOT / "output") as tmp:
+        output_root = audit.ROOT / "output"
+        output_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=output_root) as tmp:
             artifact_dir = Path(tmp)
             (artifact_dir / "report.md").write_text("source", encoding="utf-8")
             (artifact_dir / "report.tex").write_text("source", encoding="utf-8")
