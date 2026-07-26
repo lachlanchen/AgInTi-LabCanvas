@@ -905,6 +905,9 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "route and worker prompts preserve every safe explicit current instruction instead of shrinking to keyword matches",
             "queued worker tasks persist a machine-readable instruction contract",
             "legacy queued worker tasks backfill the instruction contract before execution",
+            "every coalesced source row keeps a hard numbered completion identity without a merge cap",
+            "omitted numbered requirements receive one same-session repair and one independently queued supplement fallback",
+            "explicit PDF requests require both a direct answer and a real PDF artifact",
             "generated-video contracts choose relatively cheaper Seedance models without blocking tasks on model selection",
             "generated-video generation is not public publication; reference-image upload does not authorize publish",
             "generated-video LazyEdit commands prefer worker-created correction context and metadata brief files",
@@ -1121,6 +1124,18 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "legacy_task_instruction_contract_backfill",
             "test": worker_prefix + "test_worker_backfills_instruction_contract_for_legacy_task",
+        },
+        {
+            "id": "numbered_interruption_ledger_unbounded",
+            "test": worker_prefix + "test_merge_keeps_more_than_twenty_numbered_interruptions",
+        },
+        {
+            "id": "numbered_completion_repairs_pdf",
+            "test": worker_prefix + "test_completion_audit_repairs_missing_pdf_in_same_worker_session",
+        },
+        {
+            "id": "legacy_numbered_row_recovered",
+            "test": worker_prefix + "test_legacy_child_absent_from_parent_ledger_is_requeued",
         },
         {
             "id": "supervisor_uses_guarded_worker_entrypoint",

@@ -32,6 +32,289 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_completion_audit_repairs_missing_pdf_in_same_worker_session(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf = Path(tmp) / "report.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n")
+            task = {
+                "id": "parent-1",
+                "chat": "LabAgent",
+                "original_request": "请直接回答。",
+                "source": {"local_id": 1, "sender_display": "Prof Ma"},
+                "interruptions": [
+                    {
+                        "incoming_task_id": "child-2",
+                        "request": "请同时提供 PDF 报告。",
+                        "source": {"local_id": 2, "sender_display": "Prof Ma"},
+                    }
+                ],
+                "worker_policy": {
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "medium",
+                    "sandbox": "danger-full-access",
+                    "timeout_seconds": 300,
+                },
+            }
+            first = {
+                "status": "checked",
+                "coverage_complete": False,
+                "expected_item_ids": ["task:parent-1", "task:child-2"],
+                "covered_item_ids": ["task:parent-1"],
+                "missing": [
+                    {
+                        "item_id": "task:child-2",
+                        "requirement": "Create and return the requested PDF.",
+                        "kind": "artifact",
+                    }
+                ],
+                "repair_recommended": True,
+                "complexity": "medium",
+            }
+            second = {
+                "status": "checked",
+                "coverage_complete": True,
+                "expected_item_ids": ["task:parent-1", "task:child-2"],
+                "covered_item_ids": ["task:parent-1", "task:child-2"],
+                "missing": [],
+                "repair_recommended": False,
+                "complexity": "low",
+            }
+            policies: list[dict[str, object]] = []
+
+            def repair(_task: dict, policy: dict) -> str:
+                policies.append(dict(policy))
+                return json.dumps(
+                    {
+                        "message": "直接回答，并附上详细报告。",
+                        "files": [str(pdf)],
+                        "confirmation": "",
+                    },
+                    ensure_ascii=False,
+                )
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "run_completion_audit",
+                    side_effect=[first, second],
+                ),
+                mock.patch.object(
+                    worker,
+                    "run_worker_agent_session",
+                    side_effect=repair,
+                ),
+            ):
+                result = worker.audit_and_repair_worker_completion(
+                    task,
+                    {"message": "直接回答。", "confirmation": "", "files": []},
+                )
+
+        self.assertEqual(result["files"], [str(pdf)])
+        self.assertEqual(policies[0]["model"], "gpt-5.6-sol")
+        self.assertEqual(policies[0]["reasoning_effort"], "medium")
+        self.assertEqual(task["message_coverage"]["status"], "covered")
+        self.assertEqual(
+            task["message_coverage"]["covered_item_ids"],
+            ["task:parent-1", "task:child-2"],
+        )
+
+    def test_numbered_uncovered_child_is_requeued_once_as_supplement(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            rows = [
+                {
+                    "id": "parent-1",
+                    "chat": "LabAgent",
+                    "status": "done",
+                    "result": {"message": "只回答了第一条。", "files": []},
+                    "message_coverage": {
+                        "status": "supplement_required",
+                        "covered_item_ids": ["task:parent-1"],
+                        "unresolved_item_ids": ["task:child-2"],
+                        "missing": [
+                            {
+                                "item_id": "task:child-2",
+                                "requirement": "提供 PDF。",
+                                "kind": "artifact",
+                            }
+                        ],
+                    },
+                },
+                {
+                    "id": "child-2",
+                    "chat": "LabAgent",
+                    "status": "canceled_superseded",
+                    "request": "请提供 PDF。",
+                    "original_request": "请提供 PDF。",
+                    "superseded_by": "parent-1",
+                    "superseded_reason": "merged_as_same_chat_interruption",
+                },
+            ]
+            queue.write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in rows)
+                + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(worker.reconcile_numbered_message_coverage(queue), 1)
+            updated = worker.read_tasks(queue)
+            child = next(row for row in updated if row["id"] == "child-2")
+            self.assertEqual(child["status"], "pending")
+            self.assertEqual(child["coverage_requeue_count"], 1)
+            self.assertEqual(child["coverage_status"], "supplement_pending")
+            self.assertEqual(
+                child["coverage_followup"]["item_id"],
+                "task:child-2",
+            )
+            self.assertNotIn("superseded_by", child)
+            self.assertEqual(worker.reconcile_numbered_message_coverage(queue), 0)
+
+    def test_numbered_covered_child_stays_superseded_with_receipt(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            rows = [
+                {
+                    "id": "parent-1",
+                    "status": "done",
+                    "message_coverage": {
+                        "status": "covered",
+                        "covered_item_ids": ["task:parent-1", "task:child-2"],
+                        "unresolved_item_ids": [],
+                        "missing": [],
+                    },
+                },
+                {
+                    "id": "child-2",
+                    "status": "canceled_superseded",
+                    "superseded_by": "parent-1",
+                },
+            ]
+            queue.write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(worker.reconcile_numbered_message_coverage(queue), 0)
+            child = worker.read_tasks(queue)[1]
+
+        self.assertEqual(child["status"], "canceled_superseded")
+        self.assertEqual(child["coverage_status"], "covered")
+
+    def test_legacy_child_absent_from_parent_ledger_is_requeued(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "parent-1",
+                        "status": "done",
+                        "message_coverage": {
+                            "status": "covered",
+                            "covered_item_ids": ["task:parent-1"],
+                            "unresolved_item_ids": [],
+                            "missing": [],
+                        },
+                    },
+                    {
+                        "id": "legacy-child",
+                        "status": "canceled_superseded",
+                        "request": "A row truncated by an older merge cap.",
+                        "original_request": "A row truncated by an older merge cap.",
+                        "superseded_by": "parent-1",
+                    },
+                ],
+            )
+
+            self.assertEqual(worker.reconcile_numbered_message_coverage(queue), 1)
+            child = worker.read_tasks(queue)[1]
+
+        self.assertEqual(child["status"], "pending")
+        self.assertEqual(child["coverage_status"], "supplement_pending")
+        self.assertEqual(
+            child["coverage_followup"]["item_id"],
+            "task:legacy-child",
+        )
+
+    def test_coverage_followup_cannot_be_merged_again(self) -> None:
+        worker = load_worker()
+        parent = {
+            "id": "parent-1",
+            "chat": "LabAgent",
+            "request": "先回答原问题。",
+            "status": "in_progress",
+        }
+        supplement = {
+            "id": "child-2",
+            "chat": "LabAgent",
+            "request": "补充被遗漏的 PDF。",
+            "status": "pending",
+            "coverage_followup": {
+                "item_id": "task:child-2",
+                "parent_task_id": "parent-1",
+            },
+        }
+
+        self.assertFalse(worker.same_chat_interruption_target(parent, supplement))
+        self.assertFalse(worker.same_chat_interruption_target(supplement, parent))
+
+    def test_merge_keeps_more_than_twenty_numbered_interruptions(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            rows = [
+                {
+                    "id": "parent",
+                    "chat": "LabAgent",
+                    "request": "message 0",
+                    "status": "in_progress",
+                    "source": {
+                        "message_table": "messages",
+                        "local_id": 1,
+                        "sender": "member-a",
+                    },
+                    "route_decision": {
+                        "route_kind": "research_or_summary",
+                        "worker_needed": True,
+                    },
+                }
+            ]
+            rows.extend(
+                {
+                    "id": f"child-{index}",
+                    "chat": "LabAgent",
+                    "request": f"message {index}",
+                    "original_request": f"message {index}",
+                    "status": "pending",
+                    "source": {
+                        "message_table": "messages",
+                        "local_id": index + 1,
+                        "sender": "member-a",
+                    },
+                    "route_decision": {
+                        "route_kind": "research_or_summary",
+                        "worker_needed": True,
+                    },
+                }
+                for index in range(1, 26)
+            )
+            worker.write_tasks(queue, rows)
+
+            merged = worker.merge_existing_pending_interruptions(queue)
+            stored = worker.read_tasks(queue)
+            parent = stored[0]
+
+        self.assertEqual(merged, 25)
+        self.assertEqual(len(parent["interruptions"]), 25)
+        self.assertEqual(
+            [item["incoming_task_id"] for item in parent["interruptions"]],
+            [f"child-{index}" for index in range(1, 26)],
+        )
+
     def test_worker_response_policy_is_exact_chat_and_transport_scoped(self) -> None:
         worker = load_worker()
         echomind = worker.worker_response_policy({"chat": "EchoMind", "route": {"transport": "wechat"}})
@@ -7758,6 +8041,18 @@ stderr: noisy internal trace
                 worker,
                 "run_worker_codex",
                 return_value=json.dumps({"message": "finished", "files": []}),
+            ), mock.patch.object(
+                worker,
+                "run_completion_audit",
+                return_value={
+                    "status": "checked",
+                    "coverage_complete": True,
+                    "expected_item_ids": ["task:task-ready"],
+                    "covered_item_ids": ["task:task-ready"],
+                    "missing": [],
+                    "repair_recommended": False,
+                    "complexity": "low",
+                },
             ), mock.patch.object(
                 worker, "send_result_with_retries", side_effect=inspect_persisted_result
             ), mock.patch.object(worker, "record_event"), mock.patch.object(worker, "log_worker_event"):

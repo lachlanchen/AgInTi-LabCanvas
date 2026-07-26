@@ -605,8 +605,11 @@ def queue_health(
     now = now or utc_now()
     active: list[dict[str, Any]] = []
     stale_ids: list[str] = []
+    coverage_unresolved_ids: list[str] = []
     for task_id, task in latest.items():
         status = str(task.get("status") or "")
+        if str(task.get("coverage_status") or "") == "unresolved_after_retry":
+            coverage_unresolved_ids.append(task_id)
         if status not in ACTIVE_STATUSES:
             continue
         started = parse_timestamp(
@@ -621,7 +624,7 @@ def queue_health(
         if started and age >= threshold:
             stale_ids.append(task_id)
     return {
-        "ok": not stale_ids and invalid_lines == 0,
+        "ok": not stale_ids and not coverage_unresolved_ids and invalid_lines == 0,
         "exists": True,
         "task_count": len(latest),
         "active": len(active),
@@ -629,6 +632,7 @@ def queue_health(
         "in_progress": sum(1 for item in active if item["status"] in IN_PROGRESS_STATUSES),
         "oldest_active_seconds": max((item["age_seconds"] for item in active), default=0),
         "stale_ids": stale_ids[:20],
+        "coverage_unresolved_ids": coverage_unresolved_ids[:20],
         "invalid_lines": invalid_lines,
     }
 
@@ -728,6 +732,12 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
     for name, status in queues.items():
         if status.get("stale_ids"):
             issue(f"{name}_queue_stale", "critical", f"{len(status['stale_ids'])} stale active task(s)")
+        elif status.get("coverage_unresolved_ids"):
+            issue(
+                f"{name}_queue_message_unresolved",
+                "degraded",
+                f"{len(status['coverage_unresolved_ids'])} numbered message(s) remain unresolved after retry",
+            )
         elif status.get("invalid_lines"):
             issue(f"{name}_queue_invalid", "degraded", f"{status['invalid_lines']} invalid JSONL line(s)")
     severity = "ok"

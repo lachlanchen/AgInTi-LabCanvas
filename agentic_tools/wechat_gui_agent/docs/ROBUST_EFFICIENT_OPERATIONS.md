@@ -830,6 +830,28 @@ retries only the pending delivery after a lock or transport failure; it does not
 spend another agent turn every five minutes. The transport guard checks the
 EchoMind scheduler heartbeat, not merely the existence of its tmux process.
 
+Every queued source message has a hard completion identity: `task:<queue-id>`.
+Consecutive same-chat rows may be coalesced for context, but the original row
+and every merged interruption remain separate completion-audit items. Do not
+truncate the interruption ledger. Long bursts are checked in bounded numbered
+batches, while the union of those batches must equal every source queue ID.
+Before a terminal worker result is delivered, a bounded low-effort
+`gpt-5.3-codex-spark` checker must classify every numbered item as covered,
+missing, or legitimately blocked. An omitted item resumes the exact worker
+session once with `gpt-5.6-sol` low or medium effort; the repair packet includes
+the exact omitted row text, sender, and source identity. The corrected response
+is audited again. If either checker or correction fails, the completed portion
+is not stalled or discarded: it is delivered with an honest pending-supplement
+notice, and each unresolved queue row is deterministically separated and
+re-queued once. Coverage follow-ups cannot be coalesced again. A row that is
+still unresolved after that retry remains visible as
+`coverage_status=unresolved_after_retry`; the transport guard reports it as a
+degraded queue instead of treating it as silent success. This guarantees that
+queue rows are never silently canceled merely because they were adjacent.
+An explicit PDF request is a deterministic delivery contract: coverage needs
+both a useful direct answer and a real `.pdf` artifact unless a genuine
+approval, access, source, or safety blocker was explained.
+
 Automatic lightweight `fast` and `route` turns may prefer
 `gpt-5.3-codex-spark` when the cached normal Codex quota is strictly below 25%.
 This selection is cache-only and never blocks a reply on a live quota probe.

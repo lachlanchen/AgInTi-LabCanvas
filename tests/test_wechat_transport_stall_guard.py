@@ -71,6 +71,26 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(result["pending"], 1)
         self.assertEqual(result["stale_ids"], ["old-active"])
 
+    def test_queue_health_exposes_numbered_messages_unresolved_after_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "message-42",
+                        "status": "done",
+                        "coverage_status": "unresolved_after_retry",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = guard.queue_health(queue)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["coverage_unresolved_ids"], ["message-42"])
+
     def test_tmux_snapshot_filters_exact_session_and_keeps_all_windows(self) -> None:
         original = guard.run_command
         try:

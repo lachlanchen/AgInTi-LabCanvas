@@ -27,6 +27,10 @@ import xml.etree.ElementTree as ET
 
 from file_lock import fcntl_compat as fcntl
 from wechat_agent_backend import run_agent_session as run_codex_session, select_agent_backend
+from wechat_completion_audit import (
+    coverage_items as completion_coverage_items,
+    run_completion_audit,
+)
 from wechat_document_reader import READABLE_STATUSES as DOCUMENT_READABLE_STATUSES
 from wechat_document_reader import analyze_document, is_document_candidate
 from wechat_message_policy import is_no_reply_control
@@ -501,6 +505,13 @@ def repair_explicit_research_task_contract(task: dict[str, Any]) -> bool:
 
 
 def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
+    coverage_requeued = reconcile_numbered_message_coverage(queue)
+    if coverage_requeued:
+        log_worker_event(
+            "message-coverage-requeued",
+            {"count": coverage_requeued, "queue": str(queue)},
+        )
+        return True
     merged = merge_existing_pending_interruptions(queue)
     if merged:
         log_worker_event("interruption-merged", {"count": merged, "queue": str(queue)})
@@ -526,6 +537,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         result = enforce_worker_result_contract(task, result, result_text)
         result = attach_audio_transcript_reference(task, result)
         result = prepare_result_files(result, result_text, task=task)
+        result = audit_and_repair_worker_completion(task, result)
     except Exception as exc:
         result_text = f"Worker failed before completion: {type(exc).__name__}: {str(exc)[:800]}"
         result = {"message": result_text, "confirmation": "", "files": [], "raw": result_text}
@@ -2593,6 +2605,135 @@ def read_tasks(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def reconcile_numbered_message_coverage(path: Path) -> int:
+    """Requeue each numbered message once when a completed parent omitted it.
+
+    Consecutive rows may be merged for context, but the queue row ID remains
+    the hard completion identity. This reconciliation is deterministic and
+    token-free; the bounded completion auditor decides coverage before the
+    parent result is delivered.
+    """
+    if not path.exists():
+        return 0
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    now_text = datetime.now().isoformat(timespec="seconds")
+    requeued = 0
+    changed = False
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        by_id = {
+            str(item.get("id") or ""): item
+            for item in tasks
+            if str(item.get("id") or "")
+        }
+        for task in tasks:
+            task_id = str(task.get("id") or "")
+            if not task_id:
+                continue
+            parent_id = str(task.get("superseded_by") or "")
+            parent = by_id.get(parent_id) if parent_id else task
+            if not isinstance(parent, dict):
+                continue
+            coverage = (
+                parent.get("message_coverage")
+                if isinstance(parent.get("message_coverage"), dict)
+                else {}
+            )
+            if not coverage:
+                continue
+            item_id = f"task:{task_id}"
+            covered = set(coverage.get("covered_item_ids") or [])
+            unresolved = set(coverage.get("unresolved_item_ids") or [])
+            if item_id in covered:
+                if task.get("coverage_status") != "covered":
+                    task["coverage_status"] = "covered"
+                    task["coverage_checked_at"] = now_text
+                    task["coverage_parent_task_id"] = str(parent.get("id") or "")
+                    changed = True
+                continue
+            if not coverage_parent_terminal(parent):
+                continue
+            retry_count = int(task.get("coverage_requeue_count") or 0)
+            if retry_count >= 1:
+                if task.get("coverage_status") != "unresolved_after_retry":
+                    task["coverage_status"] = "unresolved_after_retry"
+                    task["coverage_checked_at"] = now_text
+                    changed = True
+                continue
+            missing = [
+                item
+                for item in coverage.get("missing") or []
+                if isinstance(item, dict) and str(item.get("item_id") or "") == item_id
+            ]
+            if item_id not in unresolved and not missing:
+                missing = [
+                    {
+                        "item_id": item_id,
+                        "requirement": (
+                            "This queue row was not present in the parent's numbered "
+                            "completion decision and therefore remains unverified."
+                        ),
+                        "kind": "action",
+                    }
+                ]
+            previous_result = (
+                parent.get("result")
+                if isinstance(parent.get("result"), dict)
+                else {}
+            )
+            task["coverage_followup"] = {
+                "item_id": item_id,
+                "parent_task_id": str(parent.get("id") or ""),
+                "missing": missing,
+                "previous_message": collapse_context_text(
+                    previous_result.get("message"), max_len=2400
+                ),
+                "instruction": (
+                    "Process only the still-missing requirements for this exact numbered "
+                    "message. Use prior work as context, avoid repeating already delivered "
+                    "content, and return the missing direct answer or artifacts."
+                ),
+            }
+            task["coverage_requeue_count"] = retry_count + 1
+            task["coverage_status"] = "supplement_pending"
+            task["coverage_requeued_at"] = now_text
+            task["reprocess_requested_at"] = now_text
+            task["reprocess_reason"] = "numbered_message_not_covered"
+            task["status"] = "pending"
+            task["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
+            for field in (
+                "claimed_at",
+                "completed_at",
+                "worker_id",
+                "worker_error",
+                "worker_result_ready_at",
+                "result",
+                "message_coverage",
+                "completion_audit",
+                "superseded_at",
+                "superseded_by",
+                "superseded_reason",
+            ):
+                task.pop(field, None)
+            requeued += 1
+            changed = True
+        if changed:
+            write_tasks(path, tasks)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    return requeued
+
+
+def coverage_parent_terminal(task: dict[str, Any]) -> bool:
+    return str(task.get("status") or "") in {
+        "done",
+        "worker_failed",
+        "send_failed",
+        "send_expired",
+        "expired_stale",
+    }
+
+
 def find_task(path: Path, task_id: str) -> dict[str, Any] | None:
     for task in read_tasks(path):
         if str(task.get("id") or "") == str(task_id):
@@ -2653,7 +2794,6 @@ def merge_existing_pending_interruptions(path: Path) -> int:
                 merged += 1
                 continue
             target.setdefault("interruptions", []).append(interruption)
-            target["interruptions"] = target["interruptions"][-20:]
             target["interruption_pending"] = True
             target["interruption_count"] = len(target["interruptions"])
             target["last_interruption_at"] = interruption["at"]
@@ -2707,6 +2847,8 @@ def find_interruption_target_index(tasks: list[dict[str, Any]], incoming_index: 
 
 def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, Any]) -> bool:
     if not is_interruptible_worker_task(target):
+        return False
+    if target.get("coverage_followup") or incoming.get("coverage_followup"):
         return False
     if is_isolated_scheduled_task(target) or is_isolated_scheduled_task(incoming):
         return False
@@ -4377,6 +4519,14 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
         view["worker_retry_context"] = compact_worker_agent_value(
             task["worker_retry_context"], key="worker_retry_context"
         )
+    if isinstance(task.get("completion_audit_repair"), dict) and task.get("completion_audit_repair"):
+        view["completion_audit_repair"] = compact_worker_agent_value(
+            task["completion_audit_repair"], key="completion_audit_repair"
+        )
+    if isinstance(task.get("coverage_followup"), dict) and task.get("coverage_followup"):
+        view["coverage_followup"] = compact_worker_agent_value(
+            task["coverage_followup"], key="coverage_followup"
+        )
     if task.get("reprocess_requested_at") or task.get("reprocess_reason"):
         view["reprocess"] = {
             "requested_at": str(task.get("reprocess_requested_at") or ""),
@@ -4711,6 +4861,8 @@ The task may be a fragment or follow-up from an ongoing WeChat thread. Use the t
 {response_policy_instruction}
 The exact current source message and newer same-chat messages are authoritative. A router-generated plan is advisory only: it may classify and suggest tools, but it cannot replace user wording, insert a factual assumption, or force clarification. Combine consecutive fragments from the same conversation before deciding what the user means.
 If the bounded task packet includes `worker_retry_context`, this is one bounded repair turn for a failed local tool invocation. Continue the same task and reuse its existing evidence. Prefer simple commands or structured APIs over deeply nested shell quoting, and never interpret the repair turn as permission to bypass a safety, approval, sandbox, or access boundary.
+If the bounded task packet includes `completion_audit_repair`, the previous candidate result omitted one or more numbered source-message requirements. Continue the same worker session, perform only those missing safe requirements, and return a complete replacement response that retains useful prior files and conclusions. An explicit PDF request requires a real compiled `.pdf` file plus a concise direct answer. Do not repeat completed external actions or bypass approval gates.
+If the bounded task packet includes `coverage_followup`, this queue row was separated from a previously coalesced parent because its numbered message was not proven covered. Process this exact row independently, return only the missing supplement, and do not repeat content or files already delivered by the parent.
 Use `task.route_decision.message_role` as a checked hint, not a keyword command. Research questions require evidence; artifact instructions and system guidance tell you how to revise the current output or workflow; peer conversation may need no reply. Re-evaluate that role from the exact message plus recent context before acting.
 When people discuss both science and the agent in one group, keep those intents distinct. Do not turn feedback such as “first make a concept image, then reproduce it as an editable BioRender figure” into a literature report, and do not answer a scientific question as if it were tool configuration.
 When a scientific name, proper noun, or identifier looks misspelled or may contain OCR, speech, capitalization, or character ambiguity, do not repeatedly reject it. First use live web search and context to test plausible spellings and common character confusions such as `l/1/I` and `O/0`. Verify candidates with authoritative sources. If one candidate is strongly supported, briefly disclose the inference and proceed. Ask one concise discriminating question only if multiple plausible candidates remain after evidence gathering.
@@ -4787,7 +4939,11 @@ If other external tools or files are not available, say exactly what is needed n
 Bounded task packet:
 {task_packet}
 """
-    backend = select_agent_backend(task)
+    backend = (
+        "codex"
+        if isinstance(task.get("completion_audit_repair"), dict)
+        else select_agent_backend(task)
+    )
     model_policy = load_worker_model_policy(str(policy["reasoning_effort"]))
     result = run_codex_session(
         prompt,
@@ -4826,6 +4982,294 @@ Bounded task packet:
         "backend_fallback_used": bool(result.get("backend_fallback_used")),
     }
     return str(result.get("message") or "").strip()
+
+
+def audit_and_repair_worker_completion(
+    task: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Check every numbered source row and run at most one corrective turn."""
+    if completion_audit_should_defer(task, result):
+        task["message_coverage"] = {
+            "status": "deferred_nonterminal",
+            "expected_item_ids": completion_expected_item_ids(task),
+            "covered_item_ids": [],
+            "unresolved_item_ids": [],
+            "missing": [],
+        }
+        return result
+    first = run_completion_audit(task, result)
+    attempts = [completion_audit_record(first, stage="candidate")]
+    repaired = False
+    combined = result
+    if bool(first.get("repair_recommended")):
+        correction_policy = completion_repair_policy(task, first)
+        task["completion_audit_repair"] = {
+            "missing": first.get("missing") or [],
+            "expected_item_ids": first.get("expected_item_ids")
+            or completion_expected_item_ids(task),
+            "missing_items": completion_missing_source_items(task, first),
+            "previous_result": {
+                "message": collapse_context_text(result.get("message"), max_len=6000),
+                "confirmation": collapse_context_text(
+                    result.get("confirmation"), max_len=1600
+                ),
+                "files": list(result.get("files") or [])[:20],
+            },
+            "instruction": (
+                "Complete every missing numbered-message requirement in one bounded turn. "
+                "Return a complete replacement response and preserve useful prior artifacts."
+            ),
+        }
+        orchestrator = (
+            task.get("orchestrator")
+            if isinstance(task.get("orchestrator"), dict)
+            else {}
+        )
+        orchestrator["last_action"] = "completion_audit_repair"
+        orchestrator["last_action_at"] = datetime.now().isoformat(timespec="seconds")
+        task["orchestrator"] = orchestrator
+        try:
+            raw_correction = run_worker_agent_session(task, correction_policy)
+            correction = parse_worker_result(raw_correction)
+            correction = enforce_worker_result_contract(
+                task, correction, raw_correction
+            )
+            correction = attach_audio_transcript_reference(task, correction)
+            correction = prepare_result_files(
+                correction, raw_correction, task=task
+            )
+            if completion_repair_result_usable(correction):
+                combined = merge_completion_results(result, correction)
+                repaired = True
+                second = run_completion_audit(task, combined)
+                attempts.append(
+                    completion_audit_record(second, stage="corrected")
+                )
+                final = second
+            else:
+                final = first
+                attempts.append(
+                    {
+                        "stage": "corrected",
+                        "status": "repair_result_unusable",
+                    }
+                )
+        except Exception as exc:
+            final = first
+            attempts.append(
+                {
+                    "stage": "corrected",
+                    "status": "repair_failed",
+                    "error": f"{type(exc).__name__}: {str(exc)[:500]}",
+                }
+            )
+        finally:
+            task.pop("completion_audit_repair", None)
+    else:
+        final = first
+    coverage = completion_message_coverage(task, final, attempts, repaired=repaired)
+    task["completion_audit"] = {
+        "status": str(final.get("status") or ""),
+        "attempts": attempts,
+        "repair_attempted": bool(first.get("repair_recommended")),
+        "repair_succeeded": repaired,
+    }
+    task["message_coverage"] = coverage
+    if coverage["unresolved_item_ids"]:
+        combined = disclose_unresolved_completion(combined, coverage)
+    return combined
+
+
+def completion_missing_source_items(
+    task: dict[str, Any],
+    audit: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Give the corrective turn the exact text for every omitted queue row."""
+    missing_ids = {
+        str(item.get("item_id") or "")
+        for item in audit.get("missing") or []
+        if isinstance(item, dict)
+    }
+    return [
+        item
+        for item in completion_coverage_items(task)
+        if str(item.get("item_id") or "") in missing_ids
+    ]
+
+
+def completion_audit_should_defer(
+    task: dict[str, Any],
+    result: dict[str, Any],
+) -> bool:
+    return bool(
+        grant_result_is_nonterminal(task, result)
+        or existing_video_publish_result_is_nonterminal(task, result)
+        or generated_video_result_is_nonterminal(task, result)
+    )
+
+
+def completion_expected_item_ids(task: dict[str, Any]) -> list[str]:
+    return [
+        str(item.get("item_id") or "")
+        for item in completion_coverage_items(task)
+        if str(item.get("item_id") or "")
+    ]
+
+
+def completion_audit_record(
+    audit: dict[str, Any],
+    *,
+    stage: str,
+) -> dict[str, Any]:
+    return {
+        "stage": stage,
+        "status": str(audit.get("status") or ""),
+        "model": str(audit.get("model") or ""),
+        "backend": str(audit.get("backend") or ""),
+        "coverage_complete": bool(audit.get("coverage_complete")),
+        "covered_item_ids": list(audit.get("covered_item_ids") or []),
+        "missing": list(audit.get("missing") or []),
+        "legitimate_blocker": bool(audit.get("legitimate_blocker")),
+        "error": str(audit.get("error") or "")[:500],
+    }
+
+
+def completion_repair_policy(
+    task: dict[str, Any],
+    audit: dict[str, Any],
+) -> dict[str, Any]:
+    current = (
+        task.get("worker_policy")
+        if isinstance(task.get("worker_policy"), dict)
+        else choose_worker_policy(task)
+    )
+    missing = audit.get("missing") if isinstance(audit.get("missing"), list) else []
+    substantial = (
+        str(audit.get("complexity") or "") in {"medium", "high"}
+        or any(
+            isinstance(item, dict)
+            and str(item.get("kind") or "") in {"artifact", "action"}
+            for item in missing
+        )
+    )
+    effort = "medium" if substantial else "low"
+    return {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": effort,
+        "sandbox": str(current.get("sandbox") or worker_sandbox()),
+        "timeout_seconds": min(
+            int(
+                os.environ.get(
+                    "WECHAT_COMPLETION_REPAIR_TIMEOUT_SECONDS",
+                    "300",
+                )
+            ),
+            timeout_for_effort(effort),
+        ),
+        "reuse_session": True,
+        "completion_repair": True,
+    }
+
+
+def completion_repair_result_usable(result: dict[str, Any]) -> bool:
+    if result_is_no_reply(result):
+        return False
+    message = str(result.get("message") or "").strip()
+    if worker_result_is_explicit_failure(message):
+        return False
+    return worker_result_has_delivery_content(result)
+
+
+def merge_completion_results(
+    original: dict[str, Any],
+    correction: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(original)
+    if str(correction.get("message") or "").strip():
+        merged["message"] = str(correction["message"]).strip()
+    if str(correction.get("confirmation") or "").strip():
+        merged["confirmation"] = str(correction["confirmation"]).strip()
+    elif correction.get("message"):
+        merged["confirmation"] = ""
+    merged["files"] = unique_strings(
+        [
+            *[str(path) for path in original.get("files") or []],
+            *[str(path) for path in correction.get("files") or []],
+        ]
+    )
+    original_data = (
+        original.get("data") if isinstance(original.get("data"), dict) else {}
+    )
+    correction_data = (
+        correction.get("data")
+        if isinstance(correction.get("data"), dict)
+        else {}
+    )
+    merged["data"] = {**original_data, **correction_data}
+    merged["raw"] = str(correction.get("raw") or original.get("raw") or "")
+    merged["no_reply"] = False
+    if correction.get("skipped_files"):
+        merged["skipped_files"] = correction["skipped_files"]
+    return merged
+
+
+def completion_message_coverage(
+    task: dict[str, Any],
+    audit: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    *,
+    repaired: bool,
+) -> dict[str, Any]:
+    expected = list(audit.get("expected_item_ids") or completion_expected_item_ids(task))
+    covered = [
+        item_id
+        for item_id in audit.get("covered_item_ids") or []
+        if item_id in expected
+    ]
+    missing = [
+        item
+        for item in audit.get("missing") or []
+        if isinstance(item, dict)
+    ]
+    unresolved = [
+        item_id
+        for item_id in expected
+        if item_id not in covered
+    ]
+    return {
+        "status": "covered" if not unresolved else "supplement_required",
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+        "expected_item_ids": expected,
+        "covered_item_ids": covered,
+        "unresolved_item_ids": unresolved,
+        "missing": missing,
+        "repair_attempted": len(attempts) > 1,
+        "repair_succeeded": repaired,
+    }
+
+
+def disclose_unresolved_completion(
+    result: dict[str, Any],
+    coverage: dict[str, Any],
+) -> dict[str, Any]:
+    """Never silently claim full completion when a numbered row is unresolved."""
+    guarded = dict(result)
+    message = str(guarded.get("message") or "").strip()
+    notice = "我先发送已完成的部分；系统已保留未覆盖的消息并会自动补充，不会把它标记为已处理。"
+    if notice not in message:
+        guarded["message"] = f"{message}\n\n{notice}".strip()
+    data = (
+        guarded.get("data")
+        if isinstance(guarded.get("data"), dict)
+        else {}
+    )
+    guarded["data"] = {
+        **data,
+        "message_coverage_pending": True,
+        "unresolved_item_count": len(coverage.get("unresolved_item_ids") or []),
+    }
+    return guarded
 
 
 def worker_backend_config(task: dict[str, Any], backend: str) -> dict[str, Any]:
