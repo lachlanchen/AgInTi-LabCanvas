@@ -23,6 +23,55 @@ def load_module():
 
 
 class WeComMemberKnowledgeTests(unittest.TestCase):
+    def test_member_context_infers_repeated_pdf_report_preference_without_leaking_messages(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "knowledge.sqlite"
+            archive = root / "archive"
+            report_a = root / "first_research_report.pdf"
+            report_b = root / "second_research_report.pdf"
+            report_a.write_bytes(b"%PDF-1.4\nfirst")
+            report_b.write_bytes(b"%PDF-1.4\nsecond")
+            event = {
+                "message_id": "pdf-request",
+                "sender_userid": "member-a",
+                "sender_display": "Member A",
+                "sender_identity_confidence": "transport_userid",
+                "create_time": 100,
+                "msgtype": "text",
+                "transport_channel": "wecom_bot_websocket",
+            }
+            recorded = module.record_incoming_event(
+                db,
+                event,
+                "wecom:test:group:one",
+                "生成pdf",
+                archive_root=archive,
+            )
+            for index, report in enumerate((report_a, report_b), start=1):
+                module.record_member_file(
+                    db,
+                    member_key=recorded["member_key"],
+                    chat="wecom:test:group:one",
+                    path=report,
+                    source_type="worker_result",
+                    source_id=f"source-{index}",
+                    source_task_id=f"task-{index}",
+                    archive_root=archive,
+                )
+            context = module.member_context(
+                db,
+                "wecom:test:group:one",
+                recorded["member_key"],
+            )
+
+        preference = context["preferences"]["pdf_reports"]
+        self.assertTrue(preference["preferred_for_substantial_research"])
+        self.assertEqual(preference["explicit_request_count"], 1)
+        self.assertEqual(preference["completed_report_count"], 2)
+        self.assertNotIn("生成pdf", json.dumps(context, ensure_ascii=False))
+
     def test_member_events_knowledge_and_files_remain_isolated(self) -> None:
         module = load_module()
         with tempfile.TemporaryDirectory() as tmp:

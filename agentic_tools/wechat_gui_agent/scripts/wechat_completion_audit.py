@@ -55,6 +55,22 @@ def coverage_items(task: dict[str, Any]) -> list[dict[str, Any]]:
                 "text": bounded_text(original),
             }
         )
+    reprocess_reason = str(task.get("reprocess_reason") or "").strip()
+    if reprocess_reason and reprocess_reason not in {
+        "manual_reprocess",
+        "numbered_message_not_covered",
+        "same_chat_interruption",
+        "interruption_arrived_during_worker_turn",
+    }:
+        items.append(
+            {
+                "item_id": f"reprocess:{str(task.get('id') or source_identity(source, fallback='source'))}",
+                "kind": "reprocess",
+                "sender": "system-recovery",
+                "source_id": str(task.get("id") or ""),
+                "text": bounded_text(reprocess_reason),
+            }
+        )
     for index, interruption in enumerate(task.get("interruptions") or [], start=1):
         if not isinstance(interruption, dict):
             continue
@@ -134,6 +150,46 @@ def result_file_suffixes(result: dict[str, Any]) -> set[str]:
         for value in raw
         if str(value or "").strip()
     }
+
+
+def local_artifact_inventory(
+    task: dict[str, Any],
+    *,
+    limit: int = 80,
+) -> list[dict[str, Any]]:
+    """Expose bounded task-local file evidence without exposing absolute paths."""
+    raw = str(task.get("artifact_dir") or "").strip()
+    if not raw:
+        return []
+    artifact_dir = Path(raw).expanduser()
+    if not artifact_dir.is_absolute():
+        artifact_dir = ROOT / artifact_dir
+    try:
+        artifact_dir = artifact_dir.resolve()
+        artifact_dir.relative_to((ROOT / "output").resolve())
+    except (OSError, ValueError):
+        return []
+    if not artifact_dir.is_dir():
+        return []
+    files: list[dict[str, Any]] = []
+    for path in sorted(artifact_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            relative = path.relative_to(artifact_dir)
+            size = path.stat().st_size
+        except OSError:
+            continue
+        files.append(
+            {
+                "name": relative.as_posix(),
+                "suffix": path.suffix.casefold(),
+                "size": size,
+            }
+        )
+        if len(files) >= max(1, limit):
+            break
+    return files
 
 
 def deterministic_missing_requirements(
@@ -436,6 +492,7 @@ def completion_audit_prompt(
                 for path in (result.get("files") or [])
             ],
         },
+        "task_local_artifacts": local_artifact_inventory(task),
     }
     return f"""You are a fast completion auditor for one exact WeChat or WeCom task.
 Do not perform the task and do not write files. Check whether the candidate result covers every still-valid, safe request in every request item.
@@ -444,7 +501,13 @@ Rules:
 - Keep consecutive messages as separate checklist items. Never silently drop an earlier independent request because a newer message exists.
 - A newer explicit contradiction may update an older detail, but unrelated requirements remain active.
 - Preserve sender attribution. Do not transfer one member's request or preference to another member.
-- A direct answer may summarize the work, but claiming a file exists is not coverage unless that file appears in candidate_result.files.
+- `candidate_result.files` is the outbound attachment list. A requested chat
+  delivery is covered only when the file appears there.
+- `task_local_artifacts` is a private, bounded existence inventory. It may
+  satisfy an explicit local-retention or source-file requirement, but never a
+  request to send or attach that file.
+- A direct answer may summarize the work, but claiming an outbound attachment
+  exists is not coverage unless that file appears in `candidate_result.files`.
 - If a member explicitly requested a PDF, coverage requires both a useful direct answer and a `.pdf` artifact, unless a real login, approval, missing-source, or safety blocker is clearly stated.
 - A quoted message is context unless the current request asks the agent to act on it.
 - Do not demand publication, payment, account changes, deletion, or another irreversible action unless explicitly authorized by the current request.

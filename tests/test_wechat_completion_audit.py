@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -26,6 +27,49 @@ SPEC.loader.exec_module(audit)
 
 
 class WeChatCompletionAuditTests(unittest.TestCase):
+    def test_audit_prompt_distinguishes_local_sources_from_outbound_files(self) -> None:
+        task = self.task()
+        with tempfile.TemporaryDirectory(dir=audit.ROOT / "output") as tmp:
+            artifact_dir = Path(tmp)
+            (artifact_dir / "report.md").write_text("source", encoding="utf-8")
+            (artifact_dir / "report.tex").write_text("source", encoding="utf-8")
+            (artifact_dir / "report.pdf").write_bytes(b"%PDF-1.4\n")
+            task["artifact_dir"] = str(artifact_dir)
+            task["reprocess_reason"] = (
+                "Keep Markdown and XeLaTeX sources locally and send only the PDF."
+            )
+            prompt = audit.completion_audit_prompt(
+                task,
+                {"message": "Complete.", "files": [str(artifact_dir / "report.pdf")]},
+                audit.coverage_items(task),
+            )
+
+        packet = json.loads(prompt.split("Task packet:\n", 1)[1])
+        self.assertEqual(
+            packet["candidate_result"]["files"],
+            [{"name": "report.pdf", "suffix": ".pdf"}],
+        )
+        self.assertEqual(
+            {item["name"] for item in packet["task_local_artifacts"]},
+            {"report.md", "report.pdf", "report.tex"},
+        )
+        self.assertIn("never a", prompt)
+        self.assertIn("request to send or attach that file", prompt)
+
+    def test_reprocess_reason_is_an_authoritative_coverage_item(self) -> None:
+        task = self.task()
+        task["reprocess_reason"] = "Create and return a validated PDF supplement."
+
+        items = audit.coverage_items(task)
+        reprocess_item = next(item for item in items if item["kind"] == "reprocess")
+
+        self.assertEqual(reprocess_item["item_id"], f"reprocess:{task['id']}")
+        missing = audit.deterministic_missing_requirements(
+            task,
+            {"message": "The research is complete.", "files": []},
+        )
+        self.assertTrue(any(item["kind"] == "artifact" for item in missing))
+
     def task(self) -> dict:
         return {
             "id": "parent-101",

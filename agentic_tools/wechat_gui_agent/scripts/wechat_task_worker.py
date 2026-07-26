@@ -29,6 +29,7 @@ from file_lock import fcntl_compat as fcntl
 from wechat_agent_backend import run_agent_session as run_codex_session, select_agent_backend
 from wechat_completion_audit import (
     coverage_items as completion_coverage_items,
+    explicit_pdf_requested as completion_explicit_pdf_requested,
     run_completion_audit,
 )
 from wechat_document_reader import READABLE_STATUSES as DOCUMENT_READABLE_STATUSES
@@ -445,6 +446,7 @@ def reprocess_task(
                 task["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
             task["reprocess_requested_at"] = now_text
             task["reprocess_reason"] = reason or "manual_reprocess"
+            apply_reprocess_reason_contract(task, reason)
             task["queue_path"] = str(queue)
             if artifact_recovery_only:
                 task["artifact_recovery_only"] = True
@@ -454,6 +456,88 @@ def reprocess_task(
             write_tasks(queue, tasks)
             return task
     raise SystemExit(f"No task found with id {task_id}")
+
+
+def apply_reprocess_reason_contract(task: dict[str, Any], reason: str) -> None:
+    """Make new reprocess deliverables authoritative for execution and sending."""
+    value = str(reason or "").strip()
+    if not value:
+        return
+    if completion_explicit_pdf_requested([{"text": value}]):
+        route = (
+            dict(task.get("route_decision"))
+            if isinstance(task.get("route_decision"), dict)
+            else {}
+        )
+        route["require_file_delivery"] = True
+        task["route_decision"] = route
+        execution = (
+            dict(task.get("execution_contract"))
+            if isinstance(task.get("execution_contract"), dict)
+            else {}
+        )
+        required = execution.get("required_artifacts")
+        if isinstance(required, str):
+            required = [required]
+        if not isinstance(required, list):
+            required = []
+        if not any(str(item).casefold() in {"pdf", "compiled_pdf", "report_pdf"} for item in required):
+            required.append("pdf")
+        execution["required_artifacts"] = required
+        task["execution_contract"] = execution
+    if request_has_explicit_research_intent(value):
+        repair_reprocess_research_route(task)
+
+
+def repair_reprocess_research_route(task: dict[str, Any]) -> None:
+    route = (
+        dict(task.get("route_decision"))
+        if isinstance(task.get("route_decision"), dict)
+        else {}
+    )
+    current_kind = str(route.get("route_kind") or "").strip()
+    if current_kind not in {"", "chat_only", "other_worker"}:
+        return
+    route.update(
+        {
+            "route_kind": "research_or_summary",
+            "worker_needed": True,
+            "message_role": "research_request",
+        }
+    )
+    task["route_decision"] = route
+    task.pop("routine", None)
+    instruction = (
+        dict(task.get("instruction_contract"))
+        if isinstance(task.get("instruction_contract"), dict)
+        else {}
+    )
+    instruction["route_kind"] = "research_or_summary"
+    task["instruction_contract"] = instruction
+    execution = (
+        dict(task.get("execution_contract"))
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    evidence = (
+        dict(execution.get("research_evidence"))
+        if isinstance(execution.get("research_evidence"), dict)
+        else {}
+    )
+    evidence.update(
+        {
+            "required": True,
+            "target_primary_or_authoritative_sources": 3,
+            "minimum_traceable_sources": 2,
+            "separate_direct_indirect_hypothesis": True,
+            "state_uncertainty_and_limitations": True,
+            "include_actionable_next_steps": True,
+        }
+    )
+    execution["research_evidence"] = evidence
+    task["execution_contract"] = execution
+    task["route_repaired_at"] = datetime.now().isoformat(timespec="seconds")
+    task["route_repair_reason"] = "authoritative_reprocess_research_request"
 
 
 def repair_explicit_research_task_contract(task: dict[str, Any]) -> bool:

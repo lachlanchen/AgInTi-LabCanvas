@@ -566,7 +566,7 @@ Current message:
 Recent same-chat context:
 {json.dumps(context[-8:], ensure_ascii=False)[:9000]}
 
-Private same-member knowledge context:
+Private same-member knowledge and artifact-preference context:
 {json.dumps(memory_context or {}, ensure_ascii=False)[:7000]}
 """
     model = os.environ.get("WECOM_ROUTE_MODEL", "gpt-5.6-sol")
@@ -639,6 +639,16 @@ Private same-member knowledge context:
     reply_to_senders = payload.get("reply_to_senders")
     if not isinstance(reply_to_senders, list):
         reply_to_senders = []
+    report_required = bool(payload.get("report_required")) and worker_needed
+    if (
+        worker_needed
+        and member_prefers_pdf_reports(memory_context)
+        and (
+            route_kind in {"research_or_summary", "grant_proposal"}
+            or message_role == "research_request"
+        )
+    ):
+        report_required = True
     return {
         "worker_needed": worker_needed,
         "route_kind": route_kind,
@@ -648,13 +658,26 @@ Private same-member knowledge context:
         "daily_topic": daily_topic,
         "inspiration_interest": inspiration_interest,
         "inspiration_interest_mode": inspiration_interest_mode,
-        "report_required": bool(payload.get("report_required")) and worker_needed,
+        "report_required": report_required,
         "message_role": message_role,
         "reply_mode": reply_mode,
         "reply_to_senders": [" ".join(str(value or "").split()) for value in reply_to_senders[:4]],
         "memory_items": normalize_memory_items(payload.get("memory_items")),
         "public_publish_allowed": False,
     }
+
+
+def member_prefers_pdf_reports(memory_context: dict[str, Any] | None) -> bool:
+    if not isinstance(memory_context, dict):
+        return False
+    preferences = memory_context.get("preferences")
+    if not isinstance(preferences, dict):
+        return False
+    pdf_reports = preferences.get("pdf_reports")
+    return bool(
+        isinstance(pdf_reports, dict)
+        and pdf_reports.get("preferred_for_substantial_research")
+    )
 
 
 def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
@@ -740,6 +763,12 @@ def build_task(
     now = datetime.now()
     message_id = str(event["message_id"])
     transport_channel = event_transport_channel(event)
+    artifact_preferences = (
+        member_memory.get("preferences")
+        if isinstance(member_memory, dict)
+        and isinstance(member_memory.get("preferences"), dict)
+        else {}
+    )
     task = {
         "id": f"wecom-{now.strftime('%Y%m%d%H%M%S')}-{short_hash(message_id)}",
         "chat": chat,
@@ -783,6 +812,7 @@ def build_task(
             "worker_plan": str(route.get("task") or "").strip(),
             "message_role": str(route.get("message_role") or "ordinary_chat"),
             "reply_mode": str(route.get("reply_mode") or "ack_then_work"),
+            "member_artifact_preferences": artifact_preferences,
         },
         "response_policy": wecom_response_policy(chat),
         "instruction_contract": {
@@ -811,6 +841,7 @@ def build_task(
             "session": {"chat": chat, "role": "worker", "reuse": True},
             "response_policy": wecom_response_policy(chat),
             "required_artifacts": ["pdf"] if route.get("report_required") else [],
+            "member_artifact_preferences": artifact_preferences,
             "research_evidence": {
                 "required": str(route.get("route_kind") or "") == "research_or_summary",
                 "target_primary_or_authoritative_sources": 3 if str(route.get("route_kind") or "") == "research_or_summary" else 0,

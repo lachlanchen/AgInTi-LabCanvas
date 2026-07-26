@@ -1167,6 +1167,68 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(evidence["minimum_traceable_sources"], 2)
         self.assertTrue(evidence["separate_direct_indirect_hypothesis"])
 
+    def test_same_member_pdf_preference_upgrades_substantial_research_only(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(text="这个机制的临床价值和验证路径是什么？")
+        research_response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": True,
+                    "route_kind": "research_or_summary",
+                    "response": "",
+                    "task": "Research the mechanism and validation path.",
+                    "ack": "我先给出初步判断，完整研究在继续。",
+                    "report_required": False,
+                    "message_role": "research_request",
+                    "public_publish_allowed": False,
+                }
+            ),
+        }
+        preference = {
+            "scope": "exact_member_and_chat",
+            "preferences": {
+                "pdf_reports": {
+                    "preferred_for_substantial_research": True,
+                    "explicit_request_count": 2,
+                    "completed_report_count": 3,
+                }
+            },
+        }
+        with mock.patch.object(ingest, "run_agent_session", return_value=research_response):
+            route = ingest.route_event(
+                event,
+                ingest.event_request(event),
+                [],
+                memory_context=preference,
+            )
+
+        self.assertTrue(route["report_required"])
+
+        chat_response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": False,
+                    "route_kind": "other_worker",
+                    "response": "早上好。",
+                    "task": "",
+                    "ack": "",
+                    "report_required": False,
+                    "message_role": "ordinary_chat",
+                    "public_publish_allowed": False,
+                }
+            ),
+        }
+        with mock.patch.object(ingest, "run_agent_session", return_value=chat_response):
+            chat_route = ingest.route_event(
+                self.sample_event(text="早上好"),
+                "早上好",
+                [],
+                memory_context=preference,
+            )
+        self.assertFalse(chat_route["report_required"])
+
     def test_explicit_evidence_check_cannot_degrade_to_other_worker(self) -> None:
         ingest = load_ingest()
         response = {

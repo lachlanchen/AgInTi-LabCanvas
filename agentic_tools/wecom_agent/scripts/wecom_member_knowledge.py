@@ -75,6 +75,22 @@ NONTERMINAL_TASK_STATUSES = {
     "generation_poststage_pending",
     "publish_poststage_pending",
 }
+PDF_REPORT_REQUEST_RE = re.compile(
+    r"(?:"
+    r"(?:生成|制作|创建|建立|输出|导出|整理|编译|写|给我|发我|发送|提供)"
+    r".{0,24}(?:pdf|PDF)"
+    r"|"
+    r"\b(?:generate|create|make|write|compile|export|send|provide|deliver)"
+    r"\b.{0,32}\bpdf\b"
+    r"|^\s*pdf\s*$"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+PDF_REPORT_NEGATION_RE = re.compile(
+    r"(?:不要|不用|无需|不需要|\b(?:no|without|do\s+not|don't|dont)\b)"
+    r".{0,20}(?:pdf|PDF)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def main() -> int:
@@ -521,8 +537,42 @@ def member_context(db: Path, chat: str, member_key: str, *, limit: int = 12) -> 
             """,
             (member_key, chat, min(10, bounded)),
         ).fetchall()
+        event_bodies = conn.execute(
+            """
+            SELECT body FROM member_events
+            WHERE member_key = ? AND chat = ? AND direction = 'inbound'
+            ORDER BY created_at DESC LIMIT 100
+            """,
+            (member_key, chat),
+        ).fetchall()
+        report_pdf_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM member_files
+                WHERE member_key = ? AND chat = ? AND category = 'report'
+                  AND lower(suffix) = '.pdf'
+                """,
+                (member_key, chat),
+            ).fetchone()[0]
+        )
+    explicit_pdf_requests = sum(
+        1
+        for row in event_bodies
+        if pdf_report_requested(str(row[0] or ""))
+    )
+    pdf_report_preferred = explicit_pdf_requests >= 2 or (
+        explicit_pdf_requests >= 1 and report_pdf_count >= 2
+    )
     return {
         "scope": "exact_member_and_chat",
+        "preferences": {
+            "pdf_reports": {
+                "preferred_for_substantial_research": pdf_report_preferred,
+                "explicit_request_count": explicit_pdf_requests,
+                "completed_report_count": report_pdf_count,
+                "rule": "Apply to substantial research/report work only; ordinary chat remains concise.",
+            }
+        },
         "knowledge": [
             {
                 "kind": row[0],
@@ -538,6 +588,13 @@ def member_context(db: Path, chat: str, member_key: str, *, limit: int = 12) -> 
             for row in files
         ],
     }
+
+
+def pdf_report_requested(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value or PDF_REPORT_NEGATION_RE.search(value):
+        return False
+    return bool(PDF_REPORT_REQUEST_RE.search(value))
 
 
 def sync_once(db: Path, history_db: Path, queue: Path, archive_root: Path) -> dict[str, Any]:

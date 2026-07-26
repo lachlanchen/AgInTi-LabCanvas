@@ -248,6 +248,12 @@ For the restricted LabAgent research group:
 - Only a bounded exact-member/exact-chat memory view may enter route or worker
   prompts. Keep the SQLite database under `agentic_tools/wecom_agent/.private/`
   and file copies under ignored `output/wecom/member_knowledge/`. Do not commit,
+  expose, or merge raw member histories. The bounded view may include a derived
+  PDF-report preference when that exact member has repeatedly requested PDF
+  reports, or has explicitly requested one and already received multiple
+  research PDFs. This preference upgrades substantial research/report work
+  only. It must not turn greetings, small factual replies, peer conversation,
+  or another member's request into a PDF task.
   send, or expose database internals, raw user IDs, archive hashes, or another
   member's memory. Explicit `#idea`, `#insight`, `#intuition`, `#interest`,
   `#hypothesis`, and `#note` markers are deterministic; agent-derived memory
@@ -851,6 +857,10 @@ queue rows are never silently canceled merely because they were adjacent.
 An explicit PDF request is a deterministic delivery contract: coverage needs
 both a useful direct answer and a real `.pdf` artifact unless a genuine
 approval, access, source, or safety blocker was explained.
+An operator reprocess reason is also an authoritative coverage item when it
+contains a new deliverable or correction. This prevents a supplemental
+`reprocess ... "create and deliver the PDF"` request from passing merely
+because the original message did not literally contain `PDF`.
 
 Automatic lightweight `fast` and `route` turns may prefer
 `gpt-5.3-codex-spark` when the cached normal Codex quota is strictly below 25%.

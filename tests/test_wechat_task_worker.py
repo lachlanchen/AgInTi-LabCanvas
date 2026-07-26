@@ -2187,6 +2187,43 @@ stderr: noisy internal trace
         self.assertNotIn("worker_error", updated)
         self.assertNotIn("expires_at", updated)
 
+    def test_reprocess_pdf_research_reason_upgrades_route_and_delivery_contract(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "research-followup",
+                        "chat": "wecom:group:labagent",
+                        "request": "What is the clinical value?",
+                        "status": "done",
+                        "route_decision": {
+                            "route_kind": "other_worker",
+                            "require_file_delivery": False,
+                        },
+                        "execution_contract": {"required_artifacts": []},
+                        "result": {"message": "Short answer only", "files": []},
+                    }
+                ],
+            )
+
+            updated = worker.reprocess_task(
+                queue,
+                "research-followup",
+                reason=(
+                    "Create an evidence-grounded research report, compile a validated PDF, "
+                    "and deliver it to the source chat."
+                ),
+            )
+
+        self.assertEqual(updated["route_decision"]["route_kind"], "research_or_summary")
+        self.assertTrue(updated["route_decision"]["require_file_delivery"])
+        self.assertEqual(updated["execution_contract"]["required_artifacts"], ["pdf"])
+        self.assertTrue(updated["execution_contract"]["research_evidence"]["required"])
+        self.assertTrue(worker.task_contract_requires_file_delivery(updated))
+
     def test_reprocess_repairs_stale_generic_route_for_explicit_research(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
