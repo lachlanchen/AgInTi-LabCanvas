@@ -1105,6 +1105,43 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertEqual(direct_chatops.response_skip_reason(config, {}, row), "self_outbound_echo")
 
+    def test_recorded_outbound_file_is_not_reprocessed_as_a_self_attachment(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        config["self_messages_text_only"] = False
+        checksum = "4f1dc78f5d2197687d6bbe2e2fb1c2d1"
+        direct_chatops.record_event(
+            chat_name="EchoMind",
+            action="file_send",
+            direction="outbound",
+            status="sent",
+            db_path=Path(self.mirror_db),
+            metadata={
+                "file_identity": {
+                    "name": "echomind-language-review-2026-07-26.pdf",
+                    "size_bytes": 315708,
+                    "md5": checksum,
+                }
+            },
+        )
+        row = self.row(
+            (
+                "[WeChat file]\n"
+                "title: echomind-language-review-2026-07-26-3.pdf\n"
+                "size_bytes: 315708\n"
+                f"md5: {checksum}"
+            ),
+            sender="self",
+            local_type=49,
+            create_time=int(time.time()),
+        )
+
+        self.assertEqual(
+            direct_chatops.response_skip_reason(config, {}, row),
+            "self_outbound_file_echo",
+        )
+
     def test_synced_self_row_is_not_mistaken_for_successful_outbound_send(self) -> None:
         config = self.base_config()
         config["allow_human_self_messages"] = True

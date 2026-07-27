@@ -32,7 +32,11 @@ from wechat_agent_backend import (
     user_facing_backend_message,
 )
 from wechat_memory import organize_messages
-from wechat_message_policy import is_no_reply_control, recorded_outbound_echo
+from wechat_message_policy import (
+    is_no_reply_control,
+    recorded_outbound_echo,
+    recorded_outbound_file_echo,
+)
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_routines import ROUTINES, build_routine_contract, ensure_task_routine_contract
 
@@ -1478,6 +1482,8 @@ def response_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dic
 def self_message_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dict[str, Any]) -> str:
     if is_no_reply_control(visible_message_text(row)):
         return "self_no_reply_control"
+    if is_recorded_outbound_file_echo(config, row):
+        return "self_outbound_file_echo"
     if is_recorded_outbound_echo(config, row):
         return "self_outbound_echo"
     if is_remembered_sent_reply(state, row["content"]):
@@ -1527,6 +1533,17 @@ def is_recorded_outbound_echo(config: dict[str, Any], row: dict[str, Any]) -> bo
         source_epoch=float(row.get("create_time") or 0),
         window_seconds=int(config.get("self_outbound_echo_window_seconds", 1800)),
         limit=int(config.get("self_outbound_echo_lookup_limit", 240)),
+    )
+
+
+def is_recorded_outbound_file_echo(config: dict[str, Any], row: dict[str, Any]) -> bool:
+    return recorded_outbound_file_echo(
+        Path(config.get("mirror_db", DEFAULT_DB)),
+        str(config.get("chat_name") or ""),
+        str(row.get("content") or ""),
+        source_epoch=float(row.get("create_time") or 0),
+        window_seconds=int(config.get("self_outbound_file_echo_window_seconds", 7200)),
+        limit=int(config.get("self_outbound_file_echo_lookup_limit", 240)),
     )
 
 

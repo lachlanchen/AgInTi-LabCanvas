@@ -34,7 +34,7 @@ from wechat_completion_audit import (
 )
 from wechat_document_reader import READABLE_STATUSES as DOCUMENT_READABLE_STATUSES
 from wechat_document_reader import analyze_document, is_document_candidate
-from wechat_message_policy import is_no_reply_control
+from wechat_message_policy import file_transport_identity, is_no_reply_control
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_routines import (
     ensure_task_routine_contract,
@@ -12965,6 +12965,14 @@ def prepare_result_files(
         if not path.exists():
             skipped.append({"path": candidate, "reason": "missing"})
             continue
+        if (
+            task
+            and is_file_intake_task(task)
+            and path in file_intake_source_artifact_paths(task)
+            and not file_intake_source_delivery_requested(task)
+        ):
+            skipped.append({"path": str(path), "reason": "source-intake-echo"})
+            continue
         ok, reason = is_safe_outbound_file(path)
         if not ok:
             skipped.append({"path": str(path), "reason": reason})
@@ -12983,6 +12991,48 @@ def prepare_result_files(
     ):
         result["message"] = f"Generated {len(result['files'])} artifact(s); sending them now."
     return result
+
+
+def file_intake_source_artifact_paths(task: dict[str, Any]) -> set[Path]:
+    """Return task-scoped copies of the exact inbound attachment."""
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    paths: set[Path] = set()
+    for section_name in ("file_intake", "media_resolution"):
+        section = preflight.get(section_name) if isinstance(preflight.get(section_name), dict) else {}
+        for item in section.get("copied") or []:
+            if not isinstance(item, dict):
+                continue
+            for key in ("task_copy_path", "saved_path", "source_path", "mirror_path"):
+                raw = str(item.get(key) or "").strip()
+                if not raw:
+                    continue
+                try:
+                    paths.add(Path(raw).expanduser().resolve())
+                except OSError:
+                    continue
+    return paths
+
+
+def file_intake_source_delivery_requested(task: dict[str, Any]) -> bool:
+    """Require an explicit request before returning the uploaded source file."""
+    text = task_focus_text(task).casefold()
+    markers = (
+        "send this file back",
+        "send the original file",
+        "return this file",
+        "return the original",
+        "forward this file",
+        "resend this file",
+        "把这个文件发回",
+        "把這個文件發回",
+        "发回原文件",
+        "發回原文件",
+        "转发这个文件",
+        "轉發這個文件",
+        "重新发这个文件",
+        "重新發這個文件",
+    )
+    return any(marker in text for marker in markers)
 
 
 def task_uses_aginti_fallback(task: dict[str, Any] | None) -> bool:
@@ -13176,6 +13226,17 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
             "--file",
             str(file_path.expanduser().resolve()),
         ]
+    )
+    record_event(
+        chat_name=chat,
+        action="file_send",
+        direction="outbound",
+        status="sent",
+        db_path=DEFAULT_DB,
+        metadata={
+            "file_identity": file_transport_identity(file_path),
+            "transport": "wechat_gui",
+        },
     )
 
 

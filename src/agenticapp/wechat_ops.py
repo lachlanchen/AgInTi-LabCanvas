@@ -927,6 +927,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "Shipinhao native fallback can bind the exact cached cover on the received side",
             "read-only source tasks cannot enter waiting_confirmation for a verification page",
             "ZIP, RAR, 7z, Word, PDF, and text attachments are safely extracted into agent-readable task context",
+            "successful outbound files cannot re-enter the same chat as self-authored attachment tasks",
+            "bare file intake never returns the uploaded source unless the request explicitly asks",
             "the tmux worker starts through the guarded self-test entrypoint",
         ],
     }
@@ -1120,6 +1122,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "document_intake_reaches_agent_context",
             "test": worker_prefix + "test_file_intake_docx_falls_through_to_resumed_agent_with_readable_context",
+        },
+        {
+            "id": "outbound_file_echo_suppressed",
+            "test": direct_prefix + "test_recorded_outbound_file_is_not_reprocessed_as_a_self_attachment",
+        },
+        {
+            "id": "bare_file_intake_source_not_resent",
+            "test": worker_prefix + "test_bare_file_intake_does_not_send_the_uploaded_source_back",
         },
         {
             "id": "legacy_task_instruction_contract_backfill",

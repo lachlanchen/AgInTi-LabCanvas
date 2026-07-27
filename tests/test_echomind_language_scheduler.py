@@ -30,17 +30,27 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
 
         self.assertEqual(remaining, 0)
 
+    def test_quiet_hours_wake_at_six_for_daily_pdf_then_poll_until_eight(self) -> None:
+        before_daily = datetime(2026, 7, 23, 5, 50, tzinfo=scheduler.LOCAL_TZ)
+        after_daily = datetime(2026, 7, 23, 6, 5, tzinfo=scheduler.LOCAL_TZ)
+
+        self.assertEqual(scheduler.quiet_seconds(now=before_daily), 600)
+        self.assertEqual(
+            scheduler.quiet_seconds(now=after_daily),
+            scheduler.SCHEDULER_POLL_SECONDS,
+        )
+
     def test_daily_pdf_is_independent_of_quiet_hours_and_catches_up(self) -> None:
-        before = datetime(2026, 7, 23, 7, 59, tzinfo=scheduler.LOCAL_TZ)
-        due = datetime(2026, 7, 23, 8, 0, tzinfo=scheduler.LOCAL_TZ)
+        before = datetime(2026, 7, 23, 5, 59, tzinfo=scheduler.LOCAL_TZ)
+        due = datetime(2026, 7, 23, 6, 0, tzinfo=scheduler.LOCAL_TZ)
         catch_up = datetime(2026, 7, 23, 19, 30, tzinfo=scheduler.LOCAL_TZ)
 
         self.assertFalse(scheduler.daily_pdf_due({}, now=before))
         self.assertTrue(scheduler.daily_pdf_due({}, now=due))
         self.assertTrue(scheduler.daily_pdf_due({}, now=catch_up))
 
-    def test_daily_pdf_force_runs_before_eight_but_never_duplicates(self) -> None:
-        now = datetime(2026, 7, 23, 6, 30, tzinfo=scheduler.LOCAL_TZ)
+    def test_daily_pdf_force_runs_before_six_but_never_duplicates(self) -> None:
+        now = datetime(2026, 7, 23, 5, 30, tzinfo=scheduler.LOCAL_TZ)
         self.assertTrue(scheduler.daily_pdf_due({}, now=now, force=True))
         self.assertFalse(
             scheduler.daily_pdf_due(
@@ -57,6 +67,14 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         self.assertNotIn("```", document)
         self.assertIn("\\usepackage{tipa}", document)
         self.assertIn("IPA: /tɛst/", document)
+
+    def test_periodic_lesson_is_compact_for_one_chat_message(self) -> None:
+        oversized = ("一句有用的三语课程。" * 300) + "\n\n不应到达这里。"
+
+        compact = scheduler.compact_periodic_lesson(oversized, max_chars=800)
+
+        self.assertLessEqual(len(compact), 800)
+        self.assertNotIn("不应到达这里", compact)
 
     def test_pending_lesson_retries_delivery_without_regenerating(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -81,6 +99,27 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         agent.assert_not_called()
         self.assertNotIn("pending_lesson", stored)
         self.assertEqual(stored["last_delivery"]["status"], "sent_verified")
+
+    def test_pending_lesson_recovers_recorded_delivery_without_sending_again(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            state_path.write_text(
+                '{"pending_lesson":{"message":"lesson","topic":"travel","next_topic_index":2,"generated_at":"2026-07-27T01:00:00+00:00"}}',
+                encoding="utf-8",
+            )
+            config = {"chat_name": "EchoMind"}
+            with (
+                mock.patch.object(scheduler, "STATE", state_path),
+                mock.patch.object(scheduler.direct, "load_config", return_value=config),
+                mock.patch.object(scheduler, "periodic_lesson_delivery_recorded", return_value=True),
+                mock.patch.object(scheduler.direct, "send_gui_message") as send,
+            ):
+                result = scheduler.run_once()
+                stored = scheduler.load_state()
+
+        send.assert_not_called()
+        self.assertEqual(result["delivery"]["status"], "sent_verified_recovered")
+        self.assertNotIn("pending_lesson", stored)
 
     def test_failed_delivery_keeps_generated_lesson_for_retry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

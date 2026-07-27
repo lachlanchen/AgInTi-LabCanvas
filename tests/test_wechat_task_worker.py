@@ -6025,6 +6025,63 @@ stderr: noisy internal trace
         self.assertEqual(prepared["files"], [])
         self.assertEqual(prepared["skipped_files"][0]["reason"], "private-path")
 
+    def test_bare_file_intake_does_not_send_the_uploaded_source_back(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "daily-review.pdf"
+            source.write_bytes(b"%PDF-1.4\nsource")
+            task = {
+                "request": (
+                    "Current coalesced request:\n"
+                    "[WeChat file]\n"
+                    "title: daily-review.pdf\n"
+                    "size_bytes: 15\n"
+                ),
+                "route_decision": {"route_kind": "file_intake"},
+                "preflight": {
+                    "file_intake": {
+                        "copied": [
+                            {
+                                "task_copy_path": str(source),
+                                "saved_path": str(source),
+                            }
+                        ]
+                    }
+                },
+            }
+
+            prepared = worker.prepare_result_files(
+                {"message": f"Saved copy: {source}", "confirmation": "", "files": []},
+                f"Saved copy: {source}",
+                task=task,
+            )
+
+        self.assertEqual(prepared["files"], [])
+        self.assertEqual(prepared["skipped_files"][0]["reason"], "source-intake-echo")
+
+    def test_file_intake_can_return_source_when_explicitly_requested(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "requested.pdf"
+            source.write_bytes(b"%PDF-1.4\nsource")
+            task = {
+                "request": "Current coalesced request:\nPlease send this file back.",
+                "route_decision": {"route_kind": "file_intake"},
+                "preflight": {
+                    "file_intake": {
+                        "copied": [{"task_copy_path": str(source)}],
+                    }
+                },
+            }
+
+            prepared = worker.prepare_result_files(
+                {"message": "Here it is.", "confirmation": "", "files": [str(source)]},
+                "",
+                task=task,
+            )
+
+        self.assertEqual(prepared["files"], [str(source.resolve())])
+
     def test_aginti_fallback_can_only_deliver_current_task_artifacts(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

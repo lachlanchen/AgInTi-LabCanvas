@@ -515,13 +515,19 @@ The stable interface and recovery commands are documented in
   source in Chinese, English, and Japanese. When the source contains readable
   language material, add pinyin, kana/furigana, romaji, pronunciation, grammar,
   and vocabulary as useful; keep OCR and parser diagnostics private.
-- EchoMind compiles one previous-day language review at 08:00 HKT using
+- EchoMind compiles one previous-day language review at 06:00 HKT using
   XeLaTeX. The PDF contains balanced Chinese, English, and Japanese teaching
   sections, pinyin, Japanese ruby furigana, pronunciation, grammar, and
   exercises, and is delivered through the normal verified file gate with a
   date-based deduplication record. This daily transaction is independent of the
-  three-hour lesson and catches up after 08:00 or a scheduler restart. Recover
+  three-hour lesson and catches up after 06:00 or a scheduler restart. Recover
   it explicitly with `echomind_language_scheduler.py --daily-pdf-now`.
+- Every successful WeChat file delivery records a private same-chat file
+  fingerprint. If that attachment later appears as a self-authored database
+  row, the monitor suppresses it as `self_outbound_file_echo` before routing.
+  Bare file intake may summarize and retain the upload, but must not return the
+  source attachment unless the current request explicitly asks to resend it.
+  This prevents delivered reports from recursively becoming new file tasks.
 - WeCom GUI artifacts use a private one-file C-drive staging directory and the
   visible `More -> File -> Local File` picker. Navigate to the directory, select
   the verified sole row, stage it, then send it from the composer. Long labels
@@ -731,13 +737,14 @@ The stable interface and recovery commands are documented in
 - Scheduled EchoMind conversational lessons and LabAgent idle-inspiration jobs
   observe local `Asia/Hong_Kong` quiet hours from 20:00 through 08:00. Only
   those periodic conversational jobs sleep. LabAgent's 06:00 daily research and
-  EchoMind's 08:00 daily PDF remain active, retain date-based deduplication, and
+  EchoMind's 06:00 daily PDF remain active, retain date-based deduplication, and
   catch up after a missed clock or restart. Explicit user requests and
   interactive replies also remain available overnight.
 - EchoMind's periodic multilingual teaching cadence is three hours
   (`10800` seconds), not one hour. The scheduler records the last successful
   delivery and waits out the remaining interval after a restart, preventing a
-  reboot or tmux recovery from sending an extra lesson.
+  reboot or tmux recovery from sending an extra lesson. Each periodic output is
+  one compact text lesson, not a PDF or multi-part report.
 - LabAgent inspiration is opportunistic. If that exact chat has a pending or
   running question, report, confirmation, or artifact send, defer inspiration
   without enqueueing a backlog item or emitting a status message. The next
@@ -832,9 +839,11 @@ The stable interface and recovery commands are documented in
 Scheduled member jobs are independent lanes even when they share one group. They
 must never be merged as conversational interruptions across `daily_research.job_key`
 or member ownership. EchoMind persists generated lessons before GUI delivery and
-retries only the pending delivery after a lock or transport failure; it does not
-spend another agent turn every five minutes. The transport guard checks the
-EchoMind scheduler heartbeat, not merely the existence of its tmux process.
+retries only the pending delivery after a lock or transport failure. Before a
+retry, it checks the successful outbound text/file ledger and finalizes a
+recorded send without sending it again. It does not spend another agent turn
+every five minutes. The transport guard checks the EchoMind scheduler heartbeat,
+not merely the existence of its tmux process.
 
 Every queued source message has a hard completion identity: `task:<queue-id>`.
 Consecutive same-chat rows may be coalesced for context, but the original row

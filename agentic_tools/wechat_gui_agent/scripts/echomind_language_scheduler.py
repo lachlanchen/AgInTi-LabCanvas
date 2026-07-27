@@ -22,6 +22,12 @@ if str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts") not in sys.path:
 
 import wechat_direct_chatops as direct  # noqa: E402
 from wechat_agent_backend import run_agent_session  # noqa: E402
+from wechat_message_policy import (  # noqa: E402
+    file_transport_identity,
+    recorded_outbound_echo,
+    recorded_outbound_file_identity,
+)
+from wechat_mirror import DEFAULT_DB  # noqa: E402
 from wechat_task_worker import send_file  # noqa: E402
 
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
@@ -31,9 +37,10 @@ INTERVAL = 3 * 60 * 60
 LOCAL_TZ = ZoneInfo("Asia/Hong_Kong")
 QUIET_START = 20
 QUIET_END = 8
-DAILY_PDF_HOUR = 8
+DAILY_PDF_HOUR = 6
 DAILY_PDF_RETRY_SECONDS = 30 * 60
 SCHEDULER_POLL_SECONDS = 5 * 60
+PERIODIC_MAX_CHARS = int(os.environ.get("ECHOMIND_LANGUAGE_MAX_CHARS", "1400"))
 PERIODIC_MODEL = os.environ.get("ECHOMIND_LANGUAGE_MODEL", "gpt-5.3-codex-spark")
 PERIODIC_EFFORT = os.environ.get("ECHOMIND_LANGUAGE_EFFORT", "low")
 TOPICS = (
@@ -104,12 +111,26 @@ def seconds_until_due(state: dict, interval_seconds: int, *, now: datetime | Non
     return max(0.0, (due_at - current.astimezone(timezone.utc)).total_seconds())
 
 
-def quiet_seconds() -> float:
-    """Return remaining quiet-hours time, or zero during allowed hours."""
-    now = datetime.now(LOCAL_TZ)
+def quiet_seconds(*, now: datetime | None = None) -> float:
+    """Return the next quiet-hours wake without sleeping past the 06:00 PDF."""
+    now = now or datetime.now(LOCAL_TZ)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=LOCAL_TZ)
+    now = now.astimezone(LOCAL_TZ)
     if QUIET_END <= now.hour < QUIET_START:
         return 0.0
-    wake = (now + timedelta(days=1)).replace(hour=QUIET_END, minute=0, second=0, microsecond=0)
+    if now.hour >= QUIET_START:
+        wake = (now + timedelta(days=1)).replace(
+            hour=DAILY_PDF_HOUR,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    elif now.hour < DAILY_PDF_HOUR:
+        wake = now.replace(hour=DAILY_PDF_HOUR, minute=0, second=0, microsecond=0)
+    else:
+        wake = now.replace(hour=QUIET_END, minute=0, second=0, microsecond=0)
+        return min(SCHEDULER_POLL_SECONDS, max(60.0, (wake - now).total_seconds()))
     return max(60.0, (wake - now).total_seconds())
 
 
@@ -121,7 +142,7 @@ def daily_pdf_target_date(now: datetime | None = None) -> str:
 
 
 def daily_pdf_due(state: dict, *, now: datetime | None = None, force: bool = False) -> bool:
-    """Return whether the previous-day PDF is due, with catch-up after 08:00."""
+    """Return whether the previous-day PDF is due, with catch-up after 06:00."""
     current = now or datetime.now(LOCAL_TZ)
     if current.tzinfo is None:
         current = current.replace(tzinfo=LOCAL_TZ)
@@ -200,14 +221,21 @@ def run_daily_pdf(
     if isinstance(pending, dict) and str(pending.get("date") or "") == yesterday:
         pending_pdf = Path(str(pending.get("pdf") or "")).expanduser()
         if pending_pdf.is_file() and pending_pdf.stat().st_size > 0:
-            if deliver:
+            already_delivered = daily_pdf_delivery_recorded(config, pending_pdf)
+            if deliver and not already_delivered:
                 send_file(pending_pdf, config["chat_name"], CONFIG, target=config.get("send_target"))
             state["last_daily_pdf_date"] = yesterday
             state["last_daily_pdf"] = str(pending_pdf)
             state["last_daily_pdf_delivery"] = {
                 "date": yesterday,
                 "pdf": str(pending_pdf),
-                "status": "sent_verified" if deliver else "generated",
+                "status": (
+                    "sent_verified_recovered"
+                    if already_delivered
+                    else "sent_verified"
+                    if deliver
+                    else "generated"
+                ),
             }
             state.pop("pending_daily_pdf", None)
             state.pop("last_daily_pdf_error", None)
@@ -227,7 +255,7 @@ Use Unicode IPA directly. Do not use \\textipa, Markdown code fences, a document
 Previous-day EchoMind source material:
 {history}
 """
-    result = run_agent_session(prompt, backend="codex", chat_name="EchoMind", role="daily_language_pdf", model="gpt-5.6-sol", reasoning_effort="low", sandbox="read-only", timeout_seconds=900, reuse=True, backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})})
+    result = run_agent_session(prompt, backend="codex", chat_name="EchoMind", role="daily_language_pdf", model="gpt-5.6-sol", reasoning_effort="medium", sandbox="read-only", timeout_seconds=900, reuse=True, backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})})
     body = normalize_latex_body(str(result.get("message") or ""))
     if not body:
         raise RuntimeError("daily EchoMind PDF agent returned no LaTeX body")
@@ -248,13 +276,33 @@ Previous-day EchoMind source material:
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     save_state(state)
-    if deliver:
+    already_delivered = daily_pdf_delivery_recorded(config, pdf)
+    if deliver and not already_delivered:
         send_file(pdf, config["chat_name"], CONFIG, target=config.get("send_target"))
     state["last_daily_pdf_date"] = yesterday
     state["last_daily_pdf"] = str(pdf)
     state.pop("pending_daily_pdf", None)
     state.pop("last_daily_pdf_error", None)
-    return {"date": yesterday, "pdf": str(pdf), "status": "sent_verified" if deliver else "generated"}
+    return {
+        "date": yesterday,
+        "pdf": str(pdf),
+        "status": (
+            "sent_verified_recovered"
+            if already_delivered
+            else "sent_verified"
+            if deliver
+            else "generated"
+        ),
+    }
+
+
+def daily_pdf_delivery_recorded(config: dict, pdf: Path) -> bool:
+    return recorded_outbound_file_identity(
+        DEFAULT_DB,
+        str(config.get("chat_name") or "EchoMind"),
+        file_transport_identity(pdf),
+        window_seconds=48 * 60 * 60,
+    )
 
 
 def run_daily_pdf_if_due(*, deliver: bool = True, force: bool = False, now: datetime | None = None) -> dict | None:
@@ -322,11 +370,7 @@ Today's required domain is: **{topic}**. Teach a broad, practical lesson in this
 
 The recent chat is only a weak personalization signal. Use at most one short example from it when helpful; otherwise ignore it. Do not summarize the chat, make its latest message the topic, or keep dwelling on one recurring subject. Avoid repeating the previous lesson and vary the everyday domain from recent lessons.
 
-Give a complete, balanced Chinese/English/Japanese mini-lesson. Do not make Chinese the main answer with token translations. For the same example, give:
-- Chinese: natural sentence, pinyin, meaning, usage and grammar;
-- English: natural sentence, IPA or clear pronunciation, meaning, usage and grammar;
-- Japanese: natural sentence, kanji plus kana/furigana, romaji, pronunciation, meaning, usage and grammar.
-Then add useful vocabulary, one cross-language comparison, one common mistake, and one short exercise. Give substantive detail in all three languages, while avoiding a rigid repetitive essay template. Write like a helpful friend. Do not say NO_REPLY.
+Write one compact, useful lesson suitable for a single chat message, about 650-1100 characters total. Use one practical situation and no more than three core example sentences. Balance Chinese, English, and Japanese for the same examples: include concise pinyin, English pronunciation only where useful, Japanese kanji/kana plus romaji, one grammar contrast, one common mistake, and one tiny exercise. Do not produce a report, PDF, long essay, status log, repeated greeting, or multiple topic sections. Write like a helpful language teacher, not a rigid template. Do not say NO_REPLY.
 
 Recent EchoMind history:
 {history}
@@ -346,7 +390,7 @@ Previous scheduled lesson (avoid repeating its topic):
         reuse=True,
         backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})},
     )
-    message = str(result.get("message") or "").strip()
+    message = compact_periodic_lesson(str(result.get("message") or ""))
     if not message:
         raise RuntimeError("EchoMind language teacher returned no lesson")
     pending = {
@@ -368,6 +412,25 @@ Previous scheduled lesson (avoid repeating its topic):
     )
 
 
+def compact_periodic_lesson(message: str, *, max_chars: int = PERIODIC_MAX_CHARS) -> str:
+    """Keep the periodic lesson useful without allowing a chat flood."""
+    value = str(message or "").strip()
+    limit = max(500, int(max_chars))
+    if len(value) <= limit:
+        return value
+    clipped = value[:limit]
+    boundary = max(
+        clipped.rfind("\n\n"),
+        clipped.rfind("。"),
+        clipped.rfind("."),
+        clipped.rfind("！"),
+        clipped.rfind("？"),
+    )
+    if boundary >= int(limit * 0.65):
+        clipped = clipped[: boundary + 1]
+    return clipped.rstrip()
+
+
 def deliver_pending_lesson(
     config: dict,
     state: dict,
@@ -385,10 +448,13 @@ def deliver_pending_lesson(
         state["last_delivery_attempt_at"] = now
         scheduler_heartbeat(state, "lesson_delivery_attempt")
         try:
-            screenshot = direct.send_gui_message(config, message)
-            if not screenshot or not Path(screenshot).is_file():
-                raise RuntimeError(f"EchoMind lesson send was not verified: {screenshot or 'no screenshot'}")
-            delivery = {"requested": True, "status": "sent_verified", "screenshot": screenshot}
+            if periodic_lesson_delivery_recorded(config, pending):
+                delivery = {"requested": True, "status": "sent_verified_recovered"}
+            else:
+                screenshot = direct.send_gui_message(config, message)
+                if not screenshot or not Path(screenshot).is_file():
+                    raise RuntimeError(f"EchoMind lesson send was not verified: {screenshot or 'no screenshot'}")
+                delivery = {"requested": True, "status": "sent_verified", "screenshot": screenshot}
         except Exception as exc:
             state["last_delivery_error"] = f"{type(exc).__name__}: {exc}"
             scheduler_heartbeat(state, "lesson_delivery_deferred")
@@ -408,6 +474,21 @@ def deliver_pending_lesson(
     state.pop("last_delivery_error", None)
     save_state(state)
     return {"ok": True, "chat": config["chat_name"], "sent_at": now, "message": message, "delivery": delivery, "daily_pdf": None}
+
+
+def periodic_lesson_delivery_recorded(config: dict, pending: dict) -> bool:
+    generated_at = str(pending.get("generated_at") or "").strip()
+    try:
+        source_epoch = datetime.fromisoformat(generated_at.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        source_epoch = 0
+    return recorded_outbound_echo(
+        DEFAULT_DB,
+        str(config.get("chat_name") or "EchoMind"),
+        str(pending.get("message") or ""),
+        source_epoch=source_epoch,
+        window_seconds=6 * 60 * 60,
+    )
 
 
 def main() -> int:
