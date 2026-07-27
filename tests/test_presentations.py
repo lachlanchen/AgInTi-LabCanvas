@@ -98,6 +98,28 @@ class PresentationTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("beyond the slide boundary" in item for item in result["errors"]))
 
+    def test_editable_elements_are_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = default_manifest("Editable element deck")
+            manifest["slides"][1]["elements"] = [
+                {
+                    "type": "shape",
+                    "shape": "rounded_rectangle",
+                    "box": {"x": 1.0, "y": 1.5, "w": 3.0, "h": 1.0},
+                    "text": "Editable mechanism node",
+                },
+                {
+                    "type": "table",
+                    "box": {"x": 1.0, "y": 3.0, "w": 8.0, "h": 2.0},
+                    "rows": [["State", "Signal"], ["Repair", "CGRP"]],
+                },
+            ]
+
+            result = validate_manifest(manifest, root)
+
+        self.assertTrue(result["ok"])
+
     @unittest.skipUnless(importlib.util.find_spec("pptx"), "python-pptx is not installed")
     def test_build_creates_editable_pptx_with_expected_slide_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -109,3 +131,34 @@ class PresentationTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(result["package_check"]["slide_count"], 4)
             self.assertTrue(Path(result["pptx"]).is_file())
+
+    @unittest.skipUnless(importlib.util.find_spec("pptx"), "python-pptx is not installed")
+    def test_build_creates_native_shapes_and_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = initialize_presentation_workspace(root, title="Native elements")
+            manifest_path = Path(workspace["manifest"])
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["slides"][1]["elements"] = [
+                {
+                    "type": "shape",
+                    "shape": "rounded_rectangle",
+                    "box": {"x": 1.0, "y": 1.5, "w": 3.0, "h": 1.0},
+                    "text": "Editable node",
+                },
+                {
+                    "type": "table",
+                    "box": {"x": 1.0, "y": 3.0, "w": 8.0, "h": 2.0},
+                    "rows": [["State", "Signal"], ["Repair", "CGRP"]],
+                },
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            result = build_presentation(manifest_path, output_dir=root / "build")
+
+            self.assertTrue(result["ok"])
+            from pptx import Presentation
+
+            deck = Presentation(result["pptx"])
+            shape_types = [shape.shape_type for shape in deck.slides[1].shapes]
+            self.assertGreaterEqual(len(shape_types), 6)

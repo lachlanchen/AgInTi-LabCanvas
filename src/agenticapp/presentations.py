@@ -24,6 +24,17 @@ SUPPORTED_LAYOUTS = {
     "image_focus",
     "quote",
 }
+SUPPORTED_ELEMENT_TYPES = {"line", "shape", "table", "text"}
+SUPPORTED_ELEMENT_SHAPES = {
+    "chevron",
+    "down_arrow",
+    "hexagon",
+    "oval",
+    "rectangle",
+    "right_arrow",
+    "rounded_rectangle",
+    "triangle",
+}
 GENERATED_KINDS = {"imagegen", "image_generation", "aginti", "generated"}
 FORBIDDEN_GENERATED_ROLES = {
     "background",
@@ -287,6 +298,55 @@ def validate_manifest(manifest: dict[str, Any], base_dir: str | Path) -> dict[st
                     f"{asset_prefix} contains reviewed bitmap text; keep essential wording as editable slide text too"
                 )
 
+        elements = slide.get("elements") or []
+        if not isinstance(elements, list):
+            errors.append(f"{prefix} elements must be a list")
+            continue
+        for element_index, element in enumerate(elements, start=1):
+            element_prefix = f"{prefix} element {element_index}"
+            if not isinstance(element, dict):
+                errors.append(f"{element_prefix} must be an object")
+                continue
+            element_type = str(element.get("type") or "").strip().casefold()
+            if element_type not in SUPPORTED_ELEMENT_TYPES:
+                errors.append(
+                    f"{element_prefix} has unsupported type {element_type!r}"
+                )
+                continue
+            if element_type == "line":
+                points = {
+                    key: float(element.get(key, 0))
+                    for key in ("x1", "y1", "x2", "y2")
+                }
+                if min(points.values()) < 0:
+                    errors.append(f"{element_prefix} cannot start outside the slide")
+                if max(points["x1"], points["x2"]) > SLIDE_WIDTH_IN:
+                    errors.append(f"{element_prefix} extends beyond the slide width")
+                if max(points["y1"], points["y2"]) > SLIDE_HEIGHT_IN:
+                    errors.append(f"{element_prefix} extends beyond the slide height")
+                continue
+            box = _element_box(element)
+            if box["w"] <= 0 or box["h"] <= 0:
+                errors.append(f"{element_prefix} box width and height must be positive")
+            if box["x"] < 0 or box["y"] < 0:
+                errors.append(f"{element_prefix} box cannot start outside the slide")
+            if box["x"] + box["w"] > SLIDE_WIDTH_IN or box["y"] + box["h"] > SLIDE_HEIGHT_IN:
+                errors.append(f"{element_prefix} box extends beyond the slide boundary")
+            if element_type == "shape":
+                shape_kind = str(element.get("shape") or "rectangle").strip().casefold()
+                if shape_kind not in SUPPORTED_ELEMENT_SHAPES:
+                    errors.append(
+                        f"{element_prefix} has unsupported shape {shape_kind!r}"
+                    )
+            if element_type == "table":
+                rows = element.get("rows")
+                if not isinstance(rows, list) or not rows:
+                    errors.append(f"{element_prefix} table rows must be a non-empty list")
+                elif not all(isinstance(row, list) and row for row in rows):
+                    errors.append(f"{element_prefix} table rows must contain non-empty lists")
+                elif len({len(row) for row in rows}) != 1:
+                    errors.append(f"{element_prefix} table rows must have equal column counts")
+
     return {
         "ok": not errors,
         "errors": errors,
@@ -310,6 +370,7 @@ def build_presentation(
     try:
         from pptx import Presentation
         from pptx.dml.color import RGBColor
+        from pptx.enum.shapes import MSO_CONNECTOR
         from pptx.enum.shapes import MSO_SHAPE
         from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
         from pptx.util import Inches, Pt
@@ -346,6 +407,7 @@ def build_presentation(
             api={
                 "RGBColor": RGBColor,
                 "MSO_SHAPE": MSO_SHAPE,
+                "MSO_CONNECTOR": MSO_CONNECTOR,
                 "MSO_ANCHOR": MSO_ANCHOR,
                 "PP_ALIGN": PP_ALIGN,
                 "Inches": Inches,
@@ -476,6 +538,18 @@ def _asset_box(asset: dict[str, Any], layout: str) -> dict[str, float]:
     return {"x": 7.65, "y": 1.45, "w": 4.9, "h": 4.85}
 
 
+def _element_box(element: dict[str, Any]) -> dict[str, float]:
+    raw = element.get("box")
+    if not isinstance(raw, dict):
+        raw = element
+    return {
+        "x": float(raw.get("x", 0)),
+        "y": float(raw.get("y", 0)),
+        "w": float(raw.get("w", 1)),
+        "h": float(raw.get("h", 1)),
+    }
+
+
 def _hex_rgb(value: str, rgb_color: Any) -> Any:
     cleaned = str(value or "#000000").strip().lstrip("#")
     if not re.fullmatch(r"[0-9A-Fa-f]{6}", cleaned):
@@ -587,6 +661,226 @@ def _add_picture_contained(slide: Any, path: Path, box: dict[str, float], api: d
     return picture
 
 
+def _alignment(value: str, api: dict[str, Any]) -> Any:
+    choices = {
+        "center": api["PP_ALIGN"].CENTER,
+        "left": api["PP_ALIGN"].LEFT,
+        "right": api["PP_ALIGN"].RIGHT,
+    }
+    return choices.get(str(value or "left").casefold(), api["PP_ALIGN"].LEFT)
+
+
+def _vertical_alignment(value: str, api: dict[str, Any]) -> Any:
+    choices = {
+        "bottom": api["MSO_ANCHOR"].BOTTOM,
+        "middle": api["MSO_ANCHOR"].MIDDLE,
+        "top": api["MSO_ANCHOR"].TOP,
+    }
+    return choices.get(str(value or "top").casefold(), api["MSO_ANCHOR"].TOP)
+
+
+def _configure_element_text(
+    frame: Any,
+    *,
+    text: str,
+    element: dict[str, Any],
+    theme: dict[str, Any],
+    api: dict[str, Any],
+) -> None:
+    frame.clear()
+    frame.word_wrap = True
+    frame.vertical_anchor = _vertical_alignment(
+        str(element.get("valign") or "middle"),
+        api,
+    )
+    margin = float(element.get("margin", 0.08))
+    frame.margin_left = api["Inches"](margin)
+    frame.margin_right = api["Inches"](margin)
+    frame.margin_top = api["Inches"](margin)
+    frame.margin_bottom = api["Inches"](margin)
+    paragraph = frame.paragraphs[0]
+    paragraph.text = text
+    paragraph.alignment = _alignment(str(element.get("align") or "left"), api)
+    paragraph.space_after = api["Pt"](0)
+    for run in paragraph.runs:
+        run.font.name = str(
+            element.get("font_name")
+            or (
+                theme["font_heading"]
+                if element.get("bold")
+                else theme["font_body"]
+            )
+        )
+        run.font.size = api["Pt"](float(element.get("font_size", 16)))
+        run.font.bold = bool(element.get("bold"))
+        run.font.color.rgb = _hex_rgb(
+            str(element.get("text_color") or theme["text"]),
+            api["RGBColor"],
+        )
+
+
+def _render_elements(
+    slide: Any,
+    elements: list[Any],
+    *,
+    theme: dict[str, Any],
+    api: dict[str, Any],
+) -> None:
+    shape_map = {
+        "chevron": api["MSO_SHAPE"].CHEVRON,
+        "down_arrow": api["MSO_SHAPE"].DOWN_ARROW,
+        "hexagon": api["MSO_SHAPE"].HEXAGON,
+        "oval": api["MSO_SHAPE"].OVAL,
+        "rectangle": api["MSO_SHAPE"].RECTANGLE,
+        "right_arrow": api["MSO_SHAPE"].RIGHT_ARROW,
+        "rounded_rectangle": api["MSO_SHAPE"].ROUNDED_RECTANGLE,
+        "triangle": api["MSO_SHAPE"].ISOSCELES_TRIANGLE,
+    }
+    for index, element in enumerate(elements, start=1):
+        if not isinstance(element, dict):
+            continue
+        element_type = str(element.get("type") or "").strip().casefold()
+        name = str(element.get("name") or f"element-{index}")[:255]
+        if element_type == "line":
+            connector = slide.shapes.add_connector(
+                api["MSO_CONNECTOR"].STRAIGHT,
+                api["Inches"](float(element.get("x1", 0))),
+                api["Inches"](float(element.get("y1", 0))),
+                api["Inches"](float(element.get("x2", 0))),
+                api["Inches"](float(element.get("y2", 0))),
+            )
+            connector.name = name
+            connector.line.color.rgb = _hex_rgb(
+                str(element.get("color") or theme["line"]),
+                api["RGBColor"],
+            )
+            connector.line.width = api["Pt"](float(element.get("width", 1.5)))
+            if str(element.get("dash") or "").casefold() == "dash":
+                connector.line.dash_style = 4
+            continue
+
+        box = _element_box(element)
+        if element_type == "text":
+            shape = slide.shapes.add_textbox(
+                api["Inches"](box["x"]),
+                api["Inches"](box["y"]),
+                api["Inches"](box["w"]),
+                api["Inches"](box["h"]),
+            )
+            shape.name = name
+            _configure_element_text(
+                shape.text_frame,
+                text=str(element.get("text") or ""),
+                element=element,
+                theme=theme,
+                api=api,
+            )
+            continue
+
+        if element_type == "shape":
+            shape_kind = str(element.get("shape") or "rectangle").strip().casefold()
+            shape = slide.shapes.add_shape(
+                shape_map[shape_kind],
+                api["Inches"](box["x"]),
+                api["Inches"](box["y"]),
+                api["Inches"](box["w"]),
+                api["Inches"](box["h"]),
+            )
+            shape.name = name
+            fill_color = str(element.get("fill") or theme["surface"])
+            if fill_color.casefold() == "none":
+                shape.fill.background()
+            else:
+                shape.fill.solid()
+                shape.fill.fore_color.rgb = _hex_rgb(
+                    fill_color,
+                    api["RGBColor"],
+                )
+            line_color = str(element.get("line") or theme["line"])
+            if line_color.casefold() == "none":
+                shape.line.fill.background()
+            else:
+                shape.line.color.rgb = _hex_rgb(
+                    line_color,
+                    api["RGBColor"],
+                )
+                shape.line.width = api["Pt"](float(element.get("line_width", 1)))
+            text = str(element.get("text") or "")
+            if text:
+                _configure_element_text(
+                    shape.text_frame,
+                    text=text,
+                    element=element,
+                    theme=theme,
+                    api=api,
+                )
+            continue
+
+        if element_type == "table":
+            rows = element.get("rows") or []
+            row_count = len(rows)
+            column_count = len(rows[0])
+            table_shape = slide.shapes.add_table(
+                row_count,
+                column_count,
+                api["Inches"](box["x"]),
+                api["Inches"](box["y"]),
+                api["Inches"](box["w"]),
+                api["Inches"](box["h"]),
+            )
+            table_shape.name = name
+            table = table_shape.table
+            column_widths = element.get("column_widths")
+            if isinstance(column_widths, list) and len(column_widths) == column_count:
+                total_width = sum(float(value) for value in column_widths)
+                if total_width > 0:
+                    for column, value in zip(table.columns, column_widths):
+                        column.width = api["Inches"](
+                            box["w"] * float(value) / total_width
+                        )
+            header_rows = max(0, int(element.get("header_rows", 1)))
+            for row_index, values in enumerate(rows):
+                for column_index, value in enumerate(values):
+                    cell = table.cell(row_index, column_index)
+                    is_header = row_index < header_rows
+                    cell.fill.solid()
+                    cell.fill.fore_color.rgb = _hex_rgb(
+                        str(
+                            element.get("header_fill") or theme["accent"]
+                            if is_header
+                            else element.get("body_fill") or theme["surface"]
+                        ),
+                        api["RGBColor"],
+                    )
+                    cell_element = {
+                        "align": (
+                            element.get("header_align", "center")
+                            if is_header
+                            else element.get("body_align", "left")
+                        ),
+                        "bold": is_header,
+                        "font_size": (
+                            element.get("header_font_size", 13)
+                            if is_header
+                            else element.get("body_font_size", 12)
+                        ),
+                        "margin": element.get("cell_margin", 0.05),
+                        "text_color": (
+                            element.get("header_text_color", "#FFFFFF")
+                            if is_header
+                            else element.get("body_text_color", theme["text"])
+                        ),
+                        "valign": "middle",
+                    }
+                    _configure_element_text(
+                        cell.text_frame,
+                        text=str(value),
+                        element=cell_element,
+                        theme=theme,
+                        api=api,
+                    )
+
+
 def _render_slide(
     slide: Any,
     spec: dict[str, Any],
@@ -602,6 +896,7 @@ def _render_slide(
     subtitle = str(spec.get("subtitle") or "")
     bullets = spec.get("bullets") if isinstance(spec.get("bullets"), list) else []
     assets = spec.get("assets") if isinstance(spec.get("assets"), list) else []
+    elements = spec.get("elements") if isinstance(spec.get("elements"), list) else []
 
     if layout == "title":
         accent = slide.shapes.add_shape(
@@ -768,6 +1063,8 @@ def _render_slide(
                 color=theme["muted"],
                 name=f"asset-{asset_index}-caption",
             )
+
+    _render_elements(slide, elements, theme=theme, api=api)
 
     _add_text_box(
         slide,
