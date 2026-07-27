@@ -98,6 +98,7 @@ DEFAULT_TRANSPORT_RECOVERY_LIMIT = 3
 DEFAULT_TRANSPORT_RECOVERY_MAX_ATTEMPTS = 2
 DEFAULT_TRANSIENT_SEND_MAX_RETRIES = 2
 DEFAULT_VERIFIED_PUBLISH_SEND_MAX_RETRIES = 3
+DEFAULT_SEND_FAILURE_HISTORY_LIMIT = 20
 DEFAULT_GENERATED_VIDEO_POLL_BACKOFF_SECONDS = 5 * 60
 DEFAULT_GENERATED_VIDEO_WATCH_POLLS_PER_CYCLE = 1
 DEFAULT_GENERATED_VIDEO_LAZYEDIT_TIMEOUT_SECONDS = 6 * 60 * 60
@@ -3700,28 +3701,43 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
                     continue
             if status == "send_failed":
                 if not failed_send_retryable(task, now):
+                    changed = compact_send_failure_diagnostics(task) or changed
                     continue
-                task.setdefault("send_failed_repair_history", []).append(
-                    {
-                        "repaired_at": now_text,
-                        "reason": send_deferred_reason_from_errors([str(item) for item in task.get("send_errors") or []]),
-                        "from_status": "send_failed",
-                    }
-                )
+                repair_failed_send = True
             elif status not in {SEND_DEFERRED_LOCKED_STATUS, SEND_DEFERRED_ARTIFACT_STATUS, SEND_RETRYING_STATUS}:
                 continue
+            else:
+                repair_failed_send = False
             if status == SEND_RETRYING_STATUS and not stale_send_retrying(task, now):
                 continue
             if status == SEND_DEFERRED_LOCKED_STATUS and not deferred_send_backoff_elapsed(task, now):
                 continue
             if transient_send_retry_limit_reached(task):
                 task["status"] = "send_failed"
-                task.setdefault("send_errors", []).append(
-                    f"transient send retry limit reached ({int(task.get('send_retry_count') or 0)} attempts)"
+                limit_error = (
+                    "transient send retry limit reached "
+                    f"({int(task.get('send_retry_count') or 0)} attempts)"
                 )
+                errors = task.setdefault("send_errors", [])
+                if limit_error not in errors:
+                    errors.append(limit_error)
+                compact_send_failure_diagnostics(task)
                 tasks[index] = task
                 changed = True
                 continue
+            if repair_failed_send:
+                history = task.setdefault("send_failed_repair_history", [])
+                history.append(
+                    {
+                        "repaired_at": now_text,
+                        "reason": send_deferred_reason_from_errors(
+                            [str(item) for item in task.get("send_errors") or []]
+                        ),
+                        "from_status": "send_failed",
+                    }
+                )
+                if len(history) > DEFAULT_SEND_FAILURE_HISTORY_LIMIT:
+                    del history[:-DEFAULT_SEND_FAILURE_HISTORY_LIMIT]
             candidates.append(index)
         if candidates:
             if not deferred_send_global_cooldown_elapsed(tasks, now):
@@ -3741,6 +3757,30 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
         if changed:
             write_tasks(path, tasks)
         return None
+
+
+def compact_send_failure_diagnostics(task: dict[str, Any]) -> bool:
+    """Bound repeated retry diagnostics so an unavailable transport stays cheap."""
+    changed = False
+    errors = task.get("send_errors")
+    if isinstance(errors, list):
+        unique_errors: list[str] = []
+        seen: set[str] = set()
+        for item in errors:
+            value = str(item)
+            if value in seen:
+                continue
+            seen.add(value)
+            unique_errors.append(value)
+        compact_errors = unique_errors[-DEFAULT_SEND_FAILURE_HISTORY_LIMIT:]
+        if compact_errors != errors:
+            task["send_errors"] = compact_errors
+            changed = True
+    history = task.get("send_failed_repair_history")
+    if isinstance(history, list) and len(history) > DEFAULT_SEND_FAILURE_HISTORY_LIMIT:
+        task["send_failed_repair_history"] = history[-DEFAULT_SEND_FAILURE_HISTORY_LIMIT:]
+        changed = True
+    return changed
 
 
 def newer_task_superseding_deferred_confirmation(
@@ -4271,6 +4311,8 @@ def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
         return False
     if reason == "gui_compose_verification":
         max_retries = int(os.environ.get("WECOM_GUI_COMPOSE_MAX_RETRIES", "2"))
+    elif reason == "wecom_transport_transient":
+        max_retries = int(os.environ.get("WECOM_TRANSPORT_SEND_MAX_RETRIES", "3"))
     elif verified_publish_send_completion(task):
         max_retries = int(
             os.environ.get("WECHAT_WORKER_VERIFIED_PUBLISH_SEND_MAX_RETRIES", str(DEFAULT_VERIFIED_PUBLISH_SEND_MAX_RETRIES))

@@ -588,6 +588,13 @@ The stable interface and recovery commands are documented in
 - The WeCom worker's `--chat wecom` value is a transport namespace, not a chat
   filter. Its idle loop must scan the WeCom queue's deferred outbox and retry
   the highest-priority required artifact automatically.
+- WeCom transport retries use one consistent
+  `WECOM_TRANSPORT_SEND_MAX_RETRIES` limit. After that limit, keep the task
+  terminal until transport recovery or an explicit artifact-recovery request;
+  repeated idle polls must not rewrite or grow the same `send_failed` row.
+  Deduplicate repeated error strings and retain at most 20 repair-history
+  entries so an unavailable Android/GUI surface remains cheap while the
+  completed report and its pending component ledger stay recoverable.
 - Official WeCom voice, quoted voice, and mixed-message voice must be downloaded
   by the SDK into the exact message directory and exposed as
   `transport_preflight.wecom_media`. The worker passes only those exact files to

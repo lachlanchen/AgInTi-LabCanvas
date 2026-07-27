@@ -6699,6 +6699,114 @@ stderr: noisy internal trace
             else:
                 worker.os.environ["WECHAT_WORKER_TITLE_GUARD_BLANK_BACKOFF_SECONDS"] = original_backoff
 
+    def test_wecom_transport_retry_limit_is_bounded_without_queue_growth(self) -> None:
+        worker = load_worker()
+        original_max = worker.os.environ.get("WECOM_TRANSPORT_SEND_MAX_RETRIES")
+        original_backoff = worker.os.environ.get("WECOM_TRANSPORT_SEND_BACKOFF_SECONDS")
+        try:
+            worker.os.environ["WECOM_TRANSPORT_SEND_MAX_RETRIES"] = "3"
+            worker.os.environ["WECOM_TRANSPORT_SEND_BACKOFF_SECONDS"] = "0"
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                repeated_history = [
+                    {
+                        "repaired_at": f"2026-07-27T10:00:{index:02d}",
+                        "reason": "wecom_transport_transient",
+                        "from_status": "send_failed",
+                    }
+                    for index in range(40)
+                ]
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "wecom-send-failed",
+                            "chat": "LabAgent",
+                            "status": "send_failed",
+                            "send_deferred_reason": "wecom_transport_transient",
+                            "send_retry_count": 3,
+                            "send_errors": [
+                                "attempt 1: WeCom Android transport is unavailable",
+                                *(
+                                    "transient send retry limit reached (3 attempts)"
+                                    for _ in range(40)
+                                ),
+                            ],
+                            "send_failed_repair_history": repeated_history,
+                            "result": {"message": "report", "files": ["/tmp/report.pdf"]},
+                        }
+                    ],
+                )
+
+                self.assertIsNone(worker.claim_next_deferred_send(queue))
+                first = worker.read_tasks(queue)[0]
+                self.assertEqual(first["status"], "send_failed")
+                self.assertEqual(len(first["send_errors"]), 2)
+                self.assertEqual(
+                    len(first["send_failed_repair_history"]),
+                    worker.DEFAULT_SEND_FAILURE_HISTORY_LIMIT,
+                )
+
+                self.assertIsNone(worker.claim_next_deferred_send(queue))
+                second = worker.read_tasks(queue)[0]
+                self.assertEqual(second["send_errors"], first["send_errors"])
+                self.assertEqual(
+                    second["send_failed_repair_history"],
+                    first["send_failed_repair_history"],
+                )
+        finally:
+            if original_max is None:
+                worker.os.environ.pop("WECOM_TRANSPORT_SEND_MAX_RETRIES", None)
+            else:
+                worker.os.environ["WECOM_TRANSPORT_SEND_MAX_RETRIES"] = original_max
+            if original_backoff is None:
+                worker.os.environ.pop("WECOM_TRANSPORT_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECOM_TRANSPORT_SEND_BACKOFF_SECONDS"] = original_backoff
+
+    def test_wecom_transport_can_use_its_final_configured_retry(self) -> None:
+        worker = load_worker()
+        original_max = worker.os.environ.get("WECOM_TRANSPORT_SEND_MAX_RETRIES")
+        original_backoff = worker.os.environ.get("WECOM_TRANSPORT_SEND_BACKOFF_SECONDS")
+        try:
+            worker.os.environ["WECOM_TRANSPORT_SEND_MAX_RETRIES"] = "3"
+            worker.os.environ["WECOM_TRANSPORT_SEND_BACKOFF_SECONDS"] = "0"
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "wecom-final-retry",
+                            "chat": "LabAgent",
+                            "status": "send_failed",
+                            "send_deferred_reason": "wecom_transport_transient",
+                            "send_retry_count": 2,
+                            "send_errors": [
+                                "attempt 1: WeCom Android transport is unavailable"
+                            ],
+                            "result": {"message": "report", "files": []},
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+
+                self.assertIsNotNone(claimed)
+                assert claimed is not None
+                self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+                self.assertEqual(claimed["send_retry_count"], 3)
+                self.assertEqual(len(claimed["send_failed_repair_history"]), 1)
+        finally:
+            if original_max is None:
+                worker.os.environ.pop("WECOM_TRANSPORT_SEND_MAX_RETRIES", None)
+            else:
+                worker.os.environ["WECOM_TRANSPORT_SEND_MAX_RETRIES"] = original_max
+            if original_backoff is None:
+                worker.os.environ.pop("WECOM_TRANSPORT_SEND_BACKOFF_SECONDS", None)
+            else:
+                worker.os.environ["WECOM_TRANSPORT_SEND_BACKOFF_SECONDS"] = original_backoff
+
     def test_claim_next_deferred_send_can_filter_chat(self) -> None:
         worker = load_worker()
         original_backoff = worker.os.environ.get("WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS")
