@@ -68,6 +68,7 @@ ROUTE_KINDS = {
     "edit_existing_media",
     "story_or_script",
     "cad_pcb_labcanvas",
+    "presentation_generation",
     "file_download_or_save",
     "file_intake",
     "process_existing_video",
@@ -529,6 +530,7 @@ Allowed route_kind values:
 Rules:
 - LabAgent focuses on normal research, literature, research proposals, lawful paper downloads, Markdown/TeX/PDF reports, editable paper figures, scientific drawing, CAD/PCB/Blender design, and related artifact work.
 - A grant/funding application, specific aims package, or funding proposal should use `grant_proposal` with worker_needed=true and report_required=true. The worker must use a dedicated durable goal workspace, verify the funder/call and scientific evidence, create editable figures plus LaTeX/PDF, and return artifacts without submitting the application.
+- A PowerPoint/PPTX/slide-deck request should use `presentation_generation` with worker_needed=true. Start with a sensible theme, keep text and layout editable, use generated imagery only as bounded supporting material, render and inspect previews, and return the PPTX to this exact chat. Optional style details may arrive while the same task is running.
 - Attachments, links requiring reading, research, file operations, figures, CAD/PCB/Blender, generation, editing, or multi-step design work need the worker.
 - Simple greetings, ordinary questions answerable without tools, and short conversational follow-ups may be answered directly.
 - For a scientifically valuable question, run two tracks: put a concise, useful preliminary answer in `ack`, and set `worker_needed` true so the durable worker performs source-grounded deep research in parallel. The preliminary answer must be framed as provisional when evidence has not yet been checked.
@@ -682,6 +684,7 @@ def member_prefers_pdf_reports(memory_context: dict[str, Any] | None) -> bool:
 
 def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
     grant = looks_like_grant_request(request)
+    presentation = looks_like_presentation_request(request)
     source_card = str(event.get("msgtype") or "").strip() in {
         "wechat_article_card",
         "merged_chat_history",
@@ -695,7 +698,11 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
             else (
                 "grant_proposal"
                 if grant
-                else ("research_or_summary" if source_card or research else "other_worker")
+                else (
+                    "presentation_generation"
+                    if presentation
+                    else ("research_or_summary" if source_card or research else "other_worker")
+                )
             )
         ),
         "response": "",
@@ -711,6 +718,41 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         "memory_items": [],
         "public_publish_allowed": False,
     }
+
+
+def looks_like_presentation_request(request: str) -> bool:
+    """Bounded fallback; the route agent still decides the complete task."""
+    lowered = str(request or "").casefold()
+    presentation_terms = (
+        "powerpoint",
+        "pptx",
+        "slide deck",
+        "presentation deck",
+        "演示文稿",
+        "簡報",
+        "简报",
+        "幻灯片",
+        "投影片",
+    )
+    action_terms = (
+        "write",
+        "generate",
+        "create",
+        "make",
+        "build",
+        "prepare",
+        "revise",
+        "edit",
+        "写",
+        "生成",
+        "制作",
+        "做",
+        "修改",
+        "更新",
+    )
+    return any(term in lowered for term in presentation_terms) and any(
+        term in lowered for term in action_terms
+    )
 
 
 def looks_like_grant_request(request: str) -> bool:

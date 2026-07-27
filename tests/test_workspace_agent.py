@@ -30,6 +30,8 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertEqual(policy["task"], {"model": "auto-code-review", "reasoning_effort": "medium"})
         self.assertEqual(policy["fallback"]["chat"]["model"], "gpt-5.6-sol")
         self.assertEqual(policy["fallback"]["task"]["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["high"], {"model": "gpt-5.6-sol", "reasoning_effort": "high"})
+        self.assertEqual(policy["xhigh"], {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"})
 
     def test_dynamic_policy_uses_auto_review_and_medium_for_tool_work(self):
         policy = select_agent_policy("Design and render a clean KiCad PCB and CAD holder")
@@ -47,8 +49,8 @@ class WorkspaceAgentTests(unittest.TestCase):
         )
 
         self.assertEqual(policy["model"], "gpt-5.6-sol")
-        self.assertEqual(policy["reasoning_effort"], "medium")
-        self.assertEqual(policy["effort_label"], "medium")
+        self.assertEqual(policy["reasoning_effort"], "xhigh")
+        self.assertEqual(policy["effort_label"], "xhigh")
         self.assertEqual(policy["sandbox"], "read-only")
 
     def test_protein_structure_work_uses_auto_review_medium(self):
@@ -70,13 +72,32 @@ class WorkspaceAgentTests(unittest.TestCase):
                 "wechat-chatops",
                 "labview-control",
                 "protein-structure",
+                "presentations",
             }.issubset(ids)
         )
+
+    def test_presentation_work_uses_sol_xhigh(self):
+        with patch.dict(
+            "os.environ",
+            {"LABCANVAS_AGENT_STANDARD_MODEL": "legacy-standard-model"},
+        ):
+            policy = select_agent_policy("Create a polished PowerPoint presentation with editable slides")
+
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["reasoning_effort"], "xhigh")
+        self.assertEqual(policy["timeout_seconds"], 10800)
+        knowledge = selected_packaged_knowledge("Create an editable PPTX presentation")
+        self.assertIn("## Presentations", knowledge)
+        self.assertIn("Never generate a complete slide", knowledge)
 
     def test_engineering_artifacts_have_canvas_types(self):
         self.assertEqual(artifact_kind_for_path("holder.step"), "model")
         self.assertEqual(artifact_kind_for_path("print.3mf"), "model")
         self.assertEqual(content_type_for_path("report.pdf"), "application/pdf")
+        self.assertEqual(
+            content_type_for_path("deck.pptx"),
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        )
         self.assertEqual(content_type_for_path("board.kicad_pro"), "application/json; charset=utf-8")
 
     def test_prompt_packages_cad_evidence_and_artifact_contract(self):

@@ -238,6 +238,28 @@ Validate:
 - Use TeX for stable panel placement, labels, captions, and final PDF assembly.
 - Compile and inspect the PDF. Return both source and final PDF when requested.
 
+## Presentations
+
+- Use `labcanvas presentation init`, `build --render`, and `validate` with
+  `presentation.json` as the editable source of truth.
+- Start with a bright scientific theme when the requester has not specified
+  one. Tell them they may send audience, style, color, logo, or content changes
+  while work continues; do not block on optional theme confirmation.
+- Keep titles, body copy, claims, citations, labels, geometry, and slide
+  structure native and editable in the PPTX.
+- Image generation is allowed only for separate supporting assets such as a
+  photo, illustration, texture, icon, or panel. Never generate a complete slide
+  or slide background as one image.
+- Preserve a prompt/provenance record for every generated asset. If it contains
+  text, preserve a transcript and mark the wording reviewed; essential text
+  must still exist as editable slide text.
+- Prefer real plots, editable SVG/BioRender diagrams, CAD/Blender renders, and
+  source figures whenever accuracy matters.
+- Build and inspect PPTX, PDF, and PNG previews. Return the PPTX first, then
+  useful previews and the manifest.
+- Use GPT-5.6 SOL with xhigh reasoning for substantial research, narrative
+  structure, and visual synthesis. Use lower effort for narrow edits or exports.
+
 ## WeChat
 
 - Treat WeChat as a message and artifact transport to the same agent routines.
@@ -303,9 +325,10 @@ Validate:
 
 ## Agent Behavior
 
-- A short question can use low reasoning. Planning, review, file/tool
-  execution, exact reconstruction, and multi-tool validation use medium.
-  Legacy high, xhigh, max, and Ultra labels are capped at medium.
+- A short question can use low reasoning. Planning, review, and normal
+  file/tool execution use medium. Complex implementation may use high, and
+  demanding autonomous research/design/presentation work may use xhigh.
+  `max` and `Ultra` normalize to xhigh.
 - Resume one agent session per LabCanvas conversation so follow-up messages have
   context. Never reuse a session across unrelated users/workspaces.
 - A request may change direction. Re-read the latest message before irreversible

@@ -216,7 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--effort",
         choices=["low", "medium", "high", "ultra", "xhigh"],
         default="medium",
-        help="Reasoning effort; legacy high/ultra/xhigh values are capped at medium.",
+        help="Reasoning effort; Ultra aliases xhigh.",
     )
     grant_run.add_argument("--timeout", type=int, default=10800)
     grant_run.add_argument("--detach", action="store_true")
@@ -234,6 +234,53 @@ def build_parser() -> argparse.ArgumentParser:
     grant_validate.add_argument("--project-dir", required=True)
     grant_validate.add_argument("--json", action="store_true")
     grant_validate.set_defaults(func=cmd_grant_validate)
+
+    presentation_parser = subparsers.add_parser(
+        "presentation",
+        help="Create, build, render, and validate editable PowerPoint decks.",
+    )
+    presentation_subparsers = presentation_parser.add_subparsers(
+        dest="presentation_command",
+        required=True,
+    )
+
+    presentation_init = presentation_subparsers.add_parser(
+        "init",
+        help="Create a manifest-driven presentation workspace.",
+    )
+    presentation_init.add_argument("title", nargs="+")
+    presentation_init.add_argument("--objective", default="")
+    presentation_init.add_argument(
+        "--theme",
+        choices=["bright_scientific", "clean_editorial"],
+        default="bright_scientific",
+    )
+    presentation_init.add_argument("--output-dir", required=True)
+    presentation_init.add_argument("--json", action="store_true")
+    presentation_init.set_defaults(func=cmd_presentation_init)
+
+    presentation_build = presentation_subparsers.add_parser(
+        "build",
+        help="Build an editable PPTX from a presentation manifest.",
+    )
+    presentation_build.add_argument("manifest")
+    presentation_build.add_argument("--output-dir", default="")
+    presentation_build.add_argument(
+        "--render",
+        action="store_true",
+        help="Also render PDF and PNG previews with LibreOffice.",
+    )
+    presentation_build.add_argument("--timeout", type=float, default=180)
+    presentation_build.add_argument("--json", action="store_true")
+    presentation_build.set_defaults(func=cmd_presentation_build)
+
+    presentation_validate = presentation_subparsers.add_parser(
+        "validate",
+        help="Validate slide structure and generated-image policy.",
+    )
+    presentation_validate.add_argument("manifest")
+    presentation_validate.add_argument("--json", action="store_true")
+    presentation_validate.set_defaults(func=cmd_presentation_validate)
 
     worker_parser = subparsers.add_parser("_agent-worker", help=argparse.SUPPRESS)
     worker_parser.add_argument("--task-id", required=True)
@@ -684,6 +731,53 @@ def cmd_grant_validate(args: argparse.Namespace) -> int:
 
     result = validate_grant_workspace(args.project_dir)
     _print_payload(result, args.json, f"grant validation: {'ok' if result.get('ok') else 'failed'}")
+    return 0 if result.get("ok") else 1
+
+
+def cmd_presentation_init(args: argparse.Namespace) -> int:
+    from .presentations import initialize_presentation_workspace
+
+    result = initialize_presentation_workspace(
+        args.output_dir,
+        title=" ".join(args.title).strip(),
+        objective=args.objective,
+        theme=args.theme,
+    )
+    _print_payload(
+        result,
+        args.json,
+        f"presentation workspace: {result['project_dir']}",
+    )
+    return 0
+
+
+def cmd_presentation_build(args: argparse.Namespace) -> int:
+    from .presentations import build_presentation
+
+    result = build_presentation(
+        args.manifest,
+        output_dir=args.output_dir or None,
+        render=args.render,
+        timeout=args.timeout,
+    )
+    _print_payload(
+        result,
+        args.json,
+        result.get("pptx") or "; ".join(result.get("validation", {}).get("errors", [])),
+    )
+    return 0 if result.get("ok") else 1
+
+
+def cmd_presentation_validate(args: argparse.Namespace) -> int:
+    from .presentations import load_manifest, validate_manifest
+
+    manifest, manifest_path = load_manifest(args.manifest)
+    result = validate_manifest(manifest, manifest_path.parent)
+    _print_payload(
+        result,
+        args.json,
+        f"presentation validation: {'ok' if result.get('ok') else 'failed'}",
+    )
     return 0 if result.get("ok") else 1
 
 

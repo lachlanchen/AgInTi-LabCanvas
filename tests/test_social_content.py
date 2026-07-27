@@ -140,7 +140,7 @@ class SocialContentTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(captured["policy"]["model"], "gpt-5.6-sol")
-        self.assertEqual(captured["policy"]["reasoning_effort"], "medium")
+        self.assertEqual(captured["policy"]["reasoning_effort"], "xhigh")
         self.assertIn("valid JSON only", captured["prompt"])
         self.assertEqual(hn["title"], "")
         self.assertEqual(hn["body"], "")

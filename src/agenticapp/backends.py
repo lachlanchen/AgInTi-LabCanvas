@@ -14,9 +14,13 @@ MODEL_POLICY_PATH = Path(__file__).resolve().parents[2] / "configs" / "model-pol
 DEFAULT_MODEL_POLICY: dict[str, Any] = {
     "chat": {"model": "auto-code-review", "reasoning_effort": "low"},
     "task": {"model": "auto-code-review", "reasoning_effort": "medium"},
+    "high": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
+    "xhigh": {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
     "fallback": {
         "chat": {"model": "gpt-5.6-sol", "reasoning_effort": "low"},
         "task": {"model": "gpt-5.6-sol", "reasoning_effort": "medium"},
+        "high": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
+        "xhigh": {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
     },
 }
 
@@ -113,11 +117,14 @@ def load_model_policy(path: str | Path | None = None) -> dict[str, Any]:
 
 def model_policy_for_effort(effort: str, *, policy: dict[str, Any] | None = None) -> dict[str, str]:
     """Return primary and same-effort fallback models from the shared policy."""
-    selected = "low" if str(effort).strip().lower() == "low" else "medium"
+    requested = str(effort).strip().lower()
+    requested = {"max": "xhigh", "ultra": "xhigh"}.get(requested, requested)
+    selected = requested if requested in {"low", "medium", "high", "xhigh"} else "medium"
+    section = {"low": "chat", "medium": "task"}.get(selected, selected)
     current = policy if isinstance(policy, dict) else load_model_policy()
-    primary = current.get(selected) if isinstance(current.get(selected), dict) else {}
+    primary = current.get(section) if isinstance(current.get(section), dict) else {}
     fallback_root = current.get("fallback") if isinstance(current.get("fallback"), dict) else {}
-    fallback = fallback_root.get(selected) if isinstance(fallback_root.get(selected), dict) else {}
+    fallback = fallback_root.get(section) if isinstance(fallback_root.get(section), dict) else {}
     return {
         "model": str(primary.get("model") or "auto-code-review"),
         "reasoning_effort": str(primary.get("reasoning_effort") or selected),

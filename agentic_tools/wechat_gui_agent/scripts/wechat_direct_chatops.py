@@ -66,8 +66,20 @@ INTERRUPTIBLE_TASK_STATUSES = {
     "waiting_confirmation",
 }
 REQUEUE_ON_INTERRUPT_STATUSES = INTERRUPTIBLE_TASK_STATUSES - {"in_progress"}
-INTERRUPTIBLE_ROUTE_KINDS = {"story_or_script", "generate_video", "career_strategy", "grant_proposal"}
-INTERRUPTIBLE_ROUTINE_IDS = {"story_script_generation", "generated_video", "career_strategy", "grant_proposal"}
+INTERRUPTIBLE_ROUTE_KINDS = {
+    "story_or_script",
+    "generate_video",
+    "career_strategy",
+    "grant_proposal",
+    "presentation_generation",
+}
+INTERRUPTIBLE_ROUTINE_IDS = {
+    "story_script_generation",
+    "generated_video",
+    "career_strategy",
+    "grant_proposal",
+    "presentation_deck",
+}
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 
 
@@ -3082,6 +3094,7 @@ Allowed route_kind values:
 - process_existing_video
 - publish_video
 - cad_pcb_labcanvas
+- presentation_generation
 - file_intake
 - file_download_or_save
 - other_worker
@@ -3093,6 +3106,7 @@ Important distinction:
 - The current coalesced request is authoritative. Preserve every safe explicit instruction and classify toward the closest backend routine instead of dropping stages.
 - In writing_language_money, personal_organizer, and lachlanchan-style DM chats, requests about what to write, career direction, making money, monetization, opportunities, talent/strengths, personal positioning, products to build, GitHub/lazying.art direction, or "what should I do" should route to career_strategy with worker_needed=true.
 - Grant applications, funding proposals, and specific-aims packages should route to grant_proposal. The worker owns evidence-grounded drafting, an editable figure, LaTeX/PDF validation, and artifact return; this route never authorizes submission.
+- PowerPoint/PPTX/slide-deck requests should route to presentation_generation. The worker owns editable native slide text and geometry, a presentation manifest, selective supporting assets, rendered preview inspection, and PPTX delivery. Image generation may create bounded material assets, never a complete slide or slide background.
 - If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
 - Every monitored chat, including EchoMind, can ask for backend work such as CAD/PCB, image or figure generation, video generation, video publication, file/media handling, writing, Markdown, LaTeX, PDFs, and other artifact tasks. EchoMind is language-learning by default only when the message is ordinary language practice.
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
@@ -3230,6 +3244,8 @@ def fallback_route_decision(
         route_kind = "grant_proposal"
     elif is_career_strategy_task(config, text):
         route_kind = "career_strategy"
+    elif is_presentation_artifact_task(text):
+        route_kind = "presentation_generation"
     elif is_document_artifact_task(text):
         route_kind = "other_worker"
     elif is_cad_pcb_labcanvas_task(text):
@@ -3256,7 +3272,13 @@ def fallback_route_decision(
         project = "lalachan"
     elif route_kind == "career_strategy":
         project = "career"
-    elif route_kind in {"cad_pcb_labcanvas", "generate_image", "edit_existing_media", "grant_proposal"}:
+    elif route_kind in {
+        "cad_pcb_labcanvas",
+        "generate_image",
+        "edit_existing_media",
+        "grant_proposal",
+        "presentation_generation",
+    }:
         project = "labcanvas"
     else:
         project = "unknown"
@@ -3326,6 +3348,7 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         "process_existing_video",
         "publish_video",
         "cad_pcb_labcanvas",
+        "presentation_generation",
         "file_intake",
         "file_download_or_save",
         "other_worker",
@@ -4266,9 +4289,48 @@ def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
 def is_document_artifact_task(text: str) -> bool:
     """Small fallback wake gate; route/worker agents remain the primary classifier."""
     lowered = str(text or "").lower()
-    document_terms = ("latex", "tex", "markdown", "md", "pdf", "report", "document", "slides", "beamer", "文档", "文檔", "报告")
+    document_terms = (
+        "latex", "tex", "markdown", "md", "pdf", "report", "document", "slides",
+        "powerpoint", "ppt", "pptx", "beamer", "文档", "文檔", "报告", "演示文稿",
+        "簡報", "简报", "幻灯片", "投影片",
+    )
     action_terms = ("write", "generate", "create", "make", "compile", "export", "send", "return", "写", "生成", "编译", "編譯", "导出", "发送")
     return any(term in lowered for term in document_terms) and any(term in lowered for term in action_terms)
+
+
+def is_presentation_artifact_task(text: str) -> bool:
+    """Wake the presentation routine without replacing agent interpretation."""
+    lowered = str(text or "").casefold()
+    presentation_terms = (
+        "powerpoint",
+        "pptx",
+        "slide deck",
+        "presentation deck",
+        "演示文稿",
+        "簡報",
+        "简报",
+        "幻灯片",
+        "投影片",
+    )
+    action_terms = (
+        "write",
+        "generate",
+        "create",
+        "make",
+        "build",
+        "prepare",
+        "revise",
+        "edit",
+        "写",
+        "生成",
+        "制作",
+        "做",
+        "修改",
+        "更新",
+    )
+    return any(term in lowered for term in presentation_terms) and any(
+        term in lowered for term in action_terms
+    )
 
 
 def is_video_publish_context_task(text: str) -> bool:

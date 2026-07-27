@@ -24,6 +24,7 @@ MIME_BY_SUFFIX = {
     ".obj": "model/obj",
     ".pdf": "application/pdf",
     ".png": "image/png",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".scad": "text/plain; charset=utf-8",
     ".step": "model/step",
     ".stl": "model/stl",

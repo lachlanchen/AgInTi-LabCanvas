@@ -117,8 +117,16 @@ INTERRUPTIBLE_TASK_STATUSES = {
     "waiting_confirmation",
 }
 REQUEUE_ON_INTERRUPT_STATUSES = INTERRUPTIBLE_TASK_STATUSES - {CLAIMED_STATUS}
-INTERRUPTIBLE_ROUTE_KINDS = {"story_or_script", "generate_video"}
-INTERRUPTIBLE_ROUTINE_IDS = {"story_script_generation", "generated_video"}
+INTERRUPTIBLE_ROUTE_KINDS = {
+    "story_or_script",
+    "generate_video",
+    "presentation_generation",
+}
+INTERRUPTIBLE_ROUTINE_IDS = {
+    "story_script_generation",
+    "generated_video",
+    "presentation_deck",
+}
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 EFFORT_TIMEOUT_SECONDS = {
     "low": 120,
@@ -8752,7 +8760,10 @@ def is_generate_video_task(task: dict[str, Any]) -> bool:
         return str(route.get("route_kind") or "") == "generate_video"
     text = task_focus_text(task).lower()
     generation_markers = ("generate", "create", "make", "生成", "创作", "做")
-    return "video" in text and any(marker in text for marker in generation_markers)
+    video_markers = ("video", "视频", "影片", "短片", "动画", "動畫")
+    return any(marker in text for marker in video_markers) and any(
+        marker in text for marker in generation_markers
+    )
 
 
 def generated_video_monitor_only(task: dict[str, Any]) -> bool:
@@ -12377,6 +12388,12 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
     ]
     protein_structure_task = any(keyword in text for keyword in protein_structure_keywords)
     xhigh_keywords = [
+        "powerpoint",
+        "pptx",
+        "slide deck",
+        "presentation deck",
+        "演示文稿",
+        "幻灯片",
         "deep research",
         "fully implement",
         "full implementation",
@@ -12482,6 +12499,8 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
     ]
     if scheduled_daily_research and routine_id == "research_summary":
         effort = routine_effort or "xhigh"
+    elif routine_id == "presentation_deck":
+        effort = routine_effort or "xhigh"
     elif protein_structure_task:
         effort = "ultra"
     elif routine_id in {"research_summary", "story_script_generation"} and routine_effort:
@@ -12569,7 +12588,8 @@ def load_worker_model_policy(effort: str = "medium") -> dict[str, str]:
         data = json.loads(MODEL_POLICY_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         data = {}
-    section = "chat" if str(effort).strip().lower() == "low" else "task"
+    normalized = normalize_effort(effort, fallback="medium")
+    section = {"low": "chat", "medium": "task"}.get(normalized, normalized)
     primary = data.get(section) if isinstance(data, dict) and isinstance(data.get(section), dict) else {}
     fallback_root = data.get("fallback") if isinstance(data, dict) and isinstance(data.get("fallback"), dict) else {}
     fallback = fallback_root.get(section) if isinstance(fallback_root.get(section), dict) else {}
@@ -12594,15 +12614,15 @@ def worker_min_effort() -> str:
         os.environ.get("WECHAT_WORKER_MIN_EFFORT", "low"),
         fallback="low",
     )
-    return clamp_effort(configured, min_effort="low", max_effort="medium")
+    return clamp_effort(configured, min_effort="low", max_effort="xhigh")
 
 
 def worker_max_effort() -> str:
     configured = normalize_effort(
-        os.environ.get("WECHAT_WORKER_MAX_EFFORT", "medium"),
-        fallback="medium",
+        os.environ.get("WECHAT_WORKER_MAX_EFFORT", "xhigh"),
+        fallback="xhigh",
     )
-    return clamp_effort(configured, min_effort="low", max_effort="medium")
+    return clamp_effort(configured, min_effort="low", max_effort="xhigh")
 
 
 def normalize_effort(value: str | None, *, fallback: str) -> str:

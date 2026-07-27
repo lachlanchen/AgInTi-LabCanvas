@@ -334,6 +334,25 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(route["project"], "career")
         self.assertTrue(route["worker_needed"])
 
+    def test_presentation_fallback_uses_interruptible_deck_route(self) -> None:
+        config = self.backend_chat_config("懒人科研", "research")
+        text = "Create a polished PowerPoint presentation and let me revise the theme while it runs."
+        row = self.row(text)
+
+        route = direct_chatops.fallback_route_decision(config, text, row, [row])
+
+        self.assertEqual(route["route_kind"], "presentation_generation")
+        self.assertEqual(route["project"], "labcanvas")
+        self.assertTrue(route["worker_needed"])
+        self.assertTrue(
+            direct_chatops.is_interruptible_task(
+                {
+                    "route_decision": route,
+                    "routine": {"id": "presentation_deck"},
+                }
+            )
+        )
+
     def test_link_inbox_mp_weixin_preempts_cad_markers_inside_url_hashes(self) -> None:
         config = self.backend_chat_config("鏈接", "link_inbox")
         text = (

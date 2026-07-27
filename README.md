@@ -33,8 +33,9 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 
 | Area | What is ready | Entry point |
 | --- | --- | --- |
-| Workspace agent | Persistent direct chat, dynamic GPT-5.6 SOL low/medium routing, durable tasks, cancellation, and artifact return across all lab tools | [docs/WORKSPACE_AGENT.md](docs/WORKSPACE_AGENT.md) |
+| Workspace agent | Persistent direct chat, dynamic low-to-xhigh model routing, durable tasks, cancellation, and artifact return across all lab tools | [docs/WORKSPACE_AGENT.md](docs/WORKSPACE_AGENT.md) |
 | Web studio | Agent chat, bright UI, artifact canvas, backend settings, multilingual UI | `labcanvas web --port 8787 --open` |
+| Presentations | Editable manifest-driven PPTX, selective visual assets, generated-image policy gates, and PDF/PNG preview inspection | `labcanvas presentation`, [pipeline](docs/PRESENTATION_PIPELINE.md) |
 | Paper figures | Exact `NxM` SVG grids, AgInTi image dry-run payloads, editable artifact manifest | [docs/EDITABLE_FIGURE_PIPELINE.md](docs/EDITABLE_FIGURE_PIPELINE.md) |
 | Grant projects | Durable Codex goal workspace, traceable evidence, editable BioRender/SVG/TeX figures, checked LaTeX/PDF, and mandatory chat delivery | `labcanvas grant init`, `labcanvas grant run`, [BioRender bridge](agentic_tools/biorender_agent/README.md) |
 | Protein structures | Reused ProteinStructure AlphaFold Server pipeline, persistent logged-in CDP/noVNC browser, downloads, metrics, plots, and screenshots | `labcanvas protein start`, [handoff](references/proteinstructure-alphafold-labcanvas-handoff.md) |
@@ -56,9 +57,11 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 ### Model Policy
 
 Automatic LabCanvas turns use the shared [`configs/model-policy.json`](configs/model-policy.json):
-`auto-code-review` with low reasoning for ordinary chat and medium reasoning for durable tasks,
-research, and artifact work. The file keeps `gpt-5.6-sol` at the matching effort as the fallback
-when the preferred alias is unavailable. Explicit `--model` and `--effort` selections still win.
+`auto-code-review` with low reasoning for ordinary chat and medium reasoning for
+ordinary durable tasks. Complex implementation may use `gpt-5.6-sol` high;
+demanding autonomous research, design, and presentation synthesis may use
+`gpt-5.6-sol` xhigh. Matching-effort fallbacks are retained, and explicit
+`--model` and `--effort` selections still win.
 
 Run from a source checkout:
 
@@ -115,6 +118,9 @@ labcanvas agent tasks
 labcanvas grant init "Draft a proposal grounded in the supplied call and primary literature" --title "Research Grant"
 labcanvas grant run "Complete the proposal, editable figure, and checked PDF" --project-dir output/grants/PROJECT --effort medium
 labcanvas grant validate --project-dir output/grants/PROJECT --json
+labcanvas presentation init "Research roadmap" --objective "Explain the evidence and next experiment" --output-dir output/presentations/roadmap
+labcanvas presentation build output/presentations/roadmap/presentation.json --render --json
+labcanvas presentation validate output/presentations/roadmap/presentation.json --json
 labcanvas render-scene my-setup.scene.json --dry-run
 labcanvas render-scene my-setup.scene.json --output-dir output/scenes
 labcanvas studio openscad examples/paper-optics-setup.scene.json

@@ -22,6 +22,9 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m agenticapp grant init "Draft specific aims" --title "Research Grant"`: create an ignored evidence, figure, LaTeX, PDF, and goal workspace.
 - `PYTHONPATH=src python -m agenticapp grant run "Complete the proposal" --project-dir output/grants/PROJECT --effort medium`: resume a persistent GPT-5.6 SOL grant agent against one durable workspace.
 - `PYTHONPATH=src python -m agenticapp grant compile --project-dir output/grants/PROJECT && PYTHONPATH=src python -m agenticapp grant validate --project-dir output/grants/PROJECT`: compile and enforce evidence, editability, PDF, and artifact gates.
+- `PYTHONPATH=src python -m agenticapp presentation init "Research roadmap" --objective "Explain the evidence and next experiment" --output-dir output/presentations/roadmap`: create an editable manifest-driven deck workspace.
+- `PYTHONPATH=src python -m agenticapp presentation build output/presentations/roadmap/presentation.json --render --json`: build and validate the PPTX, then render PDF/PNG previews.
+- `PYTHONPATH=src python -m agenticapp presentation validate output/presentations/roadmap/presentation.json --json`: enforce editable text, bounded generated assets, prompt provenance, and generated-text review gates.
 - `agentic_tools/biorender_agent/scripts/start_biorender_stack.sh`: reuse the dedicated BioRender browser and authenticated localhost MCP proxy.
 - `python agentic_tools/biorender_agent/scripts/probe_biorender_mcp.py --json`: prove authenticated MCP `initialize` and `tools/list`, rather than relying on an HTTP health check.
 - `PYTHONPATH=src python -m agenticapp studio biorender-figure "Mechanism figure" --panel "A: mechanism" --panel "B: validation" --json`: create a reviewable dry-run contract; add `--live` only when an editable BioRender figure should actually be created.
@@ -80,7 +83,28 @@ For workspace-agent changes, mock the backend in unit tests. Test model selectio
 
 ## Workspace Agent Rules
 
-The web and CLI must use the same `workspace_agent.py` runtime. Keep the web chat a direct transport to a persistent agent session; do not replace it with keyword-specific response branches. Domain-specific code remains useful as callable routines. Automatic routing reads `configs/model-policy.json`: `auto-code-review` low for chat and medium for durable/tool-capable work, with `gpt-5.6-sol` retained as the matching-effort fallback if the preferred alias is unavailable. Explicit model/effort choices remain authoritative. Legacy high, xhigh, max, and Ultra labels normalize to medium. Preserve durable task records under ignored `output/`, return real artifacts to the canvas, and require explicit authorization for payment, manufacturing submission, public publication, credential changes, destructive deletion, or another irreversible external action.
+The web and CLI must use the same `workspace_agent.py` runtime. Keep the web chat a direct transport to a persistent agent session; do not replace it with keyword-specific response branches. Domain-specific code remains useful as callable routines. Automatic routing reads `configs/model-policy.json`: `auto-code-review` low for chat and medium for ordinary durable/tool-capable work, with `gpt-5.6-sol` high/xhigh for complex implementation, deep synthesis, and presentation work. Explicit model/effort choices remain authoritative. `max` and Ultra normalize to xhigh. Preserve durable task records under ignored `output/`, return real artifacts to the canvas, and require explicit authorization for payment, manufacturing submission, public publication, credential changes, destructive deletion, or another irreversible external action.
+
+## Presentation Rules
+
+Presentation requests use `src/agenticapp/presentations.py` and the
+`presentation_deck` worker routine. Keep native editable text, slide geometry,
+and a `presentation.json` manifest as the source of truth. Image generation is
+allowed only for separate bounded material assets such as illustrations,
+photos, icons, textures, or panels; never generate a complete slide or slide
+background as one image. Preserve the prompt/provenance for each generated
+asset. Generated text is allowed only when it has a transcript and explicit
+review, while every essential title, claim, citation, label, and body sentence
+remains editable slide text.
+
+When style is unspecified, start immediately with the bright scientific theme
+and tell the requester they may add audience, color, style, logo, or content
+preferences while work continues. Ask only one concise question when a missing
+fact materially affects the deck and cannot be inferred. Treat subsequent
+same-chat messages as interruptions to the persistent presentation session.
+Substantive deck research and synthesis may use GPT-5.6 SOL xhigh; narrow edits
+and exports can use lower effort. Validate the PPTX package and render/inspect
+PDF/PNG previews before delivery.
 
 Protein structure tasks must reuse `external/ProteinStructure` and its sibling runtime workspace `../ProteinStructure`; do not rewrite AlphaFold submission, polling, metric extraction, plotting, or screenshot logic in LabCanvas. Keep generated AlphaFold downloads, figures, compiled PDFs, copied result payloads, screenshots, and runtime logs local and ignored. Track reusable scripts, runbooks, FASTA/JSON job inputs, compact metrics, TeX/Markdown sources, and reference structures. Route nontrivial AlphaFold/protein-structure work to `gpt-5.6-sol` with medium effort, preserve the logged-in CDP profile, and distinguish prediction, literature evidence, docking hypotheses, and experimentally validated inhibition.
 
@@ -108,7 +132,7 @@ When a CAD run is ready for 3D printing, create a timestamped run folder under t
 
 Immediate execution and delivery contract: creating, enabling, changing, or restarting any routine must invoke it once immediately before waiting for its periodic schedule. A request that asks for a chat response or artifact is incomplete until the sender reports verified delivery, deferred delivery with a durable retry record, or an explicit blocker. Internal-only routines may retain their result locally, but they must state that no chat delivery was requested. This rule applies equally to WeChat and WeCom and to every group, member schedule, language lesson, research task, CAD/PCB task, media task, and publication routine.
 
-Research chat messages that mention LabCanvas, AgInTi image generation, KiCad, Gerber, STEP/STL, CAD, PCB, Blender, figures, icons, or renders should be routed to the worker queue. The fast monitor should only ACK and enqueue. The worker may run `studio figure-grid`, `studio lab-task`, `render-scene`, AgInTi image generation, KiCad, OpenSCAD, and Blender commands, then return generated PNG/PDF/SVG/MP4/MOV/audio/STEP/STL/ZIP/KiCad artifacts in the `files` array so the GUI sender can deliver them to WeChat.
+Research chat messages that mention LabCanvas, presentations/PPTX, AgInTi image generation, KiCad, Gerber, STEP/STL, CAD, PCB, Blender, figures, icons, or renders should be routed to the worker queue. The fast monitor should only ACK and enqueue. The worker may run `presentation build`, `studio figure-grid`, `studio lab-task`, `render-scene`, AgInTi image generation, KiCad, OpenSCAD, and Blender commands, then return generated PPTX/PNG/PDF/SVG/MP4/MOV/audio/STEP/STL/ZIP/KiCad artifacts in the `files` array so the GUI sender can deliver them to WeChat.
 ZIP, RAR, 7z, Word, PDF, and text attachments must pass through `wechat_document_reader.py` after exact same-chat source resolution. Treat the attachment title, extension, size, and checksum as an identity contract; never substitute nearby media. Parse DOCX as XML, extract PDFs with bounded `pdftotext` plus OCR fallback, and unpack archives only with traversal, symlink, encryption, member-count, byte, depth, executable, and compression-ratio guards. Pass `agent_context_path` to the resumed worker so it answers from the content; do not stop at a checksum receipt when readable evidence exists.
 For incoming images, use exact same-chat media resolution and Codex vision to answer naturally with what the image shows or means. For image/media analysis, always provide useful Chinese, English, and Japanese detail; add pinyin, Japanese kana/furigana, romaji, pronunciation, grammar, or vocabulary when text or language-learning content is present. Keep OCR, model names, dimensions, checksums, and fixed vision labels as private evidence; expose them only when the user explicitly asks for transcription or diagnostics.
 EchoMind has exactly two scheduled outputs: one compact multilingual teaching message every three hours, and one high-quality previous-day language review PDF at 06:00 `Asia/Hong_Kong`. The daily review must compile a beautiful XeLaTeX PDF with Japanese ruby furigana and pinyin, then deliver the verified PDF to EchoMind; do not create or deliver more than one report for the same previous-day date. Quiet hours from 20:00 through 08:00 HKT apply only to periodic conversational lessons and idle inspiration. Scheduled daily research and the 06:00 daily PDF must run or catch up independently of quiet hours. Persist both pending outputs before delivery, recover successful sends from the mirror ledger after a crash, and never replay them merely because tmux or the host restarted.

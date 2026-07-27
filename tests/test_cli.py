@@ -117,6 +117,41 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["dispatch"]["status"], "dry-run")
         self.assertEqual(payload["artifact"]["kind"], "json")
 
+    def test_presentation_init_and_validate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "presentation",
+                        "init",
+                        "Research",
+                        "roadmap",
+                        "--objective",
+                        "Explain the evidence",
+                        "--output-dir",
+                        tmp,
+                        "--json",
+                    ]
+                )
+            initialized = json.loads(stdout.getvalue())
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                validate_code = main(
+                    [
+                        "presentation",
+                        "validate",
+                        initialized["manifest"],
+                        "--json",
+                    ]
+                )
+            validation = json.loads(stdout.getvalue())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(validate_code, 0)
+        self.assertTrue(validation["ok"])
+        self.assertEqual(validation["slide_count"], 4)
+
     def test_studio_lab_task_registers_board_and_cad_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
             stdout = io.StringIO()

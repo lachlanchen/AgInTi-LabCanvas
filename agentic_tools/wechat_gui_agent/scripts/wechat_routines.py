@@ -498,6 +498,59 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "Drafting does not authorize grant submission, credential changes, payment, or another irreversible external action.",
         ),
     ),
+    "presentation_deck": RoutineDefinition(
+        id="presentation_deck",
+        title="Editable PowerPoint Presentation",
+        route_kinds=("presentation_generation",),
+        purpose=(
+            "Create a polished, editable PowerPoint deck with a manifest, native "
+            "slide text and geometry, bounded visual assets, and rendered previews."
+        ),
+        default_effort="xhigh",
+        stages=(
+            {
+                "id": "start_and_outline",
+                "owner": "worker_agent",
+                "entrypoint": "labcanvas presentation init + resumed source-chat agent",
+                "success": "deck workspace, audience-aware outline, and initial theme exist without waiting on optional style preferences",
+            },
+            {
+                "id": "asset_generation",
+                "owner": "worker_agent",
+                "entrypoint": "source-grounded charts/diagrams plus selective AgInTi/image generation/BioRender assets",
+                "success": "each necessary visual is a separate, provenance-tracked asset rather than a generated slide screenshot",
+            },
+            {
+                "id": "build_and_validate",
+                "owner": "worker_agent",
+                "entrypoint": "labcanvas presentation build --render + labcanvas presentation validate",
+                "success": "editable PPTX, manifest, PDF/PNG previews, and generated-asset policy gates pass",
+            },
+            {
+                "id": "artifact_delivery_gate",
+                "owner": "queue_orchestrator",
+                "entrypoint": "prepare_result_files -> send_result_with_retries",
+                "success": "PPTX and useful preview/source artifacts reach the exact source chat",
+            },
+        ),
+        required_gates=("build_and_validate", "artifact_delivery_gate"),
+        artifact_policy=(
+            "Return the editable PPTX first, then the PDF or montage/slide previews "
+            "and presentation.json. Keep individual asset prompts and sources in the project workspace."
+        ),
+        rules=COMMON_RULES
+        + (
+            "Start with a sensible bright scientific theme unless the current request already specifies a style; do not wait for optional color/style confirmation.",
+            "Send one natural progress response that work has started and that the requester may chip in with audience, theme, colors, logo, examples, or additional content while the deck is being made.",
+            "Ask at most one concise question only when audience, language, confidentiality, or another missing fact materially changes the deck and cannot be inferred safely.",
+            "Treat subsequent same-chat messages as interruptions to the same persistent presentation session; revise the outline/theme/assets without discarding completed valid work.",
+            "Never use image generation to create a complete slide, slide background, or screenshot of slide text. Use it only for separate supporting photos, illustrations, textures, icons, or panel assets when it improves the deck.",
+            "Generated assets may contain text only when necessary, transcribed, and reviewed; keep every essential title, claim, label, citation, and body sentence as native editable slide text.",
+            "Prefer real plots, editable diagrams, BioRender, SVG, CAD/Blender renders, and source-grounded figures over generated imagery when accuracy matters.",
+            "Use gpt-5.6-sol with xhigh reasoning for substantive deck research, story structure, and visual synthesis; lower effort is acceptable for a narrow edit, rebuild, or export.",
+            "Do not mark the task complete until the PPTX package opens, slide count matches, generated-asset gates pass, and rendered previews have been inspected when LibreOffice is available.",
+        ),
+    ),
     "general_worker": RoutineDefinition(
         id="general_worker",
         title="General Worker Supervised Task",
@@ -557,9 +610,22 @@ def routine_to_dict(routine: RoutineDefinition) -> dict[str, Any]:
 def routine_id_for_route(route_decision: dict[str, Any] | None, request_text: str = "") -> str:
     route = route_decision if isinstance(route_decision, dict) else {}
     route_kind = str(route.get("route_kind") or "").strip()
+    lowered = str(request_text or "").lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "powerpoint",
+            "pptx",
+            "slide deck",
+            "presentation deck",
+            "演示文稿",
+            "幻灯片",
+            "简报",
+        )
+    ):
+        return "presentation_deck"
     if route_kind in ROUTE_TO_ROUTINE:
         return ROUTE_TO_ROUTINE[route_kind]
-    lowered = str(request_text or "").lower()
     if any(marker in lowered for marker in ("grant proposal", "grant application", "funding proposal", "基金申请", "基金申請", "项目申请书", "項目申請書")):
         return "grant_proposal"
     if any(marker in lowered for marker in ("pcb", "kicad", "openscad", "blender", "cad", "gerber", "render", "渲染", "电路板")):

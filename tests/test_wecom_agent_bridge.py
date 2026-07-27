@@ -187,7 +187,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("WECHAT_WORKER_DISABLE_AUTOPUBLISH_PREFLIGHT=1", source)
         self.assertIn('WECHAT_WORKER_CODEX_MODEL="${WECHAT_WORKER_CODEX_MODEL:-gpt-5.6-sol}"', source)
         self.assertIn('WECHAT_WORKER_MIN_EFFORT="${WECHAT_WORKER_MIN_EFFORT:-low}"', source)
-        self.assertIn('WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-medium}"', source)
+        self.assertIn('WECHAT_WORKER_MAX_EFFORT="${WECHAT_WORKER_MAX_EFFORT:-xhigh}"', source)
         self.assertIn('WECHAT_WORKER_TIMEOUT_HIGH_SECONDS="${WECHAT_WORKER_TIMEOUT_HIGH_SECONDS:-21600}"', source)
         self.assertIn('WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS="${WECHAT_WORKER_STALE_IN_PROGRESS_SECONDS:-0}"', source)
         self.assertIn('WECHAT_WORKER_ENV_FILE="$PRIVATE_ENV"', source)
@@ -428,6 +428,17 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(route["worker_needed"])
         self.assertEqual(route["route_kind"], "grant_proposal")
         self.assertTrue(route["report_required"])
+
+    def test_presentation_request_fallback_uses_editable_deck_routine(self) -> None:
+        ingest = load_ingest()
+        event = self.sample_event(
+            text="Prepare a PowerPoint slide deck with editable text and useful figures."
+        )
+
+        route = ingest.fallback_route(event, event["text"])
+
+        self.assertTrue(route["worker_needed"])
+        self.assertEqual(route["route_kind"], "presentation_generation")
 
     def test_gui_ingest_suppresses_recent_exact_duplicate_with_changed_sender(self) -> None:
         ingest = load_ingest()

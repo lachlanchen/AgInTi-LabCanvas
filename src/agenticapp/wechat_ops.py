@@ -1211,7 +1211,7 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "dynamic_ack_enabled": True,
         "dynamic_ack_max_chars": 96,
         "immediate_ack_text": "收到，我先处理，完成后把结果发回来。",
-        "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "aginti", "imagegen", "image generation", "kicad", "gerber", "step", "stl", "3d", "labcanvas", "overview", "figure", "figure grid", "icons", "file", "image"],
+        "slow_task_keywords": ["download", "pdf", "paper", "论文", "下載", "下载", "render", "cad", "pcb", "aginti", "imagegen", "image generation", "kicad", "gerber", "step", "stl", "3d", "labcanvas", "overview", "figure", "figure grid", "icons", "file", "image", "presentation", "powerpoint", "ppt", "pptx", "slides", "slide deck", "演示文稿", "幻灯片"],
         "poll_seconds": 0.8,
         "catchup_poll_seconds": 0.1,
         "agent_backend": args.agent_backend,

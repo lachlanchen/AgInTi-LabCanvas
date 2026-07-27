@@ -52,6 +52,23 @@ class WeChatRoutineTests(unittest.TestCase):
 
         self.assertEqual(routine_id, "labcanvas_cad_pcb")
 
+    def test_presentation_route_uses_editable_deck_contract(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "other_worker"},
+            "Make a polished PowerPoint presentation and use image generation only where useful.",
+            task_id="task-ppt",
+            chat="LabAgent",
+        )
+        rules = " ".join(contract["rules"])
+
+        self.assertEqual(contract["id"], "presentation_deck")
+        self.assertEqual(contract["default_effort"], "xhigh")
+        self.assertIn("build_and_validate", contract["required_gates"])
+        self.assertIn("Never use image generation to create a complete slide", rules)
+        self.assertIn("chip in", rules)
+        self.assertIn("gpt-5.6-sol", rules)
+
     def test_contract_contains_stages_rules_and_artifact_policy(self) -> None:
         routines = load_routines()
         contract = routines.build_routine_contract(

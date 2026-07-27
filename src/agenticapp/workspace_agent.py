@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover
 PACKAGE_DIR = Path(__file__).resolve().parent
 KNOWLEDGE_PATH = PACKAGE_DIR / "knowledge" / "workspace_agent.md"
 DEFAULT_MODEL = "gpt-5.6-sol"
-EFFORTS = ("low", "medium")
+EFFORTS = ("low", "medium", "high", "xhigh")
 ARTIFACT_SUFFIXES = {
     ".3mf",
     ".blend",
@@ -49,6 +49,7 @@ ARTIFACT_SUFFIXES = {
     ".obj",
     ".pdf",
     ".png",
+    ".pptx",
     ".scad",
     ".step",
     ".stl",
@@ -82,8 +83,8 @@ def utc_now() -> str:
 
 def normalize_effort(value: str) -> str:
     normalized = str(value or "auto").strip().lower()
-    if normalized in {"high", "xhigh", "max", "ultra"}:
-        return "medium"
+    if normalized in {"max", "ultra"}:
+        return "xhigh"
     return normalized if normalized in EFFORTS else "auto"
 
 
@@ -162,6 +163,11 @@ def select_agent_policy(
             "wechat",
             "latex",
             "tex",
+            "presentation",
+            "powerpoint",
+            "ppt",
+            "pptx",
+            "slide deck",
             "step",
             "stl",
             "gerber",
@@ -189,16 +195,30 @@ def select_agent_policy(
             or any(term in lowered for term in analysis_terms)
             or len(text) > 500
         ):
-            selected_effort = "medium"
+            presentation_work = any(
+                term in lowered
+                for term in (
+                    "presentation",
+                    "powerpoint",
+                    "ppt",
+                    "pptx",
+                    "slide deck",
+                    "演示文稿",
+                    "幻灯片",
+                )
+            )
+            selected_effort = "xhigh" if presentation_work else "medium"
         else:
             selected_effort = "low"
 
     if model_was_auto:
         configured = model_policy_for_effort(selected_effort, policy=model_policy or load_model_policy())
-        selected_model = os.environ.get(
-            "LABCANVAS_AGENT_FAST_MODEL" if selected_effort == "low" else "LABCANVAS_AGENT_STANDARD_MODEL",
-            configured["model"],
-        )
+        if selected_effort == "low":
+            selected_model = os.environ.get("LABCANVAS_AGENT_FAST_MODEL", configured["model"])
+        elif selected_effort == "medium":
+            selected_model = os.environ.get("LABCANVAS_AGENT_STANDARD_MODEL", configured["model"])
+        else:
+            selected_model = configured["model"]
 
     selected_mode = str(mode or "execute").strip().lower()
     if selected_mode not in {"execute", "plan"}:
@@ -209,7 +229,12 @@ def select_agent_policy(
     if selected_backend == "auto":
         selected_backend = "codex" if resolve_codex_binary() else "aginti"
 
-    timeout_by_effort = {"low": 300, "medium": 3600}
+    timeout_by_effort = {
+        "low": 300,
+        "medium": 3600,
+        "high": 7200,
+        "xhigh": 10800,
+    }
     return {
         "backend": selected_backend,
         "model": selected_model,
@@ -262,6 +287,21 @@ def capability_catalog(root: str | Path) -> list[dict[str, Any]]:
             "commands": ["latexmk -pdf", "pdflatex"],
             "paths": ["docs", "references", "cad/reports"],
             "outputs": ["TeX", "PDF", "SVG", "PNG"],
+        },
+        {
+            "id": "presentations",
+            "title": "Editable PowerPoint presentations and slide previews",
+            "ready": True,
+            "commands": [
+                "labcanvas presentation init",
+                "labcanvas presentation build",
+                "labcanvas presentation validate",
+            ],
+            "paths": [
+                "docs/PRESENTATION_PIPELINE.md",
+                "src/agenticapp/presentations.py",
+            ],
+            "outputs": ["PPTX", "PDF", "PNG", "JSON manifest", "asset prompts"],
         },
         {
             "id": "protein-structure",
@@ -402,10 +442,10 @@ Runtime:
 Operating contract:
 1. {mode_instruction}
 2. Read `AGENTS.md` and inspect the relevant existing implementation before editing. Preserve unrelated dirty changes.
-3. Prefer mature local routines and skills over one-off shell logic. You may call LabCanvas CLI, CAD builders, KiCad, Blender, TeX, WeChat, LabVIEW, AgInTi, BioRender/MCP, Unity, Unreal, and other available tools as the task requires.
+3. Prefer mature local routines and skills over one-off shell logic. You may call LabCanvas CLI, the manifest-driven presentation builder, CAD builders, KiCad, Blender, TeX, WeChat, LabVIEW, AgInTi, BioRender/MCP, Unity, Unreal, and other available tools as the task requires.
 4. Treat CAD as editable engineering source: named parameters, decoupled solids, active-center alignment, measured references, clean analytic B-reps, bounded thread runout, STEP round-trip validation, render inspection, print-ready STEP/STL/3MF, run folders, and Nutstore handoff when applicable.
 5. For `.shapr`, inspect its archive/history and paired STEP/Parasolid evidence. Do not claim native Shapr feature replay on Ubuntu. Produce clean Shapr3D-importable STEP and preserve source references.
-6. Use KiCad ERC/DRC and manufacturing preflight; use Blender or a suitable CAD renderer for visual validation; use TeX for maintainable paper/report assembly.
+6. Use KiCad ERC/DRC and manufacturing preflight; use Blender or a suitable CAD renderer for visual validation; use TeX for maintainable paper/report assembly. For presentations, preserve editable slide text and geometry, use image generation only for bounded material assets, and never generate an entire slide as one image.
 7. WeChat is a transport and control surface. Use the existing isolated stack and APIs; never mix chats or expose private logs.
 8. Require explicit current-user authorization before payment, manufacturing order submission, public publication, credential changes, destructive deletion, or irreversible external actions. You may prepare everything and stop at the confirmation boundary.
 9. Do not claim completion without checking the real artifact, command result, render, or external status. Keep the final reply concise and factual.
@@ -454,6 +494,10 @@ def selected_packaged_knowledge(message: str) -> str:
         "KiCad and PCB": ("kicad", "pcb", "gerber", "board", "jlc", "schematic", "电路板"),
         "Blender and 3D Presentation": ("blender", "render", "scene", "animation", "渲染"),
         "TeX, Papers, and Figures": ("tex", "latex", "paper", "figure", "pdf", "report", "论文", "图"),
+        "Presentations": (
+            "presentation", "powerpoint", "ppt", "pptx", "slide deck", "slides",
+            "演示文稿", "簡報", "简报", "幻灯片", "投影片",
+        ),
         "WeChat": ("wechat", "微信", "group chat", "chatops"),
         "LabVIEW and Instrument Control": ("labview", "instrument", "camera", "vi ", "仪器"),
         "Protein Structure and AlphaFold": (

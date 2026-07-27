@@ -66,14 +66,16 @@ Auto routing classifies only the current request:
 
 | Request | Default effort | Default model |
 | --- | --- | --- |
-| Short answer or status | low | `gpt-5.6-sol` |
-| Analysis, documentation, or planning | medium | `gpt-5.6-sol` |
-| CAD/PCB/Blender/TeX/tool execution | medium | `gpt-5.6-sol` |
-| Exact reconstruction or complex autonomous work | medium | `gpt-5.6-sol` |
+| Short answer or status | low | `auto-code-review` |
+| Analysis, documentation, or ordinary tool work | medium | `auto-code-review` |
+| Complex implementation and broad engineering validation | high | `gpt-5.6-sol` |
+| Demanding autonomous research, design, or presentation synthesis | xhigh | `gpt-5.6-sol` |
 
-Explicit legacy high, xhigh, max, and Ultra effort values normalize to medium.
+Explicit low, medium, high, and xhigh values are supported. `max` and Ultra
+normalize to xhigh.
 Environment variables `LABCANVAS_AGENT_FAST_MODEL` and
-`LABCANVAS_AGENT_STANDARD_MODEL` can replace the auto tiers. Backend
+`LABCANVAS_AGENT_STANDARD_MODEL` can replace the low/medium auto tiers. High
+and xhigh use their explicit shared-policy entries. Backend
 quota/unavailable failures may fall back to AgInTi when the
 saved setting permits it. New AgInTi versions use the noninteractive
 `aginti run --stdin` contract. Older installed versions receive a short command

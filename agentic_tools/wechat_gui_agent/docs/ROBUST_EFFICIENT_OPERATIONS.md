@@ -60,12 +60,14 @@ should speed the agent up, not replace agent reasoning.
 ## Central Model Policy
 
 LabCanvas and the WeChat/WeCom worker read the repository-level
-`configs/model-policy.json`. Normal chat uses `auto-code-review` at low reasoning;
-durable research, CAD/PCB, media, PDF, and other artifact tasks use the same alias at
-medium reasoning. The matching `gpt-5.6-sol` low/medium entries are retained as the
-preferred-model fallback. If the alias is rejected as unknown, invalid, unsupported, or
-missing, the worker retries the same task/session lane with that fallback before using
-AgInTi. Explicit model/effort settings and approval gates remain authoritative.
+`configs/model-policy.json`. Normal chat uses `auto-code-review` at low
+reasoning; ordinary durable work uses the same alias at medium. Complex
+implementation can use GPT-5.6 SOL high, while demanding autonomous research,
+design, and presentation synthesis can use GPT-5.6 SOL xhigh. Matching
+`gpt-5.6-sol` fallbacks are retained for every effort. If a preferred alias is
+rejected as unknown, invalid, unsupported, or missing, the worker retries the
+same task/session lane with that fallback before using AgInTi. Explicit
+model/effort settings and approval gates remain authoritative.
 
 This is model routing only: it does not replace the per-chat session, source isolation,
 routine contracts, interruption timeline, or artifact delivery gate.
@@ -930,10 +932,10 @@ evidence for local artifacts, not chat-facing content.
   create a public-posting permission.
 - Use fast-router Codex only for new actionable messages, ambiguous routing, or
   immediate lightweight replies.
-- For the isolated WeCom transport, use `gpt-5.6-sol` low for route/chat turns
-  and `gpt-5.6-sol` medium for durable work. Scheduled daily research, protein
-  structure work, and legacy high/Ultra requests use the same medium ceiling. Keep those defaults in
-  `wecom_worker_loop.sh` and pass its private env via
+- For the isolated WeCom transport, use `gpt-5.6-sol` low for route/chat turns,
+  medium for ordinary durable work, high for complex implementation, and xhigh
+  for demanding autonomous research or presentation synthesis. Keep that
+  low-to-xhigh range in `wecom_worker_loop.sh` and pass its private env via
   `WECHAT_WORKER_ENV_FILE` so the shared guarded entrypoint cannot overwrite
   them with personal-WeChat policy.
 - Treat native WeCom merged chat-history forwards as structured source
@@ -1116,10 +1118,10 @@ evidence for local artifacts, not chat-facing content.
   starving real file/message delivery. The sync loop removes malformed,
   expired, or dead-owner reservations immediately so a crashed sender cannot
   stall chat materialization.
-- Personal-WeChat and WeCom workers use GPT-5.6 SOL with low effort for routing
-  and medium effort for durable work. Legacy high, xhigh, max, and Ultra
-  settings are capped at medium; failed medium turns persist a blocker instead
-  of escalating above the configured ceiling.
+- Personal-WeChat and WeCom workers can select low, medium, high, or xhigh from
+  current-task difficulty. `max` and Ultra normalize to xhigh. Failed turns may
+  escalate one step within the configured ceiling, while long external waits
+  remain deterministic queue state rather than expensive model calls.
 
 ## Grant Goal Workflow
 
@@ -1143,6 +1145,24 @@ evidence for local artifacts, not chat-facing content.
 - Grant drafting never authorizes public submission, payment, credential
   changes, or fabricated evidence, citations, people, facilities, eligibility,
   deadlines, approvals, or budgets.
+
+## Presentation Contract
+
+- Presentation requests use the `presentation_deck` routine and
+  `labcanvas presentation`; the editable `presentation.json` manifest is the
+  source of truth.
+- Start with a sensible bright scientific theme instead of waiting for optional
+  style confirmation. Send one natural progress reply inviting the requester
+  to add audience, color, style, logo, or content preferences while work
+  continues.
+- Image generation may create separate bounded material assets but never a
+  complete slide or slide background. Preserve prompts and review any generated
+  text while keeping essential wording native and editable.
+- Use GPT-5.6 SOL xhigh for substantive deck research, story structure, and
+  visual synthesis. Narrow edits, rebuilds, and exports may use lower effort.
+- Required delivery is the editable PPTX first, then useful PDF/PNG previews
+  and the manifest. Completion requires package, slide-count, generated-asset,
+  and preview checks.
 
 ## State Machine
 
