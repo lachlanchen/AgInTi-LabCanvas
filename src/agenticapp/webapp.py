@@ -8,10 +8,11 @@ import json
 from pathlib import Path
 import os
 import re
+import secrets
 import socket
 import threading
 from typing import Any
-from urllib import error as urlerror, request as urlrequest
+from urllib import error as urlerror, parse as urlparse, request as urlrequest
 import webbrowser
 
 from .adapters import DispatchError, dispatch_target
@@ -22,6 +23,7 @@ from .config import load_config
 from .lab_tasks import looks_like_lab_task_prompt, run_lab_task
 from .openscad_export import export_scene_to_openscad
 from .paper_figures import generate_icon_grid, parse_grid_size
+from .rooms import RoomStore, normalize_room_id
 from .scene_spec import built_in_scene_template, slugify, validate_scene_spec
 from .workspace_agent import (
     build_agent_prompt,
@@ -78,6 +80,8 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
         route = self.path.split("?", 1)[0]
         if self.path == "/" or self.path.startswith("/?"):
             self.send_static("index.html")
+        elif route == "/rooms":
+            self.send_static("rooms.html")
         elif route.startswith("/static/"):
             self.send_static(route.removeprefix("/static/"))
         elif route == "/api/spec":
@@ -99,6 +103,33 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
             self.send_json(capability_response(ROOT, self.settings_path()))
         elif route == "/api/agent/tasks":
             self.send_json(task_list_response(self.storage_dir))
+        elif route == "/api/rooms":
+            if self.require_room_access(owner_only=True):
+                self.send_json({"ok": True, "rooms": self.room_store().list_rooms()})
+        elif room_id := room_invites_route(route):
+            if self.require_room_access(room_id, owner_only=True):
+                self.send_json({"ok": True, "invites": self.room_store().list_invites(room_id)})
+        elif artifact_route := room_artifact_route(route):
+            room_id, message_id, artifact_index = artifact_route
+            if self.require_room_access(room_id):
+                artifact = self.room_store().artifact_for_message(room_id, message_id, artifact_index)
+                self.send_artifact(str(artifact.get("path") or ""))
+        elif room_id := room_messages_route(route):
+            if self.require_room_access(room_id):
+                query = urlparse.parse_qs(urlparse.urlsplit(self.path).query)
+                after = bounded_query_int(query, "after", 0, minimum=0, maximum=2_147_483_647)
+                limit = bounded_query_int(query, "limit", 200, minimum=1, maximum=500)
+                store = self.room_store()
+                store.sync_tasks(room_id)
+                messages = store.list_messages(room_id, after=after, limit=limit)
+                self.send_json(
+                    {
+                        "ok": True,
+                        "room": store.ensure_room(room_id),
+                        "messages": [room_message_shape(message) for message in messages],
+                        "cursor": messages[-1]["id"] if messages else max(0, after),
+                    }
+                )
         elif route.startswith("/api/agent/tasks/"):
             task_id = route.removeprefix("/api/agent/tasks/").strip("/")
             self.send_json(task_response(task_id, self.storage_dir))
@@ -130,6 +161,34 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
                 payload = self.read_json()
                 settings = load_backend_settings(self.settings_path())
                 self.send_json(run_web_agent_chat(payload, self.storage_dir, settings=settings))
+            elif route == "/api/rooms":
+                if self.require_room_access(owner_only=True):
+                    payload = self.read_json()
+                    room_id = normalize_room_id(str(payload.get("id") or payload.get("name") or ""))
+                    room = self.room_store().ensure_room(room_id, str(payload.get("name") or ""))
+                    self.send_json({"ok": True, "room": room})
+            elif room_id := room_invites_route(route):
+                if self.require_room_access(room_id, owner_only=True):
+                    payload = self.read_json()
+                    invite = self.room_store().create_invite(
+                        room_id,
+                        label=str(payload.get("label") or "WeChat invite"),
+                        expires_hours=int(payload.get("expires_hours") or 168),
+                    )
+                    self.send_json({"ok": True, "invite": invite}, status=HTTPStatus.CREATED)
+            elif room_id := room_messages_route(route):
+                if self.require_room_access(room_id):
+                    payload = self.read_json()
+                    settings = load_backend_settings(self.settings_path())
+                    options = room_agent_options(payload, settings, access_role=self.room_access_role)
+                    result = self.room_store().post_user_message(
+                        room_id,
+                        str(payload.get("message") or payload.get("content") or ""),
+                        sender_id=str(payload.get("sender_id") or "local-owner"),
+                        sender_name=str(payload.get("sender_name") or "Owner"),
+                        agent_options=options,
+                    )
+                    self.send_json(result, status=HTTPStatus.ACCEPTED)
             elif route == "/api/writing/next-paragraph":
                 payload = self.read_json()
                 settings = load_backend_settings(self.settings_path())
@@ -197,6 +256,35 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
             raise ValueError("Request body must be a JSON object")
         return data
 
+    def room_store(self) -> RoomStore:
+        return RoomStore(self.storage_dir, project_root=ROOT)
+
+    def require_room_access(self, room_id: str = "", *, owner_only: bool = False) -> bool:
+        self.room_access_role = ""
+        configured = os.environ.get("LABCANVAS_ROOMS_TOKEN", "").strip()
+        authorization = self.headers.get("Authorization", "")
+        supplied = authorization.removeprefix("Bearer ").strip()
+        if not supplied:
+            query = urlparse.parse_qs(urlparse.urlsplit(self.path).query)
+            supplied = str((query.get("token") or [""])[0])
+        if configured and secrets.compare_digest(supplied, configured):
+            self.room_access_role = "owner"
+            return True
+        if not configured and self.client_address[0] in {"127.0.0.1", "::1"}:
+            self.room_access_role = "owner"
+            return True
+        if room_id and not owner_only:
+            query = urlparse.parse_qs(urlparse.urlsplit(self.path).query)
+            invite_token = self.headers.get("X-LabCanvas-Room-Invite", "").strip()
+            if not invite_token:
+                invite_token = str((query.get("invite") or [""])[0])
+            if self.room_store().validate_invite(room_id, invite_token):
+                self.room_access_role = "participant"
+                return True
+        message = "Owner access required" if owner_only else "Invalid or expired room credential"
+        self.send_json({"ok": False, "error": message}, status=HTTPStatus.UNAUTHORIZED)
+        return False
+
     def send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, indent=2).encode("utf-8")
         self.send_response(status)
@@ -263,6 +351,84 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
 
     def settings_path(self) -> Path:
         return self.storage_dir / "settings.json"
+
+
+def room_messages_route(route: str) -> str:
+    match = re.fullmatch(r"/api/rooms/([^/]+)/messages", route)
+    return urlparse.unquote(match.group(1)) if match else ""
+
+
+def room_invites_route(route: str) -> str:
+    match = re.fullmatch(r"/api/rooms/([^/]+)/invites", route)
+    return urlparse.unquote(match.group(1)) if match else ""
+
+
+def room_artifact_route(route: str) -> tuple[str, int, int] | None:
+    match = re.fullmatch(r"/api/rooms/([^/]+)/artifacts/(\d+)/(\d+)", route)
+    if not match:
+        return None
+    return urlparse.unquote(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def bounded_query_int(
+    query: dict[str, list[str]],
+    key: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    try:
+        value = int((query.get(key) or [str(default)])[0])
+    except (TypeError, ValueError):
+        value = default
+    return min(maximum, max(minimum, value))
+
+
+def room_agent_options(
+    payload: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    access_role: str = "owner",
+) -> dict[str, Any]:
+    agent_settings = settings.get("agent", {}) if isinstance(settings.get("agent"), dict) else {}
+    prepared = {
+        key: payload[key]
+        for key in ("backend", "model", "effort", "reasoning_effort", "mode", "timeout_seconds")
+        if key in payload
+    }
+    if str(prepared.get("model") or "auto") == "auto" and not bool(agent_settings.get("dynamic_routing", True)):
+        prepared["model"] = str(agent_settings.get("model") or "auto")
+    if str(prepared.get("backend") or "auto") == "auto":
+        prepared["backend"] = str(agent_settings.get("backend") or "auto")
+    if access_role == "participant":
+        prepared["mode"] = "plan"
+        prepared["timeout_seconds"] = min(900, max(30, int(prepared.get("timeout_seconds") or 900)))
+    elif not prepared.get("mode"):
+        prepared["mode"] = str(agent_settings.get("mode") or "execute")
+    prepared["fallback_to_aginti"] = bool(agent_settings.get("fallback_to_aginti", True))
+    prepared["_room_access_role"] = "participant" if access_role == "participant" else "owner"
+    return prepared
+
+
+def room_message_shape(message: dict[str, Any]) -> dict[str, Any]:
+    shaped = {key: value for key, value in message.items() if key != "artifacts"}
+    room_id = urlparse.quote(normalize_room_id(str(message.get("room_id") or "")), safe="")
+    message_id = int(message.get("id") or 0)
+    artifacts: list[dict[str, Any]] = []
+    for index, artifact in enumerate(message.get("artifacts") or []):
+        if not isinstance(artifact, dict) or not str(artifact.get("path") or "").strip():
+            continue
+        public = {
+            key: artifact[key]
+            for key in ("id", "title", "kind", "preview", "mime", "created_at")
+            if key in artifact
+        }
+        public.setdefault("title", Path(str(artifact.get("path") or "artifact")).name)
+        public["url"] = f"/api/rooms/{room_id}/artifacts/{message_id}/{index}"
+        artifacts.append(public)
+    shaped["artifacts"] = artifacts
+    return shaped
 
 
 def default_spec_response() -> dict[str, Any]:
@@ -565,6 +731,7 @@ def run_web_agent_chat(payload: dict[str, Any], storage_dir: Path, *, settings: 
             effort=str(prepared.get("effort") or "auto"),
             mode=str(prepared.get("mode") or "execute"),
             backend=str(prepared.get("backend") or "auto"),
+            model_policy=settings.get("model_policy") if isinstance(settings.get("model_policy"), dict) else None,
         )
         return {
             "ok": True,

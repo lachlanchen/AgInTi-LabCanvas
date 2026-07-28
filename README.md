@@ -34,7 +34,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | Area | What is ready | Entry point |
 | --- | --- | --- |
 | Workspace agent | Persistent direct chat, dynamic low-to-xhigh model routing, durable tasks, cancellation, and artifact return across all lab tools | [docs/WORKSPACE_AGENT.md](docs/WORKSPACE_AGENT.md) |
-| Web studio | Agent chat, bright UI, artifact canvas, backend settings, multilingual UI | `labcanvas web --port 8787 --open` |
+| Web studio | Agent chat, room-based persistent sessions, artifact canvas, backend settings, multilingual UI | `labcanvas web --port 8787 --open`, `/rooms` |
 | Presentations | Editable manifest-driven PPTX, selective visual assets, generated-image policy gates, and PDF/PNG preview inspection | `labcanvas presentation`, [pipeline](docs/PRESENTATION_PIPELINE.md) |
 | Paper figures | Exact `NxM` SVG grids, AgInTi image dry-run payloads, editable artifact manifest | [docs/EDITABLE_FIGURE_PIPELINE.md](docs/EDITABLE_FIGURE_PIPELINE.md) |
 | Grant projects | Durable Codex goal workspace, traceable evidence, editable BioRender/SVG/TeX figures, checked LaTeX/PDF, and mandatory chat delivery | `labcanvas grant init`, `labcanvas grant run`, [BioRender bridge](agentic_tools/biorender_agent/README.md) |
@@ -83,6 +83,14 @@ PYTHONPATH=src python -m unittest discover -s tests
 ```
 
 The npm package has been renamed in this repository to `@lazyingart/labcanvas`, with `labcanvas` as the primary CLI and `app-auto-action` / `agenticapp` kept as compatibility aliases. The new npm package still needs a fresh authenticated publish; until then, use the source checkout or the previously published package name.
+
+`/rooms` provides persistent LabCanvas conversations backed by the same
+workspace agent as the main Studio. The local owner can use the full normal
+tool set. An invited participant is restricted to plan-only turns. In the
+allowlisted WeCom `LabAgent` group, trusted members can request research,
+editable figures, CAD/STEP/STL, PCB/KiCad/Gerber work, OpenSCAD, and Blender
+renders; generated source and preview artifacts are returned to that exact
+group. Public video publication is intentionally not available there.
 
 ```bash
 # After the renamed npm package is published:

@@ -8,6 +8,7 @@ from urllib import request
 
 from agenticapp.backends import default_backend_settings
 from agenticapp.webapp import (
+    LabCanvasHandler,
     build_next_paragraph_messages,
     chat_update,
     create_server,
@@ -86,6 +87,29 @@ class WebAppTests(unittest.TestCase):
 
         self.assertIn("image/svg+xml", content_type)
         self.assertIn("<svg", body)
+
+    def test_server_serves_room_surface_and_room_api(self):
+        previous_storage = LabCanvasHandler.storage_dir
+        with tempfile.TemporaryDirectory() as tmp:
+            LabCanvasHandler.storage_dir = Path(tmp)
+            server = create_server("127.0.0.1", 0)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                host, port = server.server_address
+                with request.urlopen(f"http://{host}:{port}/rooms", timeout=3) as response:
+                    html = response.read().decode("utf-8")
+                with request.urlopen(f"http://{host}:{port}/api/rooms", timeout=3) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=3)
+                LabCanvasHandler.storage_dir = previous_storage
+
+        self.assertIn('data-testid="rooms-app"', html)
+        self.assertIn('src="/static/rooms.js"', html)
+        self.assertEqual([room["id"] for room in payload["rooms"]], ["agenttest", "labagent"])
 
     def test_webapp_language_selector_has_profile_locales(self):
         html = (ROOT / "src" / "agenticapp" / "web" / "static" / "index.html").read_text(encoding="utf-8")

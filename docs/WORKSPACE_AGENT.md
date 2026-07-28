@@ -43,6 +43,27 @@ Each browser profile receives a stable conversation id. Codex resumes that
 conversation's prior thread, so follow-up requests retain context without
 mixing users or workspaces.
 
+## Rooms
+
+The `/rooms` surface provides durable room-scoped conversations using the same
+workspace-agent runtime and artifact store:
+
+```text
+http://127.0.0.1:8787/rooms
+```
+
+Owner access is local-only unless `LABCANVAS_ROOMS_TOKEN` is configured.
+Owner-created invite links are room-scoped, expire, and force participant turns
+into plan mode. Each room has an independent conversation ID, SQLite message
+ledger, durable task links, and artifact URLs constrained to the webapp storage
+directory.
+
+The allowlisted WeCom `LabAgent` transport uses the shared worker routines for
+research, TeX/PDF, editable figure generation, CAD, PCB/KiCad, OpenSCAD, and
+Blender work. It must return both review previews and editable/source artifacts
+to the originating group. It does not authorize public video publication,
+payment, manufacturing submission, or other irreversible external actions.
+
 ## CLI
 
 ```bash
