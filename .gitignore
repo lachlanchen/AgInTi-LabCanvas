@@ -20,6 +20,7 @@ output/
 .aginti/.env
 .aginti/.env.*
 !.aginti/.env.example
+.aginti/codebase-map.json
 agentic_tools/**/.private/
 agentic_tools/**/private*.json
 cad/sources/*.zip
@@ -36,3 +37,22 @@ handoff/lalachan-story-video-generation-handoff.md
 npm-debug.log*
 .aginti-sessions/
 .sessions/
+
+# Local application/runtime state
+/DATA/
+/_worker/
+/artifacts/
+/cache/
+/crashinfo/
+/log/
+/mmkv/
+/courgette.log
+/storage_runtime.bin
+/validation.log
+/echomind-lesson-*.md
+/echomind-lesson-*.txt
+/echomind_lesson_output.txt
+/9
+
+# Byte-preserving local archive for CAD designs removed from the tracked tree
+/cad/designs/archived/

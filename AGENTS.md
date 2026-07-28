@@ -160,6 +160,15 @@ When changing WeChat automation behavior, also update `agentic_tools/wechat_gui_
 
 Use concise imperative commit messages, such as `Add Unity target validation` or `Document BioRender MCP setup`. Pull requests should include a summary, testing performed, linked issues when applicable, and screenshots only for UI-facing changes.
 
+Before finishing any task, classify every dirty path. Intentional source,
+design, documentation, manifest, deletion, or move changes must be tested,
+committed, and pushed when repository publication is available. Private,
+generated, cache, runtime, and byte-preserving local archive paths must receive
+the narrowest appropriate `.gitignore` rule. Never finish with an unexplained
+dirty path or the generic statement that unrelated changes were left
+untouched. Preserve user work while making an explicit commit-or-ignore
+decision for it; never commit credentials or private chat/runtime data.
+
 ## Security & Configuration Tips
 
 Do not commit `labcanvas.targets.json`, `.aginti/.env`, or generated `output/` files; they may contain local endpoints, tokens, or bulky artifacts. Keep secrets in environment variables such as `BIORENDER_API_KEY`. Treat editor bridges as privileged automation surfaces: review dry-run payloads before enabling live dispatch.
