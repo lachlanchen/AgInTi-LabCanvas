@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -41,6 +42,20 @@ def args(tmp: str) -> argparse.Namespace:
 
 
 class WeChatDesktopUnlockWatchdogTests(unittest.TestCase):
+    def test_state_file_is_private_and_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "watchdog.json"
+            payload = {
+                "ok": True,
+                "desktop": {"status": "locked"},
+                "started_at": "2026-07-28T07:00:00",
+            }
+            watchdog.write_state_file(path, payload)
+
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), payload)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(list(path.parent.glob("watchdog.json.tmp-*")))
+
     def test_healthy_desktop_does_not_touch_phone(self) -> None:
         with (
             tempfile.TemporaryDirectory() as tmp,
@@ -135,6 +150,78 @@ class WeChatDesktopUnlockWatchdogTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         restore.assert_called_once_with("adb", "physical-phone", "com.tencent.wework")
+
+    def test_phone_unlocked_label_uses_reset_cycle_not_single_lock_tap(self) -> None:
+        screenshot = Path("/tmp/watchdog-test.png")
+        with (
+            mock.patch.object(watchdog, "keep_android_awake"),
+            mock.patch.object(watchdog, "start_android_package"),
+            mock.patch.object(
+                watchdog,
+                "focused_window",
+                return_value="mCurrentFocus=Window{ u0 com.tencent.mm/.plugin.webwx.ui.WebWXLogoutUI}",
+            ),
+            mock.patch.object(
+                watchdog,
+                "mobile_desktop_lock_state",
+                side_effect=["unlocked", "locked", "unlocked"],
+            ),
+            mock.patch.object(
+                watchdog,
+                "mobile_screenshot",
+                return_value=screenshot,
+            ),
+            mock.patch.object(
+                watchdog,
+                "adb_shell",
+                return_value=subprocess.CompletedProcess([], 0, "", ""),
+            ) as shell,
+            mock.patch.object(watchdog.time, "sleep"),
+        ):
+            result = watchdog.unlock_desktop_from_mobile(
+                "adb",
+                "physical-phone",
+                (505, 282),
+                (540, 690),
+                Path("/tmp"),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["state_before"], "unlocked")
+        self.assertEqual(result["states_after_tap"], ["locked", "unlocked"])
+        taps = [
+            call
+            for call in shell.call_args_list
+            if call.args[2][:2] == ["input", "tap"]
+        ]
+        self.assertEqual(len(taps), 2)
+
+    def test_mobile_lock_state_uses_screenshot_ocr_when_hierarchy_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            screenshot = Path(tmp) / "phone.png"
+            screenshot.write_bytes(b"image")
+            with (
+                mock.patch.object(
+                    watchdog,
+                    "adb_shell",
+                    return_value=subprocess.CompletedProcess([], 124, "", "timeout"),
+                ),
+                mock.patch.object(
+                    watchdog,
+                    "run",
+                    side_effect=[
+                        subprocess.CompletedProcess([], 0, "", ""),
+                        subprocess.CompletedProcess([], 0, "已锁定\n", ""),
+                    ],
+                ),
+            ):
+                state = watchdog.mobile_desktop_lock_state(
+                    "adb",
+                    "physical-phone",
+                    screenshot_path=screenshot,
+                )
+
+        self.assertEqual(state, "locked")
 
     def test_focused_package_parses_android_window_output(self) -> None:
         focus = "mCurrentFocus=Window{abc u0 com.tencent.wework/.launch.WwMainActivity}"

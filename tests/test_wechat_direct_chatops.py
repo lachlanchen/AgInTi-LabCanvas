@@ -3201,7 +3201,9 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("mobile-WeChat HTTP extraction", route["task"])
         self.assertIn("Do not ask the user to verify", route["task"])
         self.assertIn("do not open/focus an external browser", route["task"])
-        self.assertIn("Markdown and a PDF report", route["task"])
+        self.assertIn("one concise, natural chat summary", route["task"])
+        self.assertIn("explicitly asks for a PDF/report", route["task"])
+        self.assertNotIn("create Markdown and a PDF report", route["task"])
         self.assertIn("local_id=77", route["task"])
 
     def test_web_clip_inbox_routes_shipinhao_card_to_comment_aware_summary(self) -> None:
@@ -3223,7 +3225,9 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(route["route_decision"]["route_kind"], "research_or_summary")
         self.assertIn("Shipinhao/视频号/Finder", route["task"])
         self.assertIn("Yuanbao/transcript/summary comments", route["task"])
-        self.assertIn("Markdown and a PDF report", route["task"])
+        self.assertIn("one concise, natural chat summary", route["task"])
+        self.assertIn("explicitly asks for a PDF/report", route["task"])
+        self.assertNotIn("create Markdown and a PDF report", route["task"])
 
     def test_personal_organizer_routes_publish_platform_shorthand(self) -> None:
         config = self.base_config()

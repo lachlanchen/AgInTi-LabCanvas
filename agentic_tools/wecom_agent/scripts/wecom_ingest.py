@@ -134,11 +134,18 @@ def ingest_event(
             "reply": prior_reply,
             "ack": "" if prior_reply else "消息已接收，任务正在处理中。",
         }
+    duplicate_window_seconds = (
+        24 * 60 * 60
+        if transport_channel == "wecom_android"
+        and event_has_unattributed_gui_sender(event)
+        else 90
+    )
     if transport_channel in {"wecom_gui", "wecom_android"} and recent_equivalent_gui_inbound(
         history_db,
         chat,
         request,
         exclude_message_id=str(event["message_id"]),
+        window_seconds=duplicate_window_seconds,
     ):
         # OCR sender labels can vary between adjacent captures of the same
         # bubble. Exact same-chat text inside a short window is a transport
@@ -152,6 +159,7 @@ def ingest_event(
             "reply": "",
             "ack": "",
             "suppressed": "recent_exact_wecom_gui_duplicate",
+            "duplicate_window_seconds": duplicate_window_seconds,
         }
     record_history_message(history_db, event, chat, request, direction="inbound")
     knowledge_db = knowledge_db_for_history(history_db)
@@ -357,6 +365,16 @@ def event_transport_channel(event: dict[str, Any]) -> str:
     if value not in {"wecom_bot_websocket", "wecom_cli", "wecom_gui", "wecom_android"}:
         raise ValueError(f"unsupported WeCom transport channel: {value}")
     return value
+
+
+def event_has_unattributed_gui_sender(event: dict[str, Any]) -> bool:
+    """Identify history-scan rows that lost their original sender label."""
+    confidence = str(event.get("sender_identity_confidence") or "").strip().casefold()
+    display = str(event.get("sender_display") or "").strip().casefold()
+    return confidence in {"unattributed_row", "unknown", "ocr_unknown"} or display in {
+        "",
+        "unknown",
+    }
 
 
 def event_reply_mentions(event: dict[str, Any]) -> list[str]:

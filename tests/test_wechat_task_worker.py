@@ -2954,6 +2954,52 @@ stderr: noisy internal trace
         self.assertIn(str(first_copy), tool_context)
         self.assertIn("Do not say the image/file is missing", tool_context)
 
+    def test_media_resolution_rejects_mtime_only_cross_chat_candidate(self) -> None:
+        worker = load_worker()
+        import wechat_mirror  # type: ignore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            report = tmp_path / "outgoing-report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            create_time = datetime.now().timestamp()
+            db = tmp_path / "wechat_mirror.sqlite"
+            event_id = wechat_mirror.record_event(
+                chat_name="鏈接",
+                action="media-sync",
+                status="copied",
+                db_path=db,
+            )
+            wechat_mirror.record_media_files(
+                chat_name="鏈接",
+                event_id=event_id,
+                db_path=db,
+                files=[
+                    {
+                        "source": str(report),
+                        "target": str(report),
+                        "suffix": ".pdf",
+                        "bytes": report.stat().st_size,
+                        "mtime": create_time,
+                        "status": "copied",
+                        "matched_by": "mtime",
+                    }
+                ],
+            )
+            task = {
+                "chat": "鏈接",
+                "source": {"create_time": create_time},
+                "request": "Summarize the current message without an attachment.",
+            }
+
+            with mock.patch.dict(
+                worker.os.environ,
+                {"WECHAT_MIRROR_DB": str(db), "WECHAT_WORKER_ALLOW_MTIME_ONLY_MEDIA": "0"},
+            ):
+                candidates = worker.resolve_synced_media_from_mirror(task)
+
+        self.assertEqual(candidates, [])
+
     def test_media_resolution_retries_after_gui_cache_probe(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -5124,22 +5170,20 @@ stderr: noisy internal trace
         self.assertEqual(task["status"], "done")
         self.assertIn("saved-video.mp4", "\n".join(task["sent_file_paths"]))
 
-    def test_real_mp4_bridge_failure_blocks_required_delivery(self) -> None:
+    def test_real_mp4_exact_chat_sender_failure_blocks_required_delivery(self) -> None:
         worker = load_worker()
-        original_run_send = worker.run_send_subprocess
-        original_bridge = worker.run_file_bridge_subprocess
+        original_sender = worker.run_exact_chat_file_sender
         original_delay = worker.os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY")
         try:
             worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = "0"
-            worker.run_send_subprocess = lambda *_args, **_kwargs: None
 
-            def fail_bridge(*_args, **_kwargs):
-                raise RuntimeError("file bridge failed with exit 1")
+            def fail_sender(*_args, **_kwargs):
+                raise RuntimeError("exact-chat file sender failed with exit 1")
 
-            worker.run_file_bridge_subprocess = fail_bridge
+            worker.run_exact_chat_file_sender = fail_sender
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
-                mp4 = tmp_path / "bridge-failed.mp4"
+                mp4 = tmp_path / "sender-failed.mp4"
                 mp4.write_bytes(b"video")
                 targets = tmp_path / "targets.json"
                 targets.write_text(
@@ -5155,8 +5199,7 @@ stderr: noisy internal trace
                 errors = worker.send_result_with_retries(result, "🍓我的设备", targets, task=task)
                 worker.apply_send_outcome(task, result, errors)
         finally:
-            worker.run_send_subprocess = original_run_send
-            worker.run_file_bridge_subprocess = original_bridge
+            worker.run_exact_chat_file_sender = original_sender
             if original_delay is None:
                 worker.os.environ.pop("WECHAT_WORKER_SEND_RETRY_DELAY", None)
             else:
@@ -5167,6 +5210,52 @@ stderr: noisy internal trace
         self.assertEqual(task["send_deferred_reason"], "required_artifact_delivery")
         self.assertNotIn("sent_file_paths", task)
         self.assertIn("file_send_errors", task)
+
+    def test_guarded_file_send_is_one_exact_chat_transaction(self) -> None:
+        worker = load_worker()
+        commands: list[list[str]] = []
+        bridge_calls: list[list[str]] = []
+        original_sender = worker.run_exact_chat_file_sender
+        original_bridge = worker.run_file_bridge_subprocess
+        original_record = worker.record_event
+        try:
+            worker.run_exact_chat_file_sender = lambda command, **_kwargs: commands.append(command)
+            worker.run_file_bridge_subprocess = lambda command, **_kwargs: bridge_calls.append(command)
+            worker.record_event = lambda **_kwargs: None
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                report = tmp_path / "daily-report.pdf"
+                report.write_bytes(b"%PDF-1.4\n")
+                target = {
+                    "name": "写作 外语 挣钱",
+                    "query": "写作 外语 挣钱",
+                    "expected_title": "写作 外语 挣钱",
+                    "allow_search": False,
+                }
+                worker.send_file(
+                    report,
+                    "写作 外语 挣钱",
+                    tmp_path / "unused.json",
+                    target=target,
+                )
+                target_files = [
+                    Path(command[command.index("--targets-file") + 1])
+                    for command in commands
+                ]
+        finally:
+            worker.run_exact_chat_file_sender = original_sender
+            worker.run_file_bridge_subprocess = original_bridge
+            worker.record_event = original_record
+
+        self.assertEqual(len(commands), 1)
+        command = commands[0]
+        self.assertTrue(str(command[1]).endswith("wechat_gui_send.py"))
+        self.assertIn("--send", command)
+        self.assertIn("--file", command)
+        self.assertIn(str(report.resolve()), command)
+        self.assertIn("--no-search", command)
+        self.assertEqual(bridge_calls, [])
+        self.assertTrue(all(not path.exists() for path in target_files))
 
     def test_file_bridge_unlocks_and_retries_when_wechat_locks(self) -> None:
         worker = load_worker()
@@ -5204,6 +5293,60 @@ stderr: noisy internal trace
 
         self.assertEqual(len(calls), 2)
         self.assertEqual(unlocks, ["unlock"])
+
+    def test_exact_chat_file_sender_unlocks_and_retries_when_wechat_locks(self) -> None:
+        worker = load_worker()
+        calls: list[list[str]] = []
+        unlocks: list[str] = []
+        original_send = worker.run_send_subprocess
+        original_unlock = worker.unlock_wechat_for_file_send
+        original_delay = worker.os.environ.get("WECHAT_WORKER_FILE_SEND_UNLOCK_RETRY_DELAY")
+        try:
+            worker.os.environ["WECHAT_WORKER_FILE_SEND_UNLOCK_RETRY_DELAY"] = "0"
+
+            def fake_send(command: list[str], timeout: int | None = None) -> None:
+                calls.append(command)
+                if len(calls) == 1:
+                    raise RuntimeError("WECHAT_LOCKED: Weixin for Linux is locked")
+
+            worker.run_send_subprocess = fake_send
+            worker.unlock_wechat_for_file_send = lambda: unlocks.append("unlock") or ""
+            worker.run_exact_chat_file_sender(["python", "wechat_gui_send.py", "--file", "report.pdf"])
+        finally:
+            worker.run_send_subprocess = original_send
+            worker.unlock_wechat_for_file_send = original_unlock
+            if original_delay is None:
+                worker.os.environ.pop("WECHAT_WORKER_FILE_SEND_UNLOCK_RETRY_DELAY", None)
+            else:
+                worker.os.environ["WECHAT_WORKER_FILE_SEND_UNLOCK_RETRY_DELAY"] = original_delay
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(unlocks, ["unlock"])
+
+    def test_unlock_serial_loads_ignored_supervisor_config(self) -> None:
+        worker = load_worker()
+        original_private = worker.PRIVATE
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp)
+            (private / "wechat_supervisor.local.env").write_text(
+                "export WECHAT_UNLOCK_ADB_SERIAL='physical-device'\n",
+                encoding="utf-8",
+            )
+            worker.PRIVATE = private
+            with mock.patch.dict(
+                worker.os.environ,
+                {
+                    "WECHAT_UNLOCK_ADB_SERIAL": "",
+                    "ANDROID_SERIAL": "",
+                },
+                clear=False,
+            ):
+                try:
+                    serial = worker.configured_wechat_unlock_serial()
+                finally:
+                    worker.PRIVATE = original_private
+
+        self.assertEqual(serial, "physical-device")
 
     def test_mp4_sent_then_text_lock_stays_deferred(self) -> None:
         worker = load_worker()
@@ -6596,6 +6739,52 @@ stderr: noisy internal trace
             else:
                 worker.os.environ["WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES"] = original_recovery
 
+    def test_claim_next_deferred_send_has_one_default_transport_recovery_cycle(self) -> None:
+        worker = load_worker()
+        env_keys = (
+            "WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS",
+            "WECHAT_WORKER_FAILED_SEND_MAX_RETRIES",
+            "WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES",
+        )
+        saved = {key: worker.os.environ.get(key) for key in env_keys}
+        original_lock_busy = worker.gui_send_lock_busy
+        try:
+            worker.os.environ["WECHAT_WORKER_TIMEOUT_SEND_BACKOFF_SECONDS"] = "0"
+            worker.os.environ["WECHAT_WORKER_FAILED_SEND_MAX_RETRIES"] = "0"
+            worker.os.environ.pop("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES", None)
+            worker.gui_send_lock_busy = lambda: False
+            with tempfile.TemporaryDirectory() as tmp:
+                queue = Path(tmp) / "queue.jsonl"
+                worker.write_tasks(
+                    queue,
+                    [
+                        {
+                            "id": "default-recovery",
+                            "chat": "写作 外语 挣钱",
+                            "status": "send_failed",
+                            "send_deferred_reason": "gui_send_timeout",
+                            "send_retry_count": 2,
+                            "send_errors": ["attempt 1: WECHAT_SEND_TIMEOUT"],
+                            "result": {"message": "organized memo", "confirmation": "", "files": []},
+                        }
+                    ],
+                )
+
+                claimed = worker.claim_next_deferred_send(queue)
+
+            self.assertIsNotNone(claimed)
+            assert claimed is not None
+            self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+            self.assertEqual(claimed["send_failed_recovery_count"], 1)
+            self.assertEqual(claimed["send_retry_count"], 1)
+        finally:
+            worker.gui_send_lock_busy = original_lock_busy
+            for key, value in saved.items():
+                if value is None:
+                    worker.os.environ.pop(key, None)
+                else:
+                    worker.os.environ[key] = value
+
     def test_claim_next_deferred_send_recovers_stale_transport_after_recovery_cap(self) -> None:
         worker = load_worker()
         original_busy_backoff = worker.os.environ.get("WECHAT_WORKER_BUSY_SEND_BACKOFF_SECONDS")
@@ -7524,6 +7713,37 @@ stderr: noisy internal trace
         self.assertEqual(first["recovered_count"], 1)
         self.assertEqual(second["recovered_count"], 0)
 
+    def test_recover_recent_expired_transport_infers_legacy_personal_wechat_route(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "legacy-wechat",
+                        "chat": "写作 外语 挣钱",
+                        "status": "send_expired",
+                        "route": {
+                            "config_id": "xiezuo-waiyu-zhengqian-direct-chatops.local.json",
+                            "message_table": "Msg_deadbeef",
+                        },
+                        "expired_from_status": "send_failed",
+                        "expired_at": worker.datetime.now().isoformat(timespec="seconds"),
+                        "result": {"message": "done", "confirmation": "", "files": []},
+                    }
+                ],
+            )
+
+            payload = worker.recover_recent_expired_transport_deliveries(
+                queue,
+                transport="wechat",
+            )
+            task = worker.read_tasks(queue)[0]
+
+        self.assertEqual(payload["recovered_count"], 1)
+        self.assertEqual(task["send_deferred_reason"], "transport_reconnected")
+
     def test_recover_recent_expired_transport_delivery_deduplicates_same_artifacts(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -7707,6 +7927,60 @@ stderr: noisy internal trace
         selected = worker.wecom_research_delivery_files(task, files)
 
         self.assertEqual(selected, files)
+
+    def test_ordinary_research_summary_keeps_optional_artifacts_local(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Read this article and tell me what matters.",
+        }
+        result = {
+            "files": ["/tmp/report.pdf", "/tmp/report.md", "/tmp/report.tex"],
+            "data": {
+                "source_read_quality": "full",
+                "send_report_to_wechat": True,
+            },
+        }
+
+        self.assertFalse(worker.result_allows_chat_artifact_delivery(task, result))
+        self.assertEqual(
+            worker.research_summary_delivery_files(
+                task,
+                [Path("/tmp/report.pdf"), Path("/tmp/report.md"), Path("/tmp/report.tex")],
+            ),
+            [Path("/tmp/report.pdf")],
+        )
+
+    def test_explicit_pdf_summary_sends_pdf_without_sources(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Read this paper and send me a PDF report.",
+        }
+        files = [Path("/tmp/report.pdf"), Path("/tmp/report.md"), Path("/tmp/report.tex")]
+
+        self.assertTrue(worker.result_allows_chat_artifact_delivery(task, {"files": [str(path) for path in files]}))
+        self.assertEqual(
+            worker.research_summary_delivery_files(task, files),
+            [Path("/tmp/report.pdf")],
+        )
+
+    def test_scheduled_research_contract_still_allows_required_pdf(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "scheduled_daily_research": True,
+                "require_file_delivery": True,
+            },
+            "execution_contract": {"required_artifacts": ["compiled_pdf"]},
+            "request": "Today's scheduled research briefing.",
+        }
+
+        self.assertTrue(worker.result_allows_chat_artifact_delivery(task, {"files": ["/tmp/report.pdf"]}))
 
     def test_required_delivery_respects_pdf_only_execution_contract(self) -> None:
         worker = load_worker()

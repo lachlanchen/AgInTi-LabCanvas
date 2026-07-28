@@ -30,9 +30,22 @@ Daily tmux loop:
 
 ```bash
 PYTHONPATH=src python -m agenticapp wechat career-agent start \
-  --send --attach-report --morning-time 08:30 \
+  --send --attach-report --organize-report \
+  --organize-chat "写作 外语 挣钱" --morning-time 08:30 \
   --model gpt-5.5 --reasoning-effort xhigh
 ```
+
+Immediate PDF-only organization of recent items:
+
+```bash
+PYTHONPATH=src python -m agenticapp wechat career-agent organize \
+  --send --organize-chat "写作 外语 挣钱" --json
+```
+
+The organizer reuses a distinct `daily_organizer` Codex session for the exact
+chat. It keeps Markdown and evidence local, compiles one Chinese XeLaTeX PDF,
+and sends only the PDF. Its delivery ledger makes restart and transport retries
+idempotent: a failed send reuses the existing PDF without another agent turn.
 
 Full WeChat stack after reboot:
 
@@ -105,11 +118,16 @@ The daily agent uses read-only evidence:
 
 - `agentic_tools/wechat_gui_agent/.private/wechat_memory.sqlite`
 - recent organized memory for `写作 外语 挣钱` and `lachlanchan`
+- deduplicated memo/todo/idea evidence from `写作 外语 挣钱`
+- interest evidence from `鏈接` and `🍓我的设备`, used only in the private
+  `lachlanchan` analysis
 - shallow local repo surface under `/home/lachlan/ProjectsLFS`
 - shallow local repo surface under `/home/lachlan/DiskMech/Projects`
 - `LazyInvestment` or adjacent investment repo evidence if present
 - `VoidAbyss`/`voidabyss` folders if present
 - `lazying.art`, `BLOG`, `Documentations`, and `LazySkills` identity surfaces
+- `https://github.com/lachlanchen`, `https://lazying.art`, and the exact Google
+  Scholar profile `Kdqr_AcAAAAJ`
 - current web/GitHub/company research when the question depends on live facts
 
 Raw private chats are not posted back to WeChat. The worker summarizes patterns
@@ -136,10 +154,13 @@ Files:
   status, privacy flags, and git state.
 - `agent_prompt.md`: exact prompt sent to the career agent.
 - `memory_snapshot.md`: private memory summary used as evidence.
+- `life_memo_snapshot.md`: deduplicated recent memo/todo/idea evidence.
 - `project_surface.md`: local repo/project evidence.
 - `lazyinvestment_snapshot.md`: investment repo evidence if available.
 - `voidabyss_snapshot.md`: narrative/IP evidence if available.
 - `identity_surface.md`: lazying.art/blog/skill/profile evidence.
+- `public_profile_surface.md`: exact public profile URLs and current GitHub
+  profile fields.
 - `agent_result.json`: sanitized agent backend metadata and response.
 - `private_report.md`: full private Markdown report.
 - `share_report.md`: sanitized report safe to attach to WeChat.

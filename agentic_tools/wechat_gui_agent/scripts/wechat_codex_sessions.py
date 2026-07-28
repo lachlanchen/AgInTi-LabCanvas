@@ -317,7 +317,13 @@ def codex_web_search_enabled(role: str) -> bool:
     configured = os.environ.get("WECHAT_CODEX_WEB_SEARCH")
     if configured is not None:
         return configured.strip().casefold() not in {"0", "false", "no", "off"}
-    return str(role or "").strip().casefold() in {"worker", "research", "daily"}
+    return str(role or "").strip().casefold() in {
+        "worker",
+        "research",
+        "daily",
+        "career_daily",
+        "daily_organizer",
+    }
 
 
 def resolve_codex_binary() -> str:

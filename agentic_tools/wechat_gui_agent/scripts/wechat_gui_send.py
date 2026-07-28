@@ -85,7 +85,17 @@ def main() -> int:
     parser.add_argument("--download-wait-seconds", type=float, default=120.0)
     parser.add_argument("--download-file-size", type=int, default=0, help="Optional exact declared attachment size.")
     parser.add_argument("--download-file-md5", default="", help="Optional exact attachment MD5 from the source card.")
+    parser.add_argument(
+        "--file",
+        type=Path,
+        help="Send this exact local file after the target title guard succeeds. Requires --send.",
+    )
     args = parser.parse_args()
+    if args.file and not args.send:
+        raise SystemExit("--file requires --send so file delivery is always explicit.")
+    outgoing_file = args.file.expanduser().resolve() if args.file else None
+    if outgoing_file and not outgoing_file.is_file():
+        raise SystemExit(f"File does not exist: {outgoing_file}")
     minimum_timeout = int(args.download_wait_seconds + 30) if args.download_file_title else 0
     install_process_timeout(minimum_seconds=minimum_timeout)
 
@@ -145,6 +155,7 @@ def main() -> int:
                 download_wait_seconds=args.download_wait_seconds,
                 download_file_size=args.download_file_size,
                 download_file_md5=args.download_file_md5,
+                outgoing_file=outgoing_file,
             )
             results.append(result)
         fcntl.flock(lock, fcntl.LOCK_UN)
@@ -156,6 +167,7 @@ def main() -> int:
         "compose_dry_run": args.compose_dry_run,
         "message": args.message,
         "download_file_title": args.download_file_title,
+        "outgoing_file": str(outgoing_file) if outgoing_file else "",
         "results": results,
     }
     manifest_path = args.output_dir / "send_manifest.json"
@@ -282,6 +294,7 @@ def send_one(
     download_wait_seconds: float = 120.0,
     download_file_size: int = 0,
     download_file_md5: str = "",
+    outgoing_file: Path | None = None,
 ) -> dict[str, Any]:
     close_non_target_wechat_windows(env, window, target)
     focus(env, window)
@@ -319,6 +332,7 @@ def send_one(
         prefer_current,
         allow_search,
         relaxed_visible_fallback_allowed=relaxed_visible_fallback_allowed,
+        fail_closed_after_visible_match=do_send or outgoing_file is not None,
     )
     opened_path = out_dir / f"{shot_prefix}-opened.png"
     if not guard["ok"]:
@@ -375,6 +389,37 @@ def send_one(
         )
         return {"target": target.name, "screenshot_prefix": shot_prefix, **result}
 
+    if outgoing_file is not None:
+        action_window = window_from_guard(guard) or window
+        result = send_file_to_open_chat(
+            env,
+            action_window,
+            target,
+            outgoing_file,
+            out_dir,
+            shot_prefix,
+            pause=pause,
+        )
+        record_event(
+            chat_name=target.name,
+            query=target.query,
+            action="send_file",
+            direction="outbound",
+            message=outgoing_file.name,
+            status=str(result.get("status") or "failed"),
+            db_path=mirror_db,
+            screenshot_path=str(result.get("screenshot_path") or opened_path),
+            metadata={
+                "target": target.__dict__,
+                "guard": guard,
+                "file": {
+                    "name": outgoing_file.name,
+                    "size_bytes": outgoing_file.stat().st_size,
+                },
+            },
+        )
+        return {"target": target.name, "screenshot_prefix": shot_prefix, **result}
+
     if not do_send and not compose_dry_run:
         record_event(
             chat_name=target.name,
@@ -422,6 +467,120 @@ def send_one(
         metadata={"target": target.__dict__, "guard": guard},
     )
     return {"target": target.name, "status": status, "screenshot_prefix": shot_prefix}
+
+
+def send_file_to_open_chat(
+    env: dict[str, str],
+    window: Window,
+    target: TargetSpec,
+    file_path: Path,
+    out_dir: Path,
+    shot_prefix: str,
+    *,
+    pause: float,
+) -> dict[str, Any]:
+    """Send one file while the exact-target title guard and GUI lock remain active."""
+    path = file_path.expanduser().resolve()
+    if not path.is_file():
+        raise RuntimeError(f"File does not exist: {path}")
+
+    focus(env, window)
+    preflight_path = out_dir / f"{shot_prefix}-file-preflight.png"
+    screenshot(env, preflight_path)
+    raise_if_wechat_locked(
+        env,
+        window,
+        preflight_path,
+        out_dir / f"{shot_prefix}-file-preflight-lock.png",
+        "before file selection",
+    )
+    clear_composer(env, window, min(max(pause, 0.1), 0.5))
+
+    click(
+        env,
+        window.x + int(window.width * 0.47),
+        window.y + window.height - 132,
+    )
+    time.sleep(max(0.5, pause))
+    paste_path_into_file_chooser(env, path)
+    time.sleep(max(0.5, pause))
+
+    selected_path = out_dir / f"{shot_prefix}-file-selected.png"
+    screenshot(env, selected_path)
+    raise_if_wechat_locked(
+        env,
+        window,
+        selected_path,
+        out_dir / f"{shot_prefix}-file-selected-lock.png",
+        "after file selection",
+    )
+    selected_guard = verify_opened_title(
+        env,
+        window,
+        selected_path,
+        target,
+        out_dir / f"{shot_prefix}-file-selected-title.png",
+        "file_selected",
+    )
+    if not selected_guard.get("ok"):
+        raise RuntimeError(
+            "WECHAT_FILE_TARGET_CHANGED: exact chat title guard failed after "
+            f"native file selection for {path.name}"
+        )
+
+    click(
+        env,
+        window.x + window.width - 58,
+        window.y + window.height - 34,
+    )
+    time.sleep(max(1.0, pause))
+    sent_path = out_dir / f"{shot_prefix}-file-sent.png"
+    screenshot(env, sent_path)
+    raise_if_wechat_locked(
+        env,
+        window,
+        sent_path,
+        out_dir / f"{shot_prefix}-file-sent-lock.png",
+        "after file submission",
+    )
+    if same_screenshot(selected_path, sent_path):
+        raise RuntimeError(
+            "WECHAT_FILE_SEND_VERIFY_FAILED: native file selection did not "
+            f"produce a visible sent state for {path.name}"
+        )
+    return {
+        "status": "sent-file-submitted",
+        "filename": path.name,
+        "size_bytes": path.stat().st_size,
+        "screenshot_path": str(sent_path),
+        "selected_title_guard": selected_guard,
+    }
+
+
+def paste_path_into_file_chooser(env: dict[str, str], path: Path) -> None:
+    hotkey(env, "ctrl+l")
+    time.sleep(0.2)
+    paste_text(env, str(path))
+    time.sleep(0.2)
+    key(env, "Return")
+
+
+def raise_if_wechat_locked(
+    env: dict[str, str],
+    window: Window,
+    screenshot_path: Path,
+    crop_path: Path,
+    stage: str,
+) -> None:
+    locked = detect_wechat_locked(env, window, screenshot_path, crop_path)
+    if not locked.get("locked"):
+        return
+    ocr_text = str(locked.get("ocr_text") or "").replace("\n", " ")[:300]
+    raise WeChatLockedError(
+        "WECHAT_LOCKED: file send blocked "
+        f"{stage}; screenshot={screenshot_path}; "
+        f"lock_crop={locked.get('lock_crop')}; ocr={ocr_text}"
+    )
 
 
 def download_visible_file_card(
@@ -798,6 +957,7 @@ def open_target(
     prefer_current: bool = False,
     allow_search: bool = True,
     relaxed_visible_fallback_allowed: bool = False,
+    fail_closed_after_visible_match: bool = False,
 ) -> dict[str, Any]:
     def verify(label: str) -> dict[str, Any]:
         time.sleep(max(pause, float(os.environ.get("WECHAT_INITIAL_TITLE_WAIT", "1.2"))))
@@ -843,14 +1003,23 @@ def open_target(
             attempts.append({**guard, "visible_chat_list_match": match})
             if guard["ok"]:
                 return {**guard, "visible_chat_list_match": match}
-            double_click(env, window.x + int(match["click_x"]), window.y + int(match["click_y"]))
-            guard = verify(f"visible_chat_list_ocr_double:{match['text']}")
+            click(env, window.x + int(match["click_x"]), window.y + int(match["click_y"]))
+            guard = verify(f"visible_chat_list_ocr_retry:{match['text']}")
             attempts.append({**guard, "visible_chat_list_match": match})
             if guard["ok"]:
                 return {**guard, "visible_chat_list_match": match}
             fallback_guard = visible_chat_list_fallback_guard(guard, target, match)
             if fallback_guard and relaxed_visible_fallback_allowed:
                 return fallback_guard
+            if fail_closed_after_visible_match:
+                return {
+                    **guard,
+                    "ok": False,
+                    "method": str(guard.get("method") or "visible_chat_list_ocr_retry"),
+                    "exact_visible_match_open_failed": True,
+                    "attempts": attempts,
+                    "visible_chat_list_match": match,
+                }
             if not (allow_search and target.allow_search):
                 return {
                     **guard,
@@ -1012,12 +1181,14 @@ def chat_list_crop_region(window: Window) -> dict[str, int] | None:
 
 
 def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[str, Any] | None:
-    expected = [
-        normalize_title(item)
-        for item in (target.expected_title, *target.expected_title_aliases, target.name, target.query)
+    expected_titles = [
+        item
+        for item in (target.expected_title, *target.expected_title_aliases, target.name)
         if normalize_title(item)
     ]
-    if not expected:
+    if not expected_titles and normalize_title(target.query):
+        expected_titles = [target.query]
+    if not expected_titles:
         return None
     rows: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     reader = csv.DictReader(io.StringIO(tsv_text), delimiter="\t")
@@ -1045,7 +1216,7 @@ def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[
         words.sort(key=lambda item: (int(item["left"]), int(item["top"])))
         text = "".join(str(item["text"]) for item in words)
         normalized = normalize_title(text)
-        if not normalized or not any(item in normalized for item in expected):
+        if not normalized or not title_identity_matches(text, expected_titles):
             continue
         min_left = min(int(item["left"]) for item in words)
         max_right = max(int(item["left"]) + int(item["width"]) for item in words)
@@ -1053,7 +1224,7 @@ def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[
         max_bottom = max(int(item["top"]) + int(item["height"]) for item in words)
         # Chat titles normally start after the avatar column. This avoids
         # matching incidental text in timestamps, previews, or the side rail.
-        if min_left < 45 or min_left > 210:
+        if min_left < 45 or min_left > 145:
             continue
         matches.append(
             {
@@ -1145,7 +1316,7 @@ def verify_opened_title(
     window_title_ok = (
         bool(window_title)
         and not window_reject_reason
-        and any(item in normalize_title(window_title) for item in expected)
+        and title_identity_matches(window_title, expected_titles)
     )
     if window_title_ok:
         surface_guard = detect_rejected_chat_surface(env, window, screenshot_path, crop_path)
@@ -1223,8 +1394,7 @@ def verify_opened_title(
                 "compose_window": window_to_dict(window),
                 "surface_reject_reason": reject_reason,
             }
-        observed = normalize_title(text)
-        if any(item in observed for item in expected):
+        if title_identity_matches(text, expected_titles):
             surface_guard = detect_rejected_chat_surface(env, window, screenshot_path, region_crop)
             if surface_guard["reason"]:
                 return rejected_title_guard_result(
@@ -1285,6 +1455,41 @@ def rejected_title_guard_result(
 
 def normalize_title(text: str) -> str:
     return "".join(ch.lower() for ch in str(text or "") if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def title_identity_matches(observed_text: str, expected_titles: list[str] | tuple[str, ...]) -> bool:
+    """Match an exact chat title while tolerating one known OCR separator error."""
+    candidates = [line for line in str(observed_text or "").splitlines() if line.strip()]
+    if not candidates:
+        candidates = [str(observed_text or "")]
+    for candidate in candidates:
+        observed = normalize_title(candidate).rstrip("0123456789")
+        if not observed:
+            continue
+        for raw_expected in expected_titles:
+            expected = normalize_title(raw_expected)
+            if not expected:
+                continue
+            if observed == expected or (
+                observed.startswith(expected) and len(observed) - len(expected) <= 3
+            ):
+                return True
+            # Tesseract commonly reads a dash in segmented Chinese group names
+            # as the Han character "一". Only separator-bearing configured
+            # aliases enable this repair, so normal names containing "一" stay
+            # exact.
+            if title_has_explicit_separator(raw_expected):
+                observed_compact = observed.replace("一", "")
+                if observed_compact == expected or (
+                    observed_compact.startswith(expected)
+                    and len(observed_compact) - len(expected) <= 3
+                ):
+                    return True
+    return False
+
+
+def title_has_explicit_separator(text: str) -> bool:
+    return any(character.isspace() or character in "-_—–－·•/" for character in str(text or ""))
 
 
 def specific_window_title_nonmatch(window_title: str, expected: list[str]) -> bool:

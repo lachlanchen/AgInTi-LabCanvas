@@ -93,7 +93,8 @@ ROUTINES: dict[str, RoutineDefinition] = {
         ),
         artifact_policy=(
             "Return a concise chat summary by default. Save Markdown/evidence locally under the task artifact directory, "
-            "but do not attach Markdown/PDF/images to WeChat unless the user asks for a file/report or the source was substantially read and the PDF is genuinely useful."
+            "but do not attach Markdown/PDF/images to WeChat unless the current message explicitly asks for a file or report. "
+            "For an ordinary PDF/report request, send the compiled PDF only; send Markdown/TeX sources only when explicitly requested."
         ),
         rules=COMMON_RULES
         + (
@@ -102,6 +103,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "For genes and proteins, verify the official symbol, full name, species, and stable identifier with sources such as HGNC, NCBI Gene, UniProt, and peer-reviewed papers before building a report or pathway figure.",
             "For link/read-later inbox tasks, treat shared URLs/cards/media as source material to read and summarize by default.",
             "Quality over quantity: if you only saw a card title, metadata, a verification page, or a blocked preview, say that briefly and do not produce a report artifact.",
+            "Even after a full source read, ordinary link-inbox delivery remains one concise chat answer; a useful local report is not permission to send it.",
             "For mp.weixin/Gongzhonghao links, direct verification pages are not final; run read-only mobile-WeChat HTTP extraction/private-cache recovery, then exact-title/account public reconstruction without asking for verification or opening a browser.",
             "For Shipinhao/Finder shares, first use the exact source card's allowlisted media URL to verify the video, extract audio, and transcribe it; use wx_channel comments/API, visible evidence, Yuanbao/transcript comments, and exact-title/object-ID public sources only as auxiliary evidence.",
             "If a Shipinhao card URL expired, first allow the transcriber to recover a bounded public mirror only when card duration and cover/transcript content checks set content_identity_verified=true and public_mirror_validation.accepted=true. Otherwise accept only a private native capture manifest whose visible title/author identity, object ID, and audio hash match; trim feed auto-advance before transcription.",

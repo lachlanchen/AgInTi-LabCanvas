@@ -45,7 +45,7 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 | PCB manufacturing | KiCad HYBEC and Lumileds boards, DRC/ERC, JLCPCB Gerber ZIPs | [pcb](pcb) |
 | LabVIEW automation | Linux install probe, MCP candidate research, stdio-to-HTTP bridge | [agentic_tools/labview_mcp_agent](agentic_tools/labview_mcp_agent) |
 | Android control | Dedicated noVNC/scrcpy desktop and ADB wrapper for the Mi MIX 2S real device plus matching AVD profile | [docs/ANDROID_DEVICE_CONTROL.md](docs/ANDROID_DEVICE_CONTROL.md) |
-| WeChat chatops | Isolated Linux GUI, direct local message mirror, fast ACK agent, strict per-chat media isolation, AgInTi figure generation plus CAD/PCB/Blender worker queue, file/PDF/render return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md), [full control manual](agentic_tools/wechat_gui_agent/docs/FULL_CONTROL_MANUAL.md), [robust operations](agentic_tools/wechat_gui_agent/docs/ROBUST_EFFICIENT_OPERATIONS.md) |
+| WeChat chatops | Isolated Linux GUI, direct local message mirror, exact-token per-chat media isolation, serialized text/file delivery, bounded no-backlog recovery, and CAD/PCB/Blender artifact return | [docs/WECHAT_AUTOMATION.md](docs/WECHAT_AUTOMATION.md), [full control manual](agentic_tools/wechat_gui_agent/docs/FULL_CONTROL_MANUAL.md), [robust operations](agentic_tools/wechat_gui_agent/docs/ROBUST_EFFICIENT_OPERATIONS.md) |
 | WeCom bridge | Official AI Bot and `wecom-cli` transports plus allowlisted GUI/Android relays, exact voice/media transcription, content-idempotent file sends, per-chat sessions, member archives, immediate `#daily` research, and LaTeX report recovery | [setup and architecture](docs/WECOM_API_BRIDGE.md), [stable GUI interface](agentic_tools/wecom_agent/docs/GUI_RELAY_INTERFACE.md) |
 | LALACHAN video handoff | Story drafting, Xiaoyunque browser generation, MP4 download, repo/Nutstore copy, and LazyEdit permission gates for WeChat workers | [references/lalachan-story-video-handoff-for-wechat.md](references/lalachan-story-video-handoff-for-wechat.md) |
 | Video publish handoff | Agents resolve exact videos and context, then delegate subtitle correction, metadata, logo/subtitle burn, packaging, and public posting to LazyEdit/AutoPublish | [references/lazyedit-agent-integration-handoff.md](references/lazyedit-agent-integration-handoff.md) |
@@ -132,6 +132,8 @@ labcanvas wechat worker --chat "懒人科研" enqueue "Use LabCanvas to render t
 labcanvas wechat status
 labcanvas wechat hold start
 labcanvas wechat stack start --web-port 19474
+labcanvas wechat career-agent start --send --attach-report --organize-report --organize-chat "写作 外语 挣钱"
+labcanvas wechat career-agent organize --send --organize-chat "写作 外语 挣钱" --json
 labcanvas wechat audio-intake --input <exact-local-media> --output-dir output/wechat-audio-read --json
 labcanvas wechat shipinhao-transcribe --source-text-file <card.txt> --output-dir output/shipinhao-read --json
 PYTHONPATH=src python agentic_tools/wecom_agent/scripts/wecom_daily_research.py run --json

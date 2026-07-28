@@ -15,6 +15,32 @@ from agenticapp import wechat_ops
 
 
 class WeChatOpsHealthTests(unittest.TestCase):
+    def test_desktop_status_reports_fresh_watchdog_lock(self) -> None:
+        original_run = wechat_ops.run_command
+        original_port = wechat_ops.port_listening
+        original_watchdog = wechat_ops.fresh_unlock_watchdog_state
+        try:
+            wechat_ops.run_command = lambda *args, **kwargs: subprocess.CompletedProcess(  # type: ignore[assignment]
+                args[0],
+                0,
+                "123\n",
+                "",
+            )
+            wechat_ops.port_listening = lambda _port: True  # type: ignore[assignment]
+            wechat_ops.fresh_unlock_watchdog_state = lambda: {  # type: ignore[assignment]
+                "desktop": {"status": "locked"},
+                "age_seconds": 2,
+            }
+
+            payload = wechat_ops.desktop_status()
+        finally:
+            wechat_ops.run_command = original_run  # type: ignore[assignment]
+            wechat_ops.port_listening = original_port  # type: ignore[assignment]
+            wechat_ops.fresh_unlock_watchdog_state = original_watchdog  # type: ignore[assignment]
+
+        self.assertEqual(payload["status"], "locked")
+        self.assertEqual(payload["watchdog"]["desktop"]["status"], "locked")
+
     def test_direct_monitor_health_reports_stale_sources_not_ready(self) -> None:
         original_discover = wechat_ops.discover_direct_monitor_configs
         original_config_health = wechat_ops.direct_config_health

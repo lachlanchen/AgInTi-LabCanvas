@@ -30,6 +30,11 @@ def main() -> int:
     parser.add_argument("--since-epoch", type=float, default=None, help="Copy files modified at or after this Unix timestamp.")
     parser.add_argument("--until-epoch", type=float, default=None, help="Copy files modified at or before this Unix timestamp.")
     parser.add_argument("--match-token", action="append", default=[], help="Also copy files whose path/name contains this token, regardless of age. Repeatable.")
+    parser.add_argument(
+        "--require-token-match",
+        action="store_true",
+        help="Reject mtime-only matches. Use for exact-chat task source resolution.",
+    )
     parser.add_argument("--decode-dat", action=argparse.BooleanOptionalAction, default=True, help="Decode WeChat .dat image blobs when possible.")
     parser.add_argument("--image-aes-key", default="", help=argparse.SUPPRESS)
     parser.add_argument("--image-xor-key", default="", help=argparse.SUPPRESS)
@@ -67,7 +72,14 @@ def main() -> int:
                 stat = path.stat()
             except OSError:
                 continue
-            matched_by = media_match_reason(path, stat.st_mtime, cutoff_epoch, until_epoch, match_tokens)
+            matched_by = media_match_reason(
+                path,
+                stat.st_mtime,
+                cutoff_epoch,
+                until_epoch,
+                match_tokens,
+                require_token_match=bool(args.require_token_match),
+            )
             if not matched_by:
                 continue
             seen_paths.add(resolved)
@@ -103,6 +115,7 @@ def main() -> int:
             "dest": str(args.dest),
             "layout": "<dest>/<chat>/<wechat-profile>/<category>/<relative-file>",
             "match_tokens": match_tokens,
+            "require_token_match": bool(args.require_token_match),
             "since_epoch": cutoff_epoch,
             "until_epoch": until_epoch,
             "decode_dat": bool(args.decode_dat),
@@ -364,11 +377,21 @@ def decode_xor_dat(data: bytes) -> tuple[str, bytes] | None:
     return None
 
 
-def media_match_reason(path: Path, mtime: float, cutoff_epoch: float, until_epoch: float | None, match_tokens: list[str]) -> str:
+def media_match_reason(
+    path: Path,
+    mtime: float,
+    cutoff_epoch: float,
+    until_epoch: float | None,
+    match_tokens: list[str],
+    *,
+    require_token_match: bool = False,
+) -> str:
     normalized = str(path).lower()
     for token in match_tokens:
         if token and token in normalized:
             return f"token:{token[:32]}"
+    if require_token_match:
+        return ""
     if mtime >= cutoff_epoch and (until_epoch is None or mtime <= until_epoch):
         return "mtime"
     return ""

@@ -8,6 +8,7 @@ WEB_PORT="${WECHAT_WEB_PORT:-19474}"
 CAREER_ENABLED="${WECHAT_STACK_START_CAREER:-1}"
 CAREER_SESSION="${WECHAT_CAREER_SESSION:-labcanvas-career-daily}"
 CAREER_SEND_CHAT="${WECHAT_CAREER_SEND_CHAT:-lachlanchan}"
+CAREER_ORGANIZE_CHAT="${WECHAT_CAREER_ORGANIZE_CHAT:-写作 外语 挣钱}"
 CAREER_MORNING_TIME="${WECHAT_CAREER_MORNING_TIME:-08:30}"
 CAREER_MODEL="${WECHAT_CAREER_AGENT_MODEL:-gpt-5.5}"
 CAREER_EFFORT="${WECHAT_CAREER_AGENT_EFFORT:-medium}"
@@ -38,6 +39,7 @@ Environment:
   WECHAT_STACK_START_CAREER   set 0 to leave daily scheduler unmanaged
   WECHAT_CAREER_SESSION       tmux session name for daily scheduler
   WECHAT_CAREER_SEND_CHAT     chat receiving daily report, default lachlanchan
+  WECHAT_CAREER_ORGANIZE_CHAT chat receiving the PDF-only recent-items memo
   WECHAT_CAREER_MORNING_TIME  daily run time, default 08:30
   WECHAT_CAREER_AGENT_MODEL   default gpt-5.5
   WECHAT_CAREER_AGENT_EFFORT  default medium
@@ -72,6 +74,8 @@ start_career() {
   python3 -m agenticapp wechat career-agent start \
     --send \
     --attach-report \
+    --organize-report \
+    --organize-chat "$CAREER_ORGANIZE_CHAT" \
     --send-chat "$CAREER_SEND_CHAT" \
     --morning-time "$CAREER_MORNING_TIME" \
     --session "$CAREER_SESSION" \
@@ -86,6 +90,8 @@ restart_career() {
   python3 -m agenticapp wechat career-agent restart \
     --send \
     --attach-report \
+    --organize-report \
+    --organize-chat "$CAREER_ORGANIZE_CHAT" \
     --send-chat "$CAREER_SEND_CHAT" \
     --morning-time "$CAREER_MORNING_TIME" \
     --session "$CAREER_SESSION" \

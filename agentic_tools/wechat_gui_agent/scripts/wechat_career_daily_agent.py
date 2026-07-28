@@ -18,7 +18,12 @@ from typing import Any
 import uuid
 
 from wechat_agent_backend import run_agent_session, select_agent_backend
-from wechat_task_worker import ensure_markdown_pdf_companions, send_file, send_message
+from wechat_task_worker import (
+    ensure_markdown_pdf_companions,
+    render_markdown_pdf,
+    send_file,
+    send_message,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -27,16 +32,25 @@ OUTPUT = ROOT / "output" / "wechat_strategy"
 DEFAULT_MEMORY_DB = PRIVATE / "wechat_memory.sqlite"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 GUI_SEND_PRIORITY = Path(os.environ.get("WECHAT_GUI_SEND_PRIORITY_PATH", str(PRIVATE / "wechat_gui_send_priority.json")))
-DEFAULT_CHATS = ["写作 外语 挣钱", "lachlanchan"]
+DEFAULT_CHATS = ["写作 外语 挣钱", "lachlanchan", "鏈接", "🍓我的设备"]
+DEFAULT_ORGANIZER_CHAT = "写作 外语 挣钱"
+ORGANIZER_STATE = PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["run", "loop"], nargs="?", default="run")
+    parser.add_argument("action", choices=["run", "loop", "organize"], nargs="?", default="run")
     parser.add_argument("--chat", action="append", default=[], help="Memory chat to include. Repeatable.")
     parser.add_argument("--send-chat", default="lachlanchan", help="WeChat chat/DM to receive the daily note.")
     parser.add_argument("--send", action="store_true", help="Send the concise result and shareable report to WeChat.")
     parser.add_argument("--attach-report", action="store_true", help="Attach the shareable Markdown report when sending.")
+    parser.add_argument(
+        "--organize-report",
+        action="store_true",
+        help="Also create the daily recent-items PDF for the organizer chat.",
+    )
+    parser.add_argument("--organize-chat", default=DEFAULT_ORGANIZER_CHAT)
+    parser.add_argument("--force-organize", action="store_true")
     parser.add_argument("--memory-db", type=Path, default=DEFAULT_MEMORY_DB)
     parser.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS)
     parser.add_argument("--morning-time", default="08:30", help="Loop run time in HH:MM local time.")
@@ -49,7 +63,11 @@ def main() -> int:
 
     if args.action == "loop":
         return loop_daily(args)
-    payload = run_daily(args)
+    payload = (
+        run_organizer(args, force=bool(args.force_organize))
+        if args.action == "organize"
+        else run_daily(args)
+    )
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
@@ -59,27 +77,42 @@ def main() -> int:
 
 def loop_daily(args: argparse.Namespace) -> int:
     last_run_key = ""
+    organizer_done_key = ""
     while True:
         now = datetime.now()
-        run_at = next_run_time(now, args.morning_time)
-        if run_at.date() == now.date() and now >= run_at and last_run_key != run_at.strftime("%Y-%m-%d"):
-            payload = run_daily(args)
-            print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
-            last_run_key = run_at.strftime("%Y-%m-%d")
+        run_at = scheduled_run_time(now, args.morning_time)
+        run_key = run_at.strftime("%Y-%m-%d")
+        if now >= run_at:
+            if last_run_key != run_key:
+                if career_delivery_complete_for_date(run_key, require_send=bool(args.send)):
+                    last_run_key = run_key
+                else:
+                    payload = run_daily(args)
+                    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+                    last_run_key = run_key
+            if bool(getattr(args, "organize_report", False)) and organizer_done_key != run_key:
+                payload = run_organizer(args)
+                print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+                if payload.get("ok"):
+                    organizer_done_key = run_key
         sleep_until = next_run_time(datetime.now(), args.morning_time)
         delay = min(max(5.0, (sleep_until - datetime.now()).total_seconds()), max(5.0, args.loop_sleep))
         time.sleep(delay)
 
 
 def next_run_time(now: datetime, hhmm: str) -> datetime:
+    candidate = scheduled_run_time(now, hhmm)
+    if now > candidate:
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def scheduled_run_time(now: datetime, hhmm: str) -> datetime:
     try:
         hour, minute = [int(part) for part in hhmm.split(":", 1)]
     except (ValueError, TypeError):
         hour, minute = 8, 30
-    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if now > candidate + timedelta(minutes=5):
-        candidate += timedelta(days=1)
-    return candidate
+    return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
 def run_daily(args: argparse.Namespace) -> dict[str, Any]:
@@ -171,13 +204,233 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def career_delivery_complete_for_date(stamp: str, *, require_send: bool) -> bool:
+    runs_dir = PRIVATE / "output" / "career_daily" / "runs"
+    if not runs_dir.is_dir():
+        return False
+    for manifest_path in sorted(runs_dir.glob(f"{stamp}-*/manifest.json"), reverse=True):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
+        report = Path(str(outputs.get("share_report_latest") or ""))
+        if not report.is_file():
+            continue
+        if not require_send:
+            return True
+        send = manifest.get("send") if isinstance(manifest.get("send"), dict) else {}
+        if bool(send.get("complete")):
+            return True
+    return False
+
+
+def run_organizer(args: argparse.Namespace, *, force: bool = False) -> dict[str, Any]:
+    chat = str(getattr(args, "organize_chat", DEFAULT_ORGANIZER_CHAT) or DEFAULT_ORGANIZER_CHAT)
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    state_path = organizer_state_path()
+    state = read_json_file(state_path)
+    report = OUTPUT / f"{stamp}-recent-items.zh.md"
+    pdf = OUTPUT / f"{stamp}-recent-items.zh.pdf"
+
+    if not force and organizer_delivery_matches(state, stamp, chat, pdf):
+        return {
+            "ok": True,
+            "status": "already_delivered",
+            "chat": chat,
+            "report": str(report),
+            "pdf": str(pdf),
+            "send": state.get("send") or {},
+        }
+
+    generated = bool(
+        not force
+        and state.get("date") == stamp
+        and state.get("chat") == chat
+        and report.is_file()
+        and pdf.is_file()
+        and pdf.stat().st_size > 0
+    )
+    result: dict[str, Any] = {}
+    if not generated:
+        snapshot = life_memo_snapshot(getattr(args, "memory_db", DEFAULT_MEMORY_DB), chat)
+        prompt = build_organizer_prompt(chat, snapshot)
+        result = run_agent_session(
+            prompt,
+            backend=select_agent_backend({}),
+            chat_name=chat,
+            role="daily_organizer",
+            model=args.model,
+            reasoning_effort=args.reasoning_effort,
+            sandbox="read-only",
+            timeout_seconds=args.timeout_seconds,
+            workdir=ROOT,
+            reuse=True,
+        )
+        body = strip_markdown_fence(str(result.get("message") or "").strip())
+        if not result.get("ok") or not body:
+            return {
+                "ok": False,
+                "status": "agent_failed",
+                "chat": chat,
+                "agent": sanitize_agent_result(result),
+            }
+        OUTPUT.mkdir(parents=True, exist_ok=True)
+        report.write_text(body.rstrip() + "\n", encoding="utf-8")
+        rendered = render_markdown_pdf(report, pdf)
+        if rendered is None or not pdf.is_file() or pdf.stat().st_size <= 0:
+            return {
+                "ok": False,
+                "status": "pdf_failed",
+                "chat": chat,
+                "report": str(report),
+            }
+        state = {
+            "schema": "labcanvas.wechat.daily_organizer.v1",
+            "date": stamp,
+            "chat": chat,
+            "status": "ready",
+            "report": str(report),
+            "pdf": str(pdf),
+            "agent": {
+                "backend": result.get("backend"),
+                "thread_id": result.get("thread_id"),
+                "resumed": result.get("resumed"),
+                "model": args.model,
+                "reasoning_effort": args.reasoning_effort,
+            },
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        write_json_file(state_path, state)
+
+    send_status: dict[str, Any] = {"attempted": False, "complete": not bool(args.send)}
+    if args.send:
+        send_status = send_organizer_pdf(args, pdf, chat)
+    state.update(
+        {
+            "date": stamp,
+            "chat": chat,
+            "report": str(report),
+            "pdf": str(pdf),
+            "status": "delivered" if send_status.get("complete") else "delivery_failed",
+            "send": send_status,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+    )
+    write_json_file(state_path, state)
+    return {
+        "ok": bool(send_status.get("complete")),
+        "status": state["status"],
+        "chat": chat,
+        "report": str(report),
+        "pdf": str(pdf),
+        "generated": not generated,
+        "send": send_status,
+        "agent": state.get("agent") or {},
+    }
+
+
+def organizer_delivery_matches(state: dict[str, Any], stamp: str, chat: str, pdf: Path) -> bool:
+    return bool(
+        state.get("date") == stamp
+        and state.get("chat") == chat
+        and state.get("status") == "delivered"
+        and (state.get("send") or {}).get("complete")
+        and pdf.is_file()
+        and pdf.stat().st_size > 0
+    )
+
+
+def organizer_state_path() -> Path:
+    if PRIVATE == ROOT / "agentic_tools" / "wechat_gui_agent" / ".private":
+        return ORGANIZER_STATE
+    return PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
+
+
+def send_organizer_pdf(args: argparse.Namespace, pdf: Path, chat: str) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "attempted": True,
+        "complete": False,
+        "file_sent": False,
+        "files_sent": [],
+        "errors": [],
+    }
+    with reserve_gui_send_priority("daily_organizer", chat):
+        try:
+            send_daily_with_busy_retry(send_file, pdf, chat, args.send_targets)
+        except Exception as exc:  # noqa: BLE001
+            status["errors"].append(f"file {pdf}: {exc}")
+            return status
+    status["file_sent"] = True
+    status["files_sent"] = [str(pdf)]
+    status["complete"] = True
+    return status
+
+
+def build_organizer_prompt(chat: str, snapshot: str) -> str:
+    return f"""You organize one private WeChat group's recent notes into a useful daily memo.
+
+Exact chat: {chat}
+
+Return only polished Chinese Markdown for a mobile-readable PDF. Do not mention
+the automation, database, classifiers, local paths, model, or prompt.
+
+Use only the evidence below. Deduplicate repeated classifications of the same
+message. Do not invent dates, deadlines, completion states, groceries, calendar
+events, or commitments. A question or request is not automatically a real todo.
+
+Organize naturally rather than forcing empty sections. Distinguish:
+- concrete open actions for today or this week;
+- later ideas and experiments;
+- writing, language, career, and money signals;
+- factual reminders and explicit dates, only when present;
+- items that need clarification before they become actions.
+
+Be selective and substantive. Preserve important technical names and quoted
+intent. Merge related fragments, explain the connection briefly, and end with
+at most three high-leverage next actions. Do not add generic productivity advice.
+
+Recent exact-chat evidence:
+{snapshot}
+"""
+
+
+def strip_markdown_fence(text: str) -> str:
+    match = re.fullmatch(
+        r"\s*```(?:markdown|md)?\s*\n(.*?)\n```\s*",
+        str(text or ""),
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    return match.group(1).strip() if match else str(text or "").strip()
+
+
+def read_json_file(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def write_json_file(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
 def collect_evidence(chats: list[str], memory_db: Path) -> dict[str, str]:
     return {
         "memory_snapshot": memory_snapshot(memory_db, chats),
+        "life_memo_snapshot": life_memo_snapshot(memory_db, "写作 外语 挣钱"),
         "project_surface": project_surface(),
         "lazyinvestment_snapshot": repo_readme_snapshot(Path("/home/lachlan/ProjectsLFS/LazyInvestment")),
         "voidabyss_snapshot": voidabyss_snapshot(),
         "identity_surface": identity_surface(),
+        "public_profile_surface": public_profile_surface(),
     }
 
 
@@ -189,9 +442,12 @@ The user prefers substance over format. Do not write a shallow checklist.
 
 Use the evidence below:
 - WeChat memory summary, especially writing/language/money and lachlanchan.
+- The deduplicated life memo from the writing/language/money group.
 - Local repo/project surface.
 - LazyInvestment/LazyEdit/LabCanvas/LazySkills/LALACHAN/voidabyss evidence when present.
-- Current public web/GitHub/company research only when needed. Verify current facts before recommending companies or stocks.
+- Public profile evidence from GitHub, lazying.art, and the exact Google Scholar
+  profile. Verify current facts before recommending companies or stocks and do
+  not merge similarly named authors.
 
 Important:
 - Write the main report in Chinese. English terms are fine when they are the natural name of a concept/company/product.
@@ -228,6 +484,9 @@ sentence.
 WeChat memory snapshot:
 {evidence.get('memory_snapshot', '')}
 
+Deduplicated life/todo/memo snapshot:
+{evidence.get('life_memo_snapshot', '')}
+
 Local project surface:
 {evidence.get('project_surface', '')}
 
@@ -239,16 +498,21 @@ voidabyss snapshot:
 
 lazying.art/local web identity hints:
 {evidence.get('identity_surface', '')}
+
+Public profile surface:
+{evidence.get('public_profile_surface', '')}
 """
 
 
 def write_evidence_artifacts(trace_dir: Path, evidence: dict[str, str]) -> None:
     filenames = {
         "memory_snapshot": "memory_snapshot.md",
+        "life_memo_snapshot": "life_memo_snapshot.md",
         "project_surface": "project_surface.md",
         "lazyinvestment_snapshot": "lazyinvestment_snapshot.md",
         "voidabyss_snapshot": "voidabyss_snapshot.md",
         "identity_surface": "identity_surface.md",
+        "public_profile_surface": "public_profile_surface.md",
     }
     for key, filename in filenames.items():
         (trace_dir / filename).write_text(str(evidence.get(key) or "").rstrip() + "\n", encoding="utf-8")
@@ -299,10 +563,12 @@ def build_trace_manifest(
             "evidence_files": {
                 "prompt": str(trace_dir / "agent_prompt.md"),
                 "memory_snapshot": str(trace_dir / "memory_snapshot.md"),
+                "life_memo_snapshot": str(trace_dir / "life_memo_snapshot.md"),
                 "project_surface": str(trace_dir / "project_surface.md"),
                 "lazyinvestment_snapshot": str(trace_dir / "lazyinvestment_snapshot.md"),
                 "voidabyss_snapshot": str(trace_dir / "voidabyss_snapshot.md"),
                 "identity_surface": str(trace_dir / "identity_surface.md"),
+                "public_profile_surface": str(trace_dir / "public_profile_surface.md"),
             },
         },
         "outputs": {
@@ -350,6 +616,72 @@ def memory_snapshot(db: Path, chats: list[str], *, limit: int = 80) -> str:
         f"- {row['chat_name']} / {row['category']} / {row['created_at']}: {compact(row['body'], 240)}"
         for row in rows
     )
+
+
+def life_memo_snapshot(db: Path, chat: str, *, limit: int = 100) -> str:
+    if not db.exists():
+        return "(memory database not found)"
+    allowed = {
+        "calendar",
+        "grocery",
+        "idea",
+        "inbox",
+        "language",
+        "memo",
+        "money",
+        "request",
+        "todo",
+        "web_clip",
+        "writing",
+    }
+    try:
+        with sqlite3.connect(db) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT source_message_id, category, title, body, status, due_at,
+                       created_at
+                FROM memory_items
+                WHERE chat_name = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (chat, limit * 4),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        return f"(memory read failed: {exc})"
+    grouped: dict[tuple[int, str], dict[str, Any]] = {}
+    for row in rows:
+        category = str(row["category"] or "")
+        if category not in allowed:
+            continue
+        body = " ".join(str(row["body"] or "").split())
+        if not body:
+            continue
+        key = (int(row["source_message_id"]), body)
+        item = grouped.setdefault(
+            key,
+            {
+                "body": body,
+                "created_at": str(row["created_at"] or ""),
+                "status": str(row["status"] or "open"),
+                "due_at": str(row["due_at"] or ""),
+                "categories": set(),
+            },
+        )
+        item["categories"].add(category)
+    items = sorted(grouped.values(), key=lambda item: item["created_at"], reverse=True)[:limit]
+    if not items:
+        return "(no organized items found)"
+    lines = []
+    for item in items:
+        metadata = ["/".join(sorted(item["categories"])), item["created_at"]]
+        if item["status"] and item["status"] != "open":
+            metadata.append(f"status={item['status']}")
+        if item["due_at"]:
+            metadata.append(f"explicit_due={item['due_at']}")
+        lines.append(f"- {' | '.join(metadata)}: {compact(item['body'], 360)}")
+    return "\n".join(lines)
 
 
 def project_surface(*, limit: int = 48) -> str:
@@ -422,6 +754,32 @@ def identity_surface() -> str:
     return "\n\n".join(lines[:6]) if lines else "(no local lazying.art identity surface found)"
 
 
+def public_profile_surface() -> str:
+    lines = [
+        "GitHub profile: https://github.com/lachlanchen",
+        "Website: https://lazying.art",
+        "Google Scholar: https://scholar.google.com/citations?user=Kdqr_AcAAAAJ&hl=en",
+    ]
+    github = run_short(["gh", "api", "users/lachlanchen"], timeout=4.0, limit=8000)
+    if github:
+        try:
+            profile = json.loads(github)
+        except json.JSONDecodeError:
+            profile = {}
+        if isinstance(profile, dict):
+            safe_fields = {
+                key: profile.get(key)
+                for key in ("name", "company", "bio", "blog", "location", "public_repos")
+                if profile.get(key) not in (None, "")
+            }
+            if safe_fields:
+                lines.append("Current GitHub API profile: " + json.dumps(safe_fields, ensure_ascii=False))
+    profile_repo = Path("/home/lachlan/ProjectsLFS/lachlanchen")
+    if profile_repo.exists():
+        lines.append(repo_readme_snapshot(profile_repo))
+    return "\n".join(lines)
+
+
 def first_readme_line(repo: Path) -> str:
     for name in ("README.md", "readme.md"):
         path = repo / name
@@ -437,12 +795,12 @@ def first_readme_line(repo: Path) -> str:
     return ""
 
 
-def run_short(command: list[str], *, timeout: float = 2.0) -> str:
+def run_short(command: list[str], *, timeout: float = 2.0, limit: int = 220) -> str:
     try:
         proc = subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired):
         return ""
-    return compact(proc.stdout, 220)
+    return compact(proc.stdout, limit)
 
 
 def sanitize_shareable_report(text: str) -> str:

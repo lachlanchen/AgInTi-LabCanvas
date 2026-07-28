@@ -25,6 +25,130 @@ def load_wechat_gui_send():
 
 
 class WeChatGuiSendTests(unittest.TestCase):
+    def test_file_send_requires_explicit_send_flag(self):
+        module = load_wechat_gui_send()
+        with tempfile.TemporaryDirectory() as tmp:
+            file_path = Path(tmp) / "report.pdf"
+            file_path.write_bytes(b"%PDF-1.4\n")
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "wechat_gui_send.py",
+                    "--target",
+                    "EchoMind",
+                    "--file",
+                    str(file_path),
+                ],
+            ):
+                with self.assertRaisesRegex(SystemExit, "--file requires --send"):
+                    module.main()
+
+    def test_guarded_file_helper_checks_lock_and_visible_send_change(self):
+        module = load_wechat_gui_send()
+        calls: list[list[str]] = []
+        lock_checks: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            file_path = root / "report.pdf"
+            file_path.write_bytes(b"%PDF-1.4\n")
+
+            def fake_screenshot(_env, path):
+                path = Path(path)
+                calls.append(["screenshot", path.name])
+                path.write_bytes(path.name.encode("utf-8"))
+
+            def fake_lock(_env, _window, screenshot_path, _crop_path):
+                lock_checks.append(Path(screenshot_path).name)
+                return {"locked": False, "ocr_text": ""}
+
+            with (
+                mock.patch.object(module, "focus"),
+                mock.patch.object(module, "screenshot", side_effect=fake_screenshot),
+                mock.patch.object(module, "detect_wechat_locked", side_effect=fake_lock),
+                mock.patch.object(module, "clear_composer"),
+                mock.patch.object(module, "click"),
+                mock.patch.object(module, "paste_path_into_file_chooser"),
+                mock.patch.object(
+                    module,
+                    "verify_opened_title",
+                    return_value={"ok": True, "method": "file_selected"},
+                ),
+                mock.patch.object(module.time, "sleep"),
+            ):
+                result = module.send_file_to_open_chat(
+                    {},
+                    module.Window("main", 0, 0, 1000, 700),
+                    module.TargetSpec(
+                        name="EchoMind",
+                        query="EchoMind",
+                        expected_title="EchoMind",
+                    ),
+                    file_path,
+                    root,
+                    "guarded",
+                    pause=0.1,
+                )
+
+        self.assertEqual(result["status"], "sent-file-submitted")
+        self.assertEqual(result["filename"], "report.pdf")
+        self.assertEqual(
+            lock_checks,
+            [
+                "guarded-file-preflight.png",
+                "guarded-file-selected.png",
+                "guarded-file-sent.png",
+            ],
+        )
+
+    def test_guarded_file_helper_rejects_target_change_after_picker(self):
+        module = load_wechat_gui_send()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            file_path = root / "report.pdf"
+            file_path.write_bytes(b"%PDF-1.4\n")
+
+            def fake_screenshot(_env, path):
+                Path(path).write_bytes(b"frame")
+
+            with (
+                mock.patch.object(module, "focus"),
+                mock.patch.object(module, "screenshot", side_effect=fake_screenshot),
+                mock.patch.object(
+                    module,
+                    "detect_wechat_locked",
+                    return_value={"locked": False, "ocr_text": ""},
+                ),
+                mock.patch.object(module, "clear_composer"),
+                mock.patch.object(module, "click") as click,
+                mock.patch.object(module, "paste_path_into_file_chooser"),
+                mock.patch.object(
+                    module,
+                    "verify_opened_title",
+                    return_value={"ok": False, "method": "file_selected"},
+                ),
+                mock.patch.object(module.time, "sleep"),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "WECHAT_FILE_TARGET_CHANGED",
+                ):
+                    module.send_file_to_open_chat(
+                        {},
+                        module.Window("main", 0, 0, 1000, 700),
+                        module.TargetSpec(
+                            name="EchoMind",
+                            query="EchoMind",
+                            expected_title="EchoMind",
+                        ),
+                        file_path,
+                        root,
+                        "guarded",
+                        pause=0.1,
+                    )
+
+        self.assertEqual(click.call_count, 1)
+
     def test_download_file_card_reuses_exact_complete_native_cache_file(self):
         module = load_wechat_gui_send()
         with tempfile.TemporaryDirectory() as tmp:
@@ -245,6 +369,39 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["compose_window"]["width"], 1000)
+
+    def test_title_guard_accepts_chinese_dash_misread_as_one(self):
+        module = load_wechat_gui_send()
+        original_run = module.run
+        try:
+            def fake_run(command, *, env, check=True):
+                if command[0] == "tesseract":
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        "写作一外语一挣钱 (4) 二\n只 一 口\n+78: Metasurface 2 message",
+                        "",
+                    )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            module.run = fake_run
+            result = module.verify_opened_title(
+                {},
+                module.Window("1", 0, 0, 1000, 700),
+                Path("/tmp/screen.png"),
+                module.TargetSpec(
+                    name="写作 外语 挣钱",
+                    query="写作",
+                    expected_title="写作 外语 挣钱",
+                    expected_title_aliases=("写作—外语—挣钱",),
+                ),
+                Path("/tmp/title.png"),
+                "visible_chat_list_ocr",
+            )
+        finally:
+            module.run = original_run
+
+        self.assertTrue(result["ok"])
 
     def test_title_guard_accepts_popup_chat_window(self):
         module = load_wechat_gui_send()
@@ -809,6 +966,48 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertEqual(match["text"], "懒人科研")
         self.assertGreater(match["center_y"], 160)
 
+    def test_visible_chat_list_match_rejects_preview_that_mentions_target(self):
+        module = load_wechat_gui_send()
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t10\t1\t1\t1\t66\t25\t30\t30\t90\t鏈接",
+                "5\t1\t10\t1\t2\t1\t156\t120\t113\t24\t90\t753:发送者为陈苗，",
+            ]
+        )
+
+        match = module.visible_chat_list_match_from_tsv(
+            tsv,
+            module.TargetSpec(
+                name="lachlanchan",
+                query="陈苗",
+                expected_title="陈苗",
+            ),
+        )
+
+        self.assertIsNone(match)
+
+    def test_visible_chat_list_match_accepts_separator_ocr_variant(self):
+        module = load_wechat_gui_send()
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t10\t1\t1\t1\t66\t238\t115\t29\t90\t写作一外语一挣钱",
+            ]
+        )
+
+        match = module.visible_chat_list_match_from_tsv(
+            tsv,
+            module.TargetSpec(
+                name="写作 外语 挣钱",
+                query="写作",
+                expected_title="写作 外语 挣钱",
+                expected_title_aliases=("写作—外语—挣钱",),
+            ),
+        )
+
+        self.assertIsNotNone(match)
+
     def test_open_target_clicks_visible_chat_list_match_before_static_rows(self):
         module = load_wechat_gui_send()
         target = module.TargetSpec(
@@ -876,6 +1075,66 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(clicks, [(265, 434)])
         self.assertEqual(result["visible_chat_list_match"]["text"], "懒人科研")
+
+    def test_live_open_retries_exact_visible_row_then_fails_closed(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="写作 外语 挣钱",
+            query="写作",
+            expected_title="写作 外语 挣钱",
+            expected_title_aliases=("写作—外语—挣钱",),
+            result_click=(165, 125),
+            allow_search=True,
+        )
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t10\t1\t1\t1\t65\t238\t120\t29\t80\t写作—外语—挣钱",
+            ]
+        )
+        clicks: list[tuple[int, int]] = []
+        methods: list[str] = []
+
+        def fake_run(command, *, env, check=True):
+            if command[0] == "tesseract" and command[-1] == "tsv":
+                return subprocess.CompletedProcess(command, 0, tsv, "")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        def fake_verify(_env, window, _screenshot, _target, _crop, method):
+            methods.append(method)
+            return {
+                "ok": False,
+                "method": method,
+                "ocr_text": "",
+                "compose_window": module.window_to_dict(window),
+            }
+
+        with (
+            mock.patch.object(module, "run", side_effect=fake_run),
+            mock.patch.object(module, "screenshot", side_effect=lambda _env, path: Path(path).write_bytes(b"shot")),
+            mock.patch.object(module, "title_window_candidates", side_effect=lambda _env, window: [window]),
+            mock.patch.object(module, "verify_opened_title", side_effect=fake_verify),
+            mock.patch.object(module, "click", side_effect=lambda _env, x, y: clicks.append((x, y))),
+            mock.patch.object(module.time, "sleep"),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            result = module.open_target(
+                {},
+                module.Window("1", 100, 200, 1000, 700),
+                target,
+                0,
+                Path(tmp),
+                "live-visible-fail-closed",
+                False,
+                False,
+                True,
+                fail_closed_after_visible_match=True,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["exact_visible_match_open_failed"])
+        self.assertEqual(clicks, [(265, 512), (265, 512)])
+        self.assertTrue(any(method.startswith("visible_chat_list_ocr_retry") for method in methods))
 
     def test_open_target_accepts_visible_row_when_header_ocr_is_noisy_and_relaxed_allowed(self):
         module = load_wechat_gui_send()

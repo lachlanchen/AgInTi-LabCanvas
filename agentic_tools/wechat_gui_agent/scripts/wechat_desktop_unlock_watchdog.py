@@ -34,6 +34,13 @@ DEFAULT_ANDROID_OUTPUT = ROOT / "output" / "android_device_agent" / datetime.now
 DEFAULT_ANDROID_LOCK = (
     ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom_android_bridge.lock"
 )
+DEFAULT_STATE_FILE = (
+    ROOT
+    / "agentic_tools"
+    / "wechat_gui_agent"
+    / ".private"
+    / "wechat_desktop_unlock_watchdog.state.json"
+)
 DEFAULT_PROTECTED_PACKAGES = (
     "art.lazying.echomind",
     "art.lazying.aimemo",
@@ -65,8 +72,16 @@ def main() -> int:
     parser.add_argument(
         "--android-lock-timeout",
         type=float,
-        default=float(os.environ.get("WECHAT_UNLOCK_ANDROID_LOCK_TIMEOUT", "5")),
+        default=float(os.environ.get("WECHAT_UNLOCK_ANDROID_LOCK_TIMEOUT", "30")),
         help="Bounded wait for the shared phone lease before deferring.",
+    )
+    parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=Path(
+            os.environ.get("WECHAT_UNLOCK_STATE_FILE", str(DEFAULT_STATE_FILE))
+        ),
+        help="Ignored current-state snapshot consumed by health/status probes.",
     )
     parser.add_argument(
         "--protected-package",
@@ -90,6 +105,7 @@ def main() -> int:
 
     while True:
         event = watchdog_once(args)
+        write_state_file(args.state_file, event)
         print(json.dumps(event, ensure_ascii=False, sort_keys=True), flush=True)
         if not args.loop:
             return 0 if event.get("ok", False) else 1
@@ -277,17 +293,121 @@ def unlock_desktop_from_mobile(
             "focus_after_banner": focus_device_page,
             "before_screenshot": str(before),
         }
-    adb_shell(adb, serial, ["input", "tap", str(lock_tap[0]), str(lock_tap[1])])
-    time.sleep(1.0)
-    after = mobile_screenshot(adb, serial, output_dir, "after")
+    state_before = mobile_desktop_lock_state(adb, serial, screenshot_path=before)
+    if state_before == "locked":
+        tap_count = 1
+    elif state_before == "unlocked":
+        # The Linux lock screen and phone label can temporarily disagree.
+        # Reset the toggle through locked -> unlocked instead of blindly
+        # changing an already-unlocked phone label into a persistent lock.
+        tap_count = 2
+    else:
+        return {
+            "ok": False,
+            "reason": "mobile_desktop_lock_state_unknown",
+            "focus_before": focus_before,
+            "focus_after_banner": focus_device_page,
+            "before_screenshot": str(before),
+        }
+    states_after_tap: list[str] = []
+    after = before
+    for index in range(tap_count):
+        adb_shell(
+            adb,
+            serial,
+            ["input", "tap", str(lock_tap[0]), str(lock_tap[1])],
+        )
+        time.sleep(1.0)
+        after = mobile_screenshot(adb, serial, output_dir, f"after-{index + 1}")
+        states_after_tap.append(
+            mobile_desktop_lock_state(adb, serial, screenshot_path=after)
+        )
+    final_state = states_after_tap[-1] if states_after_tap else state_before
     return {
-        "ok": True,
+        "ok": final_state == "unlocked",
         "focus_before": focus_before,
         "focus_after_banner": focus_device_page,
         "after_focus": focused_window(adb, serial),
+        "state_before": state_before,
+        "states_after_tap": states_after_tap,
         "before_screenshot": str(before),
         "after_screenshot": str(after),
     }
+
+
+def mobile_desktop_lock_state(
+    adb: str,
+    serial: str,
+    *,
+    screenshot_path: Path | None = None,
+) -> str:
+    remote = "/sdcard/labcanvas_wechat_desktop_state.xml"
+    dumped = adb_shell(
+        adb,
+        serial,
+        ["uiautomator", "dump", "--compressed", remote],
+        check=False,
+        timeout=20,
+    )
+    if dumped.returncode != 0:
+        if screenshot_path and screenshot_path.is_file():
+            return mobile_desktop_lock_state_from_screenshot(screenshot_path)
+        return "unknown"
+    payload = adb_shell(
+        adb,
+        serial,
+        ["cat", remote],
+        check=False,
+        timeout=10,
+    ).stdout
+    if 'text="已锁定"' in payload:
+        return "locked"
+    if 'text="未锁定"' in payload:
+        return "unlocked"
+    if screenshot_path and screenshot_path.is_file():
+        return mobile_desktop_lock_state_from_screenshot(screenshot_path)
+    return "unknown"
+
+
+def mobile_desktop_lock_state_from_screenshot(path: Path) -> str:
+    crop = path.with_name(f"{path.stem}-lock-state.png")
+    converted = run(
+        [
+            "convert",
+            str(path),
+            "-crop",
+            "600x400+250+450",
+            "-resize",
+            "200%",
+            "-colorspace",
+            "Gray",
+            "-contrast-stretch",
+            "2%x2%",
+            str(crop),
+        ],
+        check=False,
+        timeout=15,
+    )
+    if converted.returncode != 0:
+        return "unknown"
+    ocr = run(
+        [
+            "tesseract",
+            str(crop),
+            "stdout",
+            "-l",
+            "chi_sim+eng",
+            "--psm",
+            "11",
+        ],
+        check=False,
+        timeout=15,
+    ).stdout.replace(" ", "")
+    if "已锁定" in ocr:
+        return "locked"
+    if "未锁定" in ocr:
+        return "unlocked"
+    return "unknown"
 
 
 def mobile_screenshot(adb: str, serial: str, output_dir: Path, label: str) -> Path:
@@ -336,6 +456,17 @@ def acquire_android_lease(path: Path, *, timeout_seconds: float = 5.0):
 def release_android_lease(handle) -> None:
     fcntl.flock(handle, fcntl.LOCK_UN)
     handle.close()
+
+
+def write_state_file(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp-{os.getpid()}")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
 
 
 def restore_android_package(adb: str, serial: str, package: str) -> None:
@@ -400,8 +531,19 @@ def require_serial(adb: str, serial: str) -> str:
     raise SystemExit("Multiple Android devices found; pass --serial.")
 
 
-def adb_shell(adb: str, serial: str, command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return run([adb, "-s", serial, "shell", *command], check=check)
+def adb_shell(
+    adb: str,
+    serial: str,
+    command: list[str],
+    *,
+    check: bool = True,
+    timeout: float = 30,
+) -> subprocess.CompletedProcess[str]:
+    return run(
+        [adb, "-s", serial, "shell", *command],
+        check=check,
+        timeout=timeout,
+    )
 
 
 def require_tools(*commands: str) -> None:
@@ -417,8 +559,22 @@ def run(
     env: dict[str, str] | None = None,
     check: bool = True,
     capture_bytes: bool = False,
+    timeout: float = 30,
 ) -> subprocess.CompletedProcess:
-    proc = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=not capture_bytes, check=False)
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=not capture_bytes,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or (b"" if capture_bytes else "")
+        stderr = exc.stderr or (b"" if capture_bytes else "")
+        proc = subprocess.CompletedProcess(command, 124, stdout, stderr)
     if check and proc.returncode != 0:
         stdout = proc.stdout.decode(errors="replace") if isinstance(proc.stdout, bytes) else proc.stdout
         stderr = proc.stderr.decode(errors="replace") if isinstance(proc.stderr, bytes) else proc.stderr

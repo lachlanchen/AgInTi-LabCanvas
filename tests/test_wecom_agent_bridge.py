@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 from zoneinfo import ZoneInfo
@@ -490,6 +490,128 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(duplicate["reply"], "")
         self.assertEqual(duplicate["suppressed"], "recent_exact_wecom_gui_duplicate")
         self.assertEqual(route_agent.call_count, 1)
+
+    def test_android_ingest_suppresses_old_unattributed_history_replay(self) -> None:
+        ingest = load_ingest()
+        route = {
+            "worker_needed": False,
+            "route_kind": "other_worker",
+            "response": "收到，我会处理。",
+            "task": "",
+            "ack": "",
+            "daily_topic": "",
+            "public_publish_allowed": False,
+        }
+        first_event = self.sample_event(
+            message_id="android:original",
+            account_id="external-gui",
+            chat_id="gui:LabAgent",
+            transport_channel="wecom_android",
+            sender_userid="android-member:prof-ma",
+            sender_display="Prof Ma",
+            sender_identity_confidence="visible_row_label",
+            text="请做一个研究方案并给我一份PDF。",
+        )
+        replay_event = {
+            **first_event,
+            "message_id": "android:history-replay",
+            "sender_userid": "android-member:unknown",
+            "sender_display": "unknown",
+            "sender_identity_confidence": "unattributed_row",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "history.sqlite"
+            with mock.patch.object(ingest, "route_event", return_value=route) as route_agent, mock.patch.object(
+                ingest,
+                "record_event",
+            ):
+                first = ingest.ingest_event(
+                    first_event,
+                    queue=root / "queue.jsonl",
+                    history_db=history,
+                    route_with_agent=True,
+                )
+                old_timestamp = (datetime.now() - timedelta(hours=8)).isoformat(timespec="seconds")
+                with sqlite3.connect(history) as conn:
+                    conn.execute(
+                        "UPDATE messages SET created_at = ?, processed_at = ? "
+                        "WHERE message_id = ? AND direction = 'inbound'",
+                        (old_timestamp, old_timestamp, first_event["message_id"]),
+                    )
+                replay = ingest.ingest_event(
+                    replay_event,
+                    queue=root / "queue.jsonl",
+                    history_db=history,
+                    route_with_agent=True,
+                )
+
+        self.assertTrue(first["reply"].startswith(route["response"]))
+        self.assertTrue(replay["duplicate"])
+        self.assertFalse(replay["queued"])
+        self.assertEqual(replay["reply"], "")
+        self.assertEqual(replay["suppressed"], "recent_exact_wecom_gui_duplicate")
+        self.assertEqual(replay["duplicate_window_seconds"], 24 * 60 * 60)
+        self.assertEqual(route_agent.call_count, 1)
+
+    def test_android_ingest_allows_old_repeat_from_attributed_sender(self) -> None:
+        ingest = load_ingest()
+        route = {
+            "worker_needed": False,
+            "route_kind": "other_worker",
+            "response": "收到，我会处理。",
+            "task": "",
+            "ack": "",
+            "daily_topic": "",
+            "public_publish_allowed": False,
+        }
+        first_event = self.sample_event(
+            message_id="android:original-attributed",
+            account_id="external-gui",
+            chat_id="gui:LabAgent",
+            transport_channel="wecom_android",
+            sender_userid="android-member:prof-ma",
+            sender_display="Prof Ma",
+            sender_identity_confidence="visible_row_label",
+            text="请再解释一下这个研究方向。",
+        )
+        later_event = {
+            **first_event,
+            "message_id": "android:later-attributed",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "history.sqlite"
+            with mock.patch.object(ingest, "route_event", return_value=route) as route_agent, mock.patch.object(
+                ingest,
+                "record_event",
+            ):
+                first = ingest.ingest_event(
+                    first_event,
+                    queue=root / "queue.jsonl",
+                    history_db=history,
+                    route_with_agent=True,
+                )
+                old_timestamp = (datetime.now() - timedelta(hours=8)).isoformat(timespec="seconds")
+                with sqlite3.connect(history) as conn:
+                    conn.execute(
+                        "UPDATE messages SET created_at = ?, processed_at = ? "
+                        "WHERE message_id = ? AND direction = 'inbound'",
+                        (old_timestamp, old_timestamp, first_event["message_id"]),
+                    )
+                later = ingest.ingest_event(
+                    later_event,
+                    queue=root / "queue.jsonl",
+                    history_db=history,
+                    route_with_agent=True,
+                )
+
+        self.assertTrue(first["reply"].startswith(route["response"]))
+        self.assertFalse(later["duplicate"])
+        self.assertTrue(later["reply"].startswith(route["response"]))
+        self.assertEqual(route_agent.call_count, 2)
 
     def test_gui_ingest_retries_same_unprocessed_event_instead_of_suppressing_it(self) -> None:
         ingest = load_ingest()

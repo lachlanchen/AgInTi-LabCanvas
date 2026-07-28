@@ -28,6 +28,7 @@ DEFAULT_VNC_PORT = 5917
 DEFAULT_NOVNC_PORT = 6107
 TRANSPORT_HEALTH_GUARD = SCRIPTS / "wechat_transport_stall_guard.py"
 TRANSPORT_HEALTH_SNAPSHOT = PACKAGE_ROOT / "output" / "transport-health" / "latest.json"
+UNLOCK_WATCHDOG_STATE = PRIVATE / "wechat_desktop_unlock_watchdog.state.json"
 CODEX_SESSION_KEY_RE = re.compile(r"^v2:[0-9a-z_.-]+-[0-9a-f]{12}:[0-9a-z_.-]+$")
 QUEUE_ACTIVE_STATUSES = {
     "pending",
@@ -95,7 +96,13 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     unlock = nested.add_parser("unlock-watchdog", help="Keep official desktop WeChat unlocked through the owner's Android WeChat UI.")
     unlock.add_argument("action", choices=["once", "start", "stop", "restart", "status"], nargs="?", default="once")
     unlock.add_argument("--display", default=DEFAULT_DISPLAY)
-    unlock.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL", ""))
+    unlock.add_argument(
+        "--serial",
+        default=(
+            os.environ.get("WECHAT_UNLOCK_ADB_SERIAL")
+            or os.environ.get("ANDROID_SERIAL", "")
+        ),
+    )
     unlock.add_argument("--interval", type=float, default=20)
     unlock.add_argument("--flush-deferred", action="store_true", help="Flush one deferred WeChat outbox item after unlocking.")
     unlock.add_argument("--dry-run", action="store_true")
@@ -182,11 +189,19 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     memory.set_defaults(func=cmd_memory)
 
     career = nested.add_parser("career-agent", help="Run or supervise the daily writing/career/money strategy agent.")
-    career.add_argument("action", choices=["once", "start", "stop", "restart", "status"], nargs="?", default="once")
+    career.add_argument(
+        "action",
+        choices=["once", "organize", "start", "stop", "restart", "status"],
+        nargs="?",
+        default="once",
+    )
     career.add_argument("--chat", action="append", default=[], help="Memory chat to include. Repeatable.")
     career.add_argument("--send-chat", default="lachlanchan")
     career.add_argument("--send", action="store_true")
     career.add_argument("--attach-report", action="store_true")
+    career.add_argument("--organize-report", action="store_true")
+    career.add_argument("--organize-chat", default="写作 外语 挣钱")
+    career.add_argument("--force-organize", action="store_true")
     career.add_argument("--morning-time", default="08:30")
     career.add_argument("--session", default="labcanvas-career-daily")
     career.add_argument("--model", default=os.environ.get("WECHAT_CAREER_AGENT_MODEL", "gpt-5.5"))
@@ -893,7 +908,11 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "dead worker PID claims are reclaimed immediately after restart",
             "GUI sender alarm is aligned with the worker send timeout",
             "GUI text sends fail on unconsumed clipboard data and verify the exact composer contents before Enter",
+            "GUI navigation rejects preview-text false positives while tolerating only bounded separator OCR variants",
+            "GUI file sends re-verify the exact chat after the native picker and before submission",
             "send_retrying rows are not reclaimed before the active GUI sender timeout plus grace",
+            "exact-task media resolution rejects files associated only by modification time",
+            "restart transport recovery is recent, bounded, transport-scoped, and idempotent",
             "chat-sync dry-open alarm is long enough to refresh inactive groups",
             "chat-sync retryable failures back off per chat without blocking other groups",
             "plain story/script requests route to the same worker capability set in research and device chats",
@@ -992,8 +1011,32 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": gui_prefix + "test_verify_composer_text_reads_exact_message_back",
         },
         {
+            "id": "gui_preview_target_rejected",
+            "test": gui_prefix + "test_visible_chat_list_match_rejects_preview_that_mentions_target",
+        },
+        {
+            "id": "gui_separator_ocr_bounded",
+            "test": gui_prefix + "test_visible_chat_list_match_accepts_separator_ocr_variant",
+        },
+        {
+            "id": "gui_file_target_rechecked_after_picker",
+            "test": gui_prefix + "test_guarded_file_helper_rejects_target_change_after_picker",
+        },
+        {
             "id": "send_retry_stale_after_sender_timeout",
             "test": worker_prefix + "test_send_retrying_waits_longer_than_sender_timeout",
+        },
+        {
+            "id": "mtime_only_cross_chat_media_rejected",
+            "test": worker_prefix + "test_media_resolution_rejects_mtime_only_cross_chat_candidate",
+        },
+        {
+            "id": "recent_transport_recovery_bounded",
+            "test": worker_prefix + "test_recover_recent_expired_transport_delivery_is_bounded_and_scoped",
+        },
+        {
+            "id": "recent_transport_recovery_idempotent",
+            "test": worker_prefix + "test_recover_recent_expired_transport_delivery_does_not_requeue_twice",
         },
         {
             "id": "chat_sync_gui_alarm_aligned",
@@ -1540,7 +1583,7 @@ def cmd_career_agent(args: argparse.Namespace) -> int:
     command = [
         sys.executable,
         str(SCRIPTS / "wechat_career_daily_agent.py"),
-        "loop" if start_action == "start" else "run",
+        "loop" if start_action == "start" else ("organize" if start_action == "organize" else "run"),
         "--send-chat",
         args.send_chat,
         "--morning-time",
@@ -1549,6 +1592,8 @@ def cmd_career_agent(args: argparse.Namespace) -> int:
         args.model,
         "--reasoning-effort",
         args.reasoning_effort,
+        "--organize-chat",
+        args.organize_chat,
     ]
     for chat in args.chat:
         command += ["--chat", chat]
@@ -1556,7 +1601,11 @@ def cmd_career_agent(args: argparse.Namespace) -> int:
         command.append("--send")
     if args.attach_report:
         command.append("--attach-report")
-    if start_action == "once":
+    if args.organize_report:
+        command.append("--organize-report")
+    if args.force_organize:
+        command.append("--force-organize")
+    if start_action in {"once", "organize"}:
         if getattr(args, "json", False):
             command.append("--json")
         return run_command(command, capture=False).returncode
@@ -1863,6 +1912,7 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         "export WECHAT_WEB_PORT=${WECHAT_WEB_PORT:-19474}\n"
         "export WECHAT_CAREER_SESSION=${WECHAT_CAREER_SESSION:-labcanvas-career-daily}\n"
         "export WECHAT_CAREER_SEND_CHAT=${WECHAT_CAREER_SEND_CHAT:-lachlanchan}\n"
+        "export WECHAT_CAREER_ORGANIZE_CHAT=${WECHAT_CAREER_ORGANIZE_CHAT:-写作 外语 挣钱}\n"
         "export WECHAT_CAREER_MORNING_TIME=${WECHAT_CAREER_MORNING_TIME:-08:30}\n"
         "export WECHAT_CAREER_AGENT_MODEL=${WECHAT_CAREER_AGENT_MODEL:-gpt-5.5}\n"
         "export WECHAT_CAREER_AGENT_EFFORT=${WECHAT_CAREER_AGENT_EFFORT:-medium}\n"
@@ -1918,6 +1968,7 @@ def cmd_install_user_scripts(args: argparse.Namespace) -> int:
         "export WECHAT_MARKDOWN_PDF_ENGINE=${WECHAT_MARKDOWN_PDF_ENGINE:-xelatex}\n"
         "export PYTHONPATH=" + shlex.quote(str(PACKAGE_ROOT / "src")) + ":${PYTHONPATH:-}\n"
         "exec python3 -m agenticapp wechat career-agent start --send --attach-report "
+        "--organize-report --organize-chat \"${WECHAT_CAREER_ORGANIZE_CHAT:-写作 外语 挣钱}\" "
         "--morning-time \"${WECHAT_CAREER_MORNING_TIME:-08:30}\" "
         "--model \"${WECHAT_CAREER_AGENT_MODEL:-gpt-5.5}\" "
         "--reasoning-effort \"${WECHAT_CAREER_AGENT_EFFORT:-medium}\"\n",
@@ -2925,15 +2976,45 @@ def desktop_status() -> dict[str, Any]:
     display_ok = run_command(["xdpyinfo"], capture=True, env=display_env(DEFAULT_DISPLAY)).returncode == 0
     wechat_window = run_command(["xdotool", "search", "--onlyvisible", "--class", "wechat"], capture=True, env=display_env(DEFAULT_DISPLAY))
     ports = {str(port): port_listening(port) for port in (DEFAULT_VNC_PORT, DEFAULT_NOVNC_PORT)}
-    status = "ready" if display_ok and wechat_window.returncode == 0 and ports[str(DEFAULT_NOVNC_PORT)] else "partial" if display_ok else "offline"
+    watchdog = fresh_unlock_watchdog_state()
+    live_state = str((watchdog.get("desktop") or {}).get("status") or "")
+    base_ready = bool(
+        display_ok
+        and wechat_window.returncode == 0
+        and ports[str(DEFAULT_NOVNC_PORT)]
+    )
+    if not display_ok:
+        status = "offline"
+    elif not base_ready:
+        status = "partial"
+    elif live_state in {"locked", "entry_required"}:
+        status = live_state
+    else:
+        status = "ready"
     return {
         "status": status,
         "display": DEFAULT_DISPLAY,
         "display_ok": display_ok,
         "wechat_window": wechat_window.stdout.split(),
         "ports": ports,
+        "watchdog": watchdog,
         "novnc_url": f"http://127.0.0.1:{DEFAULT_NOVNC_PORT}/vnc_lite.html?host=127.0.0.1&port={DEFAULT_NOVNC_PORT}&autoconnect=1&resize=remote",
     }
+
+
+def fresh_unlock_watchdog_state(
+    path: Path = UNLOCK_WATCHDOG_STATE,
+    *,
+    max_age_seconds: float = 90.0,
+) -> dict[str, Any]:
+    try:
+        age_seconds = max(0.0, datetime.now().timestamp() - path.stat().st_mtime)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if age_seconds > max_age_seconds or not isinstance(payload, dict):
+        return {}
+    return {**payload, "age_seconds": round(age_seconds, 3)}
 
 
 def tmux_status(session: str) -> dict[str, Any]:

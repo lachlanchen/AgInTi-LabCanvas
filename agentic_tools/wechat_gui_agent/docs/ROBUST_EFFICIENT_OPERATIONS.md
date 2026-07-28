@@ -391,6 +391,14 @@ The stable interface and recovery commands are documented in
   and English practice, but explicit backend/tool/artifact instructions route
   through the same worker routines.
 - Every live send must pass the send target and title guard.
+- A live text or file send is one serialized exact-chat transaction. Resolve a
+  visible chat-list row, open it, verify the header, compose/select the file,
+  submit, and verify the new history item while holding the same GUI lock.
+  Search-result text and chat-preview text are not valid target rows. For a
+  configured title containing whitespace or dash separators, OCR may render a
+  separator as a visually similar Han stroke; accept that bounded repair only
+  after the strong title text matches, and continue to fail closed on different
+  words or ambiguous rows.
 - For the common phone-to-desktop workflow, enable
   `allow_human_self_messages=true` with `self_message_policy=human_commands`.
   Keep `ignore_self_messages=true`, `respond_to_self=false`,
@@ -431,6 +439,13 @@ The stable interface and recovery commands are documented in
   posting, purchases, deletion, or other irreversible actions.
 - Source media must match the same chat and exact source or quoted message. If
   it is missing, stop source-limited and ask for resend/opening the media.
+- File modification time is discovery evidence, not source identity. Exact-task
+  media sync requires at least one source token from the same message, such as a
+  local/server ID, attachment title, checksum-derived name, or native media
+  token. The resolver rejects `matched_by=mtime` mirror rows by default, even
+  when a background cache scan copied the same recent file into several private
+  chat folders. `WECHAT_WORKER_ALLOW_MTIME_ONLY_MEDIA=1` is diagnostic legacy
+  compatibility only and must not be enabled in production.
 - Image edit/generation routes that refer to a just-sent, quoted, or attached
   image must keep `needs_recent_media=true` even if the route agent names the
   task `generate_image`; the worker must receive the source row IDs and media
@@ -597,6 +612,11 @@ The stable interface and recovery commands are documented in
   Deduplicate repeated error strings and retain at most 20 repair-history
   entries so an unavailable Android/GUI surface remains cheap while the
   completed report and its pending component ledger stay recoverable.
+- Personal-WeChat transport recovery is also bounded. Recover only recent
+  completed/deferred rows within the configured age and limit, infer legacy
+  personal transport only from its direct-chatops config plus `Msg_*` source
+  table, and never replay the old queue after a reboot. Recovery resends the
+  stored result; it does not invoke the model or regenerate artifacts.
 - Official WeCom voice, quoted voice, and mixed-message voice must be downloaded
   by the SDK into the exact message directory and exposed as
   `transport_preflight.wecom_media`. The worker passes only those exact files to
@@ -1639,10 +1659,12 @@ Blank title guard:
 - If a stale click point opens a wrong popup, `wechat_gui_send.py` closes that
   non-target WeChat window before trying the next configured fallback click.
 - Transient GUI send retries are bounded by
-  `WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES` (default 2), old automatic recovery
-  cycles are disabled, and deferred sends share a 30-second global cooldown.
-  This prevents a recovered network or restarted desktop from bombarding chat
-  windows with accumulated replies.
+  `WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES` (default 2). After those attempts,
+  one delayed recovery cycle is allowed by
+  `WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES` (default 1), but only after the
+  serialized GUI lane is free. The recovery counter and shared 30-second global
+  cooldown prevent a recovered network or restarted desktop from bombarding
+  chat windows with accumulated replies.
 
 Stuck GUI sender:
 
@@ -1650,6 +1672,26 @@ Stuck GUI sender:
 - On `WECHAT_SEND_TIMEOUT`, the whole process group is killed, including
   clipboard/GUI helper children, and the task is deferred instead of leaving a
   live process holding the send lane.
+- `wechat_transport_stall_guard.py` inspects the advisory lock and process
+  ownership. A short-lived sender owned by `wechat_chat_sync_loop.py` is normal;
+  never infer a desktop lock from a timeout or from the lock file's mtime.
+  Terminate only a proven stale orphan, then let the durable outbox retry once.
+
+Link inbox and scheduled organizer delivery:
+
+- `鏈接` defaults to one concise source-grounded chat summary. Research source
+  Markdown, TeX, screenshots, and intermediate images remain local.
+- A current explicit report/PDF request authorizes a compiled PDF; it does not
+  authorize Markdown or TeX delivery unless source files were also requested.
+- `写作 外语 挣钱` has a separate resumable `daily_organizer` session. Its daily
+  organizer deduplicates classifier rows, writes local Markdown, compiles one
+  Chinese XeLaTeX PDF, and sends only that PDF.
+- Organizer generation and delivery are separate persisted states. A failed
+  send retries the existing PDF without rerunning the agent, and a completed
+  date is not replayed after tmux or host restart.
+- Personal-WeChat and WeCom session keys include the exact canonical chat
+  identity and role. Reusable routines may be shared, but sessions, source
+  media, queues, and delivery transports never cross that boundary.
 
 Long Xiaoyunque/LazyEdit work:
 

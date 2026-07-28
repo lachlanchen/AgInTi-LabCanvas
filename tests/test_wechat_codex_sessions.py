@@ -50,6 +50,18 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertTrue(all(":fast" in key for key in keys))
         self.assertNotIn("wechat:fast", keys)
 
+    def test_personal_wechat_and_wecom_transport_sessions_cannot_collide(self) -> None:
+        sessions = load_sessions()
+        personal = sessions.session_key("LabAgent", "worker")
+        wecom = sessions.session_key(
+            "wecom:external-gui:group:65cbe9ac4a4c",
+            "worker",
+        )
+
+        self.assertNotEqual(personal, wecom)
+        self.assertIn("labagent", personal)
+        self.assertIn("wecom-external-gui-group", wecom)
+
     def test_load_registry_ignores_legacy_keys(self) -> None:
         sessions = load_sessions()
 
@@ -322,6 +334,8 @@ class WeChatCodexSessionTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertFalse(sessions.codex_web_search_enabled("route"))
             self.assertTrue(sessions.codex_web_search_enabled("worker"))
+            self.assertTrue(sessions.codex_web_search_enabled("career_daily"))
+            self.assertTrue(sessions.codex_web_search_enabled("daily_organizer"))
 
     def test_resolve_codex_binary_finds_nvm_install_when_path_is_minimal(self) -> None:
         sessions = load_sessions()

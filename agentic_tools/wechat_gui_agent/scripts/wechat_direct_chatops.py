@@ -2080,7 +2080,8 @@ def link_inbox_summary_instruction(row: dict[str, Any]) -> str:
         "For mp.weixin/Gongzhonghao links, run the read-only source-recovery preflight: try mobile-WeChat HTTP extraction and private cache first, then exact-title/account public-source reconstruction. "
         "Do not ask the user to verify and do not open/focus an external browser for read-only article recovery. "
         "For Shipinhao/Finder, inspect exact local media, auto-discovered wx_channel exports/API, existing visible comments, and Yuanbao/transcript/summary comments; then use exact title/author/object-ID public reconstruction when needed. Do not post comments unless explicitly requested. "
-        "For papers, GitHub, technical articles, and useful video/article summaries, create Markdown and a PDF report when possible and include safe artifact paths in `files`. "
+        "Return one concise, natural chat summary by default. Save working notes locally when useful, but do not include Markdown, TeX, PDF, screenshots, thumbnails, or other artifacts in `files` unless the current message explicitly asks for a file or report. "
+        "When the user explicitly asks for a PDF/report, send the compiled PDF only unless source files are also requested. "
         f"Structured source text:\n{visible}"
     )
 
@@ -3118,7 +3119,7 @@ Important distinction:
 - "upload all images" can mean upload reference images into a generation UI. That is NOT public publishing.
 - Public publishing/posting means Shipinhao/视频号, YouTube, Instagram, LazyEdit/AutoPublish public platform publish, or explicit publish/post wording.
 - Old context can explain a follow-up, but old context cannot authorize a new public publish.
-- In web_clip_inbox/link_inbox/internet_inbox/reading_inbox chats, shared URLs, forwarded webpage cards, mp.weixin/Gongzhonghao articles, Shipinhao/视频号/Finder cards, GitHub links, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, images, videos, and files should normally route to research_or_summary with worker_needed=true so the worker tries to read the actual source and returns a concise useful chat answer. Do not promise a report, PDF, image, or deep analysis before the source is actually readable.
+- In web_clip_inbox/link_inbox/internet_inbox/reading_inbox chats, shared URLs, forwarded webpage cards, mp.weixin/Gongzhonghao articles, Shipinhao/视频号/Finder cards, GitHub links, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, images, videos, and files should normally route to research_or_summary with worker_needed=true so the worker tries to read the actual source and returns one concise useful chat answer. Do not promise or attach a report, PDF, Markdown, TeX, image, screenshot, or deep analysis unless the current message explicitly requests that output. Local evidence notes may still be saved privately.
 - For a bare WeChat file upload with no explicit user instruction, route to file_intake with worker_needed=true. For raster images, the worker should sync/copy the exact source image, inspect it with Codex vision, and reply naturally with what it shows or means. OCR is private supporting evidence, not the user-facing response format: do not expose `Visible text / Image caption / Notes`, model names, checksums, dimensions, or an extra OCR dump unless the user explicitly asks for technical extraction. For ZIP, Word, PDF, and text uploads, run bounded read-only extraction and let the resumed worker provide a concise natural identification/preliminary summary from `agent_context_path`; do not stop at a checksum receipt when readable content exists. RAR and 7z archives use the same safe intake contract. If the current message asks to summarize/analyze/translate/convert/publish/edit the file, preserve that deeper instruction in the selected worker route.
 - For mp.weixin links, verification text such as 环境异常 or 完成验证后继续访问 means that one fetch path is blocked, not that the task needs human confirmation. Route to the worker's read-only source-recovery preflight, which tries mobile-WeChat extraction/private cache and then exact-title/account public reconstruction. Do not open/focus an external browser or ask the user to verify for read-only research.
 - A video-generation request should use local/default reference assets unless the current request says this/that/same/attached/quoted video/image.
@@ -4599,6 +4600,7 @@ def auto_sync_recent_media(config: dict[str, Any], rows: list[dict[str, Any]]) -
         str(float(config.get("media_sync_since_minutes", 180))),
         "--summary-only",
         "--record-empty",
+        "--require-token-match",
         "--db",
         str(Path(config.get("mirror_db", DEFAULT_DB))),
     ]

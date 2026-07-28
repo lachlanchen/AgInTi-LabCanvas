@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -277,6 +278,139 @@ Why it matters: It turns reflection into evidence.
         self.assertIn(str(module.PRIVATE), private_report)
         self.assertNotIn(str(module.PRIVATE), share_report)
         self.assertIn("<private-wechat-workspace>", share_report)
+
+    def test_life_memo_snapshot_deduplicates_classifier_categories(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE memory_items (
+                        id INTEGER PRIMARY KEY,
+                        source_message_id INTEGER,
+                        chat_name TEXT,
+                        category TEXT,
+                        title TEXT,
+                        body TEXT,
+                        status TEXT,
+                        due_at TEXT,
+                        created_at TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO memory_items
+                    (source_message_id, chat_name, category, title, body, status, due_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (7, "写作 外语 挣钱", "todo", "same", "整理最近的想法", "open", None, "2026-07-28T06:00:00"),
+                        (7, "写作 外语 挣钱", "memo", "same", "整理最近的想法", "open", None, "2026-07-28T06:00:00"),
+                        (8, "写作 外语 挣钱", "writing", "next", "写下一段接口", "open", None, "2026-07-27T06:00:00"),
+                    ],
+                )
+
+            snapshot = module.life_memo_snapshot(db, "写作 外语 挣钱")
+
+        self.assertEqual(snapshot.count("整理最近的想法"), 1)
+        self.assertIn("memo/todo", snapshot)
+        self.assertIn("写下一段接口", snapshot)
+
+    def test_organizer_sends_only_compiled_pdf_and_is_idempotent(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            sent_files = []
+            agent_calls = []
+            module.life_memo_snapshot = lambda *_args, **_kwargs: "- memo: one exact item"
+            module.select_agent_backend = lambda _config: "codex"
+
+            def fake_agent(*args, **kwargs):
+                agent_calls.append((args, kwargs))
+                return {
+                    "ok": True,
+                    "message": "# 今日整理\n\n只保留一个重要行动。",
+                    "backend": "codex",
+                    "thread_id": "organizer-thread",
+                    "resumed": False,
+                }
+
+            def fake_render(source, output):
+                self.assertTrue(source.is_file())
+                output.write_bytes(b"%PDF-1.4 organizer")
+                return output
+
+            module.run_agent_session = fake_agent
+            module.render_markdown_pdf = fake_render
+            module.send_file = lambda path, chat, targets: sent_files.append((path, chat, targets))
+            args = argparse.Namespace(
+                organize_chat="写作 外语 挣钱",
+                memory_db=root / "memory.sqlite",
+                model="gpt-test",
+                reasoning_effort="medium",
+                timeout_seconds=30,
+                send=True,
+                send_targets=root / "targets.json",
+            )
+
+            first = module.run_organizer(args)
+            second = module.run_organizer(args)
+
+        self.assertTrue(first["ok"])
+        self.assertEqual(first["status"], "delivered")
+        self.assertEqual(second["status"], "already_delivered")
+        self.assertEqual(len(agent_calls), 1)
+        self.assertEqual(len(sent_files), 1)
+        self.assertEqual(sent_files[0][0].suffix, ".pdf")
+        self.assertEqual(sent_files[0][1], "写作 外语 挣钱")
+
+    def test_organizer_retries_existing_pdf_without_rerunning_agent(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            module.OUTPUT.mkdir(parents=True)
+            stamp = module.datetime.now().strftime("%Y-%m-%d")
+            report = module.OUTPUT / f"{stamp}-recent-items.zh.md"
+            pdf = module.OUTPUT / f"{stamp}-recent-items.zh.pdf"
+            report.write_text("# Existing", encoding="utf-8")
+            pdf.write_bytes(b"%PDF existing")
+            state_path = module.organizer_state_path()
+            module.write_json_file(
+                state_path,
+                {
+                    "date": stamp,
+                    "chat": "写作 外语 挣钱",
+                    "status": "delivery_failed",
+                    "report": str(report),
+                    "pdf": str(pdf),
+                },
+            )
+            module.run_agent_session = lambda *_args, **_kwargs: self.fail("agent must not rerun")
+            sent = []
+            module.send_file = lambda path, chat, targets: sent.append((path, chat))
+            args = argparse.Namespace(
+                organize_chat="写作 外语 挣钱",
+                memory_db=root / "memory.sqlite",
+                model="gpt-test",
+                reasoning_effort="medium",
+                timeout_seconds=30,
+                send=True,
+                send_targets=root / "targets.json",
+            )
+
+            payload = module.run_organizer(args)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["generated"])
+        self.assertEqual(sent, [(pdf, "写作 外语 挣钱")])
 
 
 if __name__ == "__main__":

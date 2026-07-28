@@ -958,9 +958,8 @@ def result_allows_chat_artifact_delivery(task: dict[str, Any] | None, result: di
     """Return whether optional research/link artifacts should be sent to WeChat.
 
     Link inbox tasks often save local Markdown, screenshots, or reports as
-    evidence. Those should not become chat noise unless the user asked for a
-    file/report, the worker explicitly marks the source as substantially read,
-    or delivery is required by a non-summary routine.
+    evidence. Those should not become chat noise unless the current message
+    asked for a file/report or a scheduled/routine contract requires delivery.
     """
     if task is None:
         return True
@@ -971,10 +970,6 @@ def result_allows_chat_artifact_delivery(task: dict[str, Any] | None, result: di
         return True
     route = task_route_decision(task)
     if bool(route.get("require_file_delivery")) or task_contract_requires_file_delivery(task):
-        return True
-    if bool(data.get("send_files_to_wechat") or data.get("send_artifacts_to_wechat")):
-        return True
-    if bool(data.get("send_report_to_wechat")) and source_read_quality_is_substantive(data):
         return True
     return request_explicitly_asks_for_file_delivery(task_focus_text(task))
 
@@ -1103,13 +1098,28 @@ def request_explicitly_asks_for_research_source_delivery(text: str) -> bool:
     )
 
 
-def wecom_research_delivery_files(task: dict[str, Any] | None, files: list[Path]) -> list[Path]:
+def research_summary_delivery_files(
+    task: dict[str, Any] | None, files: list[Path]
+) -> list[Path]:
     """Keep research source files local unless the current request asks for them."""
-    if not task or task_transport_kind(task) != "wecom" or not task_is_research_summary(task):
+    if not task or not task_is_research_summary(task):
         return files
     if request_explicitly_asks_for_research_source_delivery(task_focus_text(task)):
         return files
-    return [path for path in files if path.suffix.lower() not in RESEARCH_SOURCE_SUFFIXES]
+    kept = [path for path in files if path.suffix.lower() not in RESEARCH_SOURCE_SUFFIXES]
+    suppressed = [str(path) for path in files if path not in kept]
+    if suppressed:
+        task["suppressed_chat_files"] = unique_strings(
+            [*(str(path) for path in task.get("suppressed_chat_files") or []), *suppressed]
+        )
+    return kept
+
+
+def wecom_research_delivery_files(task: dict[str, Any] | None, files: list[Path]) -> list[Path]:
+    """Apply the shared research delivery filter on the WeCom transport."""
+    if not task or task_transport_kind(task) != "wecom":
+        return files
+    return research_summary_delivery_files(task, files)
 
 
 def task_required_artifact_suffixes(task: dict[str, Any] | None) -> set[str]:
@@ -1677,8 +1687,14 @@ def send_result_once(
         return
     target = target if target is not None else guarded_send_target(target_chat, send_targets, task=task)
     files_to_send, files_to_note = partition_result_files_for_wechat(result.get("files") or [])
+    files_to_send = research_summary_delivery_files(task, files_to_send)
     if task is not None and files_to_send and not result_allows_chat_artifact_delivery(task, result):
-        task["suppressed_chat_files"] = [str(path) for path in files_to_send]
+        task["suppressed_chat_files"] = unique_strings(
+            [
+                *(str(path) for path in task.get("suppressed_chat_files") or []),
+                *(str(path) for path in files_to_send),
+            ]
+        )
         files_to_send = []
     if task is not None and files_to_note:
         task["unsent_saved_files"] = [str(path) for path in files_to_note]
@@ -4132,6 +4148,20 @@ def task_transport_name(task: dict[str, Any]) -> str:
         value = str(container.get("transport") or "").strip().lower()
         if value:
             return value
+        if any(
+            str(container.get(key) or "").strip().lower().startswith("wecom")
+            for key in ("wecom_transport_channel", "transport_channel")
+        ):
+            return "wecom"
+    chat = str(task.get("chat") or "").strip().lower()
+    if chat.startswith("wecom:"):
+        return "wecom"
+    route = task.get("route")
+    if isinstance(route, dict):
+        config_id = str(route.get("config_id") or "").strip().lower()
+        message_table = str(route.get("message_table") or "").strip()
+        if config_id.endswith("direct-chatops.local.json") and message_table.startswith("Msg_"):
+            return "wechat"
     return ""
 
 
@@ -4266,7 +4296,13 @@ def failed_send_retryable(task: dict[str, Any], now: datetime) -> bool:
     else:
         max_retries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_MAX_RETRIES", "0"))
     if max_retries >= 0 and int(task.get("send_retry_count") or 0) >= max_retries:
-        max_recoveries = int(os.environ.get("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES", "0"))
+        # Preserve one delayed recovery after the personal-WeChat serialized
+        # GUI lane becomes free. Other transports retain their own bounded
+        # reconnect policy and must not inherit this GUI-specific recovery.
+        default_recoveries = "1" if reason in {"gui_send_busy", "gui_send_timeout"} else "0"
+        max_recoveries = int(
+            os.environ.get("WECHAT_WORKER_FAILED_SEND_RECOVERY_CYCLES", default_recoveries)
+        )
         recoveries = int(task.get("send_failed_recovery_count") or 0)
         allow_stale_recovery = os.environ.get("WECHAT_WORKER_ALLOW_STALE_SEND_RECOVERY", "0") == "1"
         if max_recoveries < 0 or recoveries < max_recoveries or (
@@ -8198,8 +8234,11 @@ def resolve_synced_media_from_mirror(
     except sqlite3.Error:
         return []
     candidates: list[dict[str, Any]] = []
+    allow_mtime_only = os.environ.get("WECHAT_WORKER_ALLOW_MTIME_ONLY_MEDIA", "0") == "1"
     for row in rows:
         item = media_db_row_to_candidate(row)
+        if str(item.get("matched_by") or "") == "mtime" and not allow_mtime_only:
+            continue
         path = Path(str(item.get("mirror_path") or "")).expanduser()
         suffix = str(item.get("suffix") or path.suffix).lower()
         if accepted_suffixes and suffix not in accepted_suffixes and path.suffix.lower() not in accepted_suffixes:
@@ -8346,6 +8385,7 @@ def refresh_media_sync_for_task(task: dict[str, Any]) -> dict[str, Any]:
         "--auto-source",
         "--summary-only",
         "--record-empty",
+        "--require-token-match",
         "--db",
         str(Path(os.environ.get("WECHAT_MIRROR_DB") or DEFAULT_DB)),
     ]
@@ -12295,8 +12335,9 @@ WeChat article / `mp.weixin.qq.com` link cards:
 - For read-only research, do not return `waiting_confirmation`, ask the user to verify/open the page, or launch/focus an external browser. If neither full extraction nor responsible reconstruction succeeds, give a concise evidence-limited answer and stop cleanly.
 
 Link/read-later summary reports:
-- For web_clip_inbox/link_inbox sources, return a concise chat message by default. Save any working Markdown/evidence under the task artifact directory, but do not list it in `files` unless the user asked for a report/file or you truly read substantial content and the PDF would be useful.
-- For papers, PDFs, arXiv/DOI links, GitHub repositories, technical articles, mp.weixin/Gongzhonghao articles, and useful Shipinhao/Finder summaries, generate local notes when helpful. Attach a PDF to WeChat only when explicitly requested or when `data.source_read_quality` is `substantive|full|deep|read|watched` and `data.send_report_to_wechat=true`.
+- For web_clip_inbox/link_inbox sources, return a concise chat message by default, written naturally from the source evidence. Save any working Markdown/evidence under the task artifact directory, but do not list it in `files` unless the current message explicitly asks for a report/file.
+- For papers, PDFs, arXiv/DOI links, GitHub repositories, technical articles, mp.weixin/Gongzhonghao articles, and Shipinhao/Finder summaries, generate local notes when helpful. A full or substantive read does not itself authorize sending a PDF.
+- Attach a PDF to WeChat only when explicitly requested. For a PDF/report request, return the compiled PDF only by default. Include Markdown, TeX, bibliography, screenshots, or other source artifacts only when the current message asks for them.
 - For GitHub links, summarize purpose, install/use path, key files, license/stars if accessible, risks, and likely relevance.
 - For papers, include title/authors/venue/DOI when accessible, problem, method, results, limitations, and links/PDF evidence.
 - For Shipinhao/Finder videos, use accessible metadata, video media, comments, transcript/summary comments, or public mirrors; clearly mark limitations if the video/comments/transcript are not available.
@@ -13260,8 +13301,13 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
             "--targets-file",
             "",
             "--prefer-current",
+            "--send",
+            "--file",
+            str(file_path.expanduser().resolve()),
             "--pause",
             os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
+            "--mirror-db",
+            str(DEFAULT_DB),
         ]
         with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
             target_file = Path(handle.name)
@@ -13272,23 +13318,27 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
         else:
             command.append("--no-search")
         try:
-            run_send_subprocess(command)
+            run_exact_chat_file_sender(command)
         finally:
             target_file.unlink(missing_ok=True)
-    elif os.environ.get("WECHAT_ALLOW_UNGUARDED_SEND", "0") != "1":
-        raise RuntimeError(f"Refusing unguarded WeChat file send for {chat}: missing send_target")
-    run_file_bridge_subprocess(
-        [
-            sys.executable,
-            str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_chatops_bridge.py"),
-            "--config",
-            os.environ.get("WECHAT_WORKER_FILE_SEND_CONFIG", str(PRIVATE / "lazy-research-chatops.local.json")),
-            "--chat",
-            chat,
-            "--file",
-            str(file_path.expanduser().resolve()),
-        ]
-    )
+    else:
+        if os.environ.get("WECHAT_ALLOW_UNGUARDED_SEND", "0") != "1":
+            raise RuntimeError(f"Refusing unguarded WeChat file send for {chat}: missing send_target")
+        run_file_bridge_subprocess(
+            [
+                sys.executable,
+                str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_chatops_bridge.py"),
+                "--config",
+                os.environ.get(
+                    "WECHAT_WORKER_FILE_SEND_CONFIG",
+                    str(PRIVATE / "lazy-research-chatops.local.json"),
+                ),
+                "--chat",
+                chat,
+                "--file",
+                str(file_path.expanduser().resolve()),
+            ]
+        )
     record_event(
         chat_name=chat,
         action="file_send",
@@ -13373,6 +13423,50 @@ def run_file_bridge_subprocess(command: list[str], timeout: int | None = None) -
     raise RuntimeError("; ".join(errors[-4:]))
 
 
+def run_exact_chat_file_sender(command: list[str], timeout: int | None = None) -> None:
+    """Run exact-target open and native file send in one serialized process."""
+    if timeout is None:
+        timeout = int(
+            os.environ.get(
+                "WECHAT_WORKER_FILE_SEND_TIMEOUT_SECONDS",
+                os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"),
+            )
+        )
+    attempts = max(1, int(os.environ.get("WECHAT_WORKER_FILE_SEND_UNLOCK_RETRIES", "2")) + 1)
+    errors: list[str] = []
+    for attempt in range(1, attempts + 1):
+        try:
+            run_send_subprocess(command, timeout=timeout)
+            return
+        except RuntimeError as exc:
+            message = str(exc)
+            errors.append(f"attempt {attempt}: {message}")
+            locked = (
+                "wechat_locked" in message.lower()
+                or "weixin for linux is locked" in message.lower()
+                or "状态栏解锁" in message
+            )
+            if (
+                attempt < attempts
+                and locked
+                and os.environ.get("WECHAT_WORKER_FILE_SEND_AUTO_UNLOCK", "1") != "0"
+            ):
+                unlock_error = unlock_wechat_for_file_send()
+                if unlock_error:
+                    errors.append(f"unlock attempt {attempt}: {unlock_error}")
+                time.sleep(
+                    float(
+                        os.environ.get(
+                            "WECHAT_WORKER_FILE_SEND_UNLOCK_RETRY_DELAY",
+                            "1.0",
+                        )
+                    )
+                )
+                continue
+            break
+    raise RuntimeError("; ".join(errors[-4:]))
+
+
 def run_file_bridge_attempt(command: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
     lock = acquire_gui_send_lock_or_raise()
     try:
@@ -13416,6 +13510,9 @@ def unlock_wechat_for_file_send() -> str:
         "--flush-deferred",
         "--json",
     ]
+    serial = configured_wechat_unlock_serial()
+    if serial:
+        command.extend(["--serial", serial])
     try:
         proc = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
@@ -13424,6 +13521,34 @@ def unlock_wechat_for_file_send() -> str:
         return ""
     detail = (proc.stderr or proc.stdout or "").strip()
     return detail[-1200:] or f"unlock watchdog failed with exit {proc.returncode}"
+
+
+def configured_wechat_unlock_serial() -> str:
+    direct = (
+        os.environ.get("WECHAT_UNLOCK_ADB_SERIAL")
+        or os.environ.get("ANDROID_SERIAL")
+        or ""
+    ).strip()
+    if direct:
+        return direct
+    private_env = PRIVATE / "wechat_supervisor.local.env"
+    try:
+        lines = private_env.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        match = re.match(
+            r"^\s*(?:export\s+)?WECHAT_UNLOCK_ADB_SERIAL\s*=\s*(.+?)\s*$",
+            line,
+        )
+        if not match:
+            continue
+        try:
+            values = shlex.split(match.group(1), comments=True)
+        except ValueError:
+            return ""
+        return values[0].strip() if values else ""
+    return ""
 
 
 def gui_send_lock_busy(lock_path: Path = GUI_SEND_LOCK) -> bool:

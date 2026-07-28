@@ -132,6 +132,78 @@ class WeChatMediaSyncTests(unittest.TestCase):
             self.assertEqual(row[3], "copied")
             self.assertEqual(row[4], "mtime")
 
+    def test_exact_chat_sync_rejects_fresh_mtime_only_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "source-cache"
+            source.mkdir()
+            (source / "outgoing-report.pdf").write_bytes(b"%PDF-1.4\n")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--chat",
+                    "鏈接",
+                    "--source",
+                    str(source),
+                    "--dest",
+                    str(base / "downloads"),
+                    "--db",
+                    str(base / "mirror.sqlite"),
+                    "--since-minutes",
+                    "999",
+                    "--require-token-match",
+                    "--summary-only",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["status"], "no-changes")
+        self.assertEqual(payload["file_count"], 0)
+
+    def test_exact_chat_sync_accepts_matching_source_token(self) -> None:
+        token = "abc123abc123abc123abc123abc123ab"
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "source-cache"
+            source.mkdir()
+            (source / f"{token}.pdf").write_bytes(b"%PDF-1.4\n")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--chat",
+                    "鏈接",
+                    "--source",
+                    str(source),
+                    "--dest",
+                    str(base / "downloads"),
+                    "--db",
+                    str(base / "mirror.sqlite"),
+                    "--since-minutes",
+                    "0",
+                    "--match-token",
+                    token,
+                    "--require-token-match",
+                    "--summary-only",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["file_count"], 1)
+
     def test_sync_decodes_xor_dat_image_and_records_decoded_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
