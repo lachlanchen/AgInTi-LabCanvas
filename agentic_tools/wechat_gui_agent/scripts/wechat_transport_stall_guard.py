@@ -9,7 +9,7 @@ the same fault has been observed repeatedly.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
@@ -38,6 +38,9 @@ WECHAT_QUEUE = WECHAT_PRIVATE / "wechat_task_queue.jsonl"
 WECOM_QUEUE = WECOM_PRIVATE / "wecom_task_queue.jsonl"
 WECHAT_SUPERVISOR = (
     ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_supervisor_tmux.sh"
+)
+WECHAT_VIRTUAL_DESKTOP = (
+    ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_virtual_desktop.sh"
 )
 WECOM_SUPERVISOR = ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_tmux.sh"
 ANDROID_CONFIG = WECOM_PRIVATE / "wecom_android_bridge.local.json"
@@ -637,6 +640,117 @@ def queue_health(
     }
 
 
+def wechat_client_started_at(
+    *,
+    display: str | None = None,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Return the start time of the persisted WeChat client on one X display."""
+
+    expected_display = display or os.environ.get("WECHAT_DISPLAY", ":97")
+    current = now or utc_now()
+    proc = run_command(["pgrep", "-f", r"^/usr/bin/wechat([[:space:]]|$)"], timeout=3)
+    starts: list[datetime] = []
+    for raw_pid in proc.stdout.split():
+        if not raw_pid.isdigit():
+            continue
+        pid = int(raw_pid)
+        try:
+            environment = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if f"DISPLAY={expected_display}".encode() not in environment:
+            continue
+        details = process_details(pid)
+        if details is None:
+            continue
+        starts.append(current - timedelta(seconds=details["elapsed_seconds"]))
+    return min(starts) if starts else None
+
+
+def recent_wechat_gui_timeout_health(
+    path: Path = WECHAT_QUEUE,
+    *,
+    now: datetime | None = None,
+    client_started_at: datetime | None = None,
+    window_seconds: float = 900.0,
+) -> dict[str, Any]:
+    """Detect a completed GUI timeout against the currently running client.
+
+    A timeout older than the current client process is resolved evidence and
+    must not trigger another restart. One current timeout is enough to raise a
+    health fault; the outer guard still requires repeated health checks before
+    performing the profile-preserving restart.
+    """
+
+    current = now or utc_now()
+    started = client_started_at
+    if started is None:
+        started = wechat_client_started_at(now=current)
+    if not path.exists():
+        return {
+            "ok": True,
+            "exists": False,
+            "client_started_at": started.isoformat(timespec="seconds") if started else "",
+            "task_ids": [],
+        }
+    latest: dict[str, dict[str, Any]] = {}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {
+            "ok": False,
+            "exists": True,
+            "error": "unreadable",
+            "client_started_at": started.isoformat(timespec="seconds") if started else "",
+            "task_ids": [],
+        }
+    for line in lines:
+        try:
+            task = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or task.get("task_id") or "")
+        if task_id:
+            latest[task_id] = task
+
+    stalled: list[str] = []
+    newest_timeout: datetime | None = None
+    for task_id, task in latest.items():
+        attempted = parse_timestamp(
+            task.get("last_send_attempt_at")
+            or task.get("send_retry_claimed_at")
+            or task.get("completed_at")
+        )
+        if attempted is None or (current - attempted).total_seconds() > window_seconds:
+            continue
+        if started is not None and attempted <= started:
+            continue
+        fragments = [
+            str(task.get("send_deferred_reason") or ""),
+            *(str(item) for item in task.get("send_errors") or []),
+        ]
+        for item in task.get("file_send_errors") or []:
+            if isinstance(item, dict):
+                fragments.append(str(item.get("error") or ""))
+            else:
+                fragments.append(str(item))
+        text = " ".join(fragments).lower()
+        if "gui_send_timeout" not in text and "wechat_send_timeout" not in text:
+            continue
+        stalled.append(task_id)
+        newest_timeout = max(newest_timeout, attempted) if newest_timeout else attempted
+    return {
+        "ok": not stalled,
+        "exists": True,
+        "client_started_at": started.isoformat(timespec="seconds") if started else "",
+        "newest_timeout_at": newest_timeout.isoformat(timespec="seconds") if newest_timeout else "",
+        "task_ids": stalled[:20],
+    }
+
+
 def process_counts(wechat: dict[str, Any], wecom: dict[str, Any]) -> dict[str, int]:
     wechat_windows = wechat.get("windows", {})
     return {
@@ -665,6 +779,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         else {"ok": True, "enabled": False}
     )
     sender = sender_lock_health(max_holder_seconds=max_sender_seconds)
+    gui_delivery = recent_wechat_gui_timeout_health()
     direct_monitors = direct_monitor_health()
     schedules = schedule_health()
     cli_transport = cli_transport_health()
@@ -709,6 +824,12 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         )
     if not sender.get("ok"):
         issue("sender_lock_stuck", "degraded", str(sender.get("state") or "unknown"))
+    if not gui_delivery.get("ok"):
+        issue(
+            "wechat_gui_delivery_stalled",
+            "degraded",
+            f"{len(gui_delivery.get('task_ids') or [])} current-client GUI timeout(s)",
+        )
     if not schedules["echomind"]["running"]:
         issue("schedule_echomind_missing", "degraded", "EchoMind language scheduler is absent")
     elif not schedules["echomind"]["ok"]:
@@ -768,6 +889,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         "schedules": schedules,
         "agent_failures": agent_failures,
         "sender_lock": sender,
+        "wechat_gui_delivery": gui_delivery,
         "queues": queues,
         "processes": process_counts(wechat, wecom),
     }
@@ -906,6 +1028,22 @@ def perform_repairs(
                 "ok": not result.get("unknown_holder"),
                 "terminated": result.get("terminated_orphans", []),
             }
+        )
+    if (
+        "wechat_gui_delivery_stalled" in issue_codes
+        and repair_due(
+            "wechat_gui_delivery_stalled",
+            state,
+            consecutive_failures=consecutive_failures,
+            cooldown_seconds=cooldown_seconds,
+            now=now,
+        )
+    ):
+        repairs.append(
+            run_repair(
+                "wechat_input_stalled",
+                [str(WECHAT_VIRTUAL_DESKTOP), "restart-client"],
+            )
         )
     if any(
         code in issue_codes
@@ -1301,6 +1439,10 @@ def one_cycle(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             if code == "android_poll_stalled" and any(item["label"] == "android_relay" for item in repairs):
                 repaired_at[code] = snapshot["checked_at"]
             if code == "sender_lock_stuck" and any(item["label"] == "orphaned_sender" for item in repairs):
+                repaired_at[code] = snapshot["checked_at"]
+            if code == "wechat_gui_delivery_stalled" and any(
+                item["label"] == "wechat_input_stalled" for item in repairs
+            ):
                 repaired_at[code] = snapshot["checked_at"]
             if code == "wechat_direct_monitor_stalled" and any(item["label"] == "wechat_stalled_monitors" for item in repairs):
                 repaired_at[code] = snapshot["checked_at"]

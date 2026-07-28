@@ -1676,6 +1676,17 @@ Stuck GUI sender:
   ownership. A short-lived sender owned by `wechat_chat_sync_loop.py` is normal;
   never infer a desktop lock from a timeout or from the lock file's mtime.
   Terminate only a proven stale orphan, then let the durable outbox retry once.
+- A mapped, unlocked WeChat window can still have a dead input/event loop. A
+  completed `WECHAT_SEND_TIMEOUT` after the current `/usr/bin/wechat` process
+  started is recorded as `wechat_gui_delivery_stalled`. If it remains present
+  for two health checks, the transport guard runs
+  `wechat_virtual_desktop.sh restart-client`, which gracefully restarts only
+  the official client on `:97` and reuses the existing profile. It does not
+  restart monitors, workers, Xvfb, x11vnc, or noVNC.
+- Timeouts older than the current client start are resolved evidence and cannot
+  trigger another restart. The normal repair cooldown also prevents restart
+  loops. After the client returns, the durable outbox retries the already
+  generated result; no model work is repeated merely to repair delivery.
 
 Link inbox and scheduled organizer delivery:
 

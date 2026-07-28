@@ -2,10 +2,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+ACTION="${1:-ensure}"
 DISPLAY_ID="${WECHAT_DISPLAY:-:97}"
 VNC_PORT="${WECHAT_VNC_PORT:-5917}"
 NOVNC_PORT="${WECHAT_NOVNC_PORT:-6107}"
 LOG_DIR="$ROOT/output/virtual_desktop/$(date +%F)"
+PRIVATE_DIR="$ROOT/agentic_tools/wechat_gui_agent/.private"
+CLIENT_LOCK="$PRIVATE_DIR/wechat_client_lifecycle.lock"
 KEEP_AWAKE_INTERVAL="${WECHAT_KEEP_AWAKE_INTERVAL:-55}"
 MIN_WINDOW_WIDTH="${WECHAT_MIN_WINDOW_WIDTH:-640}"
 MIN_WINDOW_HEIGHT="${WECHAT_MIN_WINDOW_HEIGHT:-480}"
@@ -13,8 +16,17 @@ START_WAIT_SECONDS="${WECHAT_START_WAIT_SECONDS:-12}"
 RESTART_WAIT_SECONDS="${WECHAT_RESTART_WAIT_SECONDS:-12}"
 AUTO_RECOVER_UNMAPPED="${WECHAT_AUTO_RECOVER_UNMAPPED:-1}"
 mkdir -p "$LOG_DIR"
+mkdir -p "$PRIVATE_DIR"
 LAUNCH_LOG="$LOG_DIR/wechat_virtual_desktop_launch.log"
 APP_LOG="$LOG_DIR/wechat_app.log"
+
+case "$ACTION" in
+  ensure|restart-client) ;;
+  *)
+    echo "Usage: $0 [ensure|restart-client]" >&2
+    exit 2
+    ;;
+esac
 
 wechat_main_window() {
   local window_id geometry width height
@@ -92,11 +104,28 @@ stop_stale_wechat() {
   --log-dir "$LOG_DIR" \
   -- /bin/true >"$LAUNCH_LOG"
 
-main_window="$(wechat_main_window || true)"
-if [[ -z "$main_window" ]]; then
-  echo "No large mapped WeChat window on $DISPLAY_ID; requesting normal activation." >>"$APP_LOG"
+exec 9>"$CLIENT_LOCK"
+if ! flock -w "${WECHAT_CLIENT_LIFECYCLE_LOCK_WAIT_SECONDS:-20}" 9; then
+  echo "WeChat client lifecycle operation is already active; leaving the persisted client untouched." >&2
+  exit 75
+fi
+
+main_window=""
+if [[ "$ACTION" == "restart-client" ]]; then
+  echo "Gracefully restarting the input-stalled WeChat client on $DISPLAY_ID while preserving its profile." >>"$APP_LOG"
+  if ! stop_stale_wechat; then
+    echo "WeChat did not exit within ${RESTART_WAIT_SECONDS}s; refusing to launch a duplicate client." >&2
+    exit 1
+  fi
   launch_wechat
   main_window="$(wait_for_main_window "$START_WAIT_SECONDS" || true)"
+else
+  main_window="$(wechat_main_window || true)"
+  if [[ -z "$main_window" ]]; then
+    echo "No large mapped WeChat window on $DISPLAY_ID; requesting normal activation." >>"$APP_LOG"
+    launch_wechat
+    main_window="$(wait_for_main_window "$START_WAIT_SECONDS" || true)"
+  fi
 fi
 
 if [[ -z "$main_window" && "$AUTO_RECOVER_UNMAPPED" == "1" ]]; then

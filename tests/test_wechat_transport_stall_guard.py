@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 from pathlib import Path
@@ -90,6 +90,60 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["coverage_unresolved_ids"], ["message-42"])
+
+    def test_gui_timeout_health_ignores_failure_before_client_restart(self) -> None:
+        now = datetime(2026, 7, 28, 16, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "old-timeout",
+                        "status": "send_deferred_locked",
+                        "last_send_attempt_at": "2026-07-28T15:55:00+00:00",
+                        "send_deferred_reason": "gui_send_timeout",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = guard.recent_wechat_gui_timeout_health(
+                queue,
+                now=now,
+                client_started_at=now - timedelta(minutes=2),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["task_ids"], [])
+
+    def test_gui_timeout_health_flags_failure_against_current_client(self) -> None:
+        now = datetime(2026, 7, 28, 16, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "current-timeout",
+                        "status": "send_deferred_locked",
+                        "last_send_attempt_at": "2026-07-28T15:59:30+00:00",
+                        "file_send_errors": [
+                            {"error": "WECHAT_SEND_TIMEOUT: GUI sender exceeded 115 seconds"}
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = guard.recent_wechat_gui_timeout_health(
+                queue,
+                now=now,
+                client_started_at=now - timedelta(minutes=5),
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["task_ids"], ["current-timeout"])
 
     def test_tmux_snapshot_filters_exact_session_and_keeps_all_windows(self) -> None:
         original = guard.run_command
@@ -381,6 +435,36 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         repair.assert_called_once_with(
             "android_relay",
             [str(guard.WECOM_SUPERVISOR), "android-restart"],
+        )
+
+    def test_current_client_gui_timeout_restarts_only_wechat_client(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "code": "wechat_gui_delivery_stalled",
+                    "severity": "degraded",
+                    "detail": "one current-client timeout",
+                }
+            ]
+        }
+        state = {"fault_counts": {"wechat_gui_delivery_stalled": 2}}
+        with mock.patch.object(
+            guard,
+            "run_repair",
+            return_value={"label": "wechat_input_stalled", "ok": True},
+        ) as repair:
+            result = guard.perform_repairs(
+                snapshot,
+                state,
+                consecutive_failures=2,
+                cooldown_seconds=300,
+                max_sender_seconds=180,
+            )
+
+        self.assertEqual(result, [{"label": "wechat_input_stalled", "ok": True}])
+        repair.assert_called_once_with(
+            "wechat_input_stalled",
+            [str(guard.WECHAT_VIRTUAL_DESKTOP), "restart-client"],
         )
 
     def test_repair_agent_never_runs_for_healthy_poll(self) -> None:
