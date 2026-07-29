@@ -23,6 +23,7 @@ from wechat_mirror import DEFAULT_DB
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_AUTOPUBLISH_DIR = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/home/lachlan/Nutstore Files/AutoPublish/AutoPublish"))
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+TRANSCODE_SOURCE_WINDOW_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ def main() -> int:
             chats=args.chat,
             since_minutes=args.since_minutes,
             message_local_ids=args.message_local_id,
+            db_path=args.db,
         )
         if not candidates and args.fetch_gui and not args.dry_run:
             fetch_payload = fetch_latest_video_via_gui(
@@ -105,6 +107,7 @@ def main() -> int:
                     chats=args.chat,
                     since_minutes=args.since_minutes,
                     message_local_ids=args.message_local_id,
+                    db_path=args.db,
                 )
     else:
         candidates = find_video_candidates(
@@ -161,11 +164,19 @@ def main() -> int:
     return 0 if result["ok"] else 1
 
 
-def exact_message_candidates(*, chats: list[str], since_minutes: float, message_local_ids: list[int]) -> list[VideoCandidate]:
+def exact_message_candidates(
+    *,
+    chats: list[str],
+    since_minutes: float,
+    message_local_ids: list[int],
+    db_path: Path = DEFAULT_DB,
+) -> list[VideoCandidate]:
     messages = recent_video_messages(chats, since_minutes, message_local_ids=message_local_ids)
     candidates: list[VideoCandidate] = []
     for message in messages:
-        for path in matching_video_files(message, since_minutes=since_minutes, started_at=0):
+        paths = matching_video_files(message, since_minutes=since_minutes, started_at=0)
+        paths.extend(mirrored_message_video_files(db_path, message))
+        for path in deduplicate_paths(paths):
             try:
                 stat = path.stat()
             except OSError:
@@ -183,8 +194,91 @@ def exact_message_candidates(*, chats: list[str], since_minutes: float, message_
                     matched_by=f"message-local-id:{message.local_id}",
                 )
             )
-    candidates.sort(key=lambda item: item.source_mtime, reverse=True)
+    message_by_chat = {(item.chat_name, item.local_id): item for item in messages}
+    candidates.sort(
+        key=lambda item: exact_message_candidate_rank(
+            item.path,
+            message_by_chat[(item.chat_name, int(item.matched_by.rsplit(":", 1)[-1]))],
+        ),
+        reverse=True,
+    )
     return candidates
+
+
+def mirrored_message_video_files(db_path: Path, message: VideoMessage) -> list[Path]:
+    if not db_path.exists():
+        return []
+    suffixes = tuple(sorted(VIDEO_SUFFIXES))
+    sql = f"""
+        SELECT media_files.source_path, media_files.mirror_path,
+               media_files.size_bytes, media_files.source_mtime
+        FROM media_files
+        JOIN chats ON chats.id = media_files.chat_id
+        WHERE chats.name = ?
+          AND LOWER(media_files.suffix) IN ({",".join("?" for _ in suffixes)})
+          AND media_files.status IN ('copied', 'decoded', 'exists')
+    """
+    paths: list[Path] = []
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(sql, [message.chat_name, *suffixes]).fetchall()
+    except sqlite3.Error:
+        return []
+    local_id_pattern = re.compile(rf"(?:^|/){message.local_id}_[^/]+$", re.IGNORECASE)
+    for source_path, mirror_path, size_bytes, source_mtime in rows:
+        for raw_path in (mirror_path, source_path):
+            if not raw_path:
+                continue
+            path = Path(str(raw_path))
+            name_matches = bool(local_id_pattern.search(path.as_posix()))
+            size_matches = int(size_bytes or 0) in message.sizes
+            time_matches = bool(
+                message.create_time
+                and source_mtime
+                and abs(float(source_mtime) - message.create_time) <= TRANSCODE_SOURCE_WINDOW_SECONDS
+            )
+            stem_matches = path.stem.lower() in message.stems
+            if (name_matches and (size_matches or time_matches)) or stem_matches:
+                if path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES:
+                    paths.append(path)
+    return deduplicate_paths(paths)
+
+
+def deduplicate_paths(paths: list[Path]) -> list[Path]:
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(resolved)
+    return unique
+
+
+def exact_message_candidate_rank(path: Path, message: VideoMessage) -> tuple[int, int, int, int, int, float, float]:
+    stat = path.stat()
+    normalized = path.as_posix().lower()
+    filename = path.name.lower()
+    local_id_match = bool(re.match(rf"{message.local_id}(?:_|-)", filename))
+    size_match = stat.st_size in message.sizes
+    send_temp = "/sendtemp/" in normalized or "send_temp" in filename
+    raw_original = path.stem.lower().endswith("_raw")
+    stem_match = path.stem.lower() in message.stems
+    time_distance = abs(stat.st_mtime - message.create_time) if message.create_time else 0.0
+    return (
+        int(local_id_match),
+        int(size_match),
+        int(send_temp or raw_original),
+        int(stem_match),
+        stat.st_size,
+        -time_distance,
+        stat.st_mtime,
+    )
 
 
 def run_media_sync(chat: str, since_minutes: float, *, auto_source: bool) -> None:

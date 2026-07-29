@@ -258,6 +258,30 @@ Validate:
 - Preserve a prompt/provenance record for every generated asset. If it contains
   text, preserve a transcript and mark the wording reviewed; essential text
   must still exist as editable slide text.
+
+## Music and Music Video
+
+- Reuse the sibling Musia Studio and `labcanvas music`; do not reimplement its
+  song generators, localization pipeline, review logic, or artifact registry.
+- Keep one persistent, hashed source-scoped Musia session so follow-up chat
+  messages can revise the same song without exposing raw chat identifiers.
+- Use `labcanvas music submit --mode worker`, monitor with `music wait`, and
+  collect real outputs with `music artifacts`, then copy selected outputs with
+  `music artifact ARTIFACT_ID --output-dir ...`. Never claim audio exists
+  merely because a worker job was queued.
+- A repeated task ID is idempotent. A changed request under the same task must
+  return `revision_required` instead of starting another heavy generation;
+  create a new revision only when the current request explicitly authorizes it.
+- Treat music creation, music-video generation, and public publication as three
+  independent stages. A song request stops after reviewed audio unless the
+  current request explicitly asks for an MV.
+- For a song-first MV, the reviewed Musia master is the soundtrack and timing
+  authority. Build the handoff with `labcanvas music mv-pack`, generate visuals
+  through the existing LALACHAN/Xiaoyunque routine, then remux the reviewed
+  master audio when the generated video changes or degrades it.
+- Return reviewed audio and the verified MP4 to the exact source chat. Enter
+  LazyEdit/public platforms only when the current message explicitly requests
+  that stage.
 - Prefer real plots, editable SVG/BioRender diagrams, CAD/Blender renders, and
   source figures whenever accuracy matters.
 - Build and inspect PPTX, PDF, and PNG previews. Return the PPTX first, then

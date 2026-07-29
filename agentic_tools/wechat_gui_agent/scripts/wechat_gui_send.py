@@ -29,9 +29,15 @@ from file_lock import fcntl_compat as fcntl
 from wechat_message_policy import file_transport_identity, is_no_reply_control
 from wechat_mirror import DEFAULT_DB, record_event
 
+try:
+    from opencc import OpenCC
+except ImportError:  # Optional local OCR-normalization aid.
+    OpenCC = None
+
 
 ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
+TITLE_T2S = OpenCC("t2s") if OpenCC is not None else None
 
 
 @dataclass(frozen=True)
@@ -299,8 +305,7 @@ def send_one(
     download_file_md5: str = "",
     outgoing_file: Path | None = None,
 ) -> dict[str, Any]:
-    close_non_target_wechat_windows(env, window, target)
-    focus(env, window)
+    reset_wechat_send_surface(env, window, target, pause)
     attempt_id = datetime.now().strftime("%H%M%S-%f")
     shot_prefix = f"{index:02d}-{safe_name(target.name)}-{attempt_id}"
     before_path = out_dir / f"{shot_prefix}-before.png"
@@ -1037,7 +1042,7 @@ def open_target(
                     "attempts": attempts,
                     "visible_chat_list_match": match,
                 }
-            if not (allow_search and target.allow_search):
+            if not global_search_allowed(allow_search, target):
                 return {
                     **guard,
                     "ok": False,
@@ -1073,7 +1078,7 @@ def open_target(
         close_non_target_wechat_windows(env, window, target)
         focus(env, window)
 
-    if not (allow_search and target.allow_search):
+    if not global_search_allowed(allow_search, target):
         guard = attempts[-1] if attempts else verify("search_disabled_current")
         return {
             **guard,
@@ -1233,7 +1238,8 @@ def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[
         words.sort(key=lambda item: (int(item["left"]), int(item["top"])))
         text = "".join(str(item["text"]) for item in words)
         normalized = normalize_title(text)
-        if not normalized or not title_identity_matches(text, expected_titles):
+        identity = visible_chat_row_identity(text, expected_titles, allow_ocr_repair=target.allow_title_guard_fallback)
+        if not normalized or not identity:
             continue
         min_left = min(int(item["left"]) for item in words)
         max_right = max(int(item["left"]) + int(item["width"]) for item in words)
@@ -1252,6 +1258,7 @@ def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[
                 "right": max_right,
                 "bottom": max_bottom,
                 "center_y": (min_top + max_bottom) / 2.0,
+                "identity_mode": identity,
             }
         )
     if not matches:
@@ -1316,6 +1323,21 @@ def search_for_target(env: dict[str, str], window: Window, query: str, pause: fl
     key(env, "BackSpace")
     paste_text(env, query)
     time.sleep(max(pause, 1.6))
+
+
+def global_search_allowed(requested: bool, target: TargetSpec) -> bool:
+    """Keep WeChat's global account search out of normal chat delivery.
+
+    The top-left search surface mixes contacts, mini-programs, web results, and
+    account search. It is not a reliable exact-chat selector. Existing configs
+    may retain ``allow_search`` for compatibility, but live use additionally
+    requires an explicit operator environment opt-in.
+    """
+    return (
+        requested
+        and target.allow_search
+        and os.environ.get("WECHAT_ENABLE_GLOBAL_ACCOUNT_SEARCH", "0") == "1"
+    )
 
 
 def verify_opened_title(
@@ -1472,6 +1494,48 @@ def rejected_title_guard_result(
 
 def normalize_title(text: str) -> str:
     return "".join(ch.lower() for ch in str(text or "") if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def normalize_visible_chat_title(text: str, *, separator_hint: bool = False) -> str:
+    normalized = normalize_title(text)
+    if TITLE_T2S is not None:
+        normalized = normalize_title(TITLE_T2S.convert(normalized))
+    if separator_hint:
+        normalized = normalized.replace("一", "")
+    return normalized
+
+
+def visible_chat_row_identity(
+    observed_text: str,
+    expected_titles: list[str] | tuple[str, ...],
+    *,
+    allow_ocr_repair: bool,
+) -> str:
+    """Return the bounded identity mode for one visible chat-list title.
+
+    Exact title matching remains preferred. The repair path accepts only one
+    same-length OCR substitution in a reasonably long title. It never applies
+    to header verification or arbitrary search results.
+    """
+    if title_identity_matches(observed_text, expected_titles):
+        return "exact"
+    if not allow_ocr_repair:
+        return ""
+    for raw_expected in expected_titles:
+        expected = normalize_visible_chat_title(raw_expected)
+        observed = normalize_visible_chat_title(
+            observed_text,
+            separator_hint=title_has_explicit_separator(raw_expected),
+        )
+        if len(expected) < 8 or len(observed) != len(expected):
+            continue
+        substitutions = sum(left != right for left, right in zip(observed, expected))
+        if substitutions != 1:
+            continue
+        if SequenceMatcher(None, observed, expected).ratio() < 0.90:
+            continue
+        return "ocr-single-substitution"
+    return ""
 
 
 def title_identity_matches(observed_text: str, expected_titles: list[str] | tuple[str, ...]) -> bool:
@@ -1839,6 +1903,93 @@ def close_non_target_wechat_windows(env: dict[str, str], main: Window, target: T
             continue
         run(["xdotool", "windowclose", wid], env=env, check=False)
     time.sleep(0.3)
+
+
+def reset_wechat_send_surface(
+    env: dict[str, str],
+    main: Window,
+    target: TargetSpec,
+    pause: float,
+) -> None:
+    """Dismiss stale previews/transfers before clicking the guarded chat list."""
+    close_non_target_wechat_windows(env, main, target)
+    focus(env, main)
+    for _ in range(2):
+        try:
+            key(env, "Escape")
+        except RuntimeError:
+            break
+        time.sleep(max(0.1, min(pause, 0.3)))
+    dismiss_internal_file_transfer_surface(env, main, target, pause)
+    close_non_target_wechat_windows(env, main, target)
+    focus(env, main)
+
+
+def internal_file_transfer_surface_visible(env: dict[str, str], main: Window) -> bool:
+    runtime = PRIVATE / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    token = f"{os.getpid()}-{time.time_ns()}"
+    source = runtime / f"send-surface-{token}.png"
+    crop = runtime / f"send-surface-{token}-top.png"
+    try:
+        screenshot(env, source)
+        run(
+            [
+                "convert",
+                str(source),
+                "-crop",
+                f"{main.width}x{min(160, main.height)}+{main.x}+{main.y}",
+                "-resize",
+                "180%",
+                str(crop),
+            ],
+            env=env,
+            check=False,
+        )
+        text = run(
+            [
+                "tesseract",
+                str(crop),
+                "stdout",
+                "-l",
+                "chi_sim+chi_tra+eng",
+                "--psm",
+                "11",
+            ],
+            env=env,
+            check=False,
+        ).stdout
+        normalized = normalize_title(text)
+        return "filetransfer" in normalized or (
+            "filetr" in normalized and "nsfer" in normalized
+        )
+    finally:
+        source.unlink(missing_ok=True)
+        crop.unlink(missing_ok=True)
+
+
+def dismiss_internal_file_transfer_surface(
+    env: dict[str, str],
+    main: Window,
+    target: TargetSpec,
+    pause: float,
+) -> bool:
+    target_titles = (
+        target.expected_title,
+        *target.expected_title_aliases,
+        target.name,
+    )
+    if any("filetransfer" in normalize_title(title) for title in target_titles):
+        return False
+    if not internal_file_transfer_surface_visible(env, main):
+        return False
+    click(
+        env,
+        main.x + int(main.width * 0.744),
+        main.y + min(32, max(24, int(main.height * 0.041))),
+    )
+    time.sleep(max(0.2, min(pause, 0.5)))
+    return not internal_file_transfer_surface_visible(env, main)
 
 
 def focus(env: dict[str, str], window: Window) -> None:

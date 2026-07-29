@@ -73,6 +73,7 @@ class WorkspaceAgentTests(unittest.TestCase):
                 "labview-control",
                 "protein-structure",
                 "presentations",
+                "musia-music",
             }.issubset(ids)
         )
 
@@ -120,11 +121,13 @@ class WorkspaceAgentTests(unittest.TestCase):
         short = selected_packaged_knowledge("Reply with the current status")
         cad = selected_packaged_knowledge("Design a Shapr3D C-mount holder")
         protein = selected_packaged_knowledge("Use AlphaFold for this protein structure")
+        music = selected_packaged_knowledge("Generate a Musia song and then make an MV")
 
         self.assertNotIn("## KiCad and PCB", short)
         self.assertNotIn("## CAD and Shapr3D-Compatible Design", short)
         self.assertIn("## CAD and Shapr3D-Compatible Design", cad)
         self.assertIn("## Protein Structure and AlphaFold", protein)
+        self.assertIn("## Music and Music Video", music)
         self.assertLess(len(short), len(cad))
 
     def test_task_runner_registers_declared_artifact(self):

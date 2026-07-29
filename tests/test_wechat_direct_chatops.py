@@ -415,6 +415,39 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             )
         )
 
+    def test_music_generation_routes_to_persistent_musia_worker(self) -> None:
+        config = self.backend_chat_config("懒人科研", "research")
+        text = "Use Musia to generate and review a warm Chinese song from these lyrics."
+        row = self.row(text)
+
+        route = direct_chatops.fallback_route_decision(config, text, row, [row])
+
+        self.assertEqual(route["route_kind"], "music_generation")
+        self.assertEqual(route["project"], "musia")
+        self.assertTrue(route["worker_needed"])
+        self.assertFalse(route["public_publish_allowed"])
+        self.assertTrue(
+            direct_chatops.is_interruptible_task(
+                {
+                    "route_decision": route,
+                    "routine": {"id": "musia_music_generation"},
+                }
+            )
+        )
+
+    def test_song_first_mv_does_not_collapse_into_generic_video(self) -> None:
+        config = self.backend_chat_config("🍓My devices", "personal_organizer")
+        text = "First generate the song in Musia, then use that reviewed music to create an MV."
+        row = self.row(text)
+
+        route = direct_chatops.fallback_route_decision(config, text, row, [row])
+        guarded = direct_chatops.enforce_route_safety(dict(route), text, route)
+
+        self.assertTrue(direct_chatops.is_music_to_mv_task(text))
+        self.assertEqual(guarded["route_kind"], "music_to_mv")
+        self.assertEqual(guarded["project"], "musia")
+        self.assertFalse(guarded["public_publish_allowed"])
+
     def test_link_inbox_mp_weixin_preempts_cad_markers_inside_url_hashes(self) -> None:
         config = self.backend_chat_config("鏈接", "link_inbox")
         text = (
@@ -1221,6 +1254,49 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(
             direct_chatops.response_skip_reason(config, {}, row),
             "self_outbound_file_echo",
+        )
+
+    def test_transcoded_outbound_video_is_not_reprocessed_as_self_media(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        config["self_messages_text_only"] = False
+        now = int(time.time())
+        direct_chatops.record_event(
+            chat_name="EchoMind",
+            action="send_file",
+            direction="outbound",
+            status="sent",
+            db_path=Path(self.mirror_db),
+            metadata={
+                "file_identity": {
+                    "name": "generated.mp4",
+                    "size_bytes": 14817817,
+                    "md5": "d60f84803662db1015174b5fa864fe6b",
+                    "sha256": "e579807099328e7248913545b8ad26de2129687240978149f076ebc93f1bf1df",
+                }
+            },
+        )
+        row = self.row(
+            (
+                '<?xml version="1.0"?><msg><videomsg length="14817817" '
+                'rawmd5="a5ade409c36961d5c1fe4250ceedecb6"/></msg>'
+            ),
+            sender="self",
+            local_type=43,
+            create_time=now,
+        )
+
+        self.assertEqual(
+            direct_chatops.response_skip_reason(config, {}, row),
+            "self_outbound_file_echo",
+        )
+
+        old_row = dict(row)
+        old_row["create_time"] = now - 121
+        self.assertEqual(
+            direct_chatops.response_skip_reason(config, {}, old_row),
+            "unsupported_type",
         )
 
     def test_recent_inflight_outbound_file_is_not_reprocessed_after_uncertain_send(self) -> None:

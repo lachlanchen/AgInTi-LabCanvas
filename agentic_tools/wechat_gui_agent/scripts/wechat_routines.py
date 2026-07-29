@@ -451,6 +451,104 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "For LazyEdit stages, Codex worker supervision owns context selection and command execution; deterministic code is limited to source isolation, duplicate guards, probes, and terminal verification.",
         ),
     ),
+    "musia_music_generation": RoutineDefinition(
+        id="musia_music_generation",
+        title="Musia Music Generation And Review",
+        route_kinds=("music_generation",),
+        purpose="Create, revise, localize, or review music through the existing persistent Musia Studio.",
+        default_effort="medium",
+        stages=(
+            {
+                "id": "music_context",
+                "owner": "worker_agent",
+                "entrypoint": "same-chat request/context + exact source-scoped audio or lyric files",
+                "success": "style, lyrics, melody, language, references, and requested output are understood",
+            },
+            {
+                "id": "musia_session",
+                "owner": "worker_agent",
+                "entrypoint": "labcanvas music submit --source-scope <exact-chat-scope> --mode worker",
+                "success": "one persistent Musia Studio session and durable worker job exist",
+            },
+            {
+                "id": "music_job_monitor",
+                "owner": "worker_agent",
+                "entrypoint": "labcanvas music wait <job-id> then labcanvas music artifacts",
+                "success": "the job reaches a terminal state and real reviewed audio/source artifacts are registered",
+            },
+            {
+                "id": "music_artifact_delivery",
+                "owner": "queue_orchestrator",
+                "entrypoint": "send_result_with_retries",
+                "success": "requested reviewed audio and useful source/review artifacts reach the exact source chat",
+            },
+        ),
+        required_gates=("music_artifact_delivery",),
+        artifact_policy="Return the reviewed audio plus the smallest useful set of lyrics, review, cover, or project artifacts.",
+        rules=COMMON_RULES
+        + (
+            "Reuse Musia Studio and its existing CLI/model wrappers; do not reimplement a music generator in LabCanvas.",
+            "Keep one hashed source-scoped Musia session for continuity without storing raw chat identifiers in the registry.",
+            "Do not claim a song was generated or reviewed unless the corresponding artifact exists.",
+            "Stop after reviewed music unless the current request explicitly asks for an MV/video stage.",
+            "Public release or platform posting is a separate explicit authorization.",
+        ),
+    ),
+    "musia_music_to_mv": RoutineDefinition(
+        id="musia_music_to_mv",
+        title="Musia Song-First Music Video",
+        route_kinds=("music_to_mv",),
+        purpose="Create or select reviewed Musia audio, prepare a song-locked MV handoff, generate visuals, and return the verified song and MP4.",
+        default_effort="medium",
+        stages=(
+            {
+                "id": "reviewed_music",
+                "owner": "worker_agent",
+                "entrypoint": "musia_music_generation routine or exact reviewed Musia artifact",
+                "success": "the reviewed master audio, lyrics, duration, and creative intent are fixed",
+            },
+            {
+                "id": "mv_handoff",
+                "owner": "worker_agent",
+                "entrypoint": "labcanvas music mv-pack --audio <reviewed-master> --copy-references",
+                "success": "Musia produces the song-first Xiaoyunque prompt, manifest, audio reference, and remux command",
+            },
+            {
+                "id": "xyq_visual_generation",
+                "owner": "worker_agent_supervised_by_queue",
+                "entrypoint": "LALACHAN/Xiaoyunque browser routine using the Musia handoff",
+                "success": "one paid request is monitored to a verified MP4 without duplicate submission",
+            },
+            {
+                "id": "master_audio_lock",
+                "owner": "worker_agent",
+                "entrypoint": "Musia handoff ffmpeg remux command",
+                "success": "the final MV uses the reviewed Musia master audio and has verified duration/streams",
+            },
+            {
+                "id": "song_and_mv_delivery",
+                "owner": "queue_orchestrator",
+                "entrypoint": "send_result_with_retries",
+                "success": "reviewed audio, final MP4, and useful handoff artifacts reach the exact source chat",
+            },
+            {
+                "id": "public_publish_if_authorized",
+                "owner": "worker_agent_supervised_by_queue",
+                "entrypoint": "LazyEdit publish routine only when current-message permission is explicit",
+                "success": "requested platforms are terminal-verified or the task stops after private artifact delivery",
+            },
+        ),
+        required_gates=("song_and_mv_delivery",),
+        artifact_policy="Return the reviewed song and verified final MP4; include the compact MV handoff/lyrics only when useful.",
+        rules=COMMON_RULES
+        + (
+            "The reviewed Musia master audio is the timing and soundtrack authority.",
+            "Do not start Xiaoyunque until a reviewed audio artifact exists.",
+            "Treat music creation, MV generation, and public publication as independent permissions.",
+            "Use request-level idempotence for paid Xiaoyunque generation and never resubmit a running or completed MV request.",
+            "If Xiaoyunque changes or degrades the audio, remux the reviewed Musia master into the final visual output.",
+        ),
+    ),
     "grant_proposal": RoutineDefinition(
         id="grant_proposal",
         title="Evidence-Grounded Grant Proposal",
@@ -630,6 +728,12 @@ def routine_id_for_route(route_decision: dict[str, Any] | None, request_text: st
         return ROUTE_TO_ROUTINE[route_kind]
     if any(marker in lowered for marker in ("grant proposal", "grant application", "funding proposal", "基金申请", "基金申請", "项目申请书", "項目申請書")):
         return "grant_proposal"
+    if any(marker in lowered for marker in ("music video", "mv", "音乐视频", "音樂影片")) and any(
+        marker in lowered for marker in ("music", "song", "melody", "歌曲", "音乐", "音樂", "旋律")
+    ):
+        return "musia_music_to_mv"
+    if any(marker in lowered for marker in ("music", "song", "melody", "vocal", "歌曲", "音乐", "音樂", "旋律", "作曲", "编曲", "編曲")):
+        return "musia_music_generation"
     if any(marker in lowered for marker in ("pcb", "kicad", "openscad", "blender", "cad", "gerber", "render", "渲染", "电路板")):
         return "labcanvas_cad_pcb"
     if any(marker in lowered for marker in ("xiaoyunque", "seedance", "小云雀")) or (

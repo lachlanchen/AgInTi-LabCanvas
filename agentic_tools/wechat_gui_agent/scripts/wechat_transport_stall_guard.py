@@ -590,6 +590,7 @@ def queue_health(
     now: datetime | None = None,
     stale_active_seconds: float = 14_400.0,
     stale_pending_seconds: float = 14_400.0,
+    coverage_alert_seconds: float = 21_600.0,
 ) -> dict[str, Any]:
     if not path.exists():
         return {"ok": True, "exists": False, "active": 0, "pending": 0, "stale_ids": []}
@@ -615,10 +616,28 @@ def queue_health(
     active: list[dict[str, Any]] = []
     stale_ids: list[str] = []
     coverage_unresolved_ids: list[str] = []
+    historical_coverage_unresolved_ids: list[str] = []
     for task_id, task in latest.items():
         status = str(task.get("status") or "")
         if str(task.get("coverage_status") or "") == "unresolved_after_retry":
-            coverage_unresolved_ids.append(task_id)
+            completed = parse_timestamp(
+                task.get("completed_at")
+                or task.get("updated_at")
+                or task.get("created_at")
+            )
+            coverage_age = (
+                max(0.0, (now - completed).total_seconds())
+                if completed is not None
+                else 0.0
+            )
+            if (
+                status in ACTIVE_STATUSES
+                or completed is None
+                or coverage_age < coverage_alert_seconds
+            ):
+                coverage_unresolved_ids.append(task_id)
+            else:
+                historical_coverage_unresolved_ids.append(task_id)
         if status not in ACTIVE_STATUSES:
             continue
         started = parse_timestamp(
@@ -642,6 +661,10 @@ def queue_health(
         "oldest_active_seconds": max((item["age_seconds"] for item in active), default=0),
         "stale_ids": stale_ids[:20],
         "coverage_unresolved_ids": coverage_unresolved_ids[:20],
+        "historical_coverage_unresolved_count": len(
+            historical_coverage_unresolved_ids
+        ),
+        "historical_coverage_unresolved_ids": historical_coverage_unresolved_ids[:20],
         "invalid_lines": invalid_lines,
     }
 

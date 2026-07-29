@@ -164,11 +164,15 @@ outbox item or deliver worker output.
   `IsWindowEnabled` state as readiness; exact title OCR remains the fail-closed
   gate after cleanup.
 - Legitimate short comments, thanks, reactions, and conversational follow-ups
-  receive one concise agent-generated reply even when they contain no task.
-  Consecutive fragments from the same sender are coalesced into one turn; empty,
-  duplicate, and proven self-output rows remain silent. Because GUI OCR may
-  derive a different sender fingerprint for the same bubble on adjacent polls,
-  exact same-chat text repeated within 90 seconds is suppressed before routing.
+  remain available to the exact-chat route session, but do not mechanically
+  receive one reply per row. The route agent may answer, combine related
+  fragments, retain a message as context, or stay silent while people talk.
+  Every row keeps its sender identity. A different member may steer an active
+  task only through an agent-selected relation bound to that exact task ID.
+  Empty, duplicate, and proven self-output rows remain silent. Because GUI OCR
+  may derive a different sender fingerprint for the same bubble on adjacent
+  polls, exact same-chat text repeated within 90 seconds is suppressed before
+  routing.
 - GUI access is serialized with a process lock. Combined text/file requests stay
   in one critical section, so concurrent workers cannot switch the target chat.
 - Read cursors and send ledgers are durable SQLite state under ignored

@@ -105,6 +105,7 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(result["stale_ids"], ["old-active"])
 
     def test_queue_health_exposes_numbered_messages_unresolved_after_retry(self) -> None:
+        now = datetime(2026, 7, 30, 8, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "queue.jsonl"
             queue.write_text(
@@ -113,16 +114,44 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
                         "id": "message-42",
                         "status": "done",
                         "coverage_status": "unresolved_after_retry",
+                        "completed_at": "2026-07-30T07:30:00+00:00",
                     }
                 )
                 + "\n",
                 encoding="utf-8",
             )
 
-            result = guard.queue_health(queue)
+            result = guard.queue_health(queue, now=now)
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["coverage_unresolved_ids"], ["message-42"])
+
+    def test_queue_health_keeps_old_unresolved_coverage_as_audit_only(self) -> None:
+        now = datetime(2026, 7, 30, 8, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "historical-message",
+                        "status": "worker_failed",
+                        "coverage_status": "unresolved_after_retry",
+                        "completed_at": "2026-07-29T23:00:00+00:00",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = guard.queue_health(queue, now=now)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["coverage_unresolved_ids"], [])
+        self.assertEqual(result["historical_coverage_unresolved_count"], 1)
+        self.assertEqual(
+            result["historical_coverage_unresolved_ids"],
+            ["historical-message"],
+        )
 
     def test_gui_timeout_health_ignores_failure_before_client_restart(self) -> None:
         now = datetime(2026, 7, 28, 16, 0, tzinfo=timezone.utc)

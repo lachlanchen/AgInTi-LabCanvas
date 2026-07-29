@@ -40,6 +40,39 @@ class WeChatRoutineTests(unittest.TestCase):
 
         self.assertEqual(routine_id, "story_script_generation")
 
+    def test_music_generation_uses_persistent_musia_contract(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "music_generation", "project": "musia"},
+            "Generate and review a Chinese song with Musia.",
+            task_id="task-music",
+            chat="LazyResearch",
+        )
+        stage_ids = [stage["id"] for stage in contract["stages"]]
+
+        self.assertEqual(contract["id"], "musia_music_generation")
+        self.assertIn("musia_session", stage_ids)
+        self.assertIn("music_job_monitor", stage_ids)
+        self.assertIn("music_artifact_delivery", contract["required_gates"])
+        self.assertIn("Do not claim a song", " ".join(contract["rules"]))
+
+    def test_music_to_mv_keeps_reviewed_song_as_timing_authority(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "music_to_mv", "project": "musia"},
+            "Create the song, then make an MV from it.",
+            task_id="task-mv",
+            chat="My devices",
+        )
+        stage_ids = [stage["id"] for stage in contract["stages"]]
+
+        self.assertEqual(contract["id"], "musia_music_to_mv")
+        self.assertIn("reviewed_music", stage_ids)
+        self.assertIn("mv_handoff", stage_ids)
+        self.assertIn("master_audio_lock", stage_ids)
+        self.assertIn("song_and_mv_delivery", contract["required_gates"])
+        self.assertIn("timing and soundtrack authority", " ".join(contract["rules"]))
+
     def test_text_fallback_selects_story_before_visual_routines(self) -> None:
         routines = load_routines()
         routine_id = routines.routine_id_for_route({}, "generate a story about RaraXia and AyaChan")

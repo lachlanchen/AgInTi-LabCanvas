@@ -64,7 +64,6 @@ LAZYEDIT_ROOT = Path(os.environ.get("LAZYEDIT_ROOT", "/home/lachlan/DiskMech/Pro
 LAZYEDIT_API_URL = os.environ.get("LAZYEDIT_API_URL", "http://127.0.0.1:18787").rstrip("/")
 LAZYEDIT_REMOTE_QUEUE_URL = os.environ.get("LAZYEDIT_REMOTE_QUEUE_URL", "http://lazyingart:8081/publish/queue")
 LAZYEDIT_REMOTE_LOG_COMMAND = os.environ.get("WECHAT_WORKER_LAZYEDIT_REMOTE_LOG_COMMAND", "")
-LAZYEDIT_REMOTE_LOGIN_HOST = os.environ.get("WECHAT_WORKER_LAZYEDIT_REMOTE_LOGIN_HOST", "lachlan@lazyingart")
 DEFAULT_AUTOPUBLISH_DIR = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/home/lachlan/Nutstore Files/AutoPublish/AutoPublish"))
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
@@ -442,6 +441,12 @@ def reprocess_task(
         for index, task in enumerate(tasks):
             if str(task.get("id") or "") != str(task_id):
                 continue
+            stored_result = task.get("result") if isinstance(task.get("result"), dict) else {}
+            delivery_recovery_only = bool(
+                artifact_recovery_only
+                and stored_result
+                and stored_result_can_be_reused_for_delivery(task, stored_result)
+            )
             previous = {
                 "at": now_text,
                 "reason": reason or "manual_reprocess",
@@ -475,10 +480,42 @@ def reprocess_task(
                 task["artifact_recovery_only"] = True
             else:
                 task.pop("artifact_recovery_only", None)
+            if delivery_recovery_only:
+                task["result"] = stored_result
+                task["status"] = SEND_DEFERRED_LOCKED_STATUS
+                task["send_deferred_reason"] = "manual_delivery_recovery"
+                task["send_expires_at"] = queue_deadline_iso(
+                    DEFAULT_DEFERRED_SEND_TTL_SECONDS
+                )
+                task["delivery_recovery_only"] = True
+            else:
+                task.pop("delivery_recovery_only", None)
             tasks[index] = task
             write_tasks(queue, tasks)
             return task
     raise SystemExit(f"No task found with id {task_id}")
+
+
+def stored_result_can_be_reused_for_delivery(
+    task: dict[str, Any],
+    result: dict[str, Any],
+) -> bool:
+    """Accept only a completed result that can be resent without model work."""
+    if verified_publish_result_completion(result):
+        return True
+    text = "\n".join(
+        str(result.get(field) or "") for field in ("message", "confirmation")
+    ).strip()
+    if text and worker_result_needs_escalation(text):
+        return False
+    files = [
+        Path(str(value)).expanduser()
+        for value in result.get("files") or []
+        if str(value or "").strip()
+    ]
+    if files:
+        return all(is_safe_outbound_file(path)[0] for path in files)
+    return bool(text) and worker_result_has_delivery_content(result)
 
 
 def apply_reprocess_reason_contract(task: dict[str, Any], reason: str) -> None:
@@ -647,7 +684,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         result = audit_and_repair_worker_completion(task, result)
     except Exception as exc:
         result_text = f"Worker failed before completion: {type(exc).__name__}: {str(exc)[:800]}"
-        result = {"message": result_text, "confirmation": "", "files": [], "raw": result_text}
+        result = private_worker_failure_result(result_text)
         task["worker_error"] = {"type": type(exc).__name__, "message": str(exc)[:1000]}
     if requeue_if_task_interrupted_during_run(queue, task):
         log_worker_event("stale-result-suppressed-for-interruption", task)
@@ -660,7 +697,17 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     persist_task_progress(task)
     target_chat = str(task.get("chat") or chat)
     has_delivery_content = worker_result_has_delivery_content(result)
-    if task.get("worker_result_exhausted"):
+    private_failure = (
+        result.get("private_failure")
+        if isinstance(result.get("private_failure"), dict)
+        else {}
+    )
+    if private_failure:
+        task["worker_error"] = {
+            "type": str(private_failure.get("kind") or "BackendExecutionFailed"),
+            "message": "Backend diagnostics were retained privately and suppressed from chat.",
+        }
+    elif task.get("worker_result_exhausted"):
         task["worker_error"] = {
             "type": "WorkerAttemptsExhausted",
             "message": "All allowed effort attempts ended in an explicit failure or weak delivery payload.",
@@ -670,7 +717,12 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
             "type": "EmptyWorkerResult",
             "message": "All backend attempts returned an empty delivery payload.",
         }
-    send_now = send and has_delivery_content and should_send_worker_result(task, result)
+    send_now = (
+        send
+        and not task.get("worker_error")
+        and has_delivery_content
+        and should_send_worker_result(task, result)
+    )
     if send and not send_now:
         task["send_suppressed_reason"] = "agent_no_reply" if result_is_no_reply(result) else "nonterminal_routine_status"
         task["send_suppressed_at"] = datetime.now().isoformat(timespec="seconds")
@@ -794,18 +846,13 @@ def refresh_existing_video_publish_deferred_result(task: dict[str, Any], result:
         "confirmation": "",
         "publish_stage": verification,
     }
-    confirmation = publish_stage_confirmation(verification)
-    if confirmation:
-        payload["confirmation"] = confirmation
-        payload["files"] = fetch_remote_publish_login_artifacts(task, verification)
-        payload["poststage"] = poststage
-    elif not bool(verification.get("verified")):
-        payload["publish_poststage_retry"] = {
-            "status": verification.get("stage") or "not_verified",
-            "retry_seconds": publish_stage_retry_seconds(verification),
-            "poststage": poststage,
-            "outcome": {"status": "probe"},
-        }
+    attach_publish_poststage_retry(
+        payload,
+        task=task,
+        verification=verification,
+        poststage=poststage,
+        outcome={"status": "probe"},
+    )
     task["publish_deferred_refresh_at"] = datetime.now().isoformat(timespec="seconds")
     task["publish_deferred_refresh_from"] = old_stage
     task["publish_deferred_refresh_to"] = verification.get("stage")
@@ -2079,9 +2126,22 @@ def android_text_fallback_allowed(task: dict[str, Any], result: dict[str, Any], 
     return bool(android_publish_completion_message(result))
 
 
+def publish_stage_from_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Read verified publish evidence through bounded agent result envelopes."""
+    payload: dict[str, Any] = result
+    for _ in range(3):
+        publish_stage = payload.get("publish_stage")
+        if isinstance(publish_stage, dict):
+            return publish_stage
+        nested = payload.get("data")
+        if not isinstance(nested, dict) or nested is payload:
+            break
+        payload = nested
+    return {}
+
+
 def android_publish_completion_message(result: dict[str, Any]) -> str:
-    data = result.get("data") if isinstance(result.get("data"), dict) else {}
-    publish_stage = data.get("publish_stage") if isinstance(data.get("publish_stage"), dict) else {}
+    publish_stage = publish_stage_from_result(result)
     if not (publish_stage.get("verified") or str(publish_stage.get("stage") or "") == "published_verified"):
         return ""
     video_id = publish_stage.get("video_id")
@@ -2109,7 +2169,7 @@ def send_result_text_via_android_fallback(result: dict[str, Any], target_chat: s
     if not message:
         raise RuntimeError("no android fallback message")
     adb = os.environ.get("ADB", "adb")
-    serial = resolve_android_serial(adb, os.environ.get("ANDROID_SERIAL", ""))
+    serial = resolve_android_serial(adb, configured_wechat_unlock_serial())
     require_android_tools(adb)
     android_shell(adb, serial, ["input", "keyevent", "224"], check=False)
     android_shell(adb, serial, ["wm", "dismiss-keyguard"], check=False)
@@ -3060,7 +3120,13 @@ def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, An
         incoming_source.get("sender_userid") or incoming_source.get("sender") or ""
     ).strip()
     if target_sender and incoming_sender and target_sender != incoming_sender:
-        return False
+        incoming_route = task_route_decision(incoming)
+        relation = str(
+            incoming_route.get("active_task_relation") or ""
+        ).strip().casefold()
+        related_task_id = str(incoming_route.get("active_task_id") or "").strip()
+        if relation != "interrupt" or related_task_id != str(target.get("id") or ""):
+            return False
     if not interruption_target_recent_enough(target, incoming):
         return False
     target_local_id = int_or_none(target_source.get("local_id"))
@@ -4113,8 +4179,7 @@ def verified_publish_send_completion(task: dict[str, Any]) -> bool:
 
 
 def verified_publish_result_completion(result: dict[str, Any]) -> bool:
-    data = result.get("data") if isinstance(result.get("data"), dict) else {}
-    publish_stage = data.get("publish_stage") if isinstance(data.get("publish_stage"), dict) else {}
+    publish_stage = publish_stage_from_result(result)
     return bool(publish_stage.get("verified")) or str(publish_stage.get("stage") or "") == "published_verified"
 
 
@@ -4862,6 +4927,28 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
             task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
             persist_task_progress(task)
             return json.dumps(recovered, ensure_ascii=False)
+        recovered = recover_verified_publish_delivery_result(task)
+        if recovered is not None:
+            task["orchestrator"]["last_action"] = "recover_verified_publish_delivery_result"
+            task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
+            persist_task_progress(task)
+            return json.dumps(recovered, ensure_ascii=False)
+        task["orchestrator"]["last_action"] = "artifact_recovery_unavailable"
+        task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
+        persist_task_progress(task)
+        return json.dumps(
+            {
+                "message": "",
+                "confirmation": "",
+                "files": [],
+                "no_reply": True,
+                "data": {
+                    "artifact_recovery": False,
+                    "status": "no_verified_stored_or_deterministic_result",
+                },
+            },
+            ensure_ascii=False,
+        )
     preflight = prepare_worker_preflight(task, artifact_dir)
     if preflight:
         task["preflight"] = preflight
@@ -4901,6 +4988,98 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
     task["orchestrator"]["last_action"] = "resume_codex_worker_session"
     task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
     return run_worker_agent_session(task, policy)
+
+
+def recover_verified_publish_delivery_result(
+    task: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Rebuild a send-only completion from terminal LazyEdit evidence."""
+    if not is_video_publish_task(task):
+        return None
+    video_ids: list[int] = []
+    for item in reversed(task.get("publish_poststage_history") or []):
+        if not isinstance(item, dict):
+            continue
+        video_id = int_or_none(item.get("video_id"))
+        if video_id is not None and video_id not in video_ids:
+            video_ids.append(video_id)
+    for item in reversed(task.get("reprocess_history") or []):
+        if not isinstance(item, dict):
+            continue
+        excerpt = str(item.get("previous_result_message_excerpt") or "")
+        for match in re.finditer(r"\bvideo_id\s*[=: ]\s*(\d+)\b", excerpt):
+            video_id = int(match.group(1))
+            if video_id not in video_ids:
+                video_ids.append(video_id)
+    if not video_ids:
+        return None
+
+    payload = lazyedit_api_get("/api/autopublish/queue", timeout=20)
+    jobs = payload.get("jobs") if isinstance(payload.get("jobs"), list) else []
+    terminal = {"done", "completed", "success", "succeeded"}
+    for video_id in video_ids:
+        candidates = [
+            job
+            for job in jobs
+            if isinstance(job, dict) and int_or_none(job.get("video_id")) == video_id
+        ]
+        candidates.sort(
+            key=lambda job: (
+                str(job.get("updated_at") or ""),
+                int_or_none(job.get("id")) or 0,
+            ),
+            reverse=True,
+        )
+        for job in candidates:
+            status = normalized_status(job.get("status"))
+            remote_status = normalized_status(job.get("remote_status"))
+            remote_id = str(job.get("remote_job_id") or "").strip()
+            platforms = normalize_platforms(job.get("platforms"))
+            if (
+                status not in terminal
+                or not remote_id
+                or remote_status not in terminal
+                or not platforms
+            ):
+                continue
+            local_job = compact_publish_jobs([job])
+            source = Path(str(job.get("file_path") or job.get("filename") or "")).name
+            publish_stage = {
+                "verified": True,
+                "stage": "published_verified",
+                "video_id": video_id,
+                "requested_platforms": platforms,
+                "verified_platforms": platforms,
+                "local_jobs": local_job,
+                "remote_jobs": [
+                    {
+                        "id": remote_id,
+                        "status": remote_status,
+                        "platforms": platforms,
+                    }
+                ],
+                "blocker": {},
+                "source": source,
+                "recovered_from": "lazyedit_terminal_queue",
+            }
+            message = (
+                "已确认发布完成。"
+                f"；video_id={video_id}"
+                f"；platforms={','.join(platforms)}"
+                f"；stage=published_verified"
+                f"；job_id={job.get('id')}"
+                f"；remote_job_id={remote_id}"
+                f"；remote={remote_status}"
+            )
+            if source:
+                message += f"；source={source}"
+            return {
+                "message": message,
+                "confirmation": "",
+                "files": [],
+                "data": {"publish_stage": publish_stage},
+            }
+    return None
 
 
 def task_orchestrator_stage(task: dict[str, Any]) -> str:
@@ -5545,6 +5724,21 @@ def audit_and_repair_worker_completion(
     result: dict[str, Any],
 ) -> dict[str, Any]:
     """Check every numbered source row and run at most one corrective turn."""
+    if task.get("artifact_recovery_only"):
+        task["completion_audit"] = {
+            "status": "skipped_delivery_recovery",
+            "attempts": [],
+            "repair_attempted": False,
+            "repair_succeeded": False,
+        }
+        task["message_coverage"] = {
+            "status": "recovered_without_model_rerun",
+            "expected_item_ids": completion_expected_item_ids(task),
+            "covered_item_ids": completion_expected_item_ids(task),
+            "unresolved_item_ids": [],
+            "missing": [],
+        }
+        return result
     if completion_audit_should_defer(task, result):
         task["message_coverage"] = {
             "status": "deferred_nonterminal",
@@ -9627,8 +9821,7 @@ def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any],
         ]
     )
     lowered = text.lower()
-    public_markers = ("shipinhao", "视频号", "youtube", "instagram", "public platform", "发布", "投稿")
-    if not public_allowed and any(marker in lowered for marker in public_markers):
+    if not public_allowed and has_public_publish_intent(text):
         guarded = dict(result)
         guarded["message"] = (
             "我已拦截这个结果：当前任务被路由为“生成新视频”，不是发布旧视频或投稿到公共平台。"
@@ -9732,6 +9925,8 @@ def has_public_publish_intent(text: str) -> bool:
         "don't publish",
         "dont publish",
         "no publish",
+        "no public publish",
+        "no public publication",
         "not publish",
         "先不要发布",
         "先別發布",
@@ -9741,6 +9936,25 @@ def has_public_publish_intent(text: str) -> bool:
         "不用發布",
         "暂不发布",
         "暫不發布",
+        "未公开发布",
+        "未公開發布",
+        "没有公开发布",
+        "沒有公開發布",
+        "没有发布",
+        "沒有發布",
+        "尚未发布",
+        "尚未發布",
+        "不会发布",
+        "不會發布",
+        "并未发布",
+        "並未發布",
+        "not publicly published",
+        "not published",
+        "was not published",
+        "is not published",
+        "did not publish",
+        "didn't publish",
+        "won't publish",
     ]
     if any(marker in lowered for marker in negative_markers):
         return False
@@ -11786,10 +12000,6 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
         "confirmation": "",
         "publish_stage": verification,
     }
-    confirmation = publish_stage_confirmation(verification)
-    if confirmation:
-        payload["confirmation"] = confirmation
-        payload["files"] = fetch_remote_publish_login_artifacts(task, verification)
     if not bool(verification.get("verified")):
         poststage = {
             "kind": "existing_video_publish",
@@ -11802,15 +12012,13 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
             "autopublish_video": autopub,
             "lazyedit_context": lazy_context,
         }
-        if confirmation:
-            payload["poststage"] = poststage
-        else:
-            payload["publish_poststage_retry"] = {
-                "status": verification.get("stage") or "not_verified",
-                "retry_seconds": publish_stage_retry_seconds(verification),
-                "poststage": poststage,
-                "outcome": compact_publish_outcome(outcome),
-            }
+        attach_publish_poststage_retry(
+            payload,
+            task=task,
+            verification=verification,
+            poststage=poststage,
+            outcome=compact_publish_outcome(outcome),
+        )
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -12111,20 +12319,13 @@ def deterministic_existing_video_publish_poststage_result(task: dict[str, Any]) 
             "publish_stage": verification,
             "publish_reissue": compact_publish_outcome(outcome),
         }
-        confirmation = publish_stage_confirmation(verification)
-        if confirmation:
-            payload["confirmation"] = confirmation
-            payload["files"] = fetch_remote_publish_login_artifacts(task, verification)
-        if not bool(verification.get("verified")):
-            if confirmation:
-                payload["poststage"] = poststage
-            else:
-                payload["publish_poststage_retry"] = {
-                    "status": stage,
-                    "retry_seconds": publish_stage_retry_seconds(verification),
-                    "poststage": poststage,
-                    "outcome": compact_publish_outcome(outcome),
-                }
+        attach_publish_poststage_retry(
+            payload,
+            task=task,
+            verification=verification,
+            poststage=poststage,
+            outcome=compact_publish_outcome(outcome),
+        )
         return json.dumps(payload, ensure_ascii=False)
     wait_count = int(task.get("publish_poststage_wait_count") or 0)
     probe_only_retries = int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_PROBE_ONLY_RETRIES", "1"))
@@ -12140,20 +12341,13 @@ def deterministic_existing_video_publish_poststage_result(task: dict[str, Any]) 
         "confirmation": "",
         "publish_stage": verification,
     }
-    confirmation = publish_stage_confirmation(verification)
-    if confirmation:
-        payload["confirmation"] = confirmation
-        payload["files"] = fetch_remote_publish_login_artifacts(task, verification)
-    if not bool(verification.get("verified")):
-        if confirmation:
-            payload["poststage"] = poststage
-        else:
-            payload["publish_poststage_retry"] = {
-                "status": stage,
-                "retry_seconds": publish_stage_retry_seconds(verification),
-                "poststage": poststage,
-                "outcome": {"status": "probe"},
-            }
+    attach_publish_poststage_retry(
+        payload,
+        task=task,
+        verification=verification,
+        poststage=poststage,
+        outcome={"status": "probe"},
+    )
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -12243,6 +12437,9 @@ def verify_lazyedit_publish_stage(video_id: int, platforms: list[str], target: P
 
 
 def lazyedit_remote_blocker(local_jobs: list[dict[str, Any]], remote_jobs: list[dict[str, Any]]) -> dict[str, Any]:
+    structured = structured_publish_attention(local_jobs, remote_jobs)
+    if structured:
+        return structured
     if not LAZYEDIT_REMOTE_LOG_COMMAND:
         return {}
     if not any(job_is_active(job, remote_jobs[index] if index < len(remote_jobs) else {}) for index, job in enumerate(local_jobs)):
@@ -12267,6 +12464,60 @@ def job_is_active(job: dict[str, Any], remote: dict[str, Any]) -> bool:
     return status in {"queued", "running", "pending"} or remote_status in {"queued", "running", "pending"}
 
 
+def structured_publish_attention(
+    local_jobs: list[dict[str, Any]],
+    remote_jobs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Read job-scoped operator attention from LazyEdit's public contract."""
+
+    for index, local in enumerate(local_jobs):
+        remote = remote_jobs[index] if index < len(remote_jobs) else {}
+        if not job_is_active(local, remote):
+            continue
+        attention = local.get("attention")
+        if not isinstance(attention, dict):
+            attention = remote.get("attention")
+        if not isinstance(attention, dict):
+            continue
+        status = str(attention.get("status") or "").strip().lower()
+        kind = str(attention.get("kind") or "").strip().lower()
+        artifact_url = str(attention.get("artifact_url") or "").strip()
+        try:
+            revision = int(attention.get("revision") or 0)
+        except (TypeError, ValueError):
+            continue
+        if (
+            status != "required"
+            or kind != "login_qr"
+            or revision < 1
+            or not artifact_url.startswith("/api/autopublish/jobs/")
+            or "/attention/" not in artifact_url
+        ):
+            continue
+        remote_job_id = str(
+            local.get("remote_job_id")
+            or remote.get("id")
+            or remote.get("job_id")
+            or ""
+        )
+        return {
+            "stage": "waiting_login",
+            "kind": "remote_login_required",
+            "matched": [remote_job_id] if remote_job_id else [],
+            "correlation": "lazyedit_job_attention",
+            "message": str(attention.get("message") or ""),
+            "attention": {
+                "platform": str(attention.get("platform") or ""),
+                "kind": kind,
+                "status": status,
+                "revision": revision,
+                "artifact_url": artifact_url,
+                "media_type": str(attention.get("media_type") or ""),
+            },
+        }
+    return {}
+
+
 def detect_remote_publish_blocker_from_log(
     local_jobs: list[dict[str, Any]],
     remote_jobs: list[dict[str, Any]],
@@ -12274,16 +12525,7 @@ def detect_remote_publish_blocker_from_log(
 ) -> dict[str, Any]:
     if not log:
         return {}
-    lowered = log.lower()
-    login_markers = (
-        "login iframe detected",
-        "login required",
-        "not logged in yet",
-        "扫码",
-        "登录",
-        "登入",
-    )
-    if not any(marker in lowered for marker in login_markers):
+    if not remote_log_is_waiting_for_login(log):
         return {}
     identifiers: list[str] = []
     for index, job in enumerate(local_jobs):
@@ -12305,6 +12547,29 @@ def detect_remote_publish_blocker_from_log(
         "matched": matched[:4],
         "message": "Remote AutoPublish is waiting for platform login or QR confirmation.",
     }
+
+
+def remote_log_is_waiting_for_login(log: str) -> bool:
+    lowered = str(log or "").lower()
+    login_markers = (
+        "login iframe detected",
+        "login required",
+        "not logged in yet",
+        "二维码已过期",
+        "扫码",
+        "登录",
+        "登入",
+    )
+    resolved_markers = (
+        "logged in successfully",
+        "already logged in",
+        "publishing on shipinhao",
+        "shipinhao editor is ready",
+        "successfully published on shipinhao",
+    )
+    login_position = max((lowered.rfind(marker) for marker in login_markers), default=-1)
+    resolved_position = max((lowered.rfind(marker) for marker in resolved_markers), default=-1)
+    return login_position >= 0 and login_position > resolved_position
 
 
 def matching_lazyedit_publish_jobs(video_id: int, outcome: dict[str, Any]) -> list[dict[str, Any]]:
@@ -12338,13 +12603,8 @@ def same_local_job_id(left: Any, right: Any) -> bool:
 def remote_publish_jobs_for(local_jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not local_jobs or not LAZYEDIT_REMOTE_QUEUE_URL:
         return [{} for _ in local_jobs]
-    try:
-        with urllib.request.urlopen(LAZYEDIT_REMOTE_QUEUE_URL, timeout=20) as response:
-            payload = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
-    except (OSError, urllib.error.URLError, json.JSONDecodeError):
-        return [{} for _ in local_jobs]
-    remote_jobs = payload.get("jobs") if isinstance(payload, dict) else []
-    if not isinstance(remote_jobs, list):
+    remote_jobs = load_remote_publish_queue_jobs()
+    if not remote_jobs:
         return [{} for _ in local_jobs]
     matches: list[dict[str, Any]] = []
     for job in local_jobs:
@@ -12352,8 +12612,6 @@ def remote_publish_jobs_for(local_jobs: list[dict[str, Any]]) -> list[dict[str, 
         filename = str(job.get("remote_filename") or job.get("filename") or "")
         match = {}
         for remote in remote_jobs:
-            if not isinstance(remote, dict):
-                continue
             if remote_id and str(remote.get("id") or remote.get("job_id") or "") == remote_id:
                 match = remote
                 break
@@ -12362,6 +12620,20 @@ def remote_publish_jobs_for(local_jobs: list[dict[str, Any]]) -> list[dict[str, 
                 break
         matches.append(match)
     return matches
+
+
+def load_remote_publish_queue_jobs() -> list[dict[str, Any]]:
+    if not LAZYEDIT_REMOTE_QUEUE_URL:
+        return []
+    try:
+        with urllib.request.urlopen(LAZYEDIT_REMOTE_QUEUE_URL, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        return []
+    remote_jobs = payload.get("jobs") if isinstance(payload, dict) else []
+    if not isinstance(remote_jobs, list):
+        return []
+    return [job for job in remote_jobs if isinstance(job, dict)]
 
 
 def publish_job_verified(job: dict[str, Any], remote: dict[str, Any]) -> bool:
@@ -12408,7 +12680,18 @@ def normalized_status(value: Any) -> str:
 
 
 def compact_publish_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    keep = ("id", "video_id", "status", "platforms", "remote_status", "remote_job_id", "filename", "updated_at", "error")
+    keep = (
+        "id",
+        "video_id",
+        "status",
+        "platforms",
+        "remote_status",
+        "remote_job_id",
+        "filename",
+        "updated_at",
+        "error",
+        "attention",
+    )
     return [{key: job.get(key) for key in keep if job.get(key) not in (None, "")} for job in jobs[:6] if isinstance(job, dict)]
 
 
@@ -12422,6 +12705,31 @@ def compact_publish_outcome(outcome: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def attach_publish_poststage_retry(
+    payload: dict[str, Any],
+    *,
+    task: dict[str, Any],
+    verification: dict[str, Any],
+    poststage: dict[str, Any],
+    outcome: dict[str, Any],
+) -> None:
+    if bool(verification.get("verified")):
+        return
+    stage = str(verification.get("stage") or "not_verified")
+    if stage == "waiting_login":
+        files = fetch_remote_publish_login_artifacts(task, verification)
+        if files:
+            payload["message"] = publish_stage_confirmation(verification)
+            payload["files"] = files
+            task["publish_login_notice_sent_at"] = datetime.now().isoformat(timespec="seconds")
+    payload["publish_poststage_retry"] = {
+        "status": stage,
+        "retry_seconds": publish_stage_retry_seconds(verification),
+        "poststage": poststage,
+        "outcome": outcome,
+    }
+
+
 def publish_stage_retry_seconds(verification: dict[str, Any]) -> int:
     stage = str(verification.get("stage") or "")
     if stage == "publish_running":
@@ -12429,123 +12737,68 @@ def publish_stage_retry_seconds(verification: dict[str, Any]) -> int:
     if stage == "no_local_job":
         return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_IMPORT_RETRY_SECONDS", "180"))
     if stage == "waiting_login":
-        return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_LOGIN_RETRY_SECONDS", "1800"))
+        return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_LOGIN_RETRY_SECONDS", "60"))
     return int(os.environ.get("WECHAT_WORKER_EXISTING_VIDEO_PUBLISH_RETRY_SECONDS", "600"))
 
 
 def publish_stage_confirmation(verification: dict[str, Any]) -> str:
     if str(verification.get("stage") or "") != "waiting_login":
         return ""
-    blocker = verification.get("blocker") if isinstance(verification.get("blocker"), dict) else {}
-    message = str(blocker.get("message") or "Remote AutoPublish is waiting for platform login or QR confirmation.")
-    return (
-        f"{message} Please complete the platform login in the AutoPublish browser/noVNC, "
-        "then approve this waiting task so the worker can resume verification. I will not mark it as published until the queue has terminal evidence."
-    )
+    return "视频号需要扫码登录。我已附上当前二维码；扫码后任务会自动继续，我会继续验证各平台结果，不会把排队状态当成已发布。"
 
 
 def fetch_remote_publish_login_artifacts(
     task: dict[str, Any],
     verification: dict[str, Any],
 ) -> list[str]:
-    """Copy only fresh, fixed-name AutoPublish login evidence into this task."""
+    """Fetch the exact job-scoped QR through LazyEdit's attention API."""
 
     if str(verification.get("stage") or "") != "waiting_login":
         return []
-    if not LAZYEDIT_REMOTE_LOGIN_HOST:
+    blocker = verification.get("blocker")
+    attention = blocker.get("attention") if isinstance(blocker, dict) else None
+    if not isinstance(attention, dict):
         return []
-    max_age_minutes = max(
-        1,
-        min(
-            120,
-            int(os.environ.get("WECHAT_WORKER_LAZYEDIT_LOGIN_ARTIFACT_MAX_AGE_MINUTES", "30")),
-        ),
-    )
-    remote_command = (
-        "find /tmp -maxdepth 1 -type f -mmin "
-        f"-{max_age_minutes} "
-        "\\( -name 'autopub-login-qr-*.png' -o -name 'shipinhao-screenshot.png' \\) "
-        "-printf '%T@ %p\\n' | sort -nr | head -n 8"
+    try:
+        revision = int(attention.get("revision") or 0)
+    except (TypeError, ValueError):
+        return []
+    artifact_url = str(attention.get("artifact_url") or "").strip()
+    parsed = urllib.parse.urlsplit(artifact_url)
+    if (
+        revision < 1
+        or parsed.scheme
+        or parsed.netloc
+        or not parsed.path.startswith("/api/autopublish/jobs/")
+        or "/attention/" not in parsed.path
+    ):
+        return []
+    if int(task.get("publish_login_attention_revision") or 0) >= revision:
+        return []
+
+    request = urllib.request.Request(
+        f"{LAZYEDIT_API_URL}{artifact_url}",
+        headers={"Accept": "image/png"},
     )
     try:
-        listing = subprocess.run(
-            [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=8",
-                LAZYEDIT_REMOTE_LOGIN_HOST,
-                remote_command,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=15,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = response.read(5 * 1024 * 1024 + 1)
+    except (OSError, urllib.error.URLError, TimeoutError):
         return []
-    if listing.returncode != 0:
+    if len(data) > 5 * 1024 * 1024 or data[:8] != b"\x89PNG\r\n\x1a\n":
         return []
-    selected: dict[str, str] = {}
-    pattern = re.compile(
-        r"^/tmp/(?P<name>autopub-login-qr-[A-Za-z0-9_-]+\.png|shipinhao-screenshot\.png)$"
-    )
-    for line in listing.stdout.splitlines():
-        parts = line.strip().split(maxsplit=1)
-        if len(parts) != 2:
-            continue
-        match = pattern.fullmatch(parts[1])
-        if not match:
-            continue
-        name = match.group("name")
-        kind = "qr" if name.startswith("autopub-login-qr-") else "page"
-        selected.setdefault(kind, parts[1])
-    if not selected:
-        return []
+
     artifact_dir = worker_artifact_dir(task)
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    copied: list[str] = []
-    destination_names = {
-        "qr": "shipinhao-login-qr.png",
-        "page": "shipinhao-login-page.png",
-    }
-    for kind in ("qr", "page"):
-        remote_path = selected.get(kind)
-        if not remote_path:
-            continue
-        destination = artifact_dir / destination_names[kind]
-        try:
-            copied_file = subprocess.run(
-                [
-                    "scp",
-                    "-q",
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "ConnectTimeout=8",
-                    f"{LAZYEDIT_REMOTE_LOGIN_HOST}:{remote_path}",
-                    str(destination),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=20,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if copied_file.returncode != 0 or not destination.is_file():
-            destination.unlink(missing_ok=True)
-            continue
-        try:
-            if destination.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
-                destination.unlink(missing_ok=True)
-                continue
-        except OSError:
-            destination.unlink(missing_ok=True)
-            continue
-        copied.append(str(destination.resolve()))
-    return copied
+    destination = artifact_dir / f"shipinhao-login-qr-r{revision}.png"
+    temporary = destination.with_suffix(".tmp")
+    temporary.write_bytes(data)
+    os.replace(temporary, destination)
+    task["publish_login_attention_revision"] = revision
+    task["publish_login_attention_received_at"] = datetime.now().isoformat(
+        timespec="seconds"
+    )
+    return [str(destination.resolve())]
 
 
 def summarize_lazyedit_publish_outcome(
@@ -12820,6 +13073,22 @@ LazyEdit/AutoPublish video publishing:
   `ssh lachlan@lazyingart 'tmux capture-pane -pt autopub:0 -S -120 | tail -n 120'`
 - If Shipinhao or another platform needs QR login, CAPTCHA, consent, or a manual click, open the isolated browser via `PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --json`, then ask for human completion instead of bypassing it.
 - Final responses should include LazyEdit job id, remote job id if present, platforms, status, whether processing was reused/rerun, and safe output paths.
+
+Musia music and song-first MV production:
+- For `route_kind=music_generation` or `task.routine.id=musia_music_generation`, reuse the persistent sibling Musia Studio through:
+  `PYTHONPATH=src python -m agenticapp music status --json`
+  `PYTHONPATH=src python -m agenticapp music submit "<full request and safe same-chat context>" --source-scope "<transport:chat-session-scope>" --task-id "{task.get('id', '')}" --mode worker --json`
+  `PYTHONPATH=src python -m agenticapp music wait <JOB_ID> --timeout 10800 --json`
+  `PYTHONPATH=src python -m agenticapp music artifacts --source-scope "<transport:chat-session-scope>" --json`
+  `PYTHONPATH=src python -m agenticapp music artifact <ARTIFACT_ID> --source-scope "<transport:chat-session-scope>" --output-dir "{artifact_dir}/musia" --json`
+- The LabCanvas exact-chat Codex session owns interpretation and interruptions. Musia Studio owns music-domain history, generation/review tools, durable jobs, and registered artifacts. Do not rebuild ACE-Step, SoulX, localization, stem, lyric, or review pipelines here.
+- Use a stable source scope derived from this exact task's transport and chat session. Never expose the scope hash, registry path, raw transport ids, or another chat's Musia session in the reply.
+- Reusing the same task id is idempotent. If `music submit` reports `revision_required=true`, do not start another heavy job automatically. Inspect the existing job/artifacts and use `--new-revision` only when the current exact-chat request clearly authorizes a new generation.
+- Do not say a song exists when only a job was queued. Wait for a terminal job and return verified audio plus the smallest useful set of lyrics, review, cover, or project artifacts.
+- For `route_kind=music_to_mv` or `task.routine.id=musia_music_to_mv`, first create/select reviewed Musia master audio. Then prepare the existing handoff with:
+  `PYTHONPATH=src python -m agenticapp music mv-pack --audio <reviewed-master> --title "<title>" --duration <seconds> --copy-references --json`
+- Read `/home/lachlan/.codex/skills/musia-lalachan-mv-workflow/SKILL.md` before the MV stage. Use its handoff with the existing LALACHAN/Xiaoyunque browser routine. The reviewed Musia master is the timing/soundtrack authority; remux it into the verified final visual MP4 when needed.
+- Music creation, MV generation, and public publication are independent permissions. Stop after music unless MV is explicitly requested. Return the song and MP4 before any optional public stage. Use LazyEdit only when the current request explicitly authorizes processing/publication.
 
 Shipinhao/Finder and short-video shares:
 - Treat the deterministic resolver as the method owner. For a standalone rerun use `PYTHONPATH=src python -m agenticapp wechat shipinhao-transcribe --source-text-file <exact-card.txt> --output-dir {artifact_dir}/shipinhao_media_transcript --json`. It owns signed-URL download, cover OCR/translation, bounded public-source search, longer-source excerpt isolation, ffprobe validation, Whisper transcription, caching, and the private evidence manifest. Do not make the backend agent rediscover those steps manually.
@@ -13399,6 +13668,13 @@ def worker_result_is_infrastructure_failure(text: str) -> bool:
         'no such file or directory: "codex"',
         "returncode 127",
         "exit 127",
+        "temporary failure in name resolution",
+        "failed to lookup address information",
+        "name or service not known",
+        "network is unreachable",
+        "transport channel closed",
+        "failed to connect to websocket",
+        "failed to connect to responses_websocket",
     ]
     return any(marker in text for marker in markers)
 
@@ -13431,6 +13707,8 @@ def worker_result_is_terminal_blocker(text: str) -> bool:
 
 
 def parse_worker_result(text: str) -> dict[str, Any]:
+    if worker_result_is_private_backend_failure(text):
+        return private_worker_failure_result(text)
     data = extract_worker_json_payload(text)
     if isinstance(data, dict):
         raw_message = str(data.get("message") or "")
@@ -13457,6 +13735,39 @@ def parse_worker_result(text: str) -> dict[str, Any]:
     message = sanitize_worker_chat_message("\n".join(message_lines))
     no_reply = is_no_reply_control(message)
     return {"message": "" if no_reply else message, "confirmation": "", "files": files, "raw": text, "no_reply": no_reply}
+
+
+def worker_result_is_private_backend_failure(text: str) -> bool:
+    """Keep backend diagnostics in task state and out of user chat."""
+    normalized = str(text or "").strip().lower()
+    return bool(
+        worker_result_is_infrastructure_failure(normalized)
+        or normalized.startswith(
+            (
+                "worker failed via ",
+                "worker failed before completion:",
+                "codex failed:",
+                "agent backend failed:",
+            )
+        )
+    )
+
+
+def private_worker_failure_result(text: str) -> dict[str, Any]:
+    normalized = str(text or "").strip().lower()
+    kind = (
+        "transient_backend_unavailable"
+        if worker_result_is_infrastructure_failure(normalized)
+        else "backend_execution_failed"
+    )
+    return {
+        "message": "",
+        "confirmation": "",
+        "files": [],
+        "raw": str(text or ""),
+        "no_reply": True,
+        "private_failure": {"kind": kind},
+    }
 
 
 def extract_worker_json_payload(text: str) -> dict[str, Any] | None:

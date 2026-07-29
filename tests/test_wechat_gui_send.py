@@ -1035,6 +1035,50 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertIsNotNone(match)
 
+    def test_visible_chat_list_match_repairs_one_ocr_character_after_script_normalization(self):
+        module = load_wechat_gui_send()
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t10\t1\t1\t1\t66\t238\t188\t29\t90\tMEMO守作一外語一掙錢",
+            ]
+        )
+
+        match = module.visible_chat_list_match_from_tsv(
+            tsv,
+            module.TargetSpec(
+                name="MEMO写作—外语—挣钱",
+                query="MEMO写作",
+                expected_title="MEMO写作—外语—挣钱",
+                allow_title_guard_fallback=True,
+            ),
+        )
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match["identity_mode"], "ocr-single-substitution")
+
+    def test_visible_chat_list_match_rejects_multiple_ocr_substitutions(self):
+        module = load_wechat_gui_send()
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t10\t1\t1\t1\t66\t238\t188\t29\t90\tMEMO守业一外語一掙錢",
+            ]
+        )
+
+        match = module.visible_chat_list_match_from_tsv(
+            tsv,
+            module.TargetSpec(
+                name="MEMO写作—外语—挣钱",
+                query="MEMO写作",
+                expected_title="MEMO写作—外语—挣钱",
+                allow_title_guard_fallback=True,
+            ),
+        )
+
+        self.assertIsNone(match)
+
     def test_open_target_clicks_visible_chat_list_match_before_static_rows(self):
         module = load_wechat_gui_send()
         target = module.TargetSpec(
@@ -1429,6 +1473,24 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertTrue(allowed_target.allow_search)
         self.assertFalse(blocked_target.allow_search)
 
+    def test_global_account_search_requires_environment_opt_in(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="EchoMind",
+            query="EchoMind",
+            expected_title="EchoMind",
+            allow_search=True,
+        )
+
+        with mock.patch.dict(module.os.environ, {}, clear=True):
+            self.assertFalse(module.global_search_allowed(True, target))
+        with mock.patch.dict(
+            module.os.environ,
+            {"WECHAT_ENABLE_GLOBAL_ACCOUNT_SEARCH": "1"},
+            clear=True,
+        ):
+            self.assertTrue(module.global_search_allowed(True, target))
+
     def test_close_non_target_wechat_windows_keeps_target_popup(self):
         module = load_wechat_gui_send()
         original_run = module.run
@@ -1464,6 +1526,80 @@ class WeChatGuiSendTests(unittest.TestCase):
             module.run = original_run
 
         self.assertEqual(closed, ["file"])
+
+    def test_reset_send_surface_dismisses_transient_children_before_target_open(self):
+        module = load_wechat_gui_send()
+        calls = []
+        target = module.TargetSpec(
+            name="MEMO写作—外语—挣钱",
+            query="MEMO写作",
+            expected_title="MEMO写作—外语—挣钱",
+        )
+        with (
+            mock.patch.object(
+                module,
+                "close_non_target_wechat_windows",
+                side_effect=lambda *_args: calls.append("close"),
+            ),
+            mock.patch.object(
+                module,
+                "focus",
+                side_effect=lambda *_args: calls.append("focus"),
+            ),
+            mock.patch.object(
+                module,
+                "key",
+                side_effect=lambda _env, value: calls.append(value),
+            ),
+            mock.patch.object(
+                module,
+                "dismiss_internal_file_transfer_surface",
+                side_effect=lambda *_args: calls.append("dismiss"),
+            ),
+            mock.patch.object(module.time, "sleep"),
+        ):
+            module.reset_wechat_send_surface(
+                {},
+                module.Window("main", 0, 0, 1000, 700),
+                target,
+                0.2,
+            )
+
+        self.assertEqual(
+            calls,
+            ["close", "focus", "Escape", "Escape", "dismiss", "close", "focus"],
+        )
+
+    def test_dismiss_internal_file_transfer_surface_uses_bounded_close_control(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="MEMO写作—外语—挣钱",
+            query="MEMO写作",
+            expected_title="MEMO写作—外语—挣钱",
+        )
+        points = []
+        with (
+            mock.patch.object(
+                module,
+                "internal_file_transfer_surface_visible",
+                side_effect=[True, False],
+            ),
+            mock.patch.object(
+                module,
+                "click",
+                side_effect=lambda _env, x, y: points.append((x, y)),
+            ),
+            mock.patch.object(module.time, "sleep"),
+        ):
+            dismissed = module.dismiss_internal_file_transfer_surface(
+                {},
+                module.Window("main", 489, 193, 1020, 739),
+                target,
+                0.2,
+            )
+
+        self.assertTrue(dismissed)
+        self.assertEqual(points, [(1247, 223)])
 
     def test_same_screenshot_detects_identical_files(self):
         module = load_wechat_gui_send()

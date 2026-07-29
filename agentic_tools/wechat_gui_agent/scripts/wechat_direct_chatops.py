@@ -70,6 +70,8 @@ REQUEUE_ON_INTERRUPT_STATUSES = INTERRUPTIBLE_TASK_STATUSES - {"in_progress"}
 INTERRUPTIBLE_ROUTE_KINDS = {
     "story_or_script",
     "generate_video",
+    "music_generation",
+    "music_to_mv",
     "career_strategy",
     "grant_proposal",
     "presentation_generation",
@@ -77,6 +79,8 @@ INTERRUPTIBLE_ROUTE_KINDS = {
 INTERRUPTIBLE_ROUTINE_IDS = {
     "story_script_generation",
     "generated_video",
+    "musia_music_generation",
+    "musia_music_to_mv",
     "career_strategy",
     "grant_proposal",
     "presentation_deck",
@@ -3129,6 +3133,8 @@ Allowed route_kind values:
 - story_or_script
 - generate_image
 - edit_existing_media
+- music_generation
+- music_to_mv
 - generate_video
 - process_existing_video
 - publish_video
@@ -3146,6 +3152,8 @@ Important distinction:
 - In writing_language_money, personal_organizer, and lachlanchan-style DM chats, requests about what to write, career direction, making money, monetization, opportunities, talent/strengths, personal positioning, products to build, GitHub/lazying.art direction, or "what should I do" should route to career_strategy with worker_needed=true.
 - Grant applications, funding proposals, and specific-aims packages should route to grant_proposal. The worker owns evidence-grounded drafting, an editable figure, LaTeX/PDF validation, and artifact return; this route never authorizes submission.
 - PowerPoint/PPTX/slide-deck requests should route to presentation_generation. The worker owns editable native slide text and geometry, a presentation manifest, selective supporting assets, rendered preview inspection, and PPTX delivery. Image generation may create bounded material assets, never a complete slide or slide background.
+- Song, singing, melody, composition, lyrics-to-song, or music-production requests should route to music_generation and reuse Musia Studio. A request that explicitly asks to create/review the music and then make an MV/video from that music should route to music_to_mv. The reviewed Musia master audio is the timing authority; do not collapse music creation into generic generate_video.
+- Music generation, MV generation, and public publication are separate stages. A music_generation request stops after reviewed audio/artifacts unless the current request also asks for an MV. A music_to_mv request returns the song and verified MP4 but does not publicly post unless the current request separately authorizes publication.
 - If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
 - Every monitored chat uses the same shared backend capability framework. The per-chat profile changes ordinary defaults and proactive schedules only. A safe explicit request always overrides the focus and may use CAD/PCB, Blender, figures, presentations, image/video generation, LazyEdit processing/publication, file/media handling, writing, Markdown, LaTeX, PDFs, or another available routine.
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
@@ -3173,7 +3181,7 @@ Available backend routines:
 JSON schema:
 {{
   "route_kind": "career_strategy",
-  "project": "lalachan|labcanvas|lazyedit|career|generic|unknown",
+  "project": "lalachan|labcanvas|lazyedit|musia|career|generic|unknown",
   "worker_needed": true,
   "needs_recent_media": false,
   "public_publish_intent": false,
@@ -3291,6 +3299,10 @@ def fallback_route_decision(
         route_kind = "other_worker"
     elif is_cad_pcb_labcanvas_task(text):
         route_kind = "cad_pcb_labcanvas"
+    elif is_music_to_mv_task(text):
+        route_kind = "music_to_mv"
+    elif is_music_generation_task(text):
+        route_kind = "music_generation"
     elif is_lalachan_story_video_task(text) or has_video_generation_intent(text):
         route_kind = "generate_video"
     elif is_file_download_or_save_task(text):
@@ -3321,9 +3333,15 @@ def fallback_route_decision(
         "presentation_generation",
     }:
         project = "labcanvas"
+    elif route_kind in {"music_generation", "music_to_mv"}:
+        project = "musia"
     else:
         project = "unknown"
-    needs_recent_media = route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save", "file_intake"} or link_inbox_summary_task
+    needs_recent_media = (
+        route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save", "file_intake"}
+        or (route_kind in {"music_generation", "music_to_mv"} and references_recent_media(text))
+        or link_inbox_summary_task
+    )
     route = {
         "route_kind": route_kind,
         "project": project,
@@ -3334,7 +3352,7 @@ def fallback_route_decision(
         "external_action_allowed": bool(
             publish_allowed
             or (
-                route_kind in {"generate_video", "generate_image", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary", "grant_proposal"}
+                route_kind in {"generate_video", "generate_image", "music_generation", "music_to_mv", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary", "grant_proposal"}
                 and not permission_question
             )
             or route_kind == "career_strategy"
@@ -3385,6 +3403,8 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         "story_or_script",
         "generate_image",
         "edit_existing_media",
+        "music_generation",
+        "music_to_mv",
         "generate_video",
         "process_existing_video",
         "publish_video",
@@ -3398,6 +3418,15 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
     if route_kind not in allowed_kinds:
         route_kind = "other_worker"
     fallback_kind = str(fallback.get("route_kind") or "")
+    if fallback_kind in {"music_generation", "music_to_mv"} and route_kind in {
+        "generate_video",
+        "other_worker",
+    }:
+        route_kind = fallback_kind
+        parsed["reason"] = (
+            str(parsed.get("reason") or fallback.get("reason") or "")
+            + " | Musia song-first route restored"
+        ).strip()
     if route_kind == "other_worker" and fallback_kind in allowed_kinds and fallback_kind != "other_worker":
         route_kind = fallback_kind
         parsed["reason"] = (
@@ -3591,6 +3620,108 @@ def is_lalachan_story_video_task(text: str) -> bool:
     if not has_video_generation_intent(text):
         return False
     return mentions_lalachan_project(text)
+
+
+def is_music_to_mv_task(text: str) -> bool:
+    lowered = str(text or "").lower()
+    music_markers = (
+        "music",
+        "song",
+        "melody",
+        "singing",
+        "soundtrack",
+        "歌曲",
+        "音乐",
+        "音樂",
+        "旋律",
+        "作曲",
+        "编曲",
+        "編曲",
+        "唱歌",
+    )
+    mv_markers = (
+        "music video",
+        "mv",
+        "video",
+        "film",
+        "animation",
+        "小云雀",
+        "xiaoyunque",
+        "xyq",
+        "seedance",
+        "视频",
+        "影片",
+        "短片",
+        "动画",
+        "動畫",
+    )
+    action_markers = (
+        "generate",
+        "create",
+        "make",
+        "produce",
+        "use",
+        "turn",
+        "生成",
+        "创作",
+        "創作",
+        "制作",
+        "製作",
+        "用",
+        "做",
+    )
+    return (
+        any(marker in lowered for marker in music_markers)
+        and any(marker in lowered for marker in mv_markers)
+        and any(marker in lowered for marker in action_markers)
+    )
+
+
+def is_music_generation_task(text: str) -> bool:
+    lowered = str(text or "").lower()
+    music_markers = (
+        "music",
+        "song",
+        "melody",
+        "singing",
+        "vocal",
+        "lyrics to song",
+        "compose",
+        "歌曲",
+        "音乐",
+        "音樂",
+        "旋律",
+        "人声",
+        "人聲",
+        "唱歌",
+        "作曲",
+        "编曲",
+        "編曲",
+        "歌词生成歌曲",
+        "歌詞生成歌曲",
+    )
+    action_markers = (
+        "generate",
+        "create",
+        "make",
+        "produce",
+        "compose",
+        "write",
+        "localize",
+        "生成",
+        "创作",
+        "創作",
+        "制作",
+        "製作",
+        "写",
+        "作曲",
+        "编曲",
+        "編曲",
+        "翻唱",
+    )
+    return any(marker in lowered for marker in music_markers) and any(
+        marker in lowered for marker in action_markers
+    )
 
 
 def mentions_lalachan_project(text: str) -> bool:

@@ -292,11 +292,13 @@ def build_parser() -> argparse.ArgumentParser:
     from .wecom_ops import add_wecom_parser
     from .social_ops import add_social_parser
     from .protein_structure_ops import add_protein_structure_parser
+    from .musia_ops import add_musia_parser
 
     add_wechat_parser(subparsers)
     add_wecom_parser(subparsers)
     add_social_parser(subparsers)
     add_protein_structure_parser(subparsers)
+    add_musia_parser(subparsers)
     return parser
 
 

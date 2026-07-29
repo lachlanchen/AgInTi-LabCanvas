@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 from datetime import datetime, timedelta
 import fcntl
 import hashlib
@@ -62,9 +63,12 @@ MIRROR_DB = Path(
 DEFAULT_QUEUE = PRIVATE / "wecom_task_queue.jsonl"
 DEFAULT_HISTORY_DB = PRIVATE / "wecom_messages.local.sqlite"
 ROUTE_KINDS = {
+    "chat_only",
     "research_or_summary",
     "grant_proposal",
     "career_strategy",
+    "music_generation",
+    "music_to_mv",
     "generate_image",
     "edit_existing_media",
     "story_or_script",
@@ -76,6 +80,15 @@ ROUTE_KINDS = {
     "publish_video",
     "generate_video",
     "other_worker",
+}
+ACTIVE_CONVERSATION_TASK_STATUSES = {
+    "pending",
+    "claimed",
+    "in_progress",
+    "waiting_confirmation",
+    "generated_video_waiting",
+    "generated_video_poststage_pending",
+    "existing_video_publish_pending",
 }
 
 
@@ -251,8 +264,15 @@ def ingest_event(
         return result
     context = recent_history(history_db, chat, limit=12)
     memory_context = member_context(knowledge_db, chat, member_key, limit=12)
+    active_task = active_conversation_task(queue, chat)
     route = (
-        route_event(event, request, context, memory_context=memory_context)
+        route_event(
+            event,
+            request,
+            context,
+            memory_context=memory_context,
+            active_task=active_task,
+        )
         if route_with_agent
         else fallback_route(event, request)
     )
@@ -521,6 +541,7 @@ def route_event(
     context: list[dict[str, Any]],
     *,
     memory_context: dict[str, Any] | None = None,
+    active_task: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     prompt = f"""You route one WeCom message into the persistent LabCanvas agent runtime.
 WeCom is message transport only. Decide whether a quick conversational response is sufficient or the durable worker must execute tools/research/files.
@@ -538,6 +559,7 @@ Return one strict JSON object and no prose:
   "report_required": false,
   "message_role": "research_request|artifact_instruction|system_guidance|peer_conversation|ordinary_chat",
   "reply_mode": "reply|ack_then_work|silent",
+  "active_task_relation": "independent|interrupt|context_only",
   "reply_to_senders": ["exact sender_display names only when one reply materially addresses their related messages"],
   "memory_items": [{{"kind": "idea|insight|intuition|interest|hypothesis|decision|preference|question|note", "title": "short title", "content": "durable user-authored knowledge", "tags": ["optional"]}}],
   "public_publish_allowed": false
@@ -560,11 +582,13 @@ Rules:
 - Judge value from the actual research question and same-chat context, not from a keyword such as "paper" or "PDF". Deep reports must cite traceable primary or authoritative sources, separate direct evidence from indirect evidence and hypotheses, state uncertainty, and analyze mechanisms, limitations, and actionable experiments rather than merely list knowledge points.
 - Decide naturally whether to reply from the full recent conversation. Always answer direct questions, requests, mentions, and useful follow-ups. It is valid to stay silent when people are talking to each other and an AI reply would interrupt or add no value. Never emit a mechanical acknowledgement merely to prove receipt.
 - Reply to several consecutive messages from the same sender as one coherent turn using all of them; do not emit one mechanical response per fragment.
+- Every source message remains separately recorded even when one response covers several messages. "Do not miss" means retain and consider each contribution; it does not mean replying to each row.
 - Sender attribution is message-level evidence. Never describe one person's statement, criticism, preference, or request as coming from another person. Related messages from different people may inform one task, but their authors must remain distinct.
 - Distinguish scientific discussion from instructions addressed to LabCanvas itself. A request to research a mechanism is `research_request`; feedback about how the agent should draw, use image generation, use BioRender, revise an artifact, or improve its workflow is `artifact_instruction` or `system_guidance`, not a research question.
 - When recent same-chat context contains several fragments of one instruction, use all fragments as one intent. Apply concrete guidance to the active artifact or tool workflow instead of saying that you are waiting for another person after that guidance has already arrived.
 - Never drop a visible contribution merely because another sender posted at nearly the same time. If one coherent response materially addresses related messages from multiple people, put their exact `sender_display` values in `reply_to_senders`; otherwise leave it empty and reply only to the current sender.
 - Messages clearly directed from one human to another are `peer_conversation`. Use `reply_mode=silent` when an AI response would add no value. Direct guidance, questions, and commands addressed to the agent use `reply` or `ack_then_work`.
+- Use `active_task_relation=interrupt` only when this message corrects, extends, answers a pending decision for, or otherwise materially steers the exact active task shown below. This may come from a different participant, but preserve that person's authorship. Use `context_only` for relevant discussion that should be remembered without creating another worker turn. Use `independent` for a separate request.
 - Do not claim an attachment was read in the acknowledgement.
 - Soft-filter dangerous or clearly out-of-scope requests with a concise natural refusal or a safer research/design alternative. Do not mechanically refuse ordinary scientific work.
 - LabAgent does not perform video publication or other public posting. Set public_publish_allowed to false.
@@ -589,6 +613,9 @@ Recent same-chat context:
 
 Private same-member knowledge and artifact-preference context:
 {json.dumps(memory_context or {}, ensure_ascii=False)[:7000]}
+
+Current exact-chat active task, if any:
+{json.dumps(active_task or {}, ensure_ascii=False)[:5000]}
 """
     model = os.environ.get("WECOM_ROUTE_MODEL", "gpt-5.6-sol")
     effort = os.environ.get("WECOM_ROUTE_EFFORT", "low")
@@ -649,6 +676,25 @@ Private same-member knowledge and artifact-preference context:
     ).strip().casefold()
     if reply_mode not in {"reply", "ack_then_work", "silent"}:
         reply_mode = "ack_then_work" if worker_needed else "reply"
+    active_task_relation = str(
+        payload.get("active_task_relation") or "independent"
+    ).strip().casefold()
+    if active_task_relation not in {"independent", "interrupt", "context_only"}:
+        active_task_relation = "independent"
+    if active_task_relation == "interrupt" and active_task:
+        worker_needed = True
+        reply_mode = "ack_then_work"
+    elif (
+        active_task_relation == "context_only"
+        and not attachments
+        and not request_has_explicit_research_intent(request)
+        and route_kind not in {"grant_proposal", "presentation_generation"}
+    ):
+        worker_needed = False
+        if not response:
+            reply_mode = "silent"
+    elif active_task_relation == "interrupt":
+        active_task_relation = "independent"
     if not worker_needed and not response and reply_mode != "silent":
         worker_needed = True
     task_text = str(payload.get("task") or "").strip() or request
@@ -682,6 +728,12 @@ Private same-member knowledge and artifact-preference context:
         "report_required": report_required,
         "message_role": message_role,
         "reply_mode": reply_mode,
+        "active_task_relation": active_task_relation,
+        "active_task_id": (
+            str(active_task.get("id") or "")
+            if active_task_relation == "interrupt" and active_task
+            else ""
+        ),
         "reply_to_senders": [" ".join(str(value or "").split()) for value in reply_to_senders[:4]],
         "memory_items": normalize_memory_items(payload.get("memory_items")),
         "public_publish_allowed": False,
@@ -709,34 +761,150 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         "merged_chat_history",
     }
     research = request_has_explicit_research_intent(request)
+    attachments = normalized_attachments(event)
+    actionable = looks_like_actionable_worker_request(request)
+    worker_needed = bool(
+        attachments or grant or presentation or source_card or research or actionable
+    )
     return {
-        "worker_needed": True,
+        "worker_needed": worker_needed,
         "route_kind": (
             "file_intake"
-            if normalized_attachments(event)
+            if attachments
             else (
                 "grant_proposal"
                 if grant
                 else (
                     "presentation_generation"
                     if presentation
-                    else ("research_or_summary" if source_card or research else "other_worker")
+                    else (
+                        "research_or_summary"
+                        if source_card or research
+                        else ("other_worker" if actionable else "chat_only")
+                    )
                 )
             )
         ),
         "response": "",
         "task": request,
-        "ack": "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。",
+        "ack": (
+            "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。"
+            if worker_needed
+            else ""
+        ),
         "daily_topic": "",
         "inspiration_interest": "",
         "inspiration_interest_mode": "none",
         "report_required": grant,
-        "message_role": "research_request" if grant or research else "ordinary_chat",
-        "reply_mode": "ack_then_work",
+        "message_role": (
+            "research_request"
+            if grant or research
+            else ("ordinary_chat" if worker_needed else "peer_conversation")
+        ),
+        "reply_mode": "ack_then_work" if worker_needed else "silent",
+        "active_task_relation": "independent",
+        "active_task_id": "",
         "reply_to_senders": [],
         "memory_items": [],
         "public_publish_allowed": False,
     }
+
+
+def looks_like_actionable_worker_request(request: str) -> bool:
+    """Keep useful work routable while a model/backend is temporarily down."""
+    lowered = str(request or "").casefold()
+    action_terms = (
+        "analyze",
+        "build",
+        "compile",
+        "convert",
+        "create",
+        "design",
+        "download",
+        "draw",
+        "edit",
+        "export",
+        "generate",
+        "make",
+        "prepare",
+        "render",
+        "revise",
+        "save",
+        "simulate",
+        "transcribe",
+        "translate",
+        "update",
+        "write",
+        "分析",
+        "下载",
+        "保存",
+        "修改",
+        "制作",
+        "生成",
+        "绘制",
+        "編譯",
+        "编译",
+        "翻译",
+        "設計",
+        "设计",
+        "轉錄",
+        "转录",
+        "更新",
+        "渲染",
+        "画",
+        "写",
+        "做",
+    )
+    work_terms = (
+        "artifact",
+        "audio",
+        "blender",
+        "cad",
+        "code",
+        "document",
+        "docx",
+        "figure",
+        "file",
+        "image",
+        "kicad",
+        "latex",
+        "model",
+        "music",
+        "paper",
+        "pcb",
+        "pdf",
+        "plot",
+        "presentation",
+        "report",
+        "render",
+        "simulation",
+        "spreadsheet",
+        "step",
+        "stl",
+        "subtitle",
+        "song",
+        "table",
+        "tex",
+        "transcript",
+        "video",
+        "zip",
+        "代码",
+        "图",
+        "文件",
+        "报告",
+        "支架",
+        "模型",
+        "歌曲",
+        "音乐",
+        "音樂",
+        "论文",
+        "表格",
+        "视频",
+        "音频",
+    )
+    return any(term in lowered for term in action_terms) and any(
+        term in lowered for term in work_terms
+    )
 
 
 def looks_like_presentation_request(request: str) -> bool:
@@ -881,6 +1049,10 @@ def build_task(
             "worker_plan": str(route.get("task") or "").strip(),
             "message_role": str(route.get("message_role") or "ordinary_chat"),
             "reply_mode": str(route.get("reply_mode") or "ack_then_work"),
+            "active_task_relation": str(
+                route.get("active_task_relation") or "independent"
+            ),
+            "active_task_id": str(route.get("active_task_id") or ""),
             "member_artifact_preferences": artifact_preferences,
         },
         "response_policy": wecom_response_policy(chat),
@@ -899,6 +1071,8 @@ def build_task(
             "research_requests_use_live_web_search": True,
             "distinguish_research_from_agent_guidance": True,
             "combine_consecutive_instruction_fragments": True,
+            "conversation_level_response_not_per_message_reply": True,
+            "active_task_relation_is_agent_decided": True,
             "preserve_per_message_sender_attribution": True,
             "cross_chat_context_forbidden": True,
         },
@@ -953,6 +1127,52 @@ def build_task(
     }
     ensure_task_routine_contract(task)
     return task
+
+
+def active_conversation_task(queue: Path, chat: str) -> dict[str, Any] | None:
+    """Return a bounded exact-chat task summary for relation-aware routing."""
+    if not queue.is_file():
+        return None
+    lock_path = queue.with_suffix(queue.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with lock_path.open("a+", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH)
+            with queue.open("r", encoding="utf-8") as stream:
+                lines = deque((line for line in stream if line.strip()), maxlen=1000)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        rows = [json.loads(line) for line in lines]
+    except (OSError, json.JSONDecodeError):
+        return None
+    for task in reversed(rows):
+        if not isinstance(task, dict):
+            continue
+        if str(task.get("chat") or "") != chat:
+            continue
+        if str(task.get("status") or "") not in ACTIVE_CONVERSATION_TASK_STATUSES:
+            continue
+        source = task.get("source") if isinstance(task.get("source"), dict) else {}
+        if str(source.get("kind") or "").startswith("scheduled_") or str(
+            source.get("local_type") or ""
+        ).startswith("scheduled_"):
+            continue
+        route = (
+            task.get("route_decision")
+            if isinstance(task.get("route_decision"), dict)
+            else {}
+        )
+        return {
+            "id": str(task.get("id") or ""),
+            "status": str(task.get("status") or ""),
+            "route_kind": str(route.get("route_kind") or ""),
+            "sender_display": str(
+                source.get("sender_display") or source.get("sender") or ""
+            ),
+            "request": " ".join(str(task.get("request") or "").split())[:1800],
+            "created_at": str(task.get("created_at") or ""),
+            "interruption_count": int(task.get("interruption_count") or 0),
+        }
+    return None
 
 
 def wecom_transport_preflight(event: dict[str, Any]) -> dict[str, Any]:

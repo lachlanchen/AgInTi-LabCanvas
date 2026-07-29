@@ -23,6 +23,7 @@ SUCCESSFUL_OUTBOUND_STATUSES = {
 }
 IN_FLIGHT_OUTBOUND_FILE_STATUS = "sending"
 IN_FLIGHT_OUTBOUND_FILE_WINDOW_SECONDS = 600
+TRANSCODED_VIDEO_ECHO_WINDOW_SECONDS = 120
 
 
 def normalize_transport_text(text: str) -> str:
@@ -165,6 +166,25 @@ def file_identities_match(left: dict[str, object], right: dict[str, object]) -> 
     return bool(first_name and first_name == second_name and first_size > 0 and first_size == second_size)
 
 
+def transcoded_video_identities_match(
+    left: dict[str, object],
+    right: dict[str, object],
+) -> bool:
+    """Match a WeChat video echo whose local cache bytes were transcoded.
+
+    The Linux client may rewrite the sent MP4 and expose a different ``rawmd5``
+    in the message row. Its ``videomsg length`` still carries the exact size of
+    the submitted source file, so an exact size match is safe only inside a
+    narrow same-chat outbound-send window.
+    """
+    try:
+        left_size = int(left.get("size_bytes") or 0)
+        right_size = int(right.get("size_bytes") or 0)
+    except (TypeError, ValueError):
+        return False
+    return left_size > 0 and left_size == right_size
+
+
 def recorded_outbound_file_identity(
     db_path: Path,
     chat_name: str,
@@ -173,6 +193,7 @@ def recorded_outbound_file_identity(
     source_epoch: int | float = 0,
     window_seconds: int = 7200,
     limit: int = 240,
+    allow_transcoded_video_size_match: bool = False,
 ) -> bool:
     """Match an attachment to a recent successful file delivery event."""
     if not identity or not chat_name or not db_path.exists():
@@ -204,15 +225,23 @@ def recorded_outbound_file_identity(
         except json.JSONDecodeError:
             continue
         candidate = metadata.get("file_identity") if isinstance(metadata, dict) else {}
-        if not isinstance(candidate, dict) or not file_identities_match(identity, candidate):
+        if not isinstance(candidate, dict):
             continue
-        if source_time <= 0:
-            return True
         try:
             sent_time = datetime.fromisoformat(str(created_at)).timestamp()
         except (TypeError, ValueError):
             continue
-        if abs(source_time - sent_time) <= max_delta:
+        delta = abs(source_time - sent_time) if source_time > 0 else 0
+        if file_identities_match(identity, candidate) and (
+            source_time <= 0 or delta <= max_delta
+        ):
+            return True
+        if (
+            allow_transcoded_video_size_match
+            and source_time > 0
+            and delta <= min(max_delta, TRANSCODED_VIDEO_ECHO_WINDOW_SECONDS)
+            and transcoded_video_identities_match(identity, candidate)
+        ):
             return True
     if source_time <= 0:
         return False
@@ -245,13 +274,20 @@ def recorded_outbound_file_identity(
         except json.JSONDecodeError:
             continue
         candidate = metadata.get("file_identity") if isinstance(metadata, dict) else {}
-        if not isinstance(candidate, dict) or not file_identities_match(identity, candidate):
+        if not isinstance(candidate, dict):
             continue
         try:
             sent_time = datetime.fromisoformat(str(created_at)).timestamp()
         except (TypeError, ValueError):
             continue
-        if abs(source_time - sent_time) <= intent_window:
+        delta = abs(source_time - sent_time)
+        if file_identities_match(identity, candidate) and delta <= intent_window:
+            return True
+        if (
+            allow_transcoded_video_size_match
+            and delta <= min(intent_window, TRANSCODED_VIDEO_ECHO_WINDOW_SECONDS)
+            and transcoded_video_identities_match(identity, candidate)
+        ):
             return True
     return False
 
@@ -266,6 +302,7 @@ def recorded_outbound_file_echo(
     limit: int = 240,
 ) -> bool:
     """Return true when an inbound attachment is a recent local file send."""
+    source = str(text or "").casefold()
     return recorded_outbound_file_identity(
         db_path,
         chat_name,
@@ -273,4 +310,5 @@ def recorded_outbound_file_echo(
         source_epoch=source_epoch,
         window_seconds=window_seconds,
         limit=limit,
+        allow_transcoded_video_size_match="<videomsg" in source,
     )

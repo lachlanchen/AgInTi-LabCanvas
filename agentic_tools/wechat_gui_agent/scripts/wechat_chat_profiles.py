@@ -19,6 +19,8 @@ SHARED_CAPABILITIES = (
     "blender_rendering",
     "story_and_script_writing",
     "image_generation_and_editing",
+    "musia_music_generation_and_review",
+    "musia_song_first_music_video",
     "video_generation_and_download",
     "lazyedit_video_processing",
     "explicitly_authorized_video_publication",

@@ -315,6 +315,130 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertFalse(worker.same_chat_interruption_target(parent, supplement))
         self.assertFalse(worker.same_chat_interruption_target(supplement, parent))
 
+    def test_cross_sender_update_interrupts_only_agent_selected_active_task(self) -> None:
+        worker = load_worker()
+        parent = {
+            "id": "active-report",
+            "chat": "wecom:group:labagent",
+            "status": "in_progress",
+            "source": {
+                "local_id": 10,
+                "sender": "member-a",
+                "message_table": "messages",
+            },
+            "route_decision": {"route_kind": "research_or_summary"},
+        }
+        related = {
+            "id": "related-update",
+            "chat": "wecom:group:labagent",
+            "status": "pending",
+            "source": {
+                "local_id": 11,
+                "sender": "member-b",
+                "message_table": "messages",
+            },
+            "route_decision": {
+                "route_kind": "paper_figure",
+                "active_task_relation": "interrupt",
+                "active_task_id": "active-report",
+            },
+        }
+        independent = {
+            **related,
+            "id": "independent",
+            "route_decision": {
+                "route_kind": "paper_figure",
+                "active_task_relation": "independent",
+                "active_task_id": "",
+            },
+        }
+
+        self.assertTrue(worker.same_chat_interruption_target(parent, related))
+        self.assertFalse(worker.same_chat_interruption_target(parent, independent))
+
+    def test_backend_diagnostics_are_private_no_reply_results(self) -> None:
+        worker = load_worker()
+        raw = (
+            "Worker failed via codex: open error [Errno -3] "
+            "Temporary failure in name resolution; transport channel closed"
+        )
+
+        result = worker.parse_worker_result(raw)
+
+        self.assertTrue(result["no_reply"])
+        self.assertEqual(result["message"], "")
+        self.assertEqual(result["files"], [])
+        self.assertEqual(
+            result["private_failure"]["kind"],
+            "transient_backend_unavailable",
+        )
+        self.assertIn("Temporary failure", result["raw"])
+
+    def test_process_one_never_sends_private_backend_failure(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "failed-backend",
+                        "chat": "wecom:group:labagent",
+                        "request": "Continue the current discussion.",
+                        "status": "pending",
+                        "route_decision": {"route_kind": "other_worker"},
+                    }
+                ],
+            )
+            raw = (
+                "Worker failed via codex: open error [Errno -3] "
+                "Temporary failure in name resolution"
+            )
+            passthrough = lambda _task, result, *_args, **_kwargs: result
+            with (
+                mock.patch.object(worker, "run_worker_codex", return_value=raw),
+                mock.patch.object(
+                    worker,
+                    "enforce_worker_result_contract",
+                    side_effect=passthrough,
+                ),
+                mock.patch.object(
+                    worker,
+                    "attach_audio_transcript_reference",
+                    side_effect=lambda _task, result: result,
+                ),
+                mock.patch.object(
+                    worker,
+                    "prepare_result_files",
+                    side_effect=lambda result, *_args, **_kwargs: result,
+                ),
+                mock.patch.object(
+                    worker,
+                    "audit_and_repair_worker_completion",
+                    side_effect=lambda _task, result: result,
+                ),
+                mock.patch.object(worker, "record_event"),
+                mock.patch.object(worker, "send_result_with_retries") as sender,
+            ):
+                self.assertTrue(
+                    worker.process_one(
+                        queue,
+                        "wecom:group:labagent",
+                        send=True,
+                        send_targets=Path(tmp) / "targets.json",
+                        log_idle=False,
+                    )
+                )
+            stored = worker.find_task(queue, "failed-backend")
+
+        sender.assert_not_called()
+        self.assertEqual(stored["status"], "worker_failed")
+        self.assertTrue(stored["result"]["no_reply"])
+        self.assertEqual(
+            stored["worker_error"]["type"],
+            "transient_backend_unavailable",
+        )
+
     def test_merge_keeps_more_than_twenty_numbered_interruptions(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -883,6 +1007,29 @@ stderr: noisy internal trace
         self.assertIn("external/ProteinStructure", context)
         self.assertIn("python -m agenticapp protein start", context)
         self.assertIn("Do not recreate its browser or analysis pipeline", context)
+
+    def test_worker_tool_context_reuses_musia_and_separates_mv_publication(self) -> None:
+        worker = load_worker()
+
+        context = worker.build_worker_tool_context(
+            {
+                "id": "music-task",
+                "chat": "LazyResearch",
+                "request": "Generate a song and then create an MV.",
+                "route_decision": {
+                    "route_kind": "music_to_mv",
+                    "project": "musia",
+                    "public_publish_allowed": False,
+                },
+                "routine": {"id": "musia_music_to_mv"},
+            }
+        )
+
+        self.assertIn("python -m agenticapp music submit", context)
+        self.assertIn("python -m agenticapp music mv-pack", context)
+        self.assertIn("reviewed Musia master", context)
+        self.assertIn("independent permissions", context)
+        self.assertIn("current request explicitly authorizes", context)
 
     def test_worker_policy_uses_medium_for_literature_summary(self) -> None:
         worker = load_worker()
@@ -2627,6 +2774,155 @@ stderr: noisy internal trace
         self.assertNotIn("worker_error", updated)
         self.assertNotIn("expires_at", updated)
 
+    def test_reprocess_verified_publish_preserves_result_for_delivery_only(self) -> None:
+        worker = load_worker()
+        result = {
+            "message": "published",
+            "confirmation": "",
+            "files": [],
+            "data": {
+                "publish_stage": {
+                    "verified": True,
+                    "stage": "published_verified",
+                    "video_id": 496,
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "publish-failed-send",
+                        "chat": "MEMO写作—外语—挣钱",
+                        "status": "send_failed",
+                        "result": result,
+                    }
+                ],
+            )
+
+            updated = worker.reprocess_task(
+                queue,
+                "publish-failed-send",
+                reason="recover verified publication result delivery",
+                artifact_recovery_only=True,
+            )
+
+        self.assertEqual(updated["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
+        self.assertEqual(updated["result"], result)
+        self.assertTrue(updated["delivery_recovery_only"])
+        self.assertEqual(updated["send_deferred_reason"], "manual_delivery_recovery")
+
+    def test_publish_artifact_recovery_rebuilds_result_from_lazyedit_queue(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "publish-recovery",
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_allowed": True,
+            },
+            "publish_poststage_history": [{"video_id": 496}],
+        }
+        queue_payload = {
+            "jobs": [
+                {
+                    "id": 331,
+                    "video_id": 496,
+                    "status": "done",
+                    "remote_status": "done",
+                    "remote_job_id": "job-4",
+                    "platforms": ["shipinhao", "youtube", "instagram"],
+                    "filename": "exact_COMPLETED.zip",
+                    "file_path": "/tmp/exact_COMPLETED.mp4",
+                    "updated_at": "2026-07-29T22:38:30+08:00",
+                }
+            ]
+        }
+
+        with mock.patch.object(worker, "lazyedit_api_get", return_value=queue_payload):
+            recovered = worker.recover_verified_publish_delivery_result(task)
+
+        self.assertIsNotNone(recovered)
+        assert recovered is not None
+        stage = recovered["data"]["publish_stage"]
+        self.assertTrue(stage["verified"])
+        self.assertEqual(stage["video_id"], 496)
+        self.assertEqual(
+            stage["verified_platforms"],
+            ["shipinhao", "youtube", "instagram"],
+        )
+        self.assertIn("job_id=331", recovered["message"])
+
+    def test_artifact_recovery_never_falls_through_to_preflight_or_agent(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "no-recovery",
+            "chat": "LazyResearch",
+            "status": worker.CLAIMED_STATUS,
+            "artifact_recovery_only": True,
+            "route_decision": {"route_kind": "other_worker"},
+            "request": "recover only",
+        }
+        policy = {
+            "model": "gpt-5.5",
+            "reasoning_effort": "low",
+            "timeout_seconds": 30,
+            "reuse_session": True,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            with mock.patch.object(worker, "worker_artifact_dir", return_value=artifact_dir):
+                with mock.patch.object(
+                    worker,
+                    "recover_completed_research_artifacts",
+                    return_value=None,
+                ):
+                    with mock.patch.object(
+                        worker,
+                        "recover_verified_publish_delivery_result",
+                        return_value=None,
+                    ):
+                        with mock.patch.object(worker, "prepare_worker_preflight") as preflight:
+                            with mock.patch.object(worker, "run_worker_agent_session") as agent:
+                                raw = worker.run_task_orchestrator(task, policy)
+
+        payload = json.loads(raw)
+        self.assertTrue(payload["no_reply"])
+        self.assertEqual(
+            payload["data"]["status"],
+            "no_verified_stored_or_deterministic_result",
+        )
+        preflight.assert_not_called()
+        agent.assert_not_called()
+
+    def test_artifact_recovery_skips_model_completion_audit(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "delivery-recovery",
+            "artifact_recovery_only": True,
+            "request": "recover stored result",
+        }
+        result = {
+            "message": "published",
+            "confirmation": "",
+            "files": [],
+        }
+
+        with mock.patch.object(worker, "run_completion_audit") as audit:
+            recovered = worker.audit_and_repair_worker_completion(task, result)
+
+        self.assertEqual(recovered, result)
+        self.assertEqual(
+            task["completion_audit"]["status"],
+            "skipped_delivery_recovery",
+        )
+        self.assertEqual(
+            task["message_coverage"]["status"],
+            "recovered_without_model_rerun",
+        )
+        audit.assert_not_called()
+
     def test_reprocess_pdf_research_reason_upgrades_route_and_delivery_contract(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -3790,6 +4086,35 @@ stderr: noisy internal trace
         self.assertIn("生成新视频", guarded["message"])
         self.assertEqual(guarded["files"], [])
         self.assertEqual(guarded["contract_guard"], "blocked_public_publish_claim_for_generate_video")
+
+    def test_generate_video_route_preserves_fresh_video_with_negative_publish_note(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-generate-video",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "public_publish_allowed": False,
+            },
+            "request": "Current coalesced request:\nGenerate the video and send it back.",
+        }
+        result = {
+            "message": (
+                "故事采用别墅院子种土豆的温暖生活设定，已在 Lala Studio "
+                "上传 8 张参考图后生成。视频约 10 秒、4:3；未公开发布。"
+            ),
+            "files": ["/tmp/villa_potato_garden_warm_15s.mp4"],
+            "confirmation": "",
+        }
+
+        guarded = worker.enforce_worker_result_contract(
+            task,
+            result,
+            json.dumps(result, ensure_ascii=False),
+        )
+
+        self.assertEqual(guarded["message"], result["message"])
+        self.assertEqual(guarded["files"], result["files"])
+        self.assertNotIn("contract_guard", guarded)
 
     def test_generate_video_route_rewrites_unrequested_lazyedit_result(self) -> None:
         worker = load_worker()
@@ -6472,7 +6797,7 @@ stderr: noisy internal trace
         self.assertIn("publish_poststage_retry", payload)
         self.assertNotIn("publish_reissue", payload)
 
-    def test_publish_poststage_login_blocker_waits_for_confirmation(self) -> None:
+    def test_publish_poststage_login_blocker_sends_qr_and_keeps_polling(self) -> None:
         worker = load_worker()
         task = {
             "id": "publish-task",
@@ -6507,14 +6832,20 @@ stderr: noisy internal trace
 
         payload = json.loads(raw or "{}")
         self.assertEqual(payload["publish_stage"]["stage"], "waiting_login")
-        self.assertIn("Please complete the platform login", payload["confirmation"])
+        self.assertEqual(payload["confirmation"], "")
+        self.assertIn("视频号需要扫码登录", payload["message"])
         self.assertEqual(payload["files"], ["/tmp/shipinhao-login-qr.png"])
-        self.assertIn("poststage", payload)
-        self.assertNotIn("publish_poststage_retry", payload)
+        self.assertEqual(payload["publish_poststage_retry"]["status"], "waiting_login")
+        self.assertEqual(payload["publish_poststage_retry"]["retry_seconds"], 60)
 
-        result = {"message": payload["message"], "confirmation": payload["confirmation"], "files": [], "data": payload}
+        result = {
+            "message": payload["message"],
+            "confirmation": payload["confirmation"],
+            "files": payload["files"],
+            "data": payload,
+        }
         worker.apply_send_outcome(task, result, [])
-        self.assertEqual(task["status"], "waiting_confirmation")
+        self.assertEqual(task["status"], worker.EXISTING_VIDEO_PUBLISH_PENDING_STATUS)
         self.assertEqual(task["existing_video_publish_poststage"]["video_id"], 393)
 
     def test_deferred_publish_send_reverifies_before_retrying_stale_status(self) -> None:
@@ -6590,6 +6921,100 @@ stderr: noisy internal trace
         self.assertEqual(blocker["stage"], "waiting_login")
         self.assertEqual(blocker["kind"], "remote_login_required")
         self.assertIn("demo_COMPLETED.zip", blocker["matched"])
+
+    def test_remote_login_log_is_resolved_by_later_success(self) -> None:
+        worker = load_worker()
+
+        self.assertFalse(
+            worker.remote_log_is_waiting_for_login(
+                "Login required, will check again.\n"
+                "Logged in successfully, stopping checks.\n"
+                "Publishing on ShiPinHao...\n"
+            )
+        )
+
+    def test_structured_login_attention_binds_to_exact_running_job(self) -> None:
+        worker = load_worker()
+        local_jobs = [
+            {
+                "id": 203,
+                "remote_job_id": "job-1",
+                "remote_status": "running",
+                "status": "running",
+                "attention": {
+                    "platform": "shipinhao",
+                    "kind": "login_qr",
+                    "status": "required",
+                    "revision": 3,
+                    "artifact_url": (
+                        "/api/autopublish/jobs/job-1/attention/3"
+                    ),
+                    "media_type": "image/png",
+                },
+            }
+        ]
+        remote_jobs = [{"id": "job-1", "status": "running"}]
+        blocker = worker.structured_publish_attention(
+            local_jobs,
+            remote_jobs,
+        )
+
+        self.assertEqual(blocker["stage"], "waiting_login")
+        self.assertEqual(blocker["matched"], ["job-1"])
+        self.assertEqual(blocker["correlation"], "lazyedit_job_attention")
+        self.assertEqual(blocker["attention"]["revision"], 3)
+
+    def test_login_qr_delivery_deduplicates_revision_and_accepts_refresh(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            task = {"id": "publish-task"}
+            current = {"data": b"\x89PNG\r\n\x1a\nfirst"}
+            verification = {
+                "stage": "waiting_login",
+                "blocker": {
+                    "attention": {
+                        "kind": "login_qr",
+                        "status": "required",
+                        "revision": 1,
+                        "artifact_url": (
+                            "/api/autopublish/jobs/job-1/attention/1"
+                        ),
+                    }
+                },
+            }
+
+            with mock.patch.object(worker, "worker_artifact_dir", return_value=Path(tmp)):
+                with mock.patch.object(
+                    worker.urllib.request,
+                    "urlopen",
+                    side_effect=lambda *_args, **_kwargs: io.BytesIO(current["data"]),
+                ):
+                    first = worker.fetch_remote_publish_login_artifacts(
+                        task,
+                        verification,
+                    )
+                    duplicate = worker.fetch_remote_publish_login_artifacts(
+                        task,
+                        verification,
+                    )
+                    current["data"] = b"\x89PNG\r\n\x1a\nrefreshed"
+                    verification["blocker"]["attention"].update(
+                        {
+                            "revision": 2,
+                            "artifact_url": (
+                                "/api/autopublish/jobs/job-1/attention/2"
+                            ),
+                        }
+                    )
+                    refreshed = worker.fetch_remote_publish_login_artifacts(
+                        task,
+                        verification,
+                    )
+
+        self.assertEqual(len(first), 1)
+        self.assertEqual(duplicate, [])
+        self.assertEqual(len(refreshed), 1)
+        self.assertEqual(task["publish_login_attention_revision"], 2)
 
     def test_save_to_publish_folder_without_publish_does_not_auto_publish(self) -> None:
         worker = load_worker()
@@ -7669,6 +8094,32 @@ stderr: noisy internal trace
         self.assertIn("LazyEdit job 210", message)
         self.assertIn("remote job job-1", message)
 
+    def test_nested_agent_envelope_preserves_verified_publish_fallback(self) -> None:
+        worker = load_worker()
+        result = {
+            "message": "published",
+            "files": [],
+            "data": {
+                "message": "published",
+                "data": {
+                    "publish_stage": {
+                        "verified": True,
+                        "stage": "published_verified",
+                        "video_id": 496,
+                        "verified_platforms": ["shipinhao", "youtube", "instagram"],
+                        "local_jobs": [{"id": 331, "remote_job_id": "job-4"}],
+                        "remote_jobs": [{"id": "job-4"}],
+                    }
+                },
+            },
+        }
+
+        self.assertTrue(worker.verified_publish_result_completion(result))
+        message = worker.android_publish_completion_message(result)
+        self.assertIn("video_id 496", message)
+        self.assertIn("LazyEdit job 331", message)
+        self.assertIn("remote job job-4", message)
+
     def test_verified_publish_send_uses_android_fallback_after_title_guard_blank(self) -> None:
         worker = load_worker()
         original_flag = worker.os.environ.get("WECHAT_WORKER_ANDROID_TEXT_FALLBACK")
@@ -7710,6 +8161,40 @@ stderr: noisy internal trace
         self.assertEqual(errors, [])
         self.assertEqual(calls, ["懒人科研"])
         self.assertIn("android_text_fallback_send", task)
+
+    def test_android_publish_fallback_uses_configured_physical_device(self) -> None:
+        worker = load_worker()
+        result = {
+            "message": "已确认发布完成。",
+            "files": [],
+            "data": {
+                "publish_stage": {
+                    "verified": True,
+                    "stage": "published_verified",
+                    "video_id": 404,
+                    "verified_platforms": ["shipinhao"],
+                }
+            },
+        }
+
+        with mock.patch.object(
+            worker,
+            "configured_wechat_unlock_serial",
+            return_value="physical-device",
+        ):
+            with mock.patch.object(
+                worker,
+                "resolve_android_serial",
+                side_effect=RuntimeError("stop after device selection"),
+            ) as resolver:
+                with self.assertRaisesRegex(RuntimeError, "stop after device selection"):
+                    worker.send_result_text_via_android_fallback(
+                        result,
+                        "懒人科研",
+                        {"id": "publish-task"},
+                    )
+
+        resolver.assert_called_once_with("adb", "physical-device")
 
     def test_claim_next_deferred_send_respects_backoff(self) -> None:
         worker = load_worker()

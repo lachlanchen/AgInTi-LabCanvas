@@ -900,7 +900,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
         "publish-poststage": [
             "missing LazyEdit publish job triggers the worker's real publish command",
             "existing LazyEdit/remote job is monitored and not duplicated",
-            "remote platform login blockers become waiting_confirmation with poststage preserved",
+            "remote platform login blockers deliver an exact job-scoped QR and keep poststage polling",
         ],
         "transport-resume": [
             "WeChat queue rows carry a message-transport execution contract",
@@ -972,8 +972,8 @@ def publish_poststage_selftest_checks() -> list[dict[str, str]]:
             "test": prefix + "test_publish_poststage_does_not_reissue_when_local_job_exists",
         },
         {
-            "id": "login_blocker_waits_for_confirmation",
-            "test": prefix + "test_publish_poststage_login_blocker_waits_for_confirmation",
+            "id": "login_blocker_sends_qr_and_keeps_polling",
+            "test": prefix + "test_publish_poststage_login_blocker_sends_qr_and_keeps_polling",
         },
         {
             "id": "remote_login_log_detection",

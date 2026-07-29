@@ -227,6 +227,24 @@ LabCanvas CAD/PCB/Blender design routines with the same worker permissions as
 the private LazyResearch group. Results and requested artifacts return to the
 same group. Video/publication work is deliberately outside this bot's scope.
 
+The route agent answers at conversation level, not once per transport row.
+Every inbound message keeps its sender and source identity in history, while
+the agent may combine related fragments, use a contribution as context, stay
+silent during peer discussion, or bind a correction to one exact active task.
+A different member can interrupt an active task only when the route agent marks
+the message related and binds it to that task ID; attribution is never merged.
+If the route backend is temporarily unavailable, ordinary discussion is stored
+without creating a worker backlog. Explicit research, files, and tool/artifact
+requests still use the bounded deterministic fallback. Backend stderr, DNS,
+WebSocket, and MCP diagnostics remain private and are never sent into the
+group.
+
+The token-free health guard distinguishes live coverage failures from old audit
+evidence. Active or recently terminal messages that remain unverified still
+degrade health and trigger bounded repair. Older terminal rows remain listed as
+`historical_coverage_unresolved_ids`, but they do not keep the transport
+permanently degraded and are never replayed after a restart.
+
 Each member gets one daily-research subscription. End a message with `#daily`
 to add a distinct interest; later interests accumulate in that same member
 record instead of creating additional daily jobs:

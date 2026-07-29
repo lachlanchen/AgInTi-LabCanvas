@@ -440,6 +440,109 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(route["worker_needed"])
         self.assertEqual(route["route_kind"], "presentation_generation")
 
+    def test_backend_outage_fallback_keeps_peer_conversation_without_queueing(self) -> None:
+        ingest = load_ingest()
+
+        route = ingest.fallback_route(
+            self.sample_event(text="这个方向我也觉得很有意思"),
+            "这个方向我也觉得很有意思",
+        )
+
+        self.assertFalse(route["worker_needed"])
+        self.assertEqual(route["route_kind"], "chat_only")
+        self.assertEqual(route["reply_mode"], "silent")
+        self.assertEqual(route["ack"], "")
+
+    def test_backend_outage_fallback_still_routes_explicit_design_work(self) -> None:
+        ingest = load_ingest()
+
+        route = ingest.fallback_route(
+            self.sample_event(text="请设计并渲染一个 C-mount 支架模型"),
+            "请设计并渲染一个 C-mount 支架模型",
+        )
+
+        self.assertTrue(route["worker_needed"])
+        self.assertEqual(route["route_kind"], "other_worker")
+        self.assertEqual(route["reply_mode"], "ack_then_work")
+
+    def test_route_agent_can_bind_cross_sender_update_to_exact_active_task(self) -> None:
+        ingest = load_ingest()
+        response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": True,
+                    "route_kind": "paper_figure",
+                    "response": "",
+                    "task": "Apply the new figure guidance to the active report.",
+                    "ack": "我会把这条建议并入正在进行的图稿。",
+                    "report_required": False,
+                    "message_role": "artifact_instruction",
+                    "reply_mode": "ack_then_work",
+                    "active_task_relation": "interrupt",
+                    "reply_to_senders": [],
+                    "memory_items": [],
+                }
+            ),
+        }
+        active = {
+            "id": "wecom-active-1",
+            "status": "in_progress",
+            "route_kind": "paper_figure",
+            "sender_display": "Prof Ma",
+            "request": "Create the mechanism figure.",
+        }
+        with mock.patch.object(ingest, "run_agent_session", return_value=response):
+            route = ingest.route_event(
+                self.sample_event(
+                    sender_userid="member-two",
+                    sender_display="sunnyyty",
+                    text="图里把验证实验也画进去",
+                ),
+                "图里把验证实验也画进去",
+                [],
+                active_task=active,
+            )
+
+        self.assertTrue(route["worker_needed"])
+        self.assertEqual(route["active_task_relation"], "interrupt")
+        self.assertEqual(route["active_task_id"], "wecom-active-1")
+
+    def test_active_conversation_task_is_exact_chat_and_bounded(self) -> None:
+        ingest = load_ingest()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                "\n".join(
+                    json.dumps(row, ensure_ascii=False)
+                    for row in (
+                        {
+                            "id": "other",
+                            "chat": "wecom:other",
+                            "status": "in_progress",
+                            "request": "unrelated",
+                        },
+                        {
+                            "id": "active",
+                            "chat": "wecom:labagent",
+                            "status": "in_progress",
+                            "request": "Prepare the current report " + ("x" * 3000),
+                            "source": {"sender_display": "Prof Ma"},
+                            "route_decision": {"route_kind": "research_or_summary"},
+                        },
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            active = ingest.active_conversation_task(queue, "wecom:labagent")
+
+        self.assertEqual(active["id"], "active")
+        self.assertEqual(active["sender_display"], "Prof Ma")
+        self.assertEqual(active["route_kind"], "research_or_summary")
+        self.assertLessEqual(len(active["request"]), 1800)
+
     def test_gui_ingest_suppresses_recent_exact_duplicate_with_changed_sender(self) -> None:
         ingest = load_ingest()
         route = {

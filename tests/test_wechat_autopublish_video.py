@@ -135,6 +135,44 @@ class WeChatAutoPublishVideoTests(unittest.TestCase):
         recent.assert_called_once()
         matching.assert_called_once()
 
+    def test_exact_message_candidates_prefer_original_send_temp_over_playback_transcode(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            playback = base / "e0ba7c26e2e13ef56e4b08f5eb01cc81.mp4"
+            playback.write_bytes(b"compressed")
+            send_temp = base / "SendTemp" / "163_1785332281_send_temp.mp4"
+            send_temp.parent.mkdir()
+            send_temp.write_bytes(b"original-video-bytes")
+            db = base / "mirror.sqlite"
+            create_media_db(db, send_temp, chat="MEMO写作—外语—挣钱")
+            now = time.time()
+            playback.touch()
+            message = wechat_autopublish_video.VideoMessage(
+                chat_name="MEMO写作—外语—挣钱",
+                local_id=163,
+                create_time=int(now),
+                stems=("e0ba7c26e2e13ef56e4b08f5eb01cc81",),
+                sizes=(playback.stat().st_size,),
+            )
+            with mock.patch.object(wechat_autopublish_video, "recent_video_messages", return_value=[message]):
+                with mock.patch.object(
+                    wechat_autopublish_video,
+                    "matching_video_files",
+                    return_value=[playback],
+                ):
+                    candidates = wechat_autopublish_video.exact_message_candidates(
+                        chats=[message.chat_name],
+                        since_minutes=720,
+                        message_local_ids=[163],
+                        db_path=db,
+                    )
+
+        self.assertEqual(candidates[0].path, send_temp.resolve())
+        self.assertEqual(candidates[0].size_bytes, len(b"original-video-bytes"))
+
     def test_parse_clicks_accepts_fallback_points(self) -> None:
         sys.path.insert(0, str(SCRIPT.parent))
         import wechat_autopublish_video
