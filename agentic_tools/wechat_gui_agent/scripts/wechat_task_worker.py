@@ -64,6 +64,7 @@ LAZYEDIT_ROOT = Path(os.environ.get("LAZYEDIT_ROOT", "/home/lachlan/DiskMech/Pro
 LAZYEDIT_API_URL = os.environ.get("LAZYEDIT_API_URL", "http://127.0.0.1:18787").rstrip("/")
 LAZYEDIT_REMOTE_QUEUE_URL = os.environ.get("LAZYEDIT_REMOTE_QUEUE_URL", "http://lazyingart:8081/publish/queue")
 LAZYEDIT_REMOTE_LOG_COMMAND = os.environ.get("WECHAT_WORKER_LAZYEDIT_REMOTE_LOG_COMMAND", "")
+LAZYEDIT_REMOTE_LOGIN_HOST = os.environ.get("WECHAT_WORKER_LAZYEDIT_REMOTE_LOGIN_HOST", "lachlan@lazyingart")
 DEFAULT_AUTOPUBLISH_DIR = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/home/lachlan/Nutstore Files/AutoPublish/AutoPublish"))
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
@@ -784,6 +785,7 @@ def refresh_existing_video_publish_deferred_result(task: dict[str, Any], result:
     confirmation = publish_stage_confirmation(verification)
     if confirmation:
         payload["confirmation"] = confirmation
+        payload["files"] = fetch_remote_publish_login_artifacts(task, verification)
         payload["poststage"] = poststage
     elif not bool(verification.get("verified")):
         payload["publish_poststage_retry"] = {
@@ -798,7 +800,7 @@ def refresh_existing_video_publish_deferred_result(task: dict[str, Any], result:
     return {
         "message": str(payload.get("message") or ""),
         "confirmation": str(payload.get("confirmation") or ""),
-        "files": [],
+        "files": [str(item) for item in payload.get("files") or []],
         "raw": json.dumps(payload, ensure_ascii=False),
         "data": payload,
     }
@@ -4514,6 +4516,8 @@ def run_worker_codex(task: dict[str, Any]) -> str:
                 "artifact_recovered": artifact_recovered,
             }
         )
+        if worker_result_has_durable_publish_state(task, result):
+            break
         if artifact_recovered:
             break
         if (
@@ -4554,6 +4558,29 @@ def run_worker_codex(task: dict[str, Any]) -> str:
     task["worker_result_exhausted"] = worker_result_needs_escalation(best_result)
     task.pop("worker_retry_context", None)
     return best_result
+
+
+def worker_result_has_durable_publish_state(task: dict[str, Any], result: str) -> bool:
+    """Do not spend another model turn after the publish queue owns the task."""
+
+    if not is_video_publish_task(task):
+        return False
+    try:
+        payload = json.loads(str(result or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    publish_stage = payload.get("publish_stage")
+    if not isinstance(publish_stage, dict) and isinstance(payload.get("data"), dict):
+        publish_stage = payload["data"].get("publish_stage")
+    if not isinstance(publish_stage, dict):
+        return False
+    return str(publish_stage.get("stage") or "") in {
+        "publish_running",
+        "waiting_login",
+        "published_verified",
+    }
 
 
 def run_worker_codex_once(task: dict[str, Any], policy: dict[str, Any]) -> str:
@@ -4602,6 +4629,33 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
     if preflight:
         task["preflight"] = preflight
         persist_task_progress(task)
+    if should_agent_supervise_existing_video_publish(task):
+        publish_policy = existing_video_publish_agent_policy(policy)
+        task["orchestrator"]["last_action"] = "resume_publish_agent_session"
+        task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
+        task["publish_agent_supervision"] = {
+            "status": "running",
+            "model": publish_policy["model"],
+            "reasoning_effort": publish_policy["reasoning_effort"],
+            "started_at": task["orchestrator"]["last_action_at"],
+            "role": "interpret exact same-chat context, invoke LazyEdit, and supervise the stable pipeline",
+        }
+        persist_task_progress(task)
+        agent_result = run_worker_agent_session(task, publish_policy)
+        task["publish_agent_supervision"].update(
+            {
+                "status": "completed",
+                "completed_at": datetime.now().isoformat(timespec="seconds"),
+                "result_excerpt": collapse_context_text(agent_result, max_len=1800),
+            }
+        )
+        persist_task_progress(task)
+        deterministic = deterministic_preflight_result(task)
+        if deterministic is not None:
+            task["orchestrator"]["last_action"] = "verify_or_recover_publish_after_agent"
+            task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
+            return deterministic
+        return agent_result
     deterministic = deterministic_preflight_result(task)
     if deterministic is not None:
         task["orchestrator"]["last_action"] = "deterministic_routine_stage"
@@ -4622,6 +4676,57 @@ def task_orchestrator_stage(task: dict[str, Any]) -> str:
     if isinstance(task.get("routine"), dict) and task["routine"].get("id"):
         return f"routine:{task['routine']['id']}"
     return "routine:unclassified"
+
+
+def should_agent_supervise_existing_video_publish(task: dict[str, Any]) -> bool:
+    """Use the exact-chat agent for intent/settings while retaining hard gates."""
+
+    if os.environ.get("WECHAT_WORKER_DISABLE_PUBLISH_AGENT_SUPERVISION"):
+        return False
+    if not is_video_publish_task(task) or not should_deterministic_video_publish(task):
+        return False
+    poststage = task.get("existing_video_publish_poststage")
+    if isinstance(poststage, dict) and poststage:
+        return False
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    autopub = preflight.get("autopublish_video") if isinstance(preflight.get("autopublish_video"), dict) else {}
+    if not (autopub.get("ok") and autopub.get("target")):
+        return False
+    video_id = known_lazyedit_video_id_for_autopub(autopub)
+    if video_id is None:
+        return True
+    platforms = detect_publish_platforms(task)
+    target = Path(str(autopub.get("target") or ""))
+    verification = verify_lazyedit_publish_stage(
+        video_id,
+        platforms,
+        target,
+        {"status": "pre-agent-probe"},
+    )
+    stage = str(verification.get("stage") or "")
+    if stage in {"publish_running", "waiting_login", "published_verified"}:
+        task["publish_agent_bypassed"] = {
+            "reason": "durable_publish_state_exists",
+            "stage": stage,
+            "video_id": video_id,
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        return False
+    return True
+
+
+def existing_video_publish_agent_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    """Use a bounded GPT-5.6 SOL turn before the mature publish pipeline."""
+
+    selected = dict(policy)
+    selected["model"] = "gpt-5.6-sol"
+    effort = normalize_effort(str(selected.get("reasoning_effort") or ""), fallback="low")
+    if effort not in {"low", "medium"}:
+        effort = "medium"
+    selected["reasoning_effort"] = effort
+    selected["timeout_seconds"] = timeout_for_effort(effort)
+    selected["reuse_session"] = True
+    return selected
 
 
 def initialize_grant_task_workspace(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
@@ -4886,6 +4991,8 @@ def collect_preflight_agent_paths(value: Any, *, limit: int = 20) -> list[str]:
         "contract_path",
         "source_text_file",
         "cover_path",
+        "correction_prompt_file",
+        "metadata_prompt_file",
     }
     paths: list[str] = []
 
@@ -5144,6 +5251,7 @@ Open a human-assist browser in the isolated virtual desktop with:
 PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --wait-seconds 8 --capture --close-after --json
 Then return a confirmation telling the user to complete the manual step in noVNC and approve continuation.
 For LazyEdit video work, preserve the current request's explicit background/canvas fill, crop/padding, subtitle on/off, subtitle language/order, correction context, metadata context, logo, and platform choices. Do not silently replace them with chat-profile defaults. If unspecified, inherit LazyEdit's current settings. Generation, local processing, and public publication remain separate permissions.
+For `task.routine.id=video_publish_existing`, you are the execution supervisor, not a commentator. After confirming `public_publish_allowed=true` and the exact same-chat `task.preflight.autopublish_video.target`, use the checked-in LazyEdit publish skill and invoke LazyEdit's `scripts/lazyedit_publish.py` workflow for the requested platforms and settings. Read the correction and metadata prompt paths from `task.preflight.lazyedit_context`. Prefer an exact imported `video_id`; if import is still pending, probe briefly or use the exact target without selecting any nearby video. Submit the durable LazyEdit job with `--no-wait`; do not hold this agent turn with `--wait`, `--guided-monitor`, long sleeps, or browser polling. Return the real submitted job/video IDs. The deterministic worker poststage owns long monitoring, duplicate prevention, login/QR handoff, retries, and terminal platform verification.
 When Shipinhao publication reaches a QR/login blocker, return one concise human message with the available noVNC URL and QR/screenshot artifact. Do not send browser diagnostics or repeatedly retry the public action while login is pending.
 If other external tools or files are not available, say exactly what is needed next.
 
@@ -11418,6 +11526,13 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
     verification = verify_lazyedit_publish_stage(video_id, platforms, target, {"status": "preflight"})
     if bool(verification.get("verified")):
         outcome = {"ok": True, "status": "already_verified", "duplicate_publish_guard": True}
+    elif str(verification.get("stage") or "") in {"publish_running", "waiting_login"}:
+        outcome = {
+            "ok": True,
+            "status": "probe",
+            "duplicate_publish_guard": True,
+            "agent_supervised": bool(task.get("publish_agent_supervision")),
+        }
     else:
         outcome = run_lazyedit_publish_command(
             video_id=video_id,
@@ -11437,6 +11552,7 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
     confirmation = publish_stage_confirmation(verification)
     if confirmation:
         payload["confirmation"] = confirmation
+        payload["files"] = fetch_remote_publish_login_artifacts(task, verification)
     if not bool(verification.get("verified")):
         poststage = {
             "kind": "existing_video_publish",
@@ -11478,6 +11594,22 @@ def known_lazyedit_video_id_for_autopub(autopub: dict[str, Any]) -> int | None:
         match = re.search(r"\bvideo_id\s*[=:]\s*(\d+)\b", str(text), flags=re.I)
         if match:
             return int(match.group(1))
+    target_name = Path(str(autopub.get("target_name") or autopub.get("target") or "")).name
+    target_stem = Path(target_name).stem
+    if target_stem:
+        queue = lazyedit_api_get("/api/autopublish/queue", timeout=20)
+        jobs = queue.get("jobs") if isinstance(queue, dict) else []
+        matches: set[int] = set()
+        if isinstance(jobs, list):
+            for job in jobs:
+                if not isinstance(job, dict):
+                    continue
+                filename = Path(str(job.get("filename") or job.get("remote_filename") or "")).name
+                video_id = int_or_none(job.get("video_id"))
+                if video_id is not None and Path(filename).stem == target_stem:
+                    matches.add(video_id)
+        if len(matches) == 1:
+            return next(iter(matches))
     return None
 
 
@@ -11502,6 +11634,8 @@ def wait_for_lazyedit_import(target: Path, *, timeout: float, poll_seconds: floa
 def lazyedit_videos() -> list[dict[str, Any]]:
     payload = lazyedit_api_get("/api/videos", timeout=20)
     videos = payload.get("videos") if isinstance(payload, dict) else []
+    if not isinstance(videos, list):
+        return []
     return [item for item in videos if isinstance(item, dict)]
 
 
@@ -11553,9 +11687,7 @@ def run_lazyedit_publish_command(
         f"--platforms {','.join(platforms)}",
         "--correct-subtitles",
         "--correction-source polished",
-        "--guided-monitor",
-        "--wait",
-        "--poll-seconds 10",
+        "--no-wait",
         f"--process-timeout {process_timeout}",
         f"--publish-timeout {publish_timeout}",
         "--json",
@@ -11745,6 +11877,7 @@ def deterministic_existing_video_publish_poststage_result(task: dict[str, Any]) 
         confirmation = publish_stage_confirmation(verification)
         if confirmation:
             payload["confirmation"] = confirmation
+            payload["files"] = fetch_remote_publish_login_artifacts(task, verification)
         if not bool(verification.get("verified")):
             if confirmation:
                 payload["poststage"] = poststage
@@ -11773,6 +11906,7 @@ def deterministic_existing_video_publish_poststage_result(task: dict[str, Any]) 
     confirmation = publish_stage_confirmation(verification)
     if confirmation:
         payload["confirmation"] = confirmation
+        payload["files"] = fetch_remote_publish_login_artifacts(task, verification)
     if not bool(verification.get("verified")):
         if confirmation:
             payload["poststage"] = poststage
@@ -12073,6 +12207,110 @@ def publish_stage_confirmation(verification: dict[str, Any]) -> str:
     )
 
 
+def fetch_remote_publish_login_artifacts(
+    task: dict[str, Any],
+    verification: dict[str, Any],
+) -> list[str]:
+    """Copy only fresh, fixed-name AutoPublish login evidence into this task."""
+
+    if str(verification.get("stage") or "") != "waiting_login":
+        return []
+    if not LAZYEDIT_REMOTE_LOGIN_HOST:
+        return []
+    max_age_minutes = max(
+        1,
+        min(
+            120,
+            int(os.environ.get("WECHAT_WORKER_LAZYEDIT_LOGIN_ARTIFACT_MAX_AGE_MINUTES", "30")),
+        ),
+    )
+    remote_command = (
+        "find /tmp -maxdepth 1 -type f -mmin "
+        f"-{max_age_minutes} "
+        "\\( -name 'autopub-login-qr-*.png' -o -name 'shipinhao-screenshot.png' \\) "
+        "-printf '%T@ %p\\n' | sort -nr | head -n 8"
+    )
+    try:
+        listing = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=8",
+                LAZYEDIT_REMOTE_LOGIN_HOST,
+                remote_command,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if listing.returncode != 0:
+        return []
+    selected: dict[str, str] = {}
+    pattern = re.compile(
+        r"^/tmp/(?P<name>autopub-login-qr-[A-Za-z0-9_-]+\.png|shipinhao-screenshot\.png)$"
+    )
+    for line in listing.stdout.splitlines():
+        parts = line.strip().split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        match = pattern.fullmatch(parts[1])
+        if not match:
+            continue
+        name = match.group("name")
+        kind = "qr" if name.startswith("autopub-login-qr-") else "page"
+        selected.setdefault(kind, parts[1])
+    if not selected:
+        return []
+    artifact_dir = worker_artifact_dir(task)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    destination_names = {
+        "qr": "shipinhao-login-qr.png",
+        "page": "shipinhao-login-page.png",
+    }
+    for kind in ("qr", "page"):
+        remote_path = selected.get(kind)
+        if not remote_path:
+            continue
+        destination = artifact_dir / destination_names[kind]
+        try:
+            copied_file = subprocess.run(
+                [
+                    "scp",
+                    "-q",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=8",
+                    f"{LAZYEDIT_REMOTE_LOGIN_HOST}:{remote_path}",
+                    str(destination),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=20,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if copied_file.returncode != 0 or not destination.is_file():
+            destination.unlink(missing_ok=True)
+            continue
+        try:
+            if destination.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
+                destination.unlink(missing_ok=True)
+                continue
+        except OSError:
+            destination.unlink(missing_ok=True)
+            continue
+        copied.append(str(destination.resolve()))
+    return copied
+
+
 def summarize_lazyedit_publish_outcome(
     video_id: int,
     platforms: list[str],
@@ -12334,7 +12572,7 @@ LazyEdit/AutoPublish video publishing:
   `curl -fsS http://127.0.0.1:18787/api/ui-settings/logo_settings | jq .`
 - For subtitle correction, create a correction context file under `{artifact_dir}` from the task JSON, current coalesced request, quoted message, recent history, source/reference rows, visible media metadata, and any user-provided script/transcript/story notes. Pass that file as `--correction-prompt-file`.
 - Create a separate short metadata brief under `{artifact_dir}` for public title/description/hashtags and pass it as `--metadata-prompt-file`. Do not feed the full chat history or full script as metadata context.
-- For processing plus publish, use `scripts/lazyedit_publish.py` with `--use-current-settings`, platform flags, `--guided-monitor`, `--wait`, and separate `--correction-prompt-file` and `--metadata-prompt-file` files when context is needed.
+- For interactive/manual processing plus publish outside the dedicated existing-video routine, `--guided-monitor --wait` is available. For `video_publish_existing`, submit exactly once with `--no-wait` and separate `--correction-prompt-file` and `--metadata-prompt-file`; the deterministic poststage owns long monitoring and QR/login handoff.
 - For explicit publish requests, a `--no-publish` run is only a verification gate. If it succeeds and no manual login/CAPTCHA/approval block appears, immediately run exactly one real publish for the requested platforms with the same corrected output and report the publish job ids/status. Do not stop after a successful no-publish pass.
 - If the user asks to correct subtitles or provides contextual wording for a video, use `--correct-subtitles --correction-source polished` unless the source output has already been corrected and verified.
 - Before a real publish with subtitle correction, inspect the polished subtitle output such as `DATA/VIDEO_FOLDER/*_mixed_polished.md` and fix obvious ASR errors only when supported by the message context.
@@ -12580,7 +12818,9 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "高光谱",
         "高光譜",
     ]
-    if scheduled_daily_research and routine_id == "research_summary":
+    if routine_id == "video_publish_existing":
+        effort = routine_effort or "medium"
+    elif scheduled_daily_research and routine_id == "research_summary":
         effort = routine_effort or "xhigh"
     elif routine_id == "presentation_deck":
         effort = routine_effort or "xhigh"
@@ -12604,7 +12844,11 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         max_effort=worker_max_effort(),
     )
     return {
-        "model": "gpt-5.6-sol" if protein_structure_task else worker_model(effort),
+        "model": (
+            "gpt-5.6-sol"
+            if protein_structure_task or routine_id == "video_publish_existing"
+            else worker_model(effort)
+        ),
         "reasoning_effort": effort,
         "sandbox": worker_sandbox(),
         "timeout_seconds": timeout_for_effort(effort),

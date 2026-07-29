@@ -73,6 +73,19 @@ curl -fsS http://127.0.0.1:18787/api/ui-settings/logo_settings | jq .
   commands. Deterministic code may isolate sources, guard duplicates, probe
   status, verify terminal evidence, and enforce artifact delivery, but it must
   not become a separate hardcoded publishing workflow.
+- For `video_publish_existing`, resume the exact chat's worker with a bounded
+  `gpt-5.6-sol` low/medium turn after exact-source preflight. The agent interprets
+  the current platform/subtitle/background/metadata intent and invokes this
+  LazyEdit CLI. The deterministic poststage independently deduplicates and
+  verifies the same job.
+- The worker agent submits existing-video work with `--no-wait`. It must not
+  spend an agent turn on `--wait`, `--guided-monitor`, sleeps, or browser
+  polling. Persist the returned IDs and let the deterministic poststage handle
+  processing, QR/login handoff, retries, and terminal platform evidence.
+- A null, timed-out, or temporarily unavailable `/api/videos` payload means
+  "not visible yet", not an iterable result and not permission to select a
+  nearby video. If the exact `video_id` already has a queued/running job or a
+  login blocker, monitor that job and never issue another publish.
 - Silent or nearly silent videos may produce empty transcripts and
   `burn=skipped`. This is acceptable when transcribe/translate/caption/keyframes
   are complete; continue metadata generation, cover extraction, publish queue

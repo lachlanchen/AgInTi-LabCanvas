@@ -312,6 +312,136 @@ class WeChatCompletionAuditTests(unittest.TestCase):
             [],
         )
 
+    def test_worker_envelope_does_not_turn_pdf_policy_into_user_request(self) -> None:
+        task = {
+            "id": "article-777",
+            "chat": "Shares鏈接",
+            "original_request": (
+                "Return a natural concise answer plus files only when requested. "
+                "Do not include Markdown, TeX, PDF, or screenshots unless the current "
+                "message explicitly asks for a report.\n\n"
+                "Current coalesced request:\n"
+                "陈苗: [WeChat article] 丘脑智能完成融资，讨论多模态长期记忆\n\n"
+                "Recent history:\n"
+                "older unrelated PDF discussion"
+            ),
+            "source": {"local_id": 777, "sender_display": "陈苗"},
+        }
+        items = audit.coverage_items(task)
+
+        self.assertEqual(
+            items[0]["text"],
+            "陈苗: [WeChat article] 丘脑智能完成融资，讨论多模态长期记忆",
+        )
+        self.assertFalse(audit.explicit_pdf_requested(items))
+        self.assertEqual(
+            audit.deterministic_missing_requirements(
+                task,
+                {"message": "文章重点是长期记忆基础设施。", "files": []},
+            ),
+            [],
+        )
+
+    def test_attachment_intake_envelope_is_not_a_second_human_request(self) -> None:
+        task = {
+            "id": "publish-78",
+            "chat": "My devices",
+            "request": (
+                "Worker policy text.\n\n"
+                "Current coalesced request:\n"
+                "Chen: New WeChat video item received; inspect its message "
+                "metadata, card/link fields, and recent synced files/media, "
+                "then summarize or process it.\n"
+                "metadata: [WeChat video] <msg><videomsg length=\"123\"/></msg>\n"
+                "Chen: 帮我发布一下这个视频\n\n"
+                "Recent history:\nolder text"
+            ),
+            "source": {"local_id": 78, "sender_display": "Chen"},
+        }
+
+        items = audit.coverage_items(task)
+
+        self.assertEqual(items[0]["text"], "Chen: 帮我发布一下这个视频")
+
+    def test_naked_attachment_keeps_only_default_intake_contract(self) -> None:
+        task = {
+            "id": "video-77",
+            "original_request": (
+                "Chen: New WeChat video item received; inspect its message "
+                "metadata, card/link fields, and recent synced files/media, "
+                "then summarize or process it.\n"
+                "metadata: [WeChat video] <msg/>"
+            ),
+            "source": {"local_id": 77, "sender_display": "Chen"},
+        }
+
+        items = audit.coverage_items(task)
+
+        self.assertEqual(
+            items[0]["text"],
+            (
+                "Incoming WeChat video attachment: apply the configured default "
+                "intake behavior for this chat."
+            ),
+        )
+
+    def test_audit_packet_includes_bounded_terminal_publish_evidence(self) -> None:
+        task = {
+            "id": "publish-78",
+            "original_request": "帮我发布一下这个视频",
+            "source": {"local_id": 78},
+        }
+        result = {
+            "message": "发布完成。",
+            "files": [],
+            "data": {
+                "publish_stage": {
+                    "verified": True,
+                    "stage": "published_verified",
+                    "video_id": 495,
+                    "requested_platforms": ["shipinhao", "youtube"],
+                    "verified_platforms": ["shipinhao", "youtube"],
+                    "local_jobs": [
+                        {
+                            "id": 330,
+                            "status": "done",
+                            "remote_status": "done",
+                            "filename": "private.zip",
+                        }
+                    ],
+                    "remote_jobs": [
+                        {
+                            "id": "remote-330",
+                            "status": "done",
+                            "filename": "private.zip",
+                        }
+                    ],
+                }
+            },
+        }
+
+        prompt = audit.completion_audit_prompt(
+            task,
+            result,
+            audit.coverage_items(task),
+        )
+        packet = json.loads(prompt.split("Task packet:\n", 1)[1])
+
+        self.assertEqual(
+            packet["candidate_result"]["publish_stage"],
+            {
+                "verified": True,
+                "stage": "published_verified",
+                "video_id": 495,
+                "requested_platforms": ["shipinhao", "youtube"],
+                "verified_platforms": ["shipinhao", "youtube"],
+                "local_jobs": [
+                    {"id": 330, "status": "done", "remote_status": "done"}
+                ],
+                "remote_jobs": [{"id": "remote-330", "status": "done"}],
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

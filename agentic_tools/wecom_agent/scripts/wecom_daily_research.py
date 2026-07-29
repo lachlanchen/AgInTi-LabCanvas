@@ -972,6 +972,7 @@ def build_group_inspiration_task(
     transport_channel: str,
     topics: list[str],
     context: list[dict[str, Any]],
+    historical_memory: list[dict[str, Any]],
     previous: list[str],
     prior_research: list[str],
     now: datetime,
@@ -984,6 +985,14 @@ def build_group_inspiration_task(
         f"- {item.get('direction', 'inbound')}: {str(item.get('content') or '')[:900]}"
         for item in context[-60:]
     ) or "- 群内还没有足够的历史讨论。"
+    memory_text = "\n".join(
+        (
+            f"- [{item.get('kind', 'summary')}] "
+            f"{str(item.get('title') or '').strip()}: "
+            f"{str(item.get('content') or '')[:1000]}"
+        ).strip()
+        for item in historical_memory[-24:]
+    ) or "- 暂无更早的群内摘要或长期兴趣记录。"
     previous_text = "\n".join(f"- {item}" for item in previous) or "- 暂无历史灵感提示。"
     research_text = "\n".join(f"- {item}" for item in prior_research) or "- 暂无历史研究结果。"
     slot = now.strftime("%Y%m%d%H%M")
@@ -997,6 +1006,9 @@ Group steering interests:
 Recent and accumulated public group context (use all relevant threads, not only the last line):
 {context_text}
 
+Durable summaries distilled from older messages, member interests, ideas, and prior findings in this exact group:
+{memory_text}
+
 Previous inspiration points; avoid repeating them:
 {previous_text}
 
@@ -1008,6 +1020,7 @@ Requirements:
 - Find one meaningful connection, question, experiment, design direction, writing angle, or research opportunity that could inspire this group.
 - Explore adjacent topics when they illuminate the group's direction, but explain the connection instead of drifting into a generic news list.
 - Base it on the group context and interests. When a paper, report, or source has already appeared, inspect its substantive content when available: identify the actual result, method or evidence, limitation, and an unresolved question. Do not merely repeat its title or abstract.
+- Treat current/recent messages as the immediate direction and the durable summaries as continuity from older discussion. Web or literature search should update, test, or extend that context rather than replace it with a generic AI-generated topic.
 - If a current factual claim is needed, verify it with reliable sources and include at most two compact links; do not invent citations.
 - Keep it concise enough for a group message, but include why it matters and one possible next step.
 - Clearly separate a sourced fact from your own proposed idea.
@@ -1079,6 +1092,7 @@ Requirements:
         "group_inspiration": {
             "topics": topics,
             "interval_seconds": interval_seconds,
+            "historical_memory": historical_memory[-24:],
             "previous_outputs": previous,
             "prior_research_outputs": prior_research,
             "source_context_count": len(context),
@@ -1118,6 +1132,7 @@ def enqueue_initial_group_inspiration(
         transport_channel=str(event.get("transport_channel") or "wecom_bot_websocket"),
         topics=topics,
         context=recent_group_context(history_db, chat, limit=60),
+        historical_memory=historical_group_memory(history_db, chat, limit=24),
         previous=previous_inspiration_outputs(queue, chat),
         prior_research=previous_group_research_outputs(queue, chat),
         now=current,
@@ -1190,6 +1205,7 @@ def run_inspiration_cycle(
             transport_channel=transport_channel,
             topics=topics,
             context=context,
+            historical_memory=historical_group_memory(history_db, chat, limit=24),
             previous=previous,
             prior_research=prior_research,
             now=current,
@@ -1478,6 +1494,43 @@ def recent_group_context(path: Path, chat: str, *, limit: int) -> list[dict[str,
     return [
         {"direction": direction, "content": body, "create_time": create_time or 0, "kind": "text"}
         for direction, body, create_time in reversed(rows)
+    ]
+
+
+def historical_group_memory(path: Path, chat: str, *, limit: int) -> list[dict[str, Any]]:
+    """Return bounded, provenance-aware summaries for this exact group only."""
+
+    db = knowledge_db_for_history(path)
+    if not db.is_file():
+        return []
+    bounded = max(1, min(60, int(limit)))
+    try:
+        with sqlite3.connect(db) as conn:
+            rows = conn.execute(
+                """
+                SELECT kind, title, content, updated_at
+                FROM knowledge_items
+                WHERE chat = ?
+                  AND kind IN (
+                    'idea', 'insight', 'intuition', 'interest', 'hypothesis',
+                    'decision', 'preference', 'question', 'note', 'agent_summary'
+                  )
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (chat, bounded),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [
+        {
+            "kind": str(kind or "summary"),
+            "title": str(title or ""),
+            "content": str(content or "")[:1400],
+            "updated_at": str(updated_at or ""),
+        }
+        for kind, title, content, updated_at in reversed(rows)
+        if str(content or "").strip()
     ]
 
 

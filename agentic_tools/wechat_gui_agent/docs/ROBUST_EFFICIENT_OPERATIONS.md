@@ -641,6 +641,12 @@ The stable interface and recovery commands are documented in
   a human-confirmation state. Never open/focus a browser or ask the owner to
   verify for read-only research; return an evidence-limited answer if recovery
   remains incomplete.
+- A source-only share has one substantive responder: the persistent exact-chat
+  worker. The fast route may silently enqueue it but must not send a title-based
+  mini-analysis before the worker summary. Source identity plus source local ID
+  deduplicates queue creation and delivery; a differently worded analysis is
+  not a second result. A later human follow-up question is a new turn and may
+  reuse the saved source evidence normally.
 - WeCom Android renders ordinary text under resource `j1l`, but a native
   Gongzhonghao card title under `mww`. Treat that row as
   `wechat_article_card`, preserve its exact sender and title, and route it to
@@ -899,6 +905,14 @@ An operator reprocess reason is also an authoritative coverage item when it
 contains a new deliverable or correction. This prevents a supplemental
 `reprocess ... "create and deliver the PDF"` request from passing merely
 because the original message did not literally contain `PDF`.
+The completion checker audits human intent, not transport scaffolding. When a
+direct monitor coalesces an attachment with a later instruction, remove its
+synthetic `New WeChat ... item received` intake sentence and raw `metadata:`
+payload from the auditable text. If no human instruction follows, retain only a
+small default-intake requirement. For publication, pass the bounded
+`publish_stage` evidence to the checker; terminal `published_verified` evidence
+covers an explicit publish request and must not trigger a second metadata
+summary, corrective worker turn, or queue reprocess.
 
 Automatic lightweight `fast` and `route` turns may prefer
 `gpt-5.3-codex-spark` when the cached normal Codex quota is strictly below 25%.
@@ -1326,6 +1340,31 @@ The resumed Codex worker agent owns LazyEdit context selection and command
 invocation. Deterministic code is allowed for source isolation, duplicate
 guards, short probes, queue state, and terminal verification, but it must not
 become a parallel hardcoded publish workflow.
+For an existing-video publish, the exact chat's resumable worker session runs
+first with a bounded `gpt-5.6-sol` low/medium turn. It interprets the current
+platform/subtitle/background/metadata instructions and invokes the checked-in
+LazyEdit CLI. The deterministic poststage then verifies or repairs that same
+job. A null, timed-out, or temporarily unavailable `/api/videos` response is
+treated as retryable absence, not an iterable video list and not permission to
+select a nearby video. Once the same `video_id` has a queued/running job or a
+login blocker, the verifier only monitors it and never issues another publish.
+The agent submits this durable job with `--no-wait`; it does not hold a model
+turn across processing, remote uploads, sleeps, browser polling, or QR login.
+The deterministic poststage persists the job IDs, reports a login blocker
+promptly, copies only fresh fixed-name QR/login screenshots from the AutoPublish
+host into the exact task artifact directory, delivers them to the source chat,
+and resumes terminal verification without another model turn.
+A durable `publish_running`, `waiting_login`, or `published_verified` result
+also terminates the generic worker model-escalation ladder. A lower-quality
+agent sentence cannot start another model turn or duplicate public job after
+the queue already owns execution.
+Before resuming the publication agent at all, reprocess and reboot recovery
+probe the exact imported `video_id`. If its queue is already running, waiting
+for login, or terminal, the agent is bypassed and the deterministic poststage
+returns that durable state directly.
+If `/api/videos` is temporarily null, recover the ID only from one publish job
+whose ZIP stem exactly equals the source-scoped `_COMPLETED.mp4` stem. Never use
+mtime, title similarity, a nearby job, or an ambiguous set of matches.
 
 If both the WeChat cache and artifact ledger fail, stop source-limited. Do not
 reuse a nearby video, another group’s artifact, or an older unrelated task.
@@ -1447,6 +1486,12 @@ daily career scheduler after reboot.
   overnight quiet hours, so transport health can distinguish ordinary waiting
   from a stalled loop. Two consecutive stale checks restart only the `daily`
   scheduler window; they do not restart or log out WeCom clients.
+- Each LabAgent idle-inspiration turn receives recent exact-group messages,
+  bounded durable summaries of older interests/ideas/findings from the same
+  group, prior inspiration, and prior research output. External search updates,
+  tests, or extends this context; it does not replace it with a generic topic.
+  The knowledge query is exact-chat scoped and never imports another group's
+  member memory.
 
 For this workstation, set `LABCANVAS_HEALTH_ALERT_TRANSPORT=wechat` and
 `LABCANVAS_HEALTH_ALERT_CHAT=🍓My devices` only in the ignored WeCom env. The

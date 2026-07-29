@@ -727,6 +727,27 @@ stderr: noisy internal trace
         self.assertIn("WECHAT_WORKER_ENV_FILE", wrapper_text)
         self.assertIn('source "$PRIVATE_ENV"', wrapper_text)
 
+    def test_deterministic_lazyedit_fallback_submits_without_holding_worker(self) -> None:
+        worker = load_worker()
+        with mock.patch.object(
+            worker,
+            "run_lazyedit_publish_subprocess",
+            return_value={"ok": True, "status": "submitted"},
+        ) as run:
+            worker.run_lazyedit_publish_command(
+                video_id=495,
+                platforms=["shipinhao", "youtube"],
+                correction_prompt="/tmp/correction.md",
+                metadata_prompt="/tmp/metadata.md",
+                target=Path("/tmp/video_COMPLETED.mp4"),
+            )
+
+        command = run.call_args.args[0]
+        shell_command = command[-1]
+        self.assertIn("--no-wait", shell_command)
+        self.assertNotIn("--wait", shell_command)
+        self.assertNotIn("--guided-monitor", shell_command)
+
     def test_worker_policy_uses_high_for_cad_or_pcb_tasks(self) -> None:
         worker = load_worker()
         policy = worker.choose_worker_policy({"request": "design a PCB and render the CAD in Blender"})
@@ -780,6 +801,54 @@ stderr: noisy internal trace
         policy = worker.choose_worker_policy({"request": "summarize this PDF paper"})
 
         self.assertEqual(policy["reasoning_effort"], "medium")
+
+    def test_existing_video_publish_policy_uses_gpt_5_6_sol(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "Publish this exact video.",
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_allowed": True,
+            },
+            "routine": {
+                "id": "video_publish_existing",
+                "default_effort": "low",
+            },
+        }
+
+        policy = worker.choose_worker_policy(task)
+
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["reasoning_effort"], "low")
+
+    def test_publish_preflight_exposes_exact_target_and_prompt_paths_to_agent(self) -> None:
+        worker = load_worker()
+        preflight = {
+            "autopublish_video": {
+                "ok": True,
+                "status": "copied",
+                "target": "/tmp/exact_COMPLETED.mp4",
+            },
+            "lazyedit_context": {
+                "correction_prompt_file": "/tmp/correction.md",
+                "metadata_prompt_file": "/tmp/metadata.md",
+            },
+        }
+
+        compact = worker.compact_worker_preflight_for_agent(preflight)
+
+        self.assertEqual(
+            compact["autopublish_video"]["target"],
+            "/tmp/exact_COMPLETED.mp4",
+        )
+        self.assertIn(
+            "/tmp/correction.md",
+            compact["lazyedit_context"]["context_paths"],
+        )
+        self.assertIn(
+            "/tmp/metadata.md",
+            compact["lazyedit_context"]["context_paths"],
+        )
 
     def test_pending_manual_xyq_lazyedit_handoff_merges_and_closes_target(self) -> None:
         worker = load_worker()
@@ -1716,6 +1785,9 @@ stderr: noisy internal trace
         self.assertIn("scripts/lazyedit_publish.py", str(calls[0]["prompt"]))
         self.assertIn("--correction-prompt-file", str(calls[0]["prompt"]))
         self.assertIn("--metadata-prompt-file", str(calls[0]["prompt"]))
+        self.assertIn("Submit the durable LazyEdit job with `--no-wait`", str(calls[0]["prompt"]))
+        self.assertIn("do not hold this agent turn with `--wait`", str(calls[0]["prompt"]))
+        self.assertIn("deterministic worker poststage owns long monitoring", str(calls[0]["prompt"]))
         self.assertIn("verification gate", str(calls[0]["prompt"]))
         self.assertIn("Do not stop after a successful no-publish pass", str(calls[0]["prompt"]))
         self.assertIn("LALACHAN/RaraXia/AyaChan/SasaKun story-video generation", str(calls[0]["prompt"]))
@@ -1884,6 +1956,247 @@ stderr: noisy internal trace
         self.assertIn("Follow every safe, explicit instruction", str(calls[0]["prompt"]))
         self.assertIn("do not collapse the request to a smaller hardcoded action", str(calls[0]["prompt"]))
         self.assertIn("cheat_sheet", task["routine_contract"])
+
+    def test_existing_video_publish_runs_agent_before_pipeline_verifier(self) -> None:
+        worker = load_worker()
+        order: list[str] = []
+        policies: list[dict[str, object]] = []
+        task = {
+            "id": "publish-exact-video",
+            "chat": "My devices",
+            "request": "Publish this exact video to YouTube.",
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_allowed": True,
+            },
+            "routine": {"id": "video_publish_existing"},
+        }
+
+        def agent(_task: dict, policy: dict) -> str:
+            order.append("agent")
+            policies.append(dict(policy))
+            return '{"message":"LazyEdit job submitted","files":[],"confirmation":""}'
+
+        def verifier(_task: dict) -> str:
+            order.append("verify")
+            return '{"message":"publish running","files":[],"confirmation":""}'
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(worker, "worker_artifact_dir", return_value=Path(tmp)),
+                mock.patch.object(
+                    worker,
+                    "prepare_worker_preflight",
+                    return_value={
+                        "autopublish_video": {
+                            "ok": True,
+                            "status": "copied",
+                            "target": str(Path(tmp) / "exact_COMPLETED.mp4"),
+                        },
+                        "lazyedit_context": {
+                            "correction_prompt_file": str(Path(tmp) / "correction.md"),
+                            "metadata_prompt_file": str(Path(tmp) / "metadata.md"),
+                        },
+                    },
+                ),
+                mock.patch.object(worker, "run_worker_agent_session", side_effect=agent),
+                mock.patch.object(worker, "deterministic_preflight_result", side_effect=verifier),
+                mock.patch.object(worker, "persist_task_progress"),
+            ):
+                result = worker.run_task_orchestrator(
+                    task,
+                    {
+                        "model": "auto-code-review",
+                        "reasoning_effort": "low",
+                        "sandbox": "danger-full-access",
+                        "timeout_seconds": 120,
+                    },
+                )
+
+        self.assertIn("publish running", result)
+        self.assertEqual(order, ["agent", "verify"])
+        self.assertEqual(policies[0]["model"], "gpt-5.6-sol")
+        self.assertEqual(policies[0]["reasoning_effort"], "low")
+        self.assertEqual(
+            task["orchestrator"]["last_action"],
+            "verify_or_recover_publish_after_agent",
+        )
+
+    def test_lazyedit_null_video_list_is_temporary_unavailability(self) -> None:
+        worker = load_worker()
+        with mock.patch.object(
+            worker,
+            "lazyedit_api_get",
+            return_value={"videos": None},
+        ):
+            videos = worker.lazyedit_videos()
+
+        self.assertEqual(videos, [])
+
+    def test_known_lazyedit_video_id_uses_exact_publish_queue_stem(self) -> None:
+        worker = load_worker()
+        autopub = {
+            "target_name": "exact_trip_COMPLETED.mp4",
+            "target": "/tmp/exact_trip_COMPLETED.mp4",
+        }
+
+        with mock.patch.object(
+            worker,
+            "lazyedit_api_get",
+            return_value={
+                "jobs": [
+                    {
+                        "video_id": 495,
+                        "filename": "exact_trip_COMPLETED.zip",
+                        "status": "done",
+                    },
+                    {
+                        "video_id": 494,
+                        "filename": "nearby_trip_COMPLETED.zip",
+                        "status": "done",
+                    },
+                ]
+            },
+        ):
+            video_id = worker.known_lazyedit_video_id_for_autopub(autopub)
+
+        self.assertEqual(video_id, 495)
+
+    def test_existing_video_publish_agent_caps_legacy_xhigh_policy(self) -> None:
+        worker = load_worker()
+
+        policy = worker.existing_video_publish_agent_policy(
+            {
+                "model": "gpt-5.5",
+                "reasoning_effort": "xhigh",
+                "timeout_seconds": 1200,
+            }
+        )
+
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["reasoning_effort"], "medium")
+        self.assertEqual(policy["timeout_seconds"], worker.timeout_for_effort("medium"))
+        self.assertTrue(policy["reuse_session"])
+
+    def test_existing_verified_publish_bypasses_agent_session(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "Publish this exact video.",
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_allowed": True,
+            },
+            "preflight": {
+                "autopublish_video": {
+                    "ok": True,
+                    "target": "/tmp/exact_COMPLETED.mp4",
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(worker, "known_lazyedit_video_id_for_autopub", return_value=495),
+            mock.patch.object(
+                worker,
+                "verify_lazyedit_publish_stage",
+                return_value={
+                    "verified": True,
+                    "stage": "published_verified",
+                    "video_id": 495,
+                },
+            ),
+        ):
+            supervise = worker.should_agent_supervise_existing_video_publish(task)
+
+        self.assertFalse(supervise)
+        self.assertEqual(task["publish_agent_bypassed"]["stage"], "published_verified")
+        self.assertEqual(task["publish_agent_bypassed"]["video_id"], 495)
+
+    def test_publish_waiting_login_does_not_escalate_worker_model(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "Publish this video to Shipinhao.",
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_allowed": True,
+            },
+        }
+        result = json.dumps(
+            {
+                "message": "Waiting for login.",
+                "publish_stage": {"stage": "waiting_login", "video_id": 495},
+            }
+        )
+
+        with (
+            mock.patch.object(
+                worker,
+                "choose_worker_policy",
+                return_value={
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "medium",
+                    "timeout_seconds": 600,
+                },
+            ),
+            mock.patch.object(worker, "run_worker_codex_once", return_value=result) as run,
+            mock.patch.object(worker, "escalated_policy") as escalate,
+        ):
+            actual = worker.run_worker_codex(task)
+
+        self.assertEqual(actual, result)
+        self.assertEqual(run.call_count, 1)
+        escalate.assert_not_called()
+        self.assertFalse(task["worker_result_exhausted"])
+
+    def test_running_agent_supervised_publish_is_not_reissued(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "exact_COMPLETED.mp4"
+            video.write_bytes(b"video")
+            task = {
+                "request": "Publish this video to YouTube.",
+                "route_decision": {
+                    "route_kind": "publish_video",
+                    "public_publish_allowed": True,
+                },
+                "publish_agent_supervision": {"status": "completed"},
+                "preflight": {
+                    "lazyedit_context": {
+                        "correction_prompt_file": str(Path(tmp) / "correction.md"),
+                        "metadata_prompt_file": str(Path(tmp) / "metadata.md"),
+                    }
+                },
+            }
+            with (
+                mock.patch.object(
+                    worker,
+                    "known_lazyedit_video_id_for_autopub",
+                    return_value=72,
+                ),
+                mock.patch.object(
+                    worker,
+                    "verify_lazyedit_publish_stage",
+                    return_value={
+                        "verified": False,
+                        "stage": "publish_running",
+                        "video_id": 72,
+                        "requested_platforms": ["youtube"],
+                    },
+                ),
+                mock.patch.object(worker, "run_lazyedit_publish_command") as publish,
+            ):
+                raw = worker.run_deterministic_lazyedit_publish(
+                    task,
+                    {"ok": True, "target": str(video)},
+                )
+
+        payload = json.loads(raw or "{}")
+        publish.assert_not_called()
+        self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
+        self.assertEqual(
+            payload["publish_poststage_retry"]["outcome"]["status"],
+            "probe",
+        )
 
     def test_worker_backfills_instruction_contract_for_legacy_task(self) -> None:
         worker = load_worker()
@@ -5674,7 +5987,7 @@ stderr: noisy internal trace
         self.assertIn("旧视频", payload["message"])
         self.assertEqual(payload["files"], [])
 
-    def test_exact_video_preflight_success_runs_deterministic_lazyedit_publish(self) -> None:
+    def test_exact_video_preflight_success_does_not_duplicate_running_publish(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "exact_video_COMPLETED.mp4"
@@ -5710,8 +6023,7 @@ stderr: noisy internal trace
         self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
         self.assertFalse(payload["publish_stage"]["verified"])
         self.assertIn("publish_poststage_retry", payload)
-        self.assertEqual(calls[0]["platforms"], ["shipinhao", "youtube", "instagram"])
-        self.assertEqual(calls[0]["video_id"], 393)
+        self.assertEqual(calls, [])
 
     def test_exact_video_publish_falls_back_to_artifact_source_path(self) -> None:
         worker = load_worker()
@@ -5746,7 +6058,7 @@ stderr: noisy internal trace
         self.assertEqual(seen, [source])
         self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
 
-    def test_exact_video_publish_uses_known_lazyedit_video_id_from_source_task(self) -> None:
+    def test_exact_video_publish_uses_known_id_without_duplicate_running_publish(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "quoted_video_COMPLETED.mp4"
@@ -5779,7 +6091,7 @@ stderr: noisy internal trace
 
         payload = json.loads(raw or "{}")
         wait_import.assert_not_called()
-        self.assertEqual(calls[0]["video_id"], 404)
+        self.assertEqual(calls, [])
         self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
 
     def test_exact_video_publish_requires_terminal_platform_verification(self) -> None:
@@ -6098,11 +6410,17 @@ stderr: noisy internal trace
                     "lazyedit_remote_blocker",
                     return_value={"stage": "waiting_login", "kind": "remote_login_required", "message": "Remote login required."},
                 ):
-                    raw = worker.deterministic_existing_video_publish_poststage_result(task)
+                    with mock.patch.object(
+                        worker,
+                        "fetch_remote_publish_login_artifacts",
+                        return_value=["/tmp/shipinhao-login-qr.png"],
+                    ):
+                        raw = worker.deterministic_existing_video_publish_poststage_result(task)
 
         payload = json.loads(raw or "{}")
         self.assertEqual(payload["publish_stage"]["stage"], "waiting_login")
         self.assertIn("Please complete the platform login", payload["confirmation"])
+        self.assertEqual(payload["files"], ["/tmp/shipinhao-login-qr.png"])
         self.assertIn("poststage", payload)
         self.assertNotIn("publish_poststage_retry", payload)
 

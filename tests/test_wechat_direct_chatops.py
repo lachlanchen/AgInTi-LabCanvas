@@ -3274,6 +3274,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertIsNotNone(route)
         assert route is not None
+        self.assertEqual(route["ack"], "")
         self.assertIn("YouTube", route["task"])
         self.assertIn("summarizing", route["task"])
         self.assertTrue(direct_chatops.should_respond(config, {}, self.row("summarize this link https://example.com/article")))
@@ -3294,6 +3295,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertIsNotNone(route)
         assert route is not None
+        self.assertEqual(route["ack"], "")
         self.assertEqual(route["route_decision"]["route_kind"], "research_or_summary")
         self.assertEqual(route["route_decision"]["source_policy"], "current_plus_explicit_refs")
         self.assertIn("mp.weixin/Gongzhonghao", route["task"])
@@ -3321,6 +3323,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertIsNotNone(route)
         assert route is not None
+        self.assertEqual(route["ack"], "")
         self.assertEqual(route["route_decision"]["route_kind"], "research_or_summary")
         self.assertIn("Shipinhao/视频号/Finder", route["task"])
         self.assertIn("Yuanbao/transcript/summary comments", route["task"])

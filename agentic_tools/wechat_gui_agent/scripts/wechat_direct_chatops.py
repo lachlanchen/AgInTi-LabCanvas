@@ -2520,7 +2520,9 @@ def immediate_task_route(
         f"{lalachan_context}"
         f"{career_context}"
     )
-    ack = task_ack_text(config, route_decision)
+    # The read-later worker is the one substantive responder. A transport ACK
+    # for the same source adds noise and can look like a second analysis.
+    ack = "" if link_inbox_summary_task else task_ack_text(config, route_decision)
     return {"ack": ack, "task": task, "route_decision": route_decision}
 
 
@@ -5489,7 +5491,8 @@ For personal organizer chat purpose:
             organizer_rules += """
 - For a web-clip/link inbox, shared links/cards/media are saved and should usually become ACK+TASK when they are source material worth reading: mp.weixin/Gongzhonghao articles, Shipinhao/视频号/Finder shares, GitHub repos, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, screenshots, files, videos, and ordinary webpages.
 - A silent save is acceptable only for obvious duplicates, trivial side chat, or clearly non-actionable noise. When in doubt for a shared source, queue a research_or_summary worker task.
-- For summaries of papers, GitHub repos, technical articles, WeChat articles, and useful video/channel shares, ask the worker to return concise chat highlights plus Markdown/PDF artifacts when possible.
+- For a source-only share that becomes a worker task, prefer silent enqueue instead of a route-agent analysis or acknowledgement. The worker owns the one substantive source-grounded response. Reply immediately only when the current message contains a direct question that can be usefully answered before source reading.
+- For summaries of papers, GitHub repos, technical articles, WeChat articles, and useful video/channel shares, ask the worker for one concise natural chat summary. Keep Markdown/PDF/evidence local unless the current message explicitly requests a report or file.
 """
     research_rules = ""
     if is_research_chat(config):

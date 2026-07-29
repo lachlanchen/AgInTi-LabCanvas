@@ -776,6 +776,101 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(captured[0]["route_decision"]["scheduled_group_inspiration"])
         self.assertIn("substantive content", captured[0]["request"])
 
+    def test_group_inspiration_uses_exact_chat_durable_memory(self) -> None:
+        daily = load_daily()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "history.sqlite"
+            queue = root / "queue.jsonl"
+            knowledge = root / "wecom_member_knowledge.sqlite"
+            with sqlite3.connect(knowledge) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE knowledge_items (
+                        id TEXT PRIMARY KEY,
+                        member_key TEXT,
+                        chat TEXT,
+                        kind TEXT,
+                        title TEXT,
+                        content TEXT,
+                        updated_at TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO knowledge_items
+                    (id, member_key, chat, kind, title, content, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "same",
+                            "member-a",
+                            "wecom:default:group:labagent",
+                            "insight",
+                            "Mechanobiology direction",
+                            "Connect organoid force maps with optical phenotyping.",
+                            "2026-07-28T10:00:00",
+                        ),
+                        (
+                            "other",
+                            "member-b",
+                            "wecom:default:group:other",
+                            "note",
+                            "Private other-group note",
+                            "This must never enter LabAgent context.",
+                            "2026-07-28T11:00:00",
+                        ),
+                    ],
+                )
+            with mock.patch.dict(
+                daily.os.environ,
+                {"WECOM_MEMBER_KNOWLEDGE_DB": str(knowledge)},
+                clear=False,
+            ):
+                memory = daily.historical_group_memory(
+                    history,
+                    "wecom:default:group:labagent",
+                    limit=24,
+                )
+                task = daily.build_group_inspiration_task(
+                    chat="wecom:default:group:labagent",
+                    account_id="default",
+                    chat_id="private-chat",
+                    chat_type="group",
+                    transport_channel="wecom_bot_websocket",
+                    topics=["organoids"],
+                    context=[
+                        {
+                            "direction": "inbound",
+                            "content": "Can imaging reveal mechanical transitions?",
+                        }
+                    ],
+                    historical_memory=memory,
+                    previous=[],
+                    prior_research=[],
+                    now=datetime(
+                        2026,
+                        7,
+                        29,
+                        12,
+                        0,
+                        tzinfo=ZoneInfo("Asia/Hong_Kong"),
+                    ),
+                    queue=queue,
+                    interval_seconds=10800,
+                )
+
+        self.assertEqual(len(memory), 1)
+        self.assertIn("mechanical transitions", task["request"])
+        self.assertIn("organoid force maps", task["request"])
+        self.assertNotIn("Private other-group note", task["request"])
+        self.assertEqual(
+            task["group_inspiration"]["historical_memory"][0]["kind"],
+            "insight",
+        )
+
     def test_group_inspiration_defers_while_exact_chat_has_active_work(self) -> None:
         daily = load_daily()
         with tempfile.TemporaryDirectory() as tmp:

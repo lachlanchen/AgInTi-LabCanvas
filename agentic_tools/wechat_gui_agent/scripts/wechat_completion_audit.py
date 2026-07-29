@@ -23,6 +23,12 @@ NEGATED_PDF_RE = re.compile(
     re.I | re.S,
 )
 PDF_REQUEST_RE = re.compile(r"(?:\bpdf\b|\.pdf\b|PDF)", re.I)
+SYNTHETIC_ATTACHMENT_INTAKE_RE = re.compile(
+    r"^(?:[^:\n]{1,80}:\s*)?New WeChat "
+    r"(?P<kind>voice|audio|video|image|file/link|file|link|attachment) "
+    r"item received\b.*$",
+    re.I,
+)
 
 
 def extract_current_request(value: Any) -> str:
@@ -44,8 +50,11 @@ def coverage_items(task: dict[str, Any]) -> list[dict[str, Any]]:
     original = str(task.get("original_request") or "").strip()
     if not original:
         original = extract_current_request(task.get("request"))
+    else:
+        original = extract_current_request(original)
     items: list[dict[str, Any]] = []
     if original:
+        original = normalize_auditable_request(original)
         items.append(
             {
                 "item_id": f"task:{str(task.get('id') or source_identity(source, fallback='source'))}",
@@ -105,6 +114,42 @@ def coverage_items(task: dict[str, Any]) -> list[dict[str, Any]]:
     for sequence, item in enumerate(numbered, start=1):
         item["sequence"] = sequence
     return numbered
+
+
+def normalize_auditable_request(value: Any) -> str:
+    """Remove monitor-authored attachment instructions from human intent.
+
+    The direct monitor prepends a synthetic intake sentence and raw metadata to
+    incoming attachments. Those fields are execution context, not another
+    request that the completion checker may turn into a duplicate summary.
+    Preserve a small default-intake requirement only for a truly naked upload.
+    """
+
+    lines = str(value or "").splitlines()
+    kept: list[str] = []
+    attachment_kinds: list[str] = []
+    skip_metadata = False
+    for line in lines:
+        stripped = line.strip()
+        match = SYNTHETIC_ATTACHMENT_INTAKE_RE.fullmatch(stripped)
+        if match:
+            attachment_kinds.append(match.group("kind").casefold())
+            skip_metadata = True
+            continue
+        if skip_metadata and stripped.casefold().startswith("metadata:"):
+            continue
+        skip_metadata = False
+        kept.append(line)
+    normalized = "\n".join(kept).strip()
+    if normalized:
+        return normalized
+    if attachment_kinds:
+        kind = attachment_kinds[-1]
+        return (
+            f"Incoming WeChat {kind} attachment: apply the configured default "
+            "intake behavior for this chat."
+        )
+    return str(value or "").strip()
 
 
 def source_identity(source: dict[str, Any], *, fallback: Any) -> str:
@@ -491,6 +536,7 @@ def completion_audit_prompt(
                 }
                 for path in (result.get("files") or [])
             ],
+            "publish_stage": publish_stage_for_audit(result),
         },
         "task_local_artifacts": local_artifact_inventory(task),
     }
@@ -509,7 +555,17 @@ Rules:
 - A direct answer may summarize the work, but claiming an outbound attachment
   exists is not coverage unless that file appears in `candidate_result.files`.
 - If a member explicitly requested a PDF, coverage requires both a useful direct answer and a `.pdf` artifact, unless a real login, approval, missing-source, or safety blocker is clearly stated.
+- Treat only `request_items[*].text` as human requirements. Words such as PDF,
+  Markdown, publication, or artifacts in candidate explanations, route labels,
+  system policies, or task-local filenames do not create a request.
+- A request item that says no PDF/report is the opposite of a PDF request. Do
+  not invent a missing artifact merely because the candidate correctly says it
+  did not attach one.
 - A quoted message is context unless the current request asks the agent to act on it.
+- A candidate `publish_stage.stage=published_verified` with `verified=true` is
+  terminal evidence for an explicit publication request. Do not demand a
+  separate attachment-metadata summary unless the human request explicitly
+  asks for one.
 - Do not demand publication, payment, account changes, deletion, or another irreversible action unless explicitly authorized by the current request.
 - Mark a legitimate blocker only when the candidate clearly explains why safe completion cannot proceed.
 - When a legitimate blocker directly answers one request item, include that item in `covered_item_ids`; do not use one blocked item to cover unrelated messages.
@@ -526,6 +582,40 @@ Return JSON only:
 Task packet:
 {json.dumps(payload, ensure_ascii=False, indent=2)}
 """
+
+
+def publish_stage_for_audit(result: dict[str, Any]) -> dict[str, Any]:
+    stage = result.get("publish_stage")
+    if not isinstance(stage, dict) and isinstance(result.get("data"), dict):
+        stage = result["data"].get("publish_stage")
+    if not isinstance(stage, dict):
+        return {}
+    local_jobs = stage.get("local_jobs") if isinstance(stage.get("local_jobs"), list) else []
+    remote_jobs = stage.get("remote_jobs") if isinstance(stage.get("remote_jobs"), list) else []
+    return {
+        "verified": bool(stage.get("verified")),
+        "stage": str(stage.get("stage") or ""),
+        "video_id": stage.get("video_id"),
+        "requested_platforms": normalize_string_list(stage.get("requested_platforms")),
+        "verified_platforms": normalize_string_list(stage.get("verified_platforms")),
+        "local_jobs": [
+            {
+                "id": item.get("id"),
+                "status": str(item.get("status") or ""),
+                "remote_status": str(item.get("remote_status") or ""),
+            }
+            for item in local_jobs[:8]
+            if isinstance(item, dict)
+        ],
+        "remote_jobs": [
+            {
+                "id": item.get("id"),
+                "status": str(item.get("status") or ""),
+            }
+            for item in remote_jobs[:8]
+            if isinstance(item, dict)
+        ],
+    }
 
 
 def extract_json_object(text: str) -> dict[str, Any] | None:
