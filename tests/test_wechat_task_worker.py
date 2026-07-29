@@ -203,6 +203,59 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(child["status"], "canceled_superseded")
         self.assertEqual(child["coverage_status"], "covered")
 
+    def test_reconcile_repairs_pdf_requirement_inferred_from_transport_policy(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "finder-780",
+                        "chat": "Shares",
+                        "status": "done",
+                        "request": (
+                            "Worker policy.\n\n"
+                            "Current coalesced request:\n"
+                            "Chen: New WeChat file/link item received; inspect its "
+                            "message metadata, card/link fields, and recent synced "
+                            "files/media, then summarize or process it.\n"
+                            "metadata: [WeChat video channel]\n"
+                            "title: Example\n\n"
+                            "Link/read-later inbox source received. Do not include "
+                            "PDF unless explicitly requested.\n"
+                            "Structured source text:\nExample"
+                        ),
+                        "message_coverage": {
+                            "status": "supplement_required",
+                            "expected_item_ids": ["task:finder-780"],
+                            "covered_item_ids": [],
+                            "unresolved_item_ids": ["task:finder-780"],
+                            "missing": [
+                                {
+                                    "item_id": "task:finder-780",
+                                    "requirement": "Create the explicitly requested PDF.",
+                                    "kind": "artifact",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            )
+
+            requeued = worker.reconcile_numbered_message_coverage(queue)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertEqual(requeued, 0)
+        self.assertEqual(stored["status"], "done")
+        self.assertEqual(stored["coverage_status"], "covered")
+        self.assertEqual(stored["message_coverage"]["missing"], [])
+        self.assertEqual(
+            stored["message_coverage"]["covered_item_ids"],
+            ["task:finder-780"],
+        )
+        self.assertEqual(stored["message_coverage"]["unresolved_item_ids"], [])
+
     def test_legacy_child_absent_from_parent_ledger_is_requeued(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

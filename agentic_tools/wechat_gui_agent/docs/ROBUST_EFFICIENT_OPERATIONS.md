@@ -1128,6 +1128,11 @@ evidence for local artifacts, not chat-facing content.
   erase messages that arrived after its claim. Store the complete focused
   current request in each interruption packet; exclude reusable policy wrappers
   and unrelated recent-history text instead of truncating the user's follow-up.
+- Completion auditing must derive artifact requirements only from focused human
+  request items. Synthetic attachment intake, source metadata, and transport
+  phrases such as "send PDF only when requested" are not user requests. Reject
+  an auditor-created PDF gap when no source item explicitly requests PDF, and
+  repair stored false-positive coverage rows without sending an unwanted file.
 - Do not spam progress. Nonterminal `generation_waiting`,
   `generation_poststage_pending`, and `publish_poststage_pending` states are
   internal queue state by default. WeChat should see one contextual ack, then a

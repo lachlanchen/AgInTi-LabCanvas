@@ -385,6 +385,170 @@ class WeChatCompletionAuditTests(unittest.TestCase):
             ),
         )
 
+    def test_link_inbox_policy_does_not_create_pdf_request(self) -> None:
+        task = {
+            "id": "finder-780",
+            "request": (
+                "Worker policy.\n\n"
+                "Current coalesced request:\n"
+                "Chen: New WeChat file/link item received; inspect its message "
+                "metadata, card/link fields, and recent synced files/media, then "
+                "summarize or process it.\n"
+                "metadata: [WeChat video channel]\n"
+                "title: Unsupported placeholder\n"
+                "url: https://support.weixin.qq.com/update/\n"
+                "channel: Example\n"
+                "channel_description: example video\n\n"
+                "Link/read-later inbox source received. Return one concise summary. "
+                "Do not include PDF unless explicitly requested.\n"
+                "Structured source text:\n[WeChat video channel]"
+            ),
+            "source": {"local_id": 780, "sender_display": "Chen"},
+        }
+
+        items = audit.coverage_items(task)
+
+        self.assertEqual(
+            items[0]["text"],
+            (
+                "Incoming WeChat file/link attachment: apply the configured "
+                "default intake behavior for this chat."
+            ),
+        )
+        self.assertFalse(audit.explicit_pdf_requested(items))
+
+    def test_link_inbox_interruption_policy_does_not_create_pdf_request(self) -> None:
+        envelope = (
+            "Chen: New WeChat file/link item received; inspect its message "
+            "metadata, card/link fields, and recent synced files/media, then "
+            "summarize or process it.\n"
+            "metadata: [WeChat video channel]\n"
+            "title: Example\n\n"
+            "Link/read-later inbox source received. Do not include PDF unless "
+            "explicitly requested.\n"
+            "Structured source text:\nExample"
+        )
+        task = {
+            "id": "finder-parent",
+            "request": (
+                "Current coalesced request:\n"
+                f"{envelope}"
+            ),
+            "interruptions": [
+                {
+                    "incoming_task_id": "finder-child",
+                    "request": envelope,
+                    "source": {"local_id": 781, "sender_display": "Chen"},
+                }
+            ],
+            "source": {"local_id": 780, "sender_display": "Chen"},
+        }
+
+        items = audit.coverage_items(task)
+
+        self.assertEqual(len(items), 2)
+        self.assertTrue(
+            all("default intake behavior" in item["text"] for item in items)
+        )
+        self.assertFalse(audit.explicit_pdf_requested(items))
+
+    def test_uploaded_pdf_metadata_does_not_request_outbound_pdf(self) -> None:
+        task = {
+            "id": "pdf-upload-146",
+            "request": (
+                "Current coalesced request:\n"
+                "Chen: New WeChat file upload received with no explicit "
+                "instruction; run source-scoped file intake first. Sync/save the "
+                "exact source attachment, record filename/type/size/checksum and "
+                "a task-scoped copy path, then safely inspect ZIP/Word/PDF/text "
+                "content and give a concise natural preliminary summary.\n"
+                "metadata: [WeChat file]\n"
+                "title: recent-items.zh.pdf\n"
+                "extension: pdf\n"
+                "size_bytes: 131684\n"
+                "md5: abc123"
+            ),
+            "source": {"local_id": 146, "sender_display": "Chen"},
+        }
+
+        items = audit.coverage_items(task)
+
+        self.assertEqual(
+            items[0]["text"],
+            (
+                "Incoming WeChat file attachment: apply the configured default "
+                "intake behavior for this chat."
+            ),
+        )
+        self.assertFalse(audit.explicit_pdf_requested(items))
+
+    def test_completion_model_cannot_invent_pdf_artifact_requirement(self) -> None:
+        task = {
+            "id": "finder-780",
+            "original_request": (
+                "Chen: New WeChat file/link item received; inspect its message "
+                "metadata, card/link fields, and recent synced files/media, then "
+                "summarize or process it.\n"
+                "metadata: [WeChat video channel]\n"
+                "title: Example"
+            ),
+            "source": {"local_id": 780, "sender_display": "Chen"},
+        }
+
+        def runner(_prompt: str, **_kwargs: object) -> dict:
+            return {
+                "ok": True,
+                "backend": "codex",
+                "model": "gpt-5.3-codex-spark",
+                "message": json.dumps(
+                    {
+                        "covered_item_ids": [],
+                        "missing": [
+                            {
+                                "item_id": "task:finder-780",
+                                "requirement": "Create the requested PDF.",
+                                "kind": "artifact",
+                            }
+                        ],
+                        "legitimate_blocker": False,
+                        "complexity": "low",
+                        "summary": "incorrect artifact inference",
+                    }
+                ),
+            }
+
+        result = audit.run_completion_audit(
+            task,
+            {"message": "这是一条视频号内容摘要。", "files": []},
+            runner=runner,
+        )
+
+        self.assertTrue(result["coverage_complete"])
+        self.assertEqual(result["covered_item_ids"], ["task:finder-780"])
+        self.assertEqual(result["missing"], [])
+
+    def test_unavailable_checker_does_not_block_without_deterministic_gap(self) -> None:
+        task = {
+            "id": "plain-1",
+            "original_request": "请简要说明这条消息。",
+            "source": {"local_id": 1},
+        }
+
+        def runner(_prompt: str, **_kwargs: object) -> dict:
+            raise TimeoutError("quota unavailable")
+
+        result = audit.run_completion_audit(
+            task,
+            {"message": "简要说明。", "files": []},
+            runner=runner,
+        )
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertTrue(result["coverage_complete"])
+        self.assertEqual(result["covered_item_ids"], ["task:plain-1"])
+        self.assertEqual(result["missing"], [])
+        self.assertFalse(result["repair_recommended"])
+
     def test_audit_packet_includes_bounded_terminal_publish_evidence(self) -> None:
         task = {
             "id": "publish-78",

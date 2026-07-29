@@ -25,8 +25,18 @@ NEGATED_PDF_RE = re.compile(
 PDF_REQUEST_RE = re.compile(r"(?:\bpdf\b|\.pdf\b|PDF)", re.I)
 SYNTHETIC_ATTACHMENT_INTAKE_RE = re.compile(
     r"^(?:[^:\n]{1,80}:\s*)?New WeChat "
-    r"(?P<kind>voice|audio|video|image|file/link|file|link|attachment) "
-    r"item received\b.*$",
+    r"(?P<kind>voice|audio|video|image|file/link|file upload|file|link|attachment) "
+    r"(?:item )?(?:received|transcribed)\b.*$",
+    re.I,
+)
+SYNTHETIC_ATTACHMENT_METADATA_RE = re.compile(
+    r"^(?:metadata|title|url|channel|channel_description|filename|extension|"
+    r"size_bytes|md5|sha256|mime|mime_type|local_id|server_id|object_id|"
+    r"duration|duration_seconds):",
+    re.I,
+)
+SYNTHETIC_ATTACHMENT_POLICY_RE = re.compile(
+    r"^(?:Link/read-later inbox source received\.|Structured source text:)",
     re.I,
 )
 
@@ -107,7 +117,9 @@ def coverage_items(task: dict[str, Any]) -> list[dict[str, Any]]:
                     or ""
                 ),
                 "source_id": source_identity(interruption_source, fallback=""),
-                "text": bounded_text(extract_current_request(text)),
+                "text": bounded_text(
+                    normalize_auditable_request(extract_current_request(text))
+                ),
             }
         )
     numbered = deduplicate_items(items)
@@ -133,10 +145,12 @@ def normalize_auditable_request(value: Any) -> str:
         stripped = line.strip()
         match = SYNTHETIC_ATTACHMENT_INTAKE_RE.fullmatch(stripped)
         if match:
-            attachment_kinds.append(match.group("kind").casefold())
+            attachment_kinds.append(match.group("kind").casefold().replace(" upload", ""))
             skip_metadata = True
             continue
-        if skip_metadata and stripped.casefold().startswith("metadata:"):
+        if attachment_kinds and SYNTHETIC_ATTACHMENT_POLICY_RE.match(stripped):
+            break
+        if skip_metadata and SYNTHETIC_ATTACHMENT_METADATA_RE.match(stripped):
             continue
         skip_metadata = False
         kept.append(line)
@@ -319,6 +333,29 @@ def run_completion_audit(
         )
         for index in range(0, len(items), batch_size)
     ]
+    statuses = {str(audit.get("status") or "") for audit in audits}
+    if statuses == {"unavailable"}:
+        missing_ids = {
+            str(item.get("item_id") or "")
+            for item in deterministic_missing
+        }
+        covered_ids = [
+            item_id for item_id in expected_ids if item_id not in missing_ids
+        ]
+        return {
+            "status": "unavailable",
+            "model": "",
+            "backend": "codex",
+            "coverage_complete": not deterministic_missing,
+            "expected_item_ids": expected_ids,
+            "covered_item_ids": covered_ids,
+            "missing": deterministic_missing,
+            "legitimate_blocker": False,
+            "repair_recommended": bool(deterministic_missing),
+            "complexity": "low",
+            "summary": "Completion checker unavailable; deterministic contracts only.",
+            "batch_count": len(audits),
+        }
     legitimately_blocked_ids = {
         item_id
         for audit in audits
@@ -360,10 +397,7 @@ def run_completion_audit(
     missing = merge_missing(missing, [])
     missing_ids = {str(item.get("item_id") or "") for item in missing}
     covered_ids = [item_id for item_id in covered_ids if item_id not in missing_ids]
-    statuses = {str(audit.get("status") or "") for audit in audits}
     status = "checked" if statuses == {"checked"} else "partial"
-    if statuses == {"unavailable"}:
-        status = "unavailable"
     complexities = [
         normalize_complexity(audit.get("complexity"))
         for audit in audits
@@ -453,13 +487,21 @@ def run_completion_audit_batch(
             items,
             ValueError("completion audit returned no JSON object"),
         )
-    missing = normalize_missing(payload.get("missing"))
+    missing, rejected_missing_ids = ground_model_missing_requirements(
+        items,
+        normalize_missing(payload.get("missing")),
+    )
     expected_ids = [str(item.get("item_id") or "") for item in items]
     covered_ids = [
         item_id
         for item_id in normalize_string_list(payload.get("covered_item_ids"))
         if item_id in expected_ids
     ]
+    covered_ids.extend(
+        item_id
+        for item_id in rejected_missing_ids
+        if item_id in expected_ids and item_id not in covered_ids
+    )
     decided_ids = set(covered_ids) | {
         str(item.get("item_id") or "") for item in missing
     }
@@ -489,6 +531,39 @@ def run_completion_audit_batch(
         "complexity": normalize_complexity(payload.get("complexity")),
         "summary": bounded_text(payload.get("summary"), max_chars=600),
     }
+
+
+def ground_model_missing_requirements(
+    items: list[dict[str, Any]],
+    missing: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], set[str]]:
+    """Reject artifact requirements created only by the completion model."""
+
+    by_id = {
+        str(item.get("item_id") or ""): item
+        for item in items
+        if str(item.get("item_id") or "")
+    }
+    grounded: list[dict[str, str]] = []
+    rejected_ids: set[str] = set()
+    for item in missing:
+        item_id = str(item.get("item_id") or "")
+        requirement = str(item.get("requirement") or "")
+        kind = str(item.get("kind") or "")
+        source = by_id.get(item_id, {})
+        source_text = str(source.get("text") or "")
+        claims_pdf = bool(PDF_REQUEST_RE.search(requirement)) or (
+            kind == "artifact" and ".pdf" in requirement.casefold()
+        )
+        source_requests_pdf = bool(PDF_REQUEST_RE.search(source_text)) and not bool(
+            NEGATED_PDF_RE.search(source_text)
+        )
+        if claims_pdf and not source_requests_pdf:
+            if item_id:
+                rejected_ids.add(item_id)
+            continue
+        grounded.append(item)
+    return grounded, rejected_ids
 
 
 def unavailable_audit(

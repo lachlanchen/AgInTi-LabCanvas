@@ -2766,6 +2766,16 @@ def reconcile_numbered_message_coverage(path: Path) -> int:
             )
             if not coverage:
                 continue
+            coverage, grounding_repaired = repair_ungrounded_pdf_coverage(
+                parent,
+                coverage,
+                now_text=now_text,
+            )
+            if grounding_repaired:
+                parent["message_coverage"] = coverage
+                parent["coverage_status"] = coverage["status"]
+                parent["coverage_grounding_repaired_at"] = now_text
+                changed = True
             item_id = f"task:{task_id}"
             covered = set(coverage.get("covered_item_ids") or [])
             unresolved = set(coverage.get("unresolved_item_ids") or [])
@@ -2846,6 +2856,63 @@ def reconcile_numbered_message_coverage(path: Path) -> int:
             write_tasks(path, tasks)
         fcntl.flock(lock, fcntl.LOCK_UN)
     return requeued
+
+
+def repair_ungrounded_pdf_coverage(
+    task: dict[str, Any],
+    coverage: dict[str, Any],
+    *,
+    now_text: str,
+) -> tuple[dict[str, Any], bool]:
+    """Drop stale PDF requirements that were inferred from transport policy."""
+
+    items = completion_coverage_items(task)
+    if completion_explicit_pdf_requested(items):
+        return coverage, False
+    missing = [
+        item
+        for item in coverage.get("missing") or []
+        if isinstance(item, dict)
+    ]
+    removed_ids = {
+        str(item.get("item_id") or "")
+        for item in missing
+        if "pdf" in str(item.get("requirement") or "").casefold()
+    }
+    if not removed_ids:
+        return coverage, False
+    kept_missing = [
+        item
+        for item in missing
+        if str(item.get("item_id") or "") not in removed_ids
+        or "pdf" not in str(item.get("requirement") or "").casefold()
+    ]
+    kept_missing_ids = {
+        str(item.get("item_id") or "")
+        for item in kept_missing
+    }
+    repaired_ids = removed_ids - kept_missing_ids
+    repaired = dict(coverage)
+    repaired["missing"] = kept_missing
+    repaired["unresolved_item_ids"] = [
+        item_id
+        for item_id in coverage.get("unresolved_item_ids") or []
+        if str(item_id) not in repaired_ids
+    ]
+    covered = list(coverage.get("covered_item_ids") or [])
+    for item_id in coverage.get("expected_item_ids") or []:
+        if (
+            str(item_id) in repaired_ids
+            and str(item_id) not in covered
+        ):
+            covered.append(str(item_id))
+    repaired["covered_item_ids"] = covered
+    repaired["status"] = (
+        "covered" if not repaired["unresolved_item_ids"] else "supplement_required"
+    )
+    repaired["grounding_repaired_at"] = now_text
+    repaired["grounding_repair"] = "removed_ungrounded_pdf_requirement"
+    return repaired, True
 
 
 def coverage_parent_terminal(task: dict[str, Any]) -> bool:

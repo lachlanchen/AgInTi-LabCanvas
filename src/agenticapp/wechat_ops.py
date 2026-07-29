@@ -925,6 +925,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "route and worker prompts preserve every safe explicit current instruction instead of shrinking to keyword matches",
             "queued worker tasks persist a machine-readable instruction contract",
             "legacy queued worker tasks backfill the instruction contract before execution",
+            "completion auditing cannot turn transport PDF policy into a user artifact request",
             "every coalesced source row keeps a hard numbered completion identity without a merge cap",
             "omitted numbered requirements receive one same-session repair and one independently queued supplement fallback",
             "explicit PDF requests require both a direct answer and a real PDF artifact",
@@ -986,6 +987,7 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
     direct_prefix = "tests.test_wechat_direct_chatops.WeChatDirectChatopsPolicyTests."
     backend_prefix = "tests.test_wechat_agent_backend.WeChatAgentBackendTests."
     gui_prefix = "tests.test_wechat_gui_send.WeChatGuiSendTests."
+    audit_prefix = "tests.test_wechat_completion_audit.WeChatCompletionAuditTests."
     return [
         {
             "id": "queued_task_has_transport_contract",
@@ -1186,6 +1188,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "legacy_task_instruction_contract_backfill",
             "test": worker_prefix + "test_worker_backfills_instruction_contract_for_legacy_task",
+        },
+        {
+            "id": "transport_pdf_policy_not_user_request",
+            "test": audit_prefix + "test_completion_model_cannot_invent_pdf_artifact_requirement",
         },
         {
             "id": "numbered_interruption_ledger_unbounded",
