@@ -38,6 +38,19 @@ except ImportError:  # Optional local OCR-normalization aid.
 ROOT = Path(__file__).resolve().parents[3]
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 TITLE_T2S = OpenCC("t2s") if OpenCC is not None else None
+TITLE_SCRIPT_FOLD = str.maketrans(
+    {
+        "備": "备",
+        "懶": "懒",
+        "鏈": "链",
+        "錢": "钱",
+        "設": "设",
+        "寫": "写",
+        "學": "学",
+        "掙": "挣",
+        "語": "语",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -1500,6 +1513,11 @@ def normalize_visible_chat_title(text: str, *, separator_hint: bool = False) -> 
     normalized = normalize_title(text)
     if TITLE_T2S is not None:
         normalized = normalize_title(TITLE_T2S.convert(normalized))
+    else:
+        # Exact target selection cannot depend on an optional OpenCC install.
+        # Fold only characters found in configured chat titles, then retain the
+        # existing bounded one-character OCR repair below.
+        normalized = normalize_title(normalized.translate(TITLE_SCRIPT_FOLD))
     if separator_hint:
         normalized = normalized.replace("一", "")
     return normalized

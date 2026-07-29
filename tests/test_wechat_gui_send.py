@@ -1058,6 +1058,30 @@ class WeChatGuiSendTests(unittest.TestCase):
         assert match is not None
         self.assertEqual(match["identity_mode"], "ocr-single-substitution")
 
+    def test_visible_chat_list_match_script_normalization_does_not_require_opencc(self):
+        module = load_wechat_gui_send()
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t10\t1\t1\t1\t66\t238\t188\t29\t90\tMEMO守作一外語一掙錢",
+            ]
+        )
+
+        with mock.patch.object(module, "TITLE_T2S", None):
+            match = module.visible_chat_list_match_from_tsv(
+                tsv,
+                module.TargetSpec(
+                    name="MEMO写作—外语—挣钱",
+                    query="MEMO写作",
+                    expected_title="MEMO写作—外语—挣钱",
+                    allow_title_guard_fallback=True,
+                ),
+            )
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match["identity_mode"], "ocr-single-substitution")
+
     def test_visible_chat_list_match_rejects_multiple_ocr_substitutions(self):
         module = load_wechat_gui_send()
         tsv = "\n".join(
