@@ -315,6 +315,41 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             [f"child-{index}" for index in range(1, 26)],
         )
 
+    def test_task_interruption_keeps_complete_focused_request(self) -> None:
+        worker = load_worker()
+        policy_prefix = "Reusable worker policy. " * 500
+        focused = (
+            "Chen: summarize the first source carefully.\n"
+            "Chen: compare it with the second source and answer both requests."
+        )
+        incoming = {
+            "id": "child-focused",
+            "request": (
+                f"{policy_prefix}\n\n"
+                "Current coalesced request:\n"
+                f"{focused}\n\n"
+                "Recent history:\n"
+                "Old unrelated chat history."
+            ),
+            "original_request": "fallback text",
+            "source": {
+                "message_table": "messages",
+                "local_id": 27,
+                "sender": "member-a",
+            },
+        }
+
+        interruption = worker.build_task_interruption({"id": "parent"}, incoming)
+
+        self.assertEqual(interruption["request"], focused)
+        self.assertEqual(
+            interruption["request_excerpt"],
+            "Chen: summarize the first source carefully. "
+            "Chen: compare it with the second source and answer both requests.",
+        )
+        self.assertNotIn("Reusable worker policy", interruption["request"])
+        self.assertNotIn("Old unrelated chat history", interruption["request"])
+
     def test_worker_response_policy_is_exact_chat_and_transport_scoped(self) -> None:
         worker = load_worker()
         echomind = worker.worker_response_policy({"chat": "EchoMind", "route": {"transport": "wechat"}})
@@ -8998,6 +9033,173 @@ stderr: noisy internal trace
         self.assertIsNone(claimed)
         self.assertEqual(rows[0]["status"], "worker_abandoned")
         self.assertEqual(rows[0]["abandoned_reason"], "claiming_worker_process_ended")
+
+    def test_claim_next_pending_recovers_recent_safe_dead_worker_once(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "research-1",
+                        "chat": "Shares",
+                        "request": "read this source",
+                        "routine": {"id": "research_summary"},
+                        "status": "worker_abandoned",
+                        "abandoned_at": datetime.now().isoformat(timespec="seconds"),
+                        "abandoned_reason": "claiming_worker_process_ended",
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            rows = worker.read_tasks(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], "research-1")
+        self.assertEqual(claimed["status"], worker.CLAIMED_STATUS)
+        self.assertEqual(claimed["dead_worker_recovery_count"], 1)
+        self.assertNotIn("abandoned_reason", claimed)
+        self.assertEqual(rows[0]["dead_worker_recovery_history"][0]["attempt"], 1)
+
+    def test_claim_next_pending_does_not_recover_old_abandoned_task(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "research-old",
+                        "chat": "Shares",
+                        "request": "old source",
+                        "routine": {"id": "research_summary"},
+                        "status": "worker_abandoned",
+                        "abandoned_at": "2000-01-01T00:00:00",
+                        "abandoned_reason": "claiming_worker_process_ended",
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            rows = worker.read_tasks(queue)
+
+        self.assertIsNone(claimed)
+        self.assertEqual(rows[0]["status"], "worker_abandoned")
+        self.assertNotIn("dead_worker_recovery_count", rows[0])
+
+    def test_claim_next_pending_does_not_recover_publication_after_dead_worker(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "publish-abandoned",
+                        "chat": "My devices",
+                        "request": "publish the exact video",
+                        "routine": {"id": "video_publish_existing"},
+                        "status": "worker_abandoned",
+                        "abandoned_at": datetime.now().isoformat(timespec="seconds"),
+                        "abandoned_reason": "claiming_worker_process_ended",
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertIsNone(claimed)
+        self.assertEqual(stored["status"], "worker_abandoned")
+        self.assertNotIn("dead_worker_recovery_count", stored)
+
+    def test_claim_next_pending_serializes_active_tasks_per_chat(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            now_text = datetime.now().isoformat(timespec="seconds")
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "shares-active",
+                        "chat": "Shares",
+                        "status": worker.CLAIMED_STATUS,
+                        "worker_id": "pid:111",
+                        "claimed_at": now_text,
+                    },
+                    {
+                        "id": "shares-next",
+                        "chat": "Shares",
+                        "status": "pending",
+                        "created_at": now_text,
+                    },
+                    {
+                        "id": "research-next",
+                        "chat": "LazyResearch",
+                        "status": "pending",
+                        "created_at": now_text,
+                    },
+                ],
+            )
+
+            with mock.patch.object(worker, "process_alive", return_value=True):
+                claimed = worker.claim_next_pending(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], "research-next")
+
+    def test_rewrite_task_preserves_interruptions_added_after_worker_claim(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            current = {
+                "id": "shares-active",
+                "chat": "Shares",
+                "status": worker.CLAIMED_STATUS,
+                "worker_id": "pid:111",
+                "claimed_at": "2026-07-29T12:00:00",
+                "request": "Current coalesced request:\nSummarize the first source.",
+                "interruptions": [
+                    {
+                        "at": "2026-07-29T12:01:00",
+                        "incoming_task_id": "shares-next",
+                        "source": {
+                            "message_table": "messages",
+                            "server_id": "srv-2",
+                            "local_id": 2,
+                        },
+                        "request": "Compare it with the second source too.",
+                        "request_excerpt": "Compare it with the second source too.",
+                    }
+                ],
+                "interruption_pending": True,
+                "interruption_count": 1,
+                "last_interruption_at": "2026-07-29T12:01:00",
+            }
+            worker.write_tasks(queue, [current])
+            stale_worker_snapshot = {
+                "id": "shares-active",
+                "chat": "Shares",
+                "status": worker.CLAIMED_STATUS,
+                "worker_id": "pid:111",
+                "claimed_at": "2026-07-29T12:00:00",
+                "request": "Current coalesced request:\nSummarize the first source.",
+                "worker_progress": "reading",
+            }
+
+            worker.rewrite_task(queue, stale_worker_snapshot)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertEqual(stored["worker_progress"], "reading")
+        self.assertTrue(stored["interruption_pending"])
+        self.assertEqual(stored["interruption_count"], 1)
+        self.assertEqual(stored["interruptions"][0]["incoming_task_id"], "shares-next")
+        self.assertIn("Compare it with the second source too.", stored["request"])
 
     def test_worker_sandbox_can_be_downgraded_by_env(self) -> None:
         worker = load_worker()

@@ -1118,6 +1118,16 @@ evidence for local artifacts, not chat-facing content.
   prevents today’s LALACHAN story request from being merged into an old stale
   Xiaoyunque task. When an interruption is accepted, stale worker output is
   suppressed and the task is requeued for the same per-chat worker session.
+- Serialize worker claims by exact chat. Two workers may handle different
+  chats in parallel, but must not concurrently resume the same persistent chat
+  session. When a worker process ends unexpectedly, recover at most one recent
+  safe, non-paid task within the bounded recovery window. Never automatically
+  replay paid generation or another irreversible routine.
+- Queue persistence must merge monitor-owned interruptions into the worker's
+  task snapshot under the queue lock. A worker saving older progress must not
+  erase messages that arrived after its claim. Store the complete focused
+  current request in each interruption packet; exclude reusable policy wrappers
+  and unrelated recent-history text instead of truncating the user's follow-up.
 - Do not spam progress. Nonterminal `generation_waiting`,
   `generation_poststage_pending`, and `publish_poststage_pending` states are
   internal queue state by default. WeChat should see one contextual ack, then a
@@ -1213,7 +1223,7 @@ evidence for local artifacts, not chat-facing content.
 | `send_failed` | Non-deferred send failure. | Inspect evidence, fix target/title guard, then explicitly resend or set `WECHAT_WORKER_FAILED_SEND_MAX_RETRIES` for a repair run. Default workers do not auto-flush terminal failed rows. |
 | `expired_stale` | An ordinary pending task exceeded the 15-minute backlog TTL. | Leave terminal; explicitly replay the current request only if it is still wanted. |
 | `send_expired` | An outbound retry exceeded the 10-minute outbox TTL. | Leave terminal by default. Explicitly resend only after confirming relevance. The authenticated WeCom GUI reconnect hook may revive a bounded recent transport-send result under the constraints above. |
-| `worker_abandoned` | The process owning an ordinary `in_progress` task ended. | Leave terminal by default; explicitly reprocess only if the request is still wanted. |
+| `worker_abandoned` | The process owning an ordinary `in_progress` task ended and the row is outside the safe bounded recovery policy. | Leave terminal; explicitly reprocess only if the request is still wanted. Recent safe routines receive one automatic recovery attempt, while paid/irreversible routines never do. |
 | `worker_failed` | Backend failed or every fallback returned an empty delivery payload. | Fix source/tool issue; rerun only if safe. Never mark an empty payload `done`. |
 | `done` | Requested stages completed. | No action. |
 

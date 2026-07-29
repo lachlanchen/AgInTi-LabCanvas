@@ -905,7 +905,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
         "transport-resume": [
             "WeChat queue rows carry a message-transport execution contract",
             "nontrivial worker tasks resume the exact chat's Codex worker session",
-            "dead worker PID claims are reclaimed immediately after restart",
+            "recent safe dead-worker tasks receive one bounded restart recovery while unsafe or old rows remain abandoned",
+            "worker progress writes cannot erase same-chat interruptions that arrived after claim",
             "GUI sender alarm is aligned with the worker send timeout",
             "GUI text sends fail on unconsumed clipboard data and verify the exact composer contents before Enter",
             "GUI navigation rejects preview-text false positives while tolerating only bounded separator OCR variants",
@@ -996,7 +997,15 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         },
         {
             "id": "dead_worker_claim_abandoned",
-            "test": worker_prefix + "test_claim_next_pending_abandons_dead_worker_pid_without_replay",
+            "test": worker_prefix + "test_claim_next_pending_does_not_recover_publication_after_dead_worker",
+        },
+        {
+            "id": "safe_dead_worker_claim_recovered_once",
+            "test": worker_prefix + "test_claim_next_pending_recovers_recent_safe_dead_worker_once",
+        },
+        {
+            "id": "concurrent_interruption_survives_worker_progress",
+            "test": worker_prefix + "test_rewrite_task_preserves_interruptions_added_after_worker_claim",
         },
         {
             "id": "gui_send_alarm_aligned",

@@ -91,6 +91,8 @@ GENERATED_VIDEO_STALE_PAUSED_STATUS = "generation_stale_paused"
 GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS = "generation_poststage_pending"
 EXISTING_VIDEO_PUBLISH_PENDING_STATUS = "publish_poststage_pending"
 DEFAULT_STALE_IN_PROGRESS_SECONDS = 60 * 60
+DEFAULT_DEAD_WORKER_RECOVERY_MAX_AGE_SECONDS = 2 * 60 * 60
+DEFAULT_DEAD_WORKER_RECOVERY_LIMIT = 1
 DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS = 5 * 60
 DEFAULT_PENDING_TASK_TTL_SECONDS = 15 * 60
 DEFAULT_DEFERRED_SEND_TTL_SECONDS = 10 * 60
@@ -130,6 +132,16 @@ INTERRUPTIBLE_ROUTINE_IDS = {
     "presentation_deck",
 }
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
+DEAD_WORKER_RECOVERABLE_ROUTINES = {
+    "research_summary",
+    "career_strategy",
+    "editable_figure_image",
+    "story_script_generation",
+    "file_download_save",
+    "file_intake",
+    "grant_proposal",
+    "presentation_deck",
+}
 EFFORT_TIMEOUT_SECONDS = {
     "low": 120,
     "medium": 300,
@@ -3343,6 +3355,12 @@ def interruption_already_recorded(task: dict[str, Any], incoming_source: dict[st
 
 def build_task_interruption(target: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
+    raw_request = str(incoming.get("request") or "")
+    focused_request = (
+        extract_current_request_for_policy(raw_request)
+        or str(incoming.get("original_request") or "").strip()
+        or raw_request
+    )
     interruption = {
         "at": datetime.now().isoformat(timespec="seconds"),
         "mode": "same_chat_interruption",
@@ -3350,8 +3368,8 @@ def build_task_interruption(target: dict[str, Any], incoming: dict[str, Any]) ->
         "incoming_task_id": incoming.get("id"),
         "source": source,
         "route_decision": task_route_decision(incoming),
-        "request": str(incoming.get("request") or ""),
-        "request_excerpt": collapse_context_text(incoming.get("request"), max_len=1200),
+        "request": focused_request,
+        "request_excerpt": collapse_context_text(focused_request, max_len=6000),
         "context": incoming.get("context")[-8:] if isinstance(incoming.get("context"), list) else [],
         "instruction": "Newer same-chat user messages override stale story/video plan details.",
     }
@@ -3457,21 +3475,35 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
         now_text = now.isoformat(timespec="seconds")
         candidates: list[tuple[tuple[int, float, int], int, str]] = []
         changed = expire_stale_queue_entries(tasks, now)
+        active_chats = {
+            str(task.get("chat") or "")
+            for task in tasks
+            if str(task.get("status") or "") == CLAIMED_STATUS
+            and not claimed_worker_process_dead(task)
+            and str(task.get("chat") or "")
+        }
         for index, task in enumerate(tasks):
             status = str(task.get("status") or "")
-            if (
-                status == CLAIMED_STATUS
-                and claimed_worker_process_dead(task)
-                and os.environ.get("WECHAT_WORKER_RECLAIM_DEAD_TASKS", "0") != "1"
-            ):
-                task["status"] = "worker_abandoned"
-                task["abandoned_at"] = now_text
-                task["abandoned_reason"] = "claiming_worker_process_ended"
-                task.pop("worker_id", None)
-                task.pop("claimed_at", None)
+            if status == CLAIMED_STATUS and claimed_worker_process_dead(task):
+                if dead_worker_task_recoverable(task, now):
+                    prepare_dead_worker_recovery(task, now_text)
+                    status = "pending"
+                    tasks[index] = task
+                    changed = True
+                elif os.environ.get("WECHAT_WORKER_RECLAIM_DEAD_TASKS", "0") != "1":
+                    task["status"] = "worker_abandoned"
+                    task["abandoned_at"] = now_text
+                    task["abandoned_reason"] = "claiming_worker_process_ended"
+                    task.pop("worker_id", None)
+                    task.pop("claimed_at", None)
+                    tasks[index] = task
+                    changed = True
+                    continue
+            elif status == "worker_abandoned" and dead_worker_task_recoverable(task, now):
+                prepare_dead_worker_recovery(task, now_text)
+                status = "pending"
                 tasks[index] = task
                 changed = True
-                continue
             if generated_video_stale_pause_due(task, now):
                 task.setdefault("generation_pause_history", []).append(
                     {
@@ -3496,6 +3528,9 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
                 or generated_video_poststage_ready(task, now)
                 or existing_video_publish_poststage_ready(task, now)
             ):
+                chat = str(task.get("chat") or "")
+                if status == "pending" and chat and chat in active_chats:
+                    continue
                 candidates.append((claim_ready_sort_key(task, status, index), index, status))
         if not candidates:
             if changed:
@@ -3543,6 +3578,68 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
         tasks[index] = task
         write_tasks(path, tasks)
         return task
+
+
+def dead_worker_task_recoverable(task: dict[str, Any], now: datetime) -> bool:
+    """Resume one recent safe task after a worker process restart."""
+
+    if os.environ.get("WECHAT_WORKER_RECLAIM_DEAD_TASKS", "0") == "1":
+        return True
+    routine = task.get("routine")
+    routine_id = str(routine.get("id") or "") if isinstance(routine, dict) else str(routine or "")
+    if routine_id not in DEAD_WORKER_RECOVERABLE_ROUTINES:
+        return False
+    limit = max(
+        0,
+        int(
+            os.environ.get(
+                "WECHAT_WORKER_DEAD_RECOVERY_LIMIT",
+                str(DEFAULT_DEAD_WORKER_RECOVERY_LIMIT),
+            )
+        ),
+    )
+    if int(task.get("dead_worker_recovery_count") or 0) >= limit:
+        return False
+    timestamp = parse_iso_datetime(
+        str(task.get("abandoned_at") or task.get("claimed_at") or task.get("created_at") or "")
+    )
+    if timestamp is None:
+        return False
+    max_age = max(
+        0,
+        int(
+            os.environ.get(
+                "WECHAT_WORKER_DEAD_RECOVERY_MAX_AGE_SECONDS",
+                str(DEFAULT_DEAD_WORKER_RECOVERY_MAX_AGE_SECONDS),
+            )
+        ),
+    )
+    return (now - timestamp).total_seconds() <= max_age
+
+
+def prepare_dead_worker_recovery(task: dict[str, Any], now_text: str) -> None:
+    previous_worker = str(task.get("worker_id") or "")
+    previous_claimed_at = str(task.get("claimed_at") or "")
+    previous_abandoned_at = str(task.get("abandoned_at") or "")
+    count = int(task.get("dead_worker_recovery_count") or 0) + 1
+    task.setdefault("dead_worker_recovery_history", []).append(
+        {
+            "at": now_text,
+            "worker_id": previous_worker,
+            "claimed_at": previous_claimed_at,
+            "abandoned_at": previous_abandoned_at,
+            "reason": "claiming_worker_process_ended",
+            "attempt": count,
+        }
+    )
+    task["dead_worker_recovery_count"] = count
+    task["dead_worker_recovered_at"] = now_text
+    task["status"] = "pending"
+    task["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
+    task.pop("worker_id", None)
+    task.pop("claimed_at", None)
+    task.pop("abandoned_at", None)
+    task.pop("abandoned_reason", None)
 
 
 def claim_ready_sort_key(task: dict[str, Any], status: str, index: int) -> tuple[int, float, int]:
@@ -4425,6 +4522,79 @@ def worker_identity() -> str:
     return f"pid:{os.getpid()}"
 
 
+def merge_concurrent_task_interruptions(current: dict[str, Any], updated: dict[str, Any]) -> dict[str, Any]:
+    """Preserve monitor-owned interruptions when a worker saves an older snapshot."""
+
+    merged = dict(updated)
+    known_ids = {
+        str(item.get("incoming_task_id") or "")
+        for item in task_interruptions(merged)
+        if str(item.get("incoming_task_id") or "")
+    }
+    known_sources = {
+        (
+            str(source.get("message_table") or ""),
+            str(source.get("server_id") or ""),
+            str(source.get("local_id") or ""),
+        )
+        for item in task_interruptions(merged)
+        for source in [item.get("source") if isinstance(item.get("source"), dict) else {}]
+        if any(
+            (
+                str(source.get("message_table") or ""),
+                str(source.get("server_id") or ""),
+                str(source.get("local_id") or ""),
+            )
+        )
+    }
+    added = False
+    for interruption in task_interruptions(current):
+        source = interruption.get("source") if isinstance(interruption.get("source"), dict) else {}
+        incoming_id = str(interruption.get("incoming_task_id") or "")
+        source_key = (
+            str(source.get("message_table") or ""),
+            str(source.get("server_id") or ""),
+            str(source.get("local_id") or ""),
+        )
+        if (incoming_id and incoming_id in known_ids) or (any(source_key) and source_key in known_sources):
+            continue
+        merged.setdefault("interruptions", []).append(interruption)
+        merged["request"] = append_interruption_notice_to_request(merged.get("request"), interruption)
+        promote_story_target_for_generation_interruption(merged, interruption)
+        if incoming_id:
+            known_ids.add(incoming_id)
+        if any(source_key):
+            known_sources.add(source_key)
+        added = True
+    current_count = int(current.get("interruption_count") or len(task_interruptions(current)))
+    merged_count = len(task_interruptions(merged))
+    if added or current_count > int(updated.get("interruption_count") or len(task_interruptions(updated))):
+        merged["interruption_pending"] = True
+        merged["interruption_count"] = merged_count
+        for field in (
+            "last_interruption_at",
+            "last_interruption_source",
+            "interruption_policy",
+            "interrupt_requested_at",
+            "interrupt_delivery",
+        ):
+            if field in current:
+                merged[field] = current[field]
+    if current.get("manual_generated_video_handoff") and not updated.get("manual_generated_video_handoff"):
+        for field in (
+            "manual_handoffs",
+            "manual_generated_video_handoff",
+            "manual_handoff_pending",
+            "route_decision",
+            "status",
+            "completed_at",
+            "result",
+        ):
+            if field in current:
+                merged[field] = current[field]
+    return merged
+
+
 def rewrite_task(path: Path, updated: dict[str, Any]) -> None:
     lock_path = path.with_suffix(path.suffix + ".lock")
     with lock_path.open("w", encoding="utf-8") as lock:
@@ -4432,7 +4602,7 @@ def rewrite_task(path: Path, updated: dict[str, Any]) -> None:
         tasks = read_tasks(path)
         for index, task in enumerate(tasks):
             if task.get("id") == updated.get("id"):
-                tasks[index] = updated
+                tasks[index] = merge_concurrent_task_interruptions(task, updated)
                 break
         write_tasks(path, tasks)
 
