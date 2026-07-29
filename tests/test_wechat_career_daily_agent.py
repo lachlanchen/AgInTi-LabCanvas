@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -521,6 +522,7 @@ Why it matters: It turns reflection into evidence.
         self.assertIn(r"\item 一个普通事实", body)
         self.assertIn("完成一个小实验", body)
 
+    @unittest.skipUnless(shutil.which("xelatex"), "xelatex is required")
     def test_interactive_organizer_pdf_contains_acroform_fields(self):
         module = load_wechat_career_daily_agent()
         with tempfile.TemporaryDirectory() as tmp:
