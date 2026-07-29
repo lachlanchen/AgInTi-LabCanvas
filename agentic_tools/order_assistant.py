@@ -191,7 +191,7 @@ def provider_command(args: argparse.Namespace) -> tuple[list[str], dict[str, str
 
     script = TOOLS_ROOT / "jlcpcb_order_agent" / "scripts" / ("quick_order_china.sh" if args.site == "china" else "quick_order_global.sh")
     if args.action == "status":
-        launcher = TOOLS_ROOT / "jlcpcb_order_agent" / "scripts" / "launch_shared_chrome.sh"
+        launcher = TOOLS_ROOT / "jlcpcb_order_agent" / "scripts" / "jlc_browser_stack.sh"
         agent = TOOLS_ROOT / "jlcpcb_order_agent" / "scripts" / "jlc_order_cdp.py"
         return ["bash", "-lc", f"{shlex.quote(str(launcher))} && {shlex.quote(sys.executable)} {shlex.quote(str(agent))} status"], env
     if args.allow_submit:
@@ -215,7 +215,7 @@ def snapshot_command(args: argparse.Namespace) -> tuple[list[str], dict[str, str
         script = TOOLS_ROOT / "wenext_3d_order_agent" / "scripts" / ("quick_order_china.sh" if args.site == "china" else "quick_order_global.sh")
         return [str(script), "snapshot", "--status", "order_assistant_blocker", "--note", "Snapshot after order assistant blocker."], {}
     if args.provider == "jlc":
-        launcher = TOOLS_ROOT / "jlcpcb_order_agent" / "scripts" / "launch_shared_chrome.sh"
+        launcher = TOOLS_ROOT / "jlcpcb_order_agent" / "scripts" / "jlc_browser_stack.sh"
         agent = TOOLS_ROOT / "jlcpcb_order_agent" / "scripts" / "jlc_order_cdp.py"
         return ["bash", "-lc", f"{shlex.quote(str(launcher))} && {shlex.quote(sys.executable)} {shlex.quote(str(agent))} status"], {}
     return None

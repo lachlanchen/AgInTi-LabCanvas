@@ -217,6 +217,11 @@ Validate:
 - Manufacturing submission is a separate confirmed action. Package and preflight
   can run automatically; payment and irreversible submission require explicit
   authorization.
+- JLC web work uses
+  `agentic_tools/jlcpcb_order_agent/scripts/jlc_browser_stack.sh`: display
+  `:104`, noVNC `6124`, CDP `49237`, and the dedicated persistent JLC profile.
+  Reuse that process and existing tab. Never inject JLC into AgInTi
+  Browser/Xiaoyunque CDP `9344`, and do not stop or reopen XYQ for a JLC task.
 
 ## Blender and 3D Presentation
 

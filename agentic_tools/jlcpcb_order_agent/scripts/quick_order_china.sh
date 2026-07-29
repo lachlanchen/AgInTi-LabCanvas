@@ -11,7 +11,7 @@ ALLOW_SUBMIT="${JLCPCB_ALLOW_SUBMIT:-0}"
 SCREENSHOT="${JLCPCB_SCREENSHOT:-/tmp/jlcpcb-china-quick.png}"
 ZIP_ARG="${1:-}"
 
-"$SCRIPT_DIR/launch_shared_chrome.sh"
+"$SCRIPT_DIR/jlc_browser_stack.sh" start
 
 prepare_cmd=(
   python3 -u "$SCRIPT_DIR/jlc_order_cdp.py"

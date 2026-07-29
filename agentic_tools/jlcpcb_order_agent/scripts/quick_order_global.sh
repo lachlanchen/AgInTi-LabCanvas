@@ -10,7 +10,7 @@ ZIP_ARG="${1:-}"
 ALLOW_SUBMIT="${JLCPCB_ALLOW_SUBMIT:-0}"
 
 mkdir -p "$DOM_DIR"
-"$SCRIPT_DIR/launch_shared_chrome.sh"
+"$SCRIPT_DIR/jlc_browser_stack.sh" start
 
 if [[ -n "$ZIP_ARG" ]]; then
   python3 "$SCRIPT_DIR/jlc_order_cdp.py" --config "$CONFIG" --screenshot "$SCREENSHOT" \

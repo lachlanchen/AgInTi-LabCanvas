@@ -14,12 +14,18 @@ cp agentic_tools/jlcpcb_order_agent/config.example.json ~/.config/jlcpcb-order/p
 chmod 600 ~/.config/jlcpcb-order/private.json
 ```
 
-The live browser profile used for the HYBEC test order:
+The dedicated browser identity used for JLC ordering:
 
 ```text
-port: 49237
+X display: :104
+VNC: 127.0.0.1:5924
+noVNC: http://127.0.0.1:6124/vnc.html?host=127.0.0.1&port=6124&autoconnect=1&resize=scale
+CDP: http://127.0.0.1:49237
 profile: ~/.cache/jlcpcb-order-shared
 ```
+
+The historical profile directory name contains `shared`, but it is shared only
+by JLC order runs. It is not the AgInTi Browser/Xiaoyunque profile.
 
 Do not commit `~/.config/jlcpcb-order/private.json`; it may contain address, recipient, phone, and login preferences.
 
@@ -29,7 +35,8 @@ Set `order.confirm_mode` to `manual` for `手动确认订单` or `auto` for `系
 
 - `kicad-cli 10.0.3`: DRC/ERC, Gerber/drill export, render/STEP validation.
 - Python `playwright`: attaches to the existing Chrome DevTools Protocol port.
-- Google Chrome shared profile: keeps the JLC login persistent without launching a no-sandbox browser.
+- Dedicated Google Chrome profile: keeps the JLC login persistent without
+  touching AgInTi Browser/Xiaoyunque tabs or using a no-sandbox browser.
 - JLC China order page: `https://www.jlc.com/newOrder/#/pcb/newOnlinePlaceOrder`.
 - JLC global quote page: `https://cart.jlcpcb.com/quote?spm=jlcpcb.Public.2006`.
 - JLC desktop assistant: optional fallback, preferably installed locally at `~/.local/bin/jlc-assistant`.
@@ -46,11 +53,24 @@ python3 agentic_tools/order_assistant.py --provider jlc --site china --allow-sub
 
 If the website is difficult, the wrapper writes a private agent handoff packet under `~/.config/manufacturing-order-assistant/packets/`.
 
-Launch or reuse the persistent browser:
+Launch or reuse the dedicated persistent browser:
 
 ```bash
-agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
+agentic_tools/jlcpcb_order_agent/scripts/jlc_browser_stack.sh start
 ```
+
+The command is idempotent. It reuses the running JLC process and an existing JLC
+tab; it creates a tab only when the dedicated browser has no JLC page. Inspect
+without launching:
+
+```bash
+agentic_tools/jlcpcb_order_agent/scripts/jlc_browser_stack.sh config --json
+agentic_tools/jlcpcb_order_agent/scripts/jlc_browser_stack.sh status --json
+agentic_tools/jlcpcb_order_agent/scripts/jlc_browser_stack.sh url
+```
+
+`launch_shared_chrome.sh` remains as a compatibility wrapper. It now delegates
+to the isolated stack and rejects `JLCPCB_TAB_CDP_PORT`.
 
 Inspect browser status:
 

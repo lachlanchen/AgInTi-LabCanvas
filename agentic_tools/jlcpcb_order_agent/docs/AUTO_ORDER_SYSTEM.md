@@ -25,17 +25,22 @@ It is not a blind payment bot. Final submission requires explicit `--allow-submi
 
 ## Browser Architecture
 
-The stable route uses a normal Chrome profile with CDP enabled:
+The stable route uses a JLC-only Xvfb/noVNC browser and persistent Chrome
+profile:
 
 ```bash
-JLCPCB_CDP_PORT=49237 \
-JLCPCB_CHROME_PROFILE=~/.cache/jlcpcb-order-shared \
-agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
+agentic_tools/jlcpcb_order_agent/scripts/jlc_browser_stack.sh start
 ```
 
 The Python driver attaches with `playwright.chromium.connect_over_cdp("http://127.0.0.1:49237")`.
 
-This avoids the earlier one-off Playwright persistent-context path that triggered Chrome's unsupported/no-sandbox banner.
+The visible desktop is
+`http://127.0.0.1:6124/vnc.html?host=127.0.0.1&port=6124&autoconnect=1&resize=scale`.
+The fixed identity is display `:104`, VNC `5924`, noVNC `6124`, CDP `49237`,
+and profile `~/.cache/jlcpcb-order-shared`. This avoids the earlier one-off
+Playwright persistent-context path that triggered Chrome's
+unsupported/no-sandbox banner, and it prevents JLC from closing, replacing, or
+adding tabs to the AgInTi Browser/Xiaoyunque session.
 
 ## Live Order Steps
 
@@ -123,7 +128,7 @@ sqlite3 ~/.config/jlcpcb-order/orders.sqlite3 \
 For the same kind of bare-PCB prototype order, update `~/.config/jlcpcb-order/private.json`, then run:
 
 ```bash
-agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
+agentic_tools/jlcpcb_order_agent/scripts/jlc_browser_stack.sh start
 python3 agentic_tools/jlcpcb_order_agent/scripts/jlc_order_cdp.py prepare
 ```
 

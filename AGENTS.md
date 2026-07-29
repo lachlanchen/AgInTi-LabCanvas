@@ -69,6 +69,8 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `agentic_tools/labview_mcp_agent/scripts/probe_labview.sh`: check local LabVIEW/NI package state.
 - `agentic_tools/labview_mcp_agent/scripts/install_mcp_candidate.sh nineman`: clone/update the recommended LabVIEW-hosted MCP toolkit outside git.
 - `agentic_tools/labview_mcp_agent/scripts/install_labview_linux.sh --dry-run`: verify NI installer availability before attempting a proprietary LabVIEW install.
+- `agentic_tools/jlcpcb_order_agent/scripts/jlc_browser_stack.sh config --json`: inspect the dedicated JLC display/noVNC/CDP/profile contract without starting or changing any browser.
+- `agentic_tools/jlcpcb_order_agent/scripts/jlc_browser_stack.sh start`: start or reuse only the dedicated JLC browser stack on display `:104`, noVNC `6124`, and CDP `49237`.
 
 ## Coding Style & Naming Conventions
 
@@ -84,6 +86,13 @@ For workspace-agent changes, mock the backend in unit tests. Test model selectio
 ## Workspace Agent Rules
 
 The web and CLI must use the same `workspace_agent.py` runtime. Keep the web chat a direct transport to a persistent agent session; do not replace it with keyword-specific response branches. Domain-specific code remains useful as callable routines. Automatic routing reads `configs/model-policy.json`: `auto-code-review` low for chat and medium for ordinary durable/tool-capable work, with `gpt-5.6-sol` high/xhigh for complex implementation, deep synthesis, and presentation work. Explicit model/effort choices remain authoritative. `max` and Ultra normalize to xhigh. Preserve durable task records under ignored `output/`, return real artifacts to the canvas, and require explicit authorization for payment, manufacturing submission, public publication, credential changes, destructive deletion, or another irreversible external action.
+
+Keep JLC web ordering isolated from the existing AgInTi Browser/Xiaoyunque
+identity. JLC owns display `:104`, VNC `5924`, noVNC `6124`, CDP `49237`, and
+profile `~/.cache/jlcpcb-order-shared`. Reuse that stack and its existing tab;
+never use `JLCPCB_TAB_CDP_PORT` to inject JLC into AgInTi Browser CDP `9344`.
+Do not stop or reopen AgInTi Browser/XYQ while preparing a JLC order. The
+Books/LibGen browser remains independently owned by the Books project.
 
 ## Presentation Rules
 

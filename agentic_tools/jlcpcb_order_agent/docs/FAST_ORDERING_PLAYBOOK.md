@@ -8,22 +8,14 @@ sequence, see `TUNGSTEN_5V_400MA_ORDER_HANDOFF.md`.
 ## Fast Path
 
 ```bash
-agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
+agentic_tools/jlcpcb_order_agent/scripts/jlc_browser_stack.sh start
 agentic_tools/jlcpcb_order_agent/scripts/quick_order_china.sh path/to/gerber.zip
 ```
 
-If the noVNC desktop already has a browser such as Xiaoyunque open and you want
-JLC as a tab in that same window instead of a side-by-side Chrome window, target
-that browser's CDP port:
-
-```bash
-JLCPCB_TAB_CDP_PORT=9222 \
-  agentic_tools/jlcpcb_order_agent/scripts/launch_shared_chrome.sh
-```
-
-Chrome tabs share one profile. Use this tab mode for a clean VNC workspace; keep
-the normal JLC profile on port `49237` when preserving a logged-in JLC order
-session matters more than a single tab strip.
+Open the JLC-only desktop at
+`http://127.0.0.1:6124/vnc.html?host=127.0.0.1&port=6124&autoconnect=1&resize=scale`.
+Do not target the AgInTi Browser/Xiaoyunque CDP port. The compatibility launcher
+rejects `JLCPCB_TAB_CDP_PORT` so a JLC order cannot disturb unrelated tabs.
 
 For generated board folders with a public order config, prefer the config-driven
 wrapper:
@@ -65,7 +57,10 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 
 ## Script Map
 
-- `launch_shared_chrome.sh`: opens the persistent logged-in Chrome profile on CDP port `49237`; set `JLCPCB_TAB_CDP_PORT=9222` to open JLC as a tab in an existing noVNC Chrome session.
+- `jlc_browser_stack.sh`: starts, inspects, or stops the isolated JLC display,
+  noVNC bridge, CDP browser, and persistent profile.
+- `launch_shared_chrome.sh`: compatibility wrapper that delegates to
+  `jlc_browser_stack.sh start`; cross-browser tab mode is intentionally rejected.
 - `quick_order_china.sh`: wraps upload, setting fill, address/courier fill, order check, private DB record, optional submit.
 - `submit_board_order.py`: board-config wrapper that packages Gerbers, validates ERC/DRC, chooses size-aware finish, merges public board config with private recipient config, and delegates to the quick China/global flow.
 - `quick_order_global.sh`: opens global quote/cart flow, snapshots DOM, optionally submits selected cart item for review.
@@ -104,7 +99,7 @@ Default private config: `~/.config/jlcpcb-order/private.json`. Keep it mode `600
 | Generic `不需要` clicked wrong row | Automation clicked SMT or another option | Use `click_option_near_label(label, option)` instead of occurrence-based clicks. |
 | Courier still unfilled | Drawer says `快递方式 去填写` | Select exact text `顺丰电商标快`. This is the default China courier. |
 | Combined shipping rejected by SF | Page indicates SF does not support `并单发货` | Use `不同交期订单不一起发货`. |
-| Browser no-sandbox/unsupported banner | One-off Playwright browser created warnings | Use the persistent Chrome profile and CDP attach via `launch_shared_chrome.sh`. |
+| Browser no-sandbox/unsupported banner | One-off Playwright browser created warnings | Use the dedicated persistent Chrome profile and CDP attach via `jlc_browser_stack.sh start`. |
 | Success not detected | Submit stays ambiguous if only `pcbPlaceOrder` is recognized | Treat `pcbPlaceSuccess` and text `订单提交成功，请等待审核` as China success. |
 | Board dimensions not parsed | Drawer shows `板子尺寸 去填写` | Fill `input[placeholder='长']` and `input[placeholder='宽']` from board config in centimeters. |
 | Page retains old material/layer state | Drawer shows wrong material or layer count | Set `板材类别`, `板子层数`, and `出货方式` by row label every run. |

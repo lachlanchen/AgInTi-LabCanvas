@@ -18,7 +18,7 @@ if [[ ! -x "$ASSISTANT_BIN" && -x "$SYSTEM_ASSISTANT" ]]; then
   ASSISTANT_BIN="$SYSTEM_ASSISTANT"
 fi
 
-"$SCRIPT_DIR/launch_shared_chrome.sh"
+"$SCRIPT_DIR/jlc_browser_stack.sh" start
 
 prepare_cmd=(
   python3 "$SCRIPT_DIR/jlc_order_cdp.py"
