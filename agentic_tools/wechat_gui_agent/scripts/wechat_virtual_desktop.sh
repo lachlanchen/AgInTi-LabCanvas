@@ -61,7 +61,7 @@ launch_wechat() {
     -u QT_QPA_FONTDIR \
     -u QT_STYLE_OVERRIDE \
     DISPLAY="$DISPLAY_ID" XAUTHORITY= NO_AT_BRIDGE=1 QT_QPA_PLATFORM=xcb \
-    setsid -f /usr/bin/wechat >>"$APP_LOG" 2>&1
+    setsid -f /usr/bin/wechat 9>&- >>"$APP_LOG" 2>&1
 }
 
 wait_for_main_window() {

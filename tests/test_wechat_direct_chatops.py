@@ -16,6 +16,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "agentic_tools" / "wechat_gui_ag
 sys.path.insert(0, str(SCRIPTS))
 
 import wechat_direct_chatops as direct_chatops  # noqa: E402
+import wechat_chat_profiles as chat_profiles  # noqa: E402
 
 
 class WeChatDirectChatopsPolicyTests(unittest.TestCase):
@@ -97,6 +98,67 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertFalse(research["automatic_multilingual"])
         self.assertEqual(research["language_mode"], "match_requester_language")
         self.assertEqual(research["chat"], "懒人科研")
+
+    def test_renamed_groups_share_capabilities_and_keep_stable_sessions(self) -> None:
+        cases = (
+            ("LazyResearch", "lazyresearch", "懒人科研"),
+            ("🍓My devices", "my_devices", "🍓我的设备"),
+            ("Shares鏈接", "shares", "鏈接"),
+            ("MEMO写作—外语—挣钱", "writing_money", "写作 外语 挣钱"),
+            ("EchoMind", "echomind", "EchoMind"),
+        )
+        for chat_name, profile_id, session_scope in cases:
+            with self.subTest(chat=chat_name):
+                config = self.backend_chat_config(chat_name)
+                config["profile_id"] = profile_id
+                policy = direct_chatops.build_chat_response_policy(config)
+                profile = policy["capability_profile"]
+
+                self.assertEqual(profile["id"], profile_id)
+                self.assertEqual(profile["session_scope"], session_scope)
+                self.assertTrue(profile["explicit_request_overrides_focus"])
+                self.assertIn("cad_openscad_step_stl_3mf", profile["capabilities"])
+                self.assertIn("explicitly_authorized_video_publication", profile["capabilities"])
+                self.assertEqual(direct_chatops.agent_session_chat_name(config), session_scope)
+
+    def test_three_reference_profiles_are_full_templates_without_cross_chat_context(self) -> None:
+        lazyresearch = chat_profiles.profile_for_chat("LazyResearch")
+        my_devices = chat_profiles.profile_for_chat("🍓My devices")
+        labagent = chat_profiles.profile_for_chat(
+            "wecom:external-gui:group:opaque",
+            chat_purpose="labagent_research_drawing_and_design",
+        )
+
+        for profile in (lazyresearch, my_devices, labagent):
+            with self.subTest(profile=profile["id"]):
+                self.assertTrue(profile["template_profile"])
+                self.assertEqual(profile["template_family"], "omnipotent_labcanvas")
+                self.assertIn("cad_openscad_step_stl_3mf", profile["capabilities"])
+                self.assertIn("pcb_kicad_gerber", profile["capabilities"])
+                self.assertIn("lazyedit_video_processing", profile["capabilities"])
+                self.assertFalse(profile["cross_chat_context_allowed"])
+                self.assertFalse(profile["cross_chat_artifacts_allowed"])
+
+        self.assertNotIn(
+            "explicitly_authorized_video_publication",
+            labagent["capabilities"],
+        )
+        self.assertIn(
+            "explicitly_authorized_video_publication",
+            lazyresearch["capabilities"],
+        )
+
+    def test_echomind_focus_does_not_remove_explicit_worker_capabilities(self) -> None:
+        config = self.base_config()
+        prompt = direct_chatops.build_agent_route_prompt(
+            config,
+            self.row("请用 KiCad 设计 PCB 并输出 Gerber", local_id=9),
+            [self.row("请用 KiCad 设计 PCB 并输出 Gerber", local_id=9)],
+        )
+
+        self.assertIn("explicit_request_overrides_focus", prompt)
+        self.assertIn("pcb_kicad_gerber", prompt)
+        self.assertIn("A safe explicit request always overrides the focus", prompt)
 
     def test_monitor_checkpoints_inbound_cursor_before_agent_failure(self) -> None:
         config = self.base_config()
@@ -183,7 +245,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         try:
             def fake_route_agent(prompt: str, **kwargs: object) -> dict[str, object]:
                 self.assertEqual(kwargs["role"], "route")
-                self.assertIn("Every monitored chat, including EchoMind", prompt)
+                self.assertIn("Every monitored chat uses the same shared backend capability framework", prompt)
                 return {
                     "ok": True,
                     "message": json.dumps(
@@ -1148,6 +1210,43 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             (
                 "[WeChat file]\n"
                 "title: echomind-language-review-2026-07-26-3.pdf\n"
+                "size_bytes: 315708\n"
+                f"md5: {checksum}"
+            ),
+            sender="self",
+            local_type=49,
+            create_time=int(time.time()),
+        )
+
+        self.assertEqual(
+            direct_chatops.response_skip_reason(config, {}, row),
+            "self_outbound_file_echo",
+        )
+
+    def test_recent_inflight_outbound_file_is_not_reprocessed_after_uncertain_send(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        config["self_messages_text_only"] = False
+        checksum = "4f1dc78f5d2197687d6bbe2e2fb1c2d1"
+        direct_chatops.record_event(
+            chat_name="EchoMind",
+            action="file_send_intent",
+            direction="outbound",
+            status="sending",
+            db_path=Path(self.mirror_db),
+            metadata={
+                "file_identity": {
+                    "name": "echomind-language-review-2026-07-26.pdf",
+                    "size_bytes": 315708,
+                    "md5": checksum,
+                }
+            },
+        )
+        row = self.row(
+            (
+                "[WeChat file]\n"
+                "title: echomind-language-review-2026-07-26.pdf\n"
                 "size_bytes: 315708\n"
                 f"md5: {checksum}"
             ),

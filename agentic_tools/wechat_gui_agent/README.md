@@ -100,7 +100,7 @@ stages and artifact gates.
 
 ### Career / Writing / Money Agent
 
-`写作 外语 挣钱` and the `lachlanchan` DM have a dedicated
+`MEMO写作—外语—挣钱` and the `lachlanchan` DM have a dedicated
 `career_strategy` route. Messages about what to write, career direction,
 talent, monetization, opportunities, GitHub/lazying.art positioning, or
 practical money-making experiments are routed to a worker that can inspect
@@ -219,7 +219,7 @@ requests, explicit mentions, and configured shared-object summaries. If
 `ack_on_save` is enabled and no worker task was triggered, ordinary saved notes
 get a short deterministic receipt without a Codex call.
 
-Use `chat_purpose: "web_clip_inbox"` for a group such as `鏈接`, where the chat
+Use `chat_purpose: "web_clip_inbox"` for a group such as `Shares鏈接`, where the chat
 is mainly a read-later stream. Plain URLs, PDFs, images/screenshots,
 voice/audio, videos, forwarded webpage cards, mini programs, archives, CAD/PCB
 files, YouTube links, 视频号/Shipinhao shares, Bilibili links, contact/location
@@ -643,9 +643,16 @@ decrypted message contents.
 
 ## Chat Purpose Modes
 
-Keep one direct config per group. Research chats such as `懒人科研` should use
-`chat_purpose: "research"` and explicit triggers. Language-learning chats such
-as `EchoMind` can use:
+Keep one direct config per group. All groups use the shared capability framework
+in `scripts/wechat_chat_profiles.py`; a profile changes ordinary behavior and
+scheduled output only. Safe explicit requests can use the same research,
+artifact, CAD/PCB, Blender, presentation, media, and publication routines in
+every group. `LazyResearch`, `🍓My devices`, and WeCom `LabAgent` are the
+three reference templates; LabAgent keeps its existing shared-group ban on
+public video publication. Exact chats still have separate context, queues,
+files, delivery ledgers, and resumable sessions. `LazyResearch` uses the
+research profile. Language-learning chats
+such as `EchoMind` can use:
 
 ```json
 {

@@ -25,6 +25,33 @@ def load_wechat_gui_send():
 
 
 class WeChatGuiSendTests(unittest.TestCase):
+    def test_main_window_wait_ignores_startup_splash(self):
+        module = load_wechat_gui_send()
+        windows = [
+            module.Window("splash", 0, 0, 420, 320),
+            module.Window("main", 0, 0, 1020, 739),
+        ]
+        with (
+            mock.patch.object(module, "find_wechat_window", side_effect=windows),
+            mock.patch.object(module.time, "sleep"),
+        ):
+            selected = module.wait_for_main_wechat_window({}, timeout=2)
+
+        self.assertEqual(selected, windows[-1])
+
+    def test_main_window_wait_returns_small_window_after_timeout(self):
+        module = load_wechat_gui_send()
+        splash = module.Window("splash", 0, 0, 420, 320)
+        ticks = iter([0.0, 0.0, 1.0, 1.0])
+        with (
+            mock.patch.object(module, "find_wechat_window", return_value=splash),
+            mock.patch.object(module.time, "monotonic", side_effect=lambda: next(ticks)),
+            mock.patch.object(module.time, "sleep"),
+        ):
+            selected = module.wait_for_main_wechat_window({}, timeout=1)
+
+        self.assertEqual(selected, splash)
+
     def test_file_send_requires_explicit_send_flag(self):
         module = load_wechat_gui_send()
         with tempfile.TemporaryDirectory() as tmp:

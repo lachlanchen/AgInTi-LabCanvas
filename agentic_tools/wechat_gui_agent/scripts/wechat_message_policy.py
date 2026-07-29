@@ -21,6 +21,8 @@ SUCCESSFUL_OUTBOUND_STATUSES = {
     "done-sent",
     "waiting-confirmation-sent",
 }
+IN_FLIGHT_OUTBOUND_FILE_STATUS = "sending"
+IN_FLIGHT_OUTBOUND_FILE_WINDOW_SECONDS = 600
 
 
 def normalize_transport_text(text: str) -> str:
@@ -211,6 +213,45 @@ def recorded_outbound_file_identity(
         except (TypeError, ValueError):
             continue
         if abs(source_time - sent_time) <= max_delta:
+            return True
+    if source_time <= 0:
+        return False
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT events.metadata_json, events.created_at
+                FROM events
+                JOIN chats ON chats.id = events.chat_id
+                WHERE chats.name = ?
+                  AND events.action = 'file_send_intent'
+                  AND events.direction = 'outbound'
+                  AND events.status = ?
+                ORDER BY events.id DESC
+                LIMIT ?
+                """,
+                (
+                    chat_name,
+                    IN_FLIGHT_OUTBOUND_FILE_STATUS,
+                    max(1, int(limit)),
+                ),
+            ).fetchall()
+    except sqlite3.Error:
+        return False
+    intent_window = min(max_delta, IN_FLIGHT_OUTBOUND_FILE_WINDOW_SECONDS)
+    for metadata_json, created_at in rows:
+        try:
+            metadata = json.loads(str(metadata_json or "{}"))
+        except json.JSONDecodeError:
+            continue
+        candidate = metadata.get("file_identity") if isinstance(metadata, dict) else {}
+        if not isinstance(candidate, dict) or not file_identities_match(identity, candidate):
+            continue
+        try:
+            sent_time = datetime.fromisoformat(str(created_at)).timestamp()
+        except (TypeError, ValueError):
+            continue
+        if abs(source_time - sent_time) <= intent_window:
             return True
     return False
 

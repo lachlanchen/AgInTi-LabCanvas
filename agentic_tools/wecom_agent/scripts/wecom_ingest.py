@@ -24,6 +24,7 @@ if str(SHARED_AGENT_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SHARED_AGENT_SCRIPTS))
 
 from codex_quota_status import quota_warning_for_request  # noqa: E402
+from wechat_chat_profiles import profile_for_chat  # noqa: E402
 from wechat_agent_backend import run_agent_session  # noqa: E402
 from wechat_mirror import record_event  # noqa: E402
 from wechat_routines import (  # noqa: E402
@@ -792,15 +793,23 @@ def looks_like_grant_request(request: str) -> bool:
 
 def wecom_response_policy(chat: str) -> dict[str, Any]:
     """Return the fixed LabAgent policy for one exact official-WeCom chat."""
+    capability_profile = profile_for_chat(
+        "LabAgent",
+        profile_id="labagent",
+        chat_purpose="labagent_research_drawing_and_design",
+    )
     return {
         "scope": "exact_chat_only",
         "chat": chat,
+        "profile_id": "labagent",
         "chat_purpose": "labagent_research_drawing_and_design",
         "language_mode": "match_requester_language",
         "automatic_multilingual": False,
         "multilingual_only_when_explicitly_requested": True,
         "cross_chat_context_allowed": False,
         "cross_chat_artifacts_allowed": False,
+        "capability_profile": capability_profile,
+        "explicit_request_overrides_focus": True,
         "sender_attribution": "preserve_each_message_author",
         "native_reply_notification": "mention_current_sender",
         "multi_sender_policy": (

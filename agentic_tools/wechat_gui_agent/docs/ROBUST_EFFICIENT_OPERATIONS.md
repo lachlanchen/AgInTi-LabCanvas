@@ -1448,14 +1448,22 @@ daily career scheduler after reboot.
   from a stalled loop. Two consecutive stale checks restart only the `daily`
   scheduler window; they do not restart or log out WeCom clients.
 
-Set `LABCANVAS_HEALTH_ALERT_TRANSPORT=wecom-android` and
-`LABCANVAS_HEALTH_ALERT_CHAT=<allowlisted-group>` only in the ignored WeCom env.
+For this workstation, set `LABCANVAS_HEALTH_ALERT_TRANSPORT=wechat` and
+`LABCANVAS_HEALTH_ALERT_CHAT=🍓My devices` only in the ignored WeCom env. The
+single shared guard covers personal-WeChat, WeCom/LabAgent, queues, direct
+monitors, and daily/periodic schedules, but all operational degradation and
+recovery notices go only to the private device inbox. It never copies group
+messages, member context, files, or task output into the alert.
 Serious alerts are sent after three consecutive failed checks, keyed by the
 fault-set transition, and are cooldown/delivery-ledger deduplicated. A transient
 Codex quota error that succeeds through GPT-5.6 SOL or AgInTi fallback is not an
 alert; only a recent terminal task where every configured backend is exhausted
 is. Alert text contains health codes only, never chat text, raw IDs, secrets, or
 private paths.
+An Android relay poll that reports `WECOM_ANDROID_BUSY` while a serialized GUI
+operation is still in progress is ordinary bounded contention, not a stall.
+Only a stale busy poll, an ANR surface, or another unhealthy poll condition may
+trigger repair or an alert.
 
 Expected signs:
 
@@ -1683,26 +1691,98 @@ Stuck GUI sender:
   `wechat_virtual_desktop.sh restart-client`, which gracefully restarts only
   the official client on `:97` and reuses the existing profile. It does not
   restart monitors, workers, Xvfb, x11vnc, or noVNC.
+- The launched `/usr/bin/wechat` process explicitly closes the lifecycle lock
+  file descriptor. Otherwise the long-lived client would inherit the lock and
+  make every later guarded restart fail even after the launcher exited.
 - Timeouts older than the current client start are resolved evidence and cannot
   trigger another restart. The normal repair cooldown also prevents restart
   loops. After the client returns, the durable outbox retries the already
   generated result; no model work is repeated merely to repair delivery.
+- Daily career and organizer delivery failures use the same current-client
+  timeout signal. A generated report is persisted once, then delivery retries
+  use exponential backoff (30 minutes up to 4 hours) instead of taking the GUI
+  lane every minute. Restarting the scheduler reuses that exact report and does
+  not invoke the model again.
+- The `MEMO写作—外语—挣钱` daily organizer sends only its compiled PDF. Concrete
+  actions are represented by real PDF AcroForm checkboxes, while evidence and
+  non-action ideas remain ordinary text or bullets. A day is complete only
+  after the exact PDF send is verified.
+- The native file sender records an exact content identity before opening the
+  picker and again after verified submission. If submission succeeds but
+  screenshot verification becomes uncertain, the exact outbound WeChat
+  database echo reconciles the persisted delivery state without sending a
+  duplicate. The same recent in-flight identity prevents that outbound file
+  from being routed back as a new user upload.
+- Use `wechat_career_daily_agent.py retry --date YYYY-MM-DD --send
+  --attach-report` for artifact-only career recovery. It reuses the generated
+  bilingual PDFs and message and never invokes the career model.
+- WeChat can briefly expose a small startup window before the main chat shell.
+  The GUI sender waits a bounded 15 seconds for the main window before returning
+  `WECHAT_ENTRY_REQUIRED`; QR, login, lock, and exact-title guards remain
+  fail-closed.
 
-Link inbox and scheduled organizer delivery:
+Unified runtime and per-chat profiles:
 
-- `鏈接` defaults to one concise source-grounded chat summary. Research source
+- Every monitored chat uses one router, routine catalog, persistent worker
+  contract, guarded sender, source-isolation boundary, and artifact-delivery
+  path. Profiles change ordinary defaults and proactive schedules, not backend
+  capability.
+- A safe explicit request in any chat may use research, files, images, audio,
+  video, Markdown/LaTeX/PDF, BioRender/figures, presentations, CAD/OpenSCAD,
+  PCB/KiCad/Gerber, Blender, story/image/video generation, LazyEdit processing,
+  and explicitly authorized public publication.
+- `LazyResearch`, `🍓My devices`, and WeCom `LabAgent` are the three
+  full-capability reference profiles. Other chats inherit the same routine and
+  agent framework while emphasizing their own ordinary topic and schedule.
+  LabAgent retains its shared-group restriction against public video
+  publication; this is a permission boundary, not a capability-routing gap.
+- `wechat_chat_profiles.py` owns stable profile IDs, title aliases, and
+  rename-stable session scopes. GUI matching always uses the exact live title;
+  aliases are compatibility evidence and never authorize cross-chat routing.
+- Current personal-WeChat titles are `LazyResearch`, `🍓My devices`,
+  `Shares鏈接`, `MEMO写作—外语—挣钱`, and `EchoMind`. Their prior Chinese titles
+  remain aliases so historical memory and existing Codex sessions continue
+  without replaying messages.
+- `LazyResearch` defaults to research and general lab work.
+- `🍓My devices` defaults to personal/device intake and ordinary daily work.
+- `Shares鏈接` defaults to one concise source-grounded chat summary. Research source
   Markdown, TeX, screenshots, and intermediate images remain local.
 - A current explicit report/PDF request authorizes a compiled PDF; it does not
   authorize Markdown or TeX delivery unless source files were also requested.
-- `写作 外语 挣钱` has a separate resumable `daily_organizer` session. Its daily
+- `MEMO写作—外语—挣钱` defaults to memos, writing, language, career, and money,
+  and has a separate resumable `daily_organizer` session. Its daily
   organizer deduplicates classifier rows, writes local Markdown, compiles one
   Chinese XeLaTeX PDF, and sends only that PDF.
+- `EchoMind` defaults to multilingual teaching, but explicit CAD, PCB,
+  research, figure, media, presentation, or publication requests still route
+  to the shared worker. Its only proactive outputs remain the three-hour
+  compact lesson and one previous-day 06:00 PDF.
+- `lachlanchan` remains the private daily career/report destination and a full
+  general worker DM.
 - Organizer generation and delivery are separate persisted states. A failed
   send retries the existing PDF without rerunning the agent, and a completed
   date is not replayed after tmux or host restart.
 - Personal-WeChat and WeCom session keys include the exact canonical chat
   identity and role. Reusable routines may be shared, but sessions, source
   media, queues, and delivery transports never cross that boundary.
+- Context accumulates only inside the exact chat's reusable route and worker
+  sessions. Quoted messages and consecutive fragments stay attributed to their
+  original sender. Asking another participant whether a video should be
+  published creates a suspended exact-video task; only a later matching
+  same-chat confirmation may resume it through LazyEdit.
+- Agent delivery is result-oriented rather than mechanical. Send a prompt
+  natural answer, then the smallest useful artifact set. Research normally
+  returns one polished PDF when a report is requested or clearly valuable.
+  CAD, PCB, presentation, or spreadsheet work returns the requested native
+  artifact and only the previews/manufacturing files needed to use it.
+- Worker output is sanitized at the final boundary even when a fallback backend
+  returns structured JSON. stdout/stderr, model, sandbox, stack traces, command
+  transcripts, private paths, and log-only messages are never sent to chats.
+- LazyEdit inherits current Studio settings only when the request is silent.
+  Explicit background fill/crop, subtitle on/off and language order, correction
+  context, metadata context, logo, and platform choices remain authoritative.
+  A Shipinhao QR/login blocker yields one concise noVNC/QR handoff and pauses
+  publication without repeated retries or diagnostic chatter.
 
 Long Xiaoyunque/LazyEdit work:
 

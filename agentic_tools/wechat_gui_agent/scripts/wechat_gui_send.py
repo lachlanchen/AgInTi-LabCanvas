@@ -26,7 +26,7 @@ from typing import Any
 import unicodedata
 
 from file_lock import fcntl_compat as fcntl
-from wechat_message_policy import is_no_reply_control
+from wechat_message_policy import file_transport_identity, is_no_reply_control
 from wechat_mirror import DEFAULT_DB, record_event
 
 
@@ -116,7 +116,10 @@ def main() -> int:
     env["XAUTHORITY"] = env.get("XAUTHORITY", "")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    window = find_wechat_window(env)
+    window = wait_for_main_wechat_window(
+        env,
+        timeout=float(os.environ.get("WECHAT_MAIN_WINDOW_WAIT_SECONDS", "15")),
+    )
     if not window:
         raise SystemExit(f"No visible WeChat window found on DISPLAY={args.display}. Log in first.")
     close_secondary_wechat_windows(env, window)
@@ -391,6 +394,22 @@ def send_one(
 
     if outgoing_file is not None:
         action_window = window_from_guard(guard) or window
+        identity = file_transport_identity(outgoing_file)
+        record_event(
+            chat_name=target.name,
+            query=target.query,
+            action="file_send_intent",
+            direction="outbound",
+            message=outgoing_file.name,
+            status="sending",
+            db_path=mirror_db,
+            screenshot_path=str(opened_path),
+            metadata={
+                "target": target.__dict__,
+                "guard": guard,
+                "file_identity": identity,
+            },
+        )
         result = send_file_to_open_chat(
             env,
             action_window,
@@ -406,16 +425,14 @@ def send_one(
             action="send_file",
             direction="outbound",
             message=outgoing_file.name,
-            status=str(result.get("status") or "failed"),
+            status="sent",
             db_path=mirror_db,
             screenshot_path=str(result.get("screenshot_path") or opened_path),
             metadata={
                 "target": target.__dict__,
                 "guard": guard,
-                "file": {
-                    "name": outgoing_file.name,
-                    "size_bytes": outgoing_file.stat().st_size,
-                },
+                "file_identity": identity,
+                "transport_result": result,
             },
         )
         return {"target": target.name, "screenshot_prefix": shot_prefix, **result}
@@ -1721,6 +1738,28 @@ def find_wechat_window(env: dict[str, str]) -> Window | None:
     if not candidates:
         return None
     return max(candidates, key=lambda item: item.width * item.height)
+
+
+def wait_for_main_wechat_window(
+    env: dict[str, str],
+    *,
+    timeout: float = 15.0,
+    minimum_width: int = 500,
+    minimum_height: int = 500,
+) -> Window | None:
+    """Wait through the startup/splash window without weakening login guards."""
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    latest: Window | None = None
+    while True:
+        candidate = find_wechat_window(env)
+        if candidate is not None:
+            latest = candidate
+            if candidate.width >= minimum_width and candidate.height >= minimum_height:
+                return candidate
+        if time.monotonic() >= deadline:
+            return latest
+        time.sleep(0.5)
 
 
 def focused_window(env: dict[str, str]) -> Window | None:

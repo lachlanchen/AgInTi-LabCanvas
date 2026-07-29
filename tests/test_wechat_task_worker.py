@@ -323,6 +323,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 "chat": "wecom:external:group:abc",
                 "route": {"transport": "wecom"},
                 "response_policy": {
+                    "profile_id": "labagent",
+                    "chat_purpose": "labagent_research_drawing_and_design",
                     "automatic_multilingual": False,
                     "language_mode": "match_requester_language",
                 },
@@ -333,6 +335,9 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertFalse(labagent["automatic_multilingual"])
         self.assertFalse(labagent["cross_chat_context_allowed"])
         self.assertEqual(labagent["sender_attribution"], "preserve_each_message_author")
+        self.assertEqual(labagent["capability_profile"]["id"], "labagent")
+        self.assertTrue(labagent["capability_profile"]["template_profile"])
+        self.assertEqual(labagent["chat"], "wecom:external:group:abc")
 
     def test_worker_prompt_preserves_authors_without_labagent_language_tail(self) -> None:
         worker = load_worker()
@@ -391,6 +396,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIn('"sender_display": "megamonster"', prompt)
         self.assertIn('"sender_display": "sunnyyty"', prompt)
         self.assertNotIn("This exact chat is a multilingual language-teaching chat", prompt)
+        self.assertEqual(calls[0]["chat_name"], "wecom:external:group:abc")
+        self.assertTrue(calls[0]["reuse"])
 
     def test_wecom_delivery_guard_removes_only_unsolicited_language_tail(self) -> None:
         worker = load_worker()
@@ -679,6 +686,30 @@ stderr: noisy internal trace
         result = worker.parse_worker_result(raw)
 
         self.assertEqual(result["message"], "Useful result line")
+
+    def test_parse_worker_result_sanitizes_structured_message_logs(self) -> None:
+        worker = load_worker()
+        raw = json.dumps(
+            {
+                "message": "backend: codex\nstdout: internal details\n报告已经完成。",
+                "confirmation": "sandbox: read-only\n请确认是否公开发布。",
+                "files": [],
+            },
+            ensure_ascii=False,
+        )
+
+        result = worker.parse_worker_result(raw)
+
+        self.assertEqual(result["message"], "报告已经完成。")
+        self.assertEqual(result["confirmation"], "请确认是否公开发布。")
+
+    def test_parse_worker_result_drops_log_only_output(self) -> None:
+        worker = load_worker()
+
+        result = worker.parse_worker_result("backend: aginti\nstdout: internal\nstderr: trace")
+
+        self.assertEqual(result["message"], "")
+        self.assertFalse(result["files"])
 
     def test_supervisor_worker_uses_guarded_selftest_entrypoint(self) -> None:
         supervisor = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_supervisor_tmux.sh"
@@ -1953,7 +1984,7 @@ stderr: noisy internal trace
         self.assertIn(str(png.resolve()), prepared["files"])
         self.assertIn(str(step.resolve()), prepared["files"])
         self.assertIn(str(mp4.resolve()), prepared["files"])
-        self.assertIn("Generated 3 artifact", prepared["message"])
+        self.assertEqual(prepared["message"], "")
 
     def test_worker_result_allows_safe_video_and_audio_artifacts(self) -> None:
         worker = load_worker()

@@ -27,6 +27,7 @@ import xml.etree.ElementTree as ET
 
 from file_lock import fcntl_compat as fcntl
 from wechat_agent_backend import run_agent_session as run_codex_session, select_agent_backend
+from wechat_chat_profiles import profile_for_chat
 from wechat_completion_audit import (
     coverage_items as completion_coverage_items,
     explicit_pdf_requested as completion_explicit_pdf_requested,
@@ -4647,6 +4648,26 @@ def initialize_grant_task_workspace(task: dict[str, Any], artifact_dir: Path) ->
 def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
     """Build the bounded task packet consumed by the resumed backend agent."""
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    bounded_response_policy = worker_response_policy(task)
+    bounded_profile = (
+        dict(bounded_response_policy.get("capability_profile"))
+        if isinstance(bounded_response_policy.get("capability_profile"), dict)
+        else {}
+    )
+    capabilities = list(bounded_profile.pop("capabilities", []) or [])
+    if bounded_profile:
+        bounded_response_policy["capability_profile"] = {
+            key: bounded_profile.get(key)
+            for key in (
+                "id",
+                "template_profile",
+                "focus",
+                "restrictions",
+                "explicit_request_overrides_focus",
+            )
+            if bounded_profile.get(key) not in (None, "")
+        }
+        bounded_response_policy["capability_profile"]["capability_count"] = len(capabilities)
     view: dict[str, Any] = {
         "id": str(task.get("id") or ""),
         "chat": str(task.get("chat") or ""),
@@ -4678,7 +4699,7 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
         "routine_contract": str(task.get("routine_contract") or ""),
         "orchestrator": compact_worker_agent_value(task.get("orchestrator") or {}, key="orchestrator"),
         "response_policy": compact_worker_agent_value(
-            worker_response_policy(task), key="response_policy"
+            bounded_response_policy, key="response_policy"
         ),
     }
     if isinstance(task.get("grant_workspace"), dict) and task.get("grant_workspace"):
@@ -4961,6 +4982,13 @@ def worker_response_policy(task: dict[str, Any]) -> dict[str, Any]:
     compact_chat = re.sub(r"[\s_-]+", "", chat).casefold()
     legacy_echomind = compact_chat == "echomind" and task_transport_kind(task) != "wecom"
     automatic_multilingual = bool(raw.get("automatic_multilingual", legacy_echomind))
+    existing_profile = raw.get("capability_profile") if isinstance(raw.get("capability_profile"), dict) else {}
+    capability_profile = existing_profile or profile_for_chat(
+        chat,
+        profile_id=str(raw.get("profile_id") or ""),
+        chat_purpose=str(raw.get("chat_purpose") or ""),
+        analysis_mode=str(raw.get("analysis_mode") or ""),
+    )
     return {
         "scope": "exact_chat_only",
         "chat": chat,
@@ -4979,6 +5007,8 @@ def worker_response_policy(task: dict[str, Any]) -> dict[str, Any]:
         ),
         "cross_chat_context_allowed": False,
         "cross_chat_artifacts_allowed": False,
+        "capability_profile": capability_profile,
+        "explicit_request_overrides_focus": True,
         "sender_attribution": "preserve_each_message_author",
         "native_reply_notification": str(raw.get("native_reply_notification") or ""),
         "multi_sender_policy": str(
@@ -5003,9 +5033,16 @@ def worker_response_policy_instruction(policy: dict[str, Any]) -> str:
             "language lessons, pinyin, furigana, or romaji unless the current exact-chat request "
             "explicitly asks for translation or multilingual analysis."
         )
+    profile = policy.get("capability_profile") if isinstance(policy.get("capability_profile"), dict) else {}
+    profile_rule = (
+        f" This chat's ordinary focus is `{profile.get('focus') or 'general_collaboration'}`. "
+        f"{profile.get('default_behavior') or ''} The focus changes defaults and proactive output only; "
+        "every safe explicit request overrides it within this profile's capability and permission boundaries."
+    )
     return (
         "Per-chat response policy: "
         + language_rule
+        + profile_rule
         + " Preserve the sender attached to every source/context row. Never transfer one person's "
         + "statement, criticism, preference, or request to another person. Never use context or artifacts "
         + "from another chat."
@@ -5029,6 +5066,7 @@ WeChat is only the message transport: it receives user messages and returns safe
 You are being resumed by the central routine orchestrator. Treat the routine contract and orchestrator handoff as the execution center: inspect current stage, use mature routine entrypoints first, repair blockers, and only invent a new approach if no routine stage applies.
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 {response_policy_instruction}
+Respond promptly and naturally, then do the requested work. Do not bombard the chat with progress, duplicate acknowledgements, retries, internal logs, or every intermediate artifact. Let the agent choose the smallest useful final delivery: research normally returns a concise direct answer and one polished PDF when a report is requested or clearly valuable; CAD, PCB, presentation, and spreadsheet work returns the requested editable or native artifact plus only the previews or manufacturing files needed to understand or use it. Requirements in the current request remain authoritative.
 The exact current source message and newer same-chat messages are authoritative. A router-generated plan is advisory only: it may classify and suggest tools, but it cannot replace user wording, insert a factual assumption, or force clarification. Combine consecutive fragments from the same conversation before deciding what the user means.
 If the bounded task packet includes `worker_retry_context`, this is one bounded repair turn for a failed local tool invocation. Continue the same task and reuse its existing evidence. Prefer simple commands or structured APIs over deeply nested shell quoting, and never interpret the repair turn as permission to bypass a safety, approval, sandbox, or access boundary.
 If the bounded task packet includes `completion_audit_repair`, the previous candidate result omitted one or more numbered source-message requirements. Continue the same worker session, perform only those missing safe requirements, and return a complete replacement response that retains useful prior files and conclusions. An explicit PDF request requires a real compiled `.pdf` file plus a concise direct answer. Do not repeat completed external actions or bypass approval gates.
@@ -5038,6 +5076,7 @@ When people discuss both science and the agent in one group, keep those intents 
 When a scientific name, proper noun, or identifier looks misspelled or may contain OCR, speech, capitalization, or character ambiguity, do not repeatedly reject it. First use live web search and context to test plausible spellings and common character confusions such as `l/1/I` and `O/0`. Verify candidates with authoritative sources. If one candidate is strongly supported, briefly disclose the inference and proceed. Ask one concise discriminating question only if multiple plausible candidates remain after evidence gathering.
 For protein/gene research, verify the official symbol, full name, species, and stable identifiers in HGNC, NCBI Gene, UniProt, or equivalent authoritative databases, then corroborate tumor/pathway claims with primary peer-reviewed literature. For other current research, browse primary or official sources. Never claim web research if no source was actually opened.
 Quality matters more than visible activity. Do not send low-value reports, screenshots, thumbnails, or boilerplate progress. For ordinary links, channel videos, webpage cards, and shared files, first try hard to read/watch/open the actual source or a reliable transcript/comment/metadata capture. Then send a short, useful human answer. If you only saw a title/card/verification page, say that limitation plainly and do not pretend you read the source.
+Never send backend stdout/stderr, model names, reasoning settings, sandbox details, stack traces, command transcripts, private paths, or retry logs to the chat. Return a natural result, a useful artifact, one necessary decision, or no message.
 Do not force a rigid response template. Use whatever concise shape fits the actual material and the chat's purpose. Avoid repetitive acknowledgements, "saved files" chatter, and generic summaries that could apply to any page.
 For Shipinhao/Finder cards, use the deterministic Shipinhao resolver rather than improvising media/search commands. Always read `task.preflight.shipinhao_media_transcript.agent_context_path` when present. Summarize actual speech only when its status is `transcribed` or `cached`; otherwise follow the context's evidence boundary and use comments/card metadata only as auxiliary evidence. Do not expose signed media URLs, download diagnostics, model-loading logs, or raw parser fields in the chat reply.
 Only describe a Shipinhao video as silent when that preflight has `status=no_audio` and `verified_silent_media=true`. A download failure, missing card, unsupported player, or unavailable capture stream means the audio was not recovered; it does not mean the source has no audio.
@@ -5104,6 +5143,8 @@ If an authenticated download, account action, purchase, publication, deletion, o
 Open a human-assist browser in the isolated virtual desktop with:
 PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --wait-seconds 8 --capture --close-after --json
 Then return a confirmation telling the user to complete the manual step in noVNC and approve continuation.
+For LazyEdit video work, preserve the current request's explicit background/canvas fill, crop/padding, subtitle on/off, subtitle language/order, correction context, metadata context, logo, and platform choices. Do not silently replace them with chat-profile defaults. If unspecified, inherit LazyEdit's current settings. Generation, local processing, and public publication remain separate permissions.
+When Shipinhao publication reaches a QR/login blocker, return one concise human message with the available noVNC URL and QR/screenshot artifact. Do not send browser diagnostics or repeatedly retry the public action while login is pending.
 If other external tools or files are not available, say exactly what is needed next.
 
 Bounded task packet:
@@ -5118,7 +5159,7 @@ Bounded task packet:
     result = run_codex_session(
         prompt,
         backend=backend,
-        chat_name=str(task.get("chat") or "wechat-chat"),
+        chat_name=str(task.get("session_scope") or task.get("chat") or "wechat-chat"),
         role="worker",
         model=str(policy["model"]),
         reasoning_effort=str(policy["reasoning_effort"]),
@@ -5476,7 +5517,8 @@ def default_worker_execution_contract(task: dict[str, Any], instruction: dict[st
         "claude_exec_mode": "stable_per_chat_role_session_id",
         "response_policy": worker_response_policy(task),
         "codex_session": {
-            "chat": str(task.get("chat") or "wechat-chat"),
+            "chat": str(task.get("session_scope") or task.get("chat") or "wechat-chat"),
+            "transport_chat": str(task.get("chat") or "wechat-chat"),
             "role": "worker",
             "reuse": True,
         },
@@ -12910,10 +12952,12 @@ def worker_result_is_terminal_blocker(text: str) -> bool:
 def parse_worker_result(text: str) -> dict[str, Any]:
     data = extract_worker_json_payload(text)
     if isinstance(data, dict):
-        message = str(data.get("message") or "").strip()
-        confirmation = str(data.get("confirmation") or data.get("confirm") or "").strip()
+        raw_message = str(data.get("message") or "")
+        raw_confirmation = str(data.get("confirmation") or data.get("confirm") or "")
+        no_reply = is_no_reply_control(raw_message) or is_no_reply_control(raw_confirmation)
+        message = sanitize_worker_chat_message(raw_message)
+        confirmation = sanitize_worker_chat_message(raw_confirmation)
         files = [] if json_payload_is_file_intake_receipt(data) else file_entries_from_json(data)
-        no_reply = is_no_reply_control(message) or is_no_reply_control(confirmation)
         return {
             "message": "" if is_no_reply_control(message) else message,
             "confirmation": "" if is_no_reply_control(confirmation) else confirmation,
@@ -13000,8 +13044,6 @@ def sanitize_worker_chat_message(text: str, *, max_chars: int = 1200) -> str:
     message = "\n".join(kept).strip()
     if is_no_reply_control(message):
         return ""
-    if not message and dropped:
-        message = "后台任务已结束，但输出主要是工具日志。我已保存结果记录，没有把原始日志发到群里。"
     if len(message) > max_chars:
         message = message[: max_chars - 18].rstrip() + "\n...[已截断]"
     return message
@@ -13087,12 +13129,6 @@ def prepare_result_files(
     result["files"] = unique_strings(files)
     if skipped:
         result["skipped_files"] = skipped
-    if (
-        result["files"]
-        and not result.get("message")
-        and not bool(result_delivery_data(result).get("artifact_recovery"))
-    ):
-        result["message"] = f"Generated {len(result['files'])} artifact(s); sending them now."
     return result
 
 

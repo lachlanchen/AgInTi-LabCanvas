@@ -44,6 +44,92 @@ class WeChatCareerDailyAgentTests(unittest.TestCase):
         self.assertEqual(captured["model"], "gpt-5.5")
         self.assertEqual(captured["effort"], "medium")
 
+    def test_retry_action_reuses_generated_report(self):
+        module = load_wechat_career_daily_agent()
+        captured = {}
+        original_argv = sys.argv[:]
+        original_retry = module.retry_existing_career_delivery
+        try:
+            sys.argv = [
+                "wechat_career_daily_agent.py",
+                "retry",
+                "--date",
+                "2026-07-29",
+                "--json",
+            ]
+            module.retry_existing_career_delivery = (
+                lambda args, stamp, force=False: captured.update(
+                    {"stamp": stamp, "force": force}
+                )
+                or {"ok": True, "status": "done"}
+            )
+            rc = module.main()
+        finally:
+            sys.argv = original_argv
+            module.retry_existing_career_delivery = original_retry
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(captured, {"stamp": "2026-07-29", "force": True})
+
+    def test_uncertain_file_delivery_reconciles_from_exact_outbound_echo(self):
+        module = load_wechat_career_daily_agent()
+        original_private = module.PRIVATE
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp) / "private"
+            private.mkdir()
+            module.PRIVATE = private
+            report = Path(tmp) / "daily.pdf"
+            report.write_bytes(b"%PDF-1.4\nexact report\n")
+            identity = module.file_transport_identity(report)
+            db = private / "wechat_mirror.sqlite"
+            with sqlite3.connect(db) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE chats (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL UNIQUE
+                    );
+                    CREATE TABLE events (
+                        id INTEGER PRIMARY KEY,
+                        chat_id INTEGER NOT NULL,
+                        action TEXT NOT NULL,
+                        direction TEXT,
+                        message TEXT,
+                        status TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+                    """
+                )
+                conn.execute("INSERT INTO chats(id, name) VALUES (1, ?)", ("写作 外语 挣钱",))
+                conn.execute(
+                    """
+                    INSERT INTO events(
+                        chat_id, action, direction, message, status, created_at
+                    ) VALUES (1, 'direct_message', 'outbound', ?, 'synced', ?)
+                    """,
+                    (
+                        (
+                            "<msg><appmsg>"
+                            f"<title>{report.name}</title>"
+                            f"<appattach><totallen>{identity['size_bytes']}</totallen></appattach>"
+                            f"<md5>{identity['md5']}</md5>"
+                            "</appmsg></msg>"
+                        ),
+                        "2026-07-29T11:10:00",
+                    ),
+                )
+
+            try:
+                observed = module.observed_outbound_file(
+                    "写作 外语 挣钱",
+                    report,
+                    not_before="2026-07-29T08:30:00",
+                )
+            finally:
+                module.PRIVATE = original_private
+
+        self.assertTrue(observed)
+
     def test_prompt_requires_three_self_discovery_questions(self):
         module = load_wechat_career_daily_agent()
         prompt = module.build_prompt(
@@ -346,7 +432,7 @@ Why it matters: It turns reflection into evidence.
                 return output
 
             module.run_agent_session = fake_agent
-            module.render_markdown_pdf = fake_render
+            module.render_interactive_organizer_pdf = fake_render
             module.send_file = lambda path, chat, targets: sent_files.append((path, chat, targets))
             args = argparse.Namespace(
                 organize_chat="写作 外语 挣钱",
@@ -411,6 +497,103 @@ Why it matters: It turns reflection into evidence.
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["generated"])
         self.assertEqual(sent, [(pdf, "写作 外语 挣钱")])
+
+    def test_organizer_markdown_builds_interactive_tasks_only_for_actions(self):
+        module = load_wechat_career_daily_agent()
+        body, count = module.organizer_markdown_to_latex(
+            """
+# 今日整理
+
+## 证据
+- 一个普通事实
+
+## 本周可推进
+1. 完成一个小实验
+2. 发送一封邮件
+
+## 灵感
+- [ ] 验证一个明确想法
+"""
+        )
+
+        self.assertEqual(count, 3)
+        self.assertEqual(body.count(r"\CheckBox["), 3)
+        self.assertIn(r"\item 一个普通事实", body)
+        self.assertIn("完成一个小实验", body)
+
+    def test_interactive_organizer_pdf_contains_acroform_fields(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "organizer.md"
+            output = root / "organizer.pdf"
+            source.write_text(
+                "# 今日整理\n\n## 下一步\n- [ ] 完成一个可验证的行动\n",
+                encoding="utf-8",
+            )
+
+            rendered = module.render_interactive_organizer_pdf(source, output)
+
+            self.assertEqual(rendered, output)
+            self.assertTrue(module.pdf_has_interactive_form(output))
+            self.assertTrue(output.with_suffix(".interactive.tex").is_file())
+
+    def test_failed_delivery_uses_persisted_exponential_backoff(self):
+        module = load_wechat_career_daily_agent()
+        state = {}
+
+        module.update_delivery_retry_state(
+            state,
+            {"attempted": True, "complete": False, "errors": ["send timeout"]},
+        )
+
+        self.assertEqual(state["delivery_attempts"], 1)
+        self.assertFalse(module.delivery_retry_due(state))
+        self.assertIn("next_delivery_attempt_at", state)
+
+    def test_retry_existing_career_delivery_reuses_report_without_agent(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            stamp = module.datetime.now().strftime("%Y-%m-%d")
+            run_dir = module.PRIVATE / "output" / "career_daily" / "runs" / f"{stamp}-083000"
+            run_dir.mkdir(parents=True)
+            report = module.OUTPUT / f"{stamp}-career-strategy.md"
+            private_report = module.PRIVATE / "output" / "career_daily" / f"{stamp}-career-strategy-private.md"
+            report.parent.mkdir(parents=True)
+            private_report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text("# Existing report", encoding="utf-8")
+            private_report.write_text("微信摘要：复用今天已生成的报告。", encoding="utf-8")
+            manifest = {
+                "outputs": {
+                    "share_report_latest": str(report),
+                    "private_report_latest": str(private_report),
+                },
+                "send": {"attempted": True, "complete": False},
+            }
+            module.write_json_file(run_dir / "manifest.json", manifest)
+            sent = []
+            module.send_daily_result = lambda *args, **kwargs: sent.append((args, kwargs)) or {
+                "attempted": True,
+                "complete": True,
+                "message_sent": True,
+                "file_sent": True,
+                "files_sent": ["report.zh.pdf", "report.en.pdf"],
+                "errors": [],
+            }
+            args = argparse.Namespace(send=True)
+
+            payload = module.retry_existing_career_delivery(args, stamp)
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["status"], "done")
+            self.assertEqual(len(sent), 1)
+            saved = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertTrue(saved["send"]["complete"])
+            self.assertEqual(saved["delivery_attempts"], 0)
 
 
 if __name__ == "__main__":

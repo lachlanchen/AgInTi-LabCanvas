@@ -36,11 +36,17 @@ WECOM_PRIVATE = ROOT / "agentic_tools" / "wecom_agent" / ".private"
 SEND_LOCK = WECHAT_PRIVATE / "wechat_gui_send.lock"
 WECHAT_QUEUE = WECHAT_PRIVATE / "wechat_task_queue.jsonl"
 WECOM_QUEUE = WECOM_PRIVATE / "wecom_task_queue.jsonl"
+WECHAT_ORGANIZER_DELIVERY = (
+    WECHAT_PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
+)
 WECHAT_SUPERVISOR = (
     ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_supervisor_tmux.sh"
 )
 WECHAT_VIRTUAL_DESKTOP = (
     ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_virtual_desktop.sh"
+)
+WECHAT_GUI_SEND = (
+    ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"
 )
 WECOM_SUPERVISOR = ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_tmux.sh"
 ANDROID_CONFIG = WECOM_PRIVATE / "wecom_android_bridge.local.json"
@@ -674,6 +680,7 @@ def recent_wechat_gui_timeout_health(
     now: datetime | None = None,
     client_started_at: datetime | None = None,
     window_seconds: float = 900.0,
+    scheduler_state_paths: tuple[Path, ...] | None = None,
 ) -> dict[str, Any]:
     """Detect a completed GUI timeout against the currently running client.
 
@@ -687,24 +694,26 @@ def recent_wechat_gui_timeout_health(
     started = client_started_at
     if started is None:
         started = wechat_client_started_at(now=current)
-    if not path.exists():
-        return {
-            "ok": True,
-            "exists": False,
-            "client_started_at": started.isoformat(timespec="seconds") if started else "",
-            "task_ids": [],
-        }
+    if scheduler_state_paths is None:
+        scheduler_state_paths = (
+            (WECHAT_ORGANIZER_DELIVERY,)
+            if path == WECHAT_QUEUE
+            else ()
+        )
+    queue_exists = path.exists()
     latest: dict[str, dict[str, Any]] = {}
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return {
-            "ok": False,
-            "exists": True,
-            "error": "unreadable",
-            "client_started_at": started.isoformat(timespec="seconds") if started else "",
-            "task_ids": [],
-        }
+    lines: list[str] = []
+    if queue_exists:
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return {
+                "ok": False,
+                "exists": True,
+                "error": "unreadable",
+                "client_started_at": started.isoformat(timespec="seconds") if started else "",
+                "task_ids": [],
+            }
     for line in lines:
         try:
             task = json.loads(line)
@@ -742,9 +751,30 @@ def recent_wechat_gui_timeout_health(
             continue
         stalled.append(task_id)
         newest_timeout = max(newest_timeout, attempted) if newest_timeout else attempted
+    for state_path in scheduler_state_paths:
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(state, dict) or str(state.get("status") or "") != "delivery_failed":
+            continue
+        attempted = parse_timestamp(
+            state.get("last_delivery_attempt_at")
+            or state.get("updated_at")
+        )
+        if attempted is None or (current - attempted).total_seconds() > window_seconds:
+            continue
+        if started is not None and attempted <= started:
+            continue
+        send = state.get("send") if isinstance(state.get("send"), dict) else {}
+        text = " ".join(str(item) for item in send.get("errors") or []).lower()
+        if "gui_send_timeout" not in text and "wechat_send_timeout" not in text:
+            continue
+        stalled.append(f"scheduler:{state_path.stem}")
+        newest_timeout = max(newest_timeout, attempted) if newest_timeout else attempted
     return {
         "ok": not stalled,
-        "exists": True,
+        "exists": queue_exists,
         "client_started_at": started.isoformat(timespec="seconds") if started else "",
         "newest_timeout_at": newest_timeout.isoformat(timespec="seconds") if newest_timeout else "",
         "task_ids": stalled[:20],
@@ -809,10 +839,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         issue("wecom_windows_missing", "degraded", ",".join(wecom_missing))
     if android_expected and not android.get("endpoint_reachable"):
         issue("android_endpoint_down", "degraded", "Android relay health endpoint is unavailable")
-    elif android_expected and (
-        not android.get("poll_healthy")
-        or android.get("surface_state") == "anr"
-    ):
+    elif android_expected and android_poll_failure_is_actionable(android):
         issue(
             "android_poll_stalled",
             "degraded",
@@ -893,6 +920,22 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         "queues": queues,
         "processes": process_counts(wechat, wecom),
     }
+
+
+def android_poll_failure_is_actionable(android: dict[str, Any]) -> bool:
+    """Distinguish a bounded serialized GUI lane from a stalled relay."""
+
+    if android.get("surface_state") == "anr":
+        return True
+    if android.get("poll_healthy"):
+        return False
+    error_text = str(android.get("last_poll_error") or "")
+    serialized_busy = (
+        "WECOM_ANDROID_BUSY" in error_text
+        and bool(android.get("poll_in_progress"))
+        and not bool(android.get("poll_stale"))
+    )
+    return not serialized_busy
 
 
 def load_state(path: Path) -> dict[str, Any]:
@@ -1326,7 +1369,28 @@ def send_health_alert(
     message: str,
     task_id: str,
 ) -> dict[str, Any]:
-    if transport != "wecom-android":
+    normalized_transport = str(transport or "").strip().casefold()
+    if normalized_transport == "wechat":
+        proc = run_command(
+            [
+                sys.executable,
+                str(WECHAT_GUI_SEND),
+                "--target",
+                chat,
+                "--message",
+                message,
+                "--send",
+                "--no-search",
+            ],
+            timeout=180,
+        )
+        payload = read_json_text(proc.stdout)
+        return {
+            "ok": proc.returncode == 0 and bool(payload.get("ok", True)),
+            "returncode": proc.returncode,
+            "error": str(payload.get("error") or proc.stderr or "")[:300],
+        }
+    if normalized_transport != "wecom-android":
         return {"ok": False, "error": f"unsupported alert transport: {transport}"}
     proc = run_command(
         [

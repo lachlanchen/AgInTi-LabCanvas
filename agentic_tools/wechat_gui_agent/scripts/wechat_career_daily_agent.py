@@ -13,14 +13,20 @@ import re
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 import uuid
 
 from wechat_agent_backend import run_agent_session, select_agent_backend
+from wechat_chat_profiles import preferred_chat_title, profile_aliases
+from wechat_message_policy import (
+    attachment_transport_identity,
+    file_identities_match,
+    file_transport_identity,
+)
 from wechat_task_worker import (
     ensure_markdown_pdf_companions,
-    render_markdown_pdf,
     send_file,
     send_message,
 )
@@ -32,14 +38,21 @@ OUTPUT = ROOT / "output" / "wechat_strategy"
 DEFAULT_MEMORY_DB = PRIVATE / "wechat_memory.sqlite"
 DEFAULT_SEND_TARGETS = PRIVATE / "wechat_send_targets.local.json"
 GUI_SEND_PRIORITY = Path(os.environ.get("WECHAT_GUI_SEND_PRIORITY_PATH", str(PRIVATE / "wechat_gui_send_priority.json")))
-DEFAULT_CHATS = ["写作 外语 挣钱", "lachlanchan", "鏈接", "🍓我的设备"]
-DEFAULT_ORGANIZER_CHAT = "写作 外语 挣钱"
+DEFAULT_CHATS = [
+    *profile_aliases("writing_money"),
+    *profile_aliases("personal_dm"),
+    *profile_aliases("shares"),
+    *profile_aliases("my_devices"),
+]
+DEFAULT_ORGANIZER_CHAT = preferred_chat_title("writing_money")
 ORGANIZER_STATE = PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
+DELIVERY_RETRY_BASE_SECONDS = int(os.environ.get("WECHAT_DAILY_DELIVERY_RETRY_SECONDS", "1800"))
+DELIVERY_RETRY_MAX_SECONDS = int(os.environ.get("WECHAT_DAILY_DELIVERY_RETRY_MAX_SECONDS", "14400"))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["run", "loop", "organize"], nargs="?", default="run")
+    parser.add_argument("action", choices=["run", "loop", "organize", "retry"], nargs="?", default="run")
     parser.add_argument("--chat", action="append", default=[], help="Memory chat to include. Repeatable.")
     parser.add_argument("--send-chat", default="lachlanchan", help="WeChat chat/DM to receive the daily note.")
     parser.add_argument("--send", action="store_true", help="Send the concise result and shareable report to WeChat.")
@@ -51,6 +64,7 @@ def main() -> int:
     )
     parser.add_argument("--organize-chat", default=DEFAULT_ORGANIZER_CHAT)
     parser.add_argument("--force-organize", action="store_true")
+    parser.add_argument("--date", default="", help="Artifact-only retry date in YYYY-MM-DD form.")
     parser.add_argument("--memory-db", type=Path, default=DEFAULT_MEMORY_DB)
     parser.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS)
     parser.add_argument("--morning-time", default="08:30", help="Loop run time in HH:MM local time.")
@@ -63,6 +77,19 @@ def main() -> int:
 
     if args.action == "loop":
         return loop_daily(args)
+    if args.action == "retry":
+        payload = retry_existing_career_delivery(
+            args,
+            args.date or datetime.now().strftime("%Y-%m-%d"),
+            force=True,
+        )
+        if payload is None:
+            payload = {"ok": False, "status": "missing_generated_report"}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(payload.get("status") or "done")
+        return 0 if payload.get("ok") else 1
     payload = (
         run_organizer(args, force=bool(args.force_organize))
         if args.action == "organize"
@@ -87,12 +114,17 @@ def loop_daily(args: argparse.Namespace) -> int:
                 if career_delivery_complete_for_date(run_key, require_send=bool(args.send)):
                     last_run_key = run_key
                 else:
-                    payload = run_daily(args)
-                    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
-                    last_run_key = run_key
+                    payload = retry_existing_career_delivery(args, run_key)
+                    if payload is None:
+                        payload = run_daily(args)
+                    if payload.get("status") != "delivery_deferred":
+                        print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+                    if payload.get("ok"):
+                        last_run_key = run_key
             if bool(getattr(args, "organize_report", False)) and organizer_done_key != run_key:
                 payload = run_organizer(args)
-                print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+                if payload.get("status") != "delivery_deferred":
+                    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
                 if payload.get("ok"):
                     organizer_done_key = run_key
         sleep_until = next_run_time(datetime.now(), args.morning_time)
@@ -179,6 +211,7 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
         send_status=send_status,
         run_id=run_id,
     )
+    update_delivery_retry_state(manifest, send_status)
     (trace_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -225,6 +258,111 @@ def career_delivery_complete_for_date(stamp: str, *, require_send: bool) -> bool
     return False
 
 
+def latest_career_manifest(stamp: str) -> tuple[Path, dict[str, Any]] | None:
+    runs_dir = PRIVATE / "output" / "career_daily" / "runs"
+    if not runs_dir.is_dir():
+        return None
+    for manifest_path in sorted(runs_dir.glob(f"{stamp}-*/manifest.json"), reverse=True):
+        manifest = read_json_file(manifest_path)
+        outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
+        report = Path(str(outputs.get("share_report_latest") or ""))
+        private_report = Path(str(outputs.get("private_report_latest") or ""))
+        if report.is_file() and private_report.is_file():
+            return manifest_path, manifest
+    return None
+
+
+def retry_existing_career_delivery(
+    args: argparse.Namespace,
+    stamp: str,
+    *,
+    force: bool = False,
+) -> dict[str, Any] | None:
+    """Retry one generated career report without another model invocation."""
+
+    located = latest_career_manifest(stamp)
+    if located is None:
+        return None
+    manifest_path, manifest = located
+    if bool((manifest.get("send") or {}).get("complete")):
+        return {"ok": True, "status": "already_delivered", "manifest": str(manifest_path)}
+    if not force and not delivery_retry_due(manifest):
+        return {
+            "ok": False,
+            "status": "delivery_deferred",
+            "manifest": str(manifest_path),
+            "next_delivery_attempt_at": manifest.get("next_delivery_attempt_at"),
+        }
+    outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
+    report = Path(str(outputs.get("share_report_latest") or ""))
+    private_report = Path(str(outputs.get("private_report_latest") or ""))
+    body = private_report.read_text(encoding="utf-8", errors="replace")
+    previous_send = manifest.get("send") if isinstance(manifest.get("send"), dict) else {}
+    known_companions = [
+        Path(str(path))
+        for path in previous_send.get("pdf_companions") or []
+        if Path(str(path)).is_file()
+    ]
+    observed_files = observed_outbound_files(
+        str(getattr(args, "send_chat", "lachlanchan") or "lachlanchan"),
+        known_companions,
+        not_before=str(manifest.get("created_at") or ""),
+    )
+    send_status = send_daily_result(
+        args,
+        report,
+        body,
+        already_sent_files={
+            *[str(path) for path in previous_send.get("files_sent") or []],
+            *observed_files,
+        },
+        message_already_sent=bool(previous_send.get("message_sent")),
+    )
+    manifest["send"] = send_status
+    update_delivery_retry_state(manifest, send_status)
+    write_json_file(manifest_path, manifest)
+    return {
+        "ok": bool(send_status.get("complete")),
+        "status": "done" if send_status.get("complete") else "delivery_failed",
+        "manifest": str(manifest_path),
+        "send": send_status,
+    }
+
+
+def delivery_retry_due(state: dict[str, Any], *, now: datetime | None = None) -> bool:
+    raw = str(state.get("next_delivery_attempt_at") or "").strip()
+    if not raw:
+        return True
+    try:
+        due = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    current = now or datetime.now().astimezone()
+    if current.tzinfo is None:
+        current = current.astimezone()
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=current.tzinfo)
+    return current >= due.astimezone(current.tzinfo)
+
+
+def update_delivery_retry_state(state: dict[str, Any], send_status: dict[str, Any]) -> None:
+    if not send_status.get("attempted"):
+        return
+    now = datetime.now().astimezone()
+    state["last_delivery_attempt_at"] = now.isoformat(timespec="seconds")
+    if send_status.get("complete"):
+        state["delivery_attempts"] = 0
+        state.pop("next_delivery_attempt_at", None)
+        return
+    attempts = int(state.get("delivery_attempts") or 0) + 1
+    delay = min(
+        max(60, DELIVERY_RETRY_BASE_SECONDS) * (2 ** min(attempts - 1, 4)),
+        max(60, DELIVERY_RETRY_MAX_SECONDS),
+    )
+    state["delivery_attempts"] = attempts
+    state["next_delivery_attempt_at"] = (now + timedelta(seconds=delay)).isoformat(timespec="seconds")
+
+
 def run_organizer(args: argparse.Namespace, *, force: bool = False) -> dict[str, Any]:
     chat = str(getattr(args, "organize_chat", DEFAULT_ORGANIZER_CHAT) or DEFAULT_ORGANIZER_CHAT)
     stamp = datetime.now().strftime("%Y-%m-%d")
@@ -232,6 +370,35 @@ def run_organizer(args: argparse.Namespace, *, force: bool = False) -> dict[str,
     state = read_json_file(state_path)
     report = OUTPUT / f"{stamp}-recent-items.zh.md"
     pdf = OUTPUT / f"{stamp}-recent-items.zh.pdf"
+
+    if (
+        state.get("date") == stamp
+        and state.get("chat") == chat
+        and pdf.is_file()
+        and observed_outbound_file(
+            chat,
+            pdf,
+            not_before=str(state.get("generated_at") or ""),
+        )
+    ):
+        resolved_pdf = str(pdf.expanduser().resolve())
+        state.update(
+            {
+                "status": "delivered",
+                "send": {
+                    "attempted": True,
+                    "complete": True,
+                    "file_sent": True,
+                    "files_sent": [resolved_pdf],
+                    "errors": [],
+                    "reconciled_from_outbound_echo": True,
+                },
+                "delivery_attempts": 0,
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        )
+        state.pop("next_delivery_attempt_at", None)
+        write_json_file(state_path, state)
 
     if not force and organizer_delivery_matches(state, stamp, chat, pdf):
         return {
@@ -251,6 +418,16 @@ def run_organizer(args: argparse.Namespace, *, force: bool = False) -> dict[str,
         and pdf.is_file()
         and pdf.stat().st_size > 0
     )
+    if generated and bool(args.send) and not force and not delivery_retry_due(state):
+        return {
+            "ok": False,
+            "status": "delivery_deferred",
+            "chat": chat,
+            "report": str(report),
+            "pdf": str(pdf),
+            "generated": False,
+            "next_delivery_attempt_at": state.get("next_delivery_attempt_at"),
+        }
     result: dict[str, Any] = {}
     if not generated:
         snapshot = life_memo_snapshot(getattr(args, "memory_db", DEFAULT_MEMORY_DB), chat)
@@ -277,7 +454,7 @@ def run_organizer(args: argparse.Namespace, *, force: bool = False) -> dict[str,
             }
         OUTPUT.mkdir(parents=True, exist_ok=True)
         report.write_text(body.rstrip() + "\n", encoding="utf-8")
-        rendered = render_markdown_pdf(report, pdf)
+        rendered = render_interactive_organizer_pdf(report, pdf)
         if rendered is None or not pdf.is_file() or pdf.stat().st_size <= 0:
             return {
                 "ok": False,
@@ -317,6 +494,7 @@ def run_organizer(args: argparse.Namespace, *, force: bool = False) -> dict[str,
             "updated_at": datetime.now().isoformat(timespec="seconds"),
         }
     )
+    update_delivery_retry_state(state, send_status)
     write_json_file(state_path, state)
     return {
         "ok": bool(send_status.get("complete")),
@@ -389,10 +567,162 @@ Organize naturally rather than forcing empty sections. Distinguish:
 Be selective and substantive. Preserve important technical names and quoted
 intent. Merge related fragments, explain the connection briefly, and end with
 at most three high-leverage next actions. Do not add generic productivity advice.
+Write every concrete open action and every final next action as a Markdown task
+line beginning exactly with `- [ ]`. Use ordinary bullets for evidence, ideas,
+and non-action observations. These task lines become clickable checkboxes in the
+delivered PDF.
 
 Recent exact-chat evidence:
 {snapshot}
 """
+
+
+def render_interactive_organizer_pdf(source: Path, output: Path) -> Path | None:
+    """Render a Chinese organizer report with real AcroForm checkboxes."""
+
+    try:
+        markdown = source.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    body, checkbox_count = organizer_markdown_to_latex(markdown)
+    if checkbox_count <= 0:
+        body += "\n" + organizer_checkbox_latex("确认今天最重要的一项行动", checkbox_count + 1)
+        checkbox_count += 1
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    document = rf"""\documentclass[11pt]{{article}}
+\usepackage[a4paper,margin=18mm]{{geometry}}
+\usepackage{{fontspec}}
+\usepackage{{xeCJK}}
+\usepackage{{xcolor}}
+\usepackage{{enumitem}}
+\usepackage[unicode,colorlinks=true,linkcolor=black,urlcolor=blue]{{hyperref}}
+\setmainfont{{Noto Sans}}
+\setCJKmainfont{{Noto Sans CJK SC}}
+\definecolor{{LabInk}}{{HTML}}{{1E293B}}
+\definecolor{{LabBlue}}{{HTML}}{{0B7285}}
+\definecolor{{LabLine}}{{HTML}}{{CBD5E1}}
+\hypersetup{{pdftitle={{写作・外语・挣钱 每日整理 {stamp}}},pdfauthor={{AgInTi LabCanvas}}}}
+\setlength{{\parindent}}{{0pt}}
+\setlength{{\parskip}}{{5pt}}
+\setlist[itemize]{{leftmargin=1.5em,itemsep=2pt,topsep=2pt}}
+\begin{{document}}
+\begin{{Form}}
+{{\LARGE\bfseries\color{{LabInk}} 写作・外语・挣钱｜每日整理}}\par
+{{\small\color{{LabBlue}} {stamp} \quad 点击方框即可在 PDF 阅读器中勾选}}\par
+\vspace{{3pt}}\color{{LabLine}}\hrule\color{{black}}\vspace{{8pt}}
+{body}
+\end{{Form}}
+\end{{document}}
+"""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    tex_output = output.with_suffix(".interactive.tex")
+    tex_output.write_text(document, encoding="utf-8")
+    try:
+        with tempfile.TemporaryDirectory(prefix="labcanvas-organizer-") as tmp:
+            temp_dir = Path(tmp)
+            tex = temp_dir / "organizer.tex"
+            tex.write_text(document, encoding="utf-8")
+            for _ in range(2):
+                proc = subprocess.run(
+                    ["xelatex", "-interaction=nonstopmode", "-halt-on-error", tex.name],
+                    cwd=temp_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=240,
+                    check=False,
+                )
+                if proc.returncode != 0:
+                    return None
+            compiled = temp_dir / "organizer.pdf"
+            if not compiled.is_file() or compiled.stat().st_size <= 0:
+                return None
+            output.write_bytes(compiled.read_bytes())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return output if pdf_has_interactive_form(output) else None
+
+
+def organizer_markdown_to_latex(markdown: str) -> tuple[str, int]:
+    lines: list[str] = []
+    checkbox_count = 0
+    action_section = False
+    for raw in str(markdown or "").splitlines():
+        value = raw.strip()
+        if not value:
+            lines.append(r"\par")
+            continue
+        heading = re.match(r"^(#{1,4})\s+(.+)$", value)
+        if heading:
+            title = clean_markdown_inline(heading.group(2))
+            action_section = any(
+                marker in title
+                for marker in ("可推进", "行动", "下一步", "待办", "需要澄清")
+            )
+            command = "section*" if len(heading.group(1)) <= 2 else "subsection*"
+            lines.append(rf"\{command}{{{latex_escape(title)}}}")
+            continue
+        task = re.match(r"^(?:[-*+]|\d+[.)、])\s+(?:\[\s*\]\s*)?(.+)$", value)
+        if task:
+            explicit_task = bool(re.match(r"^(?:[-*+]|\d+[.)、])\s+\[\s*\]", value))
+            text = clean_markdown_inline(task.group(1))
+            if explicit_task or action_section:
+                checkbox_count += 1
+                lines.append(organizer_checkbox_latex(text, checkbox_count))
+            else:
+                lines.append(rf"\begin{{itemize}}\item {latex_escape(text)}\end{{itemize}}")
+            continue
+        lines.append(latex_escape(clean_markdown_inline(value)) + r"\par")
+    return "\n".join(lines), checkbox_count
+
+
+def organizer_checkbox_latex(text: str, index: int) -> str:
+    return (
+        rf"\noindent\CheckBox[name=task-{index},width=1.7ex,height=1.7ex,"
+        rf"bordercolor={{0.05 0.45 0.52}}]{{}}\hspace{{0.6em}}"
+        rf"\parbox[t]{{0.91\linewidth}}{{{latex_escape(text)}}}\par\vspace{{3pt}}"
+    )
+
+
+def clean_markdown_inline(value: str) -> str:
+    text = re.sub(r"^\[\s*\]\s*", "", str(value or "").strip())
+    text = text.replace("**", "").replace("__", "").replace("`", "")
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def latex_escape(value: str) -> str:
+    replacements = {
+        "\\": r"\textbackslash{}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
+    }
+    return "".join(replacements.get(char, char) for char in str(value or ""))
+
+
+def pdf_has_interactive_form(path: Path) -> bool:
+    try:
+        proc = subprocess.run(
+            ["pdfinfo", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return bool(re.search(r"^Form:\s+(?!none\b)\S+", proc.stdout, flags=re.MULTILINE | re.IGNORECASE))
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        payload = path.read_bytes()
+    except OSError:
+        return False
+    return b"/AcroForm" in payload
 
 
 def strip_markdown_fence(text: str) -> str:
@@ -422,10 +752,57 @@ def write_json_file(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def observed_outbound_files(
+    chat: str,
+    files: list[Path],
+    *,
+    not_before: str = "",
+) -> set[str]:
+    return {
+        str(path.expanduser().resolve())
+        for path in files
+        if path.is_file() and observed_outbound_file(chat, path, not_before=not_before)
+    }
+
+
+def observed_outbound_file(chat: str, file_path: Path, *, not_before: str = "") -> bool:
+    """Reconcile an uncertain GUI send from the exact outbound DB echo."""
+
+    if not file_path.is_file():
+        return False
+    mirror_db = PRIVATE / "wechat_mirror.sqlite"
+    if not mirror_db.is_file():
+        return False
+    identity = file_transport_identity(file_path)
+    query = """
+        SELECT events.message
+        FROM events
+        JOIN chats ON chats.id = events.chat_id
+        WHERE chats.name = ?
+          AND events.action = 'direct_message'
+          AND events.direction = 'outbound'
+          AND events.status = 'synced'
+    """
+    params: list[Any] = [chat]
+    if not_before:
+        query += " AND events.created_at >= ?"
+        params.append(not_before)
+    query += " ORDER BY events.id DESC LIMIT 80"
+    try:
+        with sqlite3.connect(mirror_db) as conn:
+            rows = conn.execute(query, params).fetchall()
+    except sqlite3.Error:
+        return False
+    return any(
+        file_identities_match(identity, attachment_transport_identity(str(message or "")))
+        for (message,) in rows
+    )
+
+
 def collect_evidence(chats: list[str], memory_db: Path) -> dict[str, str]:
     return {
         "memory_snapshot": memory_snapshot(memory_db, chats),
-        "life_memo_snapshot": life_memo_snapshot(memory_db, "写作 外语 挣钱"),
+        "life_memo_snapshot": life_memo_snapshot(memory_db, profile_aliases("writing_money")),
         "project_surface": project_surface(),
         "lazyinvestment_snapshot": repo_readme_snapshot(Path("/home/lachlan/ProjectsLFS/LazyInvestment")),
         "voidabyss_snapshot": voidabyss_snapshot(),
@@ -618,7 +995,7 @@ def memory_snapshot(db: Path, chats: list[str], *, limit: int = 80) -> str:
     )
 
 
-def life_memo_snapshot(db: Path, chat: str, *, limit: int = 100) -> str:
+def life_memo_snapshot(db: Path, chat: str | list[str], *, limit: int = 100) -> str:
     if not db.exists():
         return "(memory database not found)"
     allowed = {
@@ -637,16 +1014,18 @@ def life_memo_snapshot(db: Path, chat: str, *, limit: int = 100) -> str:
     try:
         with sqlite3.connect(db) as conn:
             conn.row_factory = sqlite3.Row
+            chats = [chat] if isinstance(chat, str) else list(dict.fromkeys(chat))
+            placeholders = ",".join("?" for _ in chats)
             rows = conn.execute(
-                """
+                f"""
                 SELECT source_message_id, category, title, body, status, due_at,
                        created_at
                 FROM memory_items
-                WHERE chat_name = ?
+                WHERE chat_name IN ({placeholders})
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (chat, limit * 4),
+                (*chats, limit * 4),
             ).fetchall()
     except sqlite3.Error as exc:
         return f"(memory read failed: {exc})"
@@ -814,12 +1193,32 @@ def sanitize_shareable_report(text: str) -> str:
     return sanitized
 
 
-def send_daily_result(args: argparse.Namespace, report: Path, body: str) -> dict[str, Any]:
+def send_daily_result(
+    args: argparse.Namespace,
+    report: Path,
+    body: str,
+    *,
+    already_sent_files: set[str] | None = None,
+    message_already_sent: bool = False,
+) -> dict[str, Any]:
     with reserve_gui_send_priority("career_daily", args.send_chat):
-        return send_daily_result_reserved(args, report, body)
+        return send_daily_result_reserved(
+            args,
+            report,
+            body,
+            already_sent_files=already_sent_files,
+            message_already_sent=message_already_sent,
+        )
 
 
-def send_daily_result_reserved(args: argparse.Namespace, report: Path, body: str) -> dict[str, Any]:
+def send_daily_result_reserved(
+    args: argparse.Namespace,
+    report: Path,
+    body: str,
+    *,
+    already_sent_files: set[str] | None = None,
+    message_already_sent: bool = False,
+) -> dict[str, Any]:
     summary = extract_daily_chat_summary(body)
     message = summary
     questions = extract_self_discovery_questions(body)
@@ -829,9 +1228,9 @@ def send_daily_result_reserved(args: argparse.Namespace, report: Path, body: str
     status: dict[str, Any] = {
         "attempted": True,
         "complete": False,
-        "message_sent": False,
+        "message_sent": bool(message_already_sent),
         "file_sent": False,
-        "files_sent": [],
+        "files_sent": sorted(already_sent_files or set()),
         "errors": [],
     }
     if args.attach_report:
@@ -852,19 +1251,24 @@ def send_daily_result_reserved(args: argparse.Namespace, report: Path, body: str
             return status
         status["pdf_companion"] = str(companions[0])
         for report_file in companions:
+            resolved_report = str(report_file.expanduser().resolve())
+            if resolved_report in set(status["files_sent"]):
+                continue
             try:
                 send_daily_with_busy_retry(send_file, report_file, args.send_chat, args.send_targets)
-                status["files_sent"].append(str(report_file))
+                status["files_sent"].append(resolved_report)
             except Exception as exc:  # noqa: BLE001
                 status["errors"].append(f"file {report_file}: {exc}")
                 return status
-        status["file_sent"] = len(status["files_sent"]) == len(companions)
-    try:
-        send_daily_with_busy_retry(send_message, message, args.send_chat, args.send_targets)
-        status["message_sent"] = True
-    except Exception as exc:  # noqa: BLE001 - preserve send blocker for operator.
-        status["errors"].append(f"message: {exc}")
-        return status
+        expected = {str(path.expanduser().resolve()) for path in companions}
+        status["file_sent"] = expected.issubset(set(status["files_sent"]))
+    if not status["message_sent"]:
+        try:
+            send_daily_with_busy_retry(send_message, message, args.send_chat, args.send_targets)
+            status["message_sent"] = True
+        except Exception as exc:  # noqa: BLE001 - preserve send blocker for operator.
+            status["errors"].append(f"message: {exc}")
+            return status
     status["complete"] = status["message_sent"] and (not args.attach_report or status["file_sent"])
     return status
 

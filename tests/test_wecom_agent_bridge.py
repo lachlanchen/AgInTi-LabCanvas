@@ -1435,6 +1435,13 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertFalse(policy["automatic_multilingual"])
         self.assertEqual(policy["language_mode"], "match_requester_language")
         self.assertFalse(policy["cross_chat_context_allowed"])
+        self.assertEqual(policy["profile_id"], "labagent")
+        self.assertTrue(policy["capability_profile"]["template_profile"])
+        self.assertEqual(policy["capability_profile"]["id"], "labagent")
+        self.assertNotIn(
+            "explicitly_authorized_video_publication",
+            policy["capability_profile"]["capabilities"],
+        )
         self.assertEqual(task["source"]["sender_display"], "megamonster")
         self.assertEqual(task["source"]["sender_mention"], "megamonster@微信")
         self.assertEqual(task["source"]["sender_identity_confidence"], "visible_row_label")

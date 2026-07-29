@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -40,13 +41,14 @@ class CodexQuotaStatusTests(unittest.TestCase):
         has_credits: bool = False,
         credit_balance: str = "0",
     ) -> dict:
+        resets_at = int(time.time()) + 3600
         return {
             "rateLimits": {
                 "limitId": "codex",
                 "primary": {
                     "usedPercent": codex_used,
                     "windowDurationMins": 10080,
-                    "resetsAt": 1785258202,
+                    "resetsAt": resets_at,
                 },
                 "credits": {
                     "hasCredits": has_credits,
@@ -69,7 +71,7 @@ class CodexQuotaStatusTests(unittest.TestCase):
                     "primary": {
                         "usedPercent": codex_used,
                         "windowDurationMins": 10080,
-                        "resetsAt": 1785258202,
+                        "resetsAt": resets_at,
                     },
                     "credits": {
                         "hasCredits": has_credits,
@@ -114,7 +116,7 @@ class CodexQuotaStatusTests(unittest.TestCase):
         english = module.format_warning(status, request_text="Continue this task")
 
         self.assertIn("仅剩 3%", chinese)
-        self.assertIn("2026-07-29", chinese)
+        self.assertIn("HKT", chinese)
         self.assertIn("3% remaining", english)
 
     def test_large_purchased_balance_suppresses_weekly_warning(self) -> None:

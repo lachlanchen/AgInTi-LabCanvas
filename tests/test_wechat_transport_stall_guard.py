@@ -25,6 +25,39 @@ SPEC.loader.exec_module(guard)
 
 
 class WeChatTransportStallGuardTests(unittest.TestCase):
+    def test_health_alert_can_target_private_personal_wechat_device_inbox(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["wechat_gui_send.py"],
+            0,
+            json.dumps({"results": [{"target": "🍓My devices", "sent": True}]}),
+            "",
+        )
+        with mock.patch.object(guard, "run_command", return_value=completed) as runner:
+            result = guard.send_health_alert(
+                transport="wechat",
+                chat="🍓My devices",
+                message="health degraded",
+                task_id="health-1",
+            )
+
+        self.assertTrue(result["ok"])
+        command = runner.call_args.args[0]
+        self.assertIn(str(guard.WECHAT_GUI_SEND), command)
+        self.assertEqual(command[command.index("--target") + 1], "🍓My devices")
+        self.assertIn("--no-search", command)
+        self.assertNotIn("LabAgent", command)
+
+    def test_virtual_desktop_closes_lifecycle_lock_in_wechat_child(self) -> None:
+        script = (
+            ROOT
+            / "agentic_tools"
+            / "wechat_gui_agent"
+            / "scripts"
+            / "wechat_virtual_desktop.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("setsid -f /usr/bin/wechat 9>&-", script)
+
     def test_old_unlocked_sender_file_is_not_treated_as_stall(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             lock = Path(tmp) / "sender.lock"
@@ -144,6 +177,38 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["task_ids"], ["current-timeout"])
+
+    def test_gui_timeout_health_includes_daily_scheduler_delivery(self) -> None:
+        now = datetime(2026, 7, 29, 3, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue = root / "queue.jsonl"
+            queue.write_text("", encoding="utf-8")
+            scheduler = root / "organizer-delivery.json"
+            scheduler.write_text(
+                json.dumps(
+                    {
+                        "status": "delivery_failed",
+                        "updated_at": "2026-07-29T10:59:00+08:00",
+                        "send": {
+                            "errors": [
+                                "WECHAT_SEND_TIMEOUT: GUI sender exceeded 115 seconds"
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = guard.recent_wechat_gui_timeout_health(
+                queue,
+                now=now,
+                client_started_at=now - timedelta(hours=1),
+                scheduler_state_paths=(scheduler,),
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["task_ids"], ["scheduler:organizer-delivery"])
 
     def test_tmux_snapshot_filters_exact_session_and_keeps_all_windows(self) -> None:
         original = guard.run_command
@@ -435,6 +500,27 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         repair.assert_called_once_with(
             "android_relay",
             [str(guard.WECOM_SUPERVISOR), "android-restart"],
+        )
+
+    def test_android_serialized_gui_busy_is_not_a_stall_until_poll_is_stale(self) -> None:
+        busy = {
+            "poll_healthy": False,
+            "poll_in_progress": True,
+            "poll_stale": False,
+            "surface_state": "polling",
+            "last_poll_error": "BridgeError: WECOM_ANDROID_BUSY: serialized GUI control exceeded 5.0s",
+        }
+
+        self.assertFalse(guard.android_poll_failure_is_actionable(busy))
+        self.assertTrue(
+            guard.android_poll_failure_is_actionable(
+                {**busy, "poll_stale": True}
+            )
+        )
+        self.assertTrue(
+            guard.android_poll_failure_is_actionable(
+                {**busy, "surface_state": "anr"}
+            )
         )
 
     def test_current_client_gui_timeout_restarts_only_wechat_client(self) -> None:
