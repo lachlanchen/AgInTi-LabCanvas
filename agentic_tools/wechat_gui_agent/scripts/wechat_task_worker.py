@@ -1036,9 +1036,22 @@ def refresh_existing_video_publish_deferred_result(task: dict[str, Any], result:
     video_id = int_or_none(poststage.get("video_id"))
     if video_id is None:
         return result
-    platforms = [str(item) for item in poststage.get("platforms") or detect_publish_platforms(task)]
+    platforms = [
+        str(item)
+        for item in poststage.get("platforms")
+        or detect_publish_platforms(task, current_only=True)
+    ]
     target = Path(str(poststage.get("target") or poststage.get("target_name") or ""))
-    verification = verify_lazyedit_publish_stage(video_id, platforms, target, {"status": "probe"})
+    verification = verify_lazyedit_publish_stage(
+        video_id,
+        platforms,
+        target,
+        {
+            "status": "probe",
+            "job_id": poststage.get("job_id"),
+            "remote_job_id": poststage.get("remote_job_id"),
+        },
+    )
     old_stage = ""
     if isinstance(data.get("publish_stage"), dict):
         old_stage = str(data["publish_stage"].get("stage") or "")
@@ -5342,6 +5355,7 @@ def worker_result_has_durable_publish_state(task: dict[str, Any], result: str) -
         "publish_running",
         "waiting_login",
         "published_verified",
+        "published_with_unrequested_platform",
     }
 
 
@@ -5571,7 +5585,7 @@ def should_agent_supervise_existing_video_publish(task: dict[str, Any]) -> bool:
     video_id = known_lazyedit_video_id_for_autopub(autopub)
     if video_id is None:
         return True
-    platforms = detect_publish_platforms(task)
+    platforms = detect_publish_platforms(task, current_only=True)
     target = Path(str(autopub.get("target") or ""))
     verification = verify_lazyedit_publish_stage(
         video_id,
@@ -5580,7 +5594,12 @@ def should_agent_supervise_existing_video_publish(task: dict[str, Any]) -> bool:
         {"status": "pre-agent-probe"},
     )
     stage = str(verification.get("stage") or "")
-    if stage in {"publish_running", "waiting_login", "published_verified"}:
+    if stage in {
+        "publish_running",
+        "waiting_login",
+        "published_verified",
+        "published_with_unrequested_platform",
+    }:
         task["publish_agent_bypassed"] = {
             "reason": "durable_publish_state_exists",
             "stage": stage,
@@ -6142,7 +6161,7 @@ Open a human-assist browser in the isolated virtual desktop with:
 PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --wait-seconds 8 --capture --close-after --json
 Then return a confirmation telling the user to complete the manual step in noVNC and approve continuation.
 For LazyEdit video work, preserve the current request's explicit background/canvas fill, crop/padding, subtitle on/off, subtitle language/order, correction context, metadata context, logo, and platform choices. Do not silently replace them with chat-profile defaults. If unspecified, inherit LazyEdit's current settings. Generation, local processing, and public publication remain separate permissions.
-For `task.routine.id=video_publish_existing`, you are the execution supervisor, not a commentator. After confirming `public_publish_allowed=true` and the exact same-chat `task.preflight.autopublish_video.target`, use the checked-in LazyEdit publish skill and invoke LazyEdit's `scripts/lazyedit_publish.py` workflow for the requested platforms and settings. Read the correction and metadata prompt paths from `task.preflight.lazyedit_context`. Prefer an exact imported `video_id`; if import is still pending, probe briefly or use the exact target without selecting any nearby video. Submit the durable LazyEdit job with `--no-wait`; do not hold this agent turn with `--wait`, `--guided-monitor`, long sleeps, or browser polling. Return the real submitted job/video IDs. The deterministic worker poststage owns long monitoring, duplicate prevention, login/QR handoff, retries, and terminal platform verification.
+For `task.routine.id=video_publish_existing`, you are the execution supervisor, not a commentator. After confirming `public_publish_allowed=true` and the exact same-chat `task.preflight.autopublish_video.target`, use the checked-in LazyEdit publish skill and invoke LazyEdit's `scripts/lazyedit_publish.py` workflow for the exact current-message platform allowlist in `task.preflight.publish_platforms`. Read the correction and metadata prompt paths from `task.preflight.lazyedit_context`. Prefer an exact imported `video_id`; if import is still pending, probe briefly or use the exact target without selecting any nearby video. Submit the durable LazyEdit job with `--no-wait` and one literal `--platforms` value; never use repeated `--platform` flags or merge saved platform toggles. Inspect the created job and require its platform set to equal the allowlist. Do not resubmit after a mismatch; do not hold this agent turn with `--wait`, `--guided-monitor`, long sleeps, or browser polling. Return the real submitted job/video IDs. The deterministic worker poststage owns long monitoring, duplicate prevention, login/QR handoff, retries, and terminal platform verification.
 When Shipinhao publication reaches a QR/login blocker, return one concise human message with the available noVNC URL and QR/screenshot artifact. Do not send browser diagnostics or repeatedly retry the public action while login is pending.
 If other external tools or files are not available, say exactly what is needed next.
 
@@ -6851,6 +6870,17 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         "correction_prompt_file": str(context_path),
         "metadata_prompt_file": str(metadata_path),
         "rule": "Pass correction_prompt_file to --correction-prompt-file and metadata_prompt_file to --metadata-prompt-file.",
+    }
+    requested_platforms = detect_publish_platforms(task, current_only=True)
+    preflight["publish_platforms"] = {
+        "requested": requested_platforms,
+        "cli_value": ",".join(requested_platforms),
+        "mode": "exact_current_request_allowlist",
+        "inherit_saved_platform_toggles": False,
+        "rule": (
+            "Use one literal --platforms value containing exactly requested. "
+            "Current Studio settings may supply layout defaults but must not add a platform."
+        ),
     }
     if not generate_video_task and should_preflight_autopublish(task):
         if "resolved_video_artifact" not in preflight:
@@ -8300,7 +8330,12 @@ def strip_recent_synced_files_section(request: str) -> str:
 def should_prepare_media_resolution(task: dict[str, Any]) -> bool:
     route = task_route_decision(task)
     route_kind = str(route.get("route_kind") or "")
-    if route_kind in {"edit_existing_media", "file_intake", "file_download_or_save", "process_existing_video", "publish_video"}:
+    if route_kind in {"process_existing_video", "publish_video"}:
+        # Exact video local-id/message-shard and task-ledger resolution is
+        # handled by the dedicated AutoPublish preflight. The generic media
+        # mirror can contain many unrelated thumbnails from the same chat.
+        return False
+    if route_kind in {"edit_existing_media", "file_intake", "file_download_or_save"}:
         return True
     text = task_focus_text(task).lower()
     explicit_media_text = any(
@@ -9462,11 +9497,13 @@ def resolve_synced_media_from_mirror(
         if not path.is_file():
             continue
         score, reasons = score_media_candidate(item, tokens=tokens, windows=windows)
-        if score <= 0 and tokens:
+        token_match = any(reason.startswith("token:") for reason in reasons)
+        window_match = "source_mtime_window" in reasons
+        if tokens and not token_match:
             continue
-        if score <= 0 and windows:
+        if not tokens and windows and not window_match:
             continue
-        if score <= 0 and not fallback_recent_media_candidate(item):
+        if not tokens and not windows and not fallback_recent_media_candidate(item):
             continue
         item["score"] = score
         item["match_reasons"] = reasons
@@ -9559,12 +9596,14 @@ def task_media_source_windows(task: dict[str, Any]) -> list[tuple[float, float]]
     window = float(os.environ.get("WECHAT_WORKER_MEDIA_SOURCE_WINDOW_SECONDS", "360"))
     times: list[float] = []
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
-    for raw in (source.get("create_time"),):
-        value = float_or_none(raw)
+    if task_row_is_media_source(source):
+        value = float_or_none(source.get("create_time"))
         if value:
             times.append(value)
     for row in task.get("context") or []:
         if not isinstance(row, dict):
+            continue
+        if not task_row_is_media_source(row):
             continue
         value = float_or_none(row.get("create_time"))
         if value:
@@ -9576,6 +9615,13 @@ def task_media_source_windows(task: dict[str, Any]) -> list[tuple[float, float]]
         if (start, end) not in windows:
             windows.append((start, end))
     return windows
+
+
+def task_row_is_media_source(row: dict[str, Any]) -> bool:
+    kind = str(row.get("kind") or "").strip().lower()
+    if kind in {"image", "video", "file", "file/link", "voice", "audio"}:
+        return True
+    return wechat_base_message_type(row.get("local_type")) in {3, 34, 43, 49}
 
 
 def float_or_none(value: Any) -> float | None:
@@ -12942,14 +12988,18 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
             },
             ensure_ascii=False,
         )
-    platforms = detect_publish_platforms(task)
+    platforms = detect_publish_platforms(task, current_only=True)
     lazy_context = ((task.get("preflight") or {}).get("lazyedit_context") if isinstance(task.get("preflight"), dict) else {}) or {}
     correction_prompt = str(lazy_context.get("correction_prompt_file") or "")
     metadata_prompt = str(lazy_context.get("metadata_prompt_file") or "")
     verification = verify_lazyedit_publish_stage(video_id, platforms, target, {"status": "preflight"})
     if bool(verification.get("verified")):
         outcome = {"ok": True, "status": "already_verified", "duplicate_publish_guard": True}
-    elif str(verification.get("stage") or "") in {"publish_running", "waiting_login"}:
+    elif str(verification.get("stage") or "") in {
+        "publish_running",
+        "waiting_login",
+        "published_with_unrequested_platform",
+    }:
         outcome = {
             "ok": True,
             "status": "probe",
@@ -12984,6 +13034,17 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
             "autopublish_video": autopub,
             "lazyedit_context": lazy_context,
         }
+        latest_job = next(
+            (
+                item
+                for item in verification.get("local_jobs") or []
+                if isinstance(item, dict)
+            ),
+            {},
+        )
+        if latest_job:
+            poststage["job_id"] = latest_job.get("id")
+            poststage["remote_job_id"] = latest_job.get("remote_job_id")
         attach_publish_poststage_retry(
             payload,
             task=task,
@@ -13073,6 +13134,8 @@ def lazyedit_api_get(path: str, *, timeout: float = 20) -> dict[str, Any]:
 def detect_publish_platforms(task: dict[str, Any], *, current_only: bool = False) -> list[str]:
     text = task_focus_text(task).lower() if current_only else json.dumps(task, ensure_ascii=False).lower()
     platforms: list[str] = []
+    if "douyin" in text or "抖音" in text:
+        platforms.append("douyin")
     if any(marker in text for marker in ["shipinhao", "视频号", "視頻號"]) or re.search(r"\bsph\b", text):
         platforms.append("shipinhao")
     if "youtube" in text or re.search(r"\b(?:y2b|ytb)\b", text):
@@ -13272,9 +13335,22 @@ def deterministic_existing_video_publish_poststage_result(task: dict[str, Any]) 
     video_id = int_or_none(poststage.get("video_id"))
     if video_id is None:
         return None
-    platforms = [str(item) for item in poststage.get("platforms") or detect_publish_platforms(task)]
+    platforms = [
+        str(item)
+        for item in poststage.get("platforms")
+        or detect_publish_platforms(task, current_only=True)
+    ]
     target = Path(str(poststage.get("target") or poststage.get("target_name") or ""))
-    verification = verify_lazyedit_publish_stage(video_id, platforms, target, {"status": "probe"})
+    verification = verify_lazyedit_publish_stage(
+        video_id,
+        platforms,
+        target,
+        {
+            "status": "probe",
+            "job_id": poststage.get("job_id"),
+            "remote_job_id": poststage.get("remote_job_id"),
+        },
+    )
     stage = str(verification.get("stage") or "not_verified")
     if should_reissue_existing_video_publish(task, poststage, verification):
         outcome = run_existing_video_publish_from_poststage(task, poststage, video_id, platforms)
@@ -13365,6 +13441,7 @@ def verify_lazyedit_publish_stage(video_id: int, platforms: list[str], target: P
     local_jobs = matching_lazyedit_publish_jobs(video_id, outcome)
     remote_jobs = remote_publish_jobs_for(local_jobs)
     verified_platforms: set[str] = set()
+    observed_platforms: set[str] = set()
     pending = False
     failed = False
     for index, job in enumerate(local_jobs):
@@ -13372,6 +13449,7 @@ def verify_lazyedit_publish_stage(video_id: int, platforms: list[str], target: P
         status = normalized_status(job.get("status"))
         remote_status = normalized_status(job.get("remote_status") or remote.get("status"))
         job_platforms = normalize_platforms(job.get("platforms") or requested)
+        observed_platforms.update(job_platforms)
         if publish_job_verified(job, remote):
             verified_platforms.update(job_platforms)
         elif status in {"queued", "running", "pending"} or remote_status in {"queued", "running", "pending"}:
@@ -13380,8 +13458,13 @@ def verify_lazyedit_publish_stage(video_id: int, platforms: list[str], target: P
             failed = True
         elif status == "done":
             pending = True
-    verified = bool(requested) and set(requested).issubset(verified_platforms)
-    if verified:
+    requested_platforms_verified = bool(requested) and set(requested).issubset(verified_platforms)
+    unexpected_platforms = sorted(observed_platforms - set(requested))
+    platform_set_matches = not unexpected_platforms
+    verified = requested_platforms_verified and platform_set_matches
+    if requested_platforms_verified and unexpected_platforms:
+        stage = "published_with_unrequested_platform"
+    elif verified:
         stage = "published_verified"
     elif not local_jobs:
         stage = "no_local_job"
@@ -13400,11 +13483,18 @@ def verify_lazyedit_publish_stage(video_id: int, platforms: list[str], target: P
         "video_id": video_id,
         "requested_platforms": requested,
         "verified_platforms": sorted(verified_platforms),
+        "observed_platforms": sorted(observed_platforms),
+        "unexpected_platforms": unexpected_platforms,
+        "requested_platforms_verified": requested_platforms_verified,
+        "platform_set_matches": platform_set_matches,
         "local_jobs": compact_publish_jobs(local_jobs),
         "remote_jobs": compact_publish_jobs(remote_jobs),
         "blocker": blocker,
         "source": target.name if str(target) else "",
-        "rule": "Do not say published unless all requested platforms have terminal platform evidence.",
+        "rule": (
+            "Do not say exact publication succeeded unless every requested platform has terminal evidence "
+            "and the submitted job contains no unrequested platform."
+        ),
     }
 
 
@@ -13546,12 +13636,39 @@ def remote_log_is_waiting_for_login(log: str) -> bool:
 
 def matching_lazyedit_publish_jobs(video_id: int, outcome: dict[str, Any]) -> list[dict[str, Any]]:
     jobs: list[dict[str, Any]] = []
+    expected_job_id = int_or_none(
+        outcome.get("job_id") or outcome.get("publish_job_id")
+    )
+    payload = outcome.get("payload") if isinstance(outcome.get("payload"), dict) else {}
+    if expected_job_id is None:
+        for key in ("publish_job", "publish_started"):
+            candidate = payload.get(key) if isinstance(payload, dict) else None
+            if not isinstance(candidate, dict):
+                continue
+            nested = (
+                candidate.get("job")
+                if isinstance(candidate.get("job"), dict)
+                else candidate
+            )
+            expected_job_id = int_or_none(
+                candidate.get("job_id")
+                or nested.get("id")
+                or nested.get("job_id")
+            )
+            if expected_job_id is not None:
+                break
     queue = lazyedit_api_get("/api/autopublish/queue", timeout=30)
     queue_jobs = queue.get("jobs") if isinstance(queue, dict) else []
     for job in queue_jobs or []:
-        if isinstance(job, dict) and int_or_none(job.get("video_id")) == video_id:
+        if (
+            isinstance(job, dict)
+            and int_or_none(job.get("video_id")) == video_id
+            and (
+                expected_job_id is None
+                or same_local_job_id(job.get("id"), expected_job_id)
+            )
+        ):
             jobs.append(job)
-    payload = outcome.get("payload") if isinstance(outcome.get("payload"), dict) else {}
     for key in ("publish_job", "publish_started"):
         candidate = payload.get(key) if isinstance(payload, dict) else None
         if isinstance(candidate, dict):
@@ -13636,7 +13753,16 @@ def normalize_platforms(platforms: Any) -> list[str]:
     else:
         raw = []
     normalized: list[str] = []
-    aliases = {"sph": "shipinhao", "视频号": "shipinhao", "視頻號": "shipinhao", "y2b": "youtube", "ytb": "youtube", "ins": "instagram"}
+    aliases = {
+        "douyin": "douyin",
+        "抖音": "douyin",
+        "sph": "shipinhao",
+        "视频号": "shipinhao",
+        "視頻號": "shipinhao",
+        "y2b": "youtube",
+        "ytb": "youtube",
+        "ins": "instagram",
+    }
     for item in raw:
         for part in re.split(r"[,，、\s]+", item.lower()):
             part = aliases.get(part.strip(), part.strip())
@@ -13688,6 +13814,8 @@ def attach_publish_poststage_retry(
     if bool(verification.get("verified")):
         return
     stage = str(verification.get("stage") or "not_verified")
+    if stage == "published_with_unrequested_platform":
+        return
     if stage == "waiting_login":
         files = fetch_remote_publish_login_artifacts(task, verification)
         if files:
@@ -13789,6 +13917,24 @@ def summarize_lazyedit_publish_outcome(
     local_job_id = latest.get("id") if isinstance(latest, dict) else None
     remote_job_id = latest.get("remote_job_id") if isinstance(latest, dict) else None
     remote_status = latest.get("remote_status") if isinstance(latest, dict) else None
+    if stage == "published_with_unrequested_platform":
+        unexpected = ",".join(verification.get("unexpected_platforms") or [])
+        pieces = [
+            "请求的平台均已发布，但检测到任务还包含了未请求的平台；我不会把它报告为精确匹配的成功。",
+            f"video_id={video_id}",
+            f"requested={requested}",
+            f"unexpected={unexpected or 'unknown'}",
+            f"stage={stage}",
+        ]
+        if local_job_id:
+            pieces.append(f"job_id={local_job_id}")
+        if remote_job_id:
+            pieces.append(f"remote_job_id={remote_job_id}")
+        if remote_status:
+            pieces.append(f"remote={remote_status}")
+        pieces.append(f"source={target.name}")
+        pieces.append("该任务已终止，不会自动重复发布。")
+        return "；".join(pieces)
     if verification.get("verified"):
         pieces = [
             "已确认发布完成。",
@@ -13940,12 +14086,18 @@ def video_server_id_to_local_id_map(task: dict[str, Any]) -> dict[str, int]:
 
 
 def extract_media_tokens_from_task(task: dict[str, Any], *, limit: int = 16) -> list[str]:
-    text = json.dumps(task, ensure_ascii=False)
+    chunks = [strip_recent_synced_files_section(str(task.get("request") or ""))]
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    if task_row_is_media_source(source):
+        chunks.extend(media_identity_text_chunks(source))
+    for row in task.get("context") or []:
+        if isinstance(row, dict) and task_row_is_media_source(row):
+            chunks.extend(media_identity_text_chunks(row))
+    text = "\n".join(chunks)
     tokens: list[str] = []
     patterns = [
-        r"\b(?:md5|newmd5|rawmd5|originsourcemd5|filemd5)\s*=\s*[\"']([0-9A-Fa-f]{16,64})[\"']",
+        r"\b(?:md5|newmd5|rawmd5|originsourcemd5|filemd5)\s*(?:=|:)\s*[\"']?([0-9A-Fa-f]{16,64})[\"']?",
         r"<md5>\s*([0-9A-Fa-f]{16,64})\s*</md5>",
-        r"\b([0-9A-Fa-f]{32,64})\b",
     ]
     for pattern in patterns:
         for match in re.finditer(pattern, text):
@@ -13955,6 +14107,19 @@ def extract_media_tokens_from_task(task: dict[str, Any], *, limit: int = 16) -> 
             if len(tokens) >= limit:
                 return tokens
     return tokens
+
+
+def media_identity_text_chunks(row: dict[str, Any]) -> list[str]:
+    chunks = [
+        str(row.get(key) or "")
+        for key in ("content", "raw_content", "message", "xml", "attachment_xml")
+        if row.get(key)
+    ]
+    for key in ("md5", "newmd5", "rawmd5", "originsourcemd5", "filemd5"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            chunks.append(f"{key}={value}")
+    return chunks
 
 
 def collapse_context_text(value: Any, *, max_len: int = 2000) -> str:
@@ -14014,6 +14179,7 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
     quoted_prompt = json.dumps(prompt_text or "prepare CAD/PCB/Blender artifacts", ensure_ascii=False)
     generated_video_note = build_generated_video_tool_context(task)
     media_resolution_note = build_media_resolution_tool_context(task)
+    existing_video_publish_note = build_existing_video_publish_tool_context(task)
     return f"""LabCanvas tool playbook:
 - Use `{artifact_dir}` as the preferred working/output folder for new artifacts.
 - Match every input file/media path to this task's exact `chat`, `source.local_id`, `source.server_id`, explicit source/reference rows in `request`, or source-scoped context text. Do not borrow files from another group/direct chat or from unrelated previous worker tasks.
@@ -14040,6 +14206,7 @@ def build_worker_tool_context(task: dict[str, Any]) -> str:
 - For AgInTi figure requests, return the editable SVG grid plus AgInTi prompt/request/manifest files; if live image generation is enabled and `imagePaths` contains PNG/JPG outputs, include those image paths too.
 - For PCB render requests, return the KiCad/board PNG preview and any STEP/Gerber zip when available. For CAD/Blender render requests, return the PNG render plus STEP/STL/source spec when useful.
 {generated_video_note}
+{existing_video_publish_note}
 
 LALACHAN/RaraXia/AyaChan/SasaKun story-video generation:
 - For requests mentioning LALACHAN, RaraXia/Rara Xia/啦啦侠, AyaChan/Aya Chan/阿芽酱, SasaKun/Sasa Kun/飒飒君, Xiaoyunque/小云雀, XYQ, or Seedance, treat the task as a LALACHAN repo workflow rather than a generic video prompt.
@@ -14166,6 +14333,20 @@ Artifact return contract:
 - For ordinary link summaries, avoid listing Markdown, PDF, or image files by default. Do not send a low-quality image/thumbnail just because one was scraped; only send an image when the user asked for it or it is a high-value figure/screenshot that you actually inspected and need to discuss.
 - Prefer PNG/JPG/SVG/PDF/MD/TEX/MP4/MOV/audio/STEP/STL/3MF/DXF/ZIP/SCAD/Blend/KiCad/Gerber files. Do not include decrypted WeChat DBs, private config, cookies, tokens, browser profiles, or chat logs.
 - Do not say a file was sent unless it is listed in `files` and exists locally.
+"""
+
+
+def build_existing_video_publish_tool_context(task: dict[str, Any]) -> str:
+    if task_routine_id(task) != "video_publish_existing":
+        return ""
+    platforms = detect_publish_platforms(task, current_only=True)
+    cli_value = ",".join(platforms)
+    return f"""
+Exact existing-video publication contract:
+- The current-message platform allowlist is exactly: `{cli_value}`.
+- Invoke LazyEdit with one literal `--platforms {cli_value}` argument. Do not use repeated `--platform` flags, because the CLI's default platform list would remain active.
+- `--use-current-settings` may inherit subtitle, logo, crop, and layout settings only. It must not broaden the platform allowlist.
+- Immediately inspect the created LazyEdit job and require its `platforms` set to equal `{cli_value}`. If it differs, report the mismatch and do not submit or reissue another public job.
 """
 
 

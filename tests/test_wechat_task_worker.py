@@ -1298,6 +1298,44 @@ stderr: noisy internal trace
         self.assertEqual(policy["model"], "gpt-5.6-sol")
         self.assertEqual(policy["reasoning_effort"], "low")
 
+    def test_existing_video_publish_tool_context_pins_exact_platform_allowlist(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": (
+                "Current coalesced request:\n"
+                "Publish this video to Shipinhao, YouTube, and Instagram."
+            ),
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_allowed": True,
+            },
+            "routine": {"id": "video_publish_existing"},
+        }
+
+        context = worker.build_worker_tool_context(task)
+
+        self.assertIn(
+            "--platforms shipinhao,youtube,instagram",
+            context,
+        )
+        self.assertIn("must not broaden the platform allowlist", context)
+        self.assertIn("Do not use repeated `--platform` flags", context)
+        self.assertNotIn("--platforms douyin,", context)
+
+    def test_detect_publish_platforms_supports_explicit_douyin(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": (
+                "Current coalesced request:\n"
+                "发布到抖音、视频号、YouTube 和 Instagram"
+            )
+        }
+
+        self.assertEqual(
+            worker.detect_publish_platforms(task, current_only=True),
+            ["douyin", "shipinhao", "youtube", "instagram"],
+        )
+
     def test_publish_preflight_exposes_exact_target_and_prompt_paths_to_agent(self) -> None:
         worker = load_worker()
         preflight = {
@@ -4289,6 +4327,105 @@ stderr: noisy internal trace
 
         self.assertEqual(candidates, [])
 
+    def test_media_resolution_rejects_readable_candidate_without_exact_media_token(self) -> None:
+        worker = load_worker()
+        import wechat_mirror  # type: ignore
+
+        expected_token = "11111111111111111111111111111111"
+        unrelated_token = "22222222222222222222222222222222"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            unrelated = tmp_path / f"{unrelated_token}.jpg"
+            unrelated.write_bytes(b"\xff\xd8\xff\xe0unrelated-jpeg")
+            create_time = datetime.now().timestamp()
+            db = tmp_path / "wechat_mirror.sqlite"
+            event_id = wechat_mirror.record_event(
+                chat_name="MEMO",
+                action="media-sync",
+                status="copied",
+                db_path=db,
+            )
+            wechat_mirror.record_media_files(
+                chat_name="MEMO",
+                event_id=event_id,
+                db_path=db,
+                files=[
+                    {
+                        "source": str(unrelated),
+                        "target": str(unrelated),
+                        "suffix": ".jpg",
+                        "bytes": unrelated.stat().st_size,
+                        "mtime": create_time,
+                        "status": "decoded",
+                        "matched_by": f"token:{unrelated_token}",
+                    }
+                ],
+            )
+            task = {
+                "chat": "MEMO",
+                "source": {
+                    "local_id": 90,
+                    "local_type": 43,
+                    "create_time": create_time,
+                    "content": f"<msg><videomsg md5=\"{expected_token}\" /></msg>",
+                },
+                "request": "Edit this exact video.",
+                "route_decision": {
+                    "route_kind": "edit_existing_media",
+                    "needs_recent_media": True,
+                },
+            }
+
+            with mock.patch.dict(worker.os.environ, {"WECHAT_MIRROR_DB": str(db)}):
+                candidates = worker.resolve_synced_media_from_mirror(task)
+
+        self.assertEqual(candidates, [])
+
+    def test_media_identity_tokens_ignore_incidental_task_and_cache_hashes(self) -> None:
+        worker = load_worker()
+        exact_token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        cache_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        config_hash = "cccccccccccccccccccccccccccccccc"
+        task = {
+            "request": (
+                "Process the current source.\n\n"
+                "Recent synced WeChat files:\n"
+                f"- /tmp/cache/{cache_hash}.jpg\n\n"
+                f"route_config_hash={config_hash}"
+            ),
+            "source": {
+                "local_type": 1,
+                "content": f"config checksum {config_hash}",
+            },
+            "context": [
+                {
+                    "local_type": 3,
+                    "kind": "image",
+                    "content": f"<msg><img md5=\"{exact_token}\" /></msg>",
+                }
+            ],
+        }
+
+        self.assertEqual(worker.extract_media_tokens_from_task(task), [exact_token])
+
+    def test_media_source_windows_ignore_ordinary_text_rows(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"local_type": 1, "create_time": 1000},
+            "context": [
+                {"local_type": 1, "create_time": 1500},
+                {"local_type": 3, "kind": "image", "create_time": 2000},
+            ],
+        }
+
+        with mock.patch.dict(
+            worker.os.environ,
+            {"WECHAT_WORKER_MEDIA_SOURCE_WINDOW_SECONDS": "10"},
+        ):
+            windows = worker.task_media_source_windows(task)
+
+        self.assertEqual(windows, [(1990.0, 2010.0)])
+
     def test_media_resolution_retries_after_gui_cache_probe(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -7262,6 +7399,93 @@ stderr: noisy internal trace
         self.assertEqual(payload["publish_stage"]["stage"], "published_verified")
         self.assertTrue(payload["publish_stage"]["verified"])
         self.assertNotIn("publish_poststage_retry", payload)
+
+    def test_exact_video_publish_rejects_terminal_unrequested_platform_without_reissue(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "exact_video_COMPLETED.mp4"
+            target.write_bytes(b"video")
+            task = {
+                "request": (
+                    "Current coalesced request:\n"
+                    "Publish it to Shipinhao, YouTube, and Instagram."
+                ),
+                "route_decision": {
+                    "route_kind": "publish_video",
+                    "public_publish_allowed": True,
+                },
+                "routine": {"id": "video_publish_existing"},
+                "preflight": {
+                    "autopublish_video": {
+                        "ok": True,
+                        "target": str(target),
+                        "video_id": 499,
+                    }
+                },
+            }
+
+            with mock.patch.object(worker, "run_lazyedit_publish_command") as publish:
+                with mock.patch.object(
+                    worker,
+                    "lazyedit_api_get",
+                    return_value={
+                        "jobs": [
+                            {
+                                "video_id": 499,
+                                "id": 332,
+                                "status": "done",
+                                "remote_status": "done",
+                                "remote_job_id": "job-1",
+                                "platforms": [
+                                    "douyin",
+                                    "shipinhao",
+                                    "youtube",
+                                    "instagram",
+                                ],
+                            }
+                        ]
+                    },
+                ):
+                    with mock.patch.object(worker, "remote_publish_jobs_for", return_value=[{}]):
+                        raw = worker.deterministic_preflight_result(task)
+
+        publish.assert_not_called()
+        payload = json.loads(raw or "{}")
+        stage = payload["publish_stage"]
+        self.assertEqual(stage["stage"], "published_with_unrequested_platform")
+        self.assertFalse(stage["verified"])
+        self.assertTrue(stage["requested_platforms_verified"])
+        self.assertFalse(stage["platform_set_matches"])
+        self.assertEqual(stage["unexpected_platforms"], ["douyin"])
+        self.assertNotIn("publish_poststage_retry", payload)
+        self.assertIn("不会自动重复发布", payload["message"])
+
+    def test_publish_poststage_matches_only_its_exact_lazyedit_job_id(self) -> None:
+        worker = load_worker()
+        queue = {
+            "jobs": [
+                {
+                    "id": 331,
+                    "video_id": 499,
+                    "status": "done",
+                    "platforms": ["douyin"],
+                },
+                {
+                    "id": 332,
+                    "video_id": 499,
+                    "status": "done",
+                    "platforms": ["shipinhao", "youtube", "instagram"],
+                },
+            ]
+        }
+
+        with mock.patch.object(worker, "lazyedit_api_get", return_value=queue):
+            jobs = worker.matching_lazyedit_publish_jobs(
+                499,
+                {"status": "probe", "job_id": 332},
+            )
+
+        self.assertEqual([job["id"] for job in jobs], [332])
 
     def test_exact_video_publish_skips_duplicate_when_already_verified(self) -> None:
         worker = load_worker()
@@ -10832,6 +11056,20 @@ stderr: noisy internal trace
 
         self.assertEqual(worker.wechat_base_message_type(encoded_type), 49)
         self.assertTrue(worker.should_prepare_media_resolution(task))
+
+    def test_publish_video_uses_exact_autopublish_preflight_not_generic_media_resolution(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"local_type": 43, "kind": "video"},
+            "route_decision": {
+                "route_kind": "publish_video",
+                "needs_recent_media": True,
+                "public_publish_allowed": True,
+            },
+            "request": "Publish this exact video.",
+        }
+
+        self.assertFalse(worker.should_prepare_media_resolution(task))
 
     def test_resumed_worker_prompt_requires_audio_context_before_reasoning(self) -> None:
         worker = load_worker()

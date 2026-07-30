@@ -288,6 +288,85 @@ class WeChatOpsSendApiTests(unittest.TestCase):
 
 
 class WeChatOpsApprovalTests(unittest.TestCase):
+    def test_approve_publish_consent_resets_stale_state_and_allows_same_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            task = {
+                "id": "publish-consent",
+                "chat": "MEMO",
+                "status": "expired_stale",
+                "waiting_reason": "third_party_publish_consent",
+                "expires_at": "2000-01-01T00:00:00",
+                "completed_at": "2026-07-30T17:07:31",
+                "claimed_at": "2026-07-30T17:06:00",
+                "worker_id": "old-worker",
+                "expired_at": "2026-07-30T17:07:31",
+                "expired_from_status": "pending",
+                "expire_reason": "pending_task_ttl_exceeded",
+                "worker_result_ready_at": "2026-07-30T17:07:30",
+                "agent_session": {"backend": "aginti"},
+                "codex_session": {"role": "worker"},
+                "existing_video_publish_poststage": {"stage": "no_local_job"},
+                "request": "Publish the exact current video.",
+                "route_decision": {
+                    "route_kind": "publish_video",
+                    "public_publish_intent": True,
+                    "public_publish_allowed": False,
+                    "external_action_allowed": False,
+                    "requires_third_party_publish_confirmation": True,
+                },
+                "preflight": {"media_resolution": {"status": "wrong-old-path"}},
+                "result": {"message": "waiting for another participant"},
+            }
+            queue.write_text(
+                json.dumps(task, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+            updated = wechat_ops.update_waiting_task(
+                queue,
+                "publish-consent",
+                decision="approve",
+                note="The requester directly authorized publication.",
+            )
+
+        self.assertEqual(updated["status"], "pending")
+        self.assertEqual(updated["approval_previous_status"], "expired_stale")
+        self.assertEqual(
+            updated["approval_from_waiting_reason"],
+            "third_party_publish_consent",
+        )
+        self.assertNotIn("waiting_reason", updated)
+        self.assertNotIn("completed_at", updated)
+        self.assertNotIn("claimed_at", updated)
+        self.assertNotIn("worker_id", updated)
+        self.assertNotIn("preflight", updated)
+        self.assertNotIn("result", updated)
+        self.assertNotIn("expired_at", updated)
+        self.assertNotIn("expired_from_status", updated)
+        self.assertNotIn("expire_reason", updated)
+        self.assertNotIn("worker_result_ready_at", updated)
+        self.assertNotIn("agent_session", updated)
+        self.assertNotIn("codex_session", updated)
+        self.assertNotIn("existing_video_publish_poststage", updated)
+        self.assertGreater(
+            wechat_ops.parse_queue_datetime(updated["expires_at"]),
+            datetime.now(),
+        )
+        route = updated["route_decision"]
+        self.assertTrue(route["public_publish_allowed"])
+        self.assertTrue(route["external_action_allowed"])
+        self.assertFalse(route["requires_third_party_publish_confirmation"])
+        self.assertTrue(route["requester_publish_override"])
+        self.assertEqual(route["confirmation_kind"], "direct_requester_publish")
+        self.assertIn("directly authorized publication", route["reason"].lower())
+        self.assertIn("no third-party confirmation", route["reason"].lower())
+        self.assertNotIn("wait", route["ack"].lower())
+        self.assertEqual(
+            updated["third_party_publish_consent"]["status"],
+            "requester_override",
+        )
+
     def test_approve_story_confirmation_promotes_to_generated_video_and_preserves_story(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "queue.jsonl"

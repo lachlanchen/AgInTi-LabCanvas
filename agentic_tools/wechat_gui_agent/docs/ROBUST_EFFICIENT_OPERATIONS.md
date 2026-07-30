@@ -1334,6 +1334,29 @@ the worker resolves the source in this order:
    messages as obsolete context, not evidence;
 8. run LazyEdit and verify local plus remote publish queues.
 
+Publication consent is contextual, not a universal extra gate:
+
+- A direct or subjectless question to the agent, such as `你能发布今天的视频吗` or
+  `可以发布吗`, is a current-message publish instruction. Do not invent another
+  participant whose approval is required.
+- Wait only when the message explicitly addresses another participant or
+  otherwise clearly asks that person's permission, such as
+  `@A can I publish this video?`.
+- If the original requester later replaces that wait with a direct publish
+  instruction, reactivate the same durable task with a requester-override
+  record. Do not create a second publish task.
+- A bare `yes` from the requester does not impersonate the named third party;
+  it must either be an explicit direct publish instruction or leave the
+  existing wait unchanged.
+
+The generic same-chat media mirror is not a publish-video resolver.
+`publish_video` and `process_existing_video` use only the exact local-id,
+message-shard, quoted-video identity, and source-task artifact ledger described
+above. Generic image/file resolution must extract tokens only from actual media
+rows, ignore incidental hashes in config/cache paths, and require an exact
+token match when a token exists. File type or a nearby text-message timestamp
+is never enough to select media.
+
 LazyEdit is a mature downstream tool, not a block of logic to reimplement in
 the worker. The worker should prepare exact source evidence and two prompt
 files, then call LazyEdit:
@@ -1378,14 +1401,23 @@ select a nearby video. Once the same `video_id` has a queued/running job or a
 login blocker, the verifier only monitors it and never issues another publish.
 The agent submits this durable job with `--no-wait`; it does not hold a model
 turn across processing, remote uploads, sleeps, browser polling, or QR login.
+The current message supplies an exact platform allowlist. The agent must use one
+literal `--platforms shipinhao,youtube,instagram`-style argument, never repeated
+`--platform` flags that retain the CLI defaults. `--use-current-settings` may
+inherit subtitle, logo, crop, and layout choices, but it may not add a public
+platform. The poststage compares the submitted job's platform set for equality,
+not merely subset coverage. If all requested platforms complete alongside an
+unrequested platform, record terminal
+`published_with_unrequested_platform`, report the extra platform honestly, and
+never attempt a duplicate corrective publish.
 The deterministic poststage persists the job IDs, reports a login blocker
 promptly, copies only fresh fixed-name QR/login screenshots from the AutoPublish
 host into the exact task artifact directory, delivers them to the source chat,
 and resumes terminal verification without another model turn.
-A durable `publish_running`, `waiting_login`, or `published_verified` result
-also terminates the generic worker model-escalation ladder. A lower-quality
-agent sentence cannot start another model turn or duplicate public job after
-the queue already owns execution.
+A durable `publish_running`, `waiting_login`, `published_verified`, or
+`published_with_unrequested_platform` result also terminates the generic worker
+model-escalation ladder. A lower-quality agent sentence cannot start another
+model turn or duplicate public job after the queue already owns execution.
 Before resuming the publication agent at all, reprocess and reboot recovery
 probe the exact imported `video_id`. If its queue is already running, waiting
 for login, or terminal, the agent is bypassed and the deterministic poststage

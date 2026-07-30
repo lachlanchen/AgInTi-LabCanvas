@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -942,6 +942,11 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "GUI file sends re-verify the exact chat after the native picker and before submission",
             "send_retrying rows are not reclaimed before the active GUI sender timeout plus grace",
             "exact-task media resolution rejects files associated only by modification time",
+            "exact media tokens reject unrelated readable files from the same chat",
+            "publish-video tasks bypass the generic same-chat media resolver",
+            "direct publish questions do not invent a third-party confirmation gate",
+            "the original requester can replace a consent wait without creating a second task",
+            "operator approval refreshes a stale publish task and clears its obsolete denial state",
             "ingress keeps independent cursors and bounded context across rotated message shards",
             "video publication binds local message IDs to their exact rotated database shard",
             "attachment identity never falls through to a duplicate local ID in another shard",
@@ -1079,6 +1084,26 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "mtime_only_cross_chat_media_rejected",
             "test": worker_prefix + "test_media_resolution_rejects_mtime_only_cross_chat_candidate",
+        },
+        {
+            "id": "unrelated_readable_media_token_rejected",
+            "test": worker_prefix + "test_media_resolution_rejects_readable_candidate_without_exact_media_token",
+        },
+        {
+            "id": "publish_video_bypasses_generic_media_resolution",
+            "test": worker_prefix + "test_publish_video_uses_exact_autopublish_preflight_not_generic_media_resolution",
+        },
+        {
+            "id": "direct_publish_has_no_third_party_wait",
+            "test": direct_prefix + "test_direct_publish_question_is_authorization_without_third_party_wait",
+        },
+        {
+            "id": "requester_can_override_consent_wait",
+            "test": direct_prefix + "test_original_requester_can_replace_consent_wait_with_direct_publish_instruction",
+        },
+        {
+            "id": "operator_publish_approval_resets_stale_state",
+            "test": "tests.test_wechat_ops_health.WeChatOpsApprovalTests.test_approve_publish_consent_resets_stale_state_and_allows_same_task",
         },
         {
             "id": "message_shard_rollover_context_preserved",
@@ -2114,12 +2139,41 @@ def update_waiting_task(path: Path, task_id: str | None, *, decision: str, note:
         raise ValueError("No matching waiting_confirmation task found")
     task = tasks[target_index]
     if decision == "approve":
+        promote_story = approval_promotes_story_to_generated_video(task, note)
+        previous_status = str(task.get("status") or "")
+        previous_waiting_reason = str(task.get("waiting_reason") or "")
+        now = datetime.now()
         task["status"] = "pending"
-        task["approved_at"] = datetime.now().isoformat(timespec="seconds")
+        task["approved_at"] = now.isoformat(timespec="seconds")
         task["approval_note"] = note
+        task["approval_previous_status"] = previous_status
+        if previous_waiting_reason:
+            task["approval_from_waiting_reason"] = previous_waiting_reason
+        task["expires_at"] = (
+            now
+            + timedelta(
+                seconds=max(
+                    60,
+                    int(
+                        os.environ.get(
+                            "WECHAT_WORKER_PENDING_TASK_TTL_SECONDS",
+                            "900",
+                        )
+                    ),
+                )
+            )
+        ).isoformat(timespec="seconds")
         if note:
-            task["request"] = f"{task.get('request', '')}\n\nUser approval note: {note}".strip()
-        if approval_promotes_story_to_generated_video(task, note):
+            approval_line = f"User approval note: {note}"
+            request = str(task.get("request") or "").strip()
+            if approval_line not in request:
+                task["request"] = f"{request}\n\n{approval_line}".strip()
+        publish_override = apply_publish_approval_override(task)
+        reset_approved_task_execution_state(
+            task,
+            preserve_result=promote_story or not publish_override,
+        )
+        if promote_story:
             promote_story_confirmation_to_generated_video(task, note)
     elif decision == "reject":
         task["status"] = "canceled"
@@ -2131,6 +2185,103 @@ def update_waiting_task(path: Path, task_id: str | None, *, decision: str, note:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in tasks), encoding="utf-8")
     return task
+
+
+def apply_publish_approval_override(task: dict[str, Any]) -> bool:
+    route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    waiting_reason = str(task.get("waiting_reason") or "")
+    if str(route.get("route_kind") or "") != "publish_video":
+        return False
+    if (
+        waiting_reason != "third_party_publish_consent"
+        and not bool(route.get("requires_third_party_publish_confirmation"))
+    ):
+        return False
+    updated = dict(route)
+    updated.update(
+        {
+            "public_publish_intent": True,
+            "public_publish_allowed": True,
+            "external_action_allowed": True,
+            "requires_third_party_publish_confirmation": False,
+            "third_party_publish_confirmed": False,
+            "requester_publish_override": True,
+            "confirmation_kind": "direct_requester_publish",
+            "reason": (
+                "The current requester directly authorized publication; "
+                "no third-party confirmation is required."
+            ),
+            "ack": "Proceed with the exact requested publication.",
+        }
+    )
+    task["route_decision"] = updated
+    consent = (
+        dict(task.get("third_party_publish_consent"))
+        if isinstance(task.get("third_party_publish_consent"), dict)
+        else {}
+    )
+    consent.update(
+        {
+            "status": "requester_override",
+            "resolution_kind": "requester_override",
+            "resolved_at": task.get("approved_at"),
+            "resolved_text": task.get("approval_note") or "",
+        }
+    )
+    task["third_party_publish_consent"] = consent
+    return True
+
+
+def reset_approved_task_execution_state(
+    task: dict[str, Any],
+    *,
+    preserve_result: bool,
+) -> None:
+    stale_fields = {
+        "canceled_at",
+        "claimed_at",
+        "codex_session",
+        "completed_at",
+        "completion_audit",
+        "coverage_checked_at",
+        "coverage_status",
+        "existing_video_publish_poststage",
+        "expire_reason",
+        "expired_at",
+        "expired_from_status",
+        "last_live_status_at",
+        "message_coverage",
+        "next_publish_poststage_at",
+        "next_publish_poststage_at_iso",
+        "orchestrator",
+        "preflight",
+        "publish_poststage_history",
+        "publish_poststage_last_outcome",
+        "publish_poststage_last_status",
+        "publish_poststage_queued_at",
+        "publish_poststage_wait_count",
+        "rejected_at",
+        "routine_contract",
+        "send_claimed_at",
+        "send_errors",
+        "send_expires_at",
+        "send_retry_claimed_at",
+        "send_suppressed_at",
+        "send_suppressed_reason",
+        "sent_at",
+        "sent_file_paths",
+        "agent_session",
+        "worker_error",
+        "worker_id",
+        "worker_policy_attempts",
+        "worker_result_exhausted",
+        "worker_result_ready_at",
+    }
+    if not preserve_result:
+        stale_fields.add("result")
+    for key in stale_fields:
+        task.pop(key, None)
+    task.pop("waiting_reason", None)
 
 
 def approval_promotes_story_to_generated_video(task: dict[str, Any], note: str = "") -> bool:

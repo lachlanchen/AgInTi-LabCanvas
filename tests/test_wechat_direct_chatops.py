@@ -2878,6 +2878,32 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertFalse(route["public_publish_allowed"])
         self.assertTrue(route["requires_third_party_publish_confirmation"])
 
+    def test_direct_publish_question_is_authorization_without_third_party_wait(self) -> None:
+        config = self.backend_chat_config("懒人科研")
+        for text in ("你能发布今天的视频吗", "可以发布吗"):
+            with self.subTest(text=text):
+                row = self.row(text)
+                self.assertFalse(direct_chatops.is_publish_permission_question(text))
+                self.assertFalse(
+                    direct_chatops.is_third_party_publish_permission_request(
+                        text,
+                        config=config,
+                    )
+                )
+                self.assertTrue(direct_chatops.has_public_publish_intent(text))
+
+                route = direct_chatops.fallback_route_decision(
+                    config,
+                    text,
+                    row,
+                    [row],
+                )
+                self.assertEqual(route["route_kind"], "publish_video")
+                self.assertTrue(route["public_publish_allowed"])
+                self.assertFalse(
+                    route.get("requires_third_party_publish_confirmation", False)
+                )
+
     def test_grant_request_is_kept_on_dedicated_safe_worker_route(self) -> None:
         text = "Write a grant proposal with specific aims, evidence, editable BioRender figure, and PDF."
         config = self.backend_chat_config("懒人科研")
@@ -3026,6 +3052,89 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             self.assertIsNone(result)
             self.assertEqual(queued[0]["status"], "waiting_confirmation")
             self.assertFalse(queued[0]["route_decision"]["public_publish_allowed"])
+
+    def test_original_requester_can_replace_consent_wait_with_direct_publish_instruction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            config = {
+                "chat_name": "懒人科研",
+                "self_wxid": "self",
+                "trigger_prefixes": ["@LazyingArt"],
+                "respond_to_all": True,
+                "trigger_local_types": [1],
+                "attachment_trigger_local_types": [43],
+                "message_table": "MSG_demo",
+                "state_path": str(Path(tmp) / "state.json"),
+                "worker_queue": str(queue),
+                "mirror_db": str(Path(tmp) / "mirror.sqlite"),
+                "send_target": {"name": "懒人科研", "expected_title": "懒人科研"},
+            }
+            video = self.row(
+                "<msg><videomsg md5=\"abcd\" /></msg>",
+                sender="owner",
+                local_id=60,
+                server_id="vid-60",
+                local_type=43,
+            )
+            request = self.row(
+                "@friend can I publish this video?",
+                sender="owner",
+                sender_display="owner",
+                local_id=61,
+                server_id="req-61",
+            )
+            direct_chatops.maybe_handle_third_party_publish_consent(
+                config,
+                request,
+                [video, request],
+                focus_rows=[request],
+            )
+
+            override = self.row(
+                "可以发布吗",
+                sender="owner",
+                sender_display="owner",
+                local_id=62,
+                server_id="override-62",
+            )
+            result = direct_chatops.maybe_handle_third_party_publish_consent(
+                config,
+                override,
+                [video, request, override],
+                focus_rows=[override],
+            )
+            queued = [
+                json.loads(line)
+                for line in queue.read_text(encoding="utf-8").splitlines()
+            ]
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result["status"], "requester_publish_override")
+            self.assertEqual(len(queued), 1)
+            self.assertEqual(queued[0]["status"], "pending")
+            self.assertTrue(queued[0]["route_decision"]["public_publish_allowed"])
+            self.assertTrue(queued[0]["route_decision"]["requester_publish_override"])
+            self.assertFalse(queued[0]["route_decision"]["third_party_publish_confirmed"])
+            self.assertEqual(
+                queued[0]["route_decision"]["confirmation_kind"],
+                "direct_requester_publish",
+            )
+            self.assertNotIn("waiting_reason", queued[0])
+            self.assertIn(
+                "directly authorized publication",
+                queued[0]["route_decision"]["reason"].lower(),
+            )
+            self.assertIn(
+                "no third-party confirmation",
+                queued[0]["route_decision"]["reason"].lower(),
+            )
+            self.assertNotIn("wait", queued[0]["route_decision"]["ack"].lower())
+            self.assertEqual(
+                queued[0]["third_party_publish_consent"]["status"],
+                "requester_override",
+            )
+            self.assertIn("Authorization row", queued[0]["request"])
 
     def test_route_policy_uses_stronger_model_for_ambiguous_video_upload(self) -> None:
         config = {

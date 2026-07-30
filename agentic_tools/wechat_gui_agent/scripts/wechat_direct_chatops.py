@@ -2823,9 +2823,21 @@ def maybe_handle_third_party_publish_consent(
                 "task_id": activated.get("id"),
                 "ack": "收到对方确认，我现在按原视频和原请求开始发布。",
             }
+        if requester_directly_authorizes_publish(pending, row, confirmation_text):
+            activated = activate_requester_publish_override_task(
+                config,
+                pending,
+                row,
+                confirmation_text,
+            )
+            return {
+                "status": "requester_publish_override",
+                "task_id": activated.get("id"),
+                "ack": "收到，这条消息直接授权发布；我会继续处理原视频。",
+            }
     latest_text = visible_message_text(row)
     permission_candidate = latest_text if pending else current_request
-    if is_third_party_publish_permission_request(permission_candidate):
+    if is_third_party_publish_permission_request(permission_candidate, config=config):
         task = enqueue_third_party_publish_wait_task(
             config,
             row,
@@ -3034,6 +3046,7 @@ def update_third_party_publish_task(
     text: str,
     *,
     approved: bool,
+    resolution_kind: str = "third_party",
 ) -> dict[str, Any]:
     queue = Path(config.get("worker_queue") or DEFAULT_QUEUE)
     lock_path = queue.with_suffix(queue.suffix + ".lock")
@@ -3051,12 +3064,37 @@ def update_third_party_publish_task(
                         "public_publish_intent": True,
                         "public_publish_allowed": bool(approved),
                         "external_action_allowed": bool(approved),
-                        "third_party_publish_confirmed": bool(approved),
+                        "third_party_publish_confirmed": bool(
+                            approved and resolution_kind == "third_party"
+                        ),
+                        "requester_publish_override": bool(
+                            approved and resolution_kind == "requester_override"
+                        ),
                         "requires_third_party_publish_confirmation": not bool(approved),
                     }
                 )
                 if approved:
-                    route["reason"] = (str(route.get("reason") or "") + " | third-party confirmation received").strip()
+                    resolution_reason = (
+                        "requester explicitly replaced the consent wait with a direct publish instruction"
+                        if resolution_kind == "requester_override"
+                        else "third-party confirmation received"
+                    )
+                    if resolution_kind == "requester_override":
+                        route.update(
+                            {
+                                "confirmation_kind": "direct_requester_publish",
+                                "reason": (
+                                    "The current requester directly authorized publication; "
+                                    "no third-party confirmation is required."
+                                ),
+                                "ack": "Proceed with the exact requested publication.",
+                            }
+                        )
+                    else:
+                        route["reason"] = (
+                            str(route.get("reason") or "")
+                            + f" | {resolution_reason}"
+                        ).strip()
                     task["status"] = "pending"
                     task["expires_at"] = (
                         datetime.now()
@@ -3067,12 +3105,54 @@ def update_third_party_publish_task(
                     task.pop("claimed_at", None)
                     task.pop("worker_id", None)
                     task.pop("result", None)
+                    for stale_key in (
+                        "agent_session",
+                        "codex_session",
+                        "completion_audit",
+                        "coverage_checked_at",
+                        "coverage_status",
+                        "existing_video_publish_poststage",
+                        "expire_reason",
+                        "expired_at",
+                        "expired_from_status",
+                        "last_live_status_at",
+                        "message_coverage",
+                        "next_publish_poststage_at",
+                        "next_publish_poststage_at_iso",
+                        "orchestrator",
+                        "preflight",
+                        "publish_poststage_history",
+                        "publish_poststage_last_outcome",
+                        "publish_poststage_last_status",
+                        "publish_poststage_queued_at",
+                        "publish_poststage_wait_count",
+                        "routine_contract",
+                        "send_claimed_at",
+                        "send_errors",
+                        "send_expires_at",
+                        "send_retry_claimed_at",
+                        "send_suppressed_at",
+                        "send_suppressed_reason",
+                        "sent_at",
+                        "sent_file_paths",
+                        "worker_error",
+                        "worker_policy_attempts",
+                        "worker_result_exhausted",
+                        "worker_result_ready_at",
+                    ):
+                        task.pop(stale_key, None)
                     task["request"] = (
                         str(task.get("request") or "").rstrip()
-                        + "\n\nThird-party confirmation received in the same chat. "
-                        "The route decision has been updated to allow public publishing. "
+                        + (
+                            "\n\nThe original requester explicitly issued a direct publish instruction, "
+                            "so the prior third-party consent wait no longer applies. "
+                            if resolution_kind == "requester_override"
+                            else "\n\nThird-party confirmation received in the same chat. "
+                        )
+                        + "The route decision has been updated to allow public publishing. "
                         "Proceed only with the exact source video/reference rows already embedded above.\n"
-                        f"Confirmation row: local_id={row.get('local_id')} server_id={row.get('server_id')} "
+                        f"{'Authorization' if resolution_kind == 'requester_override' else 'Confirmation'} row: "
+                        f"local_id={row.get('local_id')} server_id={row.get('server_id')} "
                         f"sender={row.get('sender_display') or row.get('sender')}: {text}"
                     )
                 else:
@@ -3085,11 +3165,21 @@ def update_third_party_publish_task(
                         "files": [],
                         "raw": text,
                     }
-                task["waiting_reason"] = "third_party_publish_consent"
+                if approved:
+                    task.pop("waiting_reason", None)
+                else:
+                    task["waiting_reason"] = "third_party_publish_consent"
                 task["route_decision"] = route
                 task["third_party_publish_consent"] = {
                     **(task.get("third_party_publish_consent") if isinstance(task.get("third_party_publish_consent"), dict) else {}),
-                    "status": "confirmed" if approved else "denied",
+                    "status": (
+                        "requester_override"
+                        if approved and resolution_kind == "requester_override"
+                        else "confirmed"
+                        if approved
+                        else "denied"
+                    ),
+                    "resolution_kind": resolution_kind,
                     "resolved_at": now_text,
                     "resolved_by_sender": row["sender"],
                     "resolved_by_sender_display": row["sender_display"],
@@ -3105,7 +3195,13 @@ def update_third_party_publish_task(
                 write_worker_queue_tasks(queue, tasks)
                 record_event(
                     chat_name=str(config.get("chat_name") or ""),
-                    action="third_party_publish_confirm" if approved else "third_party_publish_deny",
+                    action=(
+                        "requester_publish_override"
+                        if approved and resolution_kind == "requester_override"
+                        else "third_party_publish_confirm"
+                        if approved
+                        else "third_party_publish_deny"
+                    ),
                     direction="internal",
                     message=text,
                     status=str(task.get("status") or ""),
@@ -3132,6 +3228,34 @@ def cancel_third_party_publish_task(
     text: str,
 ) -> dict[str, Any]:
     return update_third_party_publish_task(config, pending, row, text, approved=False)
+
+
+def activate_requester_publish_override_task(
+    config: dict[str, Any],
+    pending: dict[str, Any],
+    row: dict[str, Any],
+    text: str,
+) -> dict[str, Any]:
+    return update_third_party_publish_task(
+        config,
+        pending,
+        row,
+        text,
+        approved=True,
+        resolution_kind="requester_override",
+    )
+
+
+def requester_directly_authorizes_publish(
+    pending: dict[str, Any],
+    row: dict[str, Any],
+    text: str,
+) -> bool:
+    source = pending.get("source") if isinstance(pending.get("source"), dict) else {}
+    requester = str(source.get("sender") or "")
+    if not requester or str(row.get("sender") or "") != requester:
+        return False
+    return has_public_publish_intent(text)
 
 
 def third_party_confirmation_sender_valid(config: dict[str, Any], pending: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -3432,7 +3556,7 @@ Important distinction:
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
 - Generation is not publication. A request to generate/create/make a video means create/download/send back the artifact unless the current request also explicitly says publish/post to a public platform.
 - Uploading reference images/assets into a generation UI is not public publishing. Do not set public_publish_allowed=true for "upload all images" unless the destination is a public platform such as Shipinhao, YouTube, Instagram, or 视频号.
-- If the current user asks another person/group member for permission, such as "@A can I publish this video?" or "可以发到视频号吗？", this is not authorization yet. Route it as a publish_video task with public_publish_intent=true, public_publish_allowed=false, needs_recent_media=true, and explain that a separate same-chat participant confirmation is required.
+- If the current user explicitly asks another person/group member for permission, such as "@A can I publish this video?" or "我问一下 A 能不能发到视频号", this is not authorization yet. Route it as a publish_video task with public_publish_intent=true, public_publish_allowed=false, needs_recent_media=true, and explain that a separate same-chat participant confirmation is required. A subjectless/direct question to the agent such as "可以发布吗" or "你能发布今天的视频吗" is a direct publish request and must not invent a third-party confirmation gate.
 - If a later different participant gives a clear affirmative confirmation for a waiting publish-consent task, the monitor may reactivate that same task with public_publish_allowed=true. Do not start a brand-new publish task from a bare "yes/可以" confirmation without a matching waiting task.
 - Keyword heuristics are safety fallbacks only; the route agent should reason over the full current request and recent same-chat context.
 - "upload all images" can mean upload reference images into a generation UI. That is NOT public publishing.
@@ -3586,6 +3710,8 @@ def fallback_route_decision(
         route_kind = "music_generation"
     elif is_lalachan_story_video_task(text) or has_video_generation_intent(text):
         route_kind = "generate_video"
+    elif publish_allowed or permission_question:
+        route_kind = "publish_video"
     elif is_file_download_or_save_task(text):
         route_kind = "file_download_or_save"
     elif is_story_or_script_task(text):
@@ -3594,8 +3720,6 @@ def fallback_route_decision(
         route_kind = "edit_existing_media" if contextual_media_task else "generate_image"
     elif is_research_or_summary_task(text) or is_complex_research_task(config, text, focus_rows=focus_rows):
         route_kind = "research_or_summary"
-    elif publish_allowed or permission_question:
-        route_kind = "publish_video"
     elif contextual_media_task:
         route_kind = "edit_existing_media"
     else:
@@ -5108,6 +5232,14 @@ def is_publish_permission_question(text: str) -> bool:
     lowered = collapse_text(str(text or "")).lower()
     if not lowered or not public_publish_marker_present(lowered):
         return False
+    direct_bot_request_patterns = [
+        r"\b(?:can|could|will|would)\s+you\b.{0,50}\b(?:publish|post|upload)\b",
+        r"(?:你|您).{0,10}(?:能不能|能否|能|可以|可不可以|会不会|會不會).{0,30}(?:发布|發布|发|發|投稿|上传|上傳)",
+        r"(?:请|請|麻烦|麻煩|帮我|幫我|帮忙|幫忙).{0,24}(?:发布|發布|发|發|投稿|上传|上傳)",
+        r"(?:投稿|公開|アップ).{0,24}(?:してくれ|してもら|できますか|お願い)",
+    ]
+    if any(re.search(pattern, lowered) for pattern in direct_bot_request_patterns):
+        return False
     ask_patterns = [
         r"\b(?:ask|asking)\b.{0,80}\b(?:if|whether)\b.{0,80}\b(?:i|we)\b.{0,30}\b(?:publish|post|upload)\b",
         r"(?:问|問|问一下|問一下|问问|問問).{0,80}(?:可以|可不可以|能不能|能否|能).{0,30}(?:发布|發布|发|發|投稿|视频号|視頻號)",
@@ -5138,7 +5270,6 @@ def is_publish_permission_question(text: str) -> bool:
     ]
     chinese_permission = [
         r"(?:我|我们|我們).{0,10}(?:可以|可不可以|能不能|能否|能).{0,30}(?:发布|發布|发|發|投稿|视频号|視頻號).{0,8}(?:吗|嘛|么|不|\?|？)",
-        r"(?:可以|可不可以|能不能|能否|能).{0,20}(?:发布|發布|发|發|投稿|视频号|視頻號).{0,8}(?:吗|嘛|么|不|\?|？)",
     ]
     japanese_permission = [
         r"(?:投稿|公開|アップ).{0,20}(?:して)?(?:いい|大丈夫).{0,8}(?:か|\?|？)",
@@ -5150,8 +5281,39 @@ def is_publish_permission_question(text: str) -> bool:
     )
 
 
-def is_third_party_publish_permission_request(text: str) -> bool:
-    """Detect permission-seeking messages that should wait for another participant."""
+def is_third_party_publish_permission_request(
+    text: str,
+    *,
+    config: dict[str, Any] | None = None,
+) -> bool:
+    """Detect explicit permission-seeking messages aimed at someone else.
+
+    A subjectless question such as ``可以发布吗`` is addressed to the chat agent
+    by default. Waiting for another participant requires conversational
+    evidence: a first-person permission question, an explicit ask/whether
+    construction, or an @mention that is not one of the configured bot
+    triggers.
+    """
+    if not is_publish_permission_question(text):
+        mentions = publish_consent_mentions(text)
+        if not mentions or not public_publish_marker_present(text):
+            return False
+    mentions = publish_consent_mentions(text)
+    if mentions:
+        bot_mentions = {
+            collapse_text(str(prefix or "")).lstrip("@").casefold()
+            for prefix in (config or {}).get("trigger_prefixes", [])
+            if collapse_text(str(prefix or "")).lstrip("@")
+        }
+        other_mentions = [
+            mention
+            for mention in mentions
+            if mention.casefold() not in bot_mentions
+        ]
+        if other_mentions:
+            return True
+        if mentions and not other_mentions:
+            return False
     return is_publish_permission_question(text)
 
 

@@ -363,6 +363,141 @@ class WeChatCompletionAuditTests(unittest.TestCase):
 
         self.assertEqual(items[0]["text"], "Chen: 帮我发布一下这个视频")
 
+    def test_exact_transport_rows_override_suspended_publish_wrappers(self) -> None:
+        task = {
+            "id": "publish-parent",
+            "request": (
+                "This is a suspended WeChat public-publish task. Wait for a "
+                "different participant.\n\nSame-chat reference rows:\n"
+                "title: unrelated-reference.pdf"
+            ),
+            "source": {
+                "local_id": 20,
+                "server_id": 2000,
+                "sender": "owner",
+                "sender_display": "Chen",
+            },
+            "context": [
+                {
+                    "local_id": 20,
+                    "server_id": 2000,
+                    "sender": "owner",
+                    "sender_display": "Chen",
+                    "content": "owner:\n你能发布今天的视频吗",
+                }
+            ],
+            "interruptions": [
+                {
+                    "incoming_task_id": "publish-child",
+                    "request": (
+                        "This is another suspended wrapper.\n"
+                        "title: unrelated-reference.pdf"
+                    ),
+                    "source": {
+                        "local_id": 23,
+                        "server_id": 2300,
+                        "sender": "owner",
+                        "sender_display": "Chen",
+                    },
+                    "context": [
+                        {
+                            "local_id": 23,
+                            "server_id": 2300,
+                            "sender": "owner",
+                            "sender_display": "Chen",
+                            "content": "owner:\n可以发布吗",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        items = audit.coverage_items(task)
+
+        self.assertEqual(
+            [item["text"] for item in items],
+            ["你能发布今天的视频吗", "可以发布吗"],
+        )
+        self.assertFalse(audit.explicit_pdf_requested(items))
+
+    def test_completion_model_cannot_resurrect_superseded_publish_confirmation(self) -> None:
+        task = {
+            "id": "publish-parent",
+            "source": {
+                "local_id": 20,
+                "server_id": 2000,
+                "sender": "owner",
+            },
+            "context": [
+                {
+                    "local_id": 20,
+                    "server_id": 2000,
+                    "sender": "owner",
+                    "content": "owner:\n你能发布今天的视频吗",
+                }
+            ],
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_allowed": True,
+                "requires_third_party_publish_confirmation": False,
+                "requester_publish_override": True,
+            },
+        }
+
+        def runner(_prompt: str, **_kwargs: object) -> dict:
+            return {
+                "ok": True,
+                "backend": "codex",
+                "model": "gpt-5.3-codex-spark",
+                "message": json.dumps(
+                    {
+                        "covered_item_ids": [],
+                        "missing": [
+                            {
+                                "item_id": "task:publish-parent",
+                                "requirement": (
+                                    "Wait for third-party confirmation before "
+                                    "public publication."
+                                ),
+                                "kind": "action",
+                            },
+                            {
+                                "item_id": "task:publish-parent",
+                                "requirement": "Create an unrelated PDF.",
+                                "kind": "artifact",
+                            },
+                        ],
+                        "legitimate_blocker": False,
+                        "complexity": "low",
+                        "summary": "stale wrapper inference",
+                    }
+                ),
+            }
+
+        result = audit.run_completion_audit(
+            task,
+            {
+                "message": "发布完成；检测到额外平台并已如实报告。",
+                "files": [],
+                "data": {
+                    "publish_stage": {
+                        "verified": False,
+                        "stage": "published_with_unrequested_platform",
+                        "requested_platforms": ["shipinhao"],
+                        "verified_platforms": ["douyin", "shipinhao"],
+                        "unexpected_platforms": ["douyin"],
+                        "requested_platforms_verified": True,
+                        "platform_set_matches": False,
+                    }
+                },
+            },
+            runner=runner,
+        )
+
+        self.assertTrue(result["coverage_complete"])
+        self.assertEqual(result["covered_item_ids"], ["task:publish-parent"])
+        self.assertEqual(result["missing"], [])
+
     def test_naked_attachment_keeps_only_default_intake_contract(self) -> None:
         task = {
             "id": "video-77",

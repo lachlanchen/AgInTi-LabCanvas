@@ -23,6 +23,17 @@ NEGATED_PDF_RE = re.compile(
     re.I | re.S,
 )
 PDF_REQUEST_RE = re.compile(r"(?:\bpdf\b|\.pdf\b|PDF)", re.I)
+PUBLISH_CONFIRMATION_REQUIREMENT_RE = re.compile(
+    r"(?:publish|publication|public_publish|waiting_confirmation|"
+    r"发布|發佈|公开|公開).{0,80}"
+    r"(?:confirm|confirmation|approval|permission|wait|"
+    r"确认|確認|同意|许可|許可|授权|授權|等待)"
+    r"|(?:confirm|confirmation|approval|permission|wait|"
+    r"确认|確認|同意|许可|許可|授权|授權|等待).{0,80}"
+    r"(?:publish|publication|public_publish|waiting_confirmation|"
+    r"发布|發佈|公开|公開)",
+    re.I | re.S,
+)
 SYNTHETIC_ATTACHMENT_INTAKE_RE = re.compile(
     r"^(?:[^:\n]{1,80}:\s*)?New WeChat "
     r"(?P<kind>voice|audio|video|image|file/link|file upload|file|link|attachment) "
@@ -57,7 +68,9 @@ def extract_current_request(value: Any) -> str:
 def coverage_items(task: dict[str, Any]) -> list[dict[str, Any]]:
     """Preserve each authoritative message as an independently auditable item."""
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
-    original = str(task.get("original_request") or "").strip()
+    original = exact_source_message_text(task.get("context"), source)
+    if not original:
+        original = str(task.get("original_request") or "").strip()
     if not original:
         original = extract_current_request(task.get("request"))
     else:
@@ -98,11 +111,16 @@ def coverage_items(task: dict[str, Any]) -> list[dict[str, Any]]:
             if isinstance(interruption.get("source"), dict)
             else {}
         )
-        text = str(
-            interruption.get("request")
-            or interruption.get("request_excerpt")
-            or ""
-        ).strip()
+        text = exact_source_message_text(
+            interruption.get("context"),
+            interruption_source,
+        )
+        if not text:
+            text = str(
+                interruption.get("request")
+                or interruption.get("request_excerpt")
+                or ""
+            ).strip()
         if not text:
             continue
         items.append(
@@ -126,6 +144,56 @@ def coverage_items(task: dict[str, Any]) -> list[dict[str, Any]]:
     for sequence, item in enumerate(numbered, start=1):
         item["sequence"] = sequence
     return numbered
+
+
+def exact_source_message_text(
+    rows: Any,
+    source: dict[str, Any],
+) -> str:
+    """Return the human message bound to one exact transport identity."""
+
+    if not isinstance(rows, list) or not isinstance(source, dict):
+        return ""
+    server_id = str(source.get("server_id") or "").strip()
+    local_id = str(source.get("local_id") or "").strip()
+    match: dict[str, Any] | None = None
+    if server_id:
+        match = next(
+            (
+                row
+                for row in rows
+                if isinstance(row, dict)
+                and str(row.get("server_id") or "").strip() == server_id
+            ),
+            None,
+        )
+    if match is None and local_id:
+        match = next(
+            (
+                row
+                for row in rows
+                if isinstance(row, dict)
+                and str(row.get("local_id") or "").strip() == local_id
+            ),
+            None,
+        )
+    if match is None:
+        return ""
+    text = str(match.get("content") or "").strip()
+    for sender in (
+        match.get("sender"),
+        match.get("sender_display"),
+        source.get("sender"),
+        source.get("sender_display"),
+    ):
+        sender_text = str(sender or "").strip()
+        if not sender_text:
+            continue
+        for separator in (":\n", ":\r\n", ": ", "：\n", "： "):
+            prefix = sender_text + separator
+            if text.startswith(prefix):
+                return text[len(prefix) :].strip()
+    return text
 
 
 def normalize_auditable_request(value: Any) -> str:
@@ -488,6 +556,7 @@ def run_completion_audit_batch(
             ValueError("completion audit returned no JSON object"),
         )
     missing, rejected_missing_ids = ground_model_missing_requirements(
+        task,
         items,
         normalize_missing(payload.get("missing")),
     )
@@ -534,6 +603,7 @@ def run_completion_audit_batch(
 
 
 def ground_model_missing_requirements(
+    task: dict[str, Any],
     items: list[dict[str, Any]],
     missing: list[dict[str, str]],
 ) -> tuple[list[dict[str, str]], set[str]]:
@@ -559,6 +629,25 @@ def ground_model_missing_requirements(
             NEGATED_PDF_RE.search(source_text)
         )
         if claims_pdf and not source_requests_pdf:
+            if item_id:
+                rejected_ids.add(item_id)
+            continue
+        route = (
+            task.get("route_decision")
+            if isinstance(task.get("route_decision"), dict)
+            else {}
+        )
+        requester_override = bool(route.get("requester_publish_override"))
+        current_publish_allowed = bool(route.get("public_publish_allowed"))
+        current_confirmation_required = bool(
+            route.get("requires_third_party_publish_confirmation")
+        )
+        if (
+            PUBLISH_CONFIRMATION_REQUIREMENT_RE.search(requirement)
+            and current_publish_allowed
+            and requester_override
+            and not current_confirmation_required
+        ):
             if item_id:
                 rejected_ids.add(item_id)
             continue
@@ -600,6 +689,15 @@ def completion_audit_prompt(
         "task_id": str(task.get("id") or ""),
         "chat": str(task.get("chat") or ""),
         "route_kind": str(route.get("route_kind") or ""),
+        "current_route_state": {
+            "public_publish_allowed": bool(route.get("public_publish_allowed")),
+            "requires_third_party_publish_confirmation": bool(
+                route.get("requires_third_party_publish_confirmation")
+            ),
+            "requester_publish_override": bool(
+                route.get("requester_publish_override")
+            ),
+        },
         "request_items": items,
         "candidate_result": {
             "message": bounded_text(result.get("message"), max_chars=6000),
@@ -641,6 +739,14 @@ Rules:
   terminal evidence for an explicit publication request. Do not demand a
   separate attachment-metadata summary unless the human request explicitly
   asks for one.
+- `current_route_state` is the current authoritative gate state. If a mistaken
+  older wrapper was superseded by `requester_publish_override=true` and
+  `public_publish_allowed=true`, do not resurrect the obsolete confirmation
+  requirement.
+- `published_with_unrequested_platform` is terminal evidence that the requested
+  platforms completed with a platform-set defect. It covers the requested
+  action only when the candidate reports the extra platform honestly; never
+  request a duplicate corrective publish.
 - Do not demand publication, payment, account changes, deletion, or another irreversible action unless explicitly authorized by the current request.
 - Mark a legitimate blocker only when the candidate clearly explains why safe completion cannot proceed.
 - When a legitimate blocker directly answers one request item, include that item in `covered_item_ids`; do not use one blocked item to cover unrelated messages.
@@ -667,7 +773,7 @@ def publish_stage_for_audit(result: dict[str, Any]) -> dict[str, Any]:
         return {}
     local_jobs = stage.get("local_jobs") if isinstance(stage.get("local_jobs"), list) else []
     remote_jobs = stage.get("remote_jobs") if isinstance(stage.get("remote_jobs"), list) else []
-    return {
+    compact = {
         "verified": bool(stage.get("verified")),
         "stage": str(stage.get("stage") or ""),
         "video_id": stage.get("video_id"),
@@ -691,6 +797,17 @@ def publish_stage_for_audit(result: dict[str, Any]) -> dict[str, Any]:
             if isinstance(item, dict)
         ],
     }
+    if "unexpected_platforms" in stage:
+        compact["unexpected_platforms"] = normalize_string_list(
+            stage.get("unexpected_platforms")
+        )
+    if "requested_platforms_verified" in stage:
+        compact["requested_platforms_verified"] = bool(
+            stage.get("requested_platforms_verified")
+        )
+    if "platform_set_matches" in stage:
+        compact["platform_set_matches"] = bool(stage.get("platform_set_matches"))
+    return compact
 
 
 def extract_json_object(text: str) -> dict[str, Any] | None:
