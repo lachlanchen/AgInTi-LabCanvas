@@ -1763,10 +1763,17 @@ Stuck GUI sender:
   use exponential backoff (30 minutes up to 4 hours) instead of taking the GUI
   lane every minute. Restarting the scheduler reuses that exact report and does
   not invoke the model again.
+- The scheduler writes a heartbeat with the due date, phase, completion state,
+  retry times, and overdue flags. The transport guard distinguishes a missing
+  tmux session, a stale scheduler, an overdue career delivery, and an overdue
+  MEMO delivery, then restarts only the career scheduler. Per-routine file
+  locks prevent a manual catch-up from overlapping the scheduled invocation.
 - The `MEMO写作—外语—挣钱` daily organizer sends only its compiled PDF. Concrete
   actions are represented by real PDF AcroForm checkboxes, while evidence and
   non-action ideas remain ordinary text or bullets. A day is complete only
-  after the exact PDF send is verified.
+  after the exact PDF send is verified. Its evidence query includes all title
+  aliases belonging to the same `writing_money` profile, so a group rename
+  retains prior memo history without admitting another chat's data.
 - The native file sender records an exact content identity before opening the
   picker and again after verified submission. If submission succeeds but
   screenshot verification becomes uncertain, the exact outbound WeChat
@@ -1776,6 +1783,14 @@ Stuck GUI sender:
 - Use `wechat_career_daily_agent.py retry --date YYYY-MM-DD --send
   --attach-report` for artifact-only career recovery. It reuses the generated
   bilingual PDFs and message and never invokes the career model.
+- Use `labcanvas wechat career-agent catch-up --send --attach-report
+  --organize-report` for an immediate duplicate-safe run of both outputs.
+  Delivered artifacts are skipped; generated but unsent artifacts bypass their
+  backoff once and are retried without another agent turn.
+- Visible-list matching may use a configured, sufficiently specific query when
+  the live title is ellipsis-truncated. Exact header checks normalize
+  simplified/traditional OCR variants such as `陈苗`/`陳苗`, while target
+  selection and the post-file-picker guard remain fail-closed.
 - WeChat can briefly expose a small startup window before the main chat shell.
   The GUI sender waits a bounded 15 seconds for the main window before returning
   `WECHAT_ENTRY_REQUIRED`; QR, login, lock, and exact-title guards remain

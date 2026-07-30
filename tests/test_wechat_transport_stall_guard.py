@@ -24,6 +24,37 @@ guard = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(guard)
 
 
+def schedule_state_reader(
+    *,
+    echo_last_loop_at: str,
+    career_last_loop_at: str = "2026-07-22T11:59:30+00:00",
+    career_overdue: bool = False,
+    organizer_overdue: bool = False,
+):
+    def read(path: Path):
+        if path == guard.ECHOMIND_SCHEDULE_STATE:
+            return {
+                "interval_seconds": guard.ECHOMIND_INTERVAL_SECONDS,
+                "last_loop_at": echo_last_loop_at,
+                "scheduler_phase": "waiting",
+            }
+        if path == guard.WECHAT_CAREER_SCHEDULE_STATE:
+            return {
+                "last_loop_at": career_last_loop_at,
+                "phase": "complete",
+                "date": "2026-07-22",
+                "morning_time": "08:30",
+                "career_complete": not career_overdue,
+                "career_overdue": career_overdue,
+                "organizer_required": True,
+                "organizer_complete": not organizer_overdue,
+                "organizer_overdue": organizer_overdue,
+            }
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    return read
+
+
 class WeChatTransportStallGuardTests(unittest.TestCase):
     def test_health_alert_can_target_private_personal_wechat_device_inbox(self) -> None:
         completed = subprocess.CompletedProcess(
@@ -346,13 +377,8 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
                 mock.patch.object(
                     guard,
                     "read_json",
-                    side_effect=lambda path: (
-                        {
-                            "interval_seconds": guard.ECHOMIND_INTERVAL_SECONDS,
-                            "last_loop_at": "2026-07-22T11:59:30+00:00",
-                        }
-                        if path == guard.ECHOMIND_SCHEDULE_STATE
-                        else json.loads(path.read_text(encoding="utf-8"))
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
                     ),
                 ),
             ):
@@ -384,14 +410,8 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
                 mock.patch.object(
                     guard,
                     "read_json",
-                    side_effect=lambda path: (
-                        {
-                            "interval_seconds": guard.ECHOMIND_INTERVAL_SECONDS,
-                            "last_loop_at": "2026-07-22T11:30:00+00:00",
-                            "scheduler_phase": "waiting",
-                        }
-                        if path == guard.ECHOMIND_SCHEDULE_STATE
-                        else json.loads(path.read_text(encoding="utf-8"))
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:30:00+00:00",
                     ),
                 ),
             ):
@@ -401,6 +421,36 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
                 )
 
         self.assertFalse(result["echomind"]["ok"])
+        self.assertFalse(result["ok"])
+
+    def test_schedule_health_detects_overdue_career_and_memo_delivery(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                        career_overdue=True,
+                        organizer_overdue=True,
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertFalse(result["career_daily"]["ok"])
+        self.assertTrue(result["career_daily"]["career_overdue"])
+        self.assertTrue(result["career_daily"]["organizer_overdue"])
         self.assertFalse(result["ok"])
 
     def test_quota_alert_requires_terminal_exhaustion_not_successful_fallback(self) -> None:
@@ -529,6 +579,36 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         repair.assert_called_once_with(
             "android_relay",
             [str(guard.WECOM_SUPERVISOR), "android-restart"],
+        )
+
+    def test_overdue_daily_delivery_restarts_only_career_scheduler(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "code": "schedule_memo_delivery_overdue",
+                    "severity": "degraded",
+                    "detail": "daily organizer PDF is overdue",
+                }
+            ]
+        }
+        state = {"fault_counts": {"schedule_memo_delivery_overdue": 2}}
+        with mock.patch.object(
+            guard,
+            "run_repair",
+            return_value={"label": "career_schedule", "ok": True},
+        ) as repair:
+            result = guard.perform_repairs(
+                snapshot,
+                state,
+                consecutive_failures=2,
+                cooldown_seconds=300,
+                max_sender_seconds=180,
+            )
+
+        self.assertEqual(result, [{"label": "career_schedule", "ok": True}])
+        repair.assert_called_once_with(
+            "career_schedule",
+            [str(guard.WECHAT_STACK), "restart-career"],
         )
 
     def test_android_serialized_gui_busy_is_not_a_stall_until_poll_is_stale(self) -> None:

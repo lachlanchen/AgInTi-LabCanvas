@@ -191,7 +191,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     career = nested.add_parser("career-agent", help="Run or supervise the daily writing/career/money strategy agent.")
     career.add_argument(
         "action",
-        choices=["once", "organize", "start", "stop", "restart", "status"],
+        choices=["once", "organize", "catch-up", "start", "stop", "restart", "status"],
         nargs="?",
         default="once",
     )
@@ -1598,7 +1598,15 @@ def cmd_career_agent(args: argparse.Namespace) -> int:
     command = [
         sys.executable,
         str(SCRIPTS / "wechat_career_daily_agent.py"),
-        "loop" if start_action == "start" else ("organize" if start_action == "organize" else "run"),
+        (
+            "loop"
+            if start_action == "start"
+            else (
+                "organize"
+                if start_action == "organize"
+                else ("catch-up" if start_action == "catch-up" else "run")
+            )
+        ),
         "--send-chat",
         args.send_chat,
         "--morning-time",
@@ -1620,7 +1628,7 @@ def cmd_career_agent(args: argparse.Namespace) -> int:
         command.append("--organize-report")
     if args.force_organize:
         command.append("--force-organize")
-    if start_action in {"once", "organize"}:
+    if start_action in {"once", "organize", "catch-up"}:
         if getattr(args, "json", False):
             command.append("--json")
         return run_command(command, capture=False).returncode

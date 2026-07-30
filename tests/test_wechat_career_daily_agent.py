@@ -405,6 +405,150 @@ Why it matters: It turns reflection into evidence.
         self.assertIn("memo/todo", snapshot)
         self.assertIn("写下一段接口", snapshot)
 
+    def test_organizer_includes_history_from_renamed_same_profile_chat(self):
+        module = load_wechat_career_daily_agent()
+        chats = module.organizer_memory_chats("MEMO写作—外语—挣钱")
+        self.assertIn("MEMO写作—外语—挣钱", chats)
+        self.assertIn("写作 外语 挣钱", chats)
+        self.assertEqual(module.organizer_memory_chats("Unrelated Group"), ["Unrelated Group"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE memory_items (
+                        id INTEGER PRIMARY KEY,
+                        source_message_id INTEGER,
+                        chat_name TEXT,
+                        category TEXT,
+                        title TEXT,
+                        body TEXT,
+                        status TEXT,
+                        due_at TEXT,
+                        created_at TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO memory_items
+                    (source_message_id, chat_name, category, title, body, status, due_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            1,
+                            "写作 外语 挣钱",
+                            "memo",
+                            "before rename",
+                            "保留改名前的重要写作想法",
+                            "open",
+                            None,
+                            "2026-07-28T06:00:00",
+                        ),
+                        (
+                            2,
+                            "MEMO写作—外语—挣钱",
+                            "todo",
+                            "after rename",
+                            "整理改名后的行动",
+                            "open",
+                            None,
+                            "2026-07-29T06:00:00",
+                        ),
+                    ],
+                )
+
+            snapshot = module.life_memo_snapshot(db, chats)
+
+        self.assertIn("保留改名前的重要写作想法", snapshot)
+        self.assertIn("整理改名后的行动", snapshot)
+
+    def test_catch_up_skips_delivered_career_and_runs_organizer_once(self):
+        module = load_wechat_career_daily_agent()
+        calls = []
+        module.career_delivery_complete_for_date = lambda *_args, **_kwargs: True
+        module.run_daily = lambda _args: self.fail("delivered career must not rerun")
+        module.run_organizer = (
+            lambda _args, **_kwargs: calls.append("organizer")
+            or {"ok": True, "status": "already_delivered"}
+        )
+        args = argparse.Namespace(
+            send=True,
+            organize_report=True,
+        )
+
+        payload = module.run_catch_up(args)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["career"]["status"], "already_delivered")
+        self.assertEqual(payload["organizer"]["status"], "already_delivered")
+        self.assertEqual(calls, ["organizer"])
+
+    def test_catch_up_forces_artifact_delivery_without_regenerating(self):
+        module = load_wechat_career_daily_agent()
+        calls = {}
+        module.career_delivery_complete_for_date = lambda *_args, **_kwargs: False
+        module.retry_existing_career_delivery = (
+            lambda _args, stamp, force=False: calls.update(
+                {"career_stamp": stamp, "career_force": force}
+            )
+            or {"ok": True, "status": "done"}
+        )
+        module.run_daily = lambda _args: self.fail("existing career report must be reused")
+        module.run_organizer = (
+            lambda _args, force_delivery=False: calls.update(
+                {"organizer_force_delivery": force_delivery}
+            )
+            or {"ok": True, "status": "delivered", "generated": False}
+        )
+        args = argparse.Namespace(send=True, organize_report=True)
+
+        payload = module.run_catch_up(args)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(calls["career_force"])
+        self.assertTrue(calls["organizer_force_delivery"])
+
+    def test_safe_daily_call_keeps_scheduler_alive_after_exception(self):
+        module = load_wechat_career_daily_agent()
+
+        payload = module.safe_daily_call(
+            lambda: (_ for _ in ()).throw(RuntimeError("temporary sender failure"))
+        )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "scheduler_error")
+        self.assertIn("temporary sender failure", payload["error"])
+
+    def test_daily_operation_lock_prevents_overlapping_generation(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            module.PRIVATE = Path(tmp) / ".private"
+            lock_path = (
+                module.PRIVATE
+                / "output"
+                / "career_daily"
+                / "career.lock"
+            )
+            lock_path.parent.mkdir(parents=True)
+            with lock_path.open("a+", encoding="utf-8") as handle:
+                module.fcntl.flock(
+                    handle,
+                    module.fcntl.LOCK_EX | module.fcntl.LOCK_NB,
+                )
+                try:
+                    payload = module.run_with_daily_operation_lock(
+                        "career",
+                        lambda: self.fail("overlapping callback must not run"),
+                    )
+                finally:
+                    module.fcntl.flock(handle, module.fcntl.LOCK_UN)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "already_running")
+
     def test_organizer_sends_only_compiled_pdf_and_is_idempotent(self):
         module = load_wechat_career_daily_agent()
         with tempfile.TemporaryDirectory() as tmp:

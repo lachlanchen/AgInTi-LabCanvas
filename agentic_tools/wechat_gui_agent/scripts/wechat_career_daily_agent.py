@@ -18,8 +18,9 @@ import time
 from typing import Any
 import uuid
 
+from file_lock import fcntl_compat as fcntl
 from wechat_agent_backend import run_agent_session, select_agent_backend
-from wechat_chat_profiles import preferred_chat_title, profile_aliases
+from wechat_chat_profiles import preferred_chat_title, profile_aliases, profile_for_chat
 from wechat_message_policy import (
     attachment_transport_identity,
     file_identities_match,
@@ -46,13 +47,22 @@ DEFAULT_CHATS = [
 ]
 DEFAULT_ORGANIZER_CHAT = preferred_chat_title("writing_money")
 ORGANIZER_STATE = PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
+SCHEDULER_STATE = PRIVATE / "output" / "career_daily" / "scheduler-state.json"
 DELIVERY_RETRY_BASE_SECONDS = int(os.environ.get("WECHAT_DAILY_DELIVERY_RETRY_SECONDS", "1800"))
 DELIVERY_RETRY_MAX_SECONDS = int(os.environ.get("WECHAT_DAILY_DELIVERY_RETRY_MAX_SECONDS", "14400"))
+SCHEDULER_OVERDUE_GRACE_SECONDS = int(
+    os.environ.get("WECHAT_DAILY_OVERDUE_GRACE_SECONDS", "5400")
+)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["run", "loop", "organize", "retry"], nargs="?", default="run")
+    parser.add_argument(
+        "action",
+        choices=["run", "loop", "organize", "retry", "catch-up"],
+        nargs="?",
+        default="run",
+    )
     parser.add_argument("--chat", action="append", default=[], help="Memory chat to include. Repeatable.")
     parser.add_argument("--send-chat", default="lachlanchan", help="WeChat chat/DM to receive the daily note.")
     parser.add_argument("--send", action="store_true", help="Send the concise result and shareable report to WeChat.")
@@ -90,6 +100,13 @@ def main() -> int:
         else:
             print(payload.get("status") or "done")
         return 0 if payload.get("ok") else 1
+    if args.action == "catch-up":
+        payload = run_catch_up(args)
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(payload.get("status") or "done")
+        return 0 if payload.get("ok") else 1
     payload = (
         run_organizer(args, force=bool(args.force_organize))
         if args.action == "organize"
@@ -105,31 +122,306 @@ def main() -> int:
 def loop_daily(args: argparse.Namespace) -> int:
     last_run_key = ""
     organizer_done_key = ""
+    career_retry_at: datetime | None = None
+    organizer_retry_at: datetime | None = None
+    career_status = "waiting"
+    organizer_status = "waiting"
     while True:
         now = datetime.now()
         run_at = scheduled_run_time(now, args.morning_time)
         run_key = run_at.strftime("%Y-%m-%d")
+        due = now >= run_at
+        career_complete = career_delivery_complete_for_date(
+            run_key,
+            require_send=bool(args.send),
+        )
+        organizer_complete = (
+            not bool(getattr(args, "organize_report", False))
+            or organizer_delivery_complete_for_date(
+                run_key,
+                str(getattr(args, "organize_chat", DEFAULT_ORGANIZER_CHAT)),
+                require_send=bool(args.send),
+            )
+        )
+        if career_complete:
+            last_run_key = run_key
+            career_status = "delivered" if args.send else "generated"
+        if organizer_complete:
+            organizer_done_key = run_key
+            organizer_status = "delivered" if args.send else "generated"
+        write_scheduler_heartbeat(
+            args,
+            now=now,
+            run_at=run_at,
+            phase="due" if due else "waiting",
+            career_complete=career_complete,
+            organizer_complete=organizer_complete,
+            career_status=career_status,
+            organizer_status=organizer_status,
+            career_retry_at=career_retry_at,
+            organizer_retry_at=organizer_retry_at,
+        )
         if now >= run_at:
-            if last_run_key != run_key:
-                if career_delivery_complete_for_date(run_key, require_send=bool(args.send)):
-                    last_run_key = run_key
-                else:
-                    payload = retry_existing_career_delivery(args, run_key)
-                    if payload is None:
-                        payload = run_daily(args)
-                    if payload.get("status") != "delivery_deferred":
-                        print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
-                    if payload.get("ok"):
-                        last_run_key = run_key
-            if bool(getattr(args, "organize_report", False)) and organizer_done_key != run_key:
-                payload = run_organizer(args)
+            if (
+                last_run_key != run_key
+                and (career_retry_at is None or now >= career_retry_at)
+            ):
+                write_scheduler_heartbeat(
+                    args,
+                    now=now,
+                    run_at=run_at,
+                    phase="career_running",
+                    career_complete=False,
+                    organizer_complete=organizer_complete,
+                    career_status="running",
+                    organizer_status=organizer_status,
+                    career_retry_at=career_retry_at,
+                    organizer_retry_at=organizer_retry_at,
+                )
+                payload = safe_daily_call(
+                    lambda: run_with_daily_operation_lock(
+                        "career",
+                        lambda: run_career_for_date(args, run_key),
+                    )
+                )
                 if payload.get("status") != "delivery_deferred":
                     print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+                career_status = str(payload.get("status") or "failed")
+                if payload.get("ok"):
+                    last_run_key = run_key
+                    career_retry_at = None
+                else:
+                    career_retry_at = payload_retry_at(payload, now)
+            if (
+                bool(getattr(args, "organize_report", False))
+                and organizer_done_key != run_key
+                and (organizer_retry_at is None or now >= organizer_retry_at)
+            ):
+                write_scheduler_heartbeat(
+                    args,
+                    now=datetime.now(),
+                    run_at=run_at,
+                    phase="organizer_running",
+                    career_complete=last_run_key == run_key,
+                    organizer_complete=False,
+                    career_status=career_status,
+                    organizer_status="running",
+                    career_retry_at=career_retry_at,
+                    organizer_retry_at=organizer_retry_at,
+                )
+                payload = safe_daily_call(
+                    lambda: run_with_daily_operation_lock(
+                        "organizer",
+                        lambda: run_organizer(args),
+                    )
+                )
+                if payload.get("status") != "delivery_deferred":
+                    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+                organizer_status = str(payload.get("status") or "failed")
                 if payload.get("ok"):
                     organizer_done_key = run_key
+                    organizer_retry_at = None
+                else:
+                    organizer_retry_at = payload_retry_at(payload, now)
+        current = datetime.now()
+        career_complete = career_delivery_complete_for_date(
+            run_key,
+            require_send=bool(args.send),
+        )
+        organizer_complete = (
+            not bool(getattr(args, "organize_report", False))
+            or organizer_delivery_complete_for_date(
+                run_key,
+                str(getattr(args, "organize_chat", DEFAULT_ORGANIZER_CHAT)),
+                require_send=bool(args.send),
+            )
+        )
+        write_scheduler_heartbeat(
+            args,
+            now=current,
+            run_at=run_at,
+            phase="complete" if career_complete and organizer_complete else ("retry_wait" if due else "waiting"),
+            career_complete=career_complete,
+            organizer_complete=organizer_complete,
+            career_status=career_status,
+            organizer_status=organizer_status,
+            career_retry_at=career_retry_at,
+            organizer_retry_at=organizer_retry_at,
+        )
         sleep_until = next_run_time(datetime.now(), args.morning_time)
         delay = min(max(5.0, (sleep_until - datetime.now()).total_seconds()), max(5.0, args.loop_sleep))
         time.sleep(delay)
+
+
+def run_catch_up(args: argparse.Namespace) -> dict[str, Any]:
+    """Run today's two daily outputs once without duplicating delivered work."""
+
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    career = safe_daily_call(
+        lambda: run_with_daily_operation_lock(
+            "career",
+            lambda: run_career_for_date(args, stamp, force_delivery=True),
+        )
+    )
+    organizer: dict[str, Any] = {
+        "ok": True,
+        "status": "disabled",
+    }
+    if bool(getattr(args, "organize_report", False)):
+        organizer = safe_daily_call(
+            lambda: run_with_daily_operation_lock(
+                "organizer",
+                lambda: run_organizer(args, force_delivery=True),
+            )
+        )
+    ok = bool(career.get("ok")) and bool(organizer.get("ok"))
+    return {
+        "ok": ok,
+        "status": "done" if ok else "incomplete",
+        "date": stamp,
+        "career": career,
+        "organizer": organizer,
+    }
+
+
+def run_career_for_date(
+    args: argparse.Namespace,
+    stamp: str,
+    *,
+    force_delivery: bool = False,
+) -> dict[str, Any]:
+    if career_delivery_complete_for_date(stamp, require_send=bool(args.send)):
+        return {"ok": True, "status": "already_delivered", "date": stamp}
+    payload = retry_existing_career_delivery(
+        args,
+        stamp,
+        force=force_delivery,
+    )
+    return payload if payload is not None else run_daily(args)
+
+
+def safe_daily_call(callback: Any) -> dict[str, Any]:
+    try:
+        payload = callback()
+    except Exception as exc:  # noqa: BLE001 - keep the scheduler alive and retry later.
+        return {
+            "ok": False,
+            "status": "scheduler_error",
+            "error": f"{type(exc).__name__}: {exc}"[:600],
+        }
+    return payload if isinstance(payload, dict) else {
+        "ok": False,
+        "status": "invalid_result",
+    }
+
+
+def run_with_daily_operation_lock(name: str, callback: Any) -> dict[str, Any]:
+    lock_path = (
+        PRIVATE
+        / "output"
+        / "career_daily"
+        / f"{re.sub(r'[^a-z0-9_-]+', '-', name.lower()).strip('-') or 'daily'}.lock"
+    )
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {
+                "ok": False,
+                "status": "already_running",
+                "next_delivery_attempt_at": (
+                    datetime.now() + timedelta(minutes=5)
+                ).isoformat(timespec="seconds"),
+            }
+        try:
+            return callback()
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def payload_retry_at(payload: dict[str, Any], now: datetime) -> datetime:
+    raw = str(payload.get("next_delivery_attempt_at") or "").strip()
+    if raw:
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone().replace(tzinfo=None)
+            return max(now + timedelta(seconds=60), parsed)
+    return now + timedelta(seconds=max(300, DELIVERY_RETRY_BASE_SECONDS))
+
+
+def organizer_delivery_complete_for_date(
+    stamp: str,
+    chat: str,
+    *,
+    require_send: bool,
+) -> bool:
+    state = read_json_file(organizer_state_path())
+    pdf = OUTPUT / f"{stamp}-recent-items.zh.pdf"
+    if not require_send:
+        return bool(
+            state.get("date") == stamp
+            and state.get("chat") == chat
+            and pdf.is_file()
+            and pdf.stat().st_size > 0
+        )
+    return organizer_delivery_matches(state, stamp, chat, pdf)
+
+
+def scheduler_state_path() -> Path:
+    if PRIVATE == ROOT / "agentic_tools" / "wechat_gui_agent" / ".private":
+        return SCHEDULER_STATE
+    return PRIVATE / "output" / "career_daily" / "scheduler-state.json"
+
+
+def write_scheduler_heartbeat(
+    args: argparse.Namespace,
+    *,
+    now: datetime,
+    run_at: datetime,
+    phase: str,
+    career_complete: bool,
+    organizer_complete: bool,
+    career_status: str,
+    organizer_status: str,
+    career_retry_at: datetime | None,
+    organizer_retry_at: datetime | None,
+) -> None:
+    overdue_at = run_at + timedelta(seconds=max(300, SCHEDULER_OVERDUE_GRACE_SECONDS))
+    organizer_required = bool(getattr(args, "organize_report", False))
+    state = {
+        "schema": "labcanvas.wechat.career_daily.scheduler.v1",
+        "date": run_at.strftime("%Y-%m-%d"),
+        "morning_time": str(getattr(args, "morning_time", "08:30")),
+        "last_loop_at": now.astimezone().isoformat(timespec="seconds"),
+        "phase": phase,
+        "send_chat": str(getattr(args, "send_chat", "lachlanchan")),
+        "organize_chat": str(getattr(args, "organize_chat", DEFAULT_ORGANIZER_CHAT)),
+        "career_complete": bool(career_complete),
+        "career_status": career_status,
+        "organizer_required": organizer_required,
+        "organizer_complete": bool(organizer_complete),
+        "organizer_status": organizer_status,
+        "career_overdue": bool(now >= overdue_at and not career_complete),
+        "organizer_overdue": bool(
+            organizer_required and now >= overdue_at and not organizer_complete
+        ),
+        "career_next_attempt_at": (
+            career_retry_at.astimezone().isoformat(timespec="seconds")
+            if career_retry_at is not None
+            else ""
+        ),
+        "organizer_next_attempt_at": (
+            organizer_retry_at.astimezone().isoformat(timespec="seconds")
+            if organizer_retry_at is not None
+            else ""
+        ),
+    }
+    write_json_file(scheduler_state_path(), state)
 
 
 def next_run_time(now: datetime, hhmm: str) -> datetime:
@@ -226,11 +518,13 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
         "private_report": str(private_report),
         "share_report": str(share_report),
         "send": send_status,
+        "next_delivery_attempt_at": manifest.get("next_delivery_attempt_at", ""),
         "summary": extract_daily_chat_summary(body),
         "agent": {
             "backend": result.get("backend", "codex"),
             "thread_id": result.get("thread_id"),
             "resumed": result.get("resumed"),
+            "complete": bool(result.get("ok")) and bool(str(result.get("message") or "").strip()),
             "model": args.model,
             "reasoning_effort": args.reasoning_effort,
         },
@@ -267,6 +561,13 @@ def latest_career_manifest(stamp: str) -> tuple[Path, dict[str, Any]] | None:
         outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
         report = Path(str(outputs.get("share_report_latest") or ""))
         private_report = Path(str(outputs.get("private_report_latest") or ""))
+        agent = manifest.get("agent") if isinstance(manifest.get("agent"), dict) else {}
+        if agent.get("complete") is False:
+            continue
+        agent_result_path = Path(str(outputs.get("agent_result") or ""))
+        agent_result = read_json_file(agent_result_path) if agent_result_path.is_file() else {}
+        if agent_result and agent_result.get("ok") is False:
+            continue
         if report.is_file() and private_report.is_file():
             return manifest_path, manifest
     return None
@@ -326,6 +627,7 @@ def retry_existing_career_delivery(
         "status": "done" if send_status.get("complete") else "delivery_failed",
         "manifest": str(manifest_path),
         "send": send_status,
+        "next_delivery_attempt_at": manifest.get("next_delivery_attempt_at", ""),
     }
 
 
@@ -363,7 +665,12 @@ def update_delivery_retry_state(state: dict[str, Any], send_status: dict[str, An
     state["next_delivery_attempt_at"] = (now + timedelta(seconds=delay)).isoformat(timespec="seconds")
 
 
-def run_organizer(args: argparse.Namespace, *, force: bool = False) -> dict[str, Any]:
+def run_organizer(
+    args: argparse.Namespace,
+    *,
+    force: bool = False,
+    force_delivery: bool = False,
+) -> dict[str, Any]:
     chat = str(getattr(args, "organize_chat", DEFAULT_ORGANIZER_CHAT) or DEFAULT_ORGANIZER_CHAT)
     stamp = datetime.now().strftime("%Y-%m-%d")
     state_path = organizer_state_path()
@@ -418,7 +725,13 @@ def run_organizer(args: argparse.Namespace, *, force: bool = False) -> dict[str,
         and pdf.is_file()
         and pdf.stat().st_size > 0
     )
-    if generated and bool(args.send) and not force and not delivery_retry_due(state):
+    if (
+        generated
+        and bool(args.send)
+        and not force
+        and not force_delivery
+        and not delivery_retry_due(state)
+    ):
         return {
             "ok": False,
             "status": "delivery_deferred",
@@ -430,7 +743,11 @@ def run_organizer(args: argparse.Namespace, *, force: bool = False) -> dict[str,
         }
     result: dict[str, Any] = {}
     if not generated:
-        snapshot = life_memo_snapshot(getattr(args, "memory_db", DEFAULT_MEMORY_DB), chat)
+        snapshot = life_memo_snapshot(
+            getattr(args, "memory_db", DEFAULT_MEMORY_DB),
+            organizer_memory_chats(chat),
+            limit=200,
+        )
         prompt = build_organizer_prompt(chat, snapshot)
         result = run_agent_session(
             prompt,
@@ -505,6 +822,7 @@ def run_organizer(args: argparse.Namespace, *, force: bool = False) -> dict[str,
         "generated": not generated,
         "send": send_status,
         "agent": state.get("agent") or {},
+        "next_delivery_attempt_at": state.get("next_delivery_attempt_at", ""),
     }
 
 
@@ -523,6 +841,17 @@ def organizer_state_path() -> Path:
     if PRIVATE == ROOT / "agentic_tools" / "wechat_gui_agent" / ".private":
         return ORGANIZER_STATE
     return PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
+
+
+def organizer_memory_chats(chat: str) -> list[str]:
+    profile = profile_for_chat(chat)
+    candidates = profile_aliases("writing_money") if profile.get("id") == "writing_money" else [chat]
+    result: list[str] = []
+    for candidate in [chat, *candidates]:
+        value = str(candidate or "").strip()
+        if value and value not in result:
+            result.append(value)
+    return result
 
 
 def send_organizer_pdf(args: argparse.Namespace, pdf: Path, chat: str) -> dict[str, Any]:
@@ -557,6 +886,12 @@ Use only the evidence below. Deduplicate repeated classifications of the same
 message. Do not invent dates, deadlines, completion states, groceries, calendar
 events, or commitments. A question or request is not automatically a real todo.
 
+This is the full daily organization, not a narrow highlight. Cover every
+distinct concrete action, reminder, idea, writing/language/career/money signal,
+and unresolved question in the bounded evidence. Merge duplicate classifier
+rows and closely related fragments, but do not silently drop a concrete item
+just because it does not fit one preferred narrative.
+
 Organize naturally rather than forcing empty sections. Distinguish:
 - concrete open actions for today or this week;
 - later ideas and experiments;
@@ -564,9 +899,9 @@ Organize naturally rather than forcing empty sections. Distinguish:
 - factual reminders and explicit dates, only when present;
 - items that need clarification before they become actions.
 
-Be selective and substantive. Preserve important technical names and quoted
-intent. Merge related fragments, explain the connection briefly, and end with
-at most three high-leverage next actions. Do not add generic productivity advice.
+Be comprehensive, condensed, and substantive. Preserve important technical
+names and quoted intent. Explain useful connections briefly, and end with at
+most three high-leverage next actions. Do not add generic productivity advice.
 Write every concrete open action and every final next action as a Markdown task
 line beginning exactly with `- [ ]`. Use ordinary bullets for evidence, ideas,
 and non-action observations. These task lines become clickable checkboxes in the
@@ -1309,7 +1644,16 @@ def send_daily_with_busy_retry(sender: Any, *args: Any) -> None:
             return
         except Exception as exc:
             text = str(exc).lower()
-            retryable = "wechat_send_busy" in text or "serialized gui sender is already sending" in text
+            retryable = any(
+                marker in text
+                for marker in (
+                    "wechat_send_busy",
+                    "serialized gui sender is already sending",
+                    "wechat_send_timeout",
+                    "opened chat title guard failed",
+                    "wechat_file_target_changed",
+                )
+            )
             if not retryable or attempt >= attempts:
                 raise
             if delay:

@@ -49,6 +49,7 @@ TITLE_SCRIPT_FOLD = str.maketrans(
         "學": "学",
         "掙": "挣",
         "語": "语",
+        "陳": "陈",
     }
 )
 
@@ -1218,11 +1219,14 @@ def chat_list_crop_region(window: Window) -> dict[str, int] | None:
 def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[str, Any] | None:
     expected_titles = [
         item
-        for item in (target.expected_title, *target.expected_title_aliases, target.name)
+        for item in (
+            target.expected_title,
+            *target.expected_title_aliases,
+            target.name,
+            target.query,
+        )
         if normalize_title(item)
     ]
-    if not expected_titles and normalize_title(target.query):
-        expected_titles = [target.query]
     if not expected_titles:
         return None
     rows: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -1562,28 +1566,20 @@ def title_identity_matches(observed_text: str, expected_titles: list[str] | tupl
     if not candidates:
         candidates = [str(observed_text or "")]
     for candidate in candidates:
-        observed = normalize_title(candidate).rstrip("0123456789")
-        if not observed:
-            continue
         for raw_expected in expected_titles:
-            expected = normalize_title(raw_expected)
+            expected = normalize_visible_chat_title(raw_expected)
+            observed = normalize_visible_chat_title(
+                candidate,
+                separator_hint=title_has_explicit_separator(raw_expected),
+            ).rstrip("0123456789")
+            if not observed:
+                continue
             if not expected:
                 continue
             if observed == expected or (
                 observed.startswith(expected) and len(observed) - len(expected) <= 3
             ):
                 return True
-            # Tesseract commonly reads a dash in segmented Chinese group names
-            # as the Han character "一". Only separator-bearing configured
-            # aliases enable this repair, so normal names containing "一" stay
-            # exact.
-            if title_has_explicit_separator(raw_expected):
-                observed_compact = observed.replace("一", "")
-                if observed_compact == expected or (
-                    observed_compact.startswith(expected)
-                    and len(observed_compact) - len(expected) <= 3
-                ):
-                    return True
     return False
 
 

@@ -1014,6 +1014,11 @@ class WeChatGuiSendTests(unittest.TestCase):
 
         self.assertIsNone(match)
 
+    def test_title_identity_matches_traditional_ocr_for_simplified_target(self):
+        module = load_wechat_gui_send()
+
+        self.assertTrue(module.title_identity_matches("陳苗", ["陈苗"]))
+
     def test_visible_chat_list_match_accepts_separator_ocr_variant(self):
         module = load_wechat_gui_send()
         tsv = "\n".join(
@@ -1034,6 +1039,36 @@ class WeChatGuiSendTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(match)
+
+    def test_visible_chat_list_match_accepts_ellipsis_truncated_specific_query(self):
+        module = load_wechat_gui_send()
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t15\t1\t1\t1\t66\t242\t48\t15\t92\tMEMO",
+                "5\t1\t15\t1\t1\t2\t114\t238\t17\t28\t89\t写",
+                "5\t1\t15\t1\t1\t3\t130\t238\t16\t28\t91\t作",
+                "5\t1\t15\t1\t1\t4\t146\t238\t14\t28\t96\t一",
+                "5\t1\t15\t1\t1\t5\t160\t238\t14\t28\t93\t外",
+                "5\t1\t15\t1\t1\t6\t174\t238\t13\t28\t92\t语",
+                "5\t1\t15\t1\t1\t7\t186\t238\t13\t28\t68\t…",
+            ]
+        )
+
+        match = module.visible_chat_list_match_from_tsv(
+            tsv,
+            module.TargetSpec(
+                name="MEMO写作—外语—挣钱",
+                query="MEMO写作",
+                expected_title="MEMO写作—外语—挣钱",
+                expected_title_aliases=("写作 外语 挣钱",),
+                allow_title_guard_fallback=True,
+            ),
+        )
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match["identity_mode"], "exact")
 
     def test_visible_chat_list_match_repairs_one_ocr_character_after_script_normalization(self):
         module = load_wechat_gui_send()

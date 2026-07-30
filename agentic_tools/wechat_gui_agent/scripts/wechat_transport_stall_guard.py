@@ -39,6 +39,9 @@ WECOM_QUEUE = WECOM_PRIVATE / "wecom_task_queue.jsonl"
 WECHAT_ORGANIZER_DELIVERY = (
     WECHAT_PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
 )
+WECHAT_CAREER_SCHEDULE_STATE = (
+    WECHAT_PRIVATE / "output" / "career_daily" / "scheduler-state.json"
+)
 WECHAT_SUPERVISOR = (
     ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_supervisor_tmux.sh"
 )
@@ -67,6 +70,7 @@ ECHOMIND_SCHEDULE_SESSION = "labcanvas-echomind-language"
 CAREER_SCHEDULE_SESSION = "labcanvas-career-daily"
 ECHOMIND_INTERVAL_SECONDS = 3 * 60 * 60
 ECHOMIND_HEARTBEAT_STALE_SECONDS = 12 * 60
+CAREER_HEARTBEAT_STALE_SECONDS = 30 * 60
 TERMINAL_FAILURE_STATUSES = {"failed", "worker_failed"}
 QUOTA_FAILURE_MARKERS = (
     "billing hard limit",
@@ -83,7 +87,10 @@ QUOTA_FAILURE_MARKERS = (
 )
 ALERTABLE_DEGRADED_CODES = {
     "android_poll_stalled",
+    "schedule_career_delivery_overdue",
     "schedule_career_missing",
+    "schedule_career_stalled",
+    "schedule_memo_delivery_overdue",
     "schedule_echomind_cadence",
     "schedule_echomind_missing",
     "schedule_echomind_stalled",
@@ -445,10 +452,13 @@ def tmux_session_live(name: str) -> bool:
 def schedule_health(
     *,
     labagent_heartbeat: Path = LABAGENT_SCHEDULE_HEARTBEAT,
+    career_state_path: Path = WECHAT_CAREER_SCHEDULE_STATE,
     now: datetime | None = None,
     labagent_stale_seconds: float = 120.0,
+    career_stale_seconds: float = CAREER_HEARTBEAT_STALE_SECONDS,
 ) -> dict[str, Any]:
     echo_state = read_json(ECHOMIND_SCHEDULE_STATE)
+    career_state = read_json(career_state_path)
     try:
         interval = int(echo_state.get("interval_seconds") or 0)
     except (TypeError, ValueError):
@@ -463,6 +473,7 @@ def schedule_health(
     heartbeat_at = parse_timestamp(heartbeat.get("checked_at"))
     current = now or utc_now()
     echo_heartbeat = parse_timestamp(echo_state.get("last_loop_at"))
+    career_heartbeat = parse_timestamp(career_state.get("last_loop_at"))
     echo_heartbeat_age = (
         max(0.0, (current - echo_heartbeat).total_seconds())
         if echo_heartbeat
@@ -471,6 +482,23 @@ def schedule_health(
     echomind_heartbeat_ok = (
         echo_heartbeat_age is not None
         and echo_heartbeat_age <= ECHOMIND_HEARTBEAT_STALE_SECONDS
+    )
+    career_heartbeat_age = (
+        max(0.0, (current - career_heartbeat).total_seconds())
+        if career_heartbeat
+        else None
+    )
+    career_overdue = bool(career_state.get("career_overdue"))
+    organizer_overdue = bool(career_state.get("organizer_overdue"))
+    career_heartbeat_ok = (
+        career_heartbeat_age is not None
+        and career_heartbeat_age <= career_stale_seconds
+    )
+    career_ok = (
+        career_running
+        and career_heartbeat_ok
+        and not career_overdue
+        and not organizer_overdue
     )
     heartbeat_age = (
         max(0.0, (current - heartbeat_at).total_seconds())
@@ -482,7 +510,7 @@ def schedule_health(
         "ok": (
             echomind_running
             and echomind_heartbeat_ok
-            and career_running
+            and career_ok
             and interval == ECHOMIND_INTERVAL_SECONDS
             and labagent_ok
         ),
@@ -496,7 +524,26 @@ def schedule_health(
             "phase": str(echo_state.get("scheduler_phase") or "unknown"),
             "pending_delivery": bool(echo_state.get("pending_lesson")),
         },
-        "career_daily": {"running": career_running},
+        "career_daily": {
+            "running": career_running,
+            "ok": career_ok,
+            "heartbeat_age_seconds": (
+                int(career_heartbeat_age)
+                if career_heartbeat_age is not None
+                else None
+            ),
+            "stale_after_seconds": int(career_stale_seconds),
+            "phase": str(career_state.get("phase") or "missing"),
+            "date": str(career_state.get("date") or ""),
+            "morning_time": str(career_state.get("morning_time") or ""),
+            "career_complete": bool(career_state.get("career_complete")),
+            "organizer_required": bool(career_state.get("organizer_required")),
+            "organizer_complete": bool(career_state.get("organizer_complete")),
+            "career_overdue": career_overdue,
+            "organizer_overdue": organizer_overdue,
+            "career_status": str(career_state.get("career_status") or ""),
+            "organizer_status": str(career_state.get("organizer_status") or ""),
+        },
         "labagent_idle_inspiration": {
             "ok": labagent_ok,
             "status": str(heartbeat.get("status") or "missing"),
@@ -892,6 +939,28 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         )
     if not schedules["career_daily"]["running"]:
         issue("schedule_career_missing", "degraded", "career daily scheduler is absent")
+    elif schedules["career_daily"]["heartbeat_age_seconds"] is None or (
+        schedules["career_daily"]["heartbeat_age_seconds"]
+        > schedules["career_daily"]["stale_after_seconds"]
+    ):
+        issue(
+            "schedule_career_stalled",
+            "degraded",
+            "career daily scheduler heartbeat is stale",
+        )
+    else:
+        if schedules["career_daily"]["career_overdue"]:
+            issue(
+                "schedule_career_delivery_overdue",
+                "degraded",
+                "private DM career PDF is overdue",
+            )
+        if schedules["career_daily"]["organizer_overdue"]:
+            issue(
+                "schedule_memo_delivery_overdue",
+                "degraded",
+                "MEMO daily organizer PDF is overdue",
+            )
     if not schedules["labagent_idle_inspiration"]["ok"]:
         issue("schedule_labagent_stalled", "degraded", "LabAgent idle-inspiration scheduler heartbeat is stale")
     if not agent_failures.get("ok"):
@@ -1123,17 +1192,29 @@ def perform_repairs(
         for code in {"schedule_echomind_missing", "schedule_echomind_cadence", "schedule_echomind_stalled"}
     ):
         repairs.append(run_repair("echomind_schedule", [str(ECHOMIND_SCHEDULE_HELPER), "restart"]))
-    if (
-        "schedule_career_missing" in issue_codes
+    career_issue_codes = {
+        "schedule_career_missing",
+        "schedule_career_stalled",
+        "schedule_career_delivery_overdue",
+        "schedule_memo_delivery_overdue",
+    }
+    if any(
+        code in issue_codes
         and repair_due(
-            "schedule_career_missing",
+            code,
             state,
             consecutive_failures=consecutive_failures,
             cooldown_seconds=cooldown_seconds,
             now=now,
         )
+        for code in career_issue_codes
     ):
-        repairs.append(run_repair("career_schedule", [str(WECHAT_STACK), "start"]))
+        repairs.append(
+            run_repair(
+                "career_schedule",
+                [str(WECHAT_STACK), "restart-career"],
+            )
+        )
     if (
         "schedule_labagent_stalled" in issue_codes
         and repair_due(
@@ -1370,7 +1451,10 @@ def health_alert_message(codes: list[str], *, recovered: bool = False) -> str:
         "agent_quota_exhausted": "代理额度耗尽，且备用后端也未能完成任务",
         "android_endpoint_down": "WeCom Android 中继不可用",
         "android_poll_stalled": "WeCom Android 消息轮询或原生界面停滞",
+        "schedule_career_delivery_overdue": "私聊每日职业分析 PDF 超时未交付",
         "schedule_career_missing": "每日分析定时任务未运行",
+        "schedule_career_stalled": "每日职业分析定时任务心跳停止",
+        "schedule_memo_delivery_overdue": "MEMO 每日完整整理 PDF 超时未交付",
         "schedule_echomind_cadence": "EchoMind 教学周期不是 3 小时",
         "schedule_echomind_missing": "EchoMind 教学定时任务未运行",
         "schedule_echomind_stalled": "EchoMind 教学定时任务心跳停止",
@@ -1535,7 +1619,12 @@ def one_cycle(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 repaired_at[code] = snapshot["checked_at"]
             if code.startswith("schedule_echomind_") and any(item["label"] == "echomind_schedule" for item in repairs):
                 repaired_at[code] = snapshot["checked_at"]
-            if code == "schedule_career_missing" and any(item["label"] == "career_schedule" for item in repairs):
+            if code in {
+                "schedule_career_missing",
+                "schedule_career_stalled",
+                "schedule_career_delivery_overdue",
+                "schedule_memo_delivery_overdue",
+            } and any(item["label"] == "career_schedule" for item in repairs):
                 repaired_at[code] = snapshot["checked_at"]
         if args.repair_verify_delay_seconds > 0:
             time.sleep(args.repair_verify_delay_seconds)

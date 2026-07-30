@@ -19,7 +19,7 @@ export PYTHONPATH="$ROOT/src:${PYTHONPATH:-}"
 usage() {
   cat <<'EOF'
 Usage:
-  wechat_stack_tmux.sh start|stop|restart|restart-all|status
+  wechat_stack_tmux.sh start|stop|restart|restart-all|restart-career|status
 
 Starts or stops the complete reusable WeChat chatops stack:
   - labcanvas-wechat tmux supervisor for WeChat desktop, fast monitor, worker, and media sync
@@ -141,6 +141,9 @@ case "$action" in
   restart-all)
     "$0" stop || true
     "$0" start
+    ;;
+  restart-career)
+    restart_career
     ;;
   status)
     python3 -m agenticapp wechat status
