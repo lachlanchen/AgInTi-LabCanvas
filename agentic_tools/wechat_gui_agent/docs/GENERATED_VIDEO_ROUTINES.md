@@ -81,13 +81,22 @@ publication.
    - Long renders wait through queue state and CDP probes, not a multi-hour model
      call.
    - Paid action idempotence: one logical WeChat request owns at most one paid
-     Xiaoyunque/Seedance thread. If the task already has
-     `generated_video_monitor.thread_url`, `generated_video_submit_probe`,
-     `credit_guard`, `route_decision.no_new_xyq_submit`, or
-     `monitor_only_no_resubmit`, the worker must not submit, continue, retry, or
-     create another paid generation. It may only monitor, download, verify, and
-     send back the existing thread result. A new paid rerun requires a fresh
-     current-message instruction that explicitly says to start a new paid rerun.
+     Xiaoyunque/Seedance thread. The worker must never create, resubmit, or retry
+     as a new paid job when an existing monitor/thread, credit guard,
+     no-new-submit flag, or submit probe says a paid action was attempted or may
+     have happened. A new paid rerun requires a fresh current-message
+     instruction that explicitly says to start a new paid rerun.
+   - An expected confirmation inside the same exact known thread may continue
+     only when the page asks for it, current story/approval gates allow it, and
+     the task is not marked monitor-only.
+   - A structured submit probe with `paid_action_attempted=false` and
+     `paid_action_state=not_attempted` is a recoverable pre-submit failure.
+     Restore the dedicated Xiaoyunque browser on CDP `9344` and retry the same
+     logical task without creating another queue row.
+   - If a newer completed task delivered the MP4 and its structured same-chat
+     context explicitly contains the older generation's source message, close
+     the older abandoned/waiting row as covered by that delivery. A later
+     independent generation in the same group must not supersede it.
    - Existing-MP4 shortcut: before any continuation, browser monitor, submit
      helper, or resumed Codex worker runs, the queue checks
      `generated_video_monitor.output_dir` plus the configured `filename`. If the

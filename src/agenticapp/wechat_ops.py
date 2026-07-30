@@ -43,7 +43,20 @@ QUEUE_DELIVERY_BLOCKED_STATUSES = {
     "send_deferred_locked",
 }
 QUEUE_HUMAN_BLOCKED_STATUSES = {"waiting_confirmation"}
-QUEUE_FAILED_STATUSES = {"worker_failed", "send_failed", "generation_stale_paused"}
+QUEUE_FAILED_STATUSES = {
+    "worker_failed",
+    "send_failed",
+    "generation_stale_paused",
+    "worker_abandoned",
+}
+QUEUE_TERMINAL_STATUSES = {
+    "done",
+    "send_expired",
+    "expired_stale",
+    "rejected",
+    "ignored",
+}
+DEFAULT_QUEUE_ATTENTION_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -2280,9 +2293,24 @@ def queue_status_category(status: str) -> str:
         return "failed"
     if status in QUEUE_ACTIVE_STATUSES:
         return "active"
-    if status in {"done", "canceled", "canceled_duplicate", "canceled_superseded"}:
+    if status in QUEUE_TERMINAL_STATUSES or status.startswith("canceled"):
         return "terminal"
     return "unknown"
+
+
+def queue_attention_max_age_seconds() -> int:
+    try:
+        return max(
+            0,
+            int(
+                os.environ.get(
+                    "WECHAT_QUEUE_ATTENTION_MAX_AGE_SECONDS",
+                    str(DEFAULT_QUEUE_ATTENTION_MAX_AGE_SECONDS),
+                )
+            ),
+        )
+    except ValueError:
+        return DEFAULT_QUEUE_ATTENTION_MAX_AGE_SECONDS
 
 
 def queue_stale_reason(task: dict[str, Any], now: datetime) -> str:
@@ -2351,6 +2379,7 @@ def queue_task_brief(task: dict[str, Any], now: datetime) -> dict[str, Any]:
 
 def queue_attention(tasks: list[dict[str, Any]], *, limit: int = 8, now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now()
+    attention_max_age_seconds = queue_attention_max_age_seconds()
     counts = {
         "active": 0,
         "delivery_blocked": 0,
@@ -2358,6 +2387,7 @@ def queue_attention(tasks: list[dict[str, Any]], *, limit: int = 8, now: datetim
         "failed": 0,
         "stale": 0,
         "unknown": 0,
+        "historical": 0,
     }
     active: list[dict[str, Any]] = []
     delivery_blocked: list[dict[str, Any]] = []
@@ -2370,12 +2400,33 @@ def queue_attention(tasks: list[dict[str, Any]], *, limit: int = 8, now: datetim
         status = str(task.get("status") or "unknown")
         category = queue_status_category(status)
         chat = str(task.get("chat") or "(unknown)")
-        by_chat.setdefault(chat, {"total": 0, "active": 0, "delivery_blocked": 0, "human_blocked": 0, "failed": 0})
+        by_chat.setdefault(
+            chat,
+            {
+                "total": 0,
+                "active": 0,
+                "delivery_blocked": 0,
+                "human_blocked": 0,
+                "failed": 0,
+                "historical": 0,
+            },
+        )
         by_chat[chat]["total"] += 1
-        if category in by_chat[chat]:
-            by_chat[chat][category] += 1
 
         brief = queue_task_brief(task, now)
+        age_seconds = brief.get("age_seconds")
+        historical = bool(
+            category in {"delivery_blocked", "human_blocked", "failed", "unknown"}
+            and attention_max_age_seconds > 0
+            and isinstance(age_seconds, int)
+            and age_seconds > attention_max_age_seconds
+        )
+        if historical:
+            counts["historical"] += 1
+            by_chat[chat]["historical"] += 1
+            continue
+        if category in by_chat[chat]:
+            by_chat[chat][category] += 1
         if category == "active":
             counts["active"] += 1
             active.append(brief)
@@ -2431,6 +2482,7 @@ def queue_attention(tasks: list[dict[str, Any]], *, limit: int = 8, now: datetim
         "ok": not needs_attention,
         "needs_attention": needs_attention,
         "counts": counts,
+        "attention_horizon_seconds": attention_max_age_seconds,
         "summary": summary,
         "active": active[-limit:],
         "delivery_blocked": delivery_blocked[-limit:],
@@ -2546,7 +2598,8 @@ def direct_monitor_health() -> dict[str, Any]:
         "notes": [
             "private chatroom ids, wxids, message-table names, and DB paths are intentionally omitted",
             "set WECHAT_DIRECT_CONFIGS in .private/wechat_supervisor.local.env to control monitored groups",
-            "caught_up only means state reached the latest decrypted row; ready also requires the decrypted source to be fresh",
+            "caught_up means state reached the latest decrypted row; ready also requires a fresh monitor heartbeat",
+            "chat_quiet and last_message_old are informational and do not make a healthy idle monitor stale",
         ],
     }
 
@@ -2777,15 +2830,33 @@ def direct_config_health(path: Path) -> dict[str, Any]:
     has_guarded_target = has_send_title_guard(config.get("send_target"))
     codex = config.get("codex") if isinstance(config.get("codex"), dict) else {}
     organizer = config.get("organizer") if isinstance(config.get("organizer"), dict) else {}
+    poll_seconds = float(config.get("poll_seconds", 0.8))
     stale_warning_seconds = int(config.get("stale_warning_seconds", 1800))
-    source_stale = bool((latest.get("age_seconds") or 0) > stale_warning_seconds)
+    latest_age_seconds = float(latest.get("age_seconds") or 0)
+    chat_quiet = bool(latest.get("ok") and latest_age_seconds > stale_warning_seconds)
+    heartbeat_at = parse_health_timestamp(state.get("last_loop_at"))
+    heartbeat_age_seconds = (
+        max(0.0, (datetime.now(timezone.utc) - heartbeat_at).total_seconds())
+        if heartbeat_at is not None
+        else None
+    )
+    monitor_stale_seconds = max(
+        30,
+        int(config.get("monitor_stale_seconds") or max(30.0, poll_seconds * 20)),
+    )
+    monitor_stale = bool(
+        not state_exists
+        or heartbeat_at is None
+        or heartbeat_age_seconds is None
+        or heartbeat_age_seconds > monitor_stale_seconds
+    )
     caught_up = latest.get("ok") and state_last >= int(latest.get("latest_local_id") or 0)
-    ready = bool(caught_up and not source_stale)
+    ready = bool(caught_up and not monitor_stale)
     ok = bool(
         state_exists
         and latest.get("ok")
         and caught_up
-        and not source_stale
+        and not monitor_stale
         and bool(config.get("ignore_self_messages", True))
         and not bool(config.get("respond_to_self", False))
         and has_guarded_target
@@ -2798,9 +2869,16 @@ def direct_config_health(path: Path) -> dict[str, Any]:
         "state_last_local_id": state_last,
         "db_latest_local_id": latest.get("latest_local_id"),
         "db_latest_at": latest.get("latest_at", ""),
-        "db_latest_age_seconds": latest.get("age_seconds"),
-        "db_stale": source_stale,
-        "source_stale": source_stale,
+        "db_latest_age_seconds": latest_age_seconds,
+        "last_message_old": chat_quiet,
+        "chat_quiet": chat_quiet,
+        "monitor_heartbeat_at": heartbeat_at.isoformat() if heartbeat_at else "",
+        "monitor_heartbeat_age_seconds": heartbeat_age_seconds,
+        "monitor_stale_seconds": monitor_stale_seconds,
+        "monitor_stale": monitor_stale,
+        # Compatibility fields now describe monitor freshness, not chat activity.
+        "db_stale": monitor_stale,
+        "source_stale": monitor_stale,
         "ready": ready,
         "caught_up": bool(caught_up),
         "respond_to_all": bool(config.get("respond_to_all", False)),
@@ -2814,7 +2892,7 @@ def direct_config_health(path: Path) -> dict[str, Any]:
         "analysis_mode": str(config.get("analysis_mode") or ""),
         "organizer_enabled": bool(organizer.get("enabled", False)),
         "organizer_capture_unclassified": bool(organizer.get("capture_unclassified", True)),
-        "poll_seconds": float(config.get("poll_seconds", 0.8)),
+        "poll_seconds": poll_seconds,
         "catchup_poll_seconds": float(config.get("catchup_poll_seconds", 0.1)),
         "codex_model": str(codex.get("model") or "gpt-5.5"),
         "codex_reasoning_effort": str(codex.get("reasoning_effort") or "medium"),

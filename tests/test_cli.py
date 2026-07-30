@@ -310,6 +310,71 @@ class CliTests(unittest.TestCase):
         self.assertEqual(attention["by_chat"]["device"]["total"], 4)
         self.assertTrue(any("worker once --send" in command for command in attention["recommended_commands"]))
 
+    def test_wechat_queue_attention_keeps_old_failures_as_history_not_incidents(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            old = (datetime.now() - timedelta(days=3)).isoformat(timespec="seconds")
+            queue.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "id": "failed-old",
+                                "chat": "shares",
+                                "request": "old failed task",
+                                "status": "worker_failed",
+                                "created_at": old,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "confirm-old",
+                                "chat": "shares",
+                                "request": "old confirmation",
+                                "status": "waiting_confirmation",
+                                "created_at": old,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "abandoned-old",
+                                "chat": "shares",
+                                "request": "old abandoned task",
+                                "status": "worker_abandoned",
+                                "created_at": old,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": "expired-old",
+                                "chat": "shares",
+                                "request": "old expired send",
+                                "status": "send_expired",
+                                "created_at": old,
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(["wechat", "queue", "--queue", str(queue), "--json"])
+
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(code, 0)
+        attention = payload["attention"]
+        self.assertFalse(attention["needs_attention"])
+        self.assertEqual(attention["counts"]["historical"], 3)
+        self.assertEqual(attention["counts"]["failed"], 0)
+        self.assertEqual(attention["counts"]["human_blocked"], 0)
+        self.assertEqual(attention["counts"]["unknown"], 0)
+        self.assertEqual(attention["attention_horizon_seconds"], 86400)
+        self.assertEqual(payload["recent"][-1]["category"], "terminal")
+
     def test_wechat_browser_assist_dry_run_json(self):
         stdout = io.StringIO()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 import shutil
 import sqlite3
@@ -1026,6 +1027,114 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertTrue(tasks[0]["interruption_pending"])
         self.assertEqual(tasks[0]["interruptions"][0]["source"]["local_id"], 202)
         self.assertIn("First update the story", tasks[0]["request"])
+
+    def test_followup_revives_abandoned_generation_after_proven_pre_submit_failure(self) -> None:
+        now = int(time.time())
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            original_task = {
+                "id": "task-16",
+                "chat": "MEMO",
+                "status": "worker_abandoned",
+                "abandoned_at": datetime.fromtimestamp(now).isoformat(timespec="seconds"),
+                "abandoned_reason": "claiming_worker_process_ended",
+                "request": "Current coalesced request:\nGenerate a 15 second video.",
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+                "source": {
+                    "chat": "MEMO",
+                    "config_id": "memo-direct",
+                    "message_table": "MSG",
+                    "server_id": "srv-16",
+                    "local_id": 16,
+                    "create_time": now,
+                },
+                "routine": {"id": "generated_video"},
+                "generated_video_submit_probe": {
+                    "status": "page_unavailable",
+                    "paid_action_attempted": False,
+                    "paid_action_state": "not_attempted",
+                },
+            }
+            queue.write_text(json.dumps(original_task, ensure_ascii=False) + "\n", encoding="utf-8")
+            incoming = {
+                "id": "task-17",
+                "chat": "MEMO",
+                "status": "pending",
+                "request": "Current coalesced request:\nAlso upload yesterday's villa reference.",
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+                "source": {
+                    "chat": "MEMO",
+                    "config_id": "memo-direct",
+                    "message_table": "MSG",
+                    "server_id": "srv-17",
+                    "local_id": 17,
+                    "create_time": now + 1,
+                },
+                "routine": {"id": "generated_video"},
+            }
+
+            merged, appended = direct_chatops.append_worker_task_once(queue, incoming)
+            tasks = direct_chatops.read_worker_queue_tasks(queue)
+
+        self.assertFalse(appended)
+        self.assertTrue(merged["interruption_appended"])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["id"], "task-16")
+        self.assertEqual(tasks[0]["status"], "pending")
+        self.assertNotIn("abandoned_at", tasks[0])
+        self.assertNotIn("abandoned_reason", tasks[0])
+        self.assertEqual(tasks[0]["interruptions"][0]["source"]["local_id"], 17)
+
+    def test_followup_does_not_revive_abandoned_generation_after_uncertain_submit(self) -> None:
+        now = int(time.time())
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            original_task = {
+                "id": "task-16",
+                "chat": "MEMO",
+                "status": "worker_abandoned",
+                "request": "Current coalesced request:\nGenerate a 15 second video.",
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+                "source": {
+                    "chat": "MEMO",
+                    "config_id": "memo-direct",
+                    "message_table": "MSG",
+                    "server_id": "srv-16",
+                    "local_id": 16,
+                    "create_time": now,
+                },
+                "routine": {"id": "generated_video"},
+                "generated_video_submit_probe": {
+                    "status": "timeout",
+                    "paid_action_attempted": None,
+                    "paid_action_state": "unknown",
+                },
+            }
+            queue.write_text(json.dumps(original_task, ensure_ascii=False) + "\n", encoding="utf-8")
+            incoming = {
+                "id": "task-17",
+                "chat": "MEMO",
+                "status": "pending",
+                "request": "Current coalesced request:\nAlso upload yesterday's villa reference.",
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+                "source": {
+                    "chat": "MEMO",
+                    "config_id": "memo-direct",
+                    "message_table": "MSG",
+                    "server_id": "srv-17",
+                    "local_id": 17,
+                    "create_time": now + 1,
+                },
+                "routine": {"id": "generated_video"},
+            }
+
+            merged, appended = direct_chatops.append_worker_task_once(queue, incoming)
+            tasks = direct_chatops.read_worker_queue_tasks(queue)
+
+        self.assertTrue(appended)
+        self.assertFalse(merged.get("interruption_appended"))
+        self.assertEqual([task["id"] for task in tasks], ["task-16", "task-17"])
+        self.assertEqual(tasks[0]["status"], "worker_abandoned")
 
     def test_agent_bridge_mode_general_followup_appends_as_interruption(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

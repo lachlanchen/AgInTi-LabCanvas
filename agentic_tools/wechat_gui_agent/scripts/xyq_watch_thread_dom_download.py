@@ -22,6 +22,7 @@ from typing import Any
 
 import websocket
 
+from wechat_routines import DEFAULT_XYQ_CDP_URL
 
 STATUS_RE = (
     r"(排队等待中|优先处理中|生成中|大约还需\s*\d+\s*分钟|还需\s*\d+\s*分钟|"
@@ -266,7 +267,7 @@ def completed_artifact_visible(data: dict[str, Any]) -> bool:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cdp-url", default="http://127.0.0.1:9222")
+    parser.add_argument("--cdp-url", default=DEFAULT_XYQ_CDP_URL)
     parser.add_argument("--page-id", required=True)
     parser.add_argument("--thread-url", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)

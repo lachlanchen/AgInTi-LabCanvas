@@ -2884,6 +2884,10 @@ stderr: noisy internal trace
                     "send_result_with_retries",
                     return_value=[],
                 ) as sender,
+                mock.patch.object(
+                    worker,
+                    "record_event",
+                ) as event_recorder,
             ):
                 first = worker.repair_stored_result_contract(
                     queue,
@@ -2899,6 +2903,7 @@ stderr: noisy internal trace
                 )
 
         self.assertEqual(sender.call_count, 1)
+        self.assertEqual(event_recorder.call_count, 1)
         self.assertEqual(first["status"], "waiting_confirmation")
         self.assertIn("今天的故事", first["result"]["message"])
         self.assertEqual(
@@ -5179,6 +5184,76 @@ stderr: noisy internal trace
 
         self.assertIsNone(raw)
         run_mock.assert_not_called()
+
+    def test_pre_submit_failure_is_retryable_but_uncertain_submit_is_monitor_only(self) -> None:
+        worker = load_worker()
+        base = {
+            "id": "task-video",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "public_publish_allowed": False,
+            },
+            "request": "Current coalesced request:\nGenerate a video.",
+        }
+        pre_submit = {
+            **base,
+            "generated_video_submit_probe": {
+                "status": "page_unavailable",
+                "paid_action_attempted": False,
+                "paid_action_state": "not_attempted",
+            },
+        }
+        uncertain = {
+            **base,
+            "generated_video_submit_probe": {
+                "status": "timeout",
+                "paid_action_attempted": None,
+                "paid_action_state": "unknown",
+            },
+        }
+
+        self.assertFalse(worker.generated_video_monitor_only(pre_submit))
+        self.assertTrue(worker.generated_video_monitor_only(uncertain))
+
+    def test_deterministic_video_submit_defaults_to_dedicated_cdp_9344(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-video",
+            "status": worker.CLAIMED_STATUS,
+            "route_decision": {
+                "route_kind": "generate_video",
+                "public_publish_allowed": False,
+            },
+            "request": "Current coalesced request:\nGenerate a 15 second video.",
+        }
+        commands: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            payload = {
+                "ok": False,
+                "status": "page_unavailable",
+                "paid_action_attempted": False,
+                "paid_action_state": "not_attempted",
+            }
+            return subprocess.CompletedProcess(command, 1, json.dumps(payload), "")
+
+        with (
+            mock.patch.dict(
+                worker.os.environ,
+                {"WECHAT_WORKER_XYQ_CDP_URL": "", "XYQ_CDP_URL": ""},
+                clear=False,
+            ),
+            mock.patch.object(worker, "generated_video_submit_script", return_value=Path("/tmp/xyq_submit_current.py")),
+            mock.patch.object(worker, "persist_task_progress"),
+            mock.patch.object(worker.subprocess, "run", side_effect=fake_run),
+        ):
+            raw = worker.deterministic_generated_video_submit_result(task)
+
+        self.assertIsNone(raw)
+        self.assertEqual(len(commands), 1)
+        cdp_index = commands[0].index("--cdp-url") + 1
+        self.assertEqual(commands[0][cdp_index], "http://127.0.0.1:9344")
 
     def test_story_confirmation_gate_blocks_deterministic_video_continue(self) -> None:
         worker = load_worker()
@@ -10245,6 +10320,302 @@ stderr: noisy internal trace
         self.assertEqual(claimed["dead_worker_recovery_count"], 1)
         self.assertNotIn("abandoned_reason", claimed)
         self.assertEqual(rows[0]["dead_worker_recovery_history"][0]["attempt"], 1)
+
+    def test_claim_next_pending_recovers_generated_video_proven_pre_submit(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "video-pre-submit",
+                        "chat": "MEMO",
+                        "request": "generate a video",
+                        "routine": {"id": "generated_video"},
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": "worker_abandoned",
+                        "abandoned_at": datetime.now().isoformat(timespec="seconds"),
+                        "abandoned_reason": "claiming_worker_process_ended",
+                        "generated_video_submit_probe": {
+                            "status": "page_unavailable",
+                            "paid_action_attempted": False,
+                            "paid_action_state": "not_attempted",
+                        },
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], "video-pre-submit")
+        self.assertEqual(claimed["status"], worker.CLAIMED_STATUS)
+        self.assertEqual(claimed["dead_worker_recovery_count"], 1)
+        self.assertNotIn("abandoned_reason", stored)
+
+    def test_claim_next_pending_does_not_recover_generated_video_after_uncertain_submit(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "video-uncertain-submit",
+                        "chat": "MEMO",
+                        "request": "generate a video",
+                        "routine": {"id": "generated_video"},
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": "worker_abandoned",
+                        "abandoned_at": datetime.now().isoformat(timespec="seconds"),
+                        "abandoned_reason": "claiming_worker_process_ended",
+                        "generated_video_submit_probe": {
+                            "status": "timeout",
+                            "paid_action_attempted": None,
+                            "paid_action_state": "unknown",
+                        },
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertIsNone(claimed)
+        self.assertEqual(stored["status"], "worker_abandoned")
+        self.assertNotIn("dead_worker_recovery_count", stored)
+
+    def test_claim_next_pending_cancels_generation_superseded_by_delivered_newer_task(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            video = tmp_path / "newer-result.mp4"
+            video.write_bytes(b"video")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "video-old",
+                        "chat": "MEMO",
+                        "request": "generate a video",
+                        "routine": {"id": "generated_video"},
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": worker.GENERATED_VIDEO_WAITING_STATUS,
+                        "source": {
+                            "config_id": "memo-direct",
+                            "message_table": "MSG",
+                            "local_id": 16,
+                        },
+                        "next_poll_at": 0,
+                    },
+                    {
+                        "id": "video-new",
+                        "chat": "MEMO",
+                        "request": "generate a video with the added reference",
+                        "routine": {"id": "generated_video"},
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": "done",
+                        "source": {
+                            "config_id": "memo-direct",
+                            "message_table": "MSG",
+                            "local_id": 17,
+                        },
+                        "context": [
+                            {
+                                "local_id": 16,
+                                "content": "generate a video",
+                            }
+                        ],
+                        "sent_file_paths": [str(video)],
+                    },
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertIsNone(claimed)
+        self.assertEqual(tasks[0]["status"], "canceled_superseded")
+        self.assertEqual(tasks[0]["superseded_by"], "video-new")
+        self.assertEqual(
+            tasks[0]["superseded_reason"],
+            "newer_same_chat_generation_completed_and_delivered",
+        )
+        self.assertTrue(tasks[0]["recovery_canceled_before_external_action"])
+        self.assertEqual(tasks[0]["coverage_status"], "covered")
+        self.assertEqual(
+            tasks[0]["message_coverage"]["covered_item_ids"],
+            ["task:video-old"],
+        )
+        self.assertEqual(
+            tasks[0]["message_coverage"]["covered_by_superseding_task_id"],
+            "video-new",
+        )
+
+    def test_independent_later_generation_in_same_chat_does_not_supersede(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            video = tmp_path / "independent-result.mp4"
+            video.write_bytes(b"video")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "video-old",
+                        "chat": "MEMO",
+                        "request": "generate the first video",
+                        "routine": {"id": "generated_video"},
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": "pending",
+                        "source": {
+                            "config_id": "memo-direct",
+                            "message_table": "MSG",
+                            "local_id": 16,
+                        },
+                    },
+                    {
+                        "id": "video-new",
+                        "chat": "MEMO",
+                        "request": "generate a separate second video",
+                        "routine": {"id": "generated_video"},
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": "done",
+                        "source": {
+                            "config_id": "memo-direct",
+                            "message_table": "MSG",
+                            "local_id": 17,
+                        },
+                        "context": [
+                            {
+                                "local_id": 15,
+                                "content": "unrelated earlier discussion",
+                            }
+                        ],
+                        "sent_file_paths": [str(video)],
+                    },
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed["id"], "video-old")
+        self.assertEqual(tasks[0]["status"], worker.CLAIMED_STATUS)
+
+    def test_reconcile_closes_legacy_generation_supersession_coverage(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            video = tmp_path / "newer-result.mp4"
+            video.write_bytes(b"video")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "video-old",
+                        "chat": "MEMO",
+                        "request": "generate a video",
+                        "routine": {"id": "generated_video"},
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": "canceled_superseded",
+                        "superseded_by": "video-new",
+                        "superseded_reason": (
+                            "newer_same_chat_generation_completed_and_delivered"
+                        ),
+                        "coverage_status": "unresolved_after_retry",
+                        "message_coverage": {
+                            "status": "deferred_nonterminal",
+                            "expected_item_ids": [
+                                "task:video-old",
+                                "task:interruption-2",
+                            ],
+                            "covered_item_ids": [],
+                            "unresolved_item_ids": [],
+                            "missing": [],
+                        },
+                    },
+                    {
+                        "id": "video-new",
+                        "chat": "MEMO",
+                        "request": "generate the updated video",
+                        "routine": {"id": "generated_video"},
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": "done",
+                        "sent_file_paths": [str(video)],
+                    },
+                ],
+            )
+
+            self.assertEqual(worker.reconcile_numbered_message_coverage(queue), 0)
+            tasks = worker.read_tasks(queue)
+            checked_at = tasks[0]["message_coverage"]["checked_at"]
+            self.assertEqual(worker.reconcile_numbered_message_coverage(queue), 0)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(tasks[0]["coverage_status"], "covered")
+        self.assertEqual(tasks[0]["message_coverage"]["checked_at"], checked_at)
+        self.assertEqual(
+            tasks[0]["message_coverage"]["covered_item_ids"],
+            ["task:video-old", "task:interruption-2"],
+        )
+        self.assertEqual(
+            tasks[0]["message_coverage"]["covered_by_superseding_task_id"],
+            "video-new",
+        )
+
+    def test_delivered_generation_in_another_chat_does_not_supersede_task(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            video = tmp_path / "other-chat.mp4"
+            video.write_bytes(b"video")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "video-old",
+                        "chat": "MEMO",
+                        "request": "generate a video",
+                        "routine": {"id": "generated_video"},
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": "pending",
+                        "source": {
+                            "config_id": "memo-direct",
+                            "message_table": "MSG",
+                            "local_id": 16,
+                        },
+                    },
+                    {
+                        "id": "video-other",
+                        "chat": "My devices",
+                        "request": "generate another video",
+                        "routine": {"id": "generated_video"},
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": "done",
+                        "source": {
+                            "config_id": "devices-direct",
+                            "message_table": "OTHER",
+                            "local_id": 17,
+                        },
+                        "sent_file_paths": [str(video)],
+                    },
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], "video-old")
 
     def test_claim_next_pending_does_not_recover_old_abandoned_task(self) -> None:
         worker = load_worker()

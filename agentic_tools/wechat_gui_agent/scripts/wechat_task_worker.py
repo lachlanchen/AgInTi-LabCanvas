@@ -39,10 +39,13 @@ from wechat_message_policy import file_transport_identity, is_no_reply_control
 from wechat_message_shards import list_message_db_paths, normalize_message_db_name
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_routines import (
+    DEFAULT_XYQ_CDP_URL,
     ensure_task_routine_contract,
     request_has_explicit_research_intent,
     routine_prompt_context,
     write_routine_contract,
+    xyq_submit_probe_proves_no_paid_action,
+    xyq_task_paid_action_may_have_happened,
 )
 from shipinhao_media_transcribe import (
     DEFAULT_CACHE_ROOT as SHIPINHAO_MEDIA_CACHE_ROOT,
@@ -1620,11 +1623,22 @@ def clean_url_token(value: str) -> str:
     return str(value or "").strip().strip("\"'`").rstrip(".,;:)]}>")
 
 
+def configured_xyq_cdp_url(explicit: Any = "") -> str:
+    """Return the dedicated Xiaoyunque CDP endpoint used by every worker stage."""
+    value = (
+        str(explicit or "").strip()
+        or str(os.environ.get("WECHAT_WORKER_XYQ_CDP_URL") or "").strip()
+        or str(os.environ.get("XYQ_CDP_URL") or "").strip()
+        or DEFAULT_XYQ_CDP_URL
+    )
+    return value.rstrip("/")
+
+
 def discover_generated_video_monitor_from_browser(task: dict[str, Any]) -> dict[str, str]:
     probe_monitor = discover_generated_video_monitor_from_probe(task)
     if probe_monitor:
         return probe_monitor
-    cdp_url = os.environ.get("WECHAT_WORKER_XYQ_CDP_URL") or os.environ.get("XYQ_CDP_URL") or "http://127.0.0.1:9222"
+    cdp_url = configured_xyq_cdp_url()
     try:
         with urllib.request.urlopen(f"{cdp_url}/json/list", timeout=5) as response:
             pages = json.loads(response.read().decode("utf-8", errors="replace"))
@@ -3058,6 +3072,20 @@ def reconcile_numbered_message_coverage(path: Path) -> int:
             parent = by_id.get(parent_id) if parent_id else task
             if not isinstance(parent, dict):
                 continue
+            if (
+                str(task.get("status") or "") == "canceled_superseded"
+                and str(task.get("superseded_reason") or "")
+                == "newer_same_chat_generation_completed_and_delivered"
+                and generation_task_has_verified_delivery(parent)
+            ):
+                if not generation_supersession_coverage_is_closed(task, parent):
+                    mark_generation_superseded_by_delivery(
+                        task,
+                        parent,
+                        now_text=now_text,
+                    )
+                    changed = True
+                continue
             coverage = (
                 parent.get("message_coverage")
                 if isinstance(parent.get("message_coverage"), dict)
@@ -3856,6 +3884,16 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
         }
         for index, task in enumerate(tasks):
             status = str(task.get("status") or "")
+            superseding_generation = newer_delivered_generation_task(task, tasks, index)
+            if superseding_generation is not None:
+                mark_generation_superseded_by_delivery(
+                    task,
+                    superseding_generation,
+                    now_text=now_text,
+                )
+                tasks[index] = task
+                changed = True
+                continue
             if status == CLAIMED_STATUS and claimed_worker_process_dead(task):
                 if dead_worker_task_recoverable(task, now):
                     prepare_dead_worker_recovery(task, now_text)
@@ -3952,6 +3990,183 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
         return task
 
 
+def newer_delivered_generation_task(
+    task: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    task_index: int,
+) -> dict[str, Any] | None:
+    """Find a later same-chat generation that already delivered its MP4."""
+
+    status = str(task.get("status") or "")
+    if status not in {
+        "pending",
+        CLAIMED_STATUS,
+        "worker_abandoned",
+        GENERATED_VIDEO_WAITING_STATUS,
+    }:
+        return None
+    if not is_generate_video_task(task):
+        return None
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    source_local_ids = task_source_local_ids(task)
+    if not source_local_ids:
+        return None
+    max_source_local_id = max(source_local_ids)
+    for candidate in tasks[task_index + 1 :]:
+        if str(candidate.get("status") or "") != "done":
+            continue
+        if not is_generate_video_task(candidate):
+            continue
+        if str(candidate.get("chat") or "") != str(task.get("chat") or ""):
+            continue
+        candidate_source = candidate.get("source") if isinstance(candidate.get("source"), dict) else {}
+        if not same_nonempty_task_source_field(source, candidate_source, "config_id"):
+            continue
+        if not same_nonempty_task_source_field(source, candidate_source, "message_table"):
+            continue
+        candidate_local_ids = task_source_local_ids(candidate)
+        if not candidate_local_ids or max(candidate_local_ids) <= max_source_local_id:
+            continue
+        if not set(source_local_ids).intersection(
+            generation_task_context_local_ids(candidate)
+        ):
+            continue
+        if not generation_task_has_verified_delivery(candidate):
+            continue
+        return candidate
+    return None
+
+
+def generation_task_has_verified_delivery(task: dict[str, Any]) -> bool:
+    if str(task.get("status") or "") != "done" or not is_generate_video_task(task):
+        return False
+    delivered = [
+        Path(str(item))
+        for item in task.get("sent_file_paths") or []
+        if str(item).lower().endswith((".mp4", ".mov", ".m4v"))
+    ]
+    return bool(delivered and any(path.is_file() for path in delivered))
+
+
+def mark_generation_superseded_by_delivery(
+    task: dict[str, Any],
+    superseding_generation: dict[str, Any],
+    *,
+    now_text: str,
+) -> None:
+    """Close an older generation only after a newer exact-chat MP4 was sent."""
+
+    superseding_task_id = str(superseding_generation.get("id") or "")
+    existing_coverage = (
+        task.get("message_coverage")
+        if isinstance(task.get("message_coverage"), dict)
+        else {}
+    )
+    expected_item_ids = unique_strings(
+        [
+            *[str(item) for item in existing_coverage.get("expected_item_ids") or []],
+            *completion_expected_item_ids(task),
+        ]
+    )
+    task_id = str(task.get("id") or "")
+    if not expected_item_ids and task_id:
+        expected_item_ids = [f"task:{task_id}"]
+    task["status"] = "canceled_superseded"
+    task["completed_at"] = now_text
+    task["superseded_at"] = now_text
+    task["superseded_by"] = superseding_task_id
+    task["superseded_reason"] = "newer_same_chat_generation_completed_and_delivered"
+    task["recovery_canceled_before_external_action"] = True
+    task["message_coverage"] = {
+        "status": "covered",
+        "checked_at": now_text,
+        "expected_item_ids": expected_item_ids,
+        "covered_item_ids": expected_item_ids,
+        "unresolved_item_ids": [],
+        "missing": [],
+        "covered_by_superseding_task_id": superseding_task_id,
+    }
+    task["coverage_status"] = "covered"
+    task["coverage_checked_at"] = now_text
+    task["coverage_parent_task_id"] = superseding_task_id
+    for key in (
+        "worker_id",
+        "claimed_at",
+        "abandoned_at",
+        "abandoned_reason",
+        "next_poll_at",
+        "next_poll_at_iso",
+    ):
+        task.pop(key, None)
+
+
+def generation_supersession_coverage_is_closed(
+    task: dict[str, Any],
+    superseding_generation: dict[str, Any],
+) -> bool:
+    coverage = (
+        task.get("message_coverage")
+        if isinstance(task.get("message_coverage"), dict)
+        else {}
+    )
+    expected = [str(item) for item in coverage.get("expected_item_ids") or []]
+    covered = [str(item) for item in coverage.get("covered_item_ids") or []]
+    return bool(
+        str(task.get("coverage_status") or "") == "covered"
+        and str(coverage.get("status") or "") == "covered"
+        and str(coverage.get("covered_by_superseding_task_id") or "")
+        == str(superseding_generation.get("id") or "")
+        and not coverage.get("unresolved_item_ids")
+        and set(expected) == set(covered)
+    )
+
+
+def task_source_local_ids(task: dict[str, Any]) -> list[int]:
+    values: list[int] = []
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    source_local_id = int_or_none(source.get("local_id"))
+    if source_local_id is not None:
+        values.append(source_local_id)
+    for interruption in task_interruptions(task):
+        interruption_source = interruption.get("source") if isinstance(interruption.get("source"), dict) else {}
+        local_id = int_or_none(interruption_source.get("local_id"))
+        if local_id is not None:
+            values.append(local_id)
+    return values
+
+
+def generation_task_context_local_ids(task: dict[str, Any]) -> set[int]:
+    """Return prior message IDs explicitly carried into a generation task."""
+
+    values: set[int] = set()
+    for item in task.get("context") or []:
+        if not isinstance(item, dict):
+            continue
+        local_id = int_or_none(item.get("local_id"))
+        if local_id is not None:
+            values.add(local_id)
+    for interruption in task_interruptions(task):
+        source = (
+            interruption.get("source")
+            if isinstance(interruption.get("source"), dict)
+            else {}
+        )
+        local_id = int_or_none(source.get("local_id"))
+        if local_id is not None:
+            values.add(local_id)
+    return values
+
+
+def same_nonempty_task_source_field(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    key: str,
+) -> bool:
+    left_value = str(left.get(key) or "")
+    right_value = str(right.get(key) or "")
+    return not (left_value and right_value and left_value != right_value)
+
+
 def dead_worker_task_recoverable(task: dict[str, Any], now: datetime) -> bool:
     """Resume one recent safe task after a worker process restart."""
 
@@ -3959,7 +4174,13 @@ def dead_worker_task_recoverable(task: dict[str, Any], now: datetime) -> bool:
         return True
     routine = task.get("routine")
     routine_id = str(routine.get("id") or "") if isinstance(routine, dict) else str(routine or "")
-    if routine_id not in DEAD_WORKER_RECOVERABLE_ROUTINES:
+    proven_pre_submit_generation_failure = (
+        routine_id == "generated_video"
+        and isinstance(task.get("generated_video_submit_probe"), dict)
+        and xyq_submit_probe_proves_no_paid_action(task["generated_video_submit_probe"])
+        and not xyq_task_paid_action_may_have_happened(task)
+    )
+    if routine_id not in DEAD_WORKER_RECOVERABLE_ROUTINES and not proven_pre_submit_generation_failure:
         return False
     limit = max(
         0,
@@ -5850,7 +6071,7 @@ If `task.interruptions` or `task.preflight.interruptions` exists, those are newe
 For story/video workflows, a newer request to revise/show/confirm the story must pause or replace the stale story-generation plan before any new video submit. Send the updated story back and ask whether to generate the video unless the latest same-chat messages already give clear generation permission. If a generation was submitted but the user says they stopped it or asks to update the story, do not keep polling the stale run as success; update the story/prompt first and wait for or use the latest confirmation.
 Follow the machine-readable instruction contract below. Follow every safe, explicit instruction in the current coalesced request. If the user asks for multiple stages, do them in order or persist a resumable state for unfinished stages; do not collapse the request to a smaller hardcoded action just because one routine or keyword matched.
 Before executing, inspect `task.route_decision` against the Current coalesced request and recent context. If they conflict, choose the safer interpretation and state the conflict instead of acting. If `task.route_decision` exists, treat it as the intent contract. If it says `route_kind=generate_video`, generate/import the requested new video and do not process an old WeChat MP4 as the output. Treat stages separately: story writing, video generation/download/send-back, LazyEdit import/process, and public publishing are independent permissions. If `public_publish_allowed` is false, do not publish/post/upload to Shipinhao, YouTube, Instagram, AutoPublish public queues, or any public platform even if old context mentions publishing. Public posting requires an explicit publish/post/platform instruction in the current user request, not merely old history. LazyEdit import/process is allowed only when the current request explicitly asks for LazyEdit/import/process.
-For paid Xiaoyunque/Seedance work, use request-level idempotence: one logical WeChat request owns at most one paid generation thread unless the current user message explicitly asks for a new paid rerun. If `task.generated_video_monitor.thread_url`, `task.generated_video_submit_probe`, `task.credit_guard`, `route_decision.no_new_xyq_submit`, or `monitor_only_no_resubmit` exists, do not submit, retry, continue, or create another Xiaoyunque job. Only monitor/download the existing thread and send the resulting MP4 back.
+For paid Xiaoyunque/Seedance work, use request-level idempotence: one logical WeChat request owns at most one paid generation thread unless the current user message explicitly asks for a new paid rerun. Never create, resubmit, or retry as a new job when an existing monitor/thread, credit guard, no-new-submit flag, or submit probe says a paid action was attempted or may have happened. An expected confirmation inside the same exact known thread may continue only when the page asks for it, current story/approval gates allow it, and the task is not marked monitor-only. A structured submit probe with `paid_action_attempted=false` and `paid_action_state=not_attempted` is a recoverable pre-submit failure: restore the dedicated Xiaoyunque browser and retry the same logical task once without creating a second queue task.
 Before doing work or composing the final message, check whether the recent context already contains a bot/self answer or completed result for the same request. Avoid sending the same answer again; return only the new delta, current status, missing decision, or remaining artifact.
 Strict source isolation: the task's `chat`, `source.local_id`, `source.server_id`, `context`, and any explicit source/reference rows embedded in `request` define the only WeChat source. Never use media, files, or generated artifacts from another chat, another direct message, a nearby queue item, or an unrelated old task.
 For official WeCom tasks, `task.member_memory` is a bounded private view of this exact member in this exact chat. Use it only for continuity, personalization, and linking prior papers or ideas. Never expose member keys, database internals, another member's records, or claim two identities are the same without explicit evidence.
@@ -9930,26 +10151,22 @@ def is_generate_video_task(task: dict[str, Any]) -> bool:
 
 
 def generated_video_monitor_only(task: dict[str, Any]) -> bool:
-    """Return true when a paid XYQ thread already exists for this request.
+    """Return true when the task must not submit or continue paid XYQ work.
 
-    This is an idempotence guard, not a story-specific rule: once the queue has
-    evidence that a Xiaoyunque request was submitted or credits were consumed,
-    the worker may monitor/download that thread but must not submit/continue a
-    second paid action for the same logical request.
+    A known thread is not automatically monitor-only: an agent workflow may
+    legitimately ask for one confirmation before generating its final video.
+    New-job submission remains blocked separately whenever a monitor exists.
     """
     route = task_route_decision(task)
     monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
-    credit_guard = task.get("credit_guard") if isinstance(task.get("credit_guard"), dict) else {}
-    submit_probe = task.get("generated_video_submit_probe") if isinstance(task.get("generated_video_submit_probe"), dict) else {}
     if bool(route.get("no_new_xyq_submit")) or bool(route.get("monitor_only_no_resubmit")):
         return True
     if bool(monitor.get("monitor_only_no_resubmit")) or bool(monitor.get("no_new_xyq_submit")):
         return True
+    credit_guard = task.get("credit_guard") if isinstance(task.get("credit_guard"), dict) else {}
     if bool(credit_guard.get("enabled")):
         return True
-    if submit_probe.get("ok") and str(submit_probe.get("thread_url") or submit_probe.get("page_id") or ""):
-        return True
-    if task.get("generation_wait_count") and monitor.get("thread_url"):
+    if not str(monitor.get("thread_url") or "").strip() and xyq_task_paid_action_may_have_happened(task):
         return True
     return False
 
@@ -10115,7 +10332,9 @@ def write_generated_video_contract(task: dict[str, Any], artifact_dir: Path) -> 
             "If the browser cannot submit or download a new video, return an explicit blocked/in-progress status instead of claiming success.",
             "Long Xiaoyunque rendering must stay in the queue with deterministic status probes; do not spend model tokens just to poll.",
             "Paid Xiaoyunque/Seedance idempotence: one logical WeChat request owns at most one paid generation thread unless the current user explicitly asks for a new paid rerun.",
-            "If generated_video_monitor.thread_url, generated_video_submit_probe, credit_guard, no_new_xyq_submit, or monitor_only_no_resubmit exists, do not submit, retry, continue, or create another Xiaoyunque job; only monitor/download/send the existing thread result.",
+            "Never create, resubmit, or retry as a new Xiaoyunque job when an existing monitor/thread, credit guard, no-new-submit flag, or submit probe says a paid action was attempted or may have happened.",
+            "An expected confirmation inside the same exact known thread may continue only when the page asks for it, current story/approval gates allow it, and the task is not marked monitor-only.",
+            "A structured generated_video_submit_probe with paid_action_attempted=false and paid_action_state=not_attempted is a recoverable pre-submit failure. Restore the dedicated Xiaoyunque browser and retry the same logical task without creating another queue row.",
         ],
         "expected_artifacts": [
             "story markdown",
@@ -10243,7 +10462,7 @@ def discover_generated_video_monitor_from_probe(task: dict[str, Any]) -> dict[st
     href = str(probe.get("href") or "")
     if "xyq.jianying.com" not in href or "thread_id=" not in href:
         return {}
-    cdp_url = str(existing.get("cdp_url") or os.environ.get("WECHAT_WORKER_XYQ_CDP_URL") or os.environ.get("XYQ_CDP_URL") or "http://127.0.0.1:9222")
+    cdp_url = configured_xyq_cdp_url(existing.get("cdp_url"))
     page_id = str(existing.get("page_id") or page_id_for_thread_url(cdp_url, href) or "")
     if not page_id:
         return {}
@@ -11813,7 +12032,7 @@ def deterministic_generated_video_submit_result(task: dict[str, Any]) -> str | N
         return None
     artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task)))
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    cdp_url = os.environ.get("WECHAT_WORKER_XYQ_CDP_URL") or os.environ.get("XYQ_CDP_URL") or "http://127.0.0.1:9222"
+    cdp_url = configured_xyq_cdp_url()
     request_text = task_focus_text(task)
     duration = requested_generated_video_duration_seconds(task)
     command = [
@@ -11844,15 +12063,27 @@ def deterministic_generated_video_submit_result(task: dict[str, Any]) -> str | N
         task["generated_video_submit_probe"] = {
             "ok": False,
             "status": "timeout",
+            "paid_action_state": "unknown",
+            "paid_action_attempted": None,
             "stdout": collapse_context_text(stdout, max_len=800),
             "stderr": collapse_context_text(stderr, max_len=800),
         }
         return None
     payload = parse_last_json_object((proc.stdout or "") + "\n" + (proc.stderr or ""))
     if not payload:
+        no_paid_action = xyq_submit_probe_proves_no_paid_action(
+            {
+                "status": "parse_failed",
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            }
+        )
         task["generated_video_submit_probe"] = {
             "ok": False,
             "status": "parse_failed",
+            "paid_action_state": "not_attempted" if no_paid_action else "unknown",
+            "paid_action_attempted": False if no_paid_action else None,
             "returncode": proc.returncode,
             "stdout": collapse_context_text(proc.stdout, max_len=1000),
             "stderr": collapse_context_text(proc.stderr, max_len=1000),
@@ -11930,7 +12161,7 @@ def deterministic_generated_video_continue_result(task: dict[str, Any]) -> str |
             },
             ensure_ascii=False,
         )
-    cdp_url = str(monitor.get("cdp_url") or os.environ.get("WECHAT_WORKER_XYQ_CDP_URL") or os.environ.get("XYQ_CDP_URL") or "http://127.0.0.1:9222")
+    cdp_url = configured_xyq_cdp_url(monitor.get("cdp_url"))
     page_id = str(monitor.get("page_id") or page_id_for_thread_url(cdp_url, thread_url) or "")
     prompt = generated_video_continuation_prompt(task)
     command = [
@@ -12204,7 +12435,7 @@ def run_generated_video_monitor(task: dict[str, Any], monitor: dict[str, Any]) -
     output_dir = Path(str(monitor.get("output_dir") or artifact_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = str(monitor.get("filename") or f"{safe_slug(str(task.get('id') or 'generated-video'))}.mp4")
-    cdp_url = str(monitor.get("cdp_url") or os.environ.get("XYQ_CDP_URL") or "http://127.0.0.1:9222")
+    cdp_url = configured_xyq_cdp_url(monitor.get("cdp_url"))
     status = inspect_generated_video_status(task) or {}
     poll_seconds = float(
         os.environ.get(
@@ -13764,7 +13995,9 @@ Generated-video route contract:
 - If the user confirms the revised story after seeing it, update the Xiaoyunque prompt/continuation from that approved story and the latest same-chat context. Prefer continuing the same usable XYQ thread/session; only start a new paid run when the current request explicitly authorizes a new run and the existing thread cannot be used.
 - If a newer same-chat or operator note says the owner already downloaded one or more XYQ videos to Downloads and handed them to LazyEdit/publication, record that manual handoff as terminal state for this automation path. Do not reopen the XYQ page, redownload, resubmit, continue, import, or publish unless a later explicit request asks the automation to take over again.
 - Do not keep polling, download, publish, or report success for a stale Xiaoyunque run after a same-chat interruption says the story is wrong or the browser run was stopped.
-- Paid Xiaoyunque/Seedance actions are idempotent per logical WeChat request. If this task already has `generated_video_monitor.thread_url`, `generated_video_submit_probe`, `credit_guard`, `route_decision.no_new_xyq_submit`, or `monitor_only_no_resubmit`, do not submit/continue/retry a paid generation; monitor/download/send only.
+- Paid Xiaoyunque/Seedance actions are idempotent per logical WeChat request. Never create, resubmit, or retry as a new paid job when a monitor/thread, credit guard, no-new-submit flag, or submit probe says a paid action was attempted or may have happened.
+- An expected confirmation inside the same exact known thread may continue only when the page asks for it, current story/approval gates allow it, and the task is not marked monitor-only.
+- A structured submit probe with `paid_action_attempted=false` and `paid_action_state=not_attempted` is a recoverable pre-submit failure. Restore the dedicated Xiaoyunque browser on the configured CDP endpoint and retry the same logical task without creating a second paid run or queue row.
 - For LALACHAN/Xiaoyunque, model selection must not block the task. Choose a relatively cheaper suitable model from the available page options and proceed. Prefer `Seedance 2.0 Mini 体验版` / `vipnew` when it shows `单秒限时低至4积分`; otherwise use the cheapest suitable `Seedance 2.0 Fast`, `Fast VIP`, or available Seedance row. Pause only for real non-model blockers such as no credits, recharge/payment approval, disabled submit, login, CAPTCHA, or an explicit user budget limit.
 - Prefer these existing Xiaoyunque helpers from `/home/lachlan/.codex/skills/lalachan-xyq-browser-video`:
   `scripts/xyq_cdp_browser.py list-pages`

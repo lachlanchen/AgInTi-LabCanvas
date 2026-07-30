@@ -22,6 +22,46 @@ def load_routines():
 
 
 class WeChatRoutineTests(unittest.TestCase):
+    def test_xyq_submit_probe_distinguishes_pre_submit_from_uncertain_action(self) -> None:
+        routines = load_routines()
+
+        self.assertTrue(
+            routines.xyq_submit_probe_proves_no_paid_action(
+                {
+                    "status": "page_unavailable",
+                    "paid_action_attempted": False,
+                    "paid_action_state": "not_attempted",
+                }
+            )
+        )
+        self.assertTrue(
+            routines.xyq_submit_probe_proves_no_paid_action(
+                {
+                    "status": "parse_failed",
+                    "stderr": "No Xiaoyunque home page found",
+                }
+            )
+        )
+        self.assertFalse(
+            routines.xyq_submit_probe_proves_no_paid_action(
+                {
+                    "status": "timeout",
+                    "paid_action_attempted": None,
+                    "paid_action_state": "unknown",
+                }
+            )
+        )
+        self.assertTrue(
+            routines.xyq_task_paid_action_may_have_happened(
+                {
+                    "generated_video_submit_probe": {
+                        "status": "timeout",
+                        "paid_action_state": "unknown",
+                    }
+                }
+            )
+        )
+
     def test_route_kind_selects_generated_video_routine(self) -> None:
         routines = load_routines()
         routine_id = routines.routine_id_for_route(

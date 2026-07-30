@@ -14,6 +14,51 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[3]
 DOCS_DIR = ROOT / "agentic_tools" / "wechat_gui_agent" / "docs"
 AGENT_ROUTINE_CHEAT_SHEET = DOCS_DIR / "AGENT_ROUTINE_CHEAT_SHEET.md"
+DEFAULT_XYQ_CDP_URL = "http://127.0.0.1:9344"
+
+
+def xyq_submit_probe_proves_no_paid_action(probe: dict[str, Any]) -> bool:
+    """Return true only when evidence shows failure occurred before submit."""
+    attempted = probe.get("paid_action_attempted")
+    state = str(probe.get("paid_action_state") or "").strip().lower()
+    if attempted is False or state == "not_attempted":
+        return True
+    if attempted is True or state in {"attempted", "unknown"}:
+        return False
+    status = str(probe.get("status") or "").strip().lower()
+    if status in {"page_unavailable", "not_ready", "composer_not_ready"}:
+        return True
+    evidence = "\n".join(
+        [
+            str(probe.get("reason") or ""),
+            str(probe.get("stdout") or ""),
+            str(probe.get("stderr") or ""),
+        ]
+    ).lower()
+    return status == "parse_failed" and any(
+        marker in evidence
+        for marker in (
+            "no xiaoyunque home page found",
+            "page id not found",
+            "unexpected browser state payload",
+        )
+    )
+
+
+def xyq_task_paid_action_may_have_happened(task: dict[str, Any]) -> bool:
+    """Conservatively detect an existing or uncertain paid generation action."""
+    monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
+    credit_guard = task.get("credit_guard") if isinstance(task.get("credit_guard"), dict) else {}
+    probe = task.get("generated_video_submit_probe") if isinstance(task.get("generated_video_submit_probe"), dict) else {}
+    if str(monitor.get("thread_url") or monitor.get("thread_id") or "").strip():
+        return True
+    if bool(credit_guard.get("enabled")):
+        return True
+    if not probe:
+        return False
+    if xyq_submit_probe_proves_no_paid_action(probe):
+        return False
+    return True
 
 
 @dataclass(frozen=True)

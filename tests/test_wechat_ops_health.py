@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import io
 import json
 import os
@@ -41,7 +41,7 @@ class WeChatOpsHealthTests(unittest.TestCase):
         self.assertEqual(payload["status"], "locked")
         self.assertEqual(payload["watchdog"]["desktop"]["status"], "locked")
 
-    def test_direct_monitor_health_reports_stale_sources_not_ready(self) -> None:
+    def test_direct_monitor_health_reports_stale_heartbeat_not_ready(self) -> None:
         original_discover = wechat_ops.discover_direct_monitor_configs
         original_config_health = wechat_ops.direct_config_health
         original_backend = wechat_ops.external_backend_summary
@@ -70,7 +70,105 @@ class WeChatOpsHealthTests(unittest.TestCase):
         self.assertEqual(payload["caught_up_groups"], 1)
         self.assertEqual(payload["ready_groups"], 0)
         self.assertEqual(payload["stale_source_groups"], 1)
-        self.assertIn("ready also requires", payload["notes"][-1])
+        self.assertIn("fresh monitor heartbeat", payload["notes"][-2])
+
+    def test_quiet_chat_with_fresh_monitor_heartbeat_remains_ready(self) -> None:
+        original_latest = wechat_ops.latest_direct_db_local_id
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_path = tmp_path / "state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "last_local_id": 25,
+                        "last_loop_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config_path = tmp_path / "quiet.local.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "chat_name": "QuietChat",
+                        "message_table": "Msg_test",
+                        "state_path": str(state_path),
+                        "poll_seconds": 0.8,
+                        "stale_warning_seconds": 60,
+                        "ignore_self_messages": True,
+                        "respond_to_self": False,
+                        "send_target": {"expected_title": "QuietChat"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                wechat_ops.latest_direct_db_local_id = lambda _table: {  # type: ignore[assignment]
+                    "ok": True,
+                    "status": "ok",
+                    "latest_local_id": 25,
+                    "latest_at": "2026-01-01T00:00:00",
+                    "age_seconds": 7200,
+                }
+                payload = wechat_ops.direct_config_health(config_path)
+            finally:
+                wechat_ops.latest_direct_db_local_id = original_latest  # type: ignore[assignment]
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["ready"])
+        self.assertTrue(payload["chat_quiet"])
+        self.assertTrue(payload["last_message_old"])
+        self.assertFalse(payload["monitor_stale"])
+        self.assertFalse(payload["source_stale"])
+
+    def test_caught_up_chat_with_stale_monitor_heartbeat_is_not_ready(self) -> None:
+        original_latest = wechat_ops.latest_direct_db_local_id
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_path = tmp_path / "state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "last_local_id": 25,
+                        "last_loop_at": (
+                            datetime.now(timezone.utc) - timedelta(minutes=5)
+                        ).isoformat(timespec="seconds"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            config_path = tmp_path / "stale.local.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "chat_name": "StaleChat",
+                        "message_table": "Msg_test",
+                        "state_path": str(state_path),
+                        "poll_seconds": 0.8,
+                        "monitor_stale_seconds": 30,
+                        "ignore_self_messages": True,
+                        "respond_to_self": False,
+                        "send_target": {"expected_title": "StaleChat"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                wechat_ops.latest_direct_db_local_id = lambda _table: {  # type: ignore[assignment]
+                    "ok": True,
+                    "status": "ok",
+                    "latest_local_id": 25,
+                    "latest_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "age_seconds": 1,
+                }
+                payload = wechat_ops.direct_config_health(config_path)
+            finally:
+                wechat_ops.latest_direct_db_local_id = original_latest  # type: ignore[assignment]
+
+        self.assertTrue(payload["caught_up"])
+        self.assertFalse(payload["ready"])
+        self.assertTrue(payload["monitor_stale"])
+        self.assertTrue(payload["source_stale"])
 
     def test_cli_health_uses_transport_heartbeats_for_exit_status(self) -> None:
         original_direct = wechat_ops.direct_monitor_health

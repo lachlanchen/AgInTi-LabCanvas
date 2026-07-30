@@ -20,8 +20,9 @@ from typing import Any
 
 import websocket
 
+from wechat_routines import DEFAULT_XYQ_CDP_URL
 
-DEFAULT_CDP_URL = "http://127.0.0.1:9222"
+DEFAULT_CDP_URL = DEFAULT_XYQ_CDP_URL
 
 
 class CdpPage:
@@ -355,15 +356,33 @@ def main() -> None:
     args = parser.parse_args()
 
     expect_duration = args.expect_duration or expected_duration_seconds(args.request_text)
-    page_id = choose_page_by_state(
-        args.cdp_url,
-        page_id=args.page_id,
-        request_text=args.request_text,
-        expect_duration=expect_duration,
-        min_attachments=args.min_attachments,
-        min_prompt_chars=args.min_prompt_chars,
-    )
-    page = CdpPage(page_id, args.cdp_url)
+    try:
+        page_id = choose_page_by_state(
+            args.cdp_url,
+            page_id=args.page_id,
+            request_text=args.request_text,
+            expect_duration=expect_duration,
+            min_attachments=args.min_attachments,
+            min_prompt_chars=args.min_prompt_chars,
+        )
+        page = CdpPage(page_id, args.cdp_url)
+    except (SystemExit, OSError, RuntimeError, ValueError) as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": "page_unavailable",
+                    "reason": str(exc),
+                    "cdp_url": args.cdp_url,
+                    "paid_action_state": "not_attempted",
+                    "paid_action_attempted": False,
+                    "retryable": True,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
     page.bring_to_front()
     args.artifact_dir.mkdir(parents=True, exist_ok=True)
     before_path = args.artifact_dir / f"{args.task_id}_xyq_submit_before.png"
@@ -371,7 +390,22 @@ def main() -> None:
     page.screenshot(before_path)
     before = page.eval(STATE_JS)
     if not isinstance(before, dict):
-        raise SystemExit("Unexpected browser state payload")
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": "composer_not_ready",
+                    "reason": "Unexpected browser state payload",
+                    "page_id": page_id,
+                    "paid_action_state": "not_attempted",
+                    "paid_action_attempted": False,
+                    "retryable": True,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
 
     if before.get("threadId") and task_match_score(before, args.request_text) < 2:
         payload = {
@@ -382,6 +416,9 @@ def main() -> None:
             "before": before,
             "match_score": task_match_score(before, args.request_text),
             "screenshot": str(before_path),
+            "paid_action_state": "not_attempted",
+            "paid_action_attempted": False,
+            "retryable": True,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
@@ -394,6 +431,9 @@ def main() -> None:
             "page_id": page_id,
             "before": before,
             "screenshot": str(before_path),
+            "paid_action_state": "not_attempted",
+            "paid_action_attempted": False,
+            "retryable": True,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
@@ -430,6 +470,8 @@ def main() -> None:
         "after": after,
         "submit": submit_result,
         "screenshots": [str(before_path), str(after_path)],
+        "paid_action_state": "attempted" if args.submit and not before.get("threadId") else "not_attempted",
+        "paid_action_attempted": bool(args.submit and not before.get("threadId")),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 

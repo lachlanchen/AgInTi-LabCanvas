@@ -44,7 +44,13 @@ from wechat_message_shards import (
     message_db_index as message_db_sort_key,
     normalize_message_db_name as normalized_message_db_name,
 )
-from wechat_routines import ROUTINES, build_routine_contract, ensure_task_routine_contract
+from wechat_routines import (
+    ROUTINES,
+    build_routine_contract,
+    ensure_task_routine_contract,
+    xyq_submit_probe_proves_no_paid_action,
+    xyq_task_paid_action_may_have_happened,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -70,6 +76,7 @@ INTERRUPTIBLE_TASK_STATUSES = {
     "send_deferred_locked",
     "send_retrying",
     "waiting_confirmation",
+    "worker_abandoned",
 }
 REQUEUE_ON_INTERRUPT_STATUSES = INTERRUPTIBLE_TASK_STATUSES - {"in_progress"}
 INTERRUPTIBLE_ROUTE_KINDS = {
@@ -6397,6 +6404,8 @@ def append_same_chat_task_interruption(tasks: list[dict[str, Any]], incoming: di
             candidate.pop("next_poll_at", None)
             candidate.pop("next_poststage_at", None)
             candidate.pop("next_publish_poststage_at", None)
+            candidate.pop("abandoned_at", None)
+            candidate.pop("abandoned_reason", None)
         elif status == "in_progress":
             candidate["interrupt_requested_at"] = interruption["at"]
             candidate["interrupt_delivery"] = "recorded_for_next_agent_turn_or_stale_reclaim"
@@ -6465,7 +6474,10 @@ def apply_manual_generated_video_handoff(candidate: dict[str, Any], incoming: di
 def same_chat_interruption_target(candidate: dict[str, Any], incoming: dict[str, Any]) -> bool:
     if not is_interruptible_task(candidate):
         return False
-    if str(candidate.get("status") or "") not in INTERRUPTIBLE_TASK_STATUSES:
+    status = str(candidate.get("status") or "")
+    if status not in INTERRUPTIBLE_TASK_STATUSES:
+        return False
+    if status == "worker_abandoned" and not abandoned_generation_pre_submit_recoverable(candidate):
         return False
     if str(candidate.get("chat") or "") != str(incoming.get("chat") or ""):
         return False
@@ -6486,6 +6498,21 @@ def same_chat_interruption_target(candidate: dict[str, Any], incoming: dict[str,
     ):
         return False
     return True
+
+
+def abandoned_generation_pre_submit_recoverable(task: dict[str, Any]) -> bool:
+    """Allow a follow-up to revive only a generation task proven not submitted."""
+    routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
+    route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    if str(routine.get("id") or "") != "generated_video" and str(route.get("route_kind") or "") != "generate_video":
+        return False
+    probe = task.get("generated_video_submit_probe") if isinstance(task.get("generated_video_submit_probe"), dict) else {}
+    if not probe:
+        return False
+    return (
+        xyq_submit_probe_proves_no_paid_action(probe)
+        and not xyq_task_paid_action_may_have_happened(task)
+    )
 
 
 def same_nonempty_field(left: dict[str, Any], right: dict[str, Any], key: str) -> bool:

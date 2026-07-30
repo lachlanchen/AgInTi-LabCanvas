@@ -23,8 +23,9 @@ from typing import Any
 
 import websocket
 
+from wechat_routines import DEFAULT_XYQ_CDP_URL
 
-DEFAULT_CDP_URL = "http://127.0.0.1:9222"
+DEFAULT_CDP_URL = DEFAULT_XYQ_CDP_URL
 DEFAULT_DOTENV = Path("/home/lachlan/ProjectsLFS/LALACHAN/.env")
 DEFAULT_XYQ_SKILL_SCRIPTS = Path("/home/lachlan/.agents/skills/xyq-nest-skill/scripts")
 

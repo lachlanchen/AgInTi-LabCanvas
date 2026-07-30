@@ -1557,8 +1557,10 @@ Expected signs:
   send;
 - send targets have title guards;
 - direct monitors report `ready=true`; `caught_up=true` only means state reached
-  the latest decrypted row, while `source_stale=true` means the Linux WeChat
-  source has not materialized recent phone-side messages and can miss audio;
+  the latest decrypted row, while `source_stale=true` means the monitor
+  heartbeat itself is stale or missing. `chat_quiet=true` and
+  `last_message_old=true` are informational and do not make an idle group
+  unhealthy;
 - `chat-sync` is running when multiple groups must respond even if the Linux
   client has not recently opened those conversations;
 - `chat-sync` dry-open uses a GUI sender alarm derived from
@@ -1649,16 +1651,25 @@ tail -n 80 output/wechat_gui_agent/$(date +%F)/supervisor-worker.log
 ```
 
 If the monitor is `ready=true`, caught up, and no task exists, the message was
-not actionable or was filtered. If `source_stale=true`, first restore desktop
-message materialization; Whisper and route logic cannot process rows that never
-entered the decrypted DB. If a task exists, follow its state instead of sending
-a manual duplicate.
+not actionable or was filtered. If `source_stale=true`, restore the direct
+monitor loop and its heartbeat before diagnosing message materialization.
+An old latest-message timestamp alone is `chat_quiet`, not a transport failure.
+If the phone has a newer message that never entered the decrypted DB, inspect
+chat-sync/materialization separately. If a task exists, follow its state instead
+of sending a manual duplicate.
 Use the queue attention section first: `delivery_blocked` means the artifact or
 completion exists but WeChat delivery is blocked, `human_blocked` means an
 approval step is required, `failed` means repair/reprocess is needed, and
 `stale` means a queue clock such as `next_poll_at`, `next_poststage_at`, or
 `send_retry_claimed_at` is overdue. Follow `recommended_commands` before
 running ad hoc scripts.
+Queue rows are retained as durable history, but a blocked, failed, or unknown
+row older than the current attention horizon is reported under
+`attention.counts.historical` instead of keeping live health red. The default
+horizon is 24 hours and can be changed with
+`WECHAT_QUEUE_ATTENTION_MAX_AGE_SECONDS`. Active work is never hidden by this
+horizon: pending, running, generation, poststage, and send-retry states remain
+visible until they reach a terminal state or are repaired.
 If the source group has no fresh DB rows even though the user sent a message,
 run or check `wechat_chat_sync_loop.py`: it dry-opens the configured chat with
 the normal title guard and no send action, then the direct monitor can process

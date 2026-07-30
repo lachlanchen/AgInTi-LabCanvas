@@ -176,10 +176,11 @@ labcanvas wechat control-map --json
 ```
 
 It reports each configured group, whether its monitor state has caught up to
-the decrypted DB, whether that decrypted source is fresh enough to be `ready`,
+the decrypted DB, whether the monitor heartbeat is fresh enough to be `ready`,
 and whether the self-message and title-guard protections are enabled.
-`caught_up=true` with `source_stale=true` means the monitor is alive but blind
-to newer phone-side messages until the desktop client materializes fresh rows.
+`chat_quiet=true` or `last_message_old=true` is informational: an idle group
+remains healthy when the monitor heartbeat is fresh. `source_stale=true` now
+means the monitor heartbeat itself is stale or missing.
 It also shows poll timing, Codex model/reasoning settings, and the last loop
 timing metrics. Private chatroom IDs, wxids, DB paths, and table names are
 omitted.
@@ -688,8 +689,8 @@ other configured groups independent while avoiding concurrent decrypt stalls.
 The refresh process uses `labcanvas wechat backend decrypt --incremental`
 through the same backend wrapper as the CLI, and skips decrypt work when the
 source DB/WAL timestamp is unchanged. `labcanvas wechat health --json` reports
-the external backend state next to per-group catch-up status, source freshness,
-readiness, and latest-row age.
+the external backend state next to per-group catch-up status, monitor freshness,
+readiness, chat-idle state, and latest-row age.
 Research configs can enable attachment triggers for image/video/file rows, and
 long or obviously multi-step research messages route directly to the worker
 even without a known keyword. EchoMind keeps attachment triggers disabled so it
