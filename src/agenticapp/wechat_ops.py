@@ -2787,20 +2787,37 @@ def sanitize_loop_metrics(raw: Any) -> dict[str, Any]:
 
 
 def latest_direct_db_local_id(table: str) -> dict[str, Any]:
-    db_path = PRIVATE / "wechat_decrypt" / "decrypted" / "message" / "message_0.db"
-    if not db_path.exists():
+    db_paths = sorted(
+        (PRIVATE / "wechat_decrypt" / "decrypted" / "message").glob("message_*.db"),
+        key=lambda path: int(path.stem.rsplit("_", 1)[-1]) if path.stem.rsplit("_", 1)[-1].isdigit() else -1,
+        reverse=True,
+    )
+    if not db_paths:
         return {"ok": False, "status": "decrypted-db-missing", "latest_local_id": None, "latest_at": "", "age_seconds": None}
     if not is_safe_sql_identifier(table):
         return {"ok": False, "status": "message-table-invalid", "latest_local_id": None, "latest_at": "", "age_seconds": None}
-    try:
-        with sqlite3.connect(db_path) as conn:
-            row = conn.execute(f'SELECT MAX(local_id), MAX(create_time) FROM "{table}"').fetchone()
-    except sqlite3.Error:
+    rows: list[tuple[int, int, str]] = []
+    for db_path in db_paths:
+        try:
+            with sqlite3.connect(db_path) as conn:
+                row = conn.execute(f'SELECT MAX(local_id), MAX(create_time) FROM "{table}"').fetchone()
+        except sqlite3.Error:
+            continue
+        if row and (row[0] is not None or row[1] is not None):
+            rows.append((int(row[0] or 0), int(row[1] or 0), db_path.name))
+    if not rows:
         return {"ok": False, "status": "message-table-unreadable", "latest_local_id": None, "latest_at": "", "age_seconds": None}
-    latest_time = int(row[1] or 0)
+    latest_local_id, latest_time, message_db = max(rows, key=lambda item: (item[1], item[0]))
     latest_at = datetime.fromtimestamp(latest_time).isoformat(timespec="seconds") if latest_time else ""
     age_seconds = int(datetime.now().timestamp() - latest_time) if latest_time else None
-    return {"ok": True, "status": "ok", "latest_local_id": int(row[0] or 0), "latest_at": latest_at, "age_seconds": age_seconds}
+    return {
+        "ok": True,
+        "status": "ok",
+        "latest_local_id": latest_local_id,
+        "latest_at": latest_at,
+        "age_seconds": age_seconds,
+        "message_db": message_db,
+    }
 
 
 def is_safe_sql_identifier(value: str) -> bool:

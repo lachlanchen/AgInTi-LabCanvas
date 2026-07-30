@@ -232,6 +232,82 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(rows[0]["server_id"], "srv-710")
         self.assertEqual(rows[0]["content"], "shared source")
 
+    def test_message_db_rollover_reads_new_shard_with_independent_cursor(self) -> None:
+        root = Path(self._tmpdir.name) / "decrypted"
+        message_dir = root / "message"
+        message_dir.mkdir(parents=True)
+        now = int(time.time())
+
+        def create_message_db(path: Path, rows: list[tuple[object, ...]]) -> None:
+            with sqlite3.connect(path) as conn:
+                conn.execute("CREATE TABLE Name2Id (user_name TEXT)")
+                conn.execute("INSERT INTO Name2Id(rowid, user_name) VALUES (7, 'friend')")
+                conn.execute(
+                    "CREATE TABLE Msg_test ("
+                    "local_id INTEGER, server_id TEXT, local_type INTEGER, "
+                    "real_sender_id INTEGER, create_time INTEGER, status INTEGER, "
+                    "message_content BLOB, compress_content BLOB, "
+                    "WCDB_CT_message_content INTEGER)"
+                )
+                conn.executemany("INSERT INTO Msg_test VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+
+        create_message_db(
+            message_dir / "message_0.db",
+            [(82, "old-82", 1, 7, now - 3600, 3, "old message", None, 0)],
+        )
+        create_message_db(
+            message_dir / "message_1.db",
+            [
+                (3, "new-3", 49, 7, now - 30, 3, "new book", None, 0),
+                (4, "new-4", 1, 7, now - 10, 3, "save it to Downloads", None, 0),
+            ],
+        )
+        config = self.base_config()
+        config["message_table"] = "Msg_test"
+        state: dict[str, object] = {"last_local_id": 82}
+
+        with mock.patch.object(direct_chatops, "DECRYPTED", root):
+            rows = direct_chatops.read_new_messages(config, state)
+            self.assertEqual([row["local_id"] for row in rows], [3, 4])
+            self.assertEqual({row["_message_db"] for row in rows}, {"message_1.db"})
+            self.assertEqual(state["active_message_db"], "message_1.db")
+            self.assertEqual(state["message_db_cursors"], {"message_0.db": 82})
+
+            metrics: dict[str, object] = {}
+            direct_chatops.checkpoint_inbound_before_route(config, state, rows, metrics)
+            self.assertEqual(state["message_db_cursors"], {"message_0.db": 82, "message_1.db": 4})
+            self.assertEqual(state["last_local_id"], 4)
+            self.assertEqual(
+                state["inflight_messages"],
+                [
+                    {"message_db": "message_1.db", "local_id": 3},
+                    {"message_db": "message_1.db", "local_id": 4},
+                ],
+            )
+            direct_chatops.clear_inflight_messages(state, rows)
+            self.assertEqual(direct_chatops.read_new_messages(config, state), [])
+
+    def test_local_fallback_response_keys_include_message_shard(self) -> None:
+        old = self.row("old", server_id="0", local_id=3)
+        new = self.row("new", server_id="0", local_id=3)
+        old["_message_db"] = "message_0.db"
+        new["_message_db"] = "message_1.db"
+
+        self.assertNotEqual(
+            direct_chatops.response_message_key(old),
+            direct_chatops.response_message_key(new),
+        )
+
+    def test_file_download_delivery_mode_distinguishes_local_save_and_chat_send(self) -> None:
+        self.assertEqual(
+            direct_chatops.file_download_delivery_mode("帮我把这本 PDF 保存到 Downloads"),
+            "local_save",
+        )
+        self.assertEqual(
+            direct_chatops.file_download_delivery_mode("把这本 PDF 发给我"),
+            "chat_attachment",
+        )
+
     def test_echomind_routes_explicit_backend_requests(self) -> None:
         config = self.base_config()
         config["agent_route_enabled"] = True

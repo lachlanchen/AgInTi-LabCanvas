@@ -286,13 +286,15 @@ ROUTINES: dict[str, RoutineDefinition] = {
         ),
         required_gates=("exact_source_resolution", "artifact_delivery_gate"),
         artifact_policy=(
-            "Return the requested safe media/file as a WeChat attachment by default, including text/source artifacts. "
-            "Do not close required artifact work "
+            "Follow the current request's delivery mode. Return the requested safe media/file as a WeChat attachment "
+            "when the user asks to send, return, or attach it. For an explicit local save such as Downloads, verify the "
+            "destination and send one concise completion line without echoing the source attachment. Do not close required artifact work "
             "until delivery is verified, deferred, or blocked with evidence."
         ),
         rules=COMMON_RULES
         + (
             "Never use nearby media if exact local_id/token matching fails.",
+            "Passive cache or background intake stays silent; only an explicit local-save request gets a completion receipt.",
             "Use browser assist for login/CAPTCHA/download consent instead of bypassing the site.",
         ),
     ),

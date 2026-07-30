@@ -6339,6 +6339,9 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         media_task = source_scoped_file_intake_task(task) if is_file_intake_task(task) else task
         preflight["media_resolution"] = prepare_media_resolution_preflight(media_task, artifact_dir)
         task["preflight"] = preflight
+    if native_wechat_transport and task_requests_local_download_save(task):
+        preflight["local_file_save"] = prepare_local_download_save_preflight(task, preflight)
+        task["preflight"] = preflight
     if native_wechat_transport and is_file_intake_task(task):
         preflight["file_intake"] = prepare_file_intake_preflight(task, artifact_dir)
         task["preflight"] = preflight
@@ -7626,6 +7629,148 @@ def is_file_intake_task(task: dict[str, Any]) -> bool:
     return str(route.get("route_kind") or "") == "file_intake"
 
 
+def task_requests_local_download_save(task: dict[str, Any]) -> bool:
+    route = task_route_decision(task)
+    if str(route.get("route_kind") or "") != "file_download_or_save":
+        return False
+    mode = str(route.get("delivery_mode") or "").strip().casefold()
+    if mode == "chat_attachment":
+        return False
+    if mode == "local_save":
+        return True
+    text = task_focus_text(task).casefold()
+    chat_markers = (
+        "send me",
+        "send back",
+        "send it here",
+        "send to the group",
+        "attach it",
+        "return the file",
+        "发给我",
+        "發給我",
+        "发回",
+        "發回",
+        "发到群",
+        "發到群",
+    )
+    if any(marker in text for marker in chat_markers):
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "downloads",
+            "~/downloads",
+            "download folder",
+            "downloads folder",
+            "下载目录",
+            "下載目錄",
+            "下载文件夹",
+            "下載文件夾",
+            "保存到下载",
+            "保存到下載",
+            "存到下载",
+            "存到下載",
+        )
+    )
+
+
+def local_downloads_dir() -> Path:
+    return Path(
+        os.environ.get("WECHAT_LOCAL_DOWNLOADS_DIR")
+        or str(Path.home() / "Downloads")
+    ).expanduser().resolve()
+
+
+def prepare_local_download_save_preflight(
+    task: dict[str, Any],
+    preflight: dict[str, Any],
+) -> dict[str, Any]:
+    media = preflight.get("media_resolution") if isinstance(preflight.get("media_resolution"), dict) else {}
+    candidates = [
+        item
+        for item in media.get("copied") or []
+        if isinstance(item, dict)
+    ]
+    source: Path | None = None
+    for item in candidates:
+        raw = item.get("task_copy_path") or item.get("saved_path") or item.get("mirror_path") or item.get("source_path")
+        if not raw:
+            continue
+        path = Path(str(raw)).expanduser()
+        if path.is_file():
+            source = path.resolve()
+            break
+    if source is None:
+        return {
+            "status": "source_unavailable",
+            "verified": False,
+            "require_file_delivery": False,
+        }
+
+    downloads = local_downloads_dir()
+    downloads.mkdir(parents=True, exist_ok=True)
+    preferred_name = Path(str(exact_source_file_identity(task).get("title") or source.name)).name
+    target = downloads / (preferred_name or source.name)
+    try:
+        if source == target.resolve():
+            source_sha256 = sha256_file(source)
+            return {
+                "status": "completed",
+                "verified": True,
+                "source_path": str(source),
+                "target_path": str(target),
+                "filename": target.name,
+                "size_bytes": source.stat().st_size,
+                "sha256": source_sha256,
+                "require_file_delivery": False,
+                "already_present": True,
+            }
+    except OSError:
+        pass
+
+    source_size = source.stat().st_size
+    source_sha256 = sha256_file(source)
+    if target.exists():
+        try:
+            if target.stat().st_size == source_size and sha256_file(target) == source_sha256:
+                return {
+                    "status": "completed",
+                    "verified": True,
+                    "source_path": str(source),
+                    "target_path": str(target),
+                    "filename": target.name,
+                    "size_bytes": source_size,
+                    "sha256": source_sha256,
+                    "require_file_delivery": False,
+                    "already_present": True,
+                }
+        except OSError:
+            pass
+        stem = target.stem
+        suffix = target.suffix
+        counter = 2
+        while target.exists():
+            target = downloads / f"{stem}-{counter}{suffix}"
+            counter += 1
+    shutil.copy2(source, target)
+    verified = (
+        target.is_file()
+        and target.stat().st_size == source_size
+        and sha256_file(target) == source_sha256
+    )
+    return {
+        "status": "completed" if verified else "verification_failed",
+        "verified": verified,
+        "source_path": str(source),
+        "target_path": str(target),
+        "filename": target.name,
+        "size_bytes": target.stat().st_size if target.is_file() else 0,
+        "sha256": source_sha256 if verified else "",
+        "require_file_delivery": False,
+        "already_present": False,
+    }
+
+
 def source_scoped_file_intake_task(task: dict[str, Any]) -> dict[str, Any]:
     """Limit bare upload media resolution to the actual source row.
 
@@ -7688,7 +7833,12 @@ def should_prepare_media_resolution(task: dict[str, Any]) -> bool:
 
 def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
     refresh = refresh_media_sync_for_task(task)
+    exact_file_title = current_request_file_title(str(task.get("request") or ""))
     expected_suffixes = file_intake_expected_suffixes(task) if is_file_intake_task(task) else set()
+    if task_requests_local_download_save(task) and exact_file_title:
+        title_suffix = Path(exact_file_title).suffix.lower()
+        if title_suffix:
+            expected_suffixes = {title_suffix}
     expected_file_identity = exact_source_file_identity(task) if expected_suffixes else {}
     candidates = resolve_synced_media_from_mirror(task, limit=12, suffixes=expected_suffixes or None)
     if expected_file_identity:
@@ -7696,7 +7846,6 @@ def prepare_media_resolution_preflight(task: dict[str, Any], artifact_dir: Path)
     gui_cache_probe: dict[str, Any] = {}
     gui_probe_reason = ""
     second_refresh: dict[str, Any] = {}
-    exact_file_title = current_request_file_title(str(task.get("request") or ""))
     if not candidates and exact_file_title and expected_suffixes and should_materialize_exact_file(task):
         gui_cache_probe = materialize_exact_file_for_cache(task, artifact_dir, exact_file_title)
         gui_cache_probe["reason"] = "exact_file_card_not_cached"
@@ -9123,51 +9272,133 @@ def exact_source_file_identity(task: dict[str, Any]) -> dict[str, Any]:
     }
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
     config_id = Path(str(source.get("config_id") or "")).name
-    local_id = int_or_none(source.get("local_id"))
     config_path = PRIVATE / config_id
-    db_path = PRIVATE / "wechat_decrypt" / "decrypted" / "message" / "message_0.db"
-    if not config_id or local_id is None or not config_path.is_file() or not db_path.is_file():
+    if not config_id or not config_path.is_file():
         return identity
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
         table = str(config.get("message_table") or "")
         if not re.fullmatch(r"Msg_[A-Za-z0-9_]+", table):
             return identity
-        with sqlite3.connect(db_path) as conn:
-            row = conn.execute(
-                f"SELECT message_content, compress_content, WCDB_CT_message_content FROM {table} WHERE local_id = ?",
-                (local_id,),
-            ).fetchone()
-        if not row:
-            return identity
         from wechat_direct_chatops import decode_content
 
-        content = decode_content(row[0], row[1], row[2])
-        xml_start = content.find("<?xml")
-        if xml_start < 0:
-            xml_start = content.find("<msg")
-        if xml_start < 0 or len(content) - xml_start > 100_000 or "<!DOCTYPE" in content.upper():
-            return identity
-        root = ET.fromstring(content[xml_start:])
-        appmsg = root.find(".//appmsg")
-        if appmsg is None:
-            return identity
-        title = collapse_context_text(appmsg.findtext("title") or appmsg.findtext("appattach/title"), max_len=500)
-        extension = collapse_context_text(appmsg.findtext("appattach/fileext"), max_len=32).lower().lstrip(".")
-        size = int_or_none(appmsg.findtext("appattach/totallen")) or 0
-        md5 = collapse_context_text(appmsg.findtext("appattach/md5") or appmsg.findtext(".//md5"), max_len=64).lower()
-        if title:
-            identity["title"] = title
-        if extension and re.fullmatch(r"[a-z0-9][a-z0-9._+-]{0,31}", extension):
-            identity["extension"] = extension
-        if size > 0:
-            identity["size_bytes"] = size
-        if re.fullmatch(r"[0-9a-f]{32}", md5):
-            identity["md5"] = md5
-        identity["source_verified"] = bool(identity.get("title") and identity.get("extension"))
+        refs = exact_source_file_row_refs(task)
+        db_root = PRIVATE / "wechat_decrypt" / "decrypted" / "message"
+        all_dbs = sorted(
+            (
+                path
+                for path in db_root.glob("message_*.db")
+                if re.fullmatch(r"message_\d+\.db", path.name)
+            ),
+            key=lambda path: int(re.search(r"(\d+)", path.name).group(1)),
+            reverse=True,
+        )
+        for ref in refs:
+            local_id = int_or_none(ref.get("local_id"))
+            if local_id is None:
+                continue
+            preferred = Path(str(ref.get("message_db") or ref.get("_message_db") or "")).name
+            dbs = list(all_dbs)
+            if re.fullmatch(r"message_\d+\.db", preferred):
+                preferred_path = db_root / preferred
+                dbs = [preferred_path, *(path for path in dbs if path != preferred_path)]
+            server_id = str(ref.get("server_id") or "").strip()
+            for db_path in dbs:
+                if not db_path.is_file():
+                    continue
+                try:
+                    with sqlite3.connect(db_path) as conn:
+                        if server_id and server_id not in {"0", "-1"}:
+                            row = conn.execute(
+                                f"""
+                                SELECT message_content, compress_content, WCDB_CT_message_content
+                                FROM {table}
+                                WHERE local_id = ? AND CAST(server_id AS TEXT) = ?
+                                LIMIT 1
+                                """,
+                                (local_id, server_id),
+                            ).fetchone()
+                        else:
+                            row = conn.execute(
+                                f"""
+                                SELECT message_content, compress_content, WCDB_CT_message_content
+                                FROM {table}
+                                WHERE local_id = ?
+                                LIMIT 1
+                                """,
+                                (local_id,),
+                            ).fetchone()
+                except sqlite3.Error:
+                    continue
+                if not row:
+                    continue
+                content = decode_content(row[0], row[1], row[2])
+                parsed = file_identity_from_message_content(content)
+                if not parsed:
+                    continue
+                identity.update(parsed)
+                identity["source_message_db"] = db_path.name
+                identity["source_verified"] = bool(identity.get("title") and identity.get("extension"))
+                return identity
     except (OSError, sqlite3.Error, json.JSONDecodeError, ET.ParseError, ImportError):
         return identity
     return identity
+
+
+def exact_source_file_row_refs(task: dict[str, Any]) -> list[dict[str, Any]]:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    context = [
+        item
+        for item in task.get("context") or []
+        if isinstance(item, dict)
+    ]
+    file_rows = [
+        item
+        for item in context
+        if (int_or_none(item.get("local_type")) or 0) & 0xFFFFFFFF == 49
+    ]
+    refs: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in [*reversed(file_rows), source, *reversed(context)]:
+        local_id = str(item.get("local_id") or "")
+        if not local_id:
+            continue
+        key = (
+            str(item.get("message_db") or item.get("_message_db") or ""),
+            local_id,
+            str(item.get("server_id") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append(item)
+    return refs
+
+
+def file_identity_from_message_content(content: str) -> dict[str, Any]:
+    xml_start = content.find("<?xml")
+    if xml_start < 0:
+        xml_start = content.find("<msg")
+    if xml_start < 0 or len(content) - xml_start > 100_000 or "<!DOCTYPE" in content.upper():
+        return {}
+    root = ET.fromstring(content[xml_start:])
+    appmsg = root.find(".//appmsg")
+    if appmsg is None:
+        return {}
+    title = collapse_context_text(appmsg.findtext("title") or appmsg.findtext("appattach/title"), max_len=500)
+    extension = collapse_context_text(appmsg.findtext("appattach/fileext"), max_len=32).lower().lstrip(".")
+    size = int_or_none(appmsg.findtext("appattach/totallen")) or 0
+    md5 = collapse_context_text(appmsg.findtext("appattach/md5") or appmsg.findtext(".//md5"), max_len=64).lower()
+    parsed: dict[str, Any] = {}
+    if title:
+        parsed["title"] = title
+    if extension and re.fullmatch(r"[a-z0-9][a-z0-9._+-]{0,31}", extension):
+        parsed["extension"] = extension
+    if size > 0:
+        parsed["size_bytes"] = size
+    if re.fullmatch(r"[0-9a-f]{32}", md5):
+        parsed["md5"] = md5
+    return parsed
 
 
 def filter_exact_file_candidates(candidates: list[dict[str, Any]], identity: dict[str, Any]) -> list[dict[str, Any]]:
@@ -10777,6 +11008,9 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
     file_intake = deterministic_file_intake_result(task)
     if file_intake is not None:
         return file_intake
+    local_save = deterministic_local_download_save_result(task)
+    if local_save is not None:
+        return local_save
     preflight_status = ((task.get("preflight") or {}).get("generated_video_status") if isinstance(task.get("preflight"), dict) else None)
     if isinstance(preflight_status, dict) and preflight_status.get("status") in {"submitted", "running", "queued", "generating", "waiting"}:
         return json.dumps(
@@ -10824,6 +11058,28 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
         "请重新发送原视频，或在 WeChat 里点开这条视频让客户端缓存完整 MP4；如果这是我生成过的视频，请确保对应任务 artifact 仍在本机输出目录。"
     )
     return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
+
+
+def deterministic_local_download_save_result(task: dict[str, Any]) -> str | None:
+    if not task_requests_local_download_save(task):
+        return None
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    saved = preflight.get("local_file_save") if isinstance(preflight.get("local_file_save"), dict) else {}
+    if not bool(saved.get("verified")) or str(saved.get("status") or "") != "completed":
+        return None
+    filename = Path(str(saved.get("filename") or saved.get("target_path") or "file")).name
+    return json.dumps(
+        {
+            "message": f"已保存到 Downloads：{filename}。",
+            "files": [],
+            "confirmation": "",
+            "data": {
+                "local_file_save": saved,
+                "require_file_delivery": False,
+            },
+        },
+        ensure_ascii=False,
+    )
 
 
 def deterministic_file_intake_result(task: dict[str, Any]) -> str | None:
@@ -13897,11 +14153,22 @@ def prepare_result_files(
     candidates = unique_strings([*grant_auto_delivery_files(task), *raw_files, *auto_files])
     files: list[str] = []
     skipped: list[dict[str, str]] = []
+    local_saved_paths: list[Path] = []
+    downloads_root = local_downloads_dir()
     for candidate in candidates:
         path = resolve_candidate_path(candidate)
         if not path.exists():
             skipped.append({"path": candidate, "reason": "missing"})
             continue
+        if task and task_requests_local_download_save(task):
+            try:
+                resolved = path.expanduser().resolve()
+            except OSError:
+                resolved = path
+            if resolved == downloads_root or downloads_root in resolved.parents:
+                local_saved_paths.append(resolved)
+                skipped.append({"path": str(resolved), "reason": "local-save-no-chat-echo"})
+                continue
         if (
             task
             and is_file_intake_task(task)
@@ -13919,6 +14186,25 @@ def prepare_result_files(
             continue
         files.append(str(path))
     result["files"] = unique_strings(files)
+    if local_saved_paths:
+        saved = local_saved_paths[0]
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        result["data"] = {
+            **data,
+            "local_file_save": {
+                "status": "completed",
+                "verified": saved.is_file(),
+                "target_path": str(saved),
+                "filename": saved.name,
+                "size_bytes": saved.stat().st_size if saved.is_file() else 0,
+                "require_file_delivery": False,
+            },
+            "require_file_delivery": False,
+        }
+        if result_is_no_reply(result) or not str(result.get("message") or "").strip():
+            result["message"] = f"已保存到 Downloads：{saved.name}。"
+            result["confirmation"] = ""
+            result["no_reply"] = False
     if skipped:
         result["skipped_files"] = skipped
     return result

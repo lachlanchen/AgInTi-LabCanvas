@@ -229,6 +229,8 @@ def status(external: Path, db_dir: Path | None) -> dict:
     }
     source_db_count = count_source_dbs(db_dir) if db_dir else 0
     decrypted_db_count = count_source_dbs(decrypted_dir) if decrypted_dir.exists() else 0
+    source_message_dbs = sorted((db_dir / "message").glob("message_*.db")) if db_dir else []
+    decrypted_message_dbs = sorted((decrypted_dir / "message").glob("message_*.db"))
     git = git_info(external) if external.exists() else {}
     web_port = DEFAULT_WEB_PORT
     return {
@@ -240,7 +242,8 @@ def status(external: Path, db_dir: Path | None) -> dict:
         "venv_python_exists": (PRIVATE / "wechat_decrypt" / ".venv" / "bin" / "python").exists(),
         "db_dir": public_path(db_dir) if db_dir else "",
         "db_dir_exists": bool(db_dir and db_dir.exists()),
-        "message_db_exists": bool(db_dir and (db_dir / "message" / "message_0.db").exists()),
+        "message_db_exists": bool(source_message_dbs),
+        "message_db_count": len(source_message_dbs),
         "source_db_count": source_db_count,
         "config_path": public_path(config_path),
         "config_exists": config_path.exists(),
@@ -248,7 +251,8 @@ def status(external: Path, db_dir: Path | None) -> dict:
         "keys_file_mtime": file_mtime(keys_file),
         "decrypted_dir_exists": decrypted_dir.exists(),
         "decrypted_db_count": decrypted_db_count,
-        "decrypted_message_db_exists": (decrypted_dir / "message" / "message_0.db").exists(),
+        "decrypted_message_db_exists": bool(decrypted_message_dbs),
+        "decrypted_message_db_count": len(decrypted_message_dbs),
         "scripts": scripts,
         "monitor_web": {"port": web_port, "listening": port_listening(web_port)},
         "private_paths_redacted": True,

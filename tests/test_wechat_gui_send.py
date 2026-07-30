@@ -271,6 +271,31 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertGreater(match["identity_score"], 0.35)
         self.assertEqual(match["click_x"], 977)
 
+    def test_file_card_locator_translates_focused_upscaled_coordinates(self):
+        module = load_wechat_gui_send()
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t1\t1\t1\t1\t249\t1020\t36\t42\t90\t全彩",
+                "5\t1\t1\t1\t1\t2\t291\t1020\t162\t42\t90\t_示例书.pdf",
+                "5\t1\t2\t1\t1\t1\t249\t1090\t240\t42\t90\t161.2M",
+            ]
+        )
+
+        match = module.locate_file_card_from_tsv(
+            tsv,
+            "全彩_示例书.pdf",
+            module.Window("main", 489, 193, 1020, 739),
+            offset_x=835,
+            offset_y=263,
+            coordinate_scale=3.0,
+        )
+
+        self.assertIsNotNone(match)
+        self.assertGreater(match["identity_score"], 0.7)
+        self.assertEqual(match["click_x"], 959)
+        self.assertEqual(match["click_y"], 610)
+
     def test_load_targets_resolves_cli_target_from_registry_mapping(self):
         module = load_wechat_gui_send()
         with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8") as handle:

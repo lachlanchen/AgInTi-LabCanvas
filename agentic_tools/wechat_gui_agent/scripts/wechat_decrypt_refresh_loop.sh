@@ -42,7 +42,7 @@ latest_source_stamp() {
 }
 
 decrypted_ready() {
-  [[ -f "$PRIVATE/wechat_decrypt/decrypted/message/message_0.db" ]]
+  compgen -G "$PRIVATE/wechat_decrypt/decrypted/message/message_*.db" >/dev/null
 }
 
 last_skip_log=0

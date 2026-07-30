@@ -7,6 +7,7 @@ import io
 import importlib.util
 import json
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -3231,6 +3232,137 @@ stderr: noisy internal trace
         self.assertEqual(payload["files"], [str(source_video.resolve())])
         self.assertTrue(payload["data"]["require_file_delivery"])
         self.assertEqual(payload["data"]["resolved_video_artifact"]["status"], "recent-artifact-match")
+
+    def test_explicit_downloads_save_copies_once_and_returns_concise_receipt(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "source" / "book.pdf"
+            source.parent.mkdir()
+            source.write_bytes(b"%PDF-1.4\nbook")
+            downloads = tmp_path / "Downloads"
+            task = {
+                "id": "save-book",
+                "chat": "🍓My devices",
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "delivery_mode": "local_save",
+                    "needs_recent_media": True,
+                },
+                "request": "Current coalesced request:\n帮我把这本 PDF 保存到 Downloads",
+                "preflight": {
+                    "media_resolution": {
+                        "copied": [
+                            {
+                                "task_copy_path": str(source),
+                                "filename": source.name,
+                                "size_bytes": source.stat().st_size,
+                            }
+                        ]
+                    }
+                },
+            }
+
+            with mock.patch.dict(
+                worker.os.environ,
+                {"WECHAT_LOCAL_DOWNLOADS_DIR": str(downloads)},
+            ):
+                saved = worker.prepare_local_download_save_preflight(task, task["preflight"])
+                task["preflight"]["local_file_save"] = saved
+                payload = json.loads(worker.deterministic_local_download_save_result(task) or "{}")
+
+            target = downloads / "book.pdf"
+            target_bytes = target.read_bytes()
+
+        self.assertTrue(saved["verified"])
+        self.assertEqual(target_bytes, b"%PDF-1.4\nbook")
+        self.assertEqual(payload["message"], "已保存到 Downloads：book.pdf。")
+        self.assertEqual(payload["files"], [])
+        self.assertFalse(payload["data"]["require_file_delivery"])
+
+    def test_local_save_result_path_is_not_echoed_as_chat_attachment(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            downloads = tmp_path / "Downloads"
+            downloads.mkdir()
+            target = downloads / "book.pdf"
+            target.write_bytes(b"%PDF-1.4\nbook")
+            task = {
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "delivery_mode": "local_save",
+                },
+                "request": "Current coalesced request:\nSave this PDF to Downloads",
+            }
+            result = {
+                "message": "",
+                "confirmation": "",
+                "files": [str(target)],
+                "no_reply": True,
+            }
+            with mock.patch.dict(
+                worker.os.environ,
+                {"WECHAT_LOCAL_DOWNLOADS_DIR": str(downloads)},
+            ):
+                prepared = worker.prepare_result_files(result, json.dumps(result), task=task)
+
+        self.assertEqual(prepared["files"], [])
+        self.assertEqual(prepared["message"], "已保存到 Downloads：book.pdf。")
+        self.assertFalse(prepared["no_reply"])
+        self.assertEqual(prepared["skipped_files"][0]["reason"], "local-save-no-chat-echo")
+
+    def test_exact_file_identity_uses_attachment_context_in_rotated_message_db(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp) / ".private"
+            db_dir = private / "wechat_decrypt" / "decrypted" / "message"
+            db_dir.mkdir(parents=True)
+            config_name = "my-devices.local.json"
+            (private / config_name).write_text(
+                json.dumps({"message_table": "Msg_test"}),
+                encoding="utf-8",
+            )
+            xml = (
+                "<msg><appmsg><title>全彩_示例文献.pdf</title><appattach>"
+                "<fileext>pdf</fileext><totallen>169024640</totallen>"
+                "<md5>5aea5aea5aea5aea5aea5aea5aea5aea</md5>"
+                "</appattach></appmsg></msg>"
+            )
+            with sqlite3.connect(db_dir / "message_1.db") as conn:
+                conn.execute(
+                    "CREATE TABLE Msg_test ("
+                    "local_id INTEGER, server_id TEXT, message_content BLOB, "
+                    "compress_content BLOB, WCDB_CT_message_content INTEGER)"
+                )
+                conn.execute(
+                    "INSERT INTO Msg_test VALUES (?, ?, ?, ?, ?)",
+                    (3, "3001", xml, None, 0),
+                )
+            task = {
+                "source": {
+                    "config_id": config_name,
+                    "local_id": 4,
+                    "server_id": "4001",
+                    "message_db": "message_1.db",
+                },
+                "context": [
+                    {
+                        "local_id": 3,
+                        "server_id": "3001",
+                        "message_db": "message_1.db",
+                        "local_type": 49,
+                    }
+                ],
+                "request": "Current coalesced request:\n帮我下载到 Downloads",
+            }
+            with mock.patch.object(worker, "PRIVATE", private):
+                identity = worker.exact_source_file_identity(task)
+
+        self.assertTrue(identity["source_verified"])
+        self.assertEqual(identity["title"], "全彩_示例文献.pdf")
+        self.assertEqual(identity["size_bytes"], 169024640)
+        self.assertEqual(identity["source_message_db"], "message_1.db")
 
     def test_file_download_lazyedit_request_copies_recent_video_to_intake_without_publish(self) -> None:
         worker = load_worker()

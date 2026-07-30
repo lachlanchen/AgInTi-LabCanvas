@@ -470,7 +470,12 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             metrics["coalesced_trigger_rows"] = len(trigger_rows)
     if trigger_row:
         started = time.monotonic()
-        context_rows = read_recent_history(config, trigger_row["local_id"], limit=int(config.get("history_limit", 24))) or new_rows
+        context_rows = read_recent_history(
+            config,
+            trigger_row["local_id"],
+            limit=int(config.get("history_limit", 24)),
+            message_db=str(trigger_row.get("_message_db") or ""),
+        ) or new_rows
         enrich_voice_rows(config, context_rows, metrics)
         metrics["context_ms"] = elapsed_ms(started)
         reply_text = previous_result_reuse_reply(config, trigger_row, context_rows, focus_rows=focus_rows)
@@ -606,12 +611,17 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                 processed_local_id = latest_row.get("local_id") if latest_row else processed_local_id
 
     if new_rows:
-        current_last_local_id = int(state.get("last_local_id") or 0)
-        proposed_last_local_id = max(current_last_local_id, int(processed_local_id or 0), max(row["local_id"] for row in new_rows))
-        if metrics.get("inbound_checkpointed"):
-            state["last_local_id"] = proposed_last_local_id
-        else:
-            state["last_local_id"] = retain_pending_voice_cursor(config, state, new_rows, proposed_last_local_id, metrics)
+        advance_message_db_cursors(state, new_rows)
+        active_db = normalized_message_db_name(state.get("active_message_db")) or "message_0.db"
+        state["last_local_id"] = message_db_cursors(state).get(active_db, int(state.get("last_local_id") or 0))
+        if not metrics.get("inbound_checkpointed"):
+            state["last_local_id"] = retain_pending_voice_cursor(
+                config,
+                state,
+                new_rows,
+                int(state["last_local_id"]),
+                metrics,
+            )
         state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
         clear_inflight_messages(state, new_rows)
     finish_force_replay(state, metrics)
@@ -632,15 +642,25 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
 
 def merge_message_rows(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for group in groups:
         for row in group:
-            key = (str(row.get("server_id") or ""), str(row.get("local_id") or ""))
+            key = (
+                str(row.get("_message_db") or ""),
+                str(row.get("server_id") or ""),
+                str(row.get("local_id") or ""),
+            )
             if key in seen:
                 continue
             seen.add(key)
             rows.append(row)
-    rows.sort(key=lambda item: int(item.get("local_id") or 0))
+    rows.sort(
+        key=lambda item: (
+            int(item.get("create_time") or 0),
+            message_db_sort_key(str(item.get("_message_db") or "")),
+            int(item.get("local_id") or 0),
+        )
+    )
     return rows
 
 
@@ -675,17 +695,41 @@ def checkpoint_inbound_before_route(
     """
     if not rows or not bool(config.get("checkpoint_inbound_before_route", True)):
         return
-    current = int(state.get("last_local_id") or 0)
-    proposed = max(current, max(int(row.get("local_id") or 0) for row in rows))
-    existing = inflight_local_ids(state)
-    state["inflight_local_ids"] = sorted(
-        {
-            *existing,
-            *(int(row.get("local_id") or 0) for row in rows if int(row.get("local_id") or 0) > 0),
+    existing_refs = inflight_message_refs(state)
+    refs_by_key = {
+        (str(item["message_db"]), int(item["local_id"])): item
+        for item in existing_refs
+    }
+    for row in rows:
+        local_id = int(row.get("local_id") or 0)
+        if local_id <= 0:
+            continue
+        message_db = row_message_db_name(row, state)
+        refs_by_key[(message_db, local_id)] = {
+            "message_db": message_db,
+            "local_id": local_id,
         }
+    refs = sorted(
+        refs_by_key.values(),
+        key=lambda item: (message_db_sort_key(item["message_db"]), int(item["local_id"])),
     )[-64:]
+    state["inflight_messages"] = refs
+    state["inflight_local_ids"] = [int(item["local_id"]) for item in refs]
+    distinct_dbs = {str(item["message_db"]) for item in refs}
+    if len(distinct_dbs) == 1:
+        state["inflight_message_db"] = next(iter(distinct_dbs))
+    else:
+        state.pop("inflight_message_db", None)
     state.setdefault("inflight_started_at", datetime.now().isoformat(timespec="seconds"))
-    state["last_local_id"] = retain_pending_voice_cursor(config, state, rows, proposed, metrics)
+    advance_message_db_cursors(state, rows)
+    active_db = normalized_message_db_name(state.get("active_message_db")) or "message_0.db"
+    state["last_local_id"] = retain_pending_voice_cursor(
+        config,
+        state,
+        rows,
+        message_db_cursors(state).get(active_db, int(state.get("last_local_id") or 0)),
+        metrics,
+    )
     state["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
     state["inbound_checkpoint_at"] = state["last_seen_at"]
     state["inbound_checkpoint_count"] = len(rows)
@@ -708,45 +752,91 @@ def inflight_local_ids(state: dict[str, Any]) -> list[int]:
     return values[-64:]
 
 
+def inflight_message_refs(state: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = state.get("inflight_messages")
+    refs: list[dict[str, Any]] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            message_db = normalized_message_db_name(item.get("message_db"))
+            try:
+                local_id = int(item.get("local_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if message_db and local_id > 0:
+                refs.append({"message_db": message_db, "local_id": local_id})
+    if refs:
+        return refs[-64:]
+    legacy_db = (
+        normalized_message_db_name(state.get("inflight_message_db"))
+        or normalized_message_db_name(state.get("active_message_db"))
+        or "message_0.db"
+    )
+    return [
+        {"message_db": legacy_db, "local_id": local_id}
+        for local_id in inflight_local_ids(state)
+    ]
+
+
 def read_inflight_messages(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
     """Reload rows checkpointed before a route/send turn that did not finish."""
-    local_ids = inflight_local_ids(state)
-    if not local_ids:
+    refs = inflight_message_refs(state)
+    if not refs:
         return []
-    db_path = DECRYPTED / "message" / "message_0.db"
     contact_db = DECRYPTED / "contact" / "contact.db"
-    if not db_path.exists():
-        return []
-    name_map = load_name_map(db_path)
     contact_map = load_contact_map(contact_db)
-    placeholders = ",".join("?" for _ in local_ids)
     rows: list[dict[str, Any]] = []
-    try:
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            for row in conn.execute(
-                f"""
-                SELECT local_id, server_id, local_type, real_sender_id, create_time,
-                       status, message_content, compress_content, WCDB_CT_message_content
-                FROM {config['message_table']}
-                WHERE local_id IN ({placeholders})
-                ORDER BY local_id
-                """,
-                local_ids,
-            ):
-                rows.append(row_to_message(row, name_map, contact_map))
-    except sqlite3.Error:
-        return []
+    refs_by_db: dict[str, list[int]] = {}
+    for ref in refs:
+        refs_by_db.setdefault(str(ref["message_db"]), []).append(int(ref["local_id"]))
+    for message_db, local_ids in refs_by_db.items():
+        db_path = message_db_path(message_db)
+        if not db_path.exists():
+            continue
+        try:
+            name_map = load_name_map(db_path)
+            placeholders = ",".join("?" for _ in local_ids)
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                for row in conn.execute(
+                    f"""
+                    SELECT local_id, server_id, local_type, real_sender_id, create_time,
+                           status, message_content, compress_content, WCDB_CT_message_content
+                    FROM {config['message_table']}
+                    WHERE local_id IN ({placeholders})
+                    ORDER BY local_id
+                    """,
+                    local_ids,
+                ):
+                    rows.append(row_to_message(row, name_map, contact_map, message_db=message_db))
+        except sqlite3.Error:
+            continue
     return rows
 
 
 def clear_inflight_messages(state: dict[str, Any], rows: list[dict[str, Any]]) -> None:
-    completed = {int(row.get("local_id") or 0) for row in rows}
-    remaining = [value for value in inflight_local_ids(state) if value not in completed]
+    completed = {
+        (row_message_db_name(row, state), int(row.get("local_id") or 0))
+        for row in rows
+    }
+    remaining = [
+        item
+        for item in inflight_message_refs(state)
+        if (str(item["message_db"]), int(item["local_id"])) not in completed
+    ]
     if remaining:
-        state["inflight_local_ids"] = remaining
+        state["inflight_messages"] = remaining
+        state["inflight_local_ids"] = [int(item["local_id"]) for item in remaining]
+        distinct_dbs = {str(item["message_db"]) for item in remaining}
+        if len(distinct_dbs) == 1:
+            state["inflight_message_db"] = next(iter(distinct_dbs))
+        else:
+            state.pop("inflight_message_db", None)
         return
+    state.pop("inflight_messages", None)
     state.pop("inflight_local_ids", None)
+    state.pop("inflight_message_db", None)
     state.pop("inflight_started_at", None)
 
 
@@ -852,6 +942,7 @@ def voice_pending_row_snapshot(row: dict[str, Any]) -> dict[str, Any]:
     keys = [
         "local_id",
         "server_id",
+        "_message_db",
         "local_type",
         "real_sender_id",
         "sender",
@@ -900,6 +991,7 @@ def voice_pending_key(config: dict[str, Any], row: dict[str, Any]) -> str:
     return "|".join(
         [
             str(config.get("chat_name") or config.get("chatroom_id") or ""),
+            normalized_message_db_name(row.get("_message_db")),
             str(row.get("server_id") or ""),
             str(row.get("local_id") or ""),
         ]
@@ -1017,7 +1109,8 @@ def response_message_key(row: dict[str, Any]) -> str:
     except (TypeError, ValueError):
         local_id = 0
     if local_id > 0:
-        return f"local:{local_id}"
+        message_db = normalized_message_db_name(row.get("_message_db"))
+        return f"local:{message_db}:{local_id}" if message_db else f"local:{local_id}"
     return ""
 
 
@@ -1149,58 +1242,243 @@ def elapsed_ms(started: float) -> float:
     return round((time.monotonic() - started) * 1000, 1)
 
 
-def read_new_messages(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
-    db_path = DECRYPTED / "message" / "message_0.db"
-    contact_db = DECRYPTED / "contact" / "contact.db"
-    last_local_id = int(state.get("last_local_id", 0))
+MESSAGE_DB_NAME_RE = re.compile(r"^message_(\d+)\.db$")
+
+
+def normalized_message_db_name(value: Any) -> str:
+    name = Path(str(value or "")).name
+    return name if MESSAGE_DB_NAME_RE.fullmatch(name) else ""
+
+
+def message_db_sort_key(value: Any) -> int:
+    match = MESSAGE_DB_NAME_RE.fullmatch(Path(str(value or "")).name)
+    return int(match.group(1)) if match else -1
+
+
+def message_db_path(value: Any) -> Path:
+    name = normalized_message_db_name(value)
+    return DECRYPTED / "message" / (name or "message_0.db")
+
+
+def message_db_has_table(path: Path, table: str) -> bool:
+    try:
+        with sqlite3.connect(path) as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+                    (table,),
+                ).fetchone()
+                is not None
+            )
+    except sqlite3.Error:
+        return False
+
+
+def available_message_db_paths(config: dict[str, Any]) -> list[Path]:
+    table = str(config.get("message_table") or "")
+    paths = [
+        path
+        for path in (DECRYPTED / "message").glob("message_*.db")
+        if normalized_message_db_name(path.name) and path.is_file() and message_db_has_table(path, table)
+    ]
+    paths.sort(key=lambda path: message_db_sort_key(path.name))
+    return paths
+
+
+def message_db_cursors(state: dict[str, Any]) -> dict[str, int]:
+    raw = state.get("message_db_cursors")
+    cursors: dict[str, int] = {}
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            name = normalized_message_db_name(key)
+            try:
+                cursor = max(0, int(value))
+            except (TypeError, ValueError):
+                continue
+            if name:
+                cursors[name] = cursor
+    if not cursors:
+        legacy_cursor = max(0, int(state.get("last_local_id") or 0))
+        legacy_name = normalized_message_db_name(state.get("active_message_db")) or "message_0.db"
+        if legacy_cursor or state.get("last_local_id") is not None:
+            cursors[legacy_name] = legacy_cursor
+    return cursors
+
+
+def save_message_db_cursors(state: dict[str, Any], cursors: dict[str, int]) -> None:
+    state["message_db_cursors"] = {
+        name: max(0, int(cursor))
+        for name, cursor in sorted(cursors.items(), key=lambda item: message_db_sort_key(item[0]))
+        if normalized_message_db_name(name)
+    }
+    active = normalized_message_db_name(state.get("active_message_db"))
+    if active:
+        state["last_local_id"] = state["message_db_cursors"].get(active, 0)
+
+
+def row_message_db_name(row: dict[str, Any], state: dict[str, Any] | None = None) -> str:
+    return (
+        normalized_message_db_name(row.get("_message_db"))
+        or normalized_message_db_name((state or {}).get("active_message_db"))
+        or "message_0.db"
+    )
+
+
+def advance_message_db_cursors(state: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    cursors = message_db_cursors(state)
+    for row in rows:
+        local_id = int(row.get("local_id") or 0)
+        if local_id <= 0:
+            continue
+        name = row_message_db_name(row, state)
+        cursors[name] = max(cursors.get(name, 0), local_id)
+    save_message_db_cursors(state, cursors)
+
+
+def read_rows_after_cursor(
+    config: dict[str, Any],
+    db_path: Path,
+    cursor: int,
+    contact_map: dict[str, str],
+    *,
+    newly_discovered: bool,
+) -> list[dict[str, Any]]:
     name_map = load_name_map(db_path)
-    contact_map = load_contact_map(contact_db)
     table = config["message_table"]
-    rows = []
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        for row in conn.execute(
-            f"""
+    rows: list[dict[str, Any]] = []
+    params: tuple[Any, ...]
+    if newly_discovered:
+        max_age = max(60, int(config.get("new_message_shard_max_age_seconds", 24 * 60 * 60)))
+        max_rows = max(1, min(512, int(config.get("new_message_shard_max_rows", 128))))
+        cutoff = int(time.time()) - max_age
+        query = f"""
+            SELECT local_id, server_id, local_type, real_sender_id, create_time,
+                   status, message_content, compress_content, WCDB_CT_message_content
+            FROM {table}
+            WHERE local_id > ? AND create_time >= ?
+            ORDER BY local_id DESC
+            LIMIT ?
+        """
+        params = (cursor, cutoff, max_rows)
+    else:
+        query = f"""
             SELECT local_id, server_id, local_type, real_sender_id, create_time,
                    status, message_content, compress_content, WCDB_CT_message_content
             FROM {table}
             WHERE local_id > ?
             ORDER BY local_id
-            """,
-            (last_local_id,),
-        ):
-            rows.append(row_to_message(row, name_map, contact_map))
-    return rows
-
-
-def read_recent_history(config: dict[str, Any], up_to_local_id: int, *, limit: int = 24) -> list[dict[str, Any]]:
-    db_path = DECRYPTED / "message" / "message_0.db"
-    contact_db = DECRYPTED / "contact" / "contact.db"
-    if not db_path.exists():
-        return []
-    name_map = load_name_map(db_path)
-    contact_map = load_contact_map(contact_db)
-    table = config["message_table"]
-    rows = []
+        """
+        params = (cursor,)
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        for row in conn.execute(
-            f"""
-            SELECT local_id, server_id, local_type, real_sender_id, create_time,
-                   status, message_content, compress_content, WCDB_CT_message_content
-            FROM {table}
-            WHERE local_id <= ?
-            ORDER BY local_id DESC
-            LIMIT ?
-            """,
-            (up_to_local_id, limit),
-        ):
-            rows.append(row_to_message(row, name_map, contact_map))
-    rows.reverse()
+        selected = list(conn.execute(query, params))
+    if newly_discovered:
+        selected.reverse()
+    for row in selected:
+        rows.append(row_to_message(row, name_map, contact_map, message_db=db_path.name))
     return rows
 
 
-def row_to_message(row: sqlite3.Row, name_map: dict[int, str], contact_map: dict[str, str]) -> dict[str, Any]:
+def read_new_messages(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
+    paths = available_message_db_paths(config)
+    if not paths:
+        return []
+    contact_map = load_contact_map(DECRYPTED / "contact" / "contact.db")
+    cursors = message_db_cursors(state)
+    prior_active = normalized_message_db_name(state.get("active_message_db"))
+    latest_name = paths[-1].name
+    state["active_message_db"] = latest_name
+    rows: list[dict[str, Any]] = []
+    for db_path in paths:
+        name = db_path.name
+        newly_discovered = name not in cursors
+        cursor = cursors.get(name, 0)
+        if newly_discovered and prior_active and message_db_sort_key(name) < message_db_sort_key(prior_active):
+            # An older cache shard appeared after startup. Seed it at its tail
+            # instead of replaying historical traffic.
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    tail = conn.execute(f"SELECT MAX(local_id) FROM {config['message_table']}").fetchone()
+                cursors[name] = int((tail or [0])[0] or 0)
+            except sqlite3.Error:
+                cursors[name] = 0
+            continue
+        try:
+            rows.extend(
+                read_rows_after_cursor(
+                    config,
+                    db_path,
+                    cursor,
+                    contact_map,
+                    newly_discovered=newly_discovered,
+                )
+            )
+        except sqlite3.Error:
+            continue
+        if newly_discovered and not any(row.get("_message_db") == name for row in rows):
+            cursors[name] = cursor
+    save_message_db_cursors(state, cursors)
+    state["last_local_id"] = cursors.get(latest_name, 0)
+    return merge_message_rows(rows)
+
+
+def read_recent_history(
+    config: dict[str, Any],
+    up_to_local_id: int,
+    *,
+    limit: int = 24,
+    message_db: str = "",
+) -> list[dict[str, Any]]:
+    paths = available_message_db_paths(config)
+    if not paths:
+        return []
+    selected_name = normalized_message_db_name(message_db) or paths[-1].name
+    selected_rank = message_db_sort_key(selected_name)
+    paths = [path for path in paths if message_db_sort_key(path.name) <= selected_rank]
+    contact_db = DECRYPTED / "contact" / "contact.db"
+    contact_map = load_contact_map(contact_db)
+    table = config["message_table"]
+    rows: list[dict[str, Any]] = []
+    remaining = max(1, int(limit))
+    for db_path in reversed(paths):
+        if remaining <= 0:
+            break
+        name_map = load_name_map(db_path)
+        ceiling = up_to_local_id if db_path.name == selected_name else 10**18
+        try:
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                selected = list(
+                    conn.execute(
+                        f"""
+                        SELECT local_id, server_id, local_type, real_sender_id, create_time,
+                               status, message_content, compress_content, WCDB_CT_message_content
+                        FROM {table}
+                        WHERE local_id <= ?
+                        ORDER BY local_id DESC
+                        LIMIT ?
+                        """,
+                        (ceiling, remaining),
+                    )
+                )
+        except sqlite3.Error:
+            continue
+        selected.reverse()
+        rows[0:0] = [
+            row_to_message(row, name_map, contact_map, message_db=db_path.name)
+            for row in selected
+        ]
+        remaining -= len(selected)
+    return merge_message_rows(rows)[-limit:]
+
+
+def row_to_message(
+    row: sqlite3.Row,
+    name_map: dict[int, str],
+    contact_map: dict[str, str],
+    *,
+    message_db: str = "",
+) -> dict[str, Any]:
     sender = name_map.get(row["real_sender_id"], str(row["real_sender_id"]))
     return {
         "local_id": row["local_id"],
@@ -1212,6 +1490,7 @@ def row_to_message(row: sqlite3.Row, name_map: dict[int, str], contact_map: dict
         "create_time": row["create_time"],
         "status": row["status"],
         "content": decode_content(row["message_content"], row["compress_content"], row["WCDB_CT_message_content"]),
+        "_message_db": normalized_message_db_name(message_db),
     }
 
 
@@ -2486,7 +2765,11 @@ def immediate_task_route(
         route_decision,
         request_text,
         chat=chat_name,
-        source={"local_id": row.get("local_id"), "server_id": row.get("server_id")},
+        source={
+            "local_id": row.get("local_id"),
+            "server_id": row.get("server_id"),
+            "message_db": normalized_message_db_name(row.get("_message_db")),
+        },
     )
     routine_json = json.dumps(routine_contract, ensure_ascii=False, indent=2, sort_keys=True)
     task = (
@@ -2502,7 +2785,8 @@ def immediate_task_route(
         "Extract useful metadata such as title, URL, filename, extension, media path, size, timestamp, checksum/token, and visible content before summarizing. "
         "For link/read-later inbox groups, default to source-grounded summaries and highlights for shared links/cards/media; "
         "for papers, GitHub repos, technical articles, mp.weixin/Gongzhonghao articles, and Shipinhao/Finder summaries, attach reports only when they add real value or the user asks. "
-        "If the task asks to save media/files, keep the source-scoped copy path or generated output path in the result `files` array when it is safe to send. "
+        "If the task asks to save media/files locally, verify the destination and return one short completion message naming the folder and filename. "
+        "Do not put the saved source in the result `files` array unless the same current request also asks to send/return/attach it in chat. "
         "Strict source isolation: use only media/files from this exact chat and the current source/reference local_id rows below. "
         "Do not borrow media, files, or generated artifacts from another group, direct message, old request, or unrelated download folder. "
         "For multi-message tasks, combine the latest text command with referenced same-chat media rows, such as an image sent just before an edit request. "
@@ -3167,6 +3451,7 @@ Important distinction:
 - Old context can explain a follow-up, but old context cannot authorize a new public publish.
 - In web_clip_inbox/link_inbox/internet_inbox/reading_inbox chats, shared URLs, forwarded webpage cards, mp.weixin/Gongzhonghao articles, Shipinhao/视频号/Finder cards, GitHub links, papers/PDF/DOI/arXiv links, YouTube/Bilibili links, images, videos, and files should normally route to research_or_summary with worker_needed=true so the worker tries to read the actual source and returns one concise useful chat answer. Do not promise or attach a report, PDF, Markdown, TeX, image, screenshot, or deep analysis unless the current message explicitly requests that output. Local evidence notes may still be saved privately.
 - For a bare WeChat file upload with no explicit user instruction, route to file_intake with worker_needed=true. For raster images, the worker should sync/copy the exact source image, inspect it with Codex vision, and reply naturally with what it shows or means. OCR is private supporting evidence, not the user-facing response format: do not expose `Visible text / Image caption / Notes`, model names, checksums, dimensions, or an extra OCR dump unless the user explicitly asks for technical extraction. For ZIP, Word, PDF, and text uploads, run bounded read-only extraction and let the resumed worker provide a concise natural identification/preliminary summary from `agent_context_path`; do not stop at a checksum receipt when readable content exists. RAR and 7z archives use the same safe intake contract. If the current message asks to summarize/analyze/translate/convert/publish/edit the file, preserve that deeper instruction in the selected worker route.
+- For file_download_or_save, set `delivery_mode=local_save` when the user explicitly asks to save/copy/download into this computer's Downloads folder without asking for the file in chat. Set `delivery_mode=chat_attachment` when they ask to send/return/attach it in chat. A local save should end with one short verified completion message, not an immediate acknowledgement and not a duplicate attachment.
 - For mp.weixin links, verification text such as 环境异常 or 完成验证后继续访问 means that one fetch path is blocked, not that the task needs human confirmation. Route to the worker's read-only source-recovery preflight, which tries mobile-WeChat extraction/private cache and then exact-title/account public reconstruction. Do not open/focus an external browser or ask the user to verify for read-only research.
 - A video-generation request should use local/default reference assets unless the current request says this/that/same/attached/quoted video/image.
 - Plain story/script/plot writing or revision should use story_or_script. Do not choose generate_image unless the current request explicitly asks for an image/figure/diagram/illustration. Do not choose generate_video unless the current request explicitly asks for video/animation/小云雀/Seedance/XYQ.
@@ -3187,6 +3472,7 @@ JSON schema:
   "public_publish_intent": false,
   "public_publish_allowed": false,
   "external_action_allowed": true,
+  "delivery_mode": "agent_decide|local_save|chat_attachment",
   "source_policy": "current_request_only|current_plus_explicit_refs|recent_media",
   "reason": "short reason",
   "ack": "short natural acknowledgement for WeChat, or empty string",
@@ -3362,6 +3648,8 @@ def fallback_route_decision(
         "confidence": 0.45,
         "route_agent_model": "fallback",
     }
+    if route_kind == "file_download_or_save":
+        route["delivery_mode"] = file_download_delivery_mode(text)
     if permission_question:
         route.update(
             {
@@ -3478,6 +3766,8 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
             "reason": str(parsed.get("reason") or fallback.get("reason") or ""),
         }
     )
+    if route_kind == "file_download_or_save":
+        parsed["delivery_mode"] = file_download_delivery_mode(current_request)
     if permission_question:
         parsed["project"] = str(parsed.get("project") or "lazyedit")
         parsed["public_publish_allowed"] = False
@@ -4294,6 +4584,48 @@ def is_file_download_or_save_task(text: str) -> bool:
         "下載",
     ]
     return any(term in lowered for term in media_terms) and any(term in lowered for term in action_terms)
+
+
+def file_download_delivery_mode(text: str) -> str:
+    """Distinguish a local save from returning an attachment to the chat."""
+    lowered = collapse_text(str(text or "")).casefold()
+    chat_delivery_markers = (
+        "send me",
+        "send back",
+        "send it here",
+        "send to the group",
+        "attach it",
+        "return the file",
+        "发给我",
+        "發給我",
+        "发回",
+        "發回",
+        "发到群",
+        "發到群",
+        "发送到群",
+        "發送到群",
+        "传给我",
+        "傳給我",
+    )
+    if any(marker in lowered for marker in chat_delivery_markers):
+        return "chat_attachment"
+    local_save_markers = (
+        "downloads",
+        "~/downloads",
+        "download folder",
+        "downloads folder",
+        "下载目录",
+        "下載目錄",
+        "下载文件夹",
+        "下載文件夾",
+        "保存到下载",
+        "保存到下載",
+        "存到下载",
+        "存到下載",
+    )
+    if any(marker in lowered for marker in local_save_markers):
+        return "local_save"
+    return "agent_decide"
 
 
 def is_cad_pcb_labcanvas_task(text: str) -> bool:
@@ -5734,6 +6066,7 @@ def enqueue_worker_task(
             "chat": config["chat_name"],
             "config_id": config.get("config_id") or "",
             "message_table": config.get("message_table") or "",
+            "message_db": normalized_message_db_name(row.get("_message_db")),
             "server_id": row["server_id"],
             "local_id": row["local_id"],
             "local_type": row.get("local_type"),
@@ -5747,6 +6080,7 @@ def enqueue_worker_task(
             {
                 "local_id": item["local_id"],
                 "server_id": item.get("server_id"),
+                "message_db": normalized_message_db_name(item.get("_message_db")),
                 "sender": item["sender"],
                 "sender_display": item["sender_display"],
                 "local_type": item.get("local_type"),

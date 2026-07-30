@@ -653,6 +653,21 @@ def download_visible_file_card(
     ).stdout
     card = locate_file_card_from_tsv(tsv, title, window)
     if not card:
+        focused_tsv, focused_region = focused_file_card_ocr(
+            env,
+            source_path,
+            window,
+            out_dir / f"{shot_prefix}-file-card-focused.png",
+        )
+        card = locate_file_card_from_tsv(
+            focused_tsv,
+            title,
+            window,
+            offset_x=int(focused_region["left"]),
+            offset_y=int(focused_region["top"]),
+            coordinate_scale=float(focused_region["scale"]),
+        )
+    if not card:
         return {
             "status": "file-card-not-found",
             "filename": title,
@@ -736,8 +751,77 @@ def download_visible_file_card(
     }
 
 
-def locate_file_card_from_tsv(tsv_text: str, title: str, window: Window) -> dict[str, Any] | None:
+def focused_file_card_ocr(
+    env: dict[str, str],
+    source_path: Path,
+    window: Window,
+    crop_path: Path,
+) -> tuple[str, dict[str, float]]:
+    """Run a higher-resolution OCR pass over the conversation pane.
+
+    Full-desktop OCR can truncate small attachment names even when their card is
+    clearly visible. Keep the exact-title guard, but enlarge only the guarded
+    chat pane before retrying so the extension and remaining filename survive.
+    """
+    left = window.x + int(window.width * 0.34)
+    top = window.y + 70
+    right = window.x + window.width
+    bottom = window.y + window.height - 105
+    width = max(1, right - left)
+    height = max(1, bottom - top)
+    scale = 3.0
+    run(
+        [
+            "convert",
+            str(source_path),
+            "-crop",
+            f"{width}x{height}+{left}+{top}",
+            "-resize",
+            f"{int(scale * 100)}%",
+            str(crop_path),
+        ],
+        env=env,
+        check=False,
+    )
+    proc = run(
+        [
+            "tesseract",
+            str(crop_path),
+            "stdout",
+            "-l",
+            "chi_sim+chi_tra+eng",
+            "--psm",
+            "11",
+            "tsv",
+        ],
+        env=env,
+        check=False,
+    )
+    return proc.stdout, {"left": float(left), "top": float(top), "scale": scale}
+
+
+def locate_file_card_from_tsv(
+    tsv_text: str,
+    title: str,
+    window: Window,
+    *,
+    offset_x: int = 0,
+    offset_y: int = 0,
+    coordinate_scale: float = 1.0,
+) -> dict[str, Any] | None:
+    scale = max(0.01, float(coordinate_scale))
     words = tesseract_words(tsv_text)
+    if offset_x or offset_y or scale != 1.0:
+        words = [
+            {
+                **word,
+                "left": int(round(offset_x + int(word["left"]) / scale)),
+                "top": int(round(offset_y + int(word["top"]) / scale)),
+                "width": max(1, int(round(int(word["width"]) / scale))),
+                "height": max(1, int(round(int(word["height"]) / scale))),
+            }
+            for word in words
+        ]
     extension = Path(title).suffix.lower().lstrip(".")
     if not extension:
         return None
