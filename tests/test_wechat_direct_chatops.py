@@ -284,6 +284,39 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                     {"message_db": "message_1.db", "local_id": 4},
                 ],
             )
+            history = direct_chatops.read_recent_history(
+                config,
+                4,
+                limit=10,
+                message_db="message_1.db",
+            )
+            self.assertEqual(
+                [
+                    (row["_message_db"], row["local_id"], row["content"])
+                    for row in history
+                ],
+                [
+                    ("message_0.db", 82, "old message"),
+                    ("message_1.db", 3, "new book"),
+                    ("message_1.db", 4, "save it to Downloads"),
+                ],
+            )
+            scheduled_history = direct_chatops.read_recent_history(
+                config,
+                10**18,
+                limit=10,
+            )
+            self.assertEqual(
+                [
+                    (row["_message_db"], row["local_id"])
+                    for row in scheduled_history
+                ],
+                [
+                    ("message_0.db", 82),
+                    ("message_1.db", 3),
+                    ("message_1.db", 4),
+                ],
+            )
             direct_chatops.clear_inflight_messages(state, rows)
             self.assertEqual(direct_chatops.read_new_messages(config, state), [])
 

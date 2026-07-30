@@ -919,7 +919,9 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "GUI file sends re-verify the exact chat after the native picker and before submission",
             "send_retrying rows are not reclaimed before the active GUI sender timeout plus grace",
             "exact-task media resolution rejects files associated only by modification time",
+            "ingress keeps independent cursors and bounded context across rotated message shards",
             "video publication binds local message IDs to their exact rotated database shard",
+            "attachment identity never falls through to a duplicate local ID in another shard",
             "restart transport recovery is recent, bounded, transport-scoped, and idempotent",
             "chat-sync dry-open alarm is long enough to refresh inactive groups",
             "chat-sync retryable failures back off per chat without blocking other groups",
@@ -1049,8 +1051,16 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": worker_prefix + "test_media_resolution_rejects_mtime_only_cross_chat_candidate",
         },
         {
+            "id": "message_shard_rollover_context_preserved",
+            "test": direct_prefix + "test_message_db_rollover_reads_new_shard_with_independent_cursor",
+        },
+        {
             "id": "video_message_shard_identity_preserved",
             "test": worker_prefix + "test_video_message_ref_uses_newest_matching_shard_when_local_id_restarts",
+        },
+        {
+            "id": "attachment_message_shard_identity_preserved",
+            "test": worker_prefix + "test_exact_file_identity_never_falls_through_to_duplicate_id_in_older_shard",
         },
         {
             "id": "recent_transport_recovery_bounded",

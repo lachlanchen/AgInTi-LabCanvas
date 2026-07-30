@@ -17,6 +17,11 @@ import sys
 import time
 from typing import Any
 
+from wechat_message_shards import (
+    list_message_db_paths,
+    message_db_index,
+    parse_message_ref,
+)
 from wechat_mirror import DEFAULT_DB
 
 
@@ -24,7 +29,6 @@ ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_AUTOPUBLISH_DIR = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/home/lachlan/Nutstore Files/AutoPublish/AutoPublish"))
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 TRANSCODE_SOURCE_WINDOW_SECONDS = 120
-MESSAGE_DB_NAME_PATTERN = re.compile(r"^message_([0-9]+)\.db$")
 
 
 @dataclass(frozen=True)
@@ -499,38 +503,17 @@ def fetch_latest_video_via_gui(
 def parse_message_refs(values: list[str]) -> list[tuple[str, int]]:
     refs: list[tuple[str, int]] = []
     for raw in values:
-        db_name, separator, local_id_text = str(raw or "").strip().rpartition(":")
-        if not separator or not MESSAGE_DB_NAME_PATTERN.fullmatch(db_name):
-            raise SystemExit(f"Invalid --message-ref {raw!r}; expected message_N.db:local_id")
         try:
-            local_id = int(local_id_text)
+            ref = parse_message_ref(raw)
         except ValueError as exc:
-            raise SystemExit(f"Invalid --message-ref {raw!r}; local_id must be an integer") from exc
-        if local_id <= 0:
-            raise SystemExit(f"Invalid --message-ref {raw!r}; local_id must be positive")
-        ref = (db_name, local_id)
+            raise SystemExit(f"Invalid --message-ref {raw!r}; {exc}") from exc
         if ref not in refs:
             refs.append(ref)
     return refs
 
 
-def message_db_sort_key(path: Path) -> tuple[int, str]:
-    match = MESSAGE_DB_NAME_PATTERN.fullmatch(path.name)
-    return (int(match.group(1)), path.name) if match else (-1, path.name)
-
-
 def available_message_db_paths(message_db_dir: Path, *, names: set[str] | None = None) -> list[Path]:
-    if not message_db_dir.is_dir():
-        return []
-    paths = [
-        path
-        for path in message_db_dir.glob("message_*.db")
-        if path.is_file()
-        and MESSAGE_DB_NAME_PATTERN.fullmatch(path.name)
-        and (not names or path.name in names)
-    ]
-    paths.sort(key=message_db_sort_key)
-    return paths
+    return list_message_db_paths(message_db_dir, names=names)
 
 
 def recent_video_messages(
@@ -546,9 +529,11 @@ def recent_video_messages(
     db_dir = message_db_dir or (private / "wechat_decrypt" / "decrypted" / "message")
     ref_map: dict[str, set[int]] = {}
     for db_name, local_id in message_refs or []:
-        if not MESSAGE_DB_NAME_PATTERN.fullmatch(db_name):
+        try:
+            parsed_db, parsed_local_id = parse_message_ref(f"{db_name}:{local_id}")
+        except ValueError:
             continue
-        ref_map.setdefault(db_name, set()).add(int(local_id))
+        ref_map.setdefault(parsed_db, set()).add(parsed_local_id)
     db_paths = available_message_db_paths(db_dir, names=set(ref_map) or None)
     if not db_paths:
         return []
@@ -611,7 +596,7 @@ def recent_video_messages(
     for message in messages:
         unique[(message.chat_name, message.message_db, message.local_id, message.create_time)] = message
     messages = list(unique.values())
-    messages.sort(key=lambda item: (item.create_time, message_db_sort_key(Path(item.message_db))), reverse=True)
+    messages.sort(key=lambda item: (item.create_time, message_db_index(item.message_db)), reverse=True)
     return messages
 
 

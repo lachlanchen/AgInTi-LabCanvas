@@ -39,6 +39,11 @@ from wechat_message_policy import (
 )
 from wechat_chat_profiles import profile_aliases, profile_for_chat
 from wechat_mirror import DEFAULT_DB, record_event
+from wechat_message_shards import (
+    list_message_db_paths,
+    message_db_index as message_db_sort_key,
+    normalize_message_db_name as normalized_message_db_name,
+)
 from wechat_routines import ROUTINES, build_routine_contract, ensure_task_routine_contract
 
 
@@ -1242,47 +1247,14 @@ def elapsed_ms(started: float) -> float:
     return round((time.monotonic() - started) * 1000, 1)
 
 
-MESSAGE_DB_NAME_RE = re.compile(r"^message_(\d+)\.db$")
-
-
-def normalized_message_db_name(value: Any) -> str:
-    name = Path(str(value or "")).name
-    return name if MESSAGE_DB_NAME_RE.fullmatch(name) else ""
-
-
-def message_db_sort_key(value: Any) -> int:
-    match = MESSAGE_DB_NAME_RE.fullmatch(Path(str(value or "")).name)
-    return int(match.group(1)) if match else -1
-
-
 def message_db_path(value: Any) -> Path:
     name = normalized_message_db_name(value)
     return DECRYPTED / "message" / (name or "message_0.db")
 
 
-def message_db_has_table(path: Path, table: str) -> bool:
-    try:
-        with sqlite3.connect(path) as conn:
-            return (
-                conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
-                    (table,),
-                ).fetchone()
-                is not None
-            )
-    except sqlite3.Error:
-        return False
-
-
 def available_message_db_paths(config: dict[str, Any]) -> list[Path]:
     table = str(config.get("message_table") or "")
-    paths = [
-        path
-        for path in (DECRYPTED / "message").glob("message_*.db")
-        if normalized_message_db_name(path.name) and path.is_file() and message_db_has_table(path, table)
-    ]
-    paths.sort(key=lambda path: message_db_sort_key(path.name))
-    return paths
+    return list_message_db_paths(DECRYPTED / "message", table=table)
 
 
 def message_db_cursors(state: dict[str, Any]) -> dict[str, int]:

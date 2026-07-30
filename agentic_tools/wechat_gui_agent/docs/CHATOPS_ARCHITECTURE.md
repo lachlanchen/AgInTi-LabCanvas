@@ -23,7 +23,7 @@ The Linux client stores encrypted data under:
 Important DBs:
 
 - `session/session.db`: latest message summary per conversation.
-- `message/message_0.db`: full text rows split into `Msg_*` tables.
+- `message/message_N.db`: rotated full-message shards split into `Msg_*` tables.
 - `message/message_resource.db`: resource metadata.
 - `contact/contact.db`: contacts and chatroom metadata.
 
@@ -36,6 +36,19 @@ agentic_tools/wechat_gui_agent/.private/wechat_decrypt/
 
 Do not commit `all_keys.json`, decrypted DBs, exported logs, screenshots, or
 private target configs.
+
+Message `local_id` values are shard-local and may restart in every
+`message_N.db`. Any durable source identity must therefore carry both values:
+
+```text
+message_N.db:local_id
+```
+
+`wechat_message_shards.py` is the shared resolver for shard validation,
+numeric ordering, table filtering, and exact references. Ingress keeps one
+cursor per shard. Attachment and publication lookups that receive an exact
+shard reference fail closed if that row is unavailable; they must never fall
+through to the same local ID in another shard.
 
 ## Main Commands
 

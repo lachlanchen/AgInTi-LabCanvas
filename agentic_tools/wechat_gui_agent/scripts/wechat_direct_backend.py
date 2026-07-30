@@ -14,6 +14,7 @@ import subprocess
 import sys
 from urllib import parse, request
 
+from wechat_message_shards import list_message_db_paths
 from wechat_mirror import DEFAULT_DB, record_event
 
 
@@ -229,8 +230,8 @@ def status(external: Path, db_dir: Path | None) -> dict:
     }
     source_db_count = count_source_dbs(db_dir) if db_dir else 0
     decrypted_db_count = count_source_dbs(decrypted_dir) if decrypted_dir.exists() else 0
-    source_message_dbs = sorted((db_dir / "message").glob("message_*.db")) if db_dir else []
-    decrypted_message_dbs = sorted((decrypted_dir / "message").glob("message_*.db"))
+    source_message_dbs = list_message_db_paths(db_dir / "message") if db_dir else []
+    decrypted_message_dbs = list_message_db_paths(decrypted_dir / "message")
     git = git_info(external) if external.exists() else {}
     web_port = DEFAULT_WEB_PORT
     return {

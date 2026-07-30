@@ -3402,6 +3402,60 @@ stderr: noisy internal trace
         self.assertEqual(identity["size_bytes"], 169024640)
         self.assertEqual(identity["source_message_db"], "message_1.db")
 
+    def test_exact_file_identity_never_falls_through_to_duplicate_id_in_older_shard(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp) / ".private"
+            db_dir = private / "wechat_decrypt" / "decrypted" / "message"
+            db_dir.mkdir(parents=True)
+            config_name = "my-devices.local.json"
+            (private / config_name).write_text(
+                json.dumps({"message_table": "Msg_test"}),
+                encoding="utf-8",
+            )
+            older_xml = (
+                "<msg><appmsg><title>wrong-older-book.pdf</title><appattach>"
+                "<fileext>pdf</fileext><totallen>4096</totallen>"
+                "</appattach></appmsg></msg>"
+            )
+            with sqlite3.connect(db_dir / "message_0.db") as conn:
+                conn.execute(
+                    "CREATE TABLE Msg_test ("
+                    "local_id INTEGER, server_id TEXT, message_content BLOB, "
+                    "compress_content BLOB, WCDB_CT_message_content INTEGER)"
+                )
+                conn.execute(
+                    "INSERT INTO Msg_test VALUES (?, ?, ?, ?, ?)",
+                    (3, "0", older_xml, None, 0),
+                )
+            with sqlite3.connect(db_dir / "message_1.db") as conn:
+                conn.execute(
+                    "CREATE TABLE Msg_test ("
+                    "local_id INTEGER, server_id TEXT, message_content BLOB, "
+                    "compress_content BLOB, WCDB_CT_message_content INTEGER)"
+                )
+            task = {
+                "source": {
+                    "config_id": config_name,
+                    "local_id": 4,
+                    "message_db": "message_1.db",
+                },
+                "context": [
+                    {
+                        "local_id": 3,
+                        "message_db": "message_1.db",
+                        "local_type": 49,
+                    }
+                ],
+                "request": "Current coalesced request:\n保存这本书到 Downloads",
+            }
+            with mock.patch.object(worker, "PRIVATE", private):
+                identity = worker.exact_source_file_identity(task)
+
+        self.assertFalse(identity["source_verified"])
+        self.assertNotEqual(identity.get("title"), "wrong-older-book.pdf")
+        self.assertNotIn("source_message_db", identity)
+
     def test_file_download_lazyedit_request_copies_recent_video_to_intake_without_publish(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

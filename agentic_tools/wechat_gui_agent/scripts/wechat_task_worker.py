@@ -36,6 +36,7 @@ from wechat_completion_audit import (
 from wechat_document_reader import READABLE_STATUSES as DOCUMENT_READABLE_STATUSES
 from wechat_document_reader import analyze_document, is_document_candidate
 from wechat_message_policy import file_transport_identity, is_no_reply_control
+from wechat_message_shards import list_message_db_paths, normalize_message_db_name
 from wechat_mirror import DEFAULT_DB, record_event
 from wechat_routines import (
     ensure_task_routine_contract,
@@ -9284,24 +9285,21 @@ def exact_source_file_identity(task: dict[str, Any]) -> dict[str, Any]:
 
         refs = exact_source_file_row_refs(task)
         db_root = PRIVATE / "wechat_decrypt" / "decrypted" / "message"
-        all_dbs = sorted(
-            (
-                path
-                for path in db_root.glob("message_*.db")
-                if re.fullmatch(r"message_\d+\.db", path.name)
-            ),
-            key=lambda path: int(re.search(r"(\d+)", path.name).group(1)),
-            reverse=True,
-        )
+        all_dbs = list_message_db_paths(db_root, table=table, newest_first=True)
         for ref in refs:
             local_id = int_or_none(ref.get("local_id"))
             if local_id is None:
                 continue
-            preferred = Path(str(ref.get("message_db") or ref.get("_message_db") or "")).name
-            dbs = list(all_dbs)
-            if re.fullmatch(r"message_\d+\.db", preferred):
+            preferred = normalize_message_db_name(
+                ref.get("message_db") or ref.get("_message_db")
+            )
+            if preferred:
                 preferred_path = db_root / preferred
-                dbs = [preferred_path, *(path for path in dbs if path != preferred_path)]
+                # Local IDs restart in each shard. An exact shard reference
+                # must fail closed rather than falling through to another DB.
+                dbs = [preferred_path]
+            else:
+                dbs = list(all_dbs)
             server_id = str(ref.get("server_id") or "").strip()
             for db_path in dbs:
                 if not db_path.is_file():
