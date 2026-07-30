@@ -664,6 +664,7 @@ def queue_health(
     stale_ids: list[str] = []
     coverage_unresolved_ids: list[str] = []
     historical_coverage_unresolved_ids: list[str] = []
+    historical_coverage_categories: dict[str, int] = {}
     for task_id, task in latest.items():
         status = str(task.get("status") or "")
         if str(task.get("coverage_status") or "") == "unresolved_after_retry":
@@ -685,6 +686,10 @@ def queue_health(
                 coverage_unresolved_ids.append(task_id)
             else:
                 historical_coverage_unresolved_ids.append(task_id)
+                category = historical_coverage_category(task)
+                historical_coverage_categories[category] = (
+                    historical_coverage_categories.get(category, 0) + 1
+                )
         if status not in ACTIVE_STATUSES:
             continue
         started = parse_timestamp(
@@ -712,8 +717,32 @@ def queue_health(
             historical_coverage_unresolved_ids
         ),
         "historical_coverage_unresolved_ids": historical_coverage_unresolved_ids[:20],
+        "historical_coverage_categories": dict(
+            sorted(historical_coverage_categories.items())
+        ),
         "invalid_lines": invalid_lines,
     }
+
+
+def historical_coverage_category(task: dict[str, Any]) -> str:
+    status = str(task.get("status") or "").strip().casefold()
+    if status in {"worker_failed", "failed", "error"}:
+        return "worker_failed"
+    if status in {
+        "send_expired",
+        "send_failed",
+        "send_deferred_expired",
+        "delivery_expired",
+    }:
+        return "delivery_expired"
+    delivery = (
+        task.get("wecom_delivery")
+        if isinstance(task.get("wecom_delivery"), dict)
+        else {}
+    )
+    if status == "done" or str(delivery.get("status") or "").casefold() == "sent":
+        return "delivered_unverified"
+    return "terminal_unverified"
 
 
 def wechat_client_started_at(

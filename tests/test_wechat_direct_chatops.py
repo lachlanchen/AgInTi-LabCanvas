@@ -1569,6 +1569,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(saved["context"][0]["create_time"], 1880000000)
         self.assertEqual(saved["context"][0]["kind"], "text")
         self.assertEqual(saved["execution_contract"]["wechat_role"], "message_transport_only")
+        self.assertEqual(saved["execution_contract"]["transport_role"], "message_transport_only")
+        self.assertEqual(saved["execution_contract"]["transport"], "wechat")
         self.assertEqual(saved["execution_contract"]["worker_entrypoint"], "wechat_task_worker.run_task_orchestrator")
         self.assertEqual(saved["execution_contract"]["codex_entrypoint"], "wechat_codex_sessions.run_codex_session")
         self.assertEqual(saved["execution_contract"]["codex_exec_mode"], "resume_per_chat_worker_session")

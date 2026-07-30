@@ -183,6 +183,54 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             result["historical_coverage_unresolved_ids"],
             ["historical-message"],
         )
+        self.assertEqual(
+            result["historical_coverage_categories"],
+            {"worker_failed": 1},
+        )
+
+    def test_queue_health_classifies_historical_coverage_without_replaying_it(self) -> None:
+        now = datetime(2026, 7, 30, 8, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            rows = [
+                {
+                    "id": "delivered",
+                    "status": "done",
+                    "coverage_status": "unresolved_after_retry",
+                    "completed_at": "2026-07-29T20:00:00+00:00",
+                    "wecom_delivery": {"status": "sent"},
+                },
+                {
+                    "id": "expired",
+                    "status": "send_expired",
+                    "coverage_status": "unresolved_after_retry",
+                    "completed_at": "2026-07-29T20:00:00+00:00",
+                },
+                {
+                    "id": "failed",
+                    "status": "worker_failed",
+                    "coverage_status": "unresolved_after_retry",
+                    "completed_at": "2026-07-29T20:00:00+00:00",
+                },
+            ]
+            queue.write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n",
+                encoding="utf-8",
+            )
+
+            result = guard.queue_health(queue, now=now)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["active"], 0)
+        self.assertEqual(result["coverage_unresolved_ids"], [])
+        self.assertEqual(
+            result["historical_coverage_categories"],
+            {
+                "delivered_unverified": 1,
+                "delivery_expired": 1,
+                "worker_failed": 1,
+            },
+        )
 
     def test_gui_timeout_health_ignores_failure_before_client_restart(self) -> None:
         now = datetime(2026, 7, 28, 16, 0, tzinfo=timezone.utc)

@@ -1789,6 +1789,55 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         send_wecom.assert_called_once_with(result, task["chat"], task)
 
+    def test_legacy_wecom_chat_prefix_cannot_fall_back_to_personal_wechat(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "legacy-wecom-task",
+            "chat": "wecom:external-gui:group:abc",
+            "execution_contract": {"required_artifacts": []},
+        }
+        result = {"message": "done", "confirmation": "", "files": []}
+
+        self.assertEqual(worker.task_transport_kind(task), "wecom")
+        contract = worker.worker_execution_contract(task)
+        self.assertEqual(contract["transport"], "wecom")
+        self.assertEqual(contract["wecom_transport_channel"], "wecom")
+        with mock.patch.object(
+            worker,
+            "send_result_once_wecom",
+        ) as send_wecom, mock.patch.object(
+            worker,
+            "guarded_send_target",
+            side_effect=AssertionError("personal WeChat target lookup should not run"),
+        ):
+            worker.send_result_once(
+                result,
+                task["chat"],
+                Path("/tmp/missing.json"),
+                task=task,
+            )
+
+        send_wecom.assert_called_once_with(result, task["chat"], task)
+
+    def test_worker_contract_preserves_exact_wecom_transport_channel(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "wecom:external-gui:group:abc",
+            "source": {
+                "transport": "wecom",
+                "wecom_transport_channel": "wecom_android",
+            },
+            "execution_contract": {"required_artifacts": ["pdf"]},
+        }
+
+        contract = worker.worker_execution_contract(task)
+
+        self.assertEqual(worker.task_transport_kind(task), "wecom")
+        self.assertEqual(worker.task_transport_channel(task), "wecom_android")
+        self.assertEqual(contract["transport"], "wecom_android")
+        self.assertEqual(contract["wecom_transport_channel"], "wecom_android")
+        self.assertEqual(contract["required_artifacts"], ["pdf"])
+
     def test_worker_selects_separate_cli_delivery_endpoint(self) -> None:
         worker = load_worker()
         task = {"source": {"transport": "wecom", "wecom_transport_channel": "wecom_cli"}}

@@ -244,6 +244,11 @@ evidence. Active or recently terminal messages that remain unverified still
 degrade health and trigger bounded repair. Older terminal rows remain listed as
 `historical_coverage_unresolved_ids`, but they do not keep the transport
 permanently degraded and are never replayed after a restart.
+`historical_coverage_categories` separates delivered-but-unverified results,
+expired delivery, and worker failures without spending model tokens. Backend
+stderr and diagnostic payloads remain private. A legacy task whose chat scope
+starts with `wecom:` is always routed through WeCom and can never fall back to
+the personal-WeChat sender, even when older source metadata is incomplete.
 
 Each member gets one daily-research subscription. End a message with `#daily`
 to add a distinct interest; later interests accumulate in that same member

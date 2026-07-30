@@ -1811,7 +1811,44 @@ def send_result_once(
 def task_transport_kind(task: dict[str, Any]) -> str:
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
     route = task.get("route") if isinstance(task.get("route"), dict) else {}
-    return str(source.get("transport") or route.get("transport") or "wechat").strip().casefold()
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    values = [
+        source.get("transport"),
+        source.get("wecom_transport_channel"),
+        route.get("transport"),
+        route.get("wecom_transport_channel"),
+        execution.get("transport"),
+        execution.get("wecom_transport_channel"),
+    ]
+    if any(str(value or "").strip().casefold().startswith("wecom") for value in values):
+        return "wecom"
+    if str(task.get("chat") or "").strip().casefold().startswith("wecom:"):
+        return "wecom"
+    return "wechat"
+
+
+def task_transport_channel(task: dict[str, Any]) -> str:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    route = task.get("route") if isinstance(task.get("route"), dict) else {}
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    for container in (source, route, execution):
+        for key in ("wecom_transport_channel", "transport_channel"):
+            value = str(container.get(key) or "").strip().casefold()
+            if value.startswith("wecom"):
+                return value
+    for container in (source, route, execution):
+        value = str(container.get("transport") or "").strip().casefold()
+        if value:
+            return value
+    return task_transport_kind(task)
 
 
 def record_wecom_delivery_payload(
@@ -6036,6 +6073,10 @@ def worker_execution_contract(task: dict[str, Any]) -> dict[str, Any]:
     contract = task.get("execution_contract") if isinstance(task.get("execution_contract"), dict) else {}
     if contract:
         merged = dict(contract)
+        merged.setdefault("transport_role", "message_transport_only")
+        merged.setdefault("transport", task_transport_channel(task))
+        if task_transport_kind(task) == "wecom":
+            merged.setdefault("wecom_transport_channel", task_transport_channel(task))
         merged.setdefault("instruction_contract", instruction)
         merged.setdefault("response_policy", worker_response_policy(task))
         return merged
@@ -6043,9 +6084,9 @@ def worker_execution_contract(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def default_worker_execution_contract(task: dict[str, Any], instruction: dict[str, Any]) -> dict[str, Any]:
-    return {
+    contract = {
         "transport_role": "message_transport_only",
-        "transport": task_transport_kind(task),
+        "transport": task_transport_channel(task),
         "monitor_role": "receive_coalesce_ack_enqueue",
         "routine_source": "task.routine",
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
@@ -6064,6 +6105,9 @@ def default_worker_execution_contract(task: dict[str, Any], instruction: dict[st
         },
         "instruction_contract": instruction,
     }
+    if task_transport_kind(task) == "wecom":
+        contract["wecom_transport_channel"] = task_transport_channel(task)
+    return contract
 
 
 def worker_instruction_contract(task: dict[str, Any]) -> dict[str, Any]:
@@ -6112,6 +6156,10 @@ def ensure_runtime_instruction_contract(task: dict[str, Any]) -> None:
     execution = task.get("execution_contract") if isinstance(task.get("execution_contract"), dict) else {}
     if execution:
         execution = dict(execution)
+        execution.setdefault("transport_role", "message_transport_only")
+        execution.setdefault("transport", task_transport_channel(task))
+        if task_transport_kind(task) == "wecom":
+            execution.setdefault("wecom_transport_channel", task_transport_channel(task))
         execution["instruction_contract"] = instruction
         task["execution_contract"] = execution
     else:

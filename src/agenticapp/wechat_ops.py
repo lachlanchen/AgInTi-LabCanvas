@@ -929,6 +929,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "all monitored chats route explicit backend/tool/artifact requests through the shared routine skill surface",
             "EchoMind remains language-learning by default while explicit backend instructions enqueue worker routines",
             "backend runtime session metadata can never become a user-facing WeChat reply",
+            "backend failure diagnostics remain private and cannot become a chat reply",
+            "legacy WeCom tasks can never fall back to the personal-WeChat sender",
             "an exact-row backfill isolates one chat-local message and restores the live cursor",
             "route and worker Codex exec calls resume exact per-chat sessions by role",
             "route and worker prompts preserve every safe explicit current instruction instead of shrinking to keyword matches",
@@ -1093,6 +1095,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "backend_session_metadata_not_chat",
             "test": backend_prefix + "test_metadata_only_aginti_fallback_is_rejected",
+        },
+        {
+            "id": "backend_failure_diagnostics_not_chat",
+            "test": worker_prefix + "test_backend_diagnostics_are_private_no_reply_results",
+        },
+        {
+            "id": "legacy_wecom_transport_not_personal_wechat",
+            "test": "tests.test_wecom_agent_bridge.WeComAgentBridgeTests.test_legacy_wecom_chat_prefix_cannot_fall_back_to_personal_wechat",
         },
         {
             "id": "exact_local_id_backfill",

@@ -6548,6 +6548,8 @@ def build_execution_contract(config: dict[str, Any], route_decision: dict[str, A
     instruction_contract = build_instruction_contract(config, route_decision)
     return {
         "wechat_role": "message_transport_only",
+        "transport_role": "message_transport_only",
+        "transport": "wechat",
         "monitor_role": "receive_coalesce_ack_enqueue",
         "routine_source": "task.routine",
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
