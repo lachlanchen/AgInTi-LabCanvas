@@ -125,11 +125,13 @@ INTERRUPTIBLE_ROUTE_KINDS = {
     "story_or_script",
     "generate_video",
     "presentation_generation",
+    "multilingual_book",
 }
 INTERRUPTIBLE_ROUTINE_IDS = {
     "story_script_generation",
     "generated_video",
     "presentation_deck",
+    "multilingual_book",
 }
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 DEAD_WORKER_RECOVERABLE_ROUTINES = {
@@ -139,6 +141,7 @@ DEAD_WORKER_RECOVERABLE_ROUTINES = {
     "story_script_generation",
     "file_download_save",
     "file_intake",
+    "book_search",
     "grant_proposal",
     "presentation_deck",
 }
@@ -690,6 +693,21 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     if requeue_if_task_interrupted_during_run(queue, task):
         log_worker_event("stale-result-suppressed-for-interruption", task)
         return True
+    private_failure = (
+        result.get("private_failure")
+        if isinstance(result.get("private_failure"), dict)
+        else {}
+    )
+    terminal_failure_feedback = terminal_worker_failure_feedback(task, result)
+    if terminal_failure_feedback:
+        result = {
+            **result,
+            "message": terminal_failure_feedback,
+            "confirmation": "",
+            "files": [],
+            "no_reply": False,
+            "terminal_failure_feedback": True,
+        }
     # Persist the completed agent turn before touching a GUI transport. A slow
     # picker or crashed sender can then resume delivery without rerunning the
     # expensive worker or losing its exact artifact list.
@@ -698,11 +716,6 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     persist_task_progress(task)
     target_chat = str(task.get("chat") or chat)
     has_delivery_content = worker_result_has_delivery_content(result)
-    private_failure = (
-        result.get("private_failure")
-        if isinstance(result.get("private_failure"), dict)
-        else {}
-    )
     if private_failure:
         task["worker_error"] = {
             "type": str(private_failure.get("kind") or "BackendExecutionFailed"),
@@ -720,14 +733,23 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         }
     send_now = (
         send
-        and not task.get("worker_error")
+        and (not task.get("worker_error") or bool(terminal_failure_feedback))
         and has_delivery_content
         and should_send_worker_result(task, result)
     )
     if send and not send_now:
-        task["send_suppressed_reason"] = "agent_no_reply" if result_is_no_reply(result) else "nonterminal_routine_status"
+        task["send_suppressed_reason"] = (
+            "agent_no_reply"
+            if result_is_no_reply(result)
+            else "nonterminal_routine_status"
+        )
         task["send_suppressed_at"] = datetime.now().isoformat(timespec="seconds")
     send_errors = send_result_with_retries(result, target_chat, send_targets, task=task) if send_now else []
+    if terminal_failure_feedback:
+        task["terminal_failure_feedback"] = {
+            "status": "sent" if send_now and not send_errors else "not_sent",
+            "attempted_at": datetime.now().isoformat(timespec="seconds"),
+        }
     if result.get("skipped_files"):
         task["skipped_files"] = result["skipped_files"]
     if task.get("worker_error"):
@@ -756,6 +778,12 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         event_status = "generation-waiting"
     elif task.get("status") == GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS:
         event_status = "generation-poststage-pending"
+    elif terminal_failure_feedback:
+        event_status = (
+            "worker-failed-feedback-sent"
+            if send_now and not send_errors
+            else "worker-failed-feedback-not-sent"
+        )
     elif result_is_no_reply(result):
         event_status = "done-no-reply"
     elif result["confirmation"]:
@@ -13430,6 +13458,22 @@ Musia music and song-first MV production:
 - Read `/home/lachlan/.codex/skills/musia-lalachan-mv-workflow/SKILL.md` before the MV stage. Use its handoff with the existing LALACHAN/Xiaoyunque browser routine. The reviewed Musia master is the timing/soundtrack authority; remux it into the verified final visual MP4 when needed.
 - Music creation, MV generation, and public publication are independent permissions. Stop after music unless MV is explicitly requested. Return the song and MP4 before any optional public stage. Use LazyEdit only when the current request explicitly authorizes processing/publication.
 
+Books and PocketPolyglot:
+- For `route_kind=book_search` or `task.routine.id=book_search`, reuse the sibling Books catalog and canonical AgenticBrowser:
+  `PYTHONPATH=src python -m agenticapp books status --json`
+  `PYTHONPATH=src python -m agenticapp books search "<query>" --language <code> --title-term "<title>" --author-term "<author>" --json`
+- Check `../Books` local catalog/references and lawful public-domain/open sources before browser candidates when they satisfy the request. Rank by exact title, author, language, edition, year, and requested format. A LibGen detail candidate is metadata evidence only; never download copyrighted material without a lawful source or explicit authorization.
+- For `route_kind=multilingual_book` or `task.routine.id=multilingual_book`, reuse the durable sibling PocketPolyglot Studio:
+  `PYTHONPATH=src python -m agenticapp books polyglot projects --json`
+  `PYTHONPATH=src python -m agenticapp books polyglot create "<title>" --workflow <lingualeaf|pocket_exact|pocket_polished> --source-language <lang> --target <lang> --json`
+  `PYTHONPATH=src python -m agenticapp books polyglot source-add <project> <exact-source-path> --role primary --language <lang> --json`
+  `PYTHONPATH=src python -m agenticapp books polyglot run <project> <capability> --param key=value --json`
+  `PYTHONPATH=src python -m agenticapp books polyglot status --project <project> --json`
+  `PYTHONPATH=src python -m agenticapp books polyglot progress --project <project> --json`
+- Keep one durable project per book and resume its existing job ledger; do not hold a long generation queue inside one Codex call or start a duplicate queue after a timeout. Same-chat interruptions update the same PocketPolyglot project.
+- A finished book requires current-manifest coverage, a table of contents, readable validated PDFs, and real editable TeX where the workflow requires it. Technical books must preserve figures, equations, tables, diagrams, notation, captions, exercises, and source-page evidence; page-image-only output is not complete.
+- Return the requested validated color/black-white PDF editions to the exact source chat. Keep source books, segment caches, logs, and intermediate chunks local unless explicitly requested.
+
 Shipinhao/Finder and short-video shares:
 - Treat the deterministic resolver as the method owner. For a standalone rerun use `PYTHONPATH=src python -m agenticapp wechat shipinhao-transcribe --source-text-file <exact-card.txt> --output-dir {artifact_dir}/shipinhao_media_transcript --json`. It owns signed-URL download, cover OCR/translation, bounded public-source search, longer-source excerpt isolation, ffprobe validation, Whisper transcription, caching, and the private evidence manifest. Do not make the backend agent rediscover those steps manually.
 - If that routine remains unresolved and its packet supplies `public_mirror_recovery.cover_path` plus `source_text_file`, inspect the cover privately with vision, derive at most three concise speaker/topic/source hints, and rerun the same CLI with repeatable `--search-hint "..."` arguments. The deterministic identity gate must still accept the transcript; an agent's visual guess alone is never evidence. Do not expose the cover path or search diagnostics in WeChat.
@@ -13670,6 +13714,8 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         effort = routine_effort or "xhigh"
     elif routine_id == "presentation_deck":
         effort = routine_effort or "xhigh"
+    elif routine_id in {"book_search", "multilingual_book"} and routine_effort:
+        effort = routine_effort
     elif protein_structure_task:
         effort = "ultra"
     elif routine_id in {"research_summary", "story_script_generation"} and routine_effort:
@@ -14108,6 +14154,38 @@ def private_worker_failure_result(text: str) -> dict[str, Any]:
         "no_reply": True,
         "private_failure": {"kind": kind},
     }
+
+
+def terminal_worker_failure_feedback(
+    task: dict[str, Any],
+    result: dict[str, Any],
+) -> str:
+    """Return one quiet source-scoped receipt after all backends have failed."""
+    if not isinstance(result.get("private_failure"), dict):
+        return ""
+    if task.get("terminal_failure_feedback"):
+        return ""
+    if is_isolated_scheduled_task(task):
+        return ""
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    has_exact_source = any(
+        source.get(key) not in (None, "")
+        for key in (
+            "local_id",
+            "server_id",
+            "message_id",
+            "msg_id",
+            "source_row_id",
+        )
+    )
+    if not has_exact_source:
+        return ""
+    request_text = str(task.get("request") or "")
+    if re.search(r"[\u3040-\u30ff]", request_text):
+        return "このタスクは完了できませんでした。再試行は停止しており、重複送信はありません。"
+    if re.search(r"[\u3400-\u9fff]", request_text):
+        return "这次任务没有完成，已停止重试，不会重复发送。"
+    return "This task did not complete. Retries have stopped, so it will not send duplicates."
 
 
 def extract_worker_json_payload(text: str) -> dict[str, Any] | None:

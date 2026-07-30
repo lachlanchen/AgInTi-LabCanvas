@@ -55,6 +55,19 @@ Routines are callable contracts and cheat sheets for mature work such as
 LazyEdit, Xiaoyunque, CAD/PCB, media sync, PDFs, and artifact sending. They
 should speed the agent up, not replace agent reasoning.
 
+Book work follows the same principle. Use `labcanvas books search` for exact
+candidate metadata through the canonical `../Books` browser, and use
+`labcanvas books polyglot` for durable multilingual projects in
+`../ZhJpBook`. Do not open duplicate browser profiles, rebuild PocketPolyglot,
+or turn a metadata candidate into an unauthorized download. Long book jobs
+remain in one resumable project and return concise progress or validated
+editions without per-poll chat messages.
+
+If every configured backend fails, raw backend diagnostics stay private.
+Interactive source messages receive one short terminal receipt so the chat
+does not remain silently ambiguous; scheduled/background tasks stay quiet.
+The failed queue row is terminal and is not replayed after restart.
+
 ## Strict AgInTi Fallback
 
 ## Central Model Policy

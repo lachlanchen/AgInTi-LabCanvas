@@ -73,6 +73,39 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertIn("song_and_mv_delivery", contract["required_gates"])
         self.assertIn("timing and soundtrack authority", " ".join(contract["rules"]))
 
+    def test_book_search_reuses_guarded_books_control_plane(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "book_search", "project": "books"},
+            "Find the best Japanese edition of this book.",
+            task_id="task-book-search",
+            chat="Shares",
+        )
+        rules = " ".join(contract["rules"])
+
+        self.assertEqual(contract["id"], "book_search")
+        self.assertEqual(contract["default_effort"], "medium")
+        self.assertIn("guarded_source_search", [item["id"] for item in contract["stages"]])
+        self.assertIn("labcanvas books", rules)
+        self.assertIn("never authorizes a copyrighted download", rules)
+
+    def test_multilingual_book_uses_durable_polyglot_project(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "multilingual_book", "project": "zhjpbook"},
+            "Continue the PocketPolyglot quadrilingual book and report progress.",
+            task_id="task-polyglot",
+            chat="My devices",
+        )
+        rules = " ".join(contract["rules"])
+
+        self.assertEqual(contract["id"], "multilingual_book")
+        self.assertEqual(contract["default_effort"], "high")
+        self.assertIn("progress_and_validation", contract["required_gates"])
+        self.assertIn("deliver_book_artifacts", contract["required_gates"])
+        self.assertIn("../ZhJpBook/studio/pocketpolyglot", rules)
+        self.assertIn("do not bombard", rules.lower())
+
     def test_text_fallback_selects_story_before_visual_routines(self) -> None:
         routines = load_routines()
         routine_id = routines.routine_id_for_route({}, "generate a story about RaraXia and AyaChan")

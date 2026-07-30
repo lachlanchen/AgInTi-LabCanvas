@@ -557,6 +557,37 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(guarded["project"], "musia")
         self.assertFalse(guarded["public_publish_allowed"])
 
+    def test_book_search_routes_to_guarded_books_worker(self) -> None:
+        config = self.backend_chat_config("Shares", "link_inbox")
+        text = "Find the best Japanese edition of this book in ../Books."
+        row = self.row(text)
+
+        route = direct_chatops.fallback_route_decision(config, text, row, [row])
+
+        self.assertEqual(route["route_kind"], "book_search")
+        self.assertEqual(route["project"], "books")
+        self.assertTrue(route["worker_needed"])
+        self.assertFalse(route["public_publish_allowed"])
+
+    def test_pocketpolyglot_progress_routes_to_interruptible_project(self) -> None:
+        config = self.backend_chat_config("My devices", "personal_organizer")
+        text = "Continue the PocketPolyglot quadrilingual book and report progress."
+        row = self.row(text)
+
+        route = direct_chatops.fallback_route_decision(config, text, row, [row])
+
+        self.assertEqual(route["route_kind"], "multilingual_book")
+        self.assertEqual(route["project"], "zhjpbook")
+        self.assertTrue(route["worker_needed"])
+        self.assertTrue(
+            direct_chatops.is_interruptible_task(
+                {
+                    "route_decision": route,
+                    "routine": {"id": "multilingual_book"},
+                }
+            )
+        )
+
     def test_link_inbox_mp_weixin_preempts_cad_markers_inside_url_hashes(self) -> None:
         config = self.backend_chat_config("鏈接", "link_inbox")
         text = (

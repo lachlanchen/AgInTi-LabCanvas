@@ -43,6 +43,15 @@ Current routines:
 
 - `research_summary`: papers, PDFs, links, summaries, and source-grounded
   answers.
+- `book_search`: exact title/author/language/edition discovery through
+  `labcanvas books search` and the sibling `../Books` guarded browser. Search
+  candidates are metadata evidence, not permission to download copyrighted
+  material.
+- `multilingual_book`: one durable PocketPolyglot project for creating,
+  continuing, repairing, validating, or reporting progress on bilingual and
+  multilingual books. It delegates to `labcanvas books polyglot` and
+  `../ZhJpBook/studio/pocketpolyglot` rather than duplicating its queue, OCR,
+  TeX, or validation pipeline.
 - `career_strategy`: writing direction, career positioning, monetization,
   talent/strength synthesis, market/opportunity research, and daily strategy
   notes for `写作 外语 挣钱` and `lachlanchan`.

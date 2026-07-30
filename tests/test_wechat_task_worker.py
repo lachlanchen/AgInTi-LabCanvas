@@ -440,6 +440,87 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             "transient_backend_unavailable",
         )
 
+    def test_process_one_sends_one_safe_terminal_feedback_for_interactive_failure(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "interactive-failed-backend",
+                        "chat": "wecom:group:labagent",
+                        "request": "请继续处理这个研究任务。",
+                        "status": "pending",
+                        "source": {
+                            "message_table": "messages",
+                            "local_id": 42,
+                            "server_id": "server-42",
+                        },
+                        "route_decision": {"route_kind": "other_worker"},
+                    }
+                ],
+            )
+            raw = (
+                "Worker failed via codex: open error [Errno -3] "
+                "Temporary failure in name resolution"
+            )
+            passthrough = lambda _task, result, *_args, **_kwargs: result
+            with (
+                mock.patch.object(worker, "run_worker_codex", return_value=raw),
+                mock.patch.object(
+                    worker,
+                    "enforce_worker_result_contract",
+                    side_effect=passthrough,
+                ),
+                mock.patch.object(
+                    worker,
+                    "attach_audio_transcript_reference",
+                    side_effect=lambda _task, result: result,
+                ),
+                mock.patch.object(
+                    worker,
+                    "prepare_result_files",
+                    side_effect=lambda result, *_args, **_kwargs: result,
+                ),
+                mock.patch.object(
+                    worker,
+                    "audit_and_repair_worker_completion",
+                    side_effect=lambda _task, result: result,
+                ),
+                mock.patch.object(worker, "record_event"),
+                mock.patch.object(
+                    worker,
+                    "send_result_with_retries",
+                    return_value=[],
+                ) as sender,
+            ):
+                self.assertTrue(
+                    worker.process_one(
+                        queue,
+                        "wecom:group:labagent",
+                        send=True,
+                        send_targets=Path(tmp) / "targets.json",
+                        log_idle=False,
+                    )
+                )
+            stored = worker.find_task(queue, "interactive-failed-backend")
+
+        sender.assert_called_once()
+        delivered = sender.call_args.args[0]
+        self.assertEqual(
+            delivered["message"],
+            "这次任务没有完成，已停止重试，不会重复发送。",
+        )
+        self.assertNotIn("codex", delivered["message"].lower())
+        self.assertNotIn("name resolution", delivered["message"].lower())
+        self.assertEqual(stored["status"], "worker_failed")
+        self.assertEqual(stored["terminal_failure_feedback"]["status"], "sent")
+        self.assertEqual(
+            stored["worker_error"]["type"],
+            "transient_backend_unavailable",
+        )
+
     def test_merge_keeps_more_than_twenty_numbered_interruptions(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1031,6 +1112,40 @@ stderr: noisy internal trace
         self.assertIn("reviewed Musia master", context)
         self.assertIn("independent permissions", context)
         self.assertIn("current request explicitly authorizes", context)
+
+    def test_worker_tool_context_reuses_books_and_pocketpolyglot(self) -> None:
+        worker = load_worker()
+
+        context = worker.build_worker_tool_context(
+            {
+                "id": "polyglot-task",
+                "chat": "My devices",
+                "request": "Continue this quadrilingual PocketPolyglot book.",
+                "route_decision": {
+                    "route_kind": "multilingual_book",
+                    "project": "zhjpbook",
+                },
+                "routine": {
+                    "id": "multilingual_book",
+                    "default_effort": "high",
+                },
+            }
+        )
+        policy = worker.choose_worker_policy(
+            {
+                "request": "Continue this quadrilingual PocketPolyglot book.",
+                "routine": {
+                    "id": "multilingual_book",
+                    "default_effort": "high",
+                },
+            }
+        )
+
+        self.assertIn("python -m agenticapp books search", context)
+        self.assertIn("python -m agenticapp books polyglot", context)
+        self.assertIn("one durable project per book", context)
+        self.assertIn("never download copyrighted material", context)
+        self.assertEqual(policy["reasoning_effort"], "high")
 
     def test_worker_policy_uses_medium_for_literature_summary(self) -> None:
         worker = load_worker()

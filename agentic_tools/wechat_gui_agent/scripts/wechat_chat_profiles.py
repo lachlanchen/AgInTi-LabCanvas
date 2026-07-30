@@ -21,6 +21,8 @@ SHARED_CAPABILITIES = (
     "image_generation_and_editing",
     "musia_music_generation_and_review",
     "musia_song_first_music_video",
+    "book_source_search",
+    "pocketpolyglot_multilingual_books",
     "video_generation_and_download",
     "lazyedit_video_processing",
     "explicitly_authorized_video_publication",

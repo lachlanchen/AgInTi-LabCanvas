@@ -80,6 +80,7 @@ INTERRUPTIBLE_ROUTE_KINDS = {
     "career_strategy",
     "grant_proposal",
     "presentation_generation",
+    "multilingual_book",
 }
 INTERRUPTIBLE_ROUTINE_IDS = {
     "story_script_generation",
@@ -89,6 +90,7 @@ INTERRUPTIBLE_ROUTINE_IDS = {
     "career_strategy",
     "grant_proposal",
     "presentation_deck",
+    "multilingual_book",
 }
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 
@@ -3391,6 +3393,8 @@ Allowed route_kind values:
 - edit_existing_media
 - music_generation
 - music_to_mv
+- book_search
+- multilingual_book
 - generate_video
 - process_existing_video
 - publish_video
@@ -3410,6 +3414,8 @@ Important distinction:
 - PowerPoint/PPTX/slide-deck requests should route to presentation_generation. The worker owns editable native slide text and geometry, a presentation manifest, selective supporting assets, rendered preview inspection, and PPTX delivery. Image generation may create bounded material assets, never a complete slide or slide background.
 - Song, singing, melody, composition, lyrics-to-song, or music-production requests should route to music_generation and reuse Musia Studio. A request that explicitly asks to create/review the music and then make an MV/video from that music should route to music_to_mv. The reviewed Musia master audio is the timing authority; do not collapse music creation into generic generate_video.
 - Music generation, MV generation, and public publication are separate stages. A music_generation request stops after reviewed audio/artifacts unless the current request also asks for an MV. A music_to_mv request returns the song and verified MP4 but does not publicly post unless the current request separately authorizes publication.
+- Requests to find, compare, or locate a book/edition/source should route to book_search and reuse `labcanvas books search` plus the sibling `../Books` catalog. Search/detail metadata never authorizes a copyrighted download.
+- Requests to create, continue, repair, validate, or report progress for a bilingual/trilingual/quadrilingual/PocketPolyglot/LinguaLeaf/ZhJpBook book should route to multilingual_book. Reuse the durable sibling PocketPolyglot Studio through `labcanvas books polyglot`; do not rebuild its OCR, TeX, queue, or validation pipeline.
 - If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
 - Every monitored chat uses the same shared backend capability framework. The per-chat profile changes ordinary defaults and proactive schedules only. A safe explicit request always overrides the focus and may use CAD/PCB, Blender, figures, presentations, image/video generation, LazyEdit processing/publication, file/media handling, writing, Markdown, LaTeX, PDFs, or another available routine.
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
@@ -3438,7 +3444,7 @@ Available backend routines:
 JSON schema:
 {{
   "route_kind": "career_strategy",
-  "project": "lalachan|labcanvas|lazyedit|musia|career|generic|unknown",
+  "project": "lalachan|labcanvas|lazyedit|musia|books|zhjpbook|career|generic|unknown",
   "worker_needed": true,
   "needs_recent_media": false,
   "public_publish_intent": false,
@@ -3553,6 +3559,10 @@ def fallback_route_decision(
         route_kind = "career_strategy"
     elif is_presentation_artifact_task(text):
         route_kind = "presentation_generation"
+    elif is_multilingual_book_task(text):
+        route_kind = "multilingual_book"
+    elif is_book_search_task(text):
+        route_kind = "book_search"
     elif is_document_artifact_task(text):
         route_kind = "other_worker"
     elif is_cad_pcb_labcanvas_task(text):
@@ -3593,11 +3603,16 @@ def fallback_route_decision(
         project = "labcanvas"
     elif route_kind in {"music_generation", "music_to_mv"}:
         project = "musia"
+    elif route_kind == "book_search":
+        project = "books"
+    elif route_kind == "multilingual_book":
+        project = "zhjpbook"
     else:
         project = "unknown"
     needs_recent_media = (
         route_kind in {"edit_existing_media", "publish_video", "process_existing_video", "file_download_or_save", "file_intake"}
         or (route_kind in {"music_generation", "music_to_mv"} and references_recent_media(text))
+        or (route_kind == "multilingual_book" and references_recent_media(text))
         or link_inbox_summary_task
     )
     route = {
@@ -3610,7 +3625,7 @@ def fallback_route_decision(
         "external_action_allowed": bool(
             publish_allowed
             or (
-                route_kind in {"generate_video", "generate_image", "music_generation", "music_to_mv", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary", "grant_proposal"}
+                route_kind in {"generate_video", "generate_image", "music_generation", "music_to_mv", "book_search", "multilingual_book", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary", "grant_proposal"}
                 and not permission_question
             )
             or route_kind == "career_strategy"
@@ -3665,6 +3680,8 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         "edit_existing_media",
         "music_generation",
         "music_to_mv",
+        "book_search",
+        "multilingual_book",
         "generate_video",
         "process_existing_video",
         "publish_video",
@@ -3983,6 +4000,143 @@ def is_music_generation_task(text: str) -> bool:
     )
     return any(marker in lowered for marker in music_markers) and any(
         marker in lowered for marker in action_markers
+    )
+
+
+def is_multilingual_book_task(text: str) -> bool:
+    """Fallback wake gate for the existing PocketPolyglot control plane."""
+    lowered = collapse_text(str(text or "")).casefold()
+    workflow_markers = (
+        "pocketpolyglot",
+        "pocket polyglot",
+        "lingualeaf",
+        "lingua leaf",
+        "zhjpbook",
+        "multilingual book",
+        "bilingual book",
+        "trilingual book",
+        "quadrilingual book",
+        "interlinear book",
+        "parallel-text book",
+        "双语书",
+        "雙語書",
+        "三语书",
+        "三語書",
+        "四语书",
+        "四語書",
+        "多语书",
+        "多語書",
+        "对照书",
+        "對照書",
+        "口袋书",
+        "口袋書",
+    )
+    action_markers = (
+        "create",
+        "make",
+        "build",
+        "generate",
+        "continue",
+        "resume",
+        "repair",
+        "fix",
+        "compile",
+        "validate",
+        "export",
+        "status",
+        "progress",
+        "queue",
+        "创建",
+        "創建",
+        "制作",
+        "製作",
+        "生成",
+        "继续",
+        "繼續",
+        "恢复",
+        "恢復",
+        "修复",
+        "修復",
+        "编译",
+        "編譯",
+        "验证",
+        "驗證",
+        "导出",
+        "導出",
+        "状态",
+        "狀態",
+        "进度",
+        "進度",
+        "队列",
+        "隊列",
+    )
+    return any(marker in lowered for marker in workflow_markers) and any(
+        marker in lowered for marker in action_markers
+    )
+
+
+def is_book_search_task(text: str) -> bool:
+    """Fallback wake gate for exact book/edition/source discovery."""
+    lowered = collapse_text(str(text or "")).casefold()
+
+    def has_marker(marker: str) -> bool:
+        if marker.startswith("../") or any(ord(char) > 127 for char in marker):
+            return marker in lowered
+        return re.search(
+            rf"(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])",
+            lowered,
+        ) is not None
+
+    source_markers = (
+        "../books",
+        "books repo",
+        "book catalog",
+        "book database",
+        "libgen",
+        "library genesis",
+        "book",
+        "ebook",
+        "e-book",
+        "epub",
+        "novel",
+        "书",
+        "書",
+        "电子书",
+        "電子書",
+        "图书",
+        "圖書",
+        "小说",
+        "小說",
+    )
+    search_markers = (
+        "find",
+        "search",
+        "locate",
+        "look for",
+        "recommend",
+        "which edition",
+        "which translation",
+        "source",
+        "download source",
+        "找",
+        "查找",
+        "搜索",
+        "搜寻",
+        "搜尋",
+        "检索",
+        "檢索",
+        "推荐",
+        "推薦",
+        "哪个版本",
+        "哪個版本",
+        "译本",
+        "譯本",
+        "版本",
+        "来源",
+        "來源",
+    )
+    return any(has_marker(marker) for marker in source_markers) and any(
+        has_marker(marker) for marker in search_markers
     )
 
 
@@ -4740,6 +4894,8 @@ def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
         return (
             is_file_download_or_save_task(text)
             or is_cad_pcb_labcanvas_task(text)
+            or is_multilingual_book_task(text)
+            or is_book_search_task(text)
             or has_video_generation_intent(text)
             or is_story_or_script_task(text)
             or has_public_publish_intent(text)
@@ -4751,6 +4907,8 @@ def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
     return (
         is_file_download_or_save_task(text)
         or is_cad_pcb_labcanvas_task(text)
+        or is_multilingual_book_task(text)
+        or is_book_search_task(text)
         or has_video_generation_intent(text)
         or is_story_or_script_task(text)
         or has_public_publish_intent(text)

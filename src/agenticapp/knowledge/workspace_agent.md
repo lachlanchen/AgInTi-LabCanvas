@@ -289,6 +289,33 @@ Validate:
 - Use GPT-5.6 SOL with xhigh reasoning for substantial research, narrative
   structure, and visual synthesis. Use lower effort for narrow edits or exports.
 
+## Books and PocketPolyglot
+
+- Use `labcanvas books search` for source discovery. It reuses the canonical
+  AgenticBrowser CDP profile and the sibling `../Books` search tool, closes
+  known ad targets, and returns exact metadata plus detail-page candidates.
+  Search local/public-domain sources first when appropriate. Do not treat a
+  search result as permission to download copyrighted material.
+- Use `labcanvas books polyglot ...` for multilingual book work. It delegates
+  to the existing `../ZhJpBook/studio/pocketpolyglot` control plane instead of
+  reimplementing LinguaLeaf, OCR, exact-TeX, PocketPolished, or validation
+  logic in LabCanvas.
+- Keep one durable PocketPolyglot project per book. Register an exact local
+  source with `polyglot source-add`, launch a typed capability with
+  `polyglot run`, and monitor it with `polyglot status` or
+  `polyglot progress`. Long jobs must survive the chat turn and remain
+  resumable in the Studio job ledger.
+- A completed multilingual book requires current-manifest coverage, real
+  editable TeX where the workflow requires it, a table of contents, readable
+  PDFs, and workflow-specific validation evidence. Technical books must
+  preserve figures, equations, tables, diagrams, notation, captions, and
+  source-page evidence rather than flattening them into prose or page images.
+- For modern-language work, return both requested reading directions when the
+  renderer supports them. For classical Chinese, prefer the established
+  wenyan/English/modern-Japanese/modern-Chinese quadrilingual shape. Return the
+  useful color and black-white PDFs to the exact source chat when requested;
+  keep intermediate chunks and logs local.
+
 ## WeChat
 
 - Treat WeChat as a message and artifact transport to the same agent routines.

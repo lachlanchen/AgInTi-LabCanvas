@@ -926,10 +926,13 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "chat-sync dry-open alarm is long enough to refresh inactive groups",
             "chat-sync retryable failures back off per chat without blocking other groups",
             "plain story/script requests route to the same worker capability set in research and device chats",
+            "book source discovery routes to the guarded sibling Books control plane without authorizing downloads",
+            "multilingual book work routes to one durable PocketPolyglot project and remains interruptible",
             "all monitored chats route explicit backend/tool/artifact requests through the shared routine skill surface",
             "EchoMind remains language-learning by default while explicit backend instructions enqueue worker routines",
             "backend runtime session metadata can never become a user-facing WeChat reply",
             "backend failure diagnostics remain private and cannot become a chat reply",
+            "an interactive task gets one short source-scoped terminal receipt after all backends fail",
             "legacy WeCom tasks can never fall back to the personal-WeChat sender",
             "an exact-row backfill isolates one chat-local message and restores the live cursor",
             "route and worker Codex exec calls resume exact per-chat sessions by role",
@@ -1085,6 +1088,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": direct_prefix + "test_plain_story_generation_routes_to_story_worker_for_research_and_device_chats",
         },
         {
+            "id": "book_search_guarded_route",
+            "test": direct_prefix + "test_book_search_routes_to_guarded_books_worker",
+        },
+        {
+            "id": "pocketpolyglot_durable_route",
+            "test": direct_prefix + "test_pocketpolyglot_progress_routes_to_interruptible_project",
+        },
+        {
             "id": "all_chats_shared_backend_routes",
             "test": direct_prefix + "test_all_monitored_chats_share_backend_route_skills_for_explicit_work",
         },
@@ -1099,6 +1110,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "backend_failure_diagnostics_not_chat",
             "test": worker_prefix + "test_backend_diagnostics_are_private_no_reply_results",
+        },
+        {
+            "id": "backend_failure_safe_terminal_receipt",
+            "test": worker_prefix + "test_process_one_sends_one_safe_terminal_feedback_for_interactive_failure",
         },
         {
             "id": "legacy_wecom_transport_not_personal_wechat",

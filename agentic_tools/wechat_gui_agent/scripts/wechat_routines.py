@@ -551,6 +551,112 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "If Xiaoyunque changes or degrades the audio, remux the reviewed Musia master into the final visual output.",
         ),
     ),
+    "book_search": RoutineDefinition(
+        id="book_search",
+        title="Book Search And Source Selection",
+        route_kinds=("book_search",),
+        purpose=(
+            "Search the local Books catalog, lawful public sources, and guarded "
+            "book-detail candidates without reimplementing browser controls."
+        ),
+        default_effort="medium",
+        stages=(
+            {
+                "id": "request_and_local_inventory",
+                "owner": "worker_agent",
+                "entrypoint": "same-chat request + ../Books catalog/references",
+                "success": "title, author, language, edition, format, and local availability are resolved as far as possible",
+            },
+            {
+                "id": "guarded_source_search",
+                "owner": "worker_agent",
+                "entrypoint": "labcanvas books search --language/--title-term/--author-term",
+                "success": "exact metadata-ranked detail candidates or a source-limited blocker are recorded",
+            },
+            {
+                "id": "candidate_selection",
+                "owner": "worker_agent",
+                "entrypoint": "Books selection policy + public-domain/open-license checks",
+                "success": "the response distinguishes local, lawful public, and metadata-only candidates",
+            },
+            {
+                "id": "deliver_book_result",
+                "owner": "queue_orchestrator",
+                "entrypoint": "send_result_with_retries",
+                "success": "a concise candidate recommendation and any explicitly requested lawful source artifact reach the source chat",
+            },
+        ),
+        artifact_policy=(
+            "Return a concise ranked candidate answer by default. Attach a book "
+            "file only when the current request asks for it and the source is "
+            "local, public-domain, openly licensed, or otherwise authorized."
+        ),
+        rules=COMMON_RULES
+        + (
+            "Reuse ../Books and the canonical AgenticBrowser through `labcanvas books`; do not build another browser or open duplicate profiles.",
+            "Search local catalog and public-domain/open sources before metadata-only candidates when they satisfy the request.",
+            "Match title, author, language, edition, year, and format; prefer PDF over EPUB only when the user did not state another format preference.",
+            "A LibGen result is metadata/detail-page evidence only and never authorizes a copyrighted download.",
+            "Do not claim a book was saved, opened, or downloaded unless the exact resulting file or browser state was verified.",
+        ),
+    ),
+    "multilingual_book": RoutineDefinition(
+        id="multilingual_book",
+        title="PocketPolyglot Multilingual Book",
+        route_kinds=("multilingual_book",),
+        purpose=(
+            "Create, continue, repair, validate, or report progress for a durable "
+            "multilingual book through the existing PocketPolyglot Studio."
+        ),
+        default_effort="high",
+        stages=(
+            {
+                "id": "exact_source_and_project",
+                "owner": "worker_agent",
+                "entrypoint": "same-chat exact attachment + labcanvas books polyglot projects/create/source-add",
+                "success": "one durable project owns the exact source, workflow, source language, and requested target languages",
+            },
+            {
+                "id": "prepare_or_resume_pipeline",
+                "owner": "worker_agent",
+                "entrypoint": "labcanvas books polyglot chat or the existing project pipeline",
+                "success": "the project uses an established LinguaLeaf, exact-TeX, PocketPolished, or custom capability contract",
+            },
+            {
+                "id": "durable_book_job",
+                "owner": "worker_agent_supervised_by_queue",
+                "entrypoint": "labcanvas books polyglot run <project> <capability>",
+                "success": "a PocketPolyglot tmux job and evidence ledger exist; long generation is not held inside one chat turn",
+            },
+            {
+                "id": "progress_and_validation",
+                "owner": "worker_agent_supervised_by_queue",
+                "entrypoint": "labcanvas books polyglot status/progress + repository validators/compilers",
+                "success": "manifest coverage, real TeX, TOC, readable PDFs, figures/equations, and workflow-specific evidence pass",
+            },
+            {
+                "id": "deliver_book_artifacts",
+                "owner": "queue_orchestrator",
+                "entrypoint": "prepare_result_files -> send_result_with_retries",
+                "success": "requested color/black-white PDFs and useful source/status artifacts reach the exact source chat",
+            },
+        ),
+        required_gates=("progress_and_validation", "deliver_book_artifacts"),
+        artifact_policy=(
+            "Return the validated color and black-white PDFs requested by the "
+            "user, plus concise progress or source artifacts only when useful. "
+            "Keep chunks, caches, logs, and large source files local."
+        ),
+        rules=COMMON_RULES
+        + (
+            "Reuse ../ZhJpBook/studio/pocketpolyglot through `labcanvas books polyglot`; never duplicate its queue, OCR, TeX, validation, or Codex-session logic.",
+            "Keep one durable project per book and resume its existing jobs instead of launching duplicate long queues.",
+            "Modern paired books should produce both requested reading directions when supported. Classical Chinese defaults to wenyan, English, readable modern Japanese, and modern Chinese.",
+            "Technical books must preserve editable equations, figures, tables, diagrams, notation, captions, exercises, and source-page evidence; page-image-only output is not complete.",
+            "Do not claim completion until current-manifest coverage, table of contents, readable PDFs, and workflow-specific validation evidence pass.",
+            "Send progress naturally when asked, but do not bombard the chat with per-chunk or polling updates.",
+        ),
+    ),
     "grant_proposal": RoutineDefinition(
         id="grant_proposal",
         title="Evidence-Grounded Grant Proposal",
@@ -736,6 +842,32 @@ def routine_id_for_route(route_decision: dict[str, Any] | None, request_text: st
         return "musia_music_to_mv"
     if any(marker in lowered for marker in ("music", "song", "melody", "vocal", "歌曲", "音乐", "音樂", "旋律", "作曲", "编曲", "編曲")):
         return "musia_music_generation"
+    if any(
+        marker in lowered
+        for marker in (
+            "pocketpolyglot",
+            "lingualeaf",
+            "zhjpbook",
+            "multilingual book",
+            "bilingual book",
+            "trilingual book",
+            "quadrilingual book",
+            "双语书",
+            "雙語書",
+            "三语书",
+            "三語書",
+            "四语书",
+            "四語書",
+            "多语书",
+            "多語書",
+        )
+    ):
+        return "multilingual_book"
+    if any(marker in lowered for marker in ("../books", "libgen", "book catalog", "book database")) or (
+        any(marker in lowered for marker in ("book", "ebook", "epub", "书", "書", "电子书", "電子書"))
+        and any(marker in lowered for marker in ("find", "search", "locate", "找", "查找", "搜索", "检索", "檢索"))
+    ):
+        return "book_search"
     if any(marker in lowered for marker in ("pcb", "kicad", "openscad", "blender", "cad", "gerber", "render", "渲染", "电路板")):
         return "labcanvas_cad_pcb"
     if any(marker in lowered for marker in ("xiaoyunque", "seedance", "小云雀")) or (

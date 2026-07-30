@@ -37,6 +37,9 @@ AgInTi LabCanvas is a small Python CLI and web package. Production code lives in
 - `PYTHONPATH=src python -m agenticapp social campaign create --project pocketpolyglot --name introduction --objective "Introduce the usable open-source Studio" --platform x --platform reddit:r/languagelearning --platform hackernews`: create a platform-specific campaign brief.
 - `PYTHONPATH=src python -m agenticapp social draft generate CAMPAIGN_ID --dry-run --json`: inspect the medium-effort Codex drafting contract without quota use or external writes.
 - `PYTHONPATH=src python -m agenticapp social maintain CAMPAIGN_ID --integration x=POSTIZ_X_ID --days 30 --dry-run`: inspect the source-grounded analytics and follow-up contract without provider reads or model quota.
+- `PYTHONPATH=src python -m agenticapp books status --json`: inspect the sibling Books guarded-browser search and PocketPolyglot Studio control planes.
+- `PYTHONPATH=src python -m agenticapp books search "Pride and Prejudice" --language eng --title-term "Pride and Prejudice" --json`: return metadata-ranked book/detail candidates without authorizing or performing a copyrighted download.
+- `PYTHONPATH=src python -m agenticapp books polyglot projects --json && PYTHONPATH=src python -m agenticapp books polyglot progress --project PROJECT --json`: inspect durable multilingual-book projects and browser-visible progress through the existing `../ZhJpBook` Studio.
 - `PYTHONPATH=src python -m agenticapp studio figure-grid "optical icons 2x3" --rows 2 --cols 3`: run the same artifact action as the web canvas.
 - `PYTHONPATH=src python -m agenticapp studio dispatch blender "Prepare an editable paper figure setup"`: dry-run a configured target and register the envelope as an artifact.
 - `PYTHONPATH=src python -m agenticapp wechat worker --chat "懒人科研" enqueue "Use LabCanvas to render a PCB and CAD preview"`: enqueue slower WeChat backend work that can call CAD, PCB, Blender, and LabCanvas tools.

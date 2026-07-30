@@ -331,6 +331,57 @@ def capability_catalog(root: str | Path) -> list[dict[str, Any]]:
             "outputs": ["WAV/MP3", "lyrics", "review notes", "cover", "MV handoff", "MP4"],
         },
         {
+            "id": "books-search",
+            "title": "Local catalog and guarded browser book search",
+            "ready": (
+                project_root.parent
+                / "Books"
+                / "tools"
+                / "book_search"
+                / "libgen_browser_context_search.py"
+            ).is_file(),
+            "commands": [
+                "labcanvas books status",
+                "labcanvas books search",
+            ],
+            "paths": [
+                "../Books",
+                "src/agenticapp/books_ops.py",
+            ],
+            "outputs": ["candidate metadata", "detail URLs", "source notes"],
+        },
+        {
+            "id": "pocketpolyglot-books",
+            "title": "Persistent multilingual PocketPolyglot book production",
+            "ready": (
+                project_root.parent
+                / "ZhJpBook"
+                / "studio"
+                / "pocketpolyglot"
+            ).is_file(),
+            "commands": [
+                "labcanvas books polyglot projects",
+                "labcanvas books polyglot create",
+                "labcanvas books polyglot source-add",
+                "labcanvas books polyglot run",
+                "labcanvas books polyglot status",
+                "labcanvas books polyglot progress",
+            ],
+            "paths": [
+                "../ZhJpBook",
+                "../ZhJpBook/studio",
+                "src/agenticapp/books_ops.py",
+            ],
+            "outputs": [
+                "multilingual JSON",
+                "TeX",
+                "color PDF",
+                "black-white PDF",
+                "cover",
+                "validation evidence",
+            ],
+        },
+        {
             "id": "protein-structure",
             "title": "ProteinStructure AlphaFold browser, metrics, and evidence workflow",
             "ready": (
@@ -528,6 +579,12 @@ def selected_packaged_knowledge(message: str) -> str:
         "Music and Music Video": (
             "music", "song", "melody", "vocal", "singing", "musia", "music video", "mv",
             "歌曲", "音乐", "音樂", "旋律", "人声", "人聲", "作曲", "编曲", "編曲",
+        ),
+        "Books and PocketPolyglot": (
+            "book", "books", "ebook", "epub", "libgen", "pocketpolyglot",
+            "lingualeaf", "zhjpbook", "multilingual book", "bilingual book",
+            "trilingual book", "quadrilingual book", "书", "書", "电子书", "電子書",
+            "双语书", "雙語書", "三语书", "三語書", "四语书", "四語書", "多语书", "多語書",
         ),
         "WeChat": ("wechat", "微信", "group chat", "chatops"),
         "LabVIEW and Instrument Control": ("labview", "instrument", "camera", "vi ", "仪器"),
