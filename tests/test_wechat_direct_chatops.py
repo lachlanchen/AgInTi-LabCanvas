@@ -557,6 +557,26 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(guarded["project"], "musia")
         self.assertFalse(guarded["public_publish_allowed"])
 
+    def test_generate_video_keeps_lalachan_project_when_route_agent_mislabels_it(self) -> None:
+        config = self.backend_chat_config("MEMO写作—外语—挣钱", "personal_organizer")
+        text = "使用 Lala Studio 生成今天的 15s 视频，先告诉我故事，不要急着生成。"
+        row = self.row(text)
+        fallback = direct_chatops.fallback_route_decision(config, text, row, [row])
+
+        guarded = direct_chatops.enforce_route_safety(
+            {
+                "route_kind": "generate_video",
+                "project": "lazyedit",
+                "worker_needed": True,
+                "public_publish_allowed": False,
+            },
+            text,
+            fallback,
+        )
+
+        self.assertEqual(fallback["project"], "lalachan")
+        self.assertEqual(guarded["project"], "lalachan")
+
     def test_book_search_routes_to_guarded_books_worker(self) -> None:
         config = self.backend_chat_config("Shares", "link_inbox")
         text = "Find the best Japanese edition of this book in ../Books."
@@ -587,6 +607,35 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 }
             )
         )
+
+    def test_explicit_lazyedit_bug_report_routes_to_feedback_worker(self) -> None:
+        config = self.backend_chat_config("My devices", "personal_organizer")
+        text = "Please write a bug report for LazyEdit about the missing job-scoped QR artifact."
+        row = self.row(text)
+
+        route = direct_chatops.fallback_route_decision(config, text, row, [row])
+
+        self.assertEqual(route["route_kind"], "cross_repo_feedback")
+        self.assertEqual(route["project"], "lazyedit")
+        self.assertTrue(route["worker_needed"])
+        self.assertTrue(
+            direct_chatops.is_interruptible_task(
+                {
+                    "route_decision": route,
+                    "routine": {"id": "cross_repo_feedback"},
+                }
+            )
+        )
+
+    def test_normal_research_report_is_not_cross_repo_feedback(self) -> None:
+        config = self.backend_chat_config("LabAgent", "research")
+        text = "Write a PDF research report comparing organoid imaging methods."
+        row = self.row(text)
+
+        route = direct_chatops.fallback_route_decision(config, text, row, [row])
+
+        self.assertFalse(direct_chatops.is_cross_repo_feedback_task(text))
+        self.assertNotEqual(route["route_kind"], "cross_repo_feedback")
 
     def test_link_inbox_mp_weixin_preempts_cad_markers_inside_url_hashes(self) -> None:
         config = self.backend_chat_config("鏈接", "link_inbox")

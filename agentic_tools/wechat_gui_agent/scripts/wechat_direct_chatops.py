@@ -81,6 +81,7 @@ INTERRUPTIBLE_ROUTE_KINDS = {
     "grant_proposal",
     "presentation_generation",
     "multilingual_book",
+    "cross_repo_feedback",
 }
 INTERRUPTIBLE_ROUTINE_IDS = {
     "story_script_generation",
@@ -91,6 +92,7 @@ INTERRUPTIBLE_ROUTINE_IDS = {
     "grant_proposal",
     "presentation_deck",
     "multilingual_book",
+    "cross_repo_feedback",
 }
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 
@@ -3395,6 +3397,7 @@ Allowed route_kind values:
 - music_to_mv
 - book_search
 - multilingual_book
+- cross_repo_feedback
 - generate_video
 - process_existing_video
 - publish_video
@@ -3416,6 +3419,7 @@ Important distinction:
 - Music generation, MV generation, and public publication are separate stages. A music_generation request stops after reviewed audio/artifacts unless the current request also asks for an MV. A music_to_mv request returns the song and verified MP4 but does not publicly post unless the current request separately authorizes publication.
 - Requests to find, compare, or locate a book/edition/source should route to book_search and reuse `labcanvas books search` plus the sibling `../Books` catalog. Search/detail metadata never authorizes a copyrighted download.
 - Requests to create, continue, repair, validate, or report progress for a bilingual/trilingual/quadrilingual/PocketPolyglot/LinguaLeaf/ZhJpBook book should route to multilingual_book. Reuse the durable sibling PocketPolyglot Studio through `labcanvas books polyglot`; do not rebuild its OCR, TeX, queue, or validation pipeline.
+- An explicit request to write a bug report, feature request, or integration handoff for LabCanvas, LazyEdit, Musia, Books, ZhJpBook, LALACHAN, ProteinStructure, or AgInTiFlow should route to cross_repo_feedback. Reproduce or inspect the gap, then use `labcanvas feedback`; a local report never authorizes a public GitHub issue, commit, or push.
 - If a safe request spans several stages, choose the route_kind for the first backend stage and set worker_needed=true; explain the other requested stages in reason.
 - Every monitored chat uses the same shared backend capability framework. The per-chat profile changes ordinary defaults and proactive schedules only. A safe explicit request always overrides the focus and may use CAD/PCB, Blender, figures, presentations, image/video generation, LazyEdit processing/publication, file/media handling, writing, Markdown, LaTeX, PDFs, or another available routine.
 - Do not refuse or return chat_only for safe backend work just because the exact tool is not listed in examples. Use the closest route_kind, often other_worker, when a resumed Codex worker can finish or supervise it.
@@ -3555,6 +3559,8 @@ def fallback_route_decision(
         route_kind = "research_or_summary"
     elif is_grant_proposal_task(text):
         route_kind = "grant_proposal"
+    elif is_cross_repo_feedback_task(text):
+        route_kind = "cross_repo_feedback"
     elif is_career_strategy_task(config, text):
         route_kind = "career_strategy"
     elif is_presentation_artifact_task(text):
@@ -3607,6 +3613,8 @@ def fallback_route_decision(
         project = "books"
     elif route_kind == "multilingual_book":
         project = "zhjpbook"
+    elif route_kind == "cross_repo_feedback":
+        project = feedback_target_from_text(text) or "labcanvas"
     else:
         project = "unknown"
     needs_recent_media = (
@@ -3625,7 +3633,7 @@ def fallback_route_decision(
         "external_action_allowed": bool(
             publish_allowed
             or (
-                route_kind in {"generate_video", "generate_image", "music_generation", "music_to_mv", "book_search", "multilingual_book", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary", "grant_proposal"}
+                route_kind in {"generate_video", "generate_image", "music_generation", "music_to_mv", "book_search", "multilingual_book", "cross_repo_feedback", "story_or_script", "file_download_or_save", "file_intake", "research_or_summary", "grant_proposal"}
                 and not permission_question
             )
             or route_kind == "career_strategy"
@@ -3682,6 +3690,7 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         "music_to_mv",
         "book_search",
         "multilingual_book",
+        "cross_repo_feedback",
         "generate_video",
         "process_existing_video",
         "publish_video",
@@ -3742,10 +3751,14 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         needs_recent_media = False
     if route_kind == "file_intake":
         needs_recent_media = True
+    project = str(parsed.get("project") or fallback.get("project") or "unknown")
+    fallback_project = str(fallback.get("project") or "")
+    if route_kind == fallback_kind and fallback_project not in {"", "unknown"}:
+        project = fallback_project
     parsed.update(
         {
             "route_kind": route_kind,
-            "project": str(parsed.get("project") or fallback.get("project") or "unknown"),
+            "project": project,
             "worker_needed": bool(parsed.get("worker_needed", route_kind != "chat_only")),
             "needs_recent_media": needs_recent_media,
             "public_publish_intent": (bool(parsed.get("public_publish_intent")) and publish_allowed) or permission_question,
@@ -4075,6 +4088,66 @@ def is_multilingual_book_task(text: str) -> bool:
     )
 
 
+def feedback_target_from_text(text: str) -> str:
+    """Return one allowlisted sibling project named in an explicit request."""
+    lowered = collapse_text(str(text or "")).casefold()
+    target_markers = (
+        ("lazyedit", ("lazyedit", "lazy edit")),
+        ("musia", ("musia",)),
+        ("books", ("../books", "agenticbrowser", "agentic browser", "libgen browser")),
+        (
+            "zhjpbook",
+            ("zhjpbook", "pocketpolyglot", "pocket polyglot", "lingualeaf", "lingua leaf"),
+        ),
+        ("lalachan", ("lalachan", "xiaoyunque", "小云雀", "小雲雀", "xyq")),
+        ("proteinstructure", ("proteinstructure", "protein structure", "alphafold")),
+        ("agintiflow", ("agintiflow", "aginti flow", "../agent/agintiflow")),
+        ("labcanvas", ("labcanvas", "agenticapp", "aginti labcanvas")),
+    )
+    for target_id, markers in target_markers:
+        if any(marker in lowered for marker in markers):
+            return target_id
+    return ""
+
+
+def is_cross_repo_feedback_task(text: str) -> bool:
+    """Recognize explicit integration feedback without catching normal reports."""
+    lowered = collapse_text(str(text or "")).casefold()
+    if not feedback_target_from_text(lowered):
+        return False
+    feedback_markers = (
+        "bug report",
+        "report a bug",
+        "file a bug",
+        "feature request",
+        "integration handoff",
+        "handoff note",
+        "integration report",
+        "write a handoff",
+        "document this bug",
+        "document this issue",
+        "submit a bug",
+        "submit an issue",
+        "缺陷报告",
+        "缺陷報告",
+        "错误报告",
+        "錯誤報告",
+        "报告这个 bug",
+        "報告這個 bug",
+        "功能请求",
+        "功能請求",
+        "功能建议",
+        "功能建議",
+        "交接文档",
+        "交接文檔",
+        "交接说明",
+        "交接說明",
+        "记录这个问题",
+        "記錄這個問題",
+    )
+    return any(marker in lowered for marker in feedback_markers)
+
+
 def is_book_search_task(text: str) -> bool:
     """Fallback wake gate for exact book/edition/source discovery."""
     lowered = collapse_text(str(text or "")).casefold()
@@ -4147,6 +4220,7 @@ def mentions_lalachan_project(text: str) -> bool:
         "rara xia",
         "raraxia",
         "lala xia",
+        "lala studio",
         "ayachan",
         "aya chan",
         "sasakun",
@@ -4894,6 +4968,7 @@ def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
         return (
             is_file_download_or_save_task(text)
             or is_cad_pcb_labcanvas_task(text)
+            or is_cross_repo_feedback_task(text)
             or is_multilingual_book_task(text)
             or is_book_search_task(text)
             or has_video_generation_intent(text)
@@ -4907,6 +4982,7 @@ def is_unified_backend_request(config: dict[str, Any], text: str) -> bool:
     return (
         is_file_download_or_save_task(text)
         or is_cad_pcb_labcanvas_task(text)
+        or is_cross_repo_feedback_task(text)
         or is_multilingual_book_task(text)
         or is_book_search_task(text)
         or has_video_generation_intent(text)

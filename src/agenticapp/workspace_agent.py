@@ -382,6 +382,21 @@ def capability_catalog(root: str | Path) -> list[dict[str, Any]]:
             ],
         },
         {
+            "id": "integration-feedback",
+            "title": "Evidence-based sibling repository feedback and handoff reports",
+            "ready": (project_root / "src" / "agenticapp" / "feedback_ops.py").is_file(),
+            "commands": [
+                "labcanvas feedback targets",
+                "labcanvas feedback write",
+                "labcanvas feedback list",
+            ],
+            "paths": [
+                "src/agenticapp/feedback_ops.py",
+                "docs/CROSS_REPOSITORY_FEEDBACK.md",
+            ],
+            "outputs": ["privacy-sanitized Markdown bug report", "feature request", "handoff"],
+        },
+        {
             "id": "protein-structure",
             "title": "ProteinStructure AlphaFold browser, metrics, and evidence workflow",
             "ready": (

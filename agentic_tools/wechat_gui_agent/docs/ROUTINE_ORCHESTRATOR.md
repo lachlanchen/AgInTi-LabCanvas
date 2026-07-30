@@ -52,6 +52,11 @@ Current routines:
   multilingual books. It delegates to `labcanvas books polyglot` and
   `../ZhJpBook/studio/pocketpolyglot` rather than duplicating its queue, OCR,
   TeX, or validation pipeline.
+- `cross_repo_feedback`: evidence-gated local bug, feature, and handoff reports
+  for allowlisted sibling projects. The agent returns structured evidence and
+  acceptance criteria; the orchestrator uses `labcanvas feedback` to redact
+  and write an idempotent report. Transient failures are rejected and the
+  report is not attached unless explicitly requested.
 - `career_strategy`: writing direction, career positioning, monetization,
   talent/strength synthesis, market/opportunity research, and daily strategy
   notes for `写作 外语 挣钱` and `lachlanchan`.

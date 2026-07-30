@@ -316,6 +316,20 @@ Validate:
   useful color and black-white PDFs to the exact source chat when requested;
   keep intermediate chunks and logs local.
 
+## Cross-Repository Feedback
+
+- Use `labcanvas feedback targets|write|list` for concrete integration bugs,
+  feature requests, and handoffs involving allowlisted sibling projects.
+- The agent owns interpretation, reproduction, evidence, and acceptance
+  criteria. The queue owns allowlisting, privacy redaction, idempotent report
+  writing, and optional explicit delivery.
+- Do not record a transient login, CAPTCHA, quota, network, timeout, or
+  transport failure as a product bug without independent reproduction.
+- Reports live under the target repository's `handoff/labcanvas/` directory and
+  remain local by default. They never authorize a public issue, commit, push,
+  release, publication, payment, or credential change.
+- See `docs/CROSS_REPOSITORY_FEEDBACK.md`.
+
 ## WeChat
 
 - Treat WeChat as a message and artifact transport to the same agent routines.

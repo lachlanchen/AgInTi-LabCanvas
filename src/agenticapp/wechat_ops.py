@@ -163,7 +163,17 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     send.set_defaults(func=cmd_send)
 
     worker = nested.add_parser("worker", help="Enqueue or process slower backend tasks.")
-    worker.add_argument("action", choices=["enqueue", "once", "loop", "repair-artifacts", "reprocess"])
+    worker.add_argument(
+        "action",
+        choices=[
+            "enqueue",
+            "once",
+            "loop",
+            "repair-artifacts",
+            "repair-result",
+            "reprocess",
+        ],
+    )
     worker.add_argument("request", nargs="*", help="Task text for enqueue.")
     worker.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
     worker.add_argument("--chat", default="wechat-chat")
@@ -928,6 +938,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "plain story/script requests route to the same worker capability set in research and device chats",
             "book source discovery routes to the guarded sibling Books control plane without authorizing downloads",
             "multilingual book work routes to one durable PocketPolyglot project and remains interruptible",
+            "explicit sibling-project feedback routes to an evidence-gated allowlisted local report",
+            "unverified or transient feedback cannot become a repository report or chat attachment",
             "all monitored chats route explicit backend/tool/artifact requests through the shared routine skill surface",
             "EchoMind remains language-learning by default while explicit backend instructions enqueue worker routines",
             "backend runtime session metadata can never become a user-facing WeChat reply",
@@ -1096,6 +1108,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": direct_prefix + "test_pocketpolyglot_progress_routes_to_interruptible_project",
         },
         {
+            "id": "cross_repo_feedback_allowlisted_route",
+            "test": direct_prefix + "test_explicit_lazyedit_bug_report_routes_to_feedback_worker",
+        },
+        {
+            "id": "cross_repo_feedback_transient_rejected",
+            "test": worker_prefix + "test_worker_skips_unverified_or_transient_feedback",
+        },
+        {
             "id": "all_chats_shared_backend_routes",
             "test": direct_prefix + "test_all_monitored_chats_share_backend_route_skills_for_explicit_work",
         },
@@ -1134,6 +1154,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "generated_video_stage_boundary",
             "test": worker_prefix + "test_generated_video_stage_permissions_are_current_request_only",
+        },
+        {
+            "id": "stored_result_contract_repair_no_rerun",
+            "test": worker_prefix + "test_repair_stored_result_reapplies_contract_without_agent_and_sends_once",
         },
         {
             "id": "generated_video_lazyedit_uses_context_prompts",
@@ -1580,6 +1604,10 @@ def cmd_worker(args: argparse.Namespace) -> int:
         command.append("--loop")
     elif args.action == "repair-artifacts":
         command.append("--repair-missing-artifacts")
+    elif args.action == "repair-result":
+        if not args.request:
+            raise SystemExit("Use: labcanvas wechat worker repair-result <task_id> [--send]")
+        command += ["--repair-stored-result", args.request[0]]
     elif args.action == "reprocess":
         if not args.request:
             raise SystemExit("Use: labcanvas wechat worker reprocess <task_id> [reason]")

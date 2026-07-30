@@ -31,6 +31,12 @@ delivery gates; nontrivial execution resumes the same per-chat Codex worker
 session with the routine contract and orchestrator handoff. This keeps the
 automation agentic without re-solving known workflows from scratch.
 
+Explicit integration feedback uses the same pattern. The resumed worker
+interprets and verifies the requirement, then returns structured
+`upstream_feedback`; the queue validates and writes it through the allowlisted
+`labcanvas feedback` control plane. See
+[Cross-repository feedback](CROSS_REPOSITORY_FEEDBACK.md).
+
 For video correction and publishing, the mature downstream tool is LazyEdit, not
 ad hoc browser work in LabCanvas. The worker resolves the exact source video,
 writes a rich subtitle-correction context and a separate concise metadata brief,
@@ -463,6 +469,20 @@ result without rerunning the task:
 ```bash
 python3 agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py --resend <task-id>
 ```
+
+If a later bug fix makes the stored chat-facing result invalid but the exact
+raw agent JSON is still correct, repair the result contract without rerunning
+the agent or task tools:
+
+```bash
+labcanvas wechat worker repair-result <task-id> --send
+```
+
+This path reparses `result.raw`, reapplies current safety and delivery guards,
+and sends through the normal exact-chat transport. It does not run completion
+auditing, Xiaoyunque, LazyEdit, browsers, or another model turn. A successful
+repair is fingerprinted, so the same command becomes a no-op instead of sending
+the repaired result twice.
 
 The guarded sender does not use the WeChat search box by default. It first
 checks the current visible chat, then only configured `open_click` or

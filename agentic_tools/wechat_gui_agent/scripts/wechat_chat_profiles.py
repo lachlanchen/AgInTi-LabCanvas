@@ -23,6 +23,7 @@ SHARED_CAPABILITIES = (
     "musia_song_first_music_video",
     "book_source_search",
     "pocketpolyglot_multilingual_books",
+    "cross_repository_integration_feedback",
     "video_generation_and_download",
     "lazyedit_video_processing",
     "explicitly_authorized_video_publication",

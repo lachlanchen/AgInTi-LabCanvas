@@ -6,6 +6,7 @@ import hashlib
 import io
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -1146,6 +1147,131 @@ stderr: noisy internal trace
         self.assertIn("one durable project per book", context)
         self.assertIn("never download copyrighted material", context)
         self.assertEqual(policy["reasoning_effort"], "high")
+
+    def test_worker_materializes_verified_feedback_without_chat_attachment(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            task = {
+                "id": "feedback-task-1",
+                "chat": "My devices",
+                "request": "Write a bug report for LazyEdit about the missing QR artifact.",
+                "source": {"local_id": 11, "server_id": "private-source"},
+            }
+            result = {
+                "message": "I verified the gap and recorded it for LazyEdit.",
+                "files": [],
+                "data": {
+                    "upstream_feedback": [
+                        {
+                            "target": "lazyedit",
+                            "kind": "bug",
+                            "title": "Job-scoped QR artifact is unavailable",
+                            "summary": "The integration cannot retrieve the current login QR.",
+                            "expected": "Expose the current job-scoped QR artifact.",
+                            "observed": "Only the login blocker state is exposed.",
+                            "evidence": ["Inspected the current local publish status response."],
+                            "acceptance": ["Return one current QR image for the blocked job."],
+                            "verified": True,
+                            "transient": False,
+                            "deliver_report": False,
+                        }
+                    ]
+                },
+            }
+            with mock.patch.dict(
+                os.environ,
+                {"LABCANVAS_FEEDBACK_LAZYEDIT_ROOT": tmp},
+            ):
+                prepared = worker.prepare_result_files(
+                    result,
+                    json.dumps(result),
+                    task=task,
+                )
+
+            reports = task["upstream_feedback_reports"]
+            report_path = Path(reports[0]["path"])
+            self.assertTrue(report_path.is_file())
+            self.assertEqual(prepared["files"], [])
+            self.assertIn("handoff/labcanvas", report_path.as_posix())
+            report = report_path.read_text(encoding="utf-8")
+            self.assertNotIn("feedback-task-1", report)
+            self.assertNotIn("private-source", report)
+
+    def test_worker_skips_unverified_or_transient_feedback(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            task = {
+                "id": "feedback-task-2",
+                "chat": "My devices",
+                "request": "Inspect a temporary LazyEdit timeout.",
+            }
+            result = {
+                "message": "The temporary failure was not recorded as a product bug.",
+                "files": [],
+                "data": {
+                    "upstream_feedback": [
+                        {
+                            "target": "lazyedit",
+                            "kind": "bug",
+                            "title": "Temporary timeout",
+                            "summary": "A temporary timeout occurred.",
+                            "observed": "The network was unavailable.",
+                            "evidence": ["One transient attempt."],
+                            "acceptance": ["No requirement."],
+                            "verified": True,
+                            "transient": True,
+                        },
+                        {
+                            "target": "lazyedit",
+                            "kind": "bug",
+                            "title": "Unverified behavior",
+                            "summary": "This was not reproduced.",
+                            "observed": "Unknown.",
+                            "evidence": ["None."],
+                            "acceptance": ["Reproduce first."],
+                            "verified": False,
+                            "transient": False,
+                        },
+                    ]
+                },
+            }
+            with mock.patch.dict(
+                os.environ,
+                {"LABCANVAS_FEEDBACK_LAZYEDIT_ROOT": tmp},
+            ):
+                prepared = worker.prepare_result_files(
+                    result,
+                    json.dumps(result),
+                    task=task,
+                )
+
+            self.assertEqual(prepared["files"], [])
+            self.assertNotIn("upstream_feedback_reports", task)
+            self.assertEqual(
+                {item["reason"] for item in task["upstream_feedback_report_errors"]},
+                {"transient", "unverified"},
+            )
+            self.assertFalse((Path(tmp) / "handoff" / "labcanvas").exists())
+
+    def test_worker_tool_context_exposes_feedback_control_plane(self) -> None:
+        worker = load_worker()
+
+        context = worker.build_worker_tool_context(
+            {
+                "id": "feedback-task",
+                "chat": "My devices",
+                "request": "Write a feature request for Musia.",
+                "route_decision": {
+                    "route_kind": "cross_repo_feedback",
+                    "project": "musia",
+                },
+                "routine": {"id": "cross_repo_feedback"},
+            }
+        )
+
+        self.assertIn("python -m agenticapp feedback targets", context)
+        self.assertIn("upstream_feedback", context)
+        self.assertIn("remains local by default", context)
 
     def test_worker_policy_uses_medium_for_literature_summary(self) -> None:
         worker = load_worker()
@@ -2700,6 +2826,97 @@ stderr: noisy internal trace
         assert saved is not None
         self.assertEqual(saved["status"], "done")
         self.assertIn("resent_at", saved)
+
+    def test_repair_stored_result_reapplies_contract_without_agent_and_sends_once(self) -> None:
+        worker = load_worker()
+        raw = json.dumps(
+            {
+                "message": (
+                    "今天的故事：四个人在别墅院子挖土豆，再到厨房炸薯条。"
+                    "现在只确认故事，不进入 LazyEdit 或发布流程。"
+                ),
+                "files": [],
+                "confirmation": "这个故事可以吗？确认后我再生成视频。",
+            },
+            ensure_ascii=False,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "story-repair",
+                        "chat": "MEMO",
+                        "status": "done",
+                        "request": "Current coalesced request:\n先给我故事，不要生成。",
+                        "source": {"local_id": 4},
+                        "context": [
+                            {
+                                "local_id": 4,
+                                "content": "先给我故事，不要生成。",
+                            }
+                        ],
+                        "route_decision": {
+                            "route_kind": "generate_video",
+                            "project": "lalachan",
+                            "public_publish_allowed": False,
+                        },
+                        "result": {
+                            "message": "我已拦截这个结果。",
+                            "confirmation": "",
+                            "files": [],
+                            "raw": raw,
+                            "contract_guard": "blocked_public_publish_claim_for_generate_video",
+                        },
+                    }
+                ],
+            )
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "run_worker_codex",
+                    side_effect=AssertionError("repair must not invoke the agent"),
+                ),
+                mock.patch.object(
+                    worker,
+                    "send_result_with_retries",
+                    return_value=[],
+                ) as sender,
+            ):
+                first = worker.repair_stored_result_contract(
+                    queue,
+                    "story-repair",
+                    send=True,
+                    send_targets=Path(tmp) / "targets.json",
+                )
+                second = worker.repair_stored_result_contract(
+                    queue,
+                    "story-repair",
+                    send=True,
+                    send_targets=Path(tmp) / "targets.json",
+                )
+
+        self.assertEqual(sender.call_count, 1)
+        self.assertEqual(first["status"], "waiting_confirmation")
+        self.assertIn("今天的故事", first["result"]["message"])
+        self.assertEqual(
+            first["result"]["contract_guard"],
+            "generated_video_waiting_for_confirmation",
+        )
+        self.assertEqual(
+            first["stored_contract_repair"]["delivery_status"],
+            "sent",
+        )
+        self.assertFalse(first["stored_contract_repair"]["model_invoked"])
+        self.assertFalse(
+            first["stored_contract_repair"]["external_task_action_invoked"]
+        )
+        self.assertEqual(
+            second["stored_contract_repair"]["last_noop_reason"],
+            "same_repaired_result_already_sent",
+        )
 
     def test_video_publish_preflight_writes_context_and_uses_exact_message_id(self) -> None:
         worker = load_worker()
@@ -4454,6 +4671,94 @@ stderr: noisy internal trace
         self.assertEqual(guarded["message"], result["message"])
         self.assertEqual(guarded["files"], result["files"])
         self.assertNotIn("contract_guard", guarded)
+
+    def test_generated_video_story_confirmation_is_preserved_before_generation(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-story-first",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "project": "lalachan",
+                "public_publish_allowed": False,
+            },
+            "request": (
+                "Current coalesced request:\n"
+                "先告诉我今天的故事，不要急着生成视频。"
+            ),
+        }
+        result = {
+            "message": (
+                "今天的故事先从四个人在别墅院子挖土豆开始，最后一起炸薯条。"
+                "现在只确认故事，不进入 LazyEdit 或发布流程。"
+            ),
+            "files": ["/tmp/lalachan_fries_story.md"],
+            "confirmation": "这个故事可以吗？确认后我再生成视频。",
+        }
+
+        guarded = worker.enforce_worker_result_contract(
+            task,
+            result,
+            json.dumps(result, ensure_ascii=False),
+        )
+
+        self.assertEqual(guarded["message"], result["message"])
+        self.assertEqual(guarded["confirmation"], result["confirmation"])
+        self.assertEqual(
+            guarded["contract_guard"],
+            "generated_video_waiting_for_confirmation",
+        )
+        self.assertEqual(
+            guarded["data"]["generated_video_stage_state"],
+            "waiting_confirmation_before_generation",
+        )
+        self.assertNotIn("我已拦截", guarded["message"])
+        self.assertNotIn("还没有验证到新的 MP4", guarded["message"])
+
+    def test_task_focus_uses_exact_rows_instead_of_transport_policy_wrappers(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-exact-focus",
+            "route_decision": {
+                "route_kind": "generate_video",
+                "public_publish_allowed": False,
+            },
+            "request": (
+                "Treat this as a message forwarded from WeChat into the backend Codex "
+                "session. Only enter LazyEdit if the current request asks for it.\n\n"
+                "Current coalesced request:\n"
+                "先告诉我故事，不要急着生成。\n\n"
+                "Recent history:\nold publication request"
+            ),
+            "source": {"local_id": 4},
+            "context": [
+                {
+                    "local_id": 4,
+                    "content": "我希望生成今天的视频，先告诉我故事，不要急着生成。",
+                }
+            ],
+            "interruptions": [
+                {
+                    "source": {"local_id": 7},
+                    "request": (
+                        "Treat this as a message forwarded from WeChat. "
+                        "LazyEdit import/process is a separate permission."
+                    ),
+                    "context": [
+                        {"local_id": 7, "content": "先给我文字版的故事"}
+                    ],
+                }
+            ],
+        }
+
+        focused = worker.task_focus_text(task)
+        stages = worker.generated_video_stage_permissions(task)
+
+        self.assertIn("我希望生成今天的视频", focused)
+        self.assertIn("先给我文字版的故事", focused)
+        self.assertNotIn("separate permission", focused)
+        self.assertNotIn("Only enter LazyEdit", focused)
+        self.assertFalse(stages["lazyedit_import"])
+        self.assertFalse(stages["public_publish"])
 
     def test_generate_video_route_rewrites_unrequested_lazyedit_result(self) -> None:
         worker = load_worker()

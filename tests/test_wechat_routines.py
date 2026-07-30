@@ -106,6 +106,32 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertIn("../ZhJpBook/studio/pocketpolyglot", rules)
         self.assertIn("do not bombard", rules.lower())
 
+    def test_cross_repo_feedback_requires_evidence_and_local_report_boundary(self) -> None:
+        routines = load_routines()
+        contract = routines.build_routine_contract(
+            {"route_kind": "cross_repo_feedback", "project": "lazyedit"},
+            "Write a feature request for a job-scoped QR artifact.",
+            task_id="task-feedback",
+            chat="My devices",
+        )
+        rules = " ".join(contract["rules"])
+
+        self.assertEqual(contract["id"], "cross_repo_feedback")
+        self.assertEqual(contract["default_effort"], "medium")
+        self.assertIn("reproduce_or_verify", contract["required_gates"])
+        self.assertIn("materialize_report", contract["required_gates"])
+        self.assertIn("labcanvas feedback", rules)
+        self.assertIn("does not authorize a public GitHub issue", rules)
+
+    def test_generic_feature_request_does_not_become_cross_repo_feedback(self) -> None:
+        routines = load_routines()
+        routine_id = routines.routine_id_for_route(
+            {},
+            "Write a feature request for this microscope idea.",
+        )
+
+        self.assertEqual(routine_id, "general_worker")
+
     def test_text_fallback_selects_story_before_visual_routines(self) -> None:
         routines = load_routines()
         routine_id = routines.routine_id_for_route({}, "generate a story about RaraXia and AyaChan")

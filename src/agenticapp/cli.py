@@ -294,6 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
     from .protein_structure_ops import add_protein_structure_parser
     from .musia_ops import add_musia_parser
     from .books_ops import add_books_parser
+    from .feedback_ops import add_feedback_parser
 
     add_wechat_parser(subparsers)
     add_wecom_parser(subparsers)
@@ -301,6 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_protein_structure_parser(subparsers)
     add_musia_parser(subparsers)
     add_books_parser(subparsers)
+    add_feedback_parser(subparsers)
     return parser
 
 

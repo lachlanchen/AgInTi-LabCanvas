@@ -126,12 +126,14 @@ INTERRUPTIBLE_ROUTE_KINDS = {
     "generate_video",
     "presentation_generation",
     "multilingual_book",
+    "cross_repo_feedback",
 }
 INTERRUPTIBLE_ROUTINE_IDS = {
     "story_script_generation",
     "generated_video",
     "presentation_deck",
     "multilingual_book",
+    "cross_repo_feedback",
 }
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 DEAD_WORKER_RECOVERABLE_ROUTINES = {
@@ -142,6 +144,7 @@ DEAD_WORKER_RECOVERABLE_ROUTINES = {
     "file_download_save",
     "file_intake",
     "book_search",
+    "cross_repo_feedback",
     "grant_proposal",
     "presentation_deck",
 }
@@ -284,6 +287,10 @@ def main() -> int:
     parser.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS, help="Ignored JSON mapping chat names to GUI target specs.")
     parser.add_argument("--resend", help="Send an existing task result by task id without rerunning the worker.")
     parser.add_argument("--reprocess", help="Reset an existing task to pending so the worker reruns it with current code.")
+    parser.add_argument(
+        "--repair-stored-result",
+        help="Reapply current result contracts to stored raw agent output without rerunning the worker.",
+    )
     parser.add_argument("--reason", default="", help="Reason recorded when reprocessing a task.")
     parser.add_argument(
         "--artifact-recovery-only",
@@ -324,6 +331,22 @@ def main() -> int:
     if args.resend:
         return resend_task_result(args.queue, args.resend, args.chat, send_targets=args.send_targets)
 
+    if args.repair_stored_result:
+        task = repair_stored_result_contract(
+            args.queue,
+            args.repair_stored_result,
+            chat=args.chat,
+            send=args.send,
+            send_targets=args.send_targets,
+        )
+        print(json.dumps(task, ensure_ascii=False, indent=2))
+        delivery_status = str(
+            (task.get("stored_contract_repair") or {}).get("delivery_status")
+            if isinstance(task.get("stored_contract_repair"), dict)
+            else ""
+        )
+        return 1 if delivery_status in {"send_failed", "send_deferred"} else 0
+
     if args.reprocess:
         task = reprocess_task(
             args.queue,
@@ -363,7 +386,8 @@ def main() -> int:
                 time.sleep(args.poll_seconds)
         return 0
     raise SystemExit(
-        "Use --enqueue, --once, --loop, --resend, --reprocess, --flush-deferred, "
+        "Use --enqueue, --once, --loop, --resend, --repair-stored-result, "
+        "--reprocess, --flush-deferred, "
         "--repair-missing-artifacts, or --recover-expired-transport"
     )
 
@@ -382,6 +406,155 @@ def resend_task_result(queue: Path, task_id: str, chat: str, *, send_targets: Pa
     rewrite_task(queue, task)
     print(json.dumps(task, ensure_ascii=False, indent=2))
     return 1 if errors else 0
+
+
+def stored_result_repair_fingerprint(result: dict[str, Any], raw_text: str) -> str:
+    payload = {
+        "message": str(result.get("message") or ""),
+        "confirmation": str(result.get("confirmation") or ""),
+        "files": sorted(str(path) for path in result.get("files") or []),
+        "raw_sha256": hashlib.sha256(str(raw_text or "").encode("utf-8")).hexdigest(),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def repair_stored_result_contract(
+    queue: Path,
+    task_id: str,
+    *,
+    chat: str = "wechat-chat",
+    send: bool = False,
+    send_targets: Path = DEFAULT_SEND_TARGETS,
+) -> dict[str, Any]:
+    """Repair one stored agent result without another model or tool execution."""
+    queue.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = queue.with_suffix(queue.suffix + ".lock")
+    now_text = datetime.now().isoformat(timespec="seconds")
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(queue)
+        task_index = next(
+            (
+                index
+                for index, item in enumerate(tasks)
+                if str(item.get("id") or "") == str(task_id)
+            ),
+            None,
+        )
+        if task_index is None:
+            raise SystemExit(f"No task found with id {task_id}")
+        task = tasks[task_index]
+        stored_result = task.get("result")
+        if not isinstance(stored_result, dict):
+            raise SystemExit(f"Task {task_id} has no stored result to repair")
+        raw_text = str(stored_result.get("raw") or "").strip()
+        if not raw_text:
+            raise SystemExit(f"Task {task_id} has no stored raw agent result to repair")
+
+        repaired = parse_worker_result(raw_text)
+        repaired = enforce_worker_result_contract(task, repaired, raw_text)
+        repaired = prepare_result_files(repaired, raw_text, task=task)
+        if not worker_result_has_delivery_content(repaired):
+            raise SystemExit(f"Task {task_id} raw result has no repairable delivery content")
+
+        fingerprint = stored_result_repair_fingerprint(repaired, raw_text)
+        existing = (
+            task.get("stored_contract_repair")
+            if isinstance(task.get("stored_contract_repair"), dict)
+            else {}
+        )
+        if (
+            send
+            and existing.get("fingerprint") == fingerprint
+            and existing.get("delivery_status") == "sent"
+        ):
+            task["stored_contract_repair"] = {
+                **existing,
+                "last_noop_at": now_text,
+                "last_noop_reason": "same_repaired_result_already_sent",
+            }
+            tasks[task_index] = task
+            write_tasks(queue, tasks)
+            return task
+
+        if existing.get("fingerprint") != fingerprint:
+            history = task.get("stored_contract_repair_history")
+            if not isinstance(history, list):
+                history = []
+            history.append(
+                {
+                    "at": now_text,
+                    "previous_status": task.get("status"),
+                    "previous_contract_guard": stored_result.get("contract_guard"),
+                    "previous_message_excerpt": collapse_context_text(
+                        stored_result.get("message"),
+                        max_len=500,
+                    ),
+                }
+            )
+            task["stored_contract_repair_history"] = history[-5:]
+
+        task["result"] = repaired
+        task["stored_contract_repair"] = {
+            "fingerprint": fingerprint,
+            "raw_sha256": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
+            "prepared_at": now_text,
+            "delivery_status": "prepared",
+            "model_invoked": False,
+            "external_task_action_invoked": False,
+        }
+        task.pop("worker_error", None)
+        task.pop("send_suppressed_reason", None)
+        task.pop("send_suppressed_at", None)
+        tasks[task_index] = task
+        write_tasks(queue, tasks)
+
+    if not send:
+        return task
+
+    target_chat = str(task.get("chat") or chat)
+    errors = send_result_with_retries(
+        repaired,
+        target_chat,
+        send_targets,
+        task=task,
+    )
+    apply_send_outcome(task, repaired, errors)
+    finished_at = datetime.now().isoformat(timespec="seconds")
+    repair_state = dict(task.get("stored_contract_repair") or {})
+    repair_state.update(
+        {
+            "delivery_status": (
+                "sent"
+                if not errors
+                else "send_deferred"
+                if send_errors_indicate_deferable(errors)
+                else "send_failed"
+            ),
+            "delivery_attempted_at": finished_at,
+            "send_errors": errors[:3],
+        }
+    )
+    task["stored_contract_repair"] = repair_state
+    task["result"] = repaired
+    task["completed_at"] = finished_at
+    rewrite_task(queue, task)
+    record_event(
+        chat_name=target_chat,
+        action="worker_result_contract_repair",
+        direction="outbound",
+        message=repaired.get("confirmation") or repaired.get("message") or "",
+        status="repair-sent" if not errors else str(task.get("status") or "send_failed"),
+        db_path=DEFAULT_DB,
+        metadata=task,
+    )
+    return find_task(queue, task_id) or task
 
 
 def reprocess_task(
@@ -5722,10 +5895,25 @@ Return either plain text or this JSON shape:
   "message": "concise message to send back",
   "files": ["/absolute/path/to/file.pdf", "/absolute/path/to/preview.png"],
   "confirmation": "optional question to ask before continuing",
-  "knowledge_items": [{{"kind": "idea|insight|intuition|interest|hypothesis|decision|preference|question|note", "title": "short title", "content": "durable knowledge worth retaining", "tags": ["optional"]}}]
+  "knowledge_items": [{{"kind": "idea|insight|intuition|interest|hypothesis|decision|preference|question|note", "title": "short title", "content": "durable knowledge worth retaining", "tags": ["optional"]}}],
+  "upstream_feedback": [{{
+    "target": "labcanvas|lazyedit|musia|books|zhjpbook|lalachan|proteinstructure|agintiflow",
+    "kind": "bug|feature|handoff",
+    "title": "stable concise title",
+    "summary": "concrete source-scoped finding or requirement",
+    "expected": "expected behavior",
+    "observed": "observed behavior or current limitation",
+    "evidence": ["reproduction, inspected code, command result, or explicit current requirement"],
+    "acceptance": ["testable completion criterion"],
+    "workaround": "optional current workaround",
+    "verified": true,
+    "transient": false,
+    "deliver_report": false
+  }}]
 }}
 
 For WeCom, include `knowledge_items` only for durable user-authored ideas or genuinely useful conclusions developed for that member. Do not store greetings, credentials, private transport details, speculative personal profiling, or attachment text as though it were the user's own belief.
+Use `upstream_feedback` only for a concrete reproduced integration gap or an explicit current-message feature/handoff requirement involving an allowlisted project. Do not create one for a transient login, CAPTCHA, quota, network, timeout, or transport failure. A local report does not authorize a public issue, commit, push, or release. Set `deliver_report=true` only when the current request explicitly asks to receive the report file.
 
 Use confirmation when an important choice, purchase, external send, deletion, privacy-sensitive action, or irreversible action needs approval.
 If an authenticated download, account action, purchase, publication, deletion, or other requested operation is blocked by login, CAPTCHA, bot check, or consent, do not try to bypass it. This human-assist rule does not apply to read-only mp.weixin/Shipinhao research: use `task.preflight.wechat_source_recovery` and finish with extracted, reconstructed, or evidence-limited status without opening/focusing a browser or asking for verification.
@@ -9596,6 +9784,20 @@ def file_intake_markdown(manifest: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def task_context_row_is_human_text(row: dict[str, Any]) -> bool:
+    """Distinguish a human text instruction from media/file transport XML."""
+    content = str(row.get("content") or "").strip()
+    if not content or content.startswith("<"):
+        return False
+    kind = str(row.get("kind") or "").strip().casefold()
+    if kind and kind not in {"text", "message"}:
+        return False
+    local_type = int_or_none(row.get("local_type"))
+    if local_type is not None and local_type % 4294967296 != 1:
+        return False
+    return True
+
+
 def task_focus_text(task: dict[str, Any]) -> str:
     request = str(task.get("request") or "")
     focused = request
@@ -9611,12 +9813,14 @@ def task_focus_text(task: dict[str, Any]) -> str:
     source_local_id = int_or_none(source.get("local_id"))
     source_create_time = int_or_none(source.get("create_time"))
     source_text = collapse_context_text(task.get("original_request"), max_len=3000)
+    source_text_is_exact = False
     if source_local_id is not None:
         for row in task.get("context") or []:
             if not isinstance(row, dict):
                 continue
             if int_or_none(row.get("local_id")) == source_local_id:
                 source_text = str(row.get("content") or "").strip()
+                source_text_is_exact = task_context_row_is_human_text(row)
                 break
 
     # WeCom GUI source IDs are transport-ledger hashes rather than mirror row
@@ -9628,11 +9832,11 @@ def task_focus_text(task: dict[str, Any]) -> str:
                 continue
             if int_or_none(row.get("create_time")) == source_create_time:
                 source_text = str(row.get("content") or "").strip()
+                source_text_is_exact = task_context_row_is_human_text(row)
                 break
 
     parts = []
-    authoritative_wecom_source = bool(source_text and str(source.get("transport") or "") == "wecom")
-    values = (source_text,) if authoritative_wecom_source else (focused, source_text)
+    values = (source_text,) if source_text_is_exact else (focused, source_text)
     for value in values:
         text = collapse_context_text(value, max_len=3000)
         if text and text not in parts:
@@ -9652,7 +9856,40 @@ def task_focus_text(task: dict[str, Any]) -> str:
         if text not in parts:
             parts.append(text)
     for item in task_interruptions(task):
-        text = collapse_context_text(item.get("request") or item.get("request_excerpt"), max_len=3000)
+        interruption_source = (
+            item.get("source") if isinstance(item.get("source"), dict) else {}
+        )
+        interruption_local_id = int_or_none(interruption_source.get("local_id"))
+        exact_interruption_text = ""
+        if interruption_local_id is not None:
+            for row in item.get("context") or []:
+                if not isinstance(row, dict):
+                    continue
+                if int_or_none(row.get("local_id")) == interruption_local_id:
+                    exact_interruption_text = str(row.get("content") or "").strip()
+                    if exact_interruption_text and task_context_row_is_human_text(row):
+                        break
+                    exact_interruption_text = ""
+        interruption_text = exact_interruption_text
+        if not interruption_text:
+            interruption_text = str(
+                item.get("original_request")
+                or item.get("request")
+                or item.get("request_excerpt")
+                or ""
+            )
+            match = re.search(
+                r"Current coalesced request:\n(?P<body>.*?)(?:\n\nRecent history:|\n\nSame-chat reference media/context rows:|\Z)",
+                interruption_text,
+                flags=re.DOTALL,
+            )
+            if match:
+                interruption_text = match.group("body").strip()
+            elif interruption_text.startswith(
+                "Treat this as a message forwarded from WeChat"
+            ):
+                interruption_text = ""
+        text = collapse_context_text(interruption_text, max_len=3000)
         if text and text not in parts:
             parts.append(text)
     return "\n".join(parts)
@@ -10067,6 +10304,165 @@ def format_generated_video_contract_markdown(contract: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def structured_result_has_action(data: Any, action: str) -> bool:
+    """Inspect structured result evidence without treating policy flags as actions."""
+    if isinstance(data, list):
+        return any(structured_result_has_action(item, action) for item in data[:50])
+    if not isinstance(data, dict):
+        return False
+    for raw_key, value in list(data.items())[:100]:
+        key = str(raw_key).casefold()
+        if action == "publish":
+            if key in {"published", "public_published"} and value is True:
+                return True
+            if key in {
+                "publish_job_id",
+                "remote_publish_job_id",
+                "published_url",
+                "publication_result",
+            } and value not in (None, "", False, [], {}):
+                return True
+        if action == "lazyedit":
+            if key in {"lazyedit_completed", "lazyedit_imported"} and value is True:
+                return True
+            if key in {
+                "lazyedit_job_id",
+                "lazyedit_video_id",
+                "lazyedit_result",
+            } and value not in (None, "", False, [], {}):
+                return True
+        if structured_result_has_action(value, action):
+            return True
+    return False
+
+
+def result_action_sentences(result: dict[str, Any]) -> list[str]:
+    text = "\n".join(
+        (
+            str(result.get("message") or ""),
+            str(result.get("confirmation") or ""),
+        )
+    )
+    return [
+        sentence.strip().casefold()
+        for sentence in re.split(r"[\r\n。！？!?；;]+", text)
+        if sentence.strip()
+    ]
+
+
+def action_sentence_is_negated(sentence: str) -> bool:
+    negative_markers = (
+        "do not",
+        "don't",
+        "dont",
+        "did not",
+        "didn't",
+        "will not",
+        "won't",
+        "not ",
+        " no ",
+        "without",
+        "unless",
+        "only if",
+        "不",
+        "未",
+        "没有",
+        "沒有",
+        "不会",
+        "不會",
+        "尚未",
+        "无需",
+        "無需",
+        "仅当",
+        "僅當",
+    )
+    return any(marker in f" {sentence} " for marker in negative_markers)
+
+
+def worker_result_claims_public_publish(result: dict[str, Any]) -> bool:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    if structured_result_has_action(data, "publish"):
+        return True
+    publish_markers = (
+        "publish",
+        "posted",
+        "uploaded to youtube",
+        "uploaded to instagram",
+        "shipinhao",
+        "wechat channel",
+        "发布",
+        "發布",
+        "投稿",
+        "视频号",
+        "視頻號",
+    )
+    completion_markers = (
+        "published",
+        "successfully",
+        "completed",
+        "submitted",
+        "will publish",
+        "going to publish",
+        "started",
+        "已发布",
+        "已發布",
+        "发布成功",
+        "發布成功",
+        "已投稿",
+        "已上传",
+        "已上傳",
+        "将发布",
+        "將發布",
+        "开始发布",
+        "開始發布",
+        "完成发布",
+        "完成發布",
+        "已自动完成",
+        "已自動完成",
+    )
+    for sentence in result_action_sentences(result):
+        if action_sentence_is_negated(sentence):
+            continue
+        if any(marker in sentence for marker in publish_markers) and any(
+            marker in sentence for marker in completion_markers
+        ):
+            return True
+    return False
+
+
+def worker_result_claims_lazyedit_action(result: dict[str, Any]) -> bool:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    if structured_result_has_action(data, "lazyedit"):
+        return True
+    completion_markers = (
+        "imported",
+        "processed",
+        "submitted",
+        "completed",
+        "queued",
+        "will import",
+        "will process",
+        "已导入",
+        "已導入",
+        "已处理",
+        "已處理",
+        "已提交",
+        "已完成",
+        "开始处理",
+        "開始處理",
+        "将导入",
+        "將導入",
+    )
+    for sentence in result_action_sentences(result):
+        if "lazyedit" not in sentence and "lazy edit" not in sentence:
+            continue
+        if action_sentence_is_negated(sentence):
+            continue
+        if any(marker in sentence for marker in completion_markers):
+            return True
+    return False
+
+
 def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any], raw_text: str) -> dict[str, Any]:
     if result_is_no_reply(result):
         return result
@@ -10126,7 +10522,7 @@ def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any],
         ]
     )
     lowered = text.lower()
-    if not public_allowed and has_public_publish_intent(text):
+    if not public_allowed and worker_result_claims_public_publish(result):
         guarded = dict(result)
         guarded["message"] = (
             "我已拦截这个结果：当前任务被路由为“生成新视频”，不是发布旧视频或投稿到公共平台。"
@@ -10137,7 +10533,7 @@ def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any],
         guarded["files"] = filter_generated_video_result_files(guarded.get("files") or [])
         guarded["contract_guard"] = "blocked_public_publish_claim_for_generate_video"
         return guarded
-    if not lazyedit_allowed and ("lazyedit" in lowered or "lazy edit" in lowered):
+    if not lazyedit_allowed and worker_result_claims_lazyedit_action(result):
         guarded = dict(result)
         guarded["message"] = (
             "我已拦截这个结果：当前请求只允许生成/下载并发回新视频，没有要求导入或处理到 LazyEdit。"
@@ -10174,6 +10570,16 @@ def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any],
     if has_video or any(term in lowered for term in status_terms):
         guarded = dict(result)
         guarded["files"] = files
+        return guarded
+    if str(result.get("confirmation") or "").strip():
+        guarded = dict(result)
+        guarded["files"] = files
+        data = guarded.get("data") if isinstance(guarded.get("data"), dict) else {}
+        guarded["data"] = {
+            **data,
+            "generated_video_stage_state": "waiting_confirmation_before_generation",
+        }
+        guarded["contract_guard"] = "generated_video_waiting_for_confirmation"
         return guarded
     guarded = dict(result)
     guarded["message"] = (
@@ -13474,6 +13880,14 @@ Books and PocketPolyglot:
 - A finished book requires current-manifest coverage, a table of contents, readable validated PDFs, and real editable TeX where the workflow requires it. Technical books must preserve figures, equations, tables, diagrams, notation, captions, exercises, and source-page evidence; page-image-only output is not complete.
 - Return the requested validated color/black-white PDF editions to the exact source chat. Keep source books, segment caches, logs, and intermediate chunks local unless explicitly requested.
 
+Cross-repository feedback:
+- For `route_kind=cross_repo_feedback` or `task.routine.id=cross_repo_feedback`, inspect the exact current requirement and reproduce or verify the behavior with existing status commands, tests, source, and source-scoped evidence.
+- List the only permitted destinations with `PYTHONPATH=src python -m agenticapp feedback targets --json`.
+- Return one structured `upstream_feedback` object in the worker JSON. The queue orchestrator validates, redacts, and idempotently writes it under the target repository's `handoff/labcanvas/` directory.
+- A clear current-message feature requirement can be marked verified when its expected behavior and testable acceptance criteria are explicit. A bug needs concrete observed behavior and reproduction or inspection evidence.
+- Never include raw chat/task/member IDs, credentials, cookies, signed URLs, private logs, absolute home paths, or another chat's context. Never turn temporary login, CAPTCHA, quota, network, timeout, or transport trouble into a product report.
+- The report remains local by default. Public GitHub issues, commits, pushes, releases, and other external writes need their own explicit authorization.
+
 Shipinhao/Finder and short-video shares:
 - Treat the deterministic resolver as the method owner. For a standalone rerun use `PYTHONPATH=src python -m agenticapp wechat shipinhao-transcribe --source-text-file <exact-card.txt> --output-dir {artifact_dir}/shipinhao_media_transcript --json`. It owns signed-URL download, cover OCR/translation, bounded public-source search, longer-source excerpt isolation, ffprobe validation, Whisper transcription, caching, and the private evidence manifest. Do not make the backend agent rediscover those steps manually.
 - If that routine remains unresolved and its packet supplies `public_mirror_recovery.cover_path` plus `source_text_file`, inspect the cover privately with vision, derive at most three concise speaker/topic/source hints, and rerun the same CLI with repeatable `--search-hint "..."` arguments. The deterministic identity gate must still accept the transcript; an agent's visual guess alone is never evidence. Do not expose the cover path or search diagnostics in WeChat.
@@ -13714,7 +14128,7 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         effort = routine_effort or "xhigh"
     elif routine_id == "presentation_deck":
         effort = routine_effort or "xhigh"
-    elif routine_id in {"book_search", "multilingual_book"} and routine_effort:
+    elif routine_id in {"book_search", "multilingual_book", "cross_repo_feedback"} and routine_effort:
         effort = routine_effort
     elif protein_structure_task:
         effort = "ultra"
@@ -14305,9 +14719,180 @@ def file_entries_from_json(data: Any) -> list[str]:
     return unique_strings(files)
 
 
+def upstream_feedback_entries(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract bounded feedback proposals from one structured agent result."""
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    values: list[Any] = []
+    if "upstream_feedback" in data:
+        values.append(data.get("upstream_feedback"))
+    nested = data.get("data") if isinstance(data.get("data"), dict) else {}
+    if "upstream_feedback" in nested:
+        values.append(nested.get("upstream_feedback"))
+    entries: list[dict[str, Any]] = []
+    for value in values:
+        items = value if isinstance(value, list) else [value]
+        for item in items:
+            if isinstance(item, dict):
+                entries.append(dict(item))
+            if len(entries) >= 3:
+                return entries
+    return entries
+
+
+def task_requests_feedback_report_delivery(task: dict[str, Any]) -> bool:
+    """Require explicit file-delivery wording for a repository report."""
+    text = task_focus_text(task).casefold()
+    markers = (
+        "send me the report file",
+        "send the report file",
+        "attach the report",
+        "return the report file",
+        "send this report back",
+        "把报告文件发给我",
+        "把報告文件發給我",
+        "把这个报告发给我",
+        "把這個報告發給我",
+        "发送报告文件",
+        "發送報告文件",
+        "附上报告",
+        "附上報告",
+    )
+    return any(marker in text for marker in markers)
+
+
+def feedback_source_reference(task: dict[str, Any]) -> str:
+    """Build a private source reference that the report writer hashes."""
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    payload = {
+        "task_id": str(task.get("id") or ""),
+        "transport": str(task.get("transport") or task.get("source_transport") or ""),
+        "local_id": str(source.get("local_id") or ""),
+        "server_id": str(source.get("server_id") or ""),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def materialize_upstream_feedback(
+    result: dict[str, Any],
+    *,
+    task: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Validate agent proposals and write privacy-safe local reports."""
+    if not isinstance(task, dict):
+        return result
+    entries = upstream_feedback_entries(result)
+    if not entries:
+        return result
+
+    src_root = ROOT / "src"
+    src_text = str(src_root)
+    if src_text not in sys.path:
+        sys.path.insert(0, src_text)
+    try:
+        from agenticapp.feedback_ops import write_feedback_report
+    except (ImportError, OSError) as exc:
+        task["upstream_feedback_report_errors"] = [
+            {"index": 0, "reason": f"feedback-writer-unavailable:{type(exc).__name__}"}
+        ]
+        return result
+
+    reports: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    files = result.get("files") if isinstance(result.get("files"), list) else []
+    for index, entry in enumerate(entries):
+        target = str(entry.get("target") or "").strip().casefold()
+        kind = str(entry.get("kind") or "").strip().casefold()
+        title = str(entry.get("title") or "").strip()
+        summary = str(entry.get("summary") or "").strip()
+        expected = str(entry.get("expected") or "").strip()
+        observed = str(entry.get("observed") or "").strip()
+        evidence = entry.get("evidence") if isinstance(entry.get("evidence"), list) else []
+        acceptance = (
+            entry.get("acceptance")
+            if isinstance(entry.get("acceptance"), list)
+            else entry.get("acceptance_criteria")
+            if isinstance(entry.get("acceptance_criteria"), list)
+            else []
+        )
+        if entry.get("verified") is not True:
+            errors.append({"index": index, "reason": "unverified"})
+            continue
+        if entry.get("transient") is True:
+            errors.append({"index": index, "reason": "transient"})
+            continue
+        if not target or kind not in {"bug", "feature", "handoff"}:
+            errors.append({"index": index, "reason": "invalid-target-or-kind"})
+            continue
+        if not title or not summary or not acceptance:
+            errors.append({"index": index, "reason": "missing-required-content"})
+            continue
+        if kind == "bug" and (not observed or not evidence):
+            errors.append({"index": index, "reason": "bug-needs-observation-and-evidence"})
+            continue
+        if kind == "feature" and not expected:
+            errors.append({"index": index, "reason": "feature-needs-expected-behavior"})
+            continue
+        payload = {
+            "target": target,
+            "kind": kind,
+            "title": title,
+            "summary": summary,
+            "expected": expected,
+            "observed": observed,
+            "evidence": evidence,
+            "acceptance": acceptance,
+            "workaround": entry.get("workaround"),
+            "status": entry.get("status"),
+            "verified": True,
+            "transient": False,
+            "source_ref": feedback_source_reference(task),
+        }
+        try:
+            report = write_feedback_report(payload)
+        except (OSError, ValueError) as exc:
+            errors.append(
+                {
+                    "index": index,
+                    "reason": f"write-failed:{type(exc).__name__}",
+                }
+            )
+            continue
+        safe_record = {
+            key: report.get(key)
+            for key in (
+                "target",
+                "kind",
+                "report_id",
+                "path",
+                "created",
+                "changed",
+                "revision",
+                "verified",
+                "status",
+            )
+        }
+        reports.append(safe_record)
+        if (
+            entry.get("deliver_report") is True
+            and task_requests_feedback_report_delivery(task)
+            and str(report.get("path") or "").strip()
+        ):
+            files.append(str(report["path"]))
+
+    result["files"] = unique_strings([str(value) for value in files if str(value).strip()])
+    if reports:
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        result["data"] = {**data, "upstream_feedback_reports": reports}
+        task["upstream_feedback_reports"] = reports
+    if errors:
+        task["upstream_feedback_report_errors"] = errors
+    return result
+
+
 def prepare_result_files(
     result: dict[str, Any], raw_text: str, *, task: dict[str, Any] | None = None
 ) -> dict[str, Any]:
+    result = materialize_upstream_feedback(result, task=task)
     raw_files = result.get("files") or []
     if not isinstance(raw_files, list):
         raw_files = [raw_files]

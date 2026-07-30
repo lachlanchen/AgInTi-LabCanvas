@@ -76,6 +76,7 @@ class WorkspaceAgentTests(unittest.TestCase):
                 "musia-music",
                 "books-search",
                 "pocketpolyglot-books",
+                "integration-feedback",
             }.issubset(ids)
         )
 

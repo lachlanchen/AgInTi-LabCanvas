@@ -657,6 +657,55 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "Send progress naturally when asked, but do not bombard the chat with per-chunk or polling updates.",
         ),
     ),
+    "cross_repo_feedback": RoutineDefinition(
+        id="cross_repo_feedback",
+        title="Cross-Repository Integration Feedback",
+        route_kinds=("cross_repo_feedback",),
+        purpose=(
+            "Reproduce and record a concrete LabCanvas integration bug, feature "
+            "request, or handoff in an allowlisted sibling repository."
+        ),
+        default_effort="medium",
+        stages=(
+            {
+                "id": "target_and_requirement",
+                "owner": "worker_agent",
+                "entrypoint": "current request + labcanvas feedback targets --json",
+                "success": "one allowlisted repository, report kind, expected behavior, and acceptance criteria are explicit",
+            },
+            {
+                "id": "reproduce_or_verify",
+                "owner": "worker_agent",
+                "entrypoint": "existing integration CLI/status/tests and source-scoped task evidence",
+                "success": "a reproducible gap is distinguished from transient login, quota, network, or transport failure",
+            },
+            {
+                "id": "materialize_report",
+                "owner": "queue_orchestrator",
+                "entrypoint": "worker upstream_feedback JSON -> agenticapp.feedback_ops.write_feedback_report",
+                "success": "an idempotent privacy-sanitized Markdown report exists under the target repository's handoff/labcanvas directory",
+            },
+            {
+                "id": "concise_receipt",
+                "owner": "queue_orchestrator",
+                "entrypoint": "send_result_with_retries",
+                "success": "the source chat receives one natural outcome without internal diagnostics or duplicate report attachments",
+            },
+        ),
+        required_gates=("reproduce_or_verify", "materialize_report"),
+        artifact_policy=(
+            "Keep the repository report local by default. Send the Markdown only "
+            "when the current request explicitly asks for the report file."
+        ),
+        rules=COMMON_RULES
+        + (
+            "Use only `labcanvas feedback` and its allowlisted targets; never write to an arbitrary path supplied by chat content.",
+            "A transient login, CAPTCHA, network, quota, timeout, or transport failure is not a product bug unless independent reproduction evidence proves otherwise.",
+            "Set `verified=true` only after concrete reproduction, inspection, or a clear current-message feature requirement.",
+            "Do not put raw chat IDs, task IDs, credentials, cookies, signed URLs, private logs, or absolute home paths in a report.",
+            "Creating a local report does not authorize a public GitHub issue, commit, push, release, or another external action.",
+        ),
+    ),
     "grant_proposal": RoutineDefinition(
         id="grant_proposal",
         title="Evidence-Grounded Grant Proposal",
@@ -863,6 +912,42 @@ def routine_id_for_route(route_decision: dict[str, Any] | None, request_text: st
         )
     ):
         return "multilingual_book"
+    feedback_intent = any(
+        marker in lowered
+        for marker in (
+            "bug report",
+            "feature request",
+            "handoff note",
+            "integration report",
+            "缺陷报告",
+            "錯誤報告",
+            "功能请求",
+            "功能請求",
+            "交接文档",
+            "交接文檔",
+        )
+    )
+    feedback_target = any(
+        marker in lowered
+        for marker in (
+            "labcanvas",
+            "agenticapp",
+            "lazyedit",
+            "musia",
+            "../books",
+            "agenticbrowser",
+            "zhjpbook",
+            "pocketpolyglot",
+            "lalachan",
+            "xiaoyunque",
+            "小云雀",
+            "proteinstructure",
+            "alphafold",
+            "agintiflow",
+        )
+    )
+    if feedback_intent and feedback_target:
+        return "cross_repo_feedback"
     if any(marker in lowered for marker in ("../books", "libgen", "book catalog", "book database")) or (
         any(marker in lowered for marker in ("book", "ebook", "epub", "书", "書", "电子书", "電子書"))
         and any(marker in lowered for marker in ("find", "search", "locate", "找", "查找", "搜索", "检索", "檢索"))

@@ -1403,6 +1403,12 @@ When a bug fix invalidates an already stored worker result, re-run the original
 task with `labcanvas wechat worker reprocess <task_id> <reason>` instead of
 editing the private queue or manually doing the chat task. Reprocess preserves
 the source rows and clears stale result/preflight/send state.
+When the exact stored `result.raw` is already a valid agent answer and only an
+old result guard corrupted its chat-facing form, use
+`labcanvas wechat worker repair-result <task_id> --send`. This token-free path
+reapplies current guards without rerunning the task, completion audit, browser,
+generation, or publication tools, and fingerprints successful delivery to
+prevent duplicate repair sends.
 If a research backend stopped only after writing a complete report and source
 files, use `labcanvas wechat worker reprocess <task_id> '<reason>'
 --artifact-recovery-only --send`. This compiles and delivers the exact task
