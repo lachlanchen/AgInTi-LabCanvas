@@ -17,6 +17,67 @@ SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_autop
 
 
 class WeChatAutoPublishVideoTests(unittest.TestCase):
+    def test_message_refs_require_rotated_db_and_positive_local_id(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        self.assertEqual(
+            wechat_autopublish_video.parse_message_refs(
+                ["message_1.db:7", "message_1.db:7", "message_12.db:3"]
+            ),
+            [("message_1.db", 7), ("message_12.db", 3)],
+        )
+        with self.assertRaises(SystemExit):
+            wechat_autopublish_video.parse_message_refs(["message.db:7"])
+        with self.assertRaises(SystemExit):
+            wechat_autopublish_video.parse_message_refs(["message_1.db:0"])
+
+    def test_recent_video_messages_bind_duplicate_local_id_to_exact_rotated_shard(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            private = base / "agentic_tools" / "wechat_gui_agent" / ".private"
+            message_dir = private / "wechat_decrypt" / "decrypted" / "message"
+            message_dir.mkdir(parents=True)
+            (private / "devices-direct-chatops.local.json").write_text(
+                json.dumps({"chat_name": "My devices", "message_table": "Msg_devices"}),
+                encoding="utf-8",
+            )
+            now = int(time.time())
+            create_message_db(
+                message_dir / "message_0.db",
+                table="Msg_devices",
+                local_id=7,
+                create_time=now - 20,
+                md5="a" * 32,
+            )
+            create_message_db(
+                message_dir / "message_1.db",
+                table="Msg_devices",
+                local_id=7,
+                create_time=now - 10,
+                md5="b" * 32,
+            )
+            with mock.patch.object(wechat_autopublish_video, "ROOT", base):
+                legacy = wechat_autopublish_video.recent_video_messages(
+                    ["My devices"],
+                    60,
+                    message_local_ids=[7],
+                )
+                exact = wechat_autopublish_video.recent_video_messages(
+                    ["My devices"],
+                    60,
+                    message_refs=[("message_1.db", 7)],
+                )
+
+        self.assertEqual([item.message_db for item in legacy], ["message_1.db", "message_0.db"])
+        self.assertEqual(len(exact), 1)
+        self.assertEqual(exact[0].message_db, "message_1.db")
+        self.assertEqual(exact[0].local_id, 7)
+        self.assertEqual(exact[0].stems, ("b" * 32,))
+
     def test_parse_video_metadata_extracts_stems_and_sizes(self) -> None:
         sys.path.insert(0, str(SCRIPT.parent))
         import wechat_autopublish_video
@@ -135,6 +196,43 @@ class WeChatAutoPublishVideoTests(unittest.TestCase):
         recent.assert_called_once()
         matching.assert_called_once()
 
+    def test_exact_message_candidates_preserve_rotated_message_reference(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "exact-message.mp4"
+            video.write_bytes(b"video")
+            message = wechat_autopublish_video.VideoMessage(
+                chat_name="My devices",
+                local_id=4,
+                create_time=int(time.time()),
+                stems=("exact-message",),
+                sizes=(video.stat().st_size,),
+                message_db="message_2.db",
+            )
+            with mock.patch.object(
+                wechat_autopublish_video,
+                "recent_video_messages",
+                return_value=[message],
+            ):
+                with mock.patch.object(
+                    wechat_autopublish_video,
+                    "matching_video_files",
+                    return_value=[video],
+                ):
+                    candidates = wechat_autopublish_video.exact_message_candidates(
+                        chats=["My devices"],
+                        since_minutes=720,
+                        message_local_ids=[4],
+                        message_refs=[("message_2.db", 4)],
+                    )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].matched_by, "message-ref:message_2.db:4")
+        self.assertEqual(candidates[0].message_db, "message_2.db")
+        self.assertEqual(candidates[0].message_local_id, 4)
+
     def test_exact_message_candidates_prefer_original_send_temp_over_playback_transcode(self) -> None:
         sys.path.insert(0, str(SCRIPT.parent))
         import wechat_autopublish_video
@@ -215,6 +313,40 @@ def create_media_db(path: Path, source: Path, *, chat: str) -> None:
             VALUES (1, 1, ?, ?, '.mp4', ?, ?, 'copied', 'mtime', '{}', ?, ?)
             """,
             (str(source), str(source), source.stat().st_size, source_mtime, now, now),
+        )
+
+
+def create_message_db(
+    path: Path,
+    *,
+    table: str,
+    local_id: int,
+    create_time: int,
+    md5: str,
+) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            f"""
+            CREATE TABLE {table} (
+                local_id INTEGER,
+                create_time INTEGER,
+                message_content BLOB,
+                source BLOB,
+                packed_info_data BLOB,
+                local_type INTEGER
+            )
+            """
+        )
+        conn.execute(
+            f"INSERT INTO {table} VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                local_id,
+                create_time,
+                f'<msg><videomsg md5="{md5}" length="4096" /></msg>',
+                b"",
+                b"",
+                43,
+            ),
         )
 
 

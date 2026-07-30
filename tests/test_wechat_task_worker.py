@@ -2597,6 +2597,8 @@ stderr: noisy internal trace
                 {"local_id": 10, "sender_display": "陈苗", "content": "Context is haircut and curly; use this to correct subtitles"},
                 {
                     "local_id": 14,
+                    "message_db": "message_1.db",
+                    "local_type": 43,
                     "sender_display": "陈苗",
                     "content": '<msg><videomsg md5="bea815fa6ed81bbd5da77ac6895c5fd9" length="19452344" /></msg>',
                 },
@@ -2628,10 +2630,46 @@ stderr: noisy internal trace
         self.assertIn("bea815fa6ed81bbd5da77ac6895c5fd9", context_text)
         self.assertEqual(preflight["autopublish_video"]["ok"], True)
         self.assertEqual(preflight["autopublish_video"]["message_local_ids"], [14])
+        self.assertEqual(preflight["autopublish_video"]["message_refs"], ["message_1.db:14"])
         self.assertTrue(calls)
         self.assertIn("--message-local-id", calls[0])
         self.assertIn("14", calls[0])
+        self.assertIn("--message-ref", calls[0])
+        self.assertIn("message_1.db:14", calls[0])
         self.assertIn("--fetch-gui", calls[0])
+
+    def test_video_message_ref_uses_newest_matching_shard_when_local_id_restarts(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {"local_id": 8, "message_db": "message_1.db", "local_type": 1},
+            "request": "Current coalesced request:\npublish the latest video",
+            "context": [
+                {
+                    "local_id": 7,
+                    "message_db": "message_0.db",
+                    "local_type": 43,
+                    "create_time": 100,
+                    "content": '<msg><videomsg md5="' + ("a" * 32) + '" /></msg>',
+                },
+                {
+                    "local_id": 7,
+                    "message_db": "message_1.db",
+                    "local_type": 43,
+                    "create_time": 200,
+                    "content": '<msg><videomsg md5="' + ("b" * 32) + '" /></msg>',
+                },
+                {
+                    "local_id": 8,
+                    "message_db": "message_1.db",
+                    "local_type": 1,
+                    "create_time": 201,
+                    "content": "publish the latest video",
+                },
+            ],
+        }
+
+        self.assertEqual(worker.extract_video_local_ids_from_task(task), [7])
+        self.assertEqual(worker.extract_video_message_refs_from_task(task), ["message_1.db:7"])
 
     def test_nonpublish_direct_video_preflight_saves_under_task_artifacts(self) -> None:
         worker = load_worker()

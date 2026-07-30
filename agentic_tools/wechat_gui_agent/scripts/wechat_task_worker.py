@@ -10379,6 +10379,9 @@ def run_autopublish_video_preflight(task: dict[str, Any]) -> dict[str, Any]:
     video_local_ids = extract_video_local_ids_from_task(task)
     for local_id in video_local_ids:
         command += ["--message-local-id", str(local_id)]
+    video_message_refs = extract_video_message_refs_from_task(task)
+    for message_ref in video_message_refs:
+        command += ["--message-ref", message_ref]
     timeout = float(os.environ.get("WECHAT_WORKER_AUTOPUBLISH_TIMEOUT", "180"))
     try:
         proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=timeout)
@@ -10397,6 +10400,8 @@ def run_autopublish_video_preflight(task: dict[str, Any]) -> dict[str, Any]:
         payload["stderr"] = proc.stderr.strip()[:2000]
     if video_local_ids:
         payload["message_local_ids"] = video_local_ids
+    if video_message_refs:
+        payload["message_refs"] = video_message_refs
     if private_dest:
         payload["private_save_dest"] = str(private_dest)
     return payload
@@ -13154,6 +13159,39 @@ def extract_video_local_ids_from_task(task: dict[str, Any]) -> list[int]:
         if exact:
             return exact
     return video_ids[-1:] if video_ids else []
+
+
+def extract_video_message_refs_from_task(task: dict[str, Any]) -> list[str]:
+    """Bind video local IDs to their rotated message shard.
+
+    WeChat resets local IDs in every ``message_N.db`` file. Selecting a video
+    by local ID alone can therefore target an older row after rollover. Use the
+    newest exact context row for each selected local ID and keep the shard name
+    in the AutoPublish preflight contract.
+    """
+    selected_ids = extract_video_local_ids_from_task(task)
+    if not selected_ids:
+        return []
+    selected = set(selected_ids)
+    rows: list[dict[str, Any]] = [
+        row for row in task.get("context") or [] if isinstance(row, dict)
+    ]
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    if source:
+        rows.append(source)
+    refs_by_local_id: dict[int, str] = {}
+    for row in reversed(rows):
+        local_id = int_or_none(row.get("local_id"))
+        if local_id not in selected or local_id in refs_by_local_id:
+            continue
+        content = str(row.get("content") or "")
+        if wechat_base_message_type(row.get("local_type")) != 43 and "<videomsg" not in content and "[WeChat video]" not in content:
+            continue
+        message_db = Path(str(row.get("message_db") or "")).name
+        if not re.fullmatch(r"message_[0-9]+\.db", message_db):
+            continue
+        refs_by_local_id[local_id] = f"{message_db}:{local_id}"
+    return [refs_by_local_id[local_id] for local_id in selected_ids if local_id in refs_by_local_id]
 
 
 def referenced_video_local_ids_from_source(task: dict[str, Any], source_content: str) -> list[int]:

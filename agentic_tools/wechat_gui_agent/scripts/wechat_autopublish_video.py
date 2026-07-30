@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_AUTOPUBLISH_DIR = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/home/lachlan/Nutstore Files/AutoPublish/AutoPublish"))
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 TRANSCODE_SOURCE_WINDOW_SECONDS = 120
+MESSAGE_DB_NAME_PATTERN = re.compile(r"^message_([0-9]+)\.db$")
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,8 @@ class VideoCandidate:
     updated_at: str
     status: str
     matched_by: str
+    message_db: str = ""
+    message_local_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -46,6 +49,7 @@ class VideoMessage:
     create_time: int
     stems: tuple[str, ...]
     sizes: tuple[int, ...]
+    message_db: str = ""
 
 
 def main() -> int:
@@ -57,6 +61,12 @@ def main() -> int:
     parser.add_argument("--title", default="", help="Output basename. _COMPLETED is appended if missing.")
     parser.add_argument("--match-token", action="append", default=[], help="Filter mirror rows by token in path/metadata. Repeatable.")
     parser.add_argument("--message-local-id", action="append", type=int, default=[], help="Use an exact WeChat video message local_id instead of the newest mirrored video. Repeatable.")
+    parser.add_argument(
+        "--message-ref",
+        action="append",
+        default=[],
+        help="Use an exact rotated message reference as message_N.db:local_id. Repeatable.",
+    )
     parser.add_argument("--since-minutes", type=float, default=180, help="Only use mirror rows updated or modified recently. Default: 180.")
     parser.add_argument("--limit", type=int, default=10, help="Candidate count for --list. Default: 10.")
     parser.add_argument("--sync", action="store_true", help="Run WeChat media-sync before selecting the video.")
@@ -70,6 +80,7 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    message_refs = parse_message_refs(args.message_ref)
 
     if args.sync:
         sync_chats = args.chat or configured_chats()
@@ -80,11 +91,12 @@ def main() -> int:
 
     if args.source:
         candidates = [candidate_from_source(args.source, args.chat[0] if args.chat else "manual")]
-    elif args.message_local_id:
+    elif args.message_local_id or message_refs:
         candidates = exact_message_candidates(
             chats=args.chat,
             since_minutes=args.since_minutes,
             message_local_ids=args.message_local_id,
+            message_refs=message_refs,
             db_path=args.db,
         )
         if not candidates and args.fetch_gui and not args.dry_run:
@@ -95,9 +107,15 @@ def main() -> int:
                 timeout=args.fetch_timeout,
                 video_clicks=parse_clicks(args.video_click) or default_video_clicks(),
                 message_local_ids=args.message_local_id,
+                message_refs=message_refs,
             )
             if fetch_payload.get("ok") and fetch_payload.get("path"):
-                candidates = [candidate_from_source(Path(str(fetch_payload["path"])), str(fetch_payload.get("chat") or (args.chat[0] if args.chat else "manual")))]
+                candidates = [
+                    candidate_from_source(
+                        Path(str(fetch_payload["path"])),
+                        str(fetch_payload.get("chat") or (args.chat[0] if args.chat else "manual")),
+                    )
+                ]
             if fetch_payload.get("ok"):
                 for chat in args.chat or [str(fetch_payload.get("chat") or "")]:
                     if chat:
@@ -107,6 +125,7 @@ def main() -> int:
                     chats=args.chat,
                     since_minutes=args.since_minutes,
                     message_local_ids=args.message_local_id,
+                    message_refs=message_refs,
                     db_path=args.db,
                 )
     else:
@@ -143,7 +162,12 @@ def main() -> int:
         return 0
 
     if not candidates:
-        recent_messages = recent_video_message_summary(args.chat, args.since_minutes, message_local_ids=args.message_local_id)
+        recent_messages = recent_video_message_summary(
+            args.chat,
+            args.since_minutes,
+            message_local_ids=args.message_local_id,
+            message_refs=message_refs,
+        )
         payload = {
             "ok": False,
             "error": "no matching mirrored video found",
@@ -169,13 +193,24 @@ def exact_message_candidates(
     chats: list[str],
     since_minutes: float,
     message_local_ids: list[int],
+    message_refs: list[tuple[str, int]] | None = None,
     db_path: Path = DEFAULT_DB,
 ) -> list[VideoCandidate]:
-    messages = recent_video_messages(chats, since_minutes, message_local_ids=message_local_ids)
+    messages = recent_video_messages(
+        chats,
+        since_minutes,
+        message_local_ids=message_local_ids,
+        message_refs=message_refs,
+    )
     candidates: list[VideoCandidate] = []
     for message in messages:
         paths = matching_video_files(message, since_minutes=since_minutes, started_at=0)
         paths.extend(mirrored_message_video_files(db_path, message))
+        matched_by = (
+            f"message-ref:{message.message_db}:{message.local_id}"
+            if message.message_db
+            else f"message-local-id:{message.local_id}"
+        )
         for path in deduplicate_paths(paths):
             try:
                 stat = path.stat()
@@ -191,14 +226,19 @@ def exact_message_candidates(
                     source_mtime=stat.st_mtime,
                     updated_at=datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
                     status="message-match",
-                    matched_by=f"message-local-id:{message.local_id}",
+                    matched_by=matched_by,
+                    message_db=message.message_db,
+                    message_local_id=message.local_id,
                 )
             )
-    message_by_chat = {(item.chat_name, item.local_id): item for item in messages}
+    message_by_key = {
+        (item.chat_name, item.message_db, item.local_id): item
+        for item in messages
+    }
     candidates.sort(
         key=lambda item: exact_message_candidate_rank(
             item.path,
-            message_by_chat[(item.chat_name, int(item.matched_by.rsplit(":", 1)[-1]))],
+            message_by_key[(item.chat_name, item.message_db, item.message_local_id)],
         ),
         reverse=True,
     )
@@ -411,8 +451,14 @@ def fetch_latest_video_via_gui(
     timeout: float,
     video_clicks: list[tuple[int, int]],
     message_local_ids: list[int] | None = None,
+    message_refs: list[tuple[str, int]] | None = None,
 ) -> dict:
-    messages = recent_video_messages(chats, since_minutes, message_local_ids=message_local_ids)
+    messages = recent_video_messages(
+        chats,
+        since_minutes,
+        message_local_ids=message_local_ids,
+        message_refs=message_refs,
+    )
     if not messages:
         return {"ok": False, "error": "no recent video message"}
     message = messages[0]
@@ -450,56 +496,122 @@ def fetch_latest_video_via_gui(
     return {"ok": False, "chat": message.chat_name, "error": "video cache did not appear before timeout", "attempts": attempts}
 
 
-def recent_video_messages(chats: list[str], since_minutes: float, *, message_local_ids: list[int] | None = None) -> list[VideoMessage]:
+def parse_message_refs(values: list[str]) -> list[tuple[str, int]]:
+    refs: list[tuple[str, int]] = []
+    for raw in values:
+        db_name, separator, local_id_text = str(raw or "").strip().rpartition(":")
+        if not separator or not MESSAGE_DB_NAME_PATTERN.fullmatch(db_name):
+            raise SystemExit(f"Invalid --message-ref {raw!r}; expected message_N.db:local_id")
+        try:
+            local_id = int(local_id_text)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid --message-ref {raw!r}; local_id must be an integer") from exc
+        if local_id <= 0:
+            raise SystemExit(f"Invalid --message-ref {raw!r}; local_id must be positive")
+        ref = (db_name, local_id)
+        if ref not in refs:
+            refs.append(ref)
+    return refs
+
+
+def message_db_sort_key(path: Path) -> tuple[int, str]:
+    match = MESSAGE_DB_NAME_PATTERN.fullmatch(path.name)
+    return (int(match.group(1)), path.name) if match else (-1, path.name)
+
+
+def available_message_db_paths(message_db_dir: Path, *, names: set[str] | None = None) -> list[Path]:
+    if not message_db_dir.is_dir():
+        return []
+    paths = [
+        path
+        for path in message_db_dir.glob("message_*.db")
+        if path.is_file()
+        and MESSAGE_DB_NAME_PATTERN.fullmatch(path.name)
+        and (not names or path.name in names)
+    ]
+    paths.sort(key=message_db_sort_key)
+    return paths
+
+
+def recent_video_messages(
+    chats: list[str],
+    since_minutes: float,
+    *,
+    message_local_ids: list[int] | None = None,
+    message_refs: list[tuple[str, int]] | None = None,
+    message_db_dir: Path | None = None,
+    per_table_limit: int = 3,
+) -> list[VideoMessage]:
     private = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
-    db_path = private / "wechat_decrypt" / "decrypted" / "message" / "message_0.db"
-    if not db_path.exists():
+    db_dir = message_db_dir or (private / "wechat_decrypt" / "decrypted" / "message")
+    ref_map: dict[str, set[int]] = {}
+    for db_name, local_id in message_refs or []:
+        if not MESSAGE_DB_NAME_PATTERN.fullmatch(db_name):
+            continue
+        ref_map.setdefault(db_name, set()).add(int(local_id))
+    db_paths = available_message_db_paths(db_dir, names=set(ref_map) or None)
+    if not db_paths:
         return []
     cutoff = int((datetime.now() - timedelta(minutes=since_minutes)).timestamp())
     allowed = set(chats)
     messages: list[VideoMessage] = []
-    with sqlite3.connect(db_path) as conn:
-        for config in sorted(private.glob("*-direct-chatops.local.json")):
-            try:
-                payload = json.loads(config.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            chat_name = str(payload.get("chat_name") or "")
-            table = str(payload.get("message_table") or "")
-            if allowed and chat_name not in allowed:
-                continue
-            if not table.replace("_", "").isalnum():
-                continue
-            try:
-                local_id_filter = ""
-                params: list[object] = [cutoff]
-                if message_local_ids:
-                    local_id_filter = " AND local_id IN ({})".format(",".join("?" for _ in message_local_ids))
-                    params.extend(int(item) for item in message_local_ids)
-                rows = conn.execute(
-                    f"""
-                    SELECT local_id, create_time, message_content, source, packed_info_data
-                    FROM {table}
-                    WHERE create_time >= ? AND (local_type & 4294967295) = 43{local_id_filter}
-                    ORDER BY create_time DESC
-                    LIMIT 3
-                    """,
-                    params,
-                ).fetchall()
-            except sqlite3.Error:
-                continue
-            for row in rows:
-                stems, sizes = parse_video_metadata(row[2], row[3], row[4])
-                messages.append(
-                    VideoMessage(
-                        chat_name=chat_name,
-                        local_id=int(row[0] or 0),
-                        create_time=int(row[1] or 0),
-                        stems=tuple(stems),
-                        sizes=tuple(sizes),
+    configs: list[tuple[str, str]] = []
+    for config in sorted(private.glob("*-direct-chatops.local.json")):
+        try:
+            payload = json.loads(config.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        chat_name = str(payload.get("chat_name") or "")
+        table = str(payload.get("message_table") or "")
+        if allowed and chat_name not in allowed:
+            continue
+        if not table.replace("_", "").isalnum():
+            continue
+        configs.append((chat_name, table))
+    for db_path in db_paths:
+        paired_ids = sorted(ref_map.get(db_path.name) or [])
+        if ref_map and not paired_ids:
+            continue
+        legacy_ids = sorted({int(item) for item in (message_local_ids or []) if int(item) > 0})
+        selected_ids = paired_ids if ref_map else legacy_ids
+        with sqlite3.connect(db_path) as conn:
+            for chat_name, table in configs:
+                try:
+                    local_id_filter = ""
+                    params: list[object] = [cutoff]
+                    if selected_ids:
+                        local_id_filter = " AND local_id IN ({})".format(",".join("?" for _ in selected_ids))
+                        params.extend(selected_ids)
+                    params.append(max(1, int(per_table_limit)))
+                    rows = conn.execute(
+                        f"""
+                        SELECT local_id, create_time, message_content, source, packed_info_data
+                        FROM {table}
+                        WHERE create_time >= ? AND (local_type & 4294967295) = 43{local_id_filter}
+                        ORDER BY create_time DESC
+                        LIMIT ?
+                        """,
+                        params,
+                    ).fetchall()
+                except sqlite3.Error:
+                    continue
+                for row in rows:
+                    stems, sizes = parse_video_metadata(row[2], row[3], row[4])
+                    messages.append(
+                        VideoMessage(
+                            chat_name=chat_name,
+                            local_id=int(row[0] or 0),
+                            create_time=int(row[1] or 0),
+                            stems=tuple(stems),
+                            sizes=tuple(sizes),
+                            message_db=db_path.name,
+                        )
                     )
-                )
-    messages.sort(key=lambda item: item.create_time, reverse=True)
+    unique: dict[tuple[str, str, int, int], VideoMessage] = {}
+    for message in messages:
+        unique[(message.chat_name, message.message_db, message.local_id, message.create_time)] = message
+    messages = list(unique.values())
+    messages.sort(key=lambda item: (item.create_time, message_db_sort_key(Path(item.message_db))), reverse=True)
     return messages
 
 
@@ -731,52 +843,40 @@ def add_unique(items: list[Any], value: Any) -> None:
         items.append(value)
 
 
-def recent_video_message_summary(chats: list[str], since_minutes: float, message_local_ids: list[int] | None = None) -> list[dict]:
-    private = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
-    db_path = private / "wechat_decrypt" / "decrypted" / "message" / "message_0.db"
-    if not db_path.exists():
-        return []
-    cutoff = int((datetime.now() - timedelta(minutes=since_minutes)).timestamp())
+def recent_video_message_summary(
+    chats: list[str],
+    since_minutes: float,
+    message_local_ids: list[int] | None = None,
+    message_refs: list[tuple[str, int]] | None = None,
+) -> list[dict]:
+    messages = recent_video_messages(
+        chats,
+        since_minutes,
+        message_local_ids=message_local_ids,
+        message_refs=message_refs,
+        per_table_limit=100,
+    )
+    by_chat: dict[str, list[VideoMessage]] = {}
+    for message in messages:
+        by_chat.setdefault(message.chat_name, []).append(message)
     summaries: list[dict] = []
-    allowed = set(chats)
-    with sqlite3.connect(db_path) as conn:
-        for config in sorted(private.glob("*-direct-chatops.local.json")):
-            try:
-                payload = json.loads(config.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            chat_name = str(payload.get("chat_name") or "")
-            table = str(payload.get("message_table") or "")
-            if allowed and chat_name not in allowed:
-                continue
-            if not table.replace("_", "").isalnum():
-                continue
-            try:
-                local_id_filter = ""
-                params: list[object] = [cutoff]
-                if message_local_ids:
-                    local_id_filter = " AND local_id IN ({})".format(",".join("?" for _ in message_local_ids))
-                    params.extend(int(item) for item in message_local_ids)
-                row = conn.execute(
-                    f"""
-                    SELECT COUNT(*), MAX(create_time)
-                    FROM {table}
-                    WHERE create_time >= ? AND (local_type & 4294967295) = 43{local_id_filter}
-                    """,
-                    params,
-                ).fetchone()
-            except sqlite3.Error:
-                continue
-            count = int(row[0] or 0) if row else 0
-            latest = int(row[1] or 0) if row else 0
-            if count:
-                summaries.append(
-                    {
-                        "chat": chat_name,
-                        "recent_video_rows": count,
-                        "latest_video_at": datetime.fromtimestamp(latest).isoformat(timespec="seconds") if latest else "",
-                    }
-                )
+    for chat_name, rows in sorted(by_chat.items()):
+        latest = max((item.create_time for item in rows), default=0)
+        refs = sorted(
+            {
+                f"{item.message_db}:{item.local_id}"
+                for item in rows
+                if item.message_db and item.local_id > 0
+            }
+        )
+        summaries.append(
+            {
+                "chat": chat_name,
+                "recent_video_rows": len(rows),
+                "latest_video_at": datetime.fromtimestamp(latest).isoformat(timespec="seconds") if latest else "",
+                "message_refs": refs,
+            }
+        )
     return summaries
 
 
@@ -794,6 +894,8 @@ def copy_candidate(candidate: VideoCandidate, *, dest_dir: Path, title: str, rep
         "bytes": candidate.size_bytes,
         "media_id": candidate.media_id,
     }
+    if candidate.message_db:
+        payload["message_ref"] = f"{candidate.message_db}:{candidate.message_local_id}"
     if dry_run:
         return payload
     if target.exists():
@@ -833,7 +935,7 @@ def safe_filename(value: str) -> str:
 
 
 def candidate_summary(candidate: VideoCandidate) -> dict:
-    return {
+    payload = {
         "media_id": candidate.media_id,
         "chat": candidate.chat_name,
         "name": candidate.path.name,
@@ -844,6 +946,9 @@ def candidate_summary(candidate: VideoCandidate) -> dict:
         "status": candidate.status,
         "matched_by": candidate.matched_by,
     }
+    if candidate.message_db:
+        payload["message_ref"] = f"{candidate.message_db}:{candidate.message_local_id}"
+    return payload
 
 
 def print_payload(payload: dict, as_json: bool, text: str) -> None:

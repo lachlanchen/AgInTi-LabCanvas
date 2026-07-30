@@ -309,6 +309,12 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     autopub.add_argument("--title", default="", help="Output basename. _COMPLETED is appended if missing.")
     autopub.add_argument("--match-token", action="append", default=[])
     autopub.add_argument("--message-local-id", action="append", type=int, default=[], help="Use an exact WeChat video message local_id. Repeatable.")
+    autopub.add_argument(
+        "--message-ref",
+        action="append",
+        default=[],
+        help="Use an exact rotated message reference as message_N.db:local_id. Repeatable.",
+    )
     autopub.add_argument("--since-minutes", type=float, default=180)
     autopub.add_argument("--limit", type=int, default=10)
     autopub.add_argument("--sync", action="store_true", help="Run media-sync before selecting the video.")
@@ -913,6 +919,7 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "GUI file sends re-verify the exact chat after the native picker and before submission",
             "send_retrying rows are not reclaimed before the active GUI sender timeout plus grace",
             "exact-task media resolution rejects files associated only by modification time",
+            "video publication binds local message IDs to their exact rotated database shard",
             "restart transport recovery is recent, bounded, transport-scoped, and idempotent",
             "chat-sync dry-open alarm is long enough to refresh inactive groups",
             "chat-sync retryable failures back off per chat without blocking other groups",
@@ -1040,6 +1047,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "mtime_only_cross_chat_media_rejected",
             "test": worker_prefix + "test_media_resolution_rejects_mtime_only_cross_chat_candidate",
+        },
+        {
+            "id": "video_message_shard_identity_preserved",
+            "test": worker_prefix + "test_video_message_ref_uses_newest_matching_shard_when_local_id_restarts",
         },
         {
             "id": "recent_transport_recovery_bounded",
@@ -1780,6 +1791,8 @@ def cmd_autopublish_video(args: argparse.Namespace) -> int:
         command += ["--match-token", str(token)]
     for local_id in args.message_local_id:
         command += ["--message-local-id", str(local_id)]
+    for message_ref in args.message_ref:
+        command += ["--message-ref", str(message_ref)]
     if args.sync:
         command.append("--sync")
     if args.fetch_gui:
