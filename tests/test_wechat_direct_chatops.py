@@ -953,6 +953,45 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertIsNone(route)
 
+    def test_agent_bridge_mode_cannot_drop_explicit_video_generation(self) -> None:
+        config = self.backend_chat_config("MEMO写作—外语—挣钱", "personal_organizer")
+        config["agent_bridge_mode"] = True
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row(
+            "请用 Lala Studio 生成今天的视频，上传所有参考图，并把成片发回群里。",
+            local_id=73,
+            server_id="srv-73",
+        )
+
+        with mock.patch.object(
+            direct_chatops,
+            "agent_route_decision",
+            return_value={"route_kind": "chat_only", "worker_needed": False, "reason": "mistaken fast reply"},
+        ):
+            route = direct_chatops.immediate_task_route(config, row, [row], focus_rows=[row])
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["route_decision"]["route_kind"], "generate_video")
+        self.assertTrue(route["route_decision"]["worker_needed"])
+
+    def test_new_video_request_with_previous_scene_does_not_reuse_old_result(self) -> None:
+        text = "还是之前的别墅，请生成今天的视频并把视频发回来。"
+
+        self.assertFalse(direct_chatops.is_previous_result_reuse_request(text))
+
+    def test_transport_file_receipt_is_not_a_reusable_agent_result(self) -> None:
+        receipt = (
+            "[WeChat file]\n"
+            "title: daily-report.pdf\n"
+            "extension: pdf\n"
+            "size_bytes: 184250\n"
+            "md5: 920c0ab420dd52bcb841c6eac8b27bd4"
+        )
+
+        self.assertFalse(direct_chatops.is_reusable_outbound_result(receipt))
+
     def test_agent_bridge_mode_marks_worker_task_prompt(self) -> None:
         config = self.backend_chat_config("懒人科研", "research")
         config["agent_bridge_mode"] = True
@@ -2568,9 +2607,12 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         target = self.row("分析这句日语", server_id="friend-229", local_id=229)
         state: dict[str, object] = {
             "last_local_id": 238,
+            "active_message_db": "message_1.db",
+            "message_db_cursors": {"message_0.db": 166, "message_1.db": 238},
             "responded_server_ids": ["friend-229", "friend-232"],
             "responded_message_keys": ["server:friend-229", "server:friend-232"],
         }
+        target["_message_db"] = "message_1.db"
         original_history = direct_chatops.read_recent_history
         original_read_new = direct_chatops.read_new_messages
         original_run_codex = direct_chatops.run_codex
@@ -2578,6 +2620,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             direct_chatops.read_recent_history = lambda *_args, **_kwargs: [target]  # type: ignore[assignment]
             prepared = direct_chatops.prepare_force_local_id(config, state, 229)
             self.assertEqual(prepared["last_local_id"], 228)
+            self.assertEqual(prepared["message_db_cursors"]["message_0.db"], 166)
+            self.assertEqual(prepared["message_db_cursors"]["message_1.db"], 228)
             self.assertEqual(prepared["force_replay_local_ids"], [229])
             self.assertEqual(prepared["responded_server_ids"], ["friend-232"])
             self.assertEqual(prepared["responded_message_keys"], ["server:friend-232"])
@@ -2595,6 +2639,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(result["processed_local_id"], 229)
         self.assertEqual(result["response_sent"], "language analysis")
         self.assertEqual(result["state"]["last_local_id"], 238)
+        self.assertEqual(result["state"]["message_db_cursors"], {"message_0.db": 166, "message_1.db": 238})
         self.assertNotIn("force_replay_local_ids", result["state"])
         self.assertEqual(result["metrics"]["force_replay_completed"], 1)
 

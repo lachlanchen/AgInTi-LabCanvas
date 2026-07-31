@@ -1183,6 +1183,17 @@ def prepare_force_replay_state(
         int(state.get("last_local_id") or 0),
         int(state.get("force_replay_restore_local_id") or 0),
     )
+    restore_cursors = message_db_cursors(state)
+    replay_cursors = dict(restore_cursors)
+    for row in selected:
+        local_id = int(row.get("local_id") or 0)
+        if local_id <= 0:
+            continue
+        message_db = row_message_db_name(row, state)
+        replay_cursors[message_db] = min(
+            replay_cursors.get(message_db, local_id),
+            local_id - 1,
+        )
     state["responded_server_ids"] = [
         str(server_id)
         for server_id in state.get("responded_server_ids", [])
@@ -1195,6 +1206,8 @@ def prepare_force_replay_state(
     ]
     state["last_local_id"] = max(0, min(int(row["local_id"]) for row in selected) - 1)
     state["force_replay_restore_local_id"] = restore_local_id
+    state["force_replay_restore_message_db_cursors"] = restore_cursors
+    save_message_db_cursors(state, replay_cursors)
     state["manual_reprocess_note"] = note
     state["force_replay_local_ids"] = [int(row["local_id"]) for row in selected]
     state["force_replay_at"] = datetime.now().isoformat(timespec="seconds")
@@ -1216,10 +1229,14 @@ def force_replay_local_ids(state: dict[str, Any]) -> set[int]:
 def finish_force_replay(state: dict[str, Any], metrics: dict[str, Any]) -> None:
     if not force_replay_local_ids(state):
         return
-    state["last_local_id"] = max(
-        int(state.get("last_local_id") or 0),
-        int(state.get("force_replay_restore_local_id") or 0),
-    )
+    restore_cursors = state.pop("force_replay_restore_message_db_cursors", None)
+    if isinstance(restore_cursors, dict):
+        save_message_db_cursors(state, restore_cursors)
+    else:
+        state["last_local_id"] = max(
+            int(state.get("last_local_id") or 0),
+            int(state.get("force_replay_restore_local_id") or 0),
+        )
     state.pop("force_replay_local_ids", None)
     state.pop("force_replay_restore_local_id", None)
     state["force_replay_completed_at"] = datetime.now().isoformat(timespec="seconds")
@@ -2465,6 +2482,8 @@ def is_previous_result_reuse_request(text: str) -> bool:
     normalized = collapse_text(strip_group_sender_prefix(str(text or ""))).lower()
     if not normalized:
         return False
+    if has_video_generation_intent(normalized):
+        return False
     modification_terms = [
         "optimize",
         "polish",
@@ -2584,6 +2603,8 @@ def is_reusable_outbound_result(text: str) -> bool:
     stripped = str(text or "").strip()
     collapsed = collapse_text(stripped)
     lowered = collapsed.lower()
+    if lowered.startswith("[wechat file]") or lowered.startswith("[wechat video]"):
+        return False
     if len(collapsed) < 50:
         return False
     if re.fullmatch(r"[/~.\w\u4e00-\u9fff -]+\.[A-Za-z0-9]{1,8}", collapsed):
@@ -2661,6 +2682,23 @@ def immediate_task_route(
     agent_first = (bridge_mode or agent_route_prefilter_mode(config) == "agent_first") and bool(config.get("agent_route_enabled", False))
     if agent_first:
         route_decision = agent_route_decision(config, row, context_rows, focus_rows=focus_rows, current_request=combined)
+        if (
+            not route_decision_requires_worker(route_decision)
+            and heuristic_candidate
+            and has_video_generation_intent(combined)
+        ):
+            explicit_fallback = fallback_route_decision(
+                config,
+                combined,
+                row,
+                context_rows,
+                focus_rows=focus_rows,
+            )
+            if str(explicit_fallback.get("route_kind") or "") == "generate_video":
+                explicit_fallback["route_agent_overridden"] = "chat_only_cannot_complete_explicit_video_generation"
+                explicit_fallback["route_agent_original_kind"] = str(route_decision.get("route_kind") or "")
+                explicit_fallback["route_agent_original_reason"] = str(route_decision.get("reason") or "")[:300]
+                route_decision = explicit_fallback
         if not route_decision_requires_worker(route_decision):
             if bridge_mode or is_language_analysis_mode(config):
                 return None
