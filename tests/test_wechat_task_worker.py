@@ -5565,6 +5565,88 @@ stderr: noisy internal trace
             self.assertIn("thread_id=abc", rows[0]["generated_video_monitor"]["thread_url"])
             self.assertIn("next_poll_at", rows[0])
 
+    def test_in_progress_generated_video_does_not_adopt_while_worker_is_alive(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "video-live-worker",
+            "status": worker.CLAIMED_STATUS,
+            "worker_id": "pid:12345",
+            "claimed_at": "1970-01-01T00:00:00",
+            "route_decision": {"route_kind": "generate_video"},
+        }
+
+        with mock.patch.object(worker, "process_alive", return_value=True):
+            self.assertFalse(worker.generated_video_adoption_due(task, datetime.now()))
+
+    def test_browser_monitor_discovery_rejects_threads_open_at_claim(self) -> None:
+        worker = load_worker()
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    [
+                        {"type": "page", "id": "OLD-PAGE", "title": "old", "url": "https://xyq.jianying.com/home?thread_id=old-thread&tab_name=integrated-agent"},
+                        {"type": "page", "id": "NEW-PAGE", "title": "new", "url": "https://xyq.jianying.com/home?thread_id=new-thread&tab_name=integrated-agent"},
+                    ]
+                ).encode("utf-8")
+
+        task = {
+            "route_decision": {"route_kind": "generate_video"},
+            "request": "generate a new video",
+            "generated_video_claim_baseline": {
+                "page_ids": ["OLD-PAGE"],
+                "thread_ids": ["old-thread"],
+            },
+        }
+        with mock.patch.object(worker.urllib.request, "urlopen", return_value=FakeResponse()):
+            monitor = worker.discover_generated_video_monitor_from_browser(task)
+
+        self.assertEqual(monitor["page_id"], "NEW-PAGE")
+        self.assertIn("thread_id=new-thread", monitor["thread_url"])
+
+    def test_reprocess_wrong_generated_video_uses_fresh_artifact_directory(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "video-wrong-result",
+                        "chat": "MEMO",
+                        "request": "generate a new video",
+                        "route_decision": {"route_kind": "generate_video"},
+                        "status": "done",
+                        "artifact_dir": str(Path(tmp) / "old-artifacts"),
+                        "generated_video_monitor": {"thread_url": "https://xyq.jianying.com/home?thread_id=old"},
+                        "generation_wait_count": 2,
+                        "sent_file_paths": [str(Path(tmp) / "old.mp4")],
+                    }
+                ],
+            )
+
+            task = worker.reprocess_task(
+                queue,
+                "video-wrong-result",
+                reason="The result was an old video; generate a new video for this request.",
+            )
+
+        self.assertEqual(task["status"], "pending")
+        self.assertNotIn("generated_video_monitor", task)
+        self.assertNotIn("generation_wait_count", task)
+        self.assertIn("-retry-", task["artifact_dir"])
+        self.assertTrue(task["invalid_generated_video_reprocess"]["fresh_submission_required"])
+        policy = worker.choose_worker_policy(task)
+        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["reasoning_effort"], "medium")
+        self.assertFalse(policy["reuse_session"])
+
     def test_generate_video_status_backoff_uses_page_status(self) -> None:
         worker = load_worker()
 

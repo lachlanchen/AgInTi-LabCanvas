@@ -655,6 +655,8 @@ def reprocess_task(
             task["reprocess_requested_at"] = now_text
             task["reprocess_reason"] = reason or "manual_reprocess"
             apply_reprocess_reason_contract(task, reason)
+            if invalid_generated_video_reprocess_requested(task, reason):
+                reset_invalid_generated_video_reprocess(task, now_text)
             task["queue_path"] = str(queue)
             if artifact_recovery_only:
                 task["artifact_recovery_only"] = True
@@ -674,6 +676,46 @@ def reprocess_task(
             write_tasks(queue, tasks)
             return task
     raise SystemExit(f"No task found with id {task_id}")
+
+
+def invalid_generated_video_reprocess_requested(task: dict[str, Any], reason: str) -> bool:
+    """Require explicit correction language before allowing a fresh paid run."""
+    if not is_generate_video_task(task):
+        return False
+    text = str(reason or "").strip().casefold()
+    invalid_markers = ("old video", "wrong video", "incorrect video", "stale video", "旧视频", "老视频", "错误视频", "错的视频")
+    new_markers = ("generate a new", "create a new", "regenerate", "new video", "重新生成", "生成新", "新视频")
+    return any(marker in text for marker in invalid_markers) and any(marker in text for marker in new_markers)
+
+
+def reset_invalid_generated_video_reprocess(task: dict[str, Any], now_text: str) -> None:
+    """Quarantine stale generation provenance and start in a fresh artifact dir."""
+    stale_generation_fields = (
+        "generated_video_monitor",
+        "generated_video_submit_probe",
+        "generated_video_claim_baseline",
+        "generation_wait_count",
+        "generation_started_at",
+        "generation_poll_history",
+        "generation_adoption_history",
+        "generation_pause_history",
+        "generation_paused_at",
+        "generation_pause_reason",
+        "last_generation_status_at",
+        "last_live_status_at",
+        "next_poll_at",
+        "next_poll_at_iso",
+        "credit_guard",
+    )
+    for field in stale_generation_fields:
+        task.pop(field, None)
+    stamp = re.sub(r"[^0-9]", "", now_text)[:14] or datetime.now().strftime("%Y%m%d%H%M%S")
+    task["artifact_dir"] = str((ROOT / "output" / "wechat_worker" / f"{safe_slug(str(task.get('id') or 'video'))}-retry-{stamp}").resolve())
+    task["invalid_generated_video_reprocess"] = {
+        "at": now_text,
+        "reason": collapse_context_text(task.get("reprocess_reason"), max_len=500),
+        "fresh_submission_required": True,
+    }
 
 
 def stored_result_can_be_reused_for_delivery(
@@ -853,6 +895,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         return False
     log_worker_event("claimed", task)
     task["queue_path"] = str(queue)
+    initialize_generated_video_claim_baseline(task)
     repair_explicit_research_task_contract(task)
     ensure_runtime_instruction_contract(task)
     try:
@@ -1669,6 +1712,18 @@ def discover_generated_video_monitor_from_browser(task: dict[str, Any]) -> dict[
         candidates.append(page)
     if not candidates:
         return {}
+    baseline = task.get("generated_video_claim_baseline")
+    if isinstance(baseline, dict):
+        baseline_page_ids = {str(value) for value in baseline.get("page_ids") or [] if str(value)}
+        baseline_thread_ids = {str(value) for value in baseline.get("thread_ids") or [] if str(value)}
+        candidates = [
+            page
+            for page in candidates
+            if str(page.get("id") or "") not in baseline_page_ids
+            and extract_xyq_thread_id(str(page.get("url") or "")) not in baseline_thread_ids
+        ]
+        if not candidates:
+            return {}
     request_text = task_focus_text(task).lower()
     if "lalachan" in request_text or "小云雀" in request_text or "seedance" in request_text:
         preferred = [
@@ -1687,6 +1742,38 @@ def discover_generated_video_monitor_from_browser(task: dict[str, Any]) -> dict[
         "discovered_from": "chrome_cdp_pages",
         "discovered_at": datetime.now().isoformat(timespec="seconds"),
     }
+
+
+def initialize_generated_video_claim_baseline(task: dict[str, Any]) -> None:
+    """Record pre-existing XYQ threads so timeout recovery cannot adopt old work."""
+    if not is_generate_video_task(task) or task.get("generated_video_claim_baseline"):
+        return
+    cdp_url = configured_xyq_cdp_url()
+    page_ids: list[str] = []
+    thread_ids: list[str] = []
+    try:
+        with urllib.request.urlopen(f"{cdp_url}/json/list", timeout=2) as response:
+            pages = json.loads(response.read().decode("utf-8", errors="replace"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        pages = []
+    for page in pages if isinstance(pages, list) else []:
+        if not isinstance(page, dict) or page.get("type") != "page":
+            continue
+        url = str(page.get("url") or "")
+        thread_id = extract_xyq_thread_id(url)
+        if "xyq.jianying.com" not in url or not thread_id:
+            continue
+        page_id = str(page.get("id") or "")
+        if page_id:
+            page_ids.append(page_id)
+        thread_ids.append(thread_id)
+    task["generated_video_claim_baseline"] = {
+        "captured_at": datetime.now().isoformat(timespec="seconds"),
+        "cdp_url": cdp_url,
+        "page_ids": list(dict.fromkeys(page_ids)),
+        "thread_ids": list(dict.fromkeys(thread_ids)),
+    }
+    persist_task_progress(task)
 
 
 def page_id_for_thread_url(cdp_url: str, thread_url: str) -> str:
@@ -4323,6 +4410,11 @@ def adopt_active_generated_video_tasks(path: Path) -> dict[str, Any] | None:
 
 def generated_video_adoption_due(task: dict[str, Any], now: datetime) -> bool:
     if not is_generate_video_task(task) or str(task.get("status") or "") != CLAIMED_STATUS:
+        return False
+    # Never transfer a live task to a second worker. The active worker may be
+    # preparing assets or submitting the request and can otherwise race the
+    # adopter's queue writes. A dead worker is recoverable from its exact probe.
+    if not claimed_worker_process_dead(task):
         return False
     monitor = task.get("generated_video_monitor") if isinstance(task.get("generated_video_monitor"), dict) else {}
     if monitor.get("thread_url") and monitor.get("page_id"):
@@ -14563,7 +14655,7 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         min_effort=worker_min_effort(),
         max_effort=worker_max_effort(),
     )
-    return {
+    policy = {
         "model": (
             "gpt-5.6-sol"
             if protein_structure_task or routine_id == "video_publish_existing"
@@ -14573,6 +14665,12 @@ def choose_worker_policy(task: dict[str, Any]) -> dict[str, Any]:
         "sandbox": worker_sandbox(),
         "timeout_seconds": timeout_for_effort(effort),
     }
+    if isinstance(task.get("invalid_generated_video_reprocess"), dict):
+        policy["model"] = "gpt-5.6-sol"
+        policy["reasoning_effort"] = "medium"
+        policy["timeout_seconds"] = timeout_for_effort("medium")
+        policy["reuse_session"] = False
+    return policy
 
 
 def task_routine_id(task: dict[str, Any]) -> str:
