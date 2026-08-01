@@ -1245,6 +1245,36 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(tasks[0]["interrupt_delivery"], "recorded_for_next_agent_turn_or_stale_reclaim")
         self.assertIn("Also compare it", tasks[0]["request"])
 
+    def test_agent_bridge_does_not_merge_video_request_into_file_intake(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            file_intake = {
+                "id": "file-46",
+                "chat": "MEMO",
+                "status": "in_progress",
+                "agent_bridge_mode": True,
+                "route_decision": {"route_kind": "file_intake", "agent_bridge_mode": True},
+                "source": {"config_id": "memo", "message_table": "MSG", "local_id": 46},
+                "routine": {"id": "file_intake"},
+            }
+            queue.write_text(json.dumps(file_intake) + "\n", encoding="utf-8")
+            incoming = {
+                "id": "video-48",
+                "chat": "MEMO",
+                "status": "pending",
+                "agent_bridge_mode": True,
+                "route_decision": {"route_kind": "generate_video", "project": "lalachan", "agent_bridge_mode": True},
+                "source": {"config_id": "memo", "message_table": "MSG", "local_id": 48},
+                "routine": {"id": "generated_video"},
+            }
+
+            _task, appended = direct_chatops.append_worker_task_once(queue, incoming)
+            tasks = direct_chatops.read_worker_queue_tasks(queue)
+
+        self.assertTrue(appended)
+        self.assertEqual([task["id"] for task in tasks], ["file-46", "video-48"])
+        self.assertNotIn("interruptions", tasks[0])
+
     def test_story_video_followup_promotes_story_task_to_generated_video(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

@@ -101,6 +101,20 @@ INTERRUPTIBLE_ROUTINE_IDS = {
     "multilingual_book",
     "cross_repo_feedback",
 }
+NON_INTERRUPTIBLE_ROUTE_KINDS = {
+    "chat_only",
+    "peer_conversation",
+    "ordinary_chat",
+    "file_intake",
+    "file_download_or_save",
+    "publish_video",
+    "process_existing_video",
+}
+NON_INTERRUPTIBLE_ROUTINE_IDS = {
+    "file_intake",
+    "file_download_or_save",
+    "video_publish_existing",
+}
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 
 
@@ -6552,8 +6566,6 @@ def append_same_chat_task_interruption(tasks: list[dict[str, Any]], incoming: di
     generate, revise, wait, or publish; it only gives the resumed worker agent
     the newer same-chat instruction packet at the next routine boundary.
     """
-    if not is_interruptible_task(incoming):
-        return None
     incoming_source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
     incoming_local_id = int_or_none(incoming_source.get("local_id"))
     if incoming_local_id is None:
@@ -6687,6 +6699,8 @@ def same_chat_interruption_target(candidate: dict[str, Any], incoming: dict[str,
         return False
     if not same_nonempty_field(candidate_source, incoming_source, "config_id"):
         return False
+    if not interruption_routes_compatible(candidate, incoming):
+        return False
     if not interruption_target_recent_enough(candidate, incoming):
         return False
     candidate_local_id = int_or_none(candidate_source.get("local_id"))
@@ -6698,6 +6712,55 @@ def same_chat_interruption_target(candidate: dict[str, Any], incoming: dict[str,
     ):
         return False
     return True
+
+
+def interruption_routes_compatible(candidate: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    """Merge only a real continuation, never merely the newest same-chat task."""
+    candidate_route = (
+        candidate.get("route_decision")
+        if isinstance(candidate.get("route_decision"), dict)
+        else {}
+    )
+    incoming_route = (
+        incoming.get("route_decision")
+        if isinstance(incoming.get("route_decision"), dict)
+        else {}
+    )
+    relation = str(incoming_route.get("active_task_relation") or "").strip().casefold()
+    related_task_id = str(incoming_route.get("active_task_id") or "").strip()
+    if relation == "interrupt" and related_task_id == str(candidate.get("id") or ""):
+        return True
+
+    candidate_kind = str(candidate_route.get("route_kind") or "").strip()
+    incoming_kind = str(incoming_route.get("route_kind") or "").strip()
+    if candidate_kind in NON_INTERRUPTIBLE_ROUTE_KINDS:
+        return False
+    if incoming_kind == "file_intake":
+        return True
+    if incoming_kind in NON_INTERRUPTIBLE_ROUTE_KINDS:
+        return False
+    if candidate_kind and candidate_kind == incoming_kind:
+        return True
+    if {candidate_kind, incoming_kind} <= {"story_or_script", "generate_video"}:
+        return True
+
+    candidate_routine = (
+        candidate.get("routine")
+        if isinstance(candidate.get("routine"), dict)
+        else {}
+    )
+    incoming_routine = (
+        incoming.get("routine")
+        if isinstance(incoming.get("routine"), dict)
+        else {}
+    )
+    candidate_routine_id = str(candidate_routine.get("id") or "").strip()
+    incoming_routine_id = str(incoming_routine.get("id") or "").strip()
+    return bool(
+        candidate_routine_id
+        and candidate_routine_id == incoming_routine_id
+        and candidate_routine_id not in NON_INTERRUPTIBLE_ROUTINE_IDS
+    )
 
 
 def abandoned_generation_pre_submit_recoverable(task: dict[str, Any]) -> bool:
@@ -6762,8 +6825,10 @@ def is_interruptible_task(task: dict[str, Any]) -> bool:
     route_kind = str(route.get("route_kind") or "")
     routine_id = str(routine.get("id") or "")
     project = str(route.get("project") or "").lower()
+    if route_kind in NON_INTERRUPTIBLE_ROUTE_KINDS or routine_id in NON_INTERRUPTIBLE_ROUTINE_IDS:
+        return False
     if bool(task.get("agent_bridge_mode")) or bool(route.get("agent_bridge_mode")):
-        return route_kind != "chat_only"
+        return bool(route_kind)
     if route_kind in INTERRUPTIBLE_ROUTE_KINDS or routine_id in INTERRUPTIBLE_ROUTINE_IDS:
         return True
     if project == "lalachan":

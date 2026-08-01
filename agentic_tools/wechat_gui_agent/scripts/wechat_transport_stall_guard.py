@@ -638,6 +638,7 @@ def queue_health(
     stale_active_seconds: float = 14_400.0,
     stale_pending_seconds: float = 14_400.0,
     coverage_alert_seconds: float = 21_600.0,
+    failure_alert_seconds: float = 21_600.0,
 ) -> dict[str, Any]:
     if not path.exists():
         return {"ok": True, "exists": False, "active": 0, "pending": 0, "stale_ids": []}
@@ -665,8 +666,22 @@ def queue_health(
     coverage_unresolved_ids: list[str] = []
     historical_coverage_unresolved_ids: list[str] = []
     historical_coverage_categories: dict[str, int] = {}
+    recent_failed_ids: list[str] = []
     for task_id, task in latest.items():
         status = str(task.get("status") or "")
+        if status in {"worker_failed", "failed", "error"}:
+            failed_at = parse_timestamp(
+                task.get("completed_at")
+                or task.get("updated_at")
+                or task.get("created_at")
+            )
+            failed_age = (
+                max(0.0, (now - failed_at).total_seconds())
+                if failed_at is not None
+                else 0.0
+            )
+            if failed_at is None or failed_age < failure_alert_seconds:
+                recent_failed_ids.append(task_id)
         if str(task.get("coverage_status") or "") == "unresolved_after_retry":
             completed = parse_timestamp(
                 task.get("completed_at")
@@ -704,7 +719,7 @@ def queue_health(
         if started and age >= threshold:
             stale_ids.append(task_id)
     return {
-        "ok": not stale_ids and not coverage_unresolved_ids and invalid_lines == 0,
+        "ok": not stale_ids and not coverage_unresolved_ids and not recent_failed_ids and invalid_lines == 0,
         "exists": True,
         "task_count": len(latest),
         "active": len(active),
@@ -713,6 +728,7 @@ def queue_health(
         "oldest_active_seconds": max((item["age_seconds"] for item in active), default=0),
         "stale_ids": stale_ids[:20],
         "coverage_unresolved_ids": coverage_unresolved_ids[:20],
+        "recent_failed_ids": recent_failed_ids[:20],
         "historical_coverage_unresolved_count": len(
             historical_coverage_unresolved_ids
         ),

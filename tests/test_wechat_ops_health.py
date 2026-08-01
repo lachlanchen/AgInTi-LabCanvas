@@ -198,6 +198,32 @@ class WeChatOpsHealthTests(unittest.TestCase):
         self.assertFalse(payload["diagnostic_ok"])
         self.assertTrue(payload["transport_health"]["ok"])
 
+    def test_cli_health_keeps_recent_queue_failure_visible(self) -> None:
+        original_direct = wechat_ops.direct_monitor_health
+        original_transport = wechat_ops.persistent_transport_health
+        try:
+            wechat_ops.direct_monitor_health = lambda: {  # type: ignore[assignment]
+                "ok": True,
+                "ready_groups": 1,
+                "group_count": 1,
+                "stale_source_groups": 0,
+                "queue": {"attention": {"needs_attention": True, "counts": {"failed": 1}}},
+            }
+            wechat_ops.persistent_transport_health = lambda: {  # type: ignore[assignment]
+                "ok": True,
+                "severity": "ok",
+                "direct_monitors": {"healthy": 1, "configured": 1},
+            }
+            with redirect_stdout(io.StringIO()) as stdout:
+                rc = wechat_ops.cmd_health(argparse.Namespace(json=True))
+        finally:
+            wechat_ops.direct_monitor_health = original_direct  # type: ignore[assignment]
+            wechat_ops.persistent_transport_health = original_transport  # type: ignore[assignment]
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 1)
+        self.assertFalse(payload["ok"])
+
     def test_persistent_transport_health_reuses_fresh_snapshot(self) -> None:
         original = wechat_ops.TRANSPORT_HEALTH_SNAPSHOT
         with tempfile.TemporaryDirectory() as tmp:

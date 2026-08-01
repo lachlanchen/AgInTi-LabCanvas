@@ -135,6 +135,27 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(result["pending"], 1)
         self.assertEqual(result["stale_ids"], ["old-active"])
 
+    def test_queue_health_flags_recent_terminal_worker_failure(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "failed-recent",
+                        "status": "worker_failed",
+                        "completed_at": "2026-07-22T11:30:00+00:00",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = guard.queue_health(queue, now=now)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["recent_failed_ids"], ["failed-recent"])
+
     def test_queue_health_exposes_numbered_messages_unresolved_after_retry(self) -> None:
         now = datetime(2026, 7, 30, 8, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

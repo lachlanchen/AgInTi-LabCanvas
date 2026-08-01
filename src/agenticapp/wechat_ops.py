@@ -751,7 +751,14 @@ def cmd_health(args: argparse.Namespace) -> int:
     payload["transport_health"] = transport
     if transport:
         payload["diagnostic_ok"] = payload.get("ok")
-        payload["ok"] = bool(transport.get("ok"))
+        queue_attention = (
+            (payload.get("queue") or {}).get("attention")
+            if isinstance(payload.get("queue"), dict)
+            else {}
+        )
+        payload["ok"] = bool(transport.get("ok")) and not bool(
+            isinstance(queue_attention, dict) and queue_attention.get("needs_attention")
+        )
         monitor_status = transport.get("direct_monitors") or {}
         summary = (
             "wechat health: "

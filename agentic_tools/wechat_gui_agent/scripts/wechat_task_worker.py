@@ -138,6 +138,20 @@ INTERRUPTIBLE_ROUTINE_IDS = {
     "multilingual_book",
     "cross_repo_feedback",
 }
+NON_INTERRUPTIBLE_ROUTE_KINDS = {
+    "chat_only",
+    "peer_conversation",
+    "ordinary_chat",
+    "file_intake",
+    "file_download_or_save",
+    "publish_video",
+    "process_existing_video",
+}
+NON_INTERRUPTIBLE_ROUTINE_IDS = {
+    "file_intake",
+    "file_download_or_save",
+    "video_publish_existing",
+}
 DEFAULT_INTERRUPT_TARGET_MAX_AGE_SECONDS = 12 * 60 * 60
 DEAD_WORKER_RECOVERABLE_ROUTINES = {
     "research_summary",
@@ -3379,7 +3393,7 @@ def merge_existing_pending_interruptions(path: Path) -> int:
         fcntl.flock(lock, fcntl.LOCK_EX)
         tasks = read_tasks(path)
         for incoming_index, incoming in enumerate(list(tasks)):
-            if str(incoming.get("status") or "") != "pending" or not is_interruptible_worker_task(incoming):
+            if str(incoming.get("status") or "") != "pending":
                 continue
             target_index = find_interruption_target_index(tasks, incoming_index)
             if target_index is None:
@@ -3480,6 +3494,8 @@ def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, An
         return False
     if not same_optional_field(target_source, incoming_source, "config_id"):
         return False
+    if not interruption_routes_compatible(target, incoming):
+        return False
     target_sender = str(
         target_source.get("sender_userid") or target_source.get("sender") or ""
     ).strip()
@@ -3503,6 +3519,47 @@ def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, An
     return True
 
 
+def interruption_routes_compatible(target: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    """Require semantic continuity before folding two same-chat tasks together."""
+    target_route = task_route_decision(target)
+    incoming_route = task_route_decision(incoming)
+    relation = str(incoming_route.get("active_task_relation") or "").strip().casefold()
+    related_task_id = str(incoming_route.get("active_task_id") or "").strip()
+    if relation == "interrupt" and related_task_id == str(target.get("id") or ""):
+        return True
+
+    target_kind = str(target_route.get("route_kind") or "").strip()
+    incoming_kind = str(incoming_route.get("route_kind") or "").strip()
+    if target_kind in NON_INTERRUPTIBLE_ROUTE_KINDS:
+        return False
+    if incoming_kind == "file_intake":
+        return True
+    if incoming_kind in NON_INTERRUPTIBLE_ROUTE_KINDS:
+        return False
+    if target_kind and target_kind == incoming_kind:
+        return True
+    if {target_kind, incoming_kind} <= {"story_or_script", "generate_video"}:
+        return True
+
+    target_routine = (
+        target.get("routine")
+        if isinstance(target.get("routine"), dict)
+        else {}
+    )
+    incoming_routine = (
+        incoming.get("routine")
+        if isinstance(incoming.get("routine"), dict)
+        else {}
+    )
+    target_routine_id = str(target_routine.get("id") or "").strip()
+    incoming_routine_id = str(incoming_routine.get("id") or "").strip()
+    return bool(
+        target_routine_id
+        and target_routine_id == incoming_routine_id
+        and target_routine_id not in NON_INTERRUPTIBLE_ROUTINE_IDS
+    )
+
+
 def is_isolated_scheduled_task(task: dict[str, Any]) -> bool:
     """Keep independent scheduled lanes out of conversational interruption merging."""
     route = task_route_decision(task)
@@ -3521,7 +3578,9 @@ def is_interruptible_worker_task(task: dict[str, Any]) -> bool:
     """Allow newer exact-chat worker messages to steer the active session."""
     route = task_route_decision(task)
     route_kind = str(route.get("route_kind") or "").strip()
-    if route_kind in {"chat_only", "peer_conversation", "ordinary_chat"}:
+    routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
+    routine_id = str(routine.get("id") or "").strip()
+    if route_kind in NON_INTERRUPTIBLE_ROUTE_KINDS or routine_id in NON_INTERRUPTIBLE_ROUTINE_IDS:
         return False
     return bool(task.get("routine") or task.get("execution_contract") or route_kind)
 

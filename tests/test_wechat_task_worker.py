@@ -358,6 +358,27 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertTrue(worker.same_chat_interruption_target(parent, related))
         self.assertFalse(worker.same_chat_interruption_target(parent, independent))
 
+    def test_file_intake_never_absorbs_later_video_generation(self) -> None:
+        worker = load_worker()
+        intake = {
+            "id": "file-46",
+            "chat": "MEMO",
+            "status": "in_progress",
+            "source": {"local_id": 46, "message_table": "messages"},
+            "route_decision": {"route_kind": "file_intake"},
+            "routine": {"id": "file_intake"},
+        }
+        generation = {
+            "id": "video-48",
+            "chat": "MEMO",
+            "status": "pending",
+            "source": {"local_id": 48, "message_table": "messages"},
+            "route_decision": {"route_kind": "generate_video", "project": "lalachan"},
+            "routine": {"id": "generated_video"},
+        }
+
+        self.assertFalse(worker.same_chat_interruption_target(intake, generation))
+
     def test_backend_diagnostics_are_private_no_reply_results(self) -> None:
         worker = load_worker()
         raw = (
