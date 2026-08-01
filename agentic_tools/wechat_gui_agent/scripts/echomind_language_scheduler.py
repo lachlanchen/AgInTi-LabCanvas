@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import fcntl
 import json
@@ -13,6 +14,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from typing import Any
+import uuid
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -33,6 +36,12 @@ from wechat_task_worker import send_file  # noqa: E402
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
 STATE = PRIVATE / "echomind-language-schedule.state.json"
 DAILY_PDF_LOCK = PRIVATE / "echomind-language-daily-pdf.lock"
+GUI_SEND_PRIORITY = Path(
+    os.environ.get(
+        "WECHAT_GUI_SEND_PRIORITY_PATH",
+        str(PRIVATE / "wechat_gui_send_priority.json"),
+    )
+)
 INTERVAL = 3 * 60 * 60
 LOCAL_TZ = ZoneInfo("Asia/Hong_Kong")
 QUIET_START = 20
@@ -91,6 +100,78 @@ def scheduler_heartbeat(state: dict, phase: str, **fields: object) -> None:
     state["scheduler_phase"] = phase
     state.update(fields)
     save_state(state)
+
+
+@contextmanager
+def reserve_gui_send_priority(owner: str, chat: str):
+    """Yield the GUI lane from passive chat sync while a schedule delivers."""
+    token = f"{owner}-{os.getpid()}-{uuid.uuid4().hex[:10]}"
+    ttl = max(60.0, float(os.environ.get("WECHAT_GUI_SEND_PRIORITY_TTL", "600")))
+    payload = {
+        "token": token,
+        "owner": owner,
+        "chat": chat,
+        "pid": os.getpid(),
+        "created_at": time.time(),
+        "expires_at": time.time() + ttl,
+    }
+    GUI_SEND_PRIORITY.parent.mkdir(parents=True, exist_ok=True)
+    temporary = GUI_SEND_PRIORITY.with_name(
+        f"{GUI_SEND_PRIORITY.name}.{os.getpid()}.tmp"
+    )
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(GUI_SEND_PRIORITY)
+    try:
+        yield
+    finally:
+        try:
+            current = json.loads(GUI_SEND_PRIORITY.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current = {}
+        if current.get("token") == token:
+            GUI_SEND_PRIORITY.unlink(missing_ok=True)
+
+
+def send_with_busy_retry(sender: Any, *args: Any, **kwargs: Any) -> Any:
+    """Wait out an already-running sender after reserving future GUI cycles."""
+    attempts = max(1, int(os.environ.get("WECHAT_DAILY_SEND_ATTEMPTS", "6")))
+    delay = max(0.0, float(os.environ.get("WECHAT_DAILY_SEND_RETRY_DELAY", "5")))
+    for attempt in range(1, attempts + 1):
+        try:
+            return sender(*args, **kwargs)
+        except Exception as exc:
+            message = str(exc).lower()
+            retryable = any(
+                marker in message
+                for marker in (
+                    "wechat_send_busy",
+                    "serialized gui sender is already sending",
+                    "wechat_send_timeout",
+                    "opened chat title guard failed",
+                    "wechat_file_target_changed",
+                )
+            )
+            if not retryable or attempt >= attempts:
+                raise
+            if delay:
+                time.sleep(delay)
+    raise RuntimeError("unreachable scheduled send retry state")
+
+
+def send_scheduled_file(pdf: Path, config: dict) -> None:
+    with reserve_gui_send_priority("echomind_daily_pdf", config["chat_name"]):
+        send_with_busy_retry(
+            send_file,
+            pdf,
+            config["chat_name"],
+            CONFIG,
+            target=config.get("send_target"),
+        )
+
+
+def send_scheduled_message(config: dict, message: str) -> str:
+    with reserve_gui_send_priority("echomind_periodic_lesson", config["chat_name"]):
+        return str(send_with_busy_retry(direct.send_gui_message, config, message) or "")
 
 
 def seconds_until_due(state: dict, interval_seconds: int, *, now: datetime | None = None) -> float:
@@ -223,7 +304,7 @@ def run_daily_pdf(
         if pending_pdf.is_file() and pending_pdf.stat().st_size > 0:
             already_delivered = daily_pdf_delivery_recorded(config, pending_pdf)
             if deliver and not already_delivered:
-                send_file(pending_pdf, config["chat_name"], CONFIG, target=config.get("send_target"))
+                send_scheduled_file(pending_pdf, config)
             state["last_daily_pdf_date"] = yesterday
             state["last_daily_pdf"] = str(pending_pdf)
             state["last_daily_pdf_delivery"] = {
@@ -278,7 +359,7 @@ Previous-day EchoMind source material:
     save_state(state)
     already_delivered = daily_pdf_delivery_recorded(config, pdf)
     if deliver and not already_delivered:
-        send_file(pdf, config["chat_name"], CONFIG, target=config.get("send_target"))
+        send_scheduled_file(pdf, config)
     state["last_daily_pdf_date"] = yesterday
     state["last_daily_pdf"] = str(pdf)
     state.pop("pending_daily_pdf", None)
@@ -451,7 +532,7 @@ def deliver_pending_lesson(
             if periodic_lesson_delivery_recorded(config, pending):
                 delivery = {"requested": True, "status": "sent_verified_recovered"}
             else:
-                screenshot = direct.send_gui_message(config, message)
+                screenshot = send_scheduled_message(config, message)
                 if not screenshot or not Path(screenshot).is_file():
                     raise RuntimeError(f"EchoMind lesson send was not verified: {screenshot or 'no screenshot'}")
                 delivery = {"requested": True, "status": "sent_verified", "screenshot": screenshot}

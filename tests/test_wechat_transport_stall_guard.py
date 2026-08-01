@@ -30,14 +30,21 @@ def schedule_state_reader(
     career_last_loop_at: str = "2026-07-22T11:59:30+00:00",
     career_overdue: bool = False,
     organizer_overdue: bool = False,
+    echomind_pending_daily_pdf: bool = False,
 ):
     def read(path: Path):
         if path == guard.ECHOMIND_SCHEDULE_STATE:
-            return {
+            state = {
                 "interval_seconds": guard.ECHOMIND_INTERVAL_SECONDS,
                 "last_loop_at": echo_last_loop_at,
                 "scheduler_phase": "waiting",
             }
+            if echomind_pending_daily_pdf:
+                state["pending_daily_pdf"] = {
+                    "date": "2026-07-21",
+                    "pdf": "/private/review.pdf",
+                }
+            return state
         if path == guard.WECHAT_CAREER_SCHEDULE_STATE:
             return {
                 "last_loop_at": career_last_loop_at,
@@ -490,6 +497,35 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
                 )
 
         self.assertFalse(result["echomind"]["ok"])
+        self.assertFalse(result["ok"])
+
+    def test_schedule_health_detects_pending_echomind_daily_pdf(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                        echomind_pending_daily_pdf=True,
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertFalse(result["echomind"]["ok"])
+        self.assertTrue(result["echomind"]["pending_daily_pdf"])
+        self.assertTrue(result["echomind"]["pending_delivery"])
         self.assertFalse(result["ok"])
 
     def test_schedule_health_detects_overdue_career_and_memo_delivery(self) -> None:

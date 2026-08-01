@@ -92,6 +92,8 @@ ALERTABLE_DEGRADED_CODES = {
     "schedule_career_stalled",
     "schedule_memo_delivery_overdue",
     "schedule_echomind_cadence",
+    "schedule_echomind_daily_delivery_pending",
+    "schedule_echomind_lesson_delivery_pending",
     "schedule_echomind_missing",
     "schedule_echomind_stalled",
     "schedule_labagent_stalled",
@@ -483,6 +485,16 @@ def schedule_health(
         echo_heartbeat_age is not None
         and echo_heartbeat_age <= ECHOMIND_HEARTBEAT_STALE_SECONDS
     )
+    echomind_pending_lesson = bool(echo_state.get("pending_lesson"))
+    echomind_pending_daily_pdf = bool(echo_state.get("pending_daily_pdf"))
+    echomind_delivery_pending = (
+        echomind_pending_lesson or echomind_pending_daily_pdf
+    )
+    echomind_ok = (
+        echomind_running
+        and echomind_heartbeat_ok
+        and not echomind_delivery_pending
+    )
     career_heartbeat_age = (
         max(0.0, (current - career_heartbeat).total_seconds())
         if career_heartbeat
@@ -508,21 +520,23 @@ def schedule_health(
     labagent_ok = heartbeat_age is not None and heartbeat_age <= labagent_stale_seconds
     return {
         "ok": (
-            echomind_running
-            and echomind_heartbeat_ok
+            echomind_ok
             and career_ok
             and interval == ECHOMIND_INTERVAL_SECONDS
             and labagent_ok
         ),
         "echomind": {
             "running": echomind_running,
-            "ok": echomind_running and echomind_heartbeat_ok,
+            "ok": echomind_ok,
             "interval_seconds": interval,
             "expected_interval_seconds": ECHOMIND_INTERVAL_SECONDS,
             "heartbeat_age_seconds": int(echo_heartbeat_age) if echo_heartbeat_age is not None else None,
             "stale_after_seconds": ECHOMIND_HEARTBEAT_STALE_SECONDS,
             "phase": str(echo_state.get("scheduler_phase") or "unknown"),
-            "pending_delivery": bool(echo_state.get("pending_lesson")),
+            "pending_delivery": echomind_delivery_pending,
+            "pending_lesson": echomind_pending_lesson,
+            "pending_daily_pdf": echomind_pending_daily_pdf,
+            "daily_pdf_error": str(echo_state.get("last_daily_pdf_error") or ""),
         },
         "career_daily": {
             "running": career_running,
@@ -974,8 +988,23 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         )
     if not schedules["echomind"]["running"]:
         issue("schedule_echomind_missing", "degraded", "EchoMind language scheduler is absent")
-    elif not schedules["echomind"]["ok"]:
+    elif schedules["echomind"]["heartbeat_age_seconds"] is None or (
+        schedules["echomind"]["heartbeat_age_seconds"]
+        > schedules["echomind"]["stale_after_seconds"]
+    ):
         issue("schedule_echomind_stalled", "degraded", "EchoMind scheduler heartbeat is stale")
+    elif schedules["echomind"]["pending_daily_pdf"]:
+        issue(
+            "schedule_echomind_daily_delivery_pending",
+            "degraded",
+            "EchoMind daily PDF is generated but not delivered",
+        )
+    elif schedules["echomind"]["pending_lesson"]:
+        issue(
+            "schedule_echomind_lesson_delivery_pending",
+            "degraded",
+            "EchoMind periodic lesson is generated but not delivered",
+        )
     elif schedules["echomind"]["interval_seconds"] != ECHOMIND_INTERVAL_SECONDS:
         issue(
             "schedule_echomind_cadence",
@@ -1234,7 +1263,13 @@ def perform_repairs(
             cooldown_seconds=cooldown_seconds,
             now=now,
         )
-        for code in {"schedule_echomind_missing", "schedule_echomind_cadence", "schedule_echomind_stalled"}
+        for code in {
+            "schedule_echomind_missing",
+            "schedule_echomind_cadence",
+            "schedule_echomind_stalled",
+            "schedule_echomind_daily_delivery_pending",
+            "schedule_echomind_lesson_delivery_pending",
+        }
     ):
         repairs.append(run_repair("echomind_schedule", [str(ECHOMIND_SCHEDULE_HELPER), "restart"]))
     career_issue_codes = {
@@ -1501,6 +1536,8 @@ def health_alert_message(codes: list[str], *, recovered: bool = False) -> str:
         "schedule_career_stalled": "每日职业分析定时任务心跳停止",
         "schedule_memo_delivery_overdue": "MEMO 每日完整整理 PDF 超时未交付",
         "schedule_echomind_cadence": "EchoMind 教学周期不是 3 小时",
+        "schedule_echomind_daily_delivery_pending": "EchoMind 每日 PDF 已生成但尚未交付",
+        "schedule_echomind_lesson_delivery_pending": "EchoMind 三小时课程已生成但尚未交付",
         "schedule_echomind_missing": "EchoMind 教学定时任务未运行",
         "schedule_echomind_stalled": "EchoMind 教学定时任务心跳停止",
         "schedule_labagent_stalled": "LabAgent 三小时空闲灵感任务心跳停止",

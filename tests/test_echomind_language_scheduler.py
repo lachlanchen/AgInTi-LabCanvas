@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import json
 import tempfile
 import unittest
 from unittest import mock
@@ -153,6 +154,66 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         agent.assert_called_once()
         self.assertEqual(stored["pending_lesson"]["message"], "new lesson")
         self.assertEqual(stored["scheduler_phase"], "lesson_delivery_deferred")
+
+    def test_pending_daily_pdf_reserves_lane_and_retries_without_regeneration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_path = tmp_path / "state.json"
+            priority_path = tmp_path / "priority.json"
+            pdf = tmp_path / "review.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n")
+            state = {
+                "pending_daily_pdf": {
+                    "date": "2026-07-22",
+                    "pdf": str(pdf),
+                }
+            }
+            config = {"chat_name": "EchoMind"}
+            with (
+                mock.patch.object(scheduler, "STATE", state_path),
+                mock.patch.object(scheduler, "GUI_SEND_PRIORITY", priority_path),
+                mock.patch.object(scheduler, "daily_pdf_delivery_recorded", return_value=False),
+                mock.patch.object(
+                    scheduler,
+                    "send_file",
+                    side_effect=[RuntimeError("WECHAT_SEND_BUSY"), None],
+                ) as send,
+                mock.patch.object(scheduler.time, "sleep"),
+            ):
+                result = scheduler.run_daily_pdf(
+                    config,
+                    state,
+                    now=datetime(2026, 7, 23, 6, 5, tzinfo=scheduler.LOCAL_TZ),
+                    force=True,
+                )
+
+        self.assertEqual(result["status"], "sent_verified")
+        self.assertEqual(send.call_count, 2)
+        self.assertFalse(priority_path.exists())
+        self.assertNotIn("pending_daily_pdf", state)
+
+    def test_priority_marker_is_visible_during_scheduled_send(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            priority_path = Path(tmp) / "priority.json"
+            observed: dict[str, object] = {}
+
+            def sender(*_args):
+                observed.update(json.loads(priority_path.read_text(encoding="utf-8")))
+                return "sent.png"
+
+            with (
+                mock.patch.object(scheduler, "GUI_SEND_PRIORITY", priority_path),
+                mock.patch.object(scheduler.direct, "send_gui_message", side_effect=sender),
+            ):
+                screenshot = scheduler.send_scheduled_message(
+                    {"chat_name": "EchoMind"},
+                    "lesson",
+                )
+
+        self.assertEqual(screenshot, "sent.png")
+        self.assertEqual(observed["chat"], "EchoMind")
+        self.assertEqual(observed["owner"], "echomind_periodic_lesson")
+        self.assertFalse(priority_path.exists())
 
 
 if __name__ == "__main__":
