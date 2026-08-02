@@ -121,6 +121,27 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             ["task:parent-1", "task:child-2"],
         )
 
+    def test_completion_repair_replaces_rejected_candidate_artifacts(self) -> None:
+        worker = load_worker()
+        original = {
+            "message": "I found a candidate paper.",
+            "confirmation": "",
+            "files": ["/tmp/topic-similar-paper.pdf"],
+            "data": {"source_identity": "unverified"},
+        }
+        correction = {
+            "message": "The source is a podcast, not that paper.",
+            "confirmation": "",
+            "files": ["/tmp/source-verification.pdf"],
+            "data": {"source_identity": "verified"},
+        }
+
+        merged = worker.merge_completion_results(original, correction)
+
+        self.assertEqual(merged["files"], ["/tmp/source-verification.pdf"])
+        self.assertNotIn("/tmp/topic-similar-paper.pdf", merged["files"])
+        self.assertEqual(merged["data"]["source_identity"], "verified")
+
     def test_numbered_uncovered_child_is_requeued_once_as_supplement(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

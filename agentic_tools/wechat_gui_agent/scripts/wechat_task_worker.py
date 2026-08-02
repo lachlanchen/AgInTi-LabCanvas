@@ -6223,6 +6223,7 @@ Respond promptly and naturally, then do the requested work. Do not bombard the c
 The exact current source message and newer same-chat messages are authoritative. A router-generated plan is advisory only: it may classify and suggest tools, but it cannot replace user wording, insert a factual assumption, or force clarification. Combine consecutive fragments from the same conversation before deciding what the user means.
 If the bounded task packet includes `worker_retry_context`, this is one bounded repair turn for a failed local tool invocation. Continue the same task and reuse its existing evidence. Prefer simple commands or structured APIs over deeply nested shell quoting, and never interpret the repair turn as permission to bypass a safety, approval, sandbox, or access boundary.
 If the bounded task packet includes `completion_audit_repair`, the previous candidate result omitted one or more numbered source-message requirements. Continue the same worker session, perform only those missing safe requirements, and return a complete replacement response that retains useful prior files and conclusions. An explicit PDF request requires a real compiled `.pdf` file plus a concise direct answer. Do not repeat completed external actions or bypass approval gates.
+The corrective response's `files` array is authoritative for final delivery. Include every prior artifact that remains useful, and omit any candidate artifact that was misidentified, contradicted, superseded, or should not be sent.
 If the bounded task packet includes `coverage_followup`, this queue row was separated from a previously coalesced parent because its numbered message was not proven covered. Process this exact row independently, return only the missing supplement, and do not repeat content or files already delivered by the parent.
 Use `task.route_decision.message_role` as a checked hint, not a keyword command. Research questions require evidence; artifact instructions and system guidance tell you how to revise the current output or workflow; peer conversation may need no reply. Re-evaluate that role from the exact message plus recent context before acting.
 When people discuss both science and the agent in one group, keep those intents distinct. Do not turn feedback such as “first make a concept image, then reproduce it as an editable BioRender figure” into a literature report, and do not answer a scientific question as if it were tool configuration.
@@ -6587,11 +6588,11 @@ def merge_completion_results(
         merged["confirmation"] = str(correction["confirmation"]).strip()
     elif correction.get("message"):
         merged["confirmation"] = ""
+    # A completion repair is a full replacement contract. Its file list must
+    # be authoritative so a corrected answer cannot accidentally deliver an
+    # earlier misidentified or explicitly rejected candidate artifact.
     merged["files"] = unique_strings(
-        [
-            *[str(path) for path in original.get("files") or []],
-            *[str(path) for path in correction.get("files") or []],
-        ]
+        [str(path) for path in correction.get("files") or []]
     )
     original_data = (
         original.get("data") if isinstance(original.get("data"), dict) else {}
