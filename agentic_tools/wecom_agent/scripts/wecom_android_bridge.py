@@ -82,6 +82,9 @@ MERGED_HISTORY_KIND = "merged_chat_history"
 IMAGE_BUBBLE_RESOURCE_SUFFIX = ":id/kfb"
 IMAGE_KIND = "image"
 IMAGE_VIEWER_RESOURCE_SUFFIX = ":id/nxh"
+SHIPINHAO_CARD_THUMBNAIL_RESOURCE_SUFFIX = ":id/og2"
+SHIPINHAO_CARD_ACCOUNT_RESOURCE_SUFFIX = ":id/og3"
+SHIPINHAO_CARD_KIND = "shipinhao_card"
 DOCUMENT_FILENAME_RESOURCE_SUFFIX = ":id/j2k"
 DOCUMENT_SIZE_RESOURCE_SUFFIX = ":id/j2g"
 DOCUMENT_KIND = "document"
@@ -2399,6 +2402,43 @@ class AndroidBridge:
                     )
                     body_nodes = [*merged_title_nodes, *merged_body_nodes]
             if not body_nodes:
+                card_nodes = [
+                    node
+                    for node in row.iter("node")
+                    if node.attrib.get("package") == self.package
+                    and node.attrib.get("class") == "android.widget.ImageView"
+                    and node.attrib.get("resource-id", "").endswith(
+                        SHIPINHAO_CARD_THUMBNAIL_RESOURCE_SUFFIX
+                    )
+                    and node.attrib.get("bounds")
+                ]
+                if card_nodes:
+                    source_kind = SHIPINHAO_CARD_KIND
+                    body_nodes = card_nodes
+                    image_bounds = str(card_nodes[0].attrib.get("bounds") or "")
+                    account_nodes = [
+                        node
+                        for node in row.iter("node")
+                        if node_text(node)
+                        and node.attrib.get("resource-id", "").endswith(
+                            SHIPINHAO_CARD_ACCOUNT_RESOURCE_SUFFIX
+                        )
+                    ]
+                    source_title = " ".join(
+                        unique_nonempty(node_text(node) for node in account_nodes)
+                    )
+                    if screenshot is not None:
+                        try:
+                            image_preview_sha256 = screenshot_region_sha256(
+                                screenshot, image_bounds
+                            )
+                            image_visual_id = screenshot_region_visual_id(
+                                screenshot, image_bounds
+                            )
+                        except BridgeError:
+                            image_preview_sha256 = ""
+                            image_visual_id = ""
+            if not body_nodes:
                 body_nodes = [
                     node
                     for node in row.iter("node")
@@ -2462,6 +2502,10 @@ class AndroidBridge:
             body = "\n".join(unique_nonempty(node_text(node) for node in body_nodes))
             if source_kind == IMAGE_KIND:
                 body = "[图片]"
+            elif source_kind == SHIPINHAO_CARD_KIND:
+                body = "视频号卡片"
+                if source_title:
+                    body += f"\n<account>{html.escape(source_title)}</account>"
             elif source_kind == DOCUMENT_KIND:
                 body = f"[文件] {document_filename}"
                 if document_size_text:
@@ -2496,7 +2540,7 @@ class AndroidBridge:
             except BridgeError:
                 pass
             direction = "inbound" if sender or avatar_on_left else "outbound"
-            if source_kind == IMAGE_KIND:
+            if source_kind in {IMAGE_KIND, SHIPINHAO_CARD_KIND}:
                 image_identity = image_visual_id or image_preview_sha256 or image_bounds
                 fingerprint_material = (
                     f"{direction}\0{sender}\0{source_kind}\0{image_identity}\0{quote_text}"
@@ -2797,6 +2841,12 @@ class AndroidBridge:
         expected_bounds = str(record.get("image_bounds") or "")
         visual_matches: list[ET.Element] = []
         bounds_matches: list[ET.Element] = []
+        source_kind = str(record.get("source_kind") or "")
+        resource_suffix = (
+            SHIPINHAO_CARD_THUMBNAIL_RESOURCE_SUFFIX
+            if source_kind == SHIPINHAO_CARD_KIND
+            else IMAGE_BUBBLE_RESOURCE_SUFFIX
+        )
         rows = find_nodes(root, resource_id=f"{self.package}:id/eyy", package=self.package)
         for row in rows:
             image_nodes = [
@@ -2805,7 +2855,7 @@ class AndroidBridge:
                 if node.attrib.get("package") == self.package
                 and node.attrib.get("class") == "android.widget.ImageView"
                 and node.attrib.get("resource-id", "").endswith(
-                    IMAGE_BUBBLE_RESOURCE_SUFFIX
+                    resource_suffix
                 )
                 and node.attrib.get("bounds")
             ]
@@ -2828,7 +2878,116 @@ class AndroidBridge:
             return visual_matches[0]
         if len(bounds_matches) == 1:
             return bounds_matches[0]
-        raise BridgeError("exact inbound WeCom image bubble is not uniquely visible")
+        label = "Shipinhao card" if source_kind == SHIPINHAO_CARD_KIND else "image bubble"
+        raise BridgeError(f"exact inbound WeCom {label} is not uniquely visible")
+
+    def materialize_shipinhao_card_record(
+        self,
+        chat: str,
+        record: dict[str, str],
+    ) -> dict[str, str]:
+        """Capture an exact same-chat Shipinhao preview without opening the card."""
+        if chat not in self.target_groups:
+            raise BridgeError("refusing non-allowlisted WeCom Android card source")
+        if str(record.get("direction") or "") != "inbound":
+            raise BridgeError("refusing to materialize an outbound WeCom card")
+        if str(record.get("source_kind") or "") != SHIPINHAO_CARD_KIND:
+            return dict(record)
+        fingerprint = str(record.get("fingerprint") or "")
+        if not fingerprint:
+            raise BridgeError("WeCom Shipinhao card is missing its visual fingerprint")
+        target = (
+            self.staging_dir
+            / "inbound-media"
+            / short_hash(chat, 16)
+            / f"wecom-shipinhao-card-{fingerprint[:32]}.png"
+        )
+        capture: RawScreenshot | None = None
+        if not (
+            target.is_file()
+            and target.stat().st_size > 64
+            and target.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+        ):
+            root = self.open_chat(chat)
+            screenshot = self.capture_raw_screenshot()
+            node = self.image_node_for_record(root, screenshot, record)
+            capture = self.write_shipinhao_card_preview(
+                target,
+                record,
+                screenshot,
+                bounds=str(
+                    node.attrib.get("bounds") or record.get("image_bounds") or ""
+                ),
+            )
+            restored = self.open_chat(chat)
+            if not chat_title_matches(visible_chat_title(restored), chat):
+                raise BridgeError("WeCom changed chat while capturing a Shipinhao card")
+        result = dict(record)
+        result.update(
+            {
+                "attachment_path": str(target),
+                "attachment_filename": target.name,
+                "attachment_size_bytes": str(target.stat().st_size),
+                "attachment_sha256": sha256_file(target),
+                "attachment_width": str(capture.width if capture else ""),
+                "attachment_height": str(capture.height if capture else ""),
+                "attachment_capture_kind": "wecom_android_exact_shipinhao_card_preview",
+            }
+        )
+        return result
+
+    def write_shipinhao_card_preview(
+        self,
+        target: Path,
+        record: dict[str, str],
+        screenshot: RawScreenshot,
+        *,
+        bounds: str = "",
+    ) -> RawScreenshot:
+        """Persist one already-visible exact Finder card preview."""
+        capture = crop_raw_screenshot(
+            screenshot,
+            bounds or str(record.get("image_bounds") or ""),
+        )
+        write_private_bytes(target, encode_rgba_png(capture))
+        return capture
+
+    def materialize_visible_shipinhao_card_record(
+        self,
+        chat: str,
+        record: dict[str, str],
+        screenshot: RawScreenshot,
+    ) -> dict[str, str]:
+        """Capture a history card before its viewport is moved away."""
+        if chat not in self.target_groups:
+            raise BridgeError("refusing non-allowlisted WeCom Android card source")
+        if str(record.get("source_kind") or "") != SHIPINHAO_CARD_KIND:
+            return dict(record)
+        fingerprint = str(record.get("fingerprint") or "")
+        if not fingerprint or not str(record.get("image_visual_id") or ""):
+            raise BridgeError("historical Shipinhao card lacks exact visual identity")
+        target = (
+            self.staging_dir
+            / "inbound-media"
+            / short_hash(chat, 16)
+            / f"wecom-shipinhao-card-{fingerprint[:32]}.png"
+        )
+        capture = self.write_shipinhao_card_preview(target, record, screenshot)
+        result = dict(record)
+        result.update(
+            {
+                "attachment_path": str(target),
+                "attachment_filename": target.name,
+                "attachment_size_bytes": str(target.stat().st_size),
+                "attachment_sha256": sha256_file(target),
+                "attachment_width": str(capture.width),
+                "attachment_height": str(capture.height),
+                "attachment_capture_kind": (
+                    "wecom_android_exact_shipinhao_card_history_preview"
+                ),
+            }
+        )
+        return result
 
     def wait_for_image_viewer(self, *, timeout_seconds: float = 8.0) -> ET.Element:
         deadline = time.monotonic() + max(1.0, timeout_seconds)
@@ -2932,10 +3091,30 @@ class AndroidBridge:
             root = self.dump_hierarchy(attempts=3)
             if not chat_title_matches(visible_chat_title(root), chat):
                 break
-            page_records = self.parse_messages(root)
+            try:
+                screenshot = self.capture_raw_screenshot()
+            except Exception:
+                screenshot = None
+            page_records = self.parse_messages(root, screenshot=screenshot)
             if not page_records:
                 break
             for record in page_records:
+                # Older media rows are no longer guaranteed to remain visible
+                # after this history walk returns to the live tail. Bounds-only
+                # identities also change with every viewport, which previously
+                # created an endless backlog of phantom image tasks. Current-
+                # viewport media is captured by snapshot(); history media is
+                # intentionally left for an exact native/file recovery route.
+                source_kind = record.get("source_kind")
+                if source_kind == SHIPINHAO_CARD_KIND and screenshot is not None:
+                    try:
+                        record = self.materialize_visible_shipinhao_card_record(
+                            chat, record, screenshot
+                        )
+                    except BridgeError:
+                        continue
+                elif source_kind in {IMAGE_KIND, DOCUMENT_KIND, SHIPINHAO_CARD_KIND}:
+                    continue
                 fingerprint = record["fingerprint"]
                 if fingerprint in seen:
                     continue
@@ -3136,7 +3315,7 @@ class AndroidBridge:
         sender_identity = sender if sender_confidence == "visible_row_label" else f"unattributed:{event_key}"
         source_kind = str(record.get("source_kind") or "text")
         attachments: list[dict[str, Any]] = []
-        if source_kind in {IMAGE_KIND, DOCUMENT_KIND}:
+        if source_kind in {IMAGE_KIND, DOCUMENT_KIND, SHIPINHAO_CARD_KIND}:
             attachment = Path(
                 str(record.get("attachment_path") or "")
             ).expanduser().resolve()
@@ -3151,14 +3330,14 @@ class AndroidBridge:
                     f"inbound WeCom {source_kind} checksum changed before ingest"
                 )
             attachment_payload = {
-                "kind": source_kind,
+                "kind": IMAGE_KIND if source_kind == SHIPINHAO_CARD_KIND else source_kind,
                 "filename": str(record.get("attachment_filename") or attachment.name),
                 "path": str(attachment),
                 "size_bytes": attachment.stat().st_size,
                 "sha256": actual_sha256,
                 "capture_kind": str(record.get("attachment_capture_kind") or ""),
             }
-            if source_kind == IMAGE_KIND:
+            if source_kind in {IMAGE_KIND, SHIPINHAO_CARD_KIND}:
                 attachment_payload.update(
                     {
                         "width": str(record.get("attachment_width") or ""),
@@ -3261,8 +3440,17 @@ class AndroidBridge:
             "components": source_components,
             "message_count": len(events),
         }
-        if any(str(item.get("msgtype") or "") == "wechat_article_card" for item in events):
-            event["msgtype"] = "wechat_article_card"
+        rich_card_kind = next(
+            (
+                str(item.get("msgtype") or "")
+                for item in events
+                if str(item.get("msgtype") or "")
+                in {ARTICLE_CARD_KIND, SHIPINHAO_CARD_KIND}
+            ),
+            "",
+        )
+        if rich_card_kind:
+            event["msgtype"] = rich_card_kind
         else:
             event["msgtype"] = "combined_forward"
         return event
@@ -3318,7 +3506,8 @@ class AndroidBridge:
             root = self.move_chat_to_live_tail(chat, root)
             current_records = self.parse_messages(root)
             if any(
-                record.get("source_kind") == IMAGE_KIND for record in current_records
+                record.get("source_kind") in {IMAGE_KIND, SHIPINHAO_CARD_KIND}
+                for record in current_records
             ):
                 current_records = self.parse_messages(
                     root,
@@ -3388,7 +3577,11 @@ class AndroidBridge:
             pending_inbound = list(pending_by_fingerprint.values())
             for index, record in enumerate(pending_inbound):
                 source_kind = record.get("source_kind")
-                if source_kind not in {IMAGE_KIND, DOCUMENT_KIND}:
+                if source_kind not in {
+                    IMAGE_KIND,
+                    DOCUMENT_KIND,
+                    SHIPINHAO_CARD_KIND,
+                }:
                     continue
                 attachment_path = Path(
                     str(record.get("attachment_path") or "")
@@ -3399,7 +3592,11 @@ class AndroidBridge:
                     materialized = (
                         self.materialize_image_record(chat, record)
                         if source_kind == IMAGE_KIND
-                        else self.materialize_document_record(chat, record)
+                        else (
+                            self.materialize_shipinhao_card_record(chat, record)
+                            if source_kind == SHIPINHAO_CARD_KIND
+                            else self.materialize_document_record(chat, record)
+                        )
                     )
                 except Exception as exc:
                     self.defer_observed_message(
@@ -3428,7 +3625,8 @@ class AndroidBridge:
                     record
                     for record in batch
                     if not (
-                        record.get("source_kind") in {IMAGE_KIND, DOCUMENT_KIND}
+                        record.get("source_kind")
+                        in {IMAGE_KIND, DOCUMENT_KIND, SHIPINHAO_CARD_KIND}
                         and not Path(
                             str(record.get("attachment_path") or "")
                         ).is_file()
@@ -3837,6 +4035,7 @@ def main() -> int:
     messages = subparsers.add_parser("messages")
     messages.add_argument("--chat", required=True)
     messages.add_argument("--enqueue", action="store_true")
+    messages.add_argument("--history-pages", type=int, default=0)
     messages.add_argument("--json", action="store_true")
 
     send = subparsers.add_parser("send")
@@ -3873,7 +4072,11 @@ def main() -> int:
                     root = bridge.open_chat(args.chat)
                 payload = {"ok": True, "chat": args.chat, "visible_title": visible_chat_title(root)}
             elif args.command == "messages":
-                payload = bridge.snapshot(args.chat, enqueue=args.enqueue)
+                payload = bridge.snapshot(
+                    args.chat,
+                    enqueue=args.enqueue,
+                    history_pages=bounded_int(args.history_pages, 0, 0, 8),
+                )
             elif args.command == "send":
                 if not args.message.strip() and not args.files:
                     raise BridgeError("send requires --message and/or --file")

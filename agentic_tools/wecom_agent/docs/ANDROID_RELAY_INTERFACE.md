@@ -117,6 +117,24 @@ If the bubble is ambiguous, the viewer does not open, or the source chat cannot
 be restored, the message remains pending. The relay never substitutes an
 avatar, article thumbnail, nearby image, or OCR-only reconstruction.
 
+Shipinhao/Finder cards use a separate rich-card path. The relay recognizes the
+native card thumbnail and account label, captures an exact private preview
+without opening or playing the card, and routes it as `research_or_summary`.
+The worker uses vision to identify the visible title and publisher, locates the
+canonical authoritative source, and distinguishes a research paper from a
+podcast, news item, editorial, commentary, or video about research. It returns
+a verified publisher/open-access PDF only when an exact lawful paper is
+identified; otherwise it returns the canonical source and an explicit evidence
+limit. When the requester asks for related scholarship, the agent may also
+return a directly cited or clearly foundational lawful paper, but it must label
+that artifact as related rather than as the card's original source and explain
+the verified relationship. It never substitutes a merely topic-similar paper.
+A bounded history scan may
+recover a card only while its visually hashed preview is still on screen.
+Bounds-only historical images, documents, and cards are not enqueued because
+their viewport coordinates are not stable identities and previously caused
+phantom retry backlogs.
+
 Official WeCom voice URLs are downloaded with the SDK's authenticated media
 method into the exact message directory. Voice, quoted voice, and mixed-message
 audio then enter the shared `wechat_audio_intake.py` Whisper pipeline through

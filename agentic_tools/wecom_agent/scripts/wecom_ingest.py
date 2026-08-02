@@ -508,6 +508,29 @@ def event_request(event: dict[str, Any]) -> str:
         parts.extend(["", "Exact WeCom attachment files:"])
         for item in attachments:
             parts.append(f"- {item['kind']}: {item['path']}")
+    if str(event.get("msgtype") or "").strip() == "shipinhao_card":
+        source_metadata = (
+            event.get("source_metadata")
+            if isinstance(event.get("source_metadata"), dict)
+            else {}
+        )
+        source_title = str(source_metadata.get("title") or "").strip()
+        parts.extend(
+            [
+                "",
+                "Source handling contract:",
+                "- This is an exact same-chat WeCom Shipinhao/Finder card preview.",
+                "- Inspect the preview with vision and identify its visible title, account, publisher, and scholarly identifiers before searching.",
+                "- Locate the canonical authoritative source and summarize what the card actually supports.",
+                "- If it refers to scholarship, distinguish a paper from a podcast, news story, editorial, commentary, or video about a paper.",
+                "- When an exact paper is identified and a lawful publisher or open-access PDF is available, download and return that verified PDF.",
+                "- Otherwise return the canonical source link and say precisely why no exact downloadable paper was found.",
+                "- A directly cited or clearly foundational lawful paper may also be returned when the user asks for related scholarship, but label it as related rather than the card's original source and explain the verified relationship.",
+                "- Never substitute a merely topic-similar paper or imply that a related paper is the card's exact source.",
+            ]
+        )
+        if source_title:
+            parts.append(f"- Visible card account/source label: {source_title}")
     return "\n".join(parts).strip()
 
 
@@ -671,6 +694,13 @@ Current exact-chat active task, if any:
         route_kind = "research_or_summary"
         message_role = "research_request"
         worker_needed = True
+    if str(event.get("msgtype") or "").strip() == "shipinhao_card":
+        # A rich Finder card is source material, not a generic image receipt.
+        # The route agent still decides the research plan; this only preserves
+        # the source-reading contract when a fallback labels it as file intake.
+        route_kind = "research_or_summary"
+        message_role = "research_request"
+        worker_needed = True
     reply_mode = str(
         payload.get("reply_mode") or ("ack_then_work" if worker_needed else "reply")
     ).strip().casefold()
@@ -759,6 +789,7 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
     source_card = str(event.get("msgtype") or "").strip() in {
         "wechat_article_card",
         "merged_chat_history",
+        "shipinhao_card",
     }
     research = request_has_explicit_research_intent(request)
     attachments = normalized_attachments(event)
@@ -769,18 +800,22 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
     return {
         "worker_needed": worker_needed,
         "route_kind": (
-            "file_intake"
-            if attachments
+            "research_or_summary"
+            if source_card
             else (
-                "grant_proposal"
-                if grant
+                "file_intake"
+                if attachments
                 else (
-                    "presentation_generation"
-                    if presentation
+                    "grant_proposal"
+                    if grant
                     else (
-                        "research_or_summary"
-                        if source_card or research
-                        else ("other_worker" if actionable else "chat_only")
+                        "presentation_generation"
+                        if presentation
+                        else (
+                            "research_or_summary"
+                            if research
+                            else ("other_worker" if actionable else "chat_only")
+                        )
                     )
                 )
             )
@@ -1179,12 +1214,19 @@ def wecom_transport_preflight(event: dict[str, Any]) -> dict[str, Any]:
     attachments = normalized_attachments(event)
     if not attachments:
         return {}
+    agent_next_action = "Open and use these exact source-scoped files before answering."
+    if str(event.get("msgtype") or "").strip() == "shipinhao_card":
+        agent_next_action = (
+            "Inspect this exact source-scoped Shipinhao card preview with vision, "
+            "identify the canonical source, and recover a verified lawful paper PDF "
+            "only when the card actually identifies scholarly work."
+        )
     return {
         "wecom_media": {
             "status": "ready",
             "source_transport": event_transport_channel(event),
             "copied": attachments,
-            "agent_next_action": "Open and use these exact source-scoped files before answering.",
+            "agent_next_action": agent_next_action,
         }
     }
 
