@@ -1,0 +1,6 @@
+/artifacts/
+/runs/
+/PRINT_THIS_*
+/USE_THIS_*
+/__pycache__/
+

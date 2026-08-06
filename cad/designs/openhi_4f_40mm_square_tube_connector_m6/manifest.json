@@ -1,0 +1,285 @@
+{
+  "name": "openhi_4f_40mm_square_tube_connector_m6",
+  "run": "run-1-40mm-id-8x-m6-chamfered-center-stop-print-ready-20260806T022512Z",
+  "created_by": "build_openhi_4f_40mm_square_tube_connector_m6.py",
+  "parameters": {
+    "name": "openhi_4f_40mm_square_tube_connector_m6",
+    "design_mode": "new clean parametric print-fit design",
+    "tube_measured_outer_diameter_mm": 39.8,
+    "connector_bore_diameter_mm": 40.0,
+    "tube_total_diametral_clearance_mm": 0.2,
+    "tube_radial_clearance_mm": 0.1,
+    "outer_square_mm": 42.0,
+    "connector_length_mm": 62.0,
+    "nominal_face_wall_thickness_mm": 1.0,
+    "center_stop_z_mm": 31.0,
+    "center_stop_radial_height_mm": 2.0,
+    "center_stop_minimum_opening_diameter_mm": 36.0,
+    "center_stop_chamfer_angle_deg": 45.0,
+    "center_stop_axial_base_width_mm": 4.0,
+    "center_stop_lower_z_mm": 29.0,
+    "center_stop_upper_z_mm": 33.0,
+    "center_stop_profile": "triangular annular ridge: 40 mm opening at z=29, 36 mm at z=31, 40 mm at z=33",
+    "radial_fastener_count": 8,
+    "fasteners_per_tube_end": 4,
+    "fastener_axial_stations_z_mm": [
+      15.5,
+      46.5
+    ],
+    "fastener_tangential_offset_mm": 14.5,
+    "fastener_pattern": "one radially inward set screw per square face at each axial station; face locations rotate cyclically around the tube",
+    "female_thread_nominal": "M6 x 1.0 right-hand",
+    "female_thread_pitch_mm": 1.0,
+    "female_thread_pilot_diameter_mm": 5.0,
+    "female_thread_cutter_crest_diameter_mm": 6.0,
+    "female_thread_tooth_radial_height_mm": 0.5,
+    "thread_triangle_base_width_mm": 0.58,
+    "female_thread_cutter_axis_length_mm": 12.0,
+    "thread_runout_extra_cycles_each_end": 0.5,
+    "thread_runout_extra_length_each_end_mm": 0.5,
+    "thread_hand": "right-hand; matching cutter and screw helices",
+    "male_set_screw_crest_diameter_mm": 5.8,
+    "male_set_screw_root_diameter_mm": 4.8,
+    "male_diametral_print_reduction_mm": 0.2,
+    "male_thread_length_mm": 12.0,
+    "male_head_style": "hex head",
+    "male_head_across_flats_mm": 10.0,
+    "male_head_height_mm": 4.0,
+    "male_set_screw_print_count": 8,
+    "male_set_screw_grid": "4 x 2, printed vertically with hex heads on bed",
+    "print_orientation_connector": "42 x 42 mm end face on build plate; tube axis vertical",
+    "print_orientation_set_screw": "hex head on build plate; thread axis vertical",
+    "physical_fit_note": "The 40.0 mm bore gives 0.2 mm diametral clearance around the measured 39.8 mm tube. Print one connector and one screw first; clean horizontal female threads with an M6 x 1.0 tap if the printer leaves rough crests."
+  },
+  "validation": {
+    "geometry": {
+      "tube_diametral_clearance_mm": 0.2,
+      "tube_radial_clearance_mm": 0.1,
+      "center_stop_radial_height_mm": 2.0,
+      "center_stop_axial_base_width_mm": 4.0,
+      "center_stop_chamfer_angle_deg": 45.0,
+      "minimum_thread_material_length_over_full_crest_mm": 4.6369,
+      "thread_material_length_at_hole_centerline_mm": 7.225,
+      "thread_hole_outer_edge_ligament_mm": 3.5,
+      "female_thread_pitch_mm": 1.0,
+      "male_thread_pitch_mm": 1.0,
+      "male_crest_clearance_to_female_cutter_mm": 0.2,
+      "expected_connector_bbox_mm": [
+        42.0,
+        42.0,
+        62.0
+      ],
+      "expected_set_screw_bbox_mm": [
+        11.547,
+        10.0,
+        16.0
+      ]
+    },
+    "features": {
+      "bore_clear_at_r19_z10": true,
+      "center_stop_material_at_r19_z31": true,
+      "center_stop_open_at_r17p5_z31": true,
+      "center_stop_open_at_r19_z29": true,
+      "lower_face_thread_mouth_open": true,
+      "upper_face_thread_mouth_open": true,
+      "tap_ready_pilot_mouth_open": true,
+      "corner_material_present": true
+    },
+    "threaded_connector_step": {
+      "exists": true,
+      "bytes": 7795285,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        42.0,
+        42.0,
+        62.0
+      ],
+      "volume_mm3": 30647.1883,
+      "face_count": 218,
+      "bspline_face_count": 120
+    },
+    "threaded_connector_stl": {
+      "exists": true,
+      "bytes": 4595884,
+      "watertight": true,
+      "component_count": 1,
+      "body_count": 1,
+      "bbox_mm": [
+        42.0,
+        42.0,
+        62.0
+      ],
+      "face_count": 91916
+    },
+    "threaded_connector_3mf": {
+      "exists": true,
+      "bytes": 1211447,
+      "zip_valid": true,
+      "members": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ]
+    },
+    "tap_ready_step": {
+      "exists": true,
+      "bytes": 271341,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        42.0,
+        42.0,
+        62.0
+      ],
+      "volume_mm3": 30786.0929,
+      "face_count": 18,
+      "bspline_face_count": 0
+    },
+    "set_screw_step": {
+      "exists": true,
+      "bytes": 481331,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        10.0,
+        11.547,
+        16.0
+      ],
+      "volume_mm3": 590.4752,
+      "face_count": 25,
+      "bspline_face_count": 2
+    },
+    "set_screw_stl": {
+      "exists": true,
+      "bytes": 851384,
+      "watertight": true,
+      "component_count": 1,
+      "body_count": 1,
+      "bbox_mm": [
+        10.0,
+        11.547,
+        16.0
+      ],
+      "face_count": 17026
+    },
+    "set_screw_3mf": {
+      "exists": true,
+      "bytes": 224150,
+      "zip_valid": true,
+      "members": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ]
+    },
+    "set_screw_grid_step": {
+      "exists": true,
+      "bytes": 3949887,
+      "solid_count": 8,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        52.0,
+        25.547,
+        16.0
+      ],
+      "volume_mm3": 4723.8013,
+      "face_count": 200,
+      "bspline_face_count": 16
+    },
+    "set_screw_grid_stl": {
+      "exists": true,
+      "bytes": 7239284,
+      "watertight": true,
+      "component_count": 8,
+      "body_count": 8,
+      "bbox_mm": [
+        52.0,
+        25.547,
+        16.0
+      ],
+      "face_count": 144784
+    },
+    "set_screw_grid_3mf": {
+      "exists": true,
+      "bytes": 1897612,
+      "zip_valid": true,
+      "members": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ]
+    },
+    "thread_cutters_step": {
+      "exists": true,
+      "bytes": 3953888,
+      "solid_count": 8,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        43.0,
+        43.0,
+        37.0
+      ],
+      "volume_mm3": 2265.7637,
+      "face_count": 160,
+      "bspline_face_count": 16
+    },
+    "fit_assembly_step": {
+      "exists": true,
+      "bytes": 11901599,
+      "solid_count": 11,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        50.0,
+        50.0,
+        84.0
+      ],
+      "volume_mm3": 134899.1581,
+      "face_count": 424,
+      "bspline_face_count": 136
+    }
+  },
+  "outputs": {
+    "threaded_connector_step": "artifacts/openhi_4f_40mm_square_tube_connector_m6_threaded_connector.step",
+    "threaded_connector_stl": "artifacts/openhi_4f_40mm_square_tube_connector_m6_threaded_connector.stl",
+    "threaded_connector_3mf": "artifacts/openhi_4f_40mm_square_tube_connector_m6_threaded_connector.3mf",
+    "tap_ready_step": "artifacts/openhi_4f_40mm_square_tube_connector_m6_tap_ready_connector.step",
+    "tap_ready_stl": "artifacts/openhi_4f_40mm_square_tube_connector_m6_tap_ready_connector.stl",
+    "set_screw_step": "artifacts/openhi_4f_40mm_square_tube_connector_m6_single_set_screw.step",
+    "set_screw_stl": "artifacts/openhi_4f_40mm_square_tube_connector_m6_single_set_screw.stl",
+    "set_screw_3mf": "artifacts/openhi_4f_40mm_square_tube_connector_m6_single_set_screw.3mf",
+    "set_screw_grid_step": "artifacts/openhi_4f_40mm_square_tube_connector_m6_8x_set_screw_grid.step",
+    "set_screw_grid_stl": "artifacts/openhi_4f_40mm_square_tube_connector_m6_8x_set_screw_grid.stl",
+    "set_screw_grid_3mf": "artifacts/openhi_4f_40mm_square_tube_connector_m6_8x_set_screw_grid.3mf",
+    "assembled_screws_step": "artifacts/openhi_4f_40mm_square_tube_connector_m6_assembled_set_screws.step",
+    "assembled_screws_stl": "artifacts/openhi_4f_40mm_square_tube_connector_m6_assembled_set_screws.stl",
+    "section_step": "artifacts/openhi_4f_40mm_square_tube_connector_m6_half_section.step",
+    "section_stl": "artifacts/openhi_4f_40mm_square_tube_connector_m6_half_section.stl",
+    "lower_tube_step": "artifacts/openhi_4f_40mm_square_tube_connector_m6_lower_tube_proxy.step",
+    "lower_tube_stl": "artifacts/openhi_4f_40mm_square_tube_connector_m6_lower_tube_proxy.stl",
+    "upper_tube_step": "artifacts/openhi_4f_40mm_square_tube_connector_m6_upper_tube_proxy.step",
+    "upper_tube_stl": "artifacts/openhi_4f_40mm_square_tube_connector_m6_upper_tube_proxy.stl",
+    "thread_cutters_step": "artifacts/openhi_4f_40mm_square_tube_connector_m6_8x_female_thread_cutters.step",
+    "thread_cutters_stl": "artifacts/openhi_4f_40mm_square_tube_connector_m6_8x_female_thread_cutters.stl",
+    "fit_assembly_step": "artifacts/openhi_4f_40mm_square_tube_connector_m6_fit_check_assembly.step",
+    "fit_assembly_stl": "artifacts/openhi_4f_40mm_square_tube_connector_m6_fit_check_assembly.stl"
+  },
+  "root_aliases": [
+    "PRINT_THIS_openhi_4f_40mm_square_tube_connector_m6_8x_set_screws.3mf",
+    "PRINT_THIS_openhi_4f_40mm_square_tube_connector_m6_8x_set_screws.step",
+    "PRINT_THIS_openhi_4f_40mm_square_tube_connector_m6_8x_set_screws.stl",
+    "PRINT_THIS_openhi_4f_40mm_square_tube_connector_m6_8x_set_screws_render.png",
+    "PRINT_THIS_openhi_4f_40mm_square_tube_connector_m6_single_set_screw.3mf",
+    "PRINT_THIS_openhi_4f_40mm_square_tube_connector_m6_single_set_screw.step",
+    "PRINT_THIS_openhi_4f_40mm_square_tube_connector_m6_single_set_screw.stl",
+    "PRINT_THIS_openhi_4f_40mm_square_tube_connector_m6_threaded_connector.3mf",
+    "PRINT_THIS_openhi_4f_40mm_square_tube_connector_m6_threaded_connector.step",
+    "PRINT_THIS_openhi_4f_40mm_square_tube_connector_m6_threaded_connector.stl",
+    "USE_THIS_openhi_4f_40mm_square_tube_connector_m6_center_stop_section_render.png",
+    "USE_THIS_openhi_4f_40mm_square_tube_connector_m6_connector_render.png",
+    "USE_THIS_openhi_4f_40mm_square_tube_connector_m6_fit_check_assembly.step",
+    "USE_THIS_openhi_4f_40mm_square_tube_connector_m6_fit_check_render.png",
+    "USE_THIS_openhi_4f_40mm_square_tube_connector_m6_tap_ready_connector.step",
+    "USE_THIS_openhi_4f_40mm_square_tube_connector_m6_threaded_connector.step"
+  ]
+}
