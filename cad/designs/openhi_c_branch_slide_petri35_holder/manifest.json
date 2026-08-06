@@ -1,0 +1,344 @@
+{
+  "name": "openhi_c_branch_slide_petri35_holder",
+  "run": "run-1-25mm-smooth-c-branch-socket-print-ready-20260806T030109Z",
+  "parameters": {
+    "name": "openhi_c_branch_slide_petri35_holder",
+    "design_mode": "new clean decoupled adapter using an unchanged accepted sample-holder upper geometry",
+    "accepted_geometry_source": "cad/designs/cage_sample_holder_two_piece_lock_slide_petri35/build_cage_sample_holder_two_piece_lock_slide_petri35.py",
+    "measured_reference_source": "cad/extracted/OpenHI_STEP/C.step",
+    "sample_holder_outer_mm": [
+      110.0,
+      70.0
+    ],
+    "sample_tray_thickness_mm": 8.0,
+    "chamber_gap_mm": 18.0,
+    "top_frame_z_mm": 26.0,
+    "slide_nominal_mm": [
+      72.96,
+      20.0
+    ],
+    "slide_seat_mm": [
+      75.0,
+      22.0
+    ],
+    "slide_seat_depth_mm": 1.2,
+    "petri_nominal_diameter_mm": 33.0,
+    "petri_seat_diameter_mm": 35.4,
+    "petri_seat_depth_mm": 1.8,
+    "optical_window_diameter_mm": 18.0,
+    "c_branch_reference_plain_nose_diameter_mm": 24.4,
+    "c_branch_reference_thread_crest_diameter_mm": 25.2,
+    "c_branch_reference_plain_nose_length_mm": 3.9,
+    "c_branch_reference_taper_length_mm": 7.8,
+    "c_branch_reference_taper_large_diameter_mm": 40.0,
+    "adapter_outer_diameter_mm": 40.0,
+    "adapter_smooth_socket_id_mm": 25.0,
+    "adapter_smooth_socket_length_mm": 5.0,
+    "adapter_taper_length_mm": 7.8,
+    "adapter_taper_mouth_id_mm": 39.0,
+    "adapter_mouth_radial_lip_mm": 0.5,
+    "adapter_main_length_mm": 12.8,
+    "adapter_registration_spigot_od_mm": 38.0,
+    "adapter_registration_spigot_height_mm": 2.0,
+    "tray_registration_pocket_id_mm": 38.2,
+    "tray_registration_pocket_depth_mm": 2.2,
+    "registration_diametral_clearance_mm": 0.2,
+    "registration_axial_clearance_mm": 0.2,
+    "c_reference_tip_offset_for_fit_render_mm": -1.6,
+    "fit_coupon_outer_diameter_mm": 32.0,
+    "fit_coupon_inner_diameter_mm": 25.0,
+    "fit_coupon_height_mm": 5.0,
+    "fit_coupon_entry_diameter_mm": 25.8,
+    "fit_coupon_entry_chamfer_height_mm": 0.4,
+    "thread_policy": "no thread is generated; the socket is intentionally smooth",
+    "physical_fit_warning": "The measured reference thread crest is about 25.2 mm while the user-confirmed socket ID is 25.0 mm. This is intentionally tight; print the fit coupon first.",
+    "print_orientation_adapter": "registration-spigot/18 mm optical side on the build plate; 39 mm tapered mouth upward"
+  },
+  "validation": {
+    "bottom_tray_step": {
+      "exists": true,
+      "bytes": 508166,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        161.0,
+        121.0,
+        31.2
+      ],
+      "volume_mm3": 56046.5925,
+      "face_count": 140,
+      "bspline_face_count": 0
+    },
+    "bottom_tray_stl": {
+      "exists": true,
+      "bytes": 361984,
+      "watertight": true,
+      "component_count": 1,
+      "bbox_mm": [
+        161.0,
+        121.0,
+        31.2
+      ],
+      "face_count": 7238
+    },
+    "top_frame_step": {
+      "exists": true,
+      "bytes": 505598,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        161.0,
+        121.0,
+        8.0
+      ],
+      "volume_mm3": 40496.9194,
+      "face_count": 138,
+      "bspline_face_count": 0
+    },
+    "adapter_step": {
+      "exists": true,
+      "bytes": 21088,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        40.0,
+        40.0,
+        14.8
+      ],
+      "volume_mm3": 9004.8648,
+      "face_count": 9,
+      "bspline_face_count": 0
+    },
+    "adapter_stl": {
+      "exists": true,
+      "bytes": 241584,
+      "watertight": true,
+      "component_count": 1,
+      "bbox_mm": [
+        40.0,
+        39.9955,
+        14.8
+      ],
+      "face_count": 4830
+    },
+    "adapter_print_stl": {
+      "exists": true,
+      "bytes": 241584,
+      "watertight": true,
+      "component_count": 1,
+      "bbox_mm": [
+        40.0,
+        39.9955,
+        14.8
+      ],
+      "face_count": 4830
+    },
+    "fit_coupon_step": {
+      "exists": true,
+      "bytes": 12509,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        32.0,
+        32.0,
+        5.0
+      ],
+      "volume_mm3": 1560.5191,
+      "face_count": 5,
+      "bspline_face_count": 0
+    },
+    "fit_coupon_stl": {
+      "exists": true,
+      "bytes": 105084,
+      "watertight": true,
+      "component_count": 1,
+      "bbox_mm": [
+        32.0,
+        31.9964,
+        5.0
+      ],
+      "face_count": 2100
+    },
+    "assembly_step": {
+      "exists": true,
+      "bytes": 1051063,
+      "solid_count": 3,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        161.0,
+        121.0,
+        46.8
+      ],
+      "volume_mm3": 105548.3766,
+      "face_count": 287,
+      "bspline_face_count": 0
+    },
+    "print_layout_step": {
+      "exists": true,
+      "bytes": 1066860,
+      "solid_count": 4,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        200.0,
+        245.0,
+        31.2
+      ],
+      "volume_mm3": 107108.8958,
+      "face_count": 292,
+      "bspline_face_count": 0
+    },
+    "print_layout_stl": {
+      "exists": true,
+      "bytes": 1402084,
+      "watertight": true,
+      "component_count": 4,
+      "bbox_mm": [
+        200.0,
+        245.0,
+        31.2
+      ],
+      "face_count": 28040
+    },
+    "point_checks": {
+      "tray_optical_axis_open": true,
+      "tray_slide_seat_open_at_top": true,
+      "tray_petri_seat_open_at_top": true,
+      "old_lower_rod_socket_location_is_solid": true,
+      "registration_pocket_open": true,
+      "registration_pocket_has_roof": true,
+      "adapter_optical_axis_open": true,
+      "adapter_25mm_bore_open": true,
+      "adapter_bore_wall_present": true,
+      "adapter_mouth_open": true,
+      "adapter_mouth_lip_present": true,
+      "top_center_open": true
+    },
+    "accepted_top_source": {
+      "exists": true,
+      "bytes": 505598,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        161.0,
+        121.0,
+        8.0
+      ],
+      "volume_mm3": 40496.9194,
+      "face_count": 138,
+      "bspline_face_count": 0
+    },
+    "accepted_top_invariant": true,
+    "three_mf": {
+      "bottom_tray_3mf": {
+        "exists": true,
+        "bytes": 67651,
+        "zip_valid": true,
+        "members": [
+          "3D/3dmodel.model",
+          "[Content_Types].xml",
+          "_rels/.rels"
+        ]
+      },
+      "top_frame_180deg_3mf": {
+        "exists": true,
+        "bytes": 133319,
+        "zip_valid": true,
+        "members": [
+          "3D/3dmodel.model",
+          "[Content_Types].xml",
+          "_rels/.rels"
+        ]
+      },
+      "c_branch_adapter_supported_orientation_3mf": {
+        "exists": true,
+        "bytes": 47756,
+        "zip_valid": true,
+        "members": [
+          "3D/3dmodel.model",
+          "[Content_Types].xml",
+          "_rels/.rels"
+        ]
+      },
+      "25mm_fit_coupon_3mf": {
+        "exists": true,
+        "bytes": 20099,
+        "zip_valid": true,
+        "members": [
+          "3D/3dmodel.model",
+          "[Content_Types].xml",
+          "_rels/.rels"
+        ]
+      },
+      "all_parts_layout_3mf": {
+        "exists": true,
+        "bytes": 271196,
+        "zip_valid": true,
+        "members": [
+          "3D/3dmodel.model",
+          "[Content_Types].xml",
+          "_rels/.rels"
+        ]
+      }
+    },
+    "all_3mf_valid": true
+  },
+  "outputs": {
+    "bottom_tray_step": "artifacts/openhi_c_branch_slide_petri35_holder_bottom_tray.step",
+    "bottom_tray_stl": "artifacts/openhi_c_branch_slide_petri35_holder_bottom_tray.stl",
+    "top_frame_step": "artifacts/openhi_c_branch_slide_petri35_holder_top_frame.step",
+    "top_frame_stl": "artifacts/openhi_c_branch_slide_petri35_holder_top_frame.stl",
+    "top_frame_180deg_step": "artifacts/openhi_c_branch_slide_petri35_holder_top_frame_180deg.step",
+    "top_frame_180deg_stl": "artifacts/openhi_c_branch_slide_petri35_holder_top_frame_180deg.stl",
+    "c_branch_adapter_step": "artifacts/openhi_c_branch_slide_petri35_holder_c_branch_adapter.step",
+    "c_branch_adapter_stl": "artifacts/openhi_c_branch_slide_petri35_holder_c_branch_adapter.stl",
+    "c_branch_adapter_supported_orientation_step": "artifacts/openhi_c_branch_slide_petri35_holder_c_branch_adapter_supported_orientation.step",
+    "c_branch_adapter_supported_orientation_stl": "artifacts/openhi_c_branch_slide_petri35_holder_c_branch_adapter_supported_orientation.stl",
+    "25mm_fit_coupon_step": "artifacts/openhi_c_branch_slide_petri35_holder_25mm_fit_coupon.step",
+    "25mm_fit_coupon_stl": "artifacts/openhi_c_branch_slide_petri35_holder_25mm_fit_coupon.stl",
+    "adapter_half_section_step": "artifacts/openhi_c_branch_slide_petri35_holder_adapter_half_section.step",
+    "adapter_half_section_stl": "artifacts/openhi_c_branch_slide_petri35_holder_adapter_half_section.stl",
+    "openhi_c_reference_visualization_only_step": "artifacts/openhi_c_branch_slide_petri35_holder_openhi_c_reference_visualization_only.step",
+    "openhi_c_reference_visualization_only_stl": "artifacts/openhi_c_branch_slide_petri35_holder_openhi_c_reference_visualization_only.stl",
+    "bottom_tray_3mf": "artifacts/openhi_c_branch_slide_petri35_holder_bottom_tray.3mf",
+    "top_frame_180deg_3mf": "artifacts/openhi_c_branch_slide_petri35_holder_top_frame_180deg.3mf",
+    "c_branch_adapter_supported_orientation_3mf": "artifacts/openhi_c_branch_slide_petri35_holder_c_branch_adapter_supported_orientation.3mf",
+    "25mm_fit_coupon_3mf": "artifacts/openhi_c_branch_slide_petri35_holder_25mm_fit_coupon.3mf",
+    "assembly_step": "artifacts/openhi_c_branch_slide_petri35_holder_assembly.step",
+    "assembly_stl": "artifacts/openhi_c_branch_slide_petri35_holder_assembly.stl",
+    "reference_assembly_step": "artifacts/openhi_c_branch_slide_petri35_holder_reference_assembly.step",
+    "reference_assembly_stl": "artifacts/openhi_c_branch_slide_petri35_holder_reference_assembly.stl",
+    "c_branch_fit_check_step": "artifacts/openhi_c_branch_slide_petri35_holder_c_branch_fit_check.step",
+    "c_branch_fit_check_stl": "artifacts/openhi_c_branch_slide_petri35_holder_c_branch_fit_check.stl",
+    "exploded_step": "artifacts/openhi_c_branch_slide_petri35_holder_exploded.step",
+    "exploded_stl": "artifacts/openhi_c_branch_slide_petri35_holder_exploded.stl",
+    "all_parts_layout_step": "artifacts/openhi_c_branch_slide_petri35_holder_all_parts_layout.step",
+    "all_parts_layout_stl": "artifacts/openhi_c_branch_slide_petri35_holder_all_parts_layout.stl",
+    "all_parts_layout_3mf": "artifacts/openhi_c_branch_slide_petri35_holder_all_parts_layout.3mf"
+  },
+  "root_aliases": [
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_25mm_fit_coupon.3mf",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_25mm_fit_coupon.step",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_25mm_fit_coupon.stl",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_all_parts_layout.3mf",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_all_parts_layout.step",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_all_parts_layout.stl",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_bottom_tray.3mf",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_bottom_tray.step",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_bottom_tray.stl",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_c_branch_adapter_supported_orientation.3mf",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_c_branch_adapter_supported_orientation.step",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_c_branch_adapter_supported_orientation.stl",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_top_frame_180deg.3mf",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_top_frame_180deg.step",
+    "PRINT_THIS_openhi_c_branch_slide_petri35_holder_top_frame_180deg.stl",
+    "USE_THIS_openhi_c_branch_slide_petri35_holder_assembly.step",
+    "USE_THIS_openhi_c_branch_slide_petri35_holder_c_branch_fit_check.step"
+  ],
+  "renders": [
+    "openhi_c_branch_slide_petri35_holder_assembly_render.png",
+    "openhi_c_branch_slide_petri35_holder_exploded_render.png",
+    "openhi_c_branch_slide_petri35_holder_c_branch_fit_render.png",
+    "openhi_c_branch_slide_petri35_holder_adapter_section_render.png",
+    "openhi_c_branch_slide_petri35_holder_print_layout_render.png"
+  ]
+}
