@@ -25,8 +25,8 @@ ROOT = Path(__file__).resolve().parents[3]
 DESIGN_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = DESIGN_DIR / "artifacts"
 RUN_NAME = (
-    "run-1-40mm-id-8x-m6-chamfered-center-stop-print-ready-"
-    "20260806T022512Z"
+    "run-2-40p2mm-id-8x-m6-chamfered-center-stop-print-ready-"
+    "20260806T131606Z"
 )
 RUN_DIR = DESIGN_DIR / "runs" / RUN_NAME
 RUN_ARTIFACT_DIR = RUN_DIR / "artifacts"
@@ -44,22 +44,22 @@ PARAMS = {
     "name": STEM,
     "design_mode": "new clean parametric print-fit design",
     "tube_measured_outer_diameter_mm": 39.8,
-    "connector_bore_diameter_mm": 40.0,
-    "tube_total_diametral_clearance_mm": 0.2,
-    "tube_radial_clearance_mm": 0.1,
+    "connector_bore_diameter_mm": 40.2,
+    "tube_total_diametral_clearance_mm": 0.4,
+    "tube_radial_clearance_mm": 0.2,
     "outer_square_mm": 42.0,
     "connector_length_mm": 62.0,
-    "nominal_face_wall_thickness_mm": 1.0,
+    "nominal_face_wall_thickness_mm": 0.9,
     "center_stop_z_mm": 31.0,
-    "center_stop_radial_height_mm": 2.0,
+    "center_stop_radial_height_mm": 2.1,
     "center_stop_minimum_opening_diameter_mm": 36.0,
     "center_stop_chamfer_angle_deg": 45.0,
     "center_stop_axial_base_width_mm": 4.0,
     "center_stop_lower_z_mm": 29.0,
     "center_stop_upper_z_mm": 33.0,
     "center_stop_profile": (
-        "triangular annular ridge: 40 mm opening at z=29, 36 mm at z=31, "
-        "40 mm at z=33"
+        "triangular annular ridge: 40.2 mm opening at z=29, 36 mm at z=31, "
+        "40.2 mm at z=33"
     ),
     "radial_fastener_count": 8,
     "fasteners_per_tube_end": 4,
@@ -93,7 +93,7 @@ PARAMS = {
     ),
     "print_orientation_set_screw": "hex head on build plate; thread axis vertical",
     "physical_fit_note": (
-        "The 40.0 mm bore gives 0.2 mm diametral clearance around the measured "
+        "The 40.2 mm bore gives 0.4 mm diametral clearance around the measured "
         "39.8 mm tube. Print one connector and one screw first; clean horizontal "
         "female threads with an M6 x 1.0 tap if the printer leaves rough crests."
     ),
@@ -598,25 +598,26 @@ def write_readme(path: Path, validation: dict[str, object]) -> None:
         f"""# OpenHI 4F 40 mm Square Tube Connector With Eight M6 Set Screws
 
 This clean parametric connector joins two measured `39.8 mm` OpenHI 4F tubes.
-The connector is `42 x 42 x 62 mm`, with a `40.0 mm` bore and eight radial
+The connector is `42 x 42 x 62 mm`, with a `40.2 mm` bore and eight radial
 M6-class printed set screws.
 
 ## Geometry
 
 - Tube axis / print axis: `Z`.
 - Connector envelope: `42 x 42 x 62 mm`.
-- Bore: `40.0 mm`; measured tube: `39.8 mm`.
-- Fit: `0.2 mm` diametral / `0.1 mm` radial clearance.
-- Center stop: a `2.0 mm` inward annular ridge at `z=31 mm`.
+- Bore: `40.2 mm`; measured tube: `39.8 mm`.
+- Fit: `0.4 mm` diametral / `0.2 mm` radial clearance.
+- Center stop: a `2.1 mm` inward annular ridge at `z=31 mm`; its `36.0 mm`
+  throat is unchanged from run 1.
 - The stop is a triangular cross-section with straight `45 degree` chamfers:
-  bore `40 -> 36 -> 40 mm` over `z=29 -> 31 -> 33 mm`.
+  bore `40.2 -> 36 -> 40.2 mm` over `z=29 -> 31 -> 33 mm`.
 - Optical opening remains `36 mm`; the stop is not a blocking disk.
 - Eight radial threaded holes: four at `z=15.5 mm`, four at `z=46.5 mm`.
 - The holes are offset `14.5 mm` toward the corners. This preserves
   `{geometry['minimum_thread_material_length_over_full_crest_mm']} mm` minimum
   material across the full M6 crest and
   `{geometry['thread_material_length_at_hole_centerline_mm']} mm` at each hole
-  centerline. A centered face hole would have only `1 mm` wall.
+  centerline. A centered face hole would have only `0.9 mm` wall.
 
 ## Threads
 

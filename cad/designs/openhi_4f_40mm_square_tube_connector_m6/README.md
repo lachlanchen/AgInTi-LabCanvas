@@ -1,25 +1,26 @@
 # OpenHI 4F 40 mm Square Tube Connector With Eight M6 Set Screws
 
 This clean parametric connector joins two measured `39.8 mm` OpenHI 4F tubes.
-The connector is `42 x 42 x 62 mm`, with a `40.0 mm` bore and eight radial
+The connector is `42 x 42 x 62 mm`, with a `40.2 mm` bore and eight radial
 M6-class printed set screws.
 
 ## Geometry
 
 - Tube axis / print axis: `Z`.
 - Connector envelope: `42 x 42 x 62 mm`.
-- Bore: `40.0 mm`; measured tube: `39.8 mm`.
-- Fit: `0.2 mm` diametral / `0.1 mm` radial clearance.
-- Center stop: a `2.0 mm` inward annular ridge at `z=31 mm`.
+- Bore: `40.2 mm`; measured tube: `39.8 mm`.
+- Fit: `0.4 mm` diametral / `0.2 mm` radial clearance.
+- Center stop: a `2.1 mm` inward annular ridge at `z=31 mm`; its `36.0 mm`
+  throat is unchanged from run 1.
 - The stop is a triangular cross-section with straight `45 degree` chamfers:
-  bore `40 -> 36 -> 40 mm` over `z=29 -> 31 -> 33 mm`.
+  bore `40.2 -> 36 -> 40.2 mm` over `z=29 -> 31 -> 33 mm`.
 - Optical opening remains `36 mm`; the stop is not a blocking disk.
 - Eight radial threaded holes: four at `z=15.5 mm`, four at `z=46.5 mm`.
 - The holes are offset `14.5 mm` toward the corners. This preserves
-  `4.6369 mm` minimum
+  `4.5149 mm` minimum
   material across the full M6 crest and
-  `7.225 mm` at each hole
-  centerline. A centered face hole would have only `1 mm` wall.
+  `7.0802 mm` at each hole
+  centerline. A centered face hole would have only `0.9 mm` wall.
 
 ## Threads
 
@@ -54,8 +55,8 @@ printed female thread without changing the connector envelope.
 
 - Threaded connector STEP: `1`
   valid solid; bbox `[42.0, 42.0, 62.0] mm`.
-- Printable helical STEP topology: `218`
-  faces, including `120`
+- Printable helical STEP topology: `202`
+  faces, including `104`
   B-spline faces from real helices.
 - Tap-ready Shapr STEP topology: `18`
   faces and `0` B-spline

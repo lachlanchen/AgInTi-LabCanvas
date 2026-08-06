@@ -21,11 +21,11 @@ about 39.8 mm.
 | Feature | Value |
 | --- | ---: |
 | Connector envelope | 42 x 42 x 62 mm |
-| Tube bore | 40.0 mm |
+| Tube bore | 40.2 mm |
 | Measured tube | 39.8 mm |
-| Diametral fit clearance | 0.2 mm |
+| Diametral fit clearance | 0.4 mm |
 | Center stop location | z = 31 mm |
-| Center stop radial projection | 2 mm |
+| Center stop radial projection | 2.1 mm (derived; 36 mm throat unchanged) |
 | Center stop open aperture | 36 mm |
 | Center stop axial base | 4 mm |
 | Fasteners | 8 radial M6 x 1.0 positions |
@@ -43,13 +43,13 @@ is rounded; a chamfer is a straight sloped face.
 - Tube stop plane: z = 31 mm.
 - Lower tube enters from z = 0; upper tube enters from z = 62 mm.
 - The stop is an annular triangular ridge, not a disk:
-  - bore 40 mm at z = 29;
+  - bore 40.2 mm at z = 29;
   - bore 36 mm at z = 31;
-  - bore 40 mm at z = 33.
+  - bore 40.2 mm at z = 33.
 - The two 45-degree chamfers avoid an unsupported internal right-angle shelf
   when the connector prints upright along the tube axis.
 
-The 42 mm square around a 40 mm bore gives only 1 mm face wall at each face
+The 42 mm square around a 40.2 mm bore gives only 0.9 mm face wall at each face
 center. An M6 thread cannot be placed at a face center and retain useful
 engagement. The eight radial fasteners are therefore offset tangentially by
 14.5 mm toward the corners. The validated design retains:
@@ -180,7 +180,7 @@ root connector STEP and fit-check assembly STEP for Shapr3D/LabCanvas import.
 
 1. Read the current README and manifest.
 2. Change named parameters only.
-3. Preserve the 40 mm optical/tube axis and 42 x 42 envelope unless the user
+3. Preserve the 40.2 mm optical/tube bore and 42 x 42 envelope unless the user
    explicitly changes them.
 4. Recompute fastener engagement if hole diameter, offset, bore, or envelope
    changes.
@@ -190,4 +190,3 @@ root connector STEP and fit-check assembly STEP for Shapr3D/LabCanvas import.
 8. Sync the checked run to Nutstore.
 9. Commit only source, documentation, and repository-approved artifacts; leave
    unrelated dirty files untouched.
-

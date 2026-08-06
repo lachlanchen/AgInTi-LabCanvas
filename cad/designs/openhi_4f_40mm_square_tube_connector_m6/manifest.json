@@ -1,25 +1,25 @@
 {
   "name": "openhi_4f_40mm_square_tube_connector_m6",
-  "run": "run-1-40mm-id-8x-m6-chamfered-center-stop-print-ready-20260806T022512Z",
+  "run": "run-2-40p2mm-id-8x-m6-chamfered-center-stop-print-ready-20260806T131606Z",
   "created_by": "build_openhi_4f_40mm_square_tube_connector_m6.py",
   "parameters": {
     "name": "openhi_4f_40mm_square_tube_connector_m6",
     "design_mode": "new clean parametric print-fit design",
     "tube_measured_outer_diameter_mm": 39.8,
-    "connector_bore_diameter_mm": 40.0,
-    "tube_total_diametral_clearance_mm": 0.2,
-    "tube_radial_clearance_mm": 0.1,
+    "connector_bore_diameter_mm": 40.2,
+    "tube_total_diametral_clearance_mm": 0.4,
+    "tube_radial_clearance_mm": 0.2,
     "outer_square_mm": 42.0,
     "connector_length_mm": 62.0,
-    "nominal_face_wall_thickness_mm": 1.0,
+    "nominal_face_wall_thickness_mm": 0.9,
     "center_stop_z_mm": 31.0,
-    "center_stop_radial_height_mm": 2.0,
+    "center_stop_radial_height_mm": 2.1,
     "center_stop_minimum_opening_diameter_mm": 36.0,
     "center_stop_chamfer_angle_deg": 45.0,
     "center_stop_axial_base_width_mm": 4.0,
     "center_stop_lower_z_mm": 29.0,
     "center_stop_upper_z_mm": 33.0,
-    "center_stop_profile": "triangular annular ridge: 40 mm opening at z=29, 36 mm at z=31, 40 mm at z=33",
+    "center_stop_profile": "triangular annular ridge: 40.2 mm opening at z=29, 36 mm at z=31, 40.2 mm at z=33",
     "radial_fastener_count": 8,
     "fasteners_per_tube_end": 4,
     "fastener_axial_stations_z_mm": [
@@ -49,17 +49,17 @@
     "male_set_screw_grid": "4 x 2, printed vertically with hex heads on bed",
     "print_orientation_connector": "42 x 42 mm end face on build plate; tube axis vertical",
     "print_orientation_set_screw": "hex head on build plate; thread axis vertical",
-    "physical_fit_note": "The 40.0 mm bore gives 0.2 mm diametral clearance around the measured 39.8 mm tube. Print one connector and one screw first; clean horizontal female threads with an M6 x 1.0 tap if the printer leaves rough crests."
+    "physical_fit_note": "The 40.2 mm bore gives 0.4 mm diametral clearance around the measured 39.8 mm tube. Print one connector and one screw first; clean horizontal female threads with an M6 x 1.0 tap if the printer leaves rough crests."
   },
   "validation": {
     "geometry": {
-      "tube_diametral_clearance_mm": 0.2,
-      "tube_radial_clearance_mm": 0.1,
-      "center_stop_radial_height_mm": 2.0,
+      "tube_diametral_clearance_mm": 0.4,
+      "tube_radial_clearance_mm": 0.2,
+      "center_stop_radial_height_mm": 2.1,
       "center_stop_axial_base_width_mm": 4.0,
       "center_stop_chamfer_angle_deg": 45.0,
-      "minimum_thread_material_length_over_full_crest_mm": 4.6369,
-      "thread_material_length_at_hole_centerline_mm": 7.225,
+      "minimum_thread_material_length_over_full_crest_mm": 4.5149,
+      "thread_material_length_at_hole_centerline_mm": 7.0802,
       "thread_hole_outer_edge_ligament_mm": 3.5,
       "female_thread_pitch_mm": 1.0,
       "male_thread_pitch_mm": 1.0,
@@ -87,7 +87,7 @@
     },
     "threaded_connector_step": {
       "exists": true,
-      "bytes": 7795285,
+      "bytes": 7215209,
       "solid_count": 1,
       "all_brep_valid": true,
       "bbox_mm": [
@@ -95,13 +95,13 @@
         42.0,
         62.0
       ],
-      "volume_mm3": 30647.1883,
-      "face_count": 218,
-      "bspline_face_count": 120
+      "volume_mm3": 29918.5718,
+      "face_count": 202,
+      "bspline_face_count": 104
     },
     "threaded_connector_stl": {
       "exists": true,
-      "bytes": 4595884,
+      "bytes": 4497484,
       "watertight": true,
       "component_count": 1,
       "body_count": 1,
@@ -110,11 +110,11 @@
         42.0,
         62.0
       ],
-      "face_count": 91916
+      "face_count": 89948
     },
     "threaded_connector_3mf": {
       "exists": true,
-      "bytes": 1211447,
+      "bytes": 1185380,
       "zip_valid": true,
       "members": [
         "3D/3dmodel.model",
@@ -124,7 +124,7 @@
     },
     "tap_ready_step": {
       "exists": true,
-      "bytes": 271341,
+      "bytes": 300932,
       "solid_count": 1,
       "all_brep_valid": true,
       "bbox_mm": [
@@ -132,7 +132,7 @@
         42.0,
         62.0
       ],
-      "volume_mm3": 30786.0929,
+      "volume_mm3": 30054.127,
       "face_count": 18,
       "bspline_face_count": 0
     },
@@ -226,7 +226,7 @@
     },
     "fit_assembly_step": {
       "exists": true,
-      "bytes": 11901599,
+      "bytes": 11307870,
       "solid_count": 11,
       "all_brep_valid": true,
       "bbox_mm": [
@@ -234,9 +234,9 @@
         50.0,
         84.0
       ],
-      "volume_mm3": 134899.1581,
-      "face_count": 424,
-      "bspline_face_count": 136
+      "volume_mm3": 134170.5416,
+      "face_count": 408,
+      "bspline_face_count": 120
     }
   },
   "outputs": {
