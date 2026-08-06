@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Build a slide/Petri holder that seats on the OpenHI C branch.
+"""Build the two-part OpenHI C-branch slide/Petri holder.
 
-The accepted two-piece cage sample holder remains the authority for every
-sample-facing feature.  This design replaces only the lower cage-rod sockets
-with a separate, smooth, non-threaded adapter measured from OpenHI C.step.
+The printable assembly contains exactly two independent solids:
+
+1. a sample tray with a bounded female 30 mm OpenHI thread; and
+2. a socket that covers the C-branch nose and chamfer, then continues into a
+   bounded 5 mm male 30 mm OpenHI thread that screws into the tray.
+
+The accepted slide/Petri seat geometry and anti-warp ears are reused without
+recreating their dimensions here.  No top frame, cage socket, coupon, or
+adhesive registration piece is part of this run.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import cadquery as cq
 import trimesh
@@ -30,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DESIGN_DIR = Path(__file__).resolve().parent
 ARTIFACT_DIR = DESIGN_DIR / "artifacts"
 STEM = "openhi_c_branch_slide_petri35_holder"
-RUN_NAME = "run-1-25mm-smooth-c-branch-socket-print-ready-20260806T030109Z"
+RUN_NAME = "run-2-threaded-two-part-c-branch-holder-print-ready-20260806T034958Z"
 RUN_DIR = DESIGN_DIR / "runs" / RUN_NAME
 RUN_ARTIFACT_DIR = RUN_DIR / "artifacts"
 NUTSTORE_ROOT = Path("/home/lachlan/Nutstore Files/Projects/LabCanvas")
@@ -42,6 +49,9 @@ OPENHI_C_STEP = ROOT / "cad/extracted/OpenHI_STEP/C.step"
 
 sys.path.insert(0, str(ROOT / "cad/tools"))
 from simple_3mf import export_stl_as_3mf  # noqa: E402
+
+
+THREAD_OVERLAP = 0.04
 
 
 def load_accepted_builder():
@@ -56,15 +66,16 @@ def load_accepted_builder():
 ACCEPTED = load_accepted_builder()
 
 
-PARAMS = {
+PARAMS: dict[str, Any] = {
     "name": STEM,
-    "design_mode": "new clean decoupled adapter using an unchanged accepted sample-holder upper geometry",
+    "run": RUN_NAME,
+    "units": "mm",
+    "design_mode": "two independent printable solids with a direct threaded interface",
     "accepted_geometry_source": str(ACCEPTED_BUILDER_PATH.relative_to(ROOT)),
     "measured_reference_source": str(OPENHI_C_STEP.relative_to(ROOT)),
+    "printable_part_count": 2,
     "sample_holder_outer_mm": [110.0, 70.0],
     "sample_tray_thickness_mm": 8.0,
-    "chamber_gap_mm": 18.0,
-    "top_frame_z_mm": 26.0,
     "slide_nominal_mm": [72.96, 20.0],
     "slide_seat_mm": [75.0, 22.0],
     "slide_seat_depth_mm": 1.2,
@@ -77,32 +88,36 @@ PARAMS = {
     "c_branch_reference_plain_nose_length_mm": 3.9,
     "c_branch_reference_taper_length_mm": 7.8,
     "c_branch_reference_taper_large_diameter_mm": 40.0,
-    "adapter_outer_diameter_mm": 40.0,
-    "adapter_smooth_socket_id_mm": 25.0,
-    "adapter_smooth_socket_length_mm": 5.0,
-    "adapter_taper_length_mm": 7.8,
-    "adapter_taper_mouth_id_mm": 39.0,
-    "adapter_mouth_radial_lip_mm": 0.5,
-    "adapter_main_length_mm": 12.8,
-    "adapter_registration_spigot_od_mm": 38.0,
-    "adapter_registration_spigot_height_mm": 2.0,
-    "tray_registration_pocket_id_mm": 38.2,
-    "tray_registration_pocket_depth_mm": 2.2,
-    "registration_diametral_clearance_mm": 0.2,
-    "registration_axial_clearance_mm": 0.2,
-    "c_reference_tip_offset_for_fit_render_mm": -1.6,
-    "fit_coupon_outer_diameter_mm": 32.0,
-    "fit_coupon_inner_diameter_mm": 25.0,
-    "fit_coupon_height_mm": 5.0,
-    "fit_coupon_entry_diameter_mm": 25.8,
-    "fit_coupon_entry_chamfer_height_mm": 0.4,
-    "thread_policy": "no thread is generated; the socket is intentionally smooth",
-    "physical_fit_warning": (
-        "The measured reference thread crest is about 25.2 mm while the user-confirmed "
-        "socket ID is 25.0 mm. This is intentionally tight; print the fit coupon first."
+    "socket_outer_diameter_mm": 42.0,
+    "socket_c_receiver_smooth_id_mm": 25.5,
+    "socket_c_receiver_smooth_length_mm": 5.0,
+    "socket_c_taper_length_mm": 7.8,
+    "socket_c_taper_mouth_id_mm": 40.2,
+    "socket_cup_length_mm": 12.8,
+    "socket_male_thread_length_mm": 5.0,
+    "socket_total_length_mm": 17.8,
+    "male_thread_root_diameter_mm": 29.8,
+    "male_thread_crest_diameter_mm": 30.2,
+    "holder_female_thread_land_diameter_mm": 30.0,
+    "holder_female_thread_groove_diameter_mm": 30.4,
+    "thread_pitch_mm": 0.8,
+    "thread_radial_height_mm": 0.2,
+    "thread_tooth_base_mm": 0.8,
+    "thread_runout_extra_each_end_mm": 0.4,
+    "thread_diametral_clearance_at_land_mm": 0.2,
+    "thread_diametral_clearance_at_crest_mm": 0.2,
+    "socket_shoulder_contact_z_mm": 12.8,
+    "holder_assembly_z_mm": 12.8,
+    "c_reference_tip_z_mm": 11.7,
+    "print_orientation_holder": "sample tray bottom and anti-warp ears on build plate",
+    "print_orientation_socket": (
+        "rotate 180 degrees so the 30 mm male-thread end rests on the build plate "
+        "and the 40.2 mm C-branch cavity faces upward"
     ),
-    "print_orientation_adapter": (
-        "registration-spigot/18 mm optical side on the build plate; 39 mm tapered mouth upward"
+    "interface_note": (
+        "The socket is one body: a 42 mm OD cup covers the 40 mm C-branch chamfer, "
+        "and its upper end narrows to the 29.8/30.2 mm male thread. The tray is the "
+        "second body and contains the matching 30.0/30.4 mm female thread."
     ),
 }
 
@@ -122,138 +137,225 @@ def z_cone(diameter0: float, diameter1: float, height: float, z0: float) -> cq.W
     return cq.Workplane(obj=solid)
 
 
-def build_bottom_tray() -> cq.Workplane:
-    """Reuse all accepted sample geometry and replace only the lower interface."""
+def x_thread_clip_box(x0: float, length: float, span: float) -> cq.Workplane:
+    return (
+        cq.Workplane("XY")
+        .box(length, span, span, centered=(False, True, True))
+        .translate((x0, 0, 0))
+    )
+
+
+def x_thread_tooth(
+    *,
+    x0: float,
+    length: float,
+    root_diameter: float,
+    crest_diameter: float,
+) -> cq.Workplane:
+    """Sweep a full-end helical tooth and clip it to the exact parent length."""
+    pitch = PARAMS["thread_pitch_mm"]
+    base = PARAMS["thread_tooth_base_mm"]
+    extra = PARAMS["thread_runout_extra_each_end_mm"]
+    height = (crest_diameter - root_diameter) / 2.0
+    sweep_x0 = x0 - extra
+    sweep_length = length + 2.0 * extra
+    root_r = root_diameter / 2.0 - THREAD_OVERLAP
+    path = cq.Wire.makeHelix(
+        pitch,
+        sweep_length,
+        root_r,
+        center=(sweep_x0, 0, 0),
+        dir=(1, 0, 0),
+        lefthand=True,
+    )
+    profile = (
+        cq.Workplane("XY")
+        .center(sweep_x0, root_r)
+        .polyline([(0, 0), (base / 2.0, height + THREAD_OVERLAP), (base, 0)])
+        .close()
+    )
+    tooth = profile.sweep(path, isFrenet=True, combine=False)
+    return tooth.intersect(x_thread_clip_box(x0, length, crest_diameter + 4.0))
+
+
+def z_thread_tooth(
+    *,
+    z0: float,
+    length: float,
+    root_diameter: float,
+    crest_diameter: float,
+) -> cq.Workplane:
+    """Use the proven X-axis sweep, then rotate it onto the optical Z axis."""
+    return (
+        x_thread_tooth(
+            x0=0.0,
+            length=length,
+            root_diameter=root_diameter,
+            crest_diameter=crest_diameter,
+        )
+        .rotate((0, 0, 0), (0, 1, 0), -90)
+        .translate((0, 0, z0))
+    )
+
+
+def build_female_thread_cutter() -> cq.Workplane:
+    p = PARAMS
+    length = p["socket_male_thread_length_mm"]
+    land_d = p["holder_female_thread_land_diameter_mm"]
+    groove_d = p["holder_female_thread_groove_diameter_mm"]
+    pilot = z_cylinder(land_d, length + 0.1, -0.05)
+    tooth = z_thread_tooth(
+        z0=0.0,
+        length=length,
+        root_diameter=land_d,
+        crest_diameter=groove_d,
+    )
+    return pilot.union(tooth).clean()
+
+
+def build_male_thread_local() -> cq.Workplane:
+    p = PARAMS
+    length = p["socket_male_thread_length_mm"]
+    root_d = p["male_thread_root_diameter_mm"]
+    crest_d = p["male_thread_crest_diameter_mm"]
+    root = z_cylinder(root_d, length, 0.0)
+    tooth = z_thread_tooth(
+        z0=0.0,
+        length=length,
+        root_diameter=root_d,
+        crest_diameter=crest_d,
+    )
+    return root.union(tooth).clean()
+
+
+def build_sample_holder() -> cq.Workplane:
+    """Reuse the accepted bottom sample geometry, omitting cage and lock parts."""
     part = ACCEPTED.base_plate()
     part = ACCEPTED.cut_bottom_sample_seats(part)
-    part = ACCEPTED.add_lock_feet(part)
     part = ACCEPTED.add_anti_warp_ears(part, bed_face="bottom")
-    pocket = z_cylinder(
-        PARAMS["tray_registration_pocket_id_mm"],
-        PARAMS["tray_registration_pocket_depth_mm"] + 0.1,
-        -0.1,
-    )
-    return part.cut(pocket).clean()
+    return part.cut(build_female_thread_cutter()).clean()
 
 
-def build_top_frame() -> cq.Workplane:
-    return ACCEPTED.build_top_part()
-
-
-def build_top_frame_print() -> cq.Workplane:
-    return ACCEPTED.build_top_part_180deg_print()
-
-
-def build_c_branch_adapter() -> cq.Workplane:
-    """Build the actual-use adapter at z=-12.8..2.0 beneath the sample tray."""
+def build_c_branch_socket() -> cq.Workplane:
+    """Build one socket body spanning the C receiver and male tray thread."""
     p = PARAMS
-    main = z_cylinder(p["adapter_outer_diameter_mm"], p["adapter_main_length_mm"], -p["adapter_main_length_mm"])
-    spigot = z_cylinder(
-        p["adapter_registration_spigot_od_mm"],
-        p["adapter_registration_spigot_height_mm"],
-        0.0,
-    )
-    part = main.union(spigot)
+    cup_length = p["socket_cup_length_mm"]
+    part = z_cylinder(p["socket_outer_diameter_mm"], cup_length, 0.0)
+
+    # Open the true 40.2 mm mouth explicitly, then continue through the 7.8 mm
+    # taper and 25.5 mm smooth nose receiver. Slight cutter overlap avoids a
+    # coplanar residual face without changing the specified fit envelope.
+    mouth = z_cylinder(p["socket_c_taper_mouth_id_mm"], 0.2, -0.1)
     taper = z_cone(
-        p["adapter_taper_mouth_id_mm"],
-        p["adapter_smooth_socket_id_mm"],
-        p["adapter_taper_length_mm"],
-        -p["adapter_main_length_mm"],
+        p["socket_c_taper_mouth_id_mm"],
+        p["socket_c_receiver_smooth_id_mm"],
+        p["socket_c_taper_length_mm"],
+        0.0,
     )
     nose = z_cylinder(
-        p["adapter_smooth_socket_id_mm"],
-        p["adapter_smooth_socket_length_mm"] + 0.05,
-        -p["adapter_smooth_socket_length_mm"],
+        p["socket_c_receiver_smooth_id_mm"],
+        p["socket_c_receiver_smooth_length_mm"] + 0.1,
+        p["socket_c_taper_length_mm"] - 0.05,
     )
+    part = part.cut(mouth).cut(taper).cut(nose)
+
+    male = build_male_thread_local().translate((0, 0, cup_length))
+    part = part.union(male)
     optical = z_cylinder(
         p["optical_window_diameter_mm"],
-        p["adapter_registration_spigot_height_mm"] + 0.1,
-        -0.05,
+        p["socket_male_thread_length_mm"] + 0.2,
+        cup_length - 0.1,
     )
-    return part.cut(taper).cut(nose).cut(optical).clean()
+    return part.cut(optical).clean()
 
 
-def build_adapter_print() -> cq.Workplane:
-    """Flip the adapter so the supported narrow end rests on the build plate."""
-    p = PARAMS
+def build_socket_print_orientation() -> cq.Workplane:
+    total = PARAMS["socket_total_length_mm"]
     return (
-        build_c_branch_adapter()
+        build_c_branch_socket()
         .rotate((0, 0, 0), (1, 0, 0), 180)
-        .translate((0, 0, p["adapter_registration_spigot_height_mm"]))
+        .translate((0, 0, total))
     )
-
-
-def build_fit_coupon() -> cq.Workplane:
-    p = PARAMS
-    part = z_cylinder(p["fit_coupon_outer_diameter_mm"], p["fit_coupon_height_mm"], 0.0)
-    entry = z_cone(
-        p["fit_coupon_entry_diameter_mm"],
-        p["fit_coupon_inner_diameter_mm"],
-        p["fit_coupon_entry_chamfer_height_mm"],
-        0.0,
-    )
-    bore = z_cylinder(
-        p["fit_coupon_inner_diameter_mm"],
-        p["fit_coupon_height_mm"],
-        p["fit_coupon_entry_chamfer_height_mm"] - 0.05,
-    )
-    return part.cut(entry).cut(bore).clean()
 
 
 def build_openhi_c_reference() -> cq.Workplane:
-    """Move and bound the actual C STEP to its upward mating branch only."""
+    """Align and bound the real C-branch STEP for visual/interference checks."""
     reference = cq.importers.importStep(str(OPENHI_C_STEP))
     transformed = (
         reference
         .translate((-429.0, -210.0, -600.0))
         .rotate((0, 0, 0), (0, 1, 0), -90)
-        .translate((0, 0, PARAMS["c_reference_tip_offset_for_fit_render_mm"]))
+        .translate((0, 0, PARAMS["c_reference_tip_z_mm"]))
     )
-    # The source STEP also contains distant construction/assembly bodies. Keep
-    # only the measured 40 mm branch and its nose so the fit-check is readable.
-    branch_clip = z_cylinder(40.1, 22.0, -22.0)
+    branch_clip = z_cylinder(40.2, 32.0, -20.0)
     return transformed.intersect(branch_clip)
 
 
-def build_assembly(include_samples: bool = False) -> cq.Assembly:
+def build_assembly() -> cq.Assembly:
     assembly = cq.Assembly(name=f"{STEM}_assembly")
-    assembly.add(build_bottom_tray(), name="unchanged_sample_tray_new_registration_pocket", color=cq.Color(0.55, 0.54, 0.50, 1.0))
-    assembly.add(build_c_branch_adapter(), name="separate_smooth_c_branch_adapter", color=cq.Color(0.10, 0.38, 0.76, 1.0))
-    assembly.add(build_top_frame().translate((0, 0, ACCEPTED.top_part_z())), name="unchanged_top_frame", color=cq.Color(0.82, 0.80, 0.72, 1.0))
-    if include_samples:
-        assembly.add(ACCEPTED.build_slide_proxy(), name="slide_proxy", color=cq.Color(0.1, 0.8, 0.95, 0.35))
-        assembly.add(ACCEPTED.build_petri_proxy(), name="petri_proxy", color=cq.Color(0.95, 0.95, 1.0, 0.35))
+    assembly.add(
+        build_c_branch_socket(),
+        name="c_branch_socket_with_male30_thread",
+        color=cq.Color(0.08, 0.38, 0.76, 1.0),
+    )
+    assembly.add(
+        build_sample_holder().translate((0, 0, PARAMS["holder_assembly_z_mm"])),
+        name="sample_holder_with_female30_thread",
+        color=cq.Color(0.60, 0.58, 0.51, 1.0),
+    )
     return assembly
 
 
 def build_fit_check_assembly() -> cq.Assembly:
-    assembly = build_assembly(include_samples=True)
-    assembly.add(build_openhi_c_reference(), name="measured_openhi_c_reference_not_printable", color=cq.Color(0.95, 0.35, 0.06, 0.38))
+    assembly = build_assembly()
+    assembly.add(
+        build_openhi_c_reference(),
+        name="measured_openhi_c_reference_visualization_only",
+        color=cq.Color(0.95, 0.34, 0.05, 0.45),
+    )
     return assembly
 
 
 def build_exploded_assembly() -> cq.Assembly:
     assembly = cq.Assembly(name=f"{STEM}_exploded")
-    assembly.add(build_c_branch_adapter().translate((0, 0, -12)), name="smooth_adapter", color=cq.Color(0.10, 0.38, 0.76, 1.0))
-    assembly.add(build_bottom_tray().translate((0, 0, 10)), name="sample_tray", color=cq.Color(0.55, 0.54, 0.50, 1.0))
-    assembly.add(build_top_frame().translate((0, 0, 56)), name="top_frame", color=cq.Color(0.82, 0.80, 0.72, 1.0))
-    assembly.add(ACCEPTED.build_slide_proxy().translate((0, -48, 18)), name="slide_proxy", color=cq.Color(0.1, 0.8, 0.95, 0.35))
-    assembly.add(ACCEPTED.build_petri_proxy().translate((0, 48, 18)), name="petri_proxy", color=cq.Color(0.95, 0.95, 1.0, 0.35))
+    assembly.add(
+        build_c_branch_socket().translate((0, 0, -8.0)),
+        name="c_branch_socket_with_male30_thread",
+        color=cq.Color(0.08, 0.38, 0.76, 1.0),
+    )
+    assembly.add(
+        build_sample_holder().translate((0, 0, 30.0)),
+        name="sample_holder_with_female30_thread",
+        color=cq.Color(0.60, 0.58, 0.51, 1.0),
+    )
     return assembly
 
 
 def build_print_layout() -> cq.Assembly:
-    assembly = cq.Assembly(name=f"{STEM}_print_layout")
-    assembly.add(build_bottom_tray().translate((0, -62, 0)), name="bottom_tray", color=cq.Color(0.55, 0.54, 0.50, 1.0))
-    assembly.add(build_top_frame_print().translate((0, 62, 0)), name="top_frame_180deg", color=cq.Color(0.82, 0.80, 0.72, 1.0))
-    assembly.add(build_adapter_print().translate((82, 0, 0)), name="adapter_supported_orientation", color=cq.Color(0.10, 0.38, 0.76, 1.0))
-    assembly.add(build_fit_coupon().translate((-82, 0, 0)), name="25mm_fit_coupon", color=cq.Color(0.95, 0.62, 0.15, 1.0))
+    assembly = cq.Assembly(name=f"{STEM}_two_part_print_layout")
+    assembly.add(
+        build_sample_holder().translate((-92.0, 0, 0)),
+        name="print_sample_holder",
+        color=cq.Color(0.60, 0.58, 0.51, 1.0),
+    )
+    assembly.add(
+        build_socket_print_orientation().translate((70.0, 0, 0)),
+        name="print_c_branch_socket",
+        color=cq.Color(0.08, 0.38, 0.76, 1.0),
+    )
     return assembly
 
 
-def build_adapter_half_section() -> cq.Workplane:
-    clip = cq.Workplane("XY").box(24, 50, 30, centered=(False, True, True)).translate((0, 0, -5))
-    return build_c_branch_adapter().intersect(clip).clean()
+def build_thread_section() -> cq.Compound:
+    holder = build_sample_holder().translate((0, 0, PARAMS["holder_assembly_z_mm"]))
+    socket = build_c_branch_socket()
+    clip = (
+        cq.Workplane("XY")
+        .box(55.0, 26.0, 35.0, centered=(True, False, False))
+        .translate((0, 0, -2.0))
+    )
+    solids = [socket.intersect(clip).val(), holder.intersect(clip).val()]
+    return cq.Compound.makeCompound(solids)
 
 
 def export_shape(shape: cq.Workplane | cq.Shape, step_path: Path, stl_path: Path) -> None:
@@ -314,41 +416,68 @@ def validate_3mf(path: Path) -> dict[str, object]:
     }
 
 
+def inside(shape: cq.Shape, x: float, y: float, z: float) -> bool:
+    return shape.isInside(cq.Vector(x, y, z), 1e-6)
+
+
 def point_checks() -> dict[str, bool]:
-    tray = build_bottom_tray().val()
-    adapter = build_c_branch_adapter().val()
-    accepted_top = build_top_frame().val()
+    holder = build_sample_holder().val()
+    socket = build_c_branch_socket().val()
     return {
-        "tray_optical_axis_open": not tray.isInside(cq.Vector(0, 0, 4), 1e-6),
-        "tray_slide_seat_open_at_top": not tray.isInside(cq.Vector(30, 0, 7.5), 1e-6),
-        "tray_petri_seat_open_at_top": not tray.isInside(cq.Vector(0, 15, 7.0), 1e-6),
-        "old_lower_rod_socket_location_is_solid": tray.isInside(cq.Vector(15, 15, 3.5), 1e-6),
-        "registration_pocket_open": not tray.isInside(cq.Vector(12, 0, 1.0), 1e-6),
-        "registration_pocket_has_roof": tray.isInside(cq.Vector(12, 0, 3.0), 1e-6),
-        "adapter_optical_axis_open": not adapter.isInside(cq.Vector(0, 0, 1.0), 1e-6),
-        "adapter_25mm_bore_open": not adapter.isInside(cq.Vector(12.4, 0, -2.0), 1e-6),
-        "adapter_bore_wall_present": adapter.isInside(cq.Vector(13.0, 0, -2.0), 1e-6),
-        "adapter_mouth_open": not adapter.isInside(cq.Vector(19.4, 0, -12.7), 1e-6),
-        "adapter_mouth_lip_present": adapter.isInside(cq.Vector(19.8, 0, -12.7), 1e-6),
-        "top_center_open": not accepted_top.isInside(cq.Vector(0, 0, 4), 1e-6),
+        "holder_optical_axis_open": not inside(holder, 0, 0, 6.5),
+        "holder_slide_seat_open_at_top": not inside(holder, 30, 0, 7.5),
+        "holder_petri_seat_open_at_top": not inside(holder, 0, 15, 7.0),
+        "old_lower_cage_socket_location_is_solid": inside(holder, 15, 15, 3.5),
+        "old_lock_foot_is_absent": not inside(holder, 47, 27, 9.0),
+        "female_land_is_open": not inside(holder, 14.9, 0, 2.0),
+        "female_outer_wall_is_present": inside(holder, 15.3, 0, 2.0),
+        "socket_optical_axis_open": not inside(socket, 0, 0, 15.0),
+        "socket_smooth_c_receiver_is_open": not inside(socket, 12.7, 0, 10.0),
+        "socket_smooth_receiver_wall_is_present": inside(socket, 13.0, 0, 10.0),
+        "socket_taper_mouth_is_open": not inside(socket, 20.0, 0, 0.1),
+        "socket_taper_mouth_wall_is_present": inside(socket, 20.8, 0, 0.1),
+        "male_thread_root_is_present": inside(socket, 14.85, 0, 15.0),
+        "socket_outside_is_empty": not inside(socket, 21.1, 0, 6.0),
     }
+
+
+def intersection_volume(a: cq.Workplane, b: cq.Workplane) -> float:
+    try:
+        common = a.intersect(b)
+        return round(sum(s.Volume() for s in common.solids().vals()), 6)
+    except Exception:
+        return -1.0
 
 
 def run_blender() -> None:
     blender = shutil.which("blender")
     if not blender:
         raise RuntimeError("Blender is required for checked CAD renders")
-    subprocess.run([blender, "--background", "--python", str(DESIGN_DIR / f"render_{STEM}.py")], check=True)
+    subprocess.run(
+        [blender, "--background", "--python", str(DESIGN_DIR / f"render_{STEM}.py")],
+        check=True,
+    )
     expected = [
         ARTIFACT_DIR / f"{STEM}_assembly_render.png",
         ARTIFACT_DIR / f"{STEM}_exploded_render.png",
         ARTIFACT_DIR / f"{STEM}_c_branch_fit_render.png",
-        ARTIFACT_DIR / f"{STEM}_adapter_section_render.png",
-        ARTIFACT_DIR / f"{STEM}_print_layout_render.png",
+        ARTIFACT_DIR / f"{STEM}_thread_section_render.png",
+        ARTIFACT_DIR / f"{STEM}_two_part_print_layout_render.png",
     ]
     missing = [str(path) for path in expected if not path.is_file()]
     if missing:
         raise RuntimeError(f"Missing checked renders: {missing}")
+
+
+def remove_stale_latest_files() -> None:
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    for path in ARTIFACT_DIR.iterdir():
+        if path.is_file():
+            path.unlink()
+    for pattern in ("PRINT_THIS_*", "USE_THIS_*"):
+        for path in DESIGN_DIR.glob(pattern):
+            if path.is_file():
+                path.unlink()
 
 
 def copy_named(source_dir: Path, destination: Path, names: list[str]) -> None:
@@ -361,71 +490,71 @@ def write_readme(path: Path, validation: dict[str, object]) -> None:
     path.write_text(
         f"""# OpenHI C-Branch Slide And Petri 35 Holder
 
-This is a clean, decoupled variant of the accepted two-piece slide/Petri holder.
-Every sample-facing feature is rebuilt by importing the accepted parametric
-functions from `{PARAMS['accepted_geometry_source']}`. Only the lower four cage
-rod sockets are removed and replaced by a separate smooth OpenHI C-branch
-adapter.
+This run contains exactly two printable parts. The first is the bottom sample
+tray/holder with the accepted slide and Petri-dish seats. The second is one
+continuous socket that covers the OpenHI C-branch C-mount nose and chamfer and
+then screws directly into the holder.
 
-## Measured C Interface
+## Two Parts
 
-Source: `{PARAMS['measured_reference_source']}`.
+1. `sample_holder_female30_thread`: accepted bottom tray geometry, without cage
+   rod sockets, lock feet, or top frame. Its underside has a 5 mm female OpenHI
+   30 mm thread.
+2. `c_branch_socket_male30_thread`: a 42 mm OD cup with a 40.2-to-25.5 mm
+   internal C-branch receiver and a 5 mm male OpenHI 30 mm thread at the holder
+   end.
 
-- Plain nose/body: `24.4 mm` measured diameter.
-- Thread crest envelope in the reference: about `25.2 mm`.
-- Taper: `7.8 mm` axial length, from approximately `40 mm` to the nose.
-- User-confirmed new socket: `25.0 mm` smooth ID, no generated thread.
-- Adapter OD: `40.0 mm`, matching the OpenHI 4F tube OD.
-- Taper mouth: `39.0 mm`; this leaves a printable `0.5 mm` radial lip and seats
-  just before the original 40 mm shoulder.
+There is no coupon, top frame, adhesive spigot, or third connector part.
 
-The `25.0 mm` ID is intentionally tighter than the measured `25.2 mm` thread
-crest. Print `PRINT_THIS_{STEM}_25mm_fit_coupon.*` before the full holder. Sand
-or ream the coupon only after checking the physical C branch.
+## C-Branch Receiver
 
-## Unchanged Sample Geometry
+Measured source: `{PARAMS['measured_reference_source']}`.
 
-- Tray: `110 x 70 x 8 mm`.
-- Slide seat: `75 x 22 mm`, `1.2 mm` deep, for the accepted `72.96 x 20 mm` strip.
-- Petri seat: `35.4 mm`, `1.8 mm` deep, for a nominal `33 mm` dish.
-- Optical opening: `18 mm`.
-- Chamber gap: `18 mm`.
-- Lock feet, finger access, anti-warp ears, and top frame are unchanged.
+- Reference C nose/body: 24.4 mm.
+- Reference thread crest envelope: about 25.2 mm.
+- Smooth receiver ID: 25.5 mm.
+- Reference chamfer/taper length: 7.8 mm.
+- Receiver taper: 40.2 mm at the branch shoulder to 25.5 mm at the nose.
+- Socket cup OD: 42.0 mm, leaving a 0.9 mm radial wall at the wide mouth.
 
-## Decoupled Parts
+The 42 mm cup is required to cover the approximately 40 mm C-branch chamfer.
+The 29.8 mm dimension belongs only to the upper male thread root, not to the
+lower C-branch cup.
 
-1. `bottom_tray`: accepted sample tray without lower cage holes; adds a
-   `38.2 x 2.2 mm` underside registration pocket.
-2. `c_branch_adapter`: independent `40 mm` OD socket with a `38.0 x 2.0 mm`
-   registration spigot. Use adhesive after confirming fit.
-3. `top_frame_180deg_print`: accepted top frame in its validated print orientation.
-4. `25mm_fit_coupon`: fast physical fit check for the user-confirmed socket ID.
+## Direct Threaded Interface
 
-The assembly STEP keeps these as separate solids for clean Shapr3D editing.
+- Pitch: 0.8 mm.
+- Radial tooth height: 0.2 mm.
+- Male root/crest: 29.8 / 30.2 mm.
+- Female land/groove: 30.0 / 30.4 mm.
+- Diametral clearance: 0.2 mm at both the land and crest pairs.
+- Thread length: 5.0 mm.
+- Both thread sweeps extend half a pitch during construction and are clipped
+  back to their exact 5 mm parent length, so no tooth overflows either end.
 
 ## Print Files
 
-- `PRINT_THIS_{STEM}_bottom_tray.*`
-- `PRINT_THIS_{STEM}_c_branch_adapter_supported_orientation.*`
-- `PRINT_THIS_{STEM}_top_frame_180deg.*`
-- `PRINT_THIS_{STEM}_25mm_fit_coupon.*`
-- `PRINT_THIS_{STEM}_all_parts_layout.*`
+- `PRINT_THIS_{STEM}_sample_holder_female30_thread.*`
+- `PRINT_THIS_{STEM}_c_branch_socket_male30_thread.*`
+- `PRINT_THIS_{STEM}_two_part_layout.*`
 
-Print the adapter with the small registration/optical face on the build plate
-and its wide tapered mouth upward. This avoids an unsupported 39 mm first-layer
-opening.
+Print the tray normally with its anti-warp ears on the build plate. The socket
+print export is already rotated so the male-thread end rests on the build plate
+and the wide C-branch cavity points upward.
 
 ## Validation
 
-- Adapter STEP: {validation['adapter_step']['solid_count']} solid, bbox
-  `{validation['adapter_step']['bbox_mm']} mm`, B-spline faces
-  `{validation['adapter_step']['bspline_face_count']}`.
-- Adapter STL watertight: `{validation['adapter_stl']['watertight']}`.
-- Tray STEP: {validation['bottom_tray_step']['solid_count']} solids; STL
-  watertight `{validation['bottom_tray_stl']['watertight']}`.
-- Top frame matches accepted bbox and volume: `{validation['accepted_top_invariant']}`.
-- 3MF files valid: `{validation['all_3mf_valid']}`.
-- Feature checks: `{validation['point_checks']}`.
+- Holder STEP: {validation['holder_step']['solid_count']} valid solid; bbox
+  `{validation['holder_step']['bbox_mm']} mm`.
+- Socket STEP: {validation['socket_step']['solid_count']} valid solid; bbox
+  `{validation['socket_step']['bbox_mm']} mm`.
+- Assembly solid count: {validation['assembly_step']['solid_count']}.
+- Print-layout STL components: {validation['print_layout_stl']['component_count']}.
+- Holder/socket STL watertight: {validation['holder_stl']['watertight']} /
+  {validation['socket_stl']['watertight']}.
+- 3MF packages valid: {validation['all_3mf_valid']}.
+- Thread clearances: {validation['thread_clearance_mm']}.
+- Feature checks: {validation['point_checks']}.
 
 The OpenHI C body in the fit-check file is visualization-only and must not be
 printed.
@@ -435,18 +564,17 @@ printed.
 
 
 def main() -> None:
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    remove_stale_latest_files()
     RUN_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
     parts = {
-        "bottom_tray": build_bottom_tray(),
-        "top_frame": build_top_frame(),
-        "top_frame_180deg": build_top_frame_print(),
-        "c_branch_adapter": build_c_branch_adapter(),
-        "c_branch_adapter_supported_orientation": build_adapter_print(),
-        "25mm_fit_coupon": build_fit_coupon(),
-        "adapter_half_section": build_adapter_half_section(),
+        "sample_holder_female30_thread": build_sample_holder(),
+        "c_branch_socket_male30_thread": build_c_branch_socket(),
+        "c_branch_socket_male30_thread_print": build_socket_print_orientation(),
+        "male30_thread_local": build_male_thread_local(),
+        "female30_thread_cutter": build_female_thread_cutter(),
         "openhi_c_reference_visualization_only": build_openhi_c_reference(),
+        "thread_section": build_thread_section(),
     }
     paths: dict[str, Path] = {}
     for key, shape in parts.items():
@@ -456,17 +584,16 @@ def main() -> None:
         paths[f"{key}_step"] = step
         paths[f"{key}_stl"] = stl
 
-    for key in ("bottom_tray", "top_frame_180deg", "c_branch_adapter_supported_orientation", "25mm_fit_coupon"):
+    for key in ("sample_holder_female30_thread", "c_branch_socket_male30_thread_print"):
         target = ARTIFACT_DIR / f"{STEM}_{key}.3mf"
         export_stl_as_3mf(paths[f"{key}_stl"], target, title=f"{STEM} {key}")
         paths[f"{key}_3mf"] = target
 
     assemblies = {
         "assembly": build_assembly(),
-        "reference_assembly": build_assembly(include_samples=True),
         "c_branch_fit_check": build_fit_check_assembly(),
         "exploded": build_exploded_assembly(),
-        "all_parts_layout": build_print_layout(),
+        "two_part_print_layout": build_print_layout(),
     }
     for key, assembly in assemblies.items():
         step = ARTIFACT_DIR / f"{STEM}_{key}.step"
@@ -474,50 +601,73 @@ def main() -> None:
         export_assembly(assembly, step, stl)
         paths[f"{key}_step"] = step
         paths[f"{key}_stl"] = stl
-    layout_3mf = ARTIFACT_DIR / f"{STEM}_all_parts_layout.3mf"
-    export_stl_as_3mf(paths["all_parts_layout_stl"], layout_3mf, title=f"{STEM} all printable parts")
-    paths["all_parts_layout_3mf"] = layout_3mf
 
-    validation = {
-        "bottom_tray_step": validate_step(paths["bottom_tray_step"]),
-        "bottom_tray_stl": validate_stl(paths["bottom_tray_stl"]),
-        "top_frame_step": validate_step(paths["top_frame_step"]),
-        "adapter_step": validate_step(paths["c_branch_adapter_step"]),
-        "adapter_stl": validate_stl(paths["c_branch_adapter_stl"]),
-        "adapter_print_stl": validate_stl(paths["c_branch_adapter_supported_orientation_stl"]),
-        "fit_coupon_step": validate_step(paths["25mm_fit_coupon_step"]),
-        "fit_coupon_stl": validate_stl(paths["25mm_fit_coupon_stl"]),
-        "assembly_step": validate_step(paths["assembly_step"]),
-        "print_layout_step": validate_step(paths["all_parts_layout_step"]),
-        "print_layout_stl": validate_stl(paths["all_parts_layout_stl"]),
-        "point_checks": point_checks(),
-    }
-    accepted_top_path = ACCEPTED_DIR / "artifacts/cage_sample_holder_two_piece_lock_slide_petri35_top_part.step"
-    accepted_top = validate_step(accepted_top_path)
-    validation["accepted_top_source"] = accepted_top
-    validation["accepted_top_invariant"] = (
-        validation["top_frame_step"]["bbox_mm"] == accepted_top["bbox_mm"]
-        and validation["top_frame_step"]["solid_count"] == accepted_top["solid_count"]
-        and abs(validation["top_frame_step"]["volume_mm3"] - accepted_top["volume_mm3"]) < 0.01
+    layout_3mf = ARTIFACT_DIR / f"{STEM}_two_part_print_layout.3mf"
+    export_stl_as_3mf(
+        paths["two_part_print_layout_stl"],
+        layout_3mf,
+        title=f"{STEM} two printable parts",
     )
+    paths["two_part_print_layout_3mf"] = layout_3mf
+
+    holder_actual = build_sample_holder().translate((0, 0, PARAMS["holder_assembly_z_mm"]))
+    validation = {
+        "holder_step": validate_step(paths["sample_holder_female30_thread_step"]),
+        "holder_stl": validate_stl(paths["sample_holder_female30_thread_stl"]),
+        "socket_step": validate_step(paths["c_branch_socket_male30_thread_step"]),
+        "socket_stl": validate_stl(paths["c_branch_socket_male30_thread_stl"]),
+        "socket_print_stl": validate_stl(paths["c_branch_socket_male30_thread_print_stl"]),
+        "male_thread_step": validate_step(paths["male30_thread_local_step"]),
+        "female_cutter_step": validate_step(paths["female30_thread_cutter_step"]),
+        "assembly_step": validate_step(paths["assembly_step"]),
+        "print_layout_step": validate_step(paths["two_part_print_layout_step"]),
+        "print_layout_stl": validate_stl(paths["two_part_print_layout_stl"]),
+        "point_checks": point_checks(),
+        "holder_socket_intersection_volume_mm3": intersection_volume(
+            holder_actual,
+            build_c_branch_socket(),
+        ),
+        "socket_c_reference_intersection_volume_mm3": intersection_volume(
+            build_c_branch_socket(),
+            build_openhi_c_reference(),
+        ),
+        "thread_clearance_mm": {
+            "land_diametral": round(
+                PARAMS["holder_female_thread_land_diameter_mm"]
+                - PARAMS["male_thread_root_diameter_mm"],
+                4,
+            ),
+            "crest_diametral": round(
+                PARAMS["holder_female_thread_groove_diameter_mm"]
+                - PARAMS["male_thread_crest_diameter_mm"],
+                4,
+            ),
+        },
+    }
     three_mf_keys = [key for key in paths if key.endswith("_3mf")]
     validation["three_mf"] = {key: validate_3mf(paths[key]) for key in three_mf_keys}
     validation["all_3mf_valid"] = all(item["zip_valid"] for item in validation["three_mf"].values())
 
-    if validation["adapter_step"]["solid_count"] != 1 or not validation["adapter_step"]["all_brep_valid"]:
-        raise RuntimeError("Adapter must be one valid B-rep solid")
-    if validation["adapter_step"]["bbox_mm"] != [40.0, 40.0, 14.8]:
-        raise RuntimeError(f"Unexpected adapter envelope: {validation['adapter_step']['bbox_mm']}")
-    if validation["adapter_step"]["bspline_face_count"] != 0:
-        raise RuntimeError("Smooth adapter must not contain fragile B-spline/thread faces")
-    if not validation["adapter_stl"]["watertight"] or validation["adapter_stl"]["component_count"] != 1:
-        raise RuntimeError("Adapter STL must be one watertight component")
-    if not validation["bottom_tray_stl"]["watertight"]:
-        raise RuntimeError("Bottom tray STL is not watertight")
-    if not validation["accepted_top_invariant"]:
-        raise RuntimeError("Accepted top-frame geometry drifted")
+    if validation["holder_step"]["solid_count"] != 1 or not validation["holder_step"]["all_brep_valid"]:
+        raise RuntimeError("Holder must be one valid B-rep solid")
+    if validation["socket_step"]["solid_count"] != 1 or not validation["socket_step"]["all_brep_valid"]:
+        raise RuntimeError("Socket must be one valid B-rep solid")
+    if validation["assembly_step"]["solid_count"] != 2:
+        raise RuntimeError(f"Assembly must contain exactly two solids: {validation['assembly_step']}")
+    if validation["socket_step"]["bbox_mm"] != [42.0, 42.0, 17.8]:
+        raise RuntimeError(f"Unexpected socket envelope: {validation['socket_step']['bbox_mm']}")
+    if validation["holder_step"]["bbox_mm"] != [161.0, 121.0, 8.0]:
+        raise RuntimeError(f"Unexpected holder envelope: {validation['holder_step']['bbox_mm']}")
+    if not validation["holder_stl"]["watertight"] or validation["holder_stl"]["component_count"] != 1:
+        raise RuntimeError("Holder STL must be one watertight component")
+    if not validation["socket_stl"]["watertight"] or validation["socket_stl"]["component_count"] != 1:
+        raise RuntimeError("Socket STL must be one watertight component")
+    if validation["print_layout_stl"]["component_count"] != 2:
+        raise RuntimeError("Print layout must contain exactly two components")
     if not all(validation["point_checks"].values()):
         raise RuntimeError(f"Feature checks failed: {validation['point_checks']}")
+    if validation["thread_clearance_mm"] != {"land_diametral": 0.2, "crest_diametral": 0.2}:
+        raise RuntimeError(f"Unexpected thread clearance: {validation['thread_clearance_mm']}")
     if not validation["all_3mf_valid"]:
         raise RuntimeError("At least one 3MF package is invalid")
 
@@ -526,28 +676,22 @@ def main() -> None:
     aliases = {
         f"USE_THIS_{STEM}_assembly.step": paths["assembly_step"],
         f"USE_THIS_{STEM}_c_branch_fit_check.step": paths["c_branch_fit_check_step"],
-        f"PRINT_THIS_{STEM}_bottom_tray.step": paths["bottom_tray_step"],
-        f"PRINT_THIS_{STEM}_bottom_tray.stl": paths["bottom_tray_stl"],
-        f"PRINT_THIS_{STEM}_bottom_tray.3mf": paths["bottom_tray_3mf"],
-        f"PRINT_THIS_{STEM}_c_branch_adapter_supported_orientation.step": paths["c_branch_adapter_supported_orientation_step"],
-        f"PRINT_THIS_{STEM}_c_branch_adapter_supported_orientation.stl": paths["c_branch_adapter_supported_orientation_stl"],
-        f"PRINT_THIS_{STEM}_c_branch_adapter_supported_orientation.3mf": paths["c_branch_adapter_supported_orientation_3mf"],
-        f"PRINT_THIS_{STEM}_top_frame_180deg.step": paths["top_frame_180deg_step"],
-        f"PRINT_THIS_{STEM}_top_frame_180deg.stl": paths["top_frame_180deg_stl"],
-        f"PRINT_THIS_{STEM}_top_frame_180deg.3mf": paths["top_frame_180deg_3mf"],
-        f"PRINT_THIS_{STEM}_25mm_fit_coupon.step": paths["25mm_fit_coupon_step"],
-        f"PRINT_THIS_{STEM}_25mm_fit_coupon.stl": paths["25mm_fit_coupon_stl"],
-        f"PRINT_THIS_{STEM}_25mm_fit_coupon.3mf": paths["25mm_fit_coupon_3mf"],
-        f"PRINT_THIS_{STEM}_all_parts_layout.step": paths["all_parts_layout_step"],
-        f"PRINT_THIS_{STEM}_all_parts_layout.stl": paths["all_parts_layout_stl"],
-        f"PRINT_THIS_{STEM}_all_parts_layout.3mf": paths["all_parts_layout_3mf"],
+        f"PRINT_THIS_{STEM}_sample_holder_female30_thread.step": paths["sample_holder_female30_thread_step"],
+        f"PRINT_THIS_{STEM}_sample_holder_female30_thread.stl": paths["sample_holder_female30_thread_stl"],
+        f"PRINT_THIS_{STEM}_sample_holder_female30_thread.3mf": paths["sample_holder_female30_thread_3mf"],
+        f"PRINT_THIS_{STEM}_c_branch_socket_male30_thread.step": paths["c_branch_socket_male30_thread_print_step"],
+        f"PRINT_THIS_{STEM}_c_branch_socket_male30_thread.stl": paths["c_branch_socket_male30_thread_print_stl"],
+        f"PRINT_THIS_{STEM}_c_branch_socket_male30_thread.3mf": paths["c_branch_socket_male30_thread_print_3mf"],
+        f"PRINT_THIS_{STEM}_two_part_layout.step": paths["two_part_print_layout_step"],
+        f"PRINT_THIS_{STEM}_two_part_layout.stl": paths["two_part_print_layout_stl"],
+        f"PRINT_THIS_{STEM}_two_part_layout.3mf": paths["two_part_print_layout_3mf"],
     }
     render_names = [
         f"{STEM}_assembly_render.png",
         f"{STEM}_exploded_render.png",
         f"{STEM}_c_branch_fit_render.png",
-        f"{STEM}_adapter_section_render.png",
-        f"{STEM}_print_layout_render.png",
+        f"{STEM}_thread_section_render.png",
+        f"{STEM}_two_part_print_layout_render.png",
     ]
     for alias, source in aliases.items():
         shutil.copy2(source, DESIGN_DIR / alias)
