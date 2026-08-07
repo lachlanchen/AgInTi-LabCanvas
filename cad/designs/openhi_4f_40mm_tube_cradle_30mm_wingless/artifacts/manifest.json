@@ -1,0 +1,183 @@
+{
+  "name": "openhi_4f_40mm_tube_cradle_30mm_wingless",
+  "run": "run-1-wingless-30mm-four-corner-ears-print-ready-20260807T041851Z",
+  "created_by": "build_openhi_4f_40mm_tube_cradle_30mm_wingless.py",
+  "parameters": {
+    "name": "openhi_4f_40mm_tube_cradle_30mm_wingless",
+    "design_mode": "new clean parametric print-fit design",
+    "tube_nominal_outer_diameter_mm": 40.0,
+    "seat_diameter_mm": 40.2,
+    "seat_total_diametral_clearance_mm": 0.2,
+    "seat_radial_clearance_mm": 0.1,
+    "holder_length_along_tube_mm": 30.0,
+    "holder_width_mm": 40.0,
+    "holder_max_height_mm": 15.0,
+    "minimum_floor_thickness_mm": 2.0,
+    "mounting_wings": false,
+    "mounting_holes": false,
+    "print_layout_count": 1,
+    "print_orientation": "flat 30 x 40 mm bottom on build plate; concave seat upward",
+    "anti_warp_ears": true,
+    "anti_warp_ear_style": "four removable filled corner ears with two side contacts and a diagonal pull",
+    "anti_warp_ear_thickness_mm": 1.0,
+    "anti_warp_ear_breakaway_overlap_mm": 0.6,
+    "anti_warp_ear_side_contact_length_mm": 5.0,
+    "anti_warp_ear_side_reach_mm": 12.0,
+    "anti_warp_ear_side_width_mm": 6.0,
+    "anti_warp_ear_diagonal_reach_mm": 14.0,
+    "anti_warp_ear_tail_width_mm": 10.0,
+    "anti_warp_ear_note": "The accepted holder stays clean; ears exist only in PRINT_THIS exports. Each 1 mm sacrificial ear overlaps both adjacent edges by 0.6 mm and pulls the true corner outward along both side directions and the diagonal."
+  },
+  "validation": {
+    "geometry": {
+      "seat_center_z_mm": 22.1,
+      "tube_rest_center_z_mm": 22.0,
+      "minimum_floor_thickness_mm": 2.0,
+      "flat_shoulder_width_each_side_mm": 1.1957,
+      "seat_intersection_y_at_top_mm": 18.8043,
+      "nominal_tube_tangent_to_seat_at_bottom": true,
+      "mounting_wings_absent": true,
+      "mounting_holes_absent": true,
+      "accepted_50mm_wingless_holder_volume_scaled_to_30mm_mm3": 7342.5212,
+      "expected_clean_holder_bbox_mm": [
+        30.0,
+        40.0,
+        15.0
+      ],
+      "expected_single_print_bbox_mm": [
+        68.0,
+        78.0,
+        15.0
+      ]
+    },
+    "features": {
+      "no_clean_holder_material_outside_40mm_width": true,
+      "center_floor_present_at_z1mm": true,
+      "seat_open_above_floor_at_z2p5mm": true,
+      "four_anti_warp_tail_centers_present": true
+    },
+    "clean_holder_step": {
+      "exists": true,
+      "bytes": 24085,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        30.0,
+        40.0,
+        15.0
+      ],
+      "volume_mm3": 7342.5212
+    },
+    "clean_holder_stl": {
+      "exists": true,
+      "bytes": 13084,
+      "watertight": true,
+      "component_count": 1,
+      "body_count": 1,
+      "bbox_mm": [
+        30.0,
+        40.0,
+        15.0
+      ],
+      "face_count": 260
+    },
+    "clean_holder_3mf": {
+      "exists": true,
+      "bytes": 3307,
+      "zip_valid": true,
+      "members": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ]
+    },
+    "assembly_step": {
+      "exists": true,
+      "bytes": 24085,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        30.0,
+        40.0,
+        15.0
+      ],
+      "volume_mm3": 7342.5212
+    },
+    "tube_proxy_step": {
+      "exists": true,
+      "bytes": 5642,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        40.0,
+        40.0,
+        40.0
+      ],
+      "volume_mm3": 50265.4825
+    },
+    "fit_check_step": {
+      "exists": true,
+      "bytes": 31440,
+      "solid_count": 2,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        40.0,
+        40.0,
+        42.0
+      ],
+      "volume_mm3": 57608.0037
+    },
+    "print_step": {
+      "exists": true,
+      "bytes": 212154,
+      "solid_count": 1,
+      "all_brep_valid": true,
+      "bbox_mm": [
+        68.0,
+        78.0,
+        15.0
+      ],
+      "volume_mm3": 8635.3212
+    },
+    "print_stl": {
+      "exists": true,
+      "bytes": 23484,
+      "watertight": true,
+      "component_count": 1,
+      "body_count": 1,
+      "bbox_mm": [
+        68.0,
+        78.0,
+        15.0
+      ],
+      "face_count": 468
+    },
+    "print_3mf": {
+      "exists": true,
+      "bytes": 5047,
+      "zip_valid": true,
+      "members": [
+        "3D/3dmodel.model",
+        "[Content_Types].xml",
+        "_rels/.rels"
+      ]
+    }
+  },
+  "outputs": {
+    "single_holder_step": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_holder.step",
+    "single_holder_stl": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_holder.stl",
+    "single_holder_3mf": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_holder.3mf",
+    "holder_assembly_step": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_assembly.step",
+    "tube_proxy_step": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_tube_proxy_od40.step",
+    "fit_check_assembly_step": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_fit_check_assembly.step",
+    "single_print_step": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_single_with_anti_warp_ears.step",
+    "single_print_stl": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_single_with_anti_warp_ears.stl",
+    "single_print_3mf": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_single_with_anti_warp_ears.3mf",
+    "clean_holder_render": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_single_render.png",
+    "single_print_render": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_single_with_anti_warp_ears_render.png",
+    "single_print_top_render": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_single_with_anti_warp_ears_top_render.png",
+    "fit_check_render": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_fit_check_render.png",
+    "cross_section_render": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_cross_section_fit_render.png",
+    "clean_top_render": "artifacts/openhi_4f_40mm_tube_cradle_30mm_wingless_clean_top_render.png"
+  }
+}
