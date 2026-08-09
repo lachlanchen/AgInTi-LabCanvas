@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sqlite3
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -436,6 +437,96 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         tap.assert_called_once()
         self.assertEqual(bridge.visible_chat_title(result), "LabAgent(6)")
 
+    def test_launch_wecom_trusts_focused_activity_when_hierarchy_is_stale(self) -> None:
+        bridge = load_bridge()
+        stale = ET.fromstring('<hierarchy><node package="android" /></hierarchy>')
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.prepare_device = mock.Mock()
+            runtime.dump_hierarchy = mock.Mock(return_value=stale)
+            runtime.current_package = mock.Mock(return_value=runtime.package)
+            runtime.adb_shell = mock.Mock()
+
+            runtime.launch_wecom()
+
+        runtime.adb_shell.assert_not_called()
+
+    def test_status_uses_focused_activity_when_hierarchy_is_unreadable(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.run = mock.Mock(
+                return_value=subprocess.CompletedProcess([], 0, stdout="test\tdevice\n", stderr="")
+            )
+            runtime.serialized = mock.Mock(return_value=nullcontext())
+            runtime.dump_hierarchy = mock.Mock(
+                side_effect=bridge.BridgeError("temporary UIAutomator failure")
+            )
+            runtime.current_package = mock.Mock(return_value=runtime.package)
+
+            result = runtime.status()
+
+        self.assertTrue(result["wecom_foreground"])
+        self.assertEqual(result["surface_state"], "wecom_other")
+
+    def test_running_service_status_returns_persistent_relay_snapshot(self) -> None:
+        bridge = load_bridge()
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "transport": "wecom_android",
+                        "started_at": "2026-08-09T12:48:47",
+                        "last_poll_success_at": "2026-08-09T13:04:00",
+                    }
+                ).encode("utf-8")
+
+        with mock.patch.object(bridge.urlrequest, "urlopen", return_value=Response()) as urlopen:
+            result = bridge.running_service_status(
+                {"local_api_port": 19581, "local_api_token": "secret"}
+            )
+
+        self.assertEqual(result["started_at"], "2026-08-09T12:48:47")
+        self.assertEqual(result["last_poll_success_at"], "2026-08-09T13:04:00")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:19581/v1/status")
+        self.assertEqual(request.get_header("Authorization"), "Bearer secret")
+
+    def test_running_service_status_falls_back_when_service_is_offline(self) -> None:
+        bridge = load_bridge()
+        with mock.patch.object(
+            bridge.urlrequest,
+            "urlopen",
+            side_effect=bridge.urlerror.URLError("offline"),
+        ):
+            result = bridge.running_service_status(
+                {"local_api_port": 19581, "local_api_token": "secret"}
+            )
+
+        self.assertIsNone(result)
+
     def test_anr_recovery_chooses_wait_without_closing_wecom(self) -> None:
         bridge = load_bridge()
         anr = ET.fromstring(
@@ -563,6 +654,84 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(health["consecutive_poll_failures"], 2)
         self.assertIn("chat list", health["last_poll_error"])
 
+    def test_poll_health_allows_bounded_active_reconciliation(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime._poll_health.update(
+                {
+                    "last_poll_attempt_at": (
+                        bridge.datetime.now() - bridge.timedelta(seconds=300)
+                    ).isoformat(timespec="seconds"),
+                    "poll_in_progress": True,
+                }
+            )
+
+            health = runtime.poll_health_snapshot()
+
+        self.assertTrue(health["poll_healthy"])
+        self.assertFalse(health["poll_stale"])
+        self.assertEqual(health["poll_stale_after_seconds"], 900)
+
+    def test_poll_health_stales_wedged_active_reconciliation(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime._poll_health.update(
+                {
+                    "last_poll_attempt_at": (
+                        bridge.datetime.now() - bridge.timedelta(seconds=1200)
+                    ).isoformat(timespec="seconds"),
+                    "poll_in_progress": True,
+                }
+            )
+
+            health = runtime.poll_health_snapshot()
+
+        self.assertFalse(health["poll_healthy"])
+        self.assertTrue(health["poll_stale"])
+        self.assertEqual(health["poll_stale_after_seconds"], 900)
+
+    def test_poll_health_keeps_short_idle_watchdog(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime._poll_health.update(
+                {
+                    "last_poll_attempt_at": (
+                        bridge.datetime.now() - bridge.timedelta(seconds=300)
+                    ).isoformat(timespec="seconds"),
+                    "poll_in_progress": False,
+                }
+            )
+
+            health = runtime.poll_health_snapshot()
+
+        self.assertFalse(health["poll_healthy"])
+        self.assertTrue(health["poll_stale"])
+        self.assertEqual(health["poll_stale_after_seconds"], 180)
+
     def test_surface_failure_matching_is_case_insensitive(self) -> None:
         bridge = load_bridge()
 
@@ -571,6 +740,36 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         )
 
         self.assertIn("changed chat", error)
+
+    def test_surface_recovery_is_cooled_down_after_failure(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                    "surface_recovery_cooldown_seconds": 300,
+                }
+            )
+            runtime.recover_transport_surface = mock.Mock(
+                side_effect=bridge.BridgeError("WeCom did not reach the foreground")
+            )
+            runtime.serialized = mock.Mock(return_value=nullcontext())
+
+            first = runtime.recover_transport_surface_bounded(reason="poll_exception")
+            second = runtime.recover_transport_surface_bounded(reason="poll_exception")
+            health = runtime.poll_health_snapshot()
+
+        self.assertFalse(first["ok"])
+        self.assertIn("did not reach the foreground", first["error"])
+        self.assertEqual(second["skipped"], "cooldown")
+        self.assertGreater(second["retry_after_seconds"], 0)
+        runtime.recover_transport_surface.assert_called_once_with(reason="poll_exception")
+        self.assertTrue(health["last_recovery_attempt_at"])
+        self.assertTrue(health["last_recovery_failure_at"])
+        self.assertIn("did not reach the foreground", health["last_recovery_error"])
 
     def test_normalize_chat_surface_dismisses_stale_attachment_choice(self) -> None:
         bridge = load_bridge()
@@ -1350,6 +1549,49 @@ class WeComAndroidBridgeTests(unittest.TestCase):
                 )
 
         self.assertEqual(records, [article])
+
+    def test_history_scan_merges_long_bubble_when_sender_label_enters_view(self) -> None:
+        bridge = load_bridge()
+        body = "让芯片从减法制造转向可编程生长。" * 12
+        unlabeled = {
+            "fingerprint": "long-unlabeled",
+            "direction": "outbound",
+            "sender": "",
+            "body": body,
+            "quote_text": "",
+            "source_kind": "text",
+        }
+        labeled = {
+            "fingerprint": "long-labeled",
+            "direction": "inbound",
+            "sender": "陈苗",
+            "body": body,
+            "quote_text": "",
+            "source_kind": "text",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            chat_root = ET.fromstring(
+                '<hierarchy><node text="LabAgent(6)" resource-id="com.tencent.wework:id/n5i" '
+                'package="com.tencent.wework" /></hierarchy>'
+            )
+            with mock.patch.object(runtime, "adb_shell"), mock.patch.object(
+                runtime, "dump_hierarchy", side_effect=[chat_root, chat_root]
+            ), mock.patch.object(
+                runtime, "parse_messages", side_effect=[[unlabeled], [labeled]]
+            ), mock.patch.object(runtime, "capture_raw_screenshot", side_effect=RuntimeError):
+                records = runtime.scan_older_message_records(
+                    "LabAgent", [], max_pages=2
+                )
+
+        self.assertEqual(records, [labeled])
 
     def test_parse_messages_keeps_adjacent_authors_on_their_own_rows(self) -> None:
         bridge = load_bridge()

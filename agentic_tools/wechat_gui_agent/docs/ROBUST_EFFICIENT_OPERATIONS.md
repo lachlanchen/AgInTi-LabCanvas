@@ -1511,7 +1511,11 @@ alone. The relay reports its last poll attempt/success, consecutive native
 surface failures, current surface class, and last recovery action. Two
 consecutive failures, a stale poll loop, an Android ANR, or the phone being on
 another app becomes `android_poll_stalled`; the guard may then restart only the
-Android relay after repeated observations. The relay itself first chooses the
+Android relay after repeated observations. An idle poll retains the normal
+three-minute/20-cycle watchdog, while an active bounded reconciliation or
+history scan gets 15 minutes by default (`poll_in_progress_stale_seconds`) so a
+healthy long native scan is not trapped in a restart loop. An active poll that
+exceeds that deadline is still treated as stalled. The relay itself first chooses the
 non-destructive Android **Wait** action, backs out of WeCom's native
 article/document viewer, and uses one `am force-stop` plus launcher restart only
 when bounded navigation cannot recover. It never clears app data or changes the
@@ -1828,8 +1832,35 @@ Stuck GUI sender:
 - The scheduler writes a heartbeat with the due date, phase, completion state,
   retry times, and overdue flags. The transport guard distinguishes a missing
   tmux session, a stale scheduler, an overdue career delivery, and an overdue
-  MEMO delivery, then restarts only the career scheduler. Per-routine file
-  locks prevent a manual catch-up from overlapping the scheduled invocation.
+  MEMO delivery, then restarts only the career scheduler. A persisted future
+  retry suppresses the overdue fault until that attempt is actually due, so
+  exponential delivery backoff does not trigger a premature repair-agent turn.
+  A fresh `career_running` or `organizer_running` phase likewise suppresses the
+  corresponding overdue fault while the bounded operation is in flight; once
+  the scheduler heartbeat exceeds its stale deadline, the overdue fault becomes
+  actionable again.
+  Per-routine file locks prevent a manual catch-up from overlapping the
+  scheduled invocation.
+- A newly persisted EchoMind daily PDF or periodic lesson gets a ten-minute
+  delivery-settlement grace. Health still exposes the pending output during
+  that window, but the guard does not restart the healthy scheduler until the
+  pending state becomes old enough to be actionable. Missing or invalid
+  generation timestamps fail closed and remain immediately actionable.
+  Every daily-PDF delivery attempt advances the durable attempt timestamp;
+  after a busy or failed GUI send, both the scheduler and transport guard honor
+  the same 30-minute retry window. This prevents the five-minute scheduler poll
+  from repeatedly contending for the GUI lane while preserving the exact PDF.
+  A fresh `lesson_delivery_attempt` heartbeat also keeps an older pending
+  lesson non-actionable while its bounded sender transaction is running; the
+  normal scheduler heartbeat deadline makes a wedged attempt actionable again.
+  Periodic lessons deferred into `quiet_hours` remain visibly pending but are
+  non-actionable until the scheduler leaves quiet hours. Daily PDFs are not
+  covered by this exception because their catch-up is independent of quiet
+  hours.
+  Failed periodic-lesson delivery uses durable exponential backoff from 30
+  minutes up to four hours. The retry timestamp survives scheduler and host
+  restarts; both the scheduler and health guard honor it instead of retrying or
+  restarting every five minutes.
 - The `MEMO写作—外语—挣钱` daily organizer sends only its compiled PDF. Concrete
   actions are represented by real PDF AcroForm checkboxes, while evidence and
   non-action ideas remain ordinary text or bullets. A day is complete only

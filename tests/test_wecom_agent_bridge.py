@@ -359,6 +359,93 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(result["no_reply"])
         self.assertFalse((root / "queue.jsonl").exists())
 
+    def test_router_prompt_does_not_silence_group_level_experiment_question(self) -> None:
+        ingest = load_ingest()
+        response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": False,
+                    "route_kind": "chat_only",
+                    "response": "可以，先把半结构化场景的变量和成功标准收窄，再做第一轮对照实验。",
+                    "task": "",
+                    "ack": "",
+                    "message_role": "ordinary_chat",
+                    "reply_mode": "reply",
+                    "public_publish_allowed": False,
+                }
+            ),
+        }
+        prompts: list[str] = []
+
+        def fake_agent(prompt: str, **_kwargs: object) -> dict[str, object]:
+            prompts.append(prompt)
+            return response
+
+        with mock.patch.object(ingest, "run_agent_session", side_effect=fake_agent):
+            route = ingest.route_event(
+                self.sample_event(text="先做半结构化场景的实验设计？", sender_display="megamonster"),
+                "先做半结构化场景的实验设计？",
+                [{"sender_display": "陈苗", "content": "我们先把实验路线收窄。"}],
+            )
+
+        self.assertEqual(route["reply_mode"], "reply")
+        self.assertTrue(route["response"])
+        self.assertIn("lacks an @ mention", prompts[0])
+        self.assertIn("experimental next-step question", prompts[0])
+
+    def test_processed_no_reply_message_can_be_reconsidered_without_duplicate_history(self) -> None:
+        ingest = load_ingest()
+        silent = {
+            "worker_needed": False,
+            "route_kind": "chat_only",
+            "response": "",
+            "task": "",
+            "ack": "",
+            "message_role": "peer_conversation",
+            "reply_mode": "silent",
+            "public_publish_allowed": False,
+        }
+        reply = {
+            **silent,
+            "response": "可以，先收窄变量并定义对照组。",
+            "message_role": "ordinary_chat",
+            "reply_mode": "reply",
+        }
+        event = self.sample_event(
+            text="先做半结构化场景的实验设计？",
+            sender_display="megamonster",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "history.sqlite"
+            queue = root / "queue.jsonl"
+            with mock.patch.object(
+                ingest, "route_event", side_effect=[silent, reply]
+            ), mock.patch.object(ingest, "record_event"):
+                first = ingest.ingest_event(
+                    event,
+                    queue=queue,
+                    history_db=history,
+                    route_with_agent=True,
+                )
+                second = ingest.ingest_event(
+                    event,
+                    queue=queue,
+                    history_db=history,
+                    route_with_agent=True,
+                    reconsider_processed=True,
+                )
+            with sqlite3.connect(history) as conn:
+                inbound_count = conn.execute(
+                    "SELECT COUNT(*) FROM messages WHERE message_id = ? AND direction = 'inbound'",
+                    (event["message_id"],),
+                ).fetchone()[0]
+
+        self.assertTrue(first["no_reply"])
+        self.assertEqual(second["reply"], "可以，先收窄变量并定义对照组。")
+        self.assertEqual(inbound_count, 1)
+
     def test_router_preserves_artifact_guidance_role_and_context(self) -> None:
         ingest = load_ingest()
         response = {
@@ -3553,6 +3640,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("window_exists knowledge", tmux_source)
         self.assertIn("codex_quota_status.py", tmux_source)
         self.assertIn("window_exists quota", tmux_source)
+        self.assertIn("health_guard_reload_needed", tmux_source)
+        self.assertIn("HEALTH_GUARD_SIGNATURE", tmux_source)
         self.assertIn("missing windows repaired", tmux_source)
         self.assertNotIn("xwechat_files", source)
         self.assertNotIn("wechat_gui_agent", source)

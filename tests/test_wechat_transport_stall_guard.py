@@ -30,25 +30,53 @@ def schedule_state_reader(
     career_last_loop_at: str = "2026-07-22T11:59:30+00:00",
     career_overdue: bool = False,
     organizer_overdue: bool = False,
+    career_next_attempt_at: str = "",
+    organizer_next_attempt_at: str = "",
     echomind_pending_daily_pdf: bool = False,
+    echomind_pending_daily_pdf_generated_at: str = "",
+    echomind_last_daily_pdf_attempt_at: str = "",
+    echomind_pending_lesson: bool = False,
+    echomind_pending_lesson_generated_at: str = "",
+    echomind_phase: str = "waiting",
+    echomind_pending_lesson_next_attempt_at: str = "",
+    career_phase: str = "complete",
 ):
     def read(path: Path):
         if path == guard.ECHOMIND_SCHEDULE_STATE:
             state = {
                 "interval_seconds": guard.ECHOMIND_INTERVAL_SECONDS,
                 "last_loop_at": echo_last_loop_at,
-                "scheduler_phase": "waiting",
+                "scheduler_phase": echomind_phase,
             }
             if echomind_pending_daily_pdf:
                 state["pending_daily_pdf"] = {
                     "date": "2026-07-21",
                     "pdf": "/private/review.pdf",
                 }
+                if echomind_pending_daily_pdf_generated_at:
+                    state["pending_daily_pdf"]["generated_at"] = (
+                        echomind_pending_daily_pdf_generated_at
+                    )
+                if echomind_last_daily_pdf_attempt_at:
+                    state["last_daily_pdf_attempt_date"] = "2026-07-21"
+                    state["last_daily_pdf_attempt_at"] = (
+                        echomind_last_daily_pdf_attempt_at
+                    )
+            if echomind_pending_lesson:
+                state["pending_lesson"] = {"message": "private lesson"}
+                if echomind_pending_lesson_generated_at:
+                    state["pending_lesson"]["generated_at"] = (
+                        echomind_pending_lesson_generated_at
+                    )
+                if echomind_pending_lesson_next_attempt_at:
+                    state["pending_lesson"]["next_attempt_at"] = (
+                        echomind_pending_lesson_next_attempt_at
+                    )
             return state
         if path == guard.WECHAT_CAREER_SCHEDULE_STATE:
             return {
                 "last_loop_at": career_last_loop_at,
-                "phase": "complete",
+                "phase": career_phase,
                 "date": "2026-07-22",
                 "morning_time": "08:30",
                 "career_complete": not career_overdue,
@@ -56,6 +84,8 @@ def schedule_state_reader(
                 "organizer_required": True,
                 "organizer_complete": not organizer_overdue,
                 "organizer_overdue": organizer_overdue,
+                "career_next_attempt_at": career_next_attempt_at,
+                "organizer_next_attempt_at": organizer_next_attempt_at,
             }
         return json.loads(path.read_text(encoding="utf-8"))
 
@@ -528,6 +558,245 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertTrue(result["echomind"]["pending_delivery"])
         self.assertFalse(result["ok"])
 
+    def test_schedule_health_graces_fresh_pending_echomind_daily_pdf(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                        echomind_pending_daily_pdf=True,
+                        echomind_pending_daily_pdf_generated_at=(
+                            "2026-07-22T11:58:00+00:00"
+                        ),
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertTrue(result["echomind"]["ok"])
+        self.assertTrue(result["echomind"]["pending_daily_pdf"])
+        self.assertFalse(result["echomind"]["pending_daily_pdf_actionable"])
+        self.assertEqual(result["echomind"]["pending_daily_pdf_age_seconds"], 120)
+        self.assertTrue(result["ok"])
+
+    def test_schedule_health_graces_pending_daily_pdf_until_scheduler_retry(self) -> None:
+        now = datetime(2026, 7, 22, 12, 20, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T12:19:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T12:19:30+00:00",
+                        echomind_pending_daily_pdf=True,
+                        echomind_pending_daily_pdf_generated_at=(
+                            "2026-07-22T12:05:00+00:00"
+                        ),
+                        echomind_last_daily_pdf_attempt_at=(
+                            "2026-07-22T12:00:00+00:00"
+                        ),
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertTrue(result["echomind"]["ok"])
+        self.assertTrue(result["echomind"]["pending_daily_pdf_retry_pending"])
+        self.assertFalse(result["echomind"]["pending_daily_pdf_actionable"])
+        self.assertEqual(
+            result["echomind"]["pending_daily_pdf_next_attempt_at"],
+            "2026-07-22T12:30:00+00:00",
+        )
+        self.assertTrue(result["ok"])
+
+    def test_schedule_health_graces_fresh_pending_echomind_lesson(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                        echomind_pending_lesson=True,
+                        echomind_pending_lesson_generated_at=(
+                            "2026-07-22T11:58:00+00:00"
+                        ),
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertTrue(result["echomind"]["ok"])
+        self.assertTrue(result["echomind"]["pending_lesson"])
+        self.assertFalse(result["echomind"]["pending_lesson_actionable"])
+        self.assertEqual(result["echomind"]["pending_lesson_age_seconds"], 120)
+        self.assertTrue(result["ok"])
+
+    def test_schedule_health_waits_for_fresh_lesson_delivery_attempt(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:58:30+00:00",
+                        echomind_pending_lesson=True,
+                        echomind_pending_lesson_generated_at=(
+                            "2026-07-22T11:00:00+00:00"
+                        ),
+                        echomind_phase="lesson_delivery_attempt",
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertTrue(result["echomind"]["ok"])
+        self.assertTrue(result["echomind"]["pending_lesson_in_progress"])
+        self.assertFalse(result["echomind"]["pending_lesson_actionable"])
+
+    def test_schedule_health_flags_stale_lesson_delivery_attempt(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:00:00+00:00",
+                        echomind_pending_lesson=True,
+                        echomind_pending_lesson_generated_at=(
+                            "2026-07-22T11:00:00+00:00"
+                        ),
+                        echomind_phase="lesson_delivery_attempt",
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertFalse(result["echomind"]["ok"])
+        self.assertFalse(result["echomind"]["pending_lesson_in_progress"])
+        self.assertTrue(result["echomind"]["pending_lesson_actionable"])
+
+    def test_schedule_health_defers_pending_lesson_during_quiet_hours(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                        echomind_pending_lesson=True,
+                        echomind_pending_lesson_generated_at=(
+                            "2026-07-22T06:00:00+00:00"
+                        ),
+                        echomind_phase="quiet_hours",
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertTrue(result["echomind"]["ok"])
+        self.assertTrue(
+            result["echomind"]["pending_lesson_quiet_hours_deferred"]
+        )
+        self.assertFalse(result["echomind"]["pending_lesson_actionable"])
+        self.assertTrue(result["ok"])
+
+    def test_schedule_health_waits_for_persisted_lesson_retry(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                        echomind_pending_lesson=True,
+                        echomind_pending_lesson_generated_at=(
+                            "2026-07-22T06:00:00+00:00"
+                        ),
+                        echomind_pending_lesson_next_attempt_at=(
+                            "2026-07-22T12:30:00+00:00"
+                        ),
+                        echomind_phase="lesson_retry_wait",
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertTrue(result["echomind"]["ok"])
+        self.assertTrue(result["echomind"]["pending_lesson_retry_pending"])
+        self.assertFalse(result["echomind"]["pending_lesson_actionable"])
+
     def test_schedule_health_detects_overdue_career_and_memo_delivery(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -557,6 +826,106 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertTrue(result["career_daily"]["career_overdue"])
         self.assertTrue(result["career_daily"]["organizer_overdue"])
         self.assertFalse(result["ok"])
+
+    def test_schedule_health_waits_for_persisted_delivery_retry(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps(
+                    {"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                        career_overdue=True,
+                        organizer_overdue=True,
+                        career_next_attempt_at="2026-07-22T12:15:00+00:00",
+                        organizer_next_attempt_at="2026-07-22T12:30:00+00:00",
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertTrue(result["career_daily"]["ok"])
+        self.assertFalse(result["career_daily"]["career_overdue"])
+        self.assertFalse(result["career_daily"]["organizer_overdue"])
+        self.assertTrue(result["career_daily"]["career_retry_pending"])
+        self.assertTrue(result["career_daily"]["organizer_retry_pending"])
+        self.assertTrue(result["ok"])
+
+    def test_schedule_health_waits_for_fresh_in_progress_career_delivery(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps(
+                    {"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                        career_last_loop_at="2026-07-22T11:58:30+00:00",
+                        career_overdue=True,
+                        career_phase="career_running",
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertTrue(result["career_daily"]["ok"])
+        self.assertTrue(result["career_daily"]["career_in_progress"])
+        self.assertFalse(result["career_daily"]["career_overdue"])
+
+    def test_schedule_health_flags_stale_in_progress_career_delivery(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps(
+                    {"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                        career_last_loop_at="2026-07-22T11:00:00+00:00",
+                        career_overdue=True,
+                        career_phase="career_running",
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(
+                    labagent_heartbeat=heartbeat,
+                    now=now,
+                )
+
+        self.assertFalse(result["career_daily"]["ok"])
+        self.assertFalse(result["career_daily"]["career_in_progress"])
+        self.assertTrue(result["career_daily"]["career_overdue"])
 
     def test_quota_alert_requires_terminal_exhaustion_not_successful_fallback(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
@@ -685,6 +1054,64 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             "android_relay",
             [str(guard.WECOM_SUPERVISOR), "android-restart"],
         )
+
+    def test_live_android_relay_is_not_restarted_for_native_foreground_failure(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "code": "android_poll_stalled",
+                    "severity": "degraded",
+                    "detail": "surface=unavailable, failures=3",
+                }
+            ],
+            "android": {
+                "endpoint_reachable": True,
+                "poll_stale": False,
+                "poll_in_progress": False,
+                "last_poll_error": "BridgeError: WeCom did not reach the foreground",
+            },
+        }
+        state = {"fault_counts": {"android_poll_stalled": 2}}
+        with mock.patch.object(guard, "run_repair") as repair:
+            result = guard.perform_repairs(
+                snapshot,
+                state,
+                consecutive_failures=2,
+                cooldown_seconds=300,
+                max_sender_seconds=180,
+            )
+
+        self.assertEqual(result, [])
+        repair.assert_not_called()
+
+    def test_live_android_relay_is_not_restarted_for_locked_keyguard(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "code": "android_poll_stalled",
+                    "severity": "degraded",
+                    "detail": "surface=other_app, failures=5",
+                }
+            ],
+            "android": {
+                "endpoint_reachable": True,
+                "poll_stale": False,
+                "poll_in_progress": False,
+                "last_poll_error": "BridgeError: Android keyguard is locked",
+            },
+        }
+        state = {"fault_counts": {"android_poll_stalled": 2}}
+        with mock.patch.object(guard, "run_repair") as repair:
+            result = guard.perform_repairs(
+                snapshot,
+                state,
+                consecutive_failures=2,
+                cooldown_seconds=300,
+                max_sender_seconds=180,
+            )
+
+        self.assertEqual(result, [])
+        repair.assert_not_called()
 
     def test_overdue_daily_delivery_restarts_only_career_scheduler(self) -> None:
         snapshot = {
@@ -889,6 +1316,8 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertIn("window_exists health", wecom)
         self.assertIn("health-restart", wecom)
         self.assertIn("start_health_window", wecom)
+        self.assertIn("health_guard_reload_needed", wecom)
+        self.assertIn("sha256sum \"$HEALTH_GUARD\"", wecom)
         self.assertIn("kill_window_if_present", wecom)
         self.assertIn("external_required", wecom)
         self.assertIn("message_permission_unavailable", wecom)

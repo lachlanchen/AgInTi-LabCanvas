@@ -98,6 +98,11 @@ def main() -> int:
     parser.add_argument("--queue", type=Path, default=DEFAULT_QUEUE)
     parser.add_argument("--history-db", type=Path, default=DEFAULT_HISTORY_DB)
     parser.add_argument("--no-route-agent", action="store_true")
+    parser.add_argument(
+        "--reconsider-processed",
+        action="store_true",
+        help="Rerun routing for one exact stored message without duplicating its history row.",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     try:
@@ -107,6 +112,7 @@ def main() -> int:
             queue=args.queue,
             history_db=args.history_db,
             route_with_agent=not args.no_route_agent,
+            reconsider_processed=args.reconsider_processed,
         )
         payload = {"ok": True, **result}
     except Exception as exc:
@@ -134,12 +140,13 @@ def ingest_event(
     queue: Path,
     history_db: Path,
     route_with_agent: bool = True,
+    reconsider_processed: bool = False,
 ) -> dict[str, Any]:
     chat = canonical_chat_name(event)
     transport_channel = event_transport_channel(event)
     request = event_request(event)
     init_history_db(history_db)
-    if message_processed(history_db, str(event["message_id"])):
+    if message_processed(history_db, str(event["message_id"])) and not reconsider_processed:
         prior_reply = prior_direct_reply(history_db, str(event["message_id"]))
         return {
             "duplicate": True,
@@ -611,6 +618,8 @@ Rules:
 - When recent same-chat context contains several fragments of one instruction, use all fragments as one intent. Apply concrete guidance to the active artifact or tool workflow instead of saying that you are waiting for another person after that guidance has already arrived.
 - Never drop a visible contribution merely because another sender posted at nearly the same time. If one coherent response materially addresses related messages from multiple people, put their exact `sender_display` values in `reply_to_senders`; otherwise leave it empty and reply only to the current sender.
 - Messages clearly directed from one human to another are `peer_conversation`. Use `reply_mode=silent` when an AI response would add no value. Direct guidance, questions, and commands addressed to the agent use `reply` or `ack_then_work`.
+- Do not infer `peer_conversation` or silence merely because a message lacks an @ mention. A concrete scientific proposal, experimental next-step question, or group-level request such as asking whether to start with a particular experiment is reply-worthy when the agent can materially clarify the design, tradeoffs, evidence, or next action. Use the same-chat context to decide whether to answer briefly or start durable work.
+- A substantive user-authored analysis, hypothesis, roadmap, or research proposal shared without an explicit command is still a meaningful group contribution. Give a concise thoughtful response when the agent can test an assumption, connect it to the current discussion, or suggest a useful next step; reserve silence for casual or clearly private human-to-human chatter where the agent adds no value.
 - Use `active_task_relation=interrupt` only when this message corrects, extends, answers a pending decision for, or otherwise materially steers the exact active task shown below. This may come from a different participant, but preserve that person's authorship. Use `context_only` for relevant discussion that should be remembered without creating another worker turn. Use `independent` for a separate request.
 - Do not claim an attachment was read in the acknowledgement.
 - Soft-filter dangerous or clearly out-of-scope requests with a concise natural refusal or a safer research/design alternative. Do not mechanically refuse ordinary scientific work.

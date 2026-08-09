@@ -32,7 +32,8 @@ import tempfile
 import threading
 import time
 from typing import Any, Iterator
-from urllib import parse
+from urllib import error as urlerror
+from urllib import parse, request as urlrequest
 from xml.etree import ElementTree as ET
 import zlib
 
@@ -55,6 +56,7 @@ WECOM_LAUNCH_COMPONENT = ".launch.LaunchSplashActivity"
 REMOTE_STAGING = "/sdcard/Download"
 MAX_API_BODY = 2 * 1024 * 1024
 MAX_MENTIONS = 4
+MAX_RECOVERY_HISTORY_PAGES = 40
 # WeCom exposes the same rich mention span with or without a literal leading
 # `@` depending on keyboard/composer state.
 MENTION_TOKEN_RE = re.compile(r"@?\ufff3[^\ufff0]+\ufff0")
@@ -607,6 +609,9 @@ def initialize_config(
         "staging_dir": str(existing.get("staging_dir") or DEFAULT_STAGING),
         "initial_backfill": "seed",
         "poll_seconds": bounded_float(existing.get("poll_seconds"), 6.0, 2.0, 120.0),
+        "surface_recovery_cooldown_seconds": bounded_float(
+            existing.get("surface_recovery_cooldown_seconds"), 300.0, 30.0, 3600.0
+        ),
         "reconcile_seconds": bounded_float(
             existing.get("reconcile_seconds"), 20.0, 5.0, 600.0
         ),
@@ -874,6 +879,10 @@ class AndroidBridge:
         self._history_scan_cursor = 0
         self._stop = threading.Event()
         self._health_lock = threading.Lock()
+        self.surface_recovery_cooldown_seconds = bounded_float(
+            config.get("surface_recovery_cooldown_seconds"), 300.0, 30.0, 3600.0
+        )
+        self._next_surface_recovery_at = 0.0
         self._poll_health: dict[str, Any] = {
             "started_at": now_iso(),
             "last_poll_attempt_at": "",
@@ -883,6 +892,9 @@ class AndroidBridge:
             "consecutive_poll_failures": 0,
             "last_recovery_at": "",
             "last_recovery_action": "",
+            "last_recovery_attempt_at": "",
+            "last_recovery_failure_at": "",
+            "last_recovery_error": "",
         }
         self.init_state()
 
@@ -1041,13 +1053,19 @@ class AndroidBridge:
                 match = re.search(r"topResumedActivity=.*?\s([A-Za-z0-9_.]+)/", activities)
         return match.group(1) if match else ""
 
+    def wecom_is_foreground(self, root: ET.Element | None = None) -> bool:
+        """Use the focused Android activity when UIAutomator metadata is stale."""
+        if root is not None and self.package in hierarchy_packages(root):
+            return True
+        return self.current_package() == self.package
+
     def launch_wecom(self) -> None:
         self.prepare_device()
         try:
             root = self.dump_hierarchy(attempts=1)
         except BridgeError:
             root = None
-        if root is not None and self.package in hierarchy_packages(root) and not is_anr_dialog(root):
+        if root is not None and self.wecom_is_foreground(root) and not is_anr_dialog(root):
             return
         component = str(
             self.config.get("launch_component")
@@ -1059,12 +1077,14 @@ class AndroidBridge:
             try:
                 root = self.dump_hierarchy(attempts=1)
             except BridgeError:
+                if self.wecom_is_foreground():
+                    return
                 time.sleep(0.5)
                 continue
             if is_anr_dialog(root):
                 self.dismiss_anr_dialog(root)
                 continue
-            if self.package in hierarchy_packages(root):
+            if self.wecom_is_foreground(root):
                 return
             time.sleep(0.5)
         raise BridgeError("WeCom did not reach the foreground")
@@ -1182,6 +1202,30 @@ class AndroidBridge:
                 {
                     "last_recovery_at": now_iso(),
                     "last_recovery_action": normalize_visible_text(action)[:160],
+                    "last_recovery_failure_at": "",
+                    "last_recovery_error": "",
+                }
+            )
+
+    def claim_surface_recovery(self) -> tuple[bool, int]:
+        """Rate-limit app-level recovery while leaving poll health degraded."""
+        now = time.monotonic()
+        with self._health_lock:
+            remaining = self._next_surface_recovery_at - now
+            if remaining > 0:
+                return False, max(1, int(remaining) + 1)
+            self._next_surface_recovery_at = (
+                now + self.surface_recovery_cooldown_seconds
+            )
+            self._poll_health["last_recovery_attempt_at"] = now_iso()
+        return True, 0
+
+    def record_recovery_failure(self, error: str) -> None:
+        with self._health_lock:
+            self._poll_health.update(
+                {
+                    "last_recovery_failure_at": now_iso(),
+                    "last_recovery_error": normalize_visible_text(error)[:500],
                 }
             )
 
@@ -1189,6 +1233,18 @@ class AndroidBridge:
         with self._health_lock:
             health = dict(self._poll_health)
         interval = bounded_float(self.config.get("poll_seconds"), 6.0, 2.0, 120.0)
+        idle_stale_seconds = max(180.0, interval * 20.0)
+        active_stale_seconds = bounded_float(
+            self.config.get("poll_in_progress_stale_seconds"),
+            900.0,
+            idle_stale_seconds,
+            3600.0,
+        )
+        stale_after_seconds = (
+            active_stale_seconds
+            if health.get("poll_in_progress")
+            else idle_stale_seconds
+        )
         reference = (
             health.get("last_poll_attempt_at")
             or health.get("started_at")
@@ -1200,11 +1256,11 @@ class AndroidBridge:
         except ValueError:
             reference_time = None
         if reference_time is not None:
-            stale = (datetime.now() - reference_time).total_seconds() > max(
-                180.0,
-                interval * 20.0,
-            )
+            stale = (
+                datetime.now() - reference_time
+            ).total_seconds() > stale_after_seconds
         failures = int(health.get("consecutive_poll_failures") or 0)
+        health["poll_stale_after_seconds"] = int(stale_after_seconds)
         health["poll_stale"] = stale
         health["poll_healthy"] = failures < 2 and not stale
         return health
@@ -1238,6 +1294,22 @@ class AndroidBridge:
                 "first_error": str(first_error)[:300],
                 "visible_chat": visible_chat_title(root),
             }
+
+    def recover_transport_surface_bounded(self, *, reason: str) -> dict[str, Any]:
+        claimed, retry_after_seconds = self.claim_surface_recovery()
+        if not claimed:
+            return {
+                "ok": False,
+                "skipped": "cooldown",
+                "retry_after_seconds": retry_after_seconds,
+            }
+        try:
+            with self.serialized(timeout_seconds=30.0):
+                return self.recover_transport_surface(reason=reason)
+        except Exception as exc:
+            error_text = f"{type(exc).__name__}: {str(exc)[:500]}"
+            self.record_recovery_failure(error_text)
+            return {"ok": False, "error": error_text}
 
     def normalize_chat_surface(self, chat: str) -> ET.Element:
         """Return to the exact chat composer from a stale picker or attachment sheet."""
@@ -3079,12 +3151,13 @@ class AndroidBridge:
         max_pages: int,
     ) -> list[dict[str, str]]:
         """Read a bounded number of older viewports without changing task semantics."""
-        pages = bounded_int(max_pages, 0, 0, 8)
+        pages = bounded_int(max_pages, 0, 0, MAX_RECOVERY_HISTORY_PAGES)
         if pages == 0:
             return []
         recovered: list[dict[str, str]] = []
         seen = {record["fingerprint"] for record in current_records}
-        for _ in range(pages):
+        long_content_index: dict[tuple[str, str, str], tuple[int, int]] = {}
+        for page_index in range(pages):
             # Pull the viewport downward to walk backward through older rows.
             self.adb_shell("input", "swipe", "520", "350", "520", "1450", "500")
             time.sleep(0.55)
@@ -3118,8 +3191,35 @@ class AndroidBridge:
                 fingerprint = record["fingerprint"]
                 if fingerprint in seen:
                     continue
+                body = normalize_visible_text(record.get("body"))
+                content_key = (
+                    str(record.get("source_kind") or ""),
+                    body,
+                    normalize_visible_text(record.get("quote_text")),
+                )
+                prior = long_content_index.get(content_key) if len(body) >= 80 else None
+                if prior is not None:
+                    prior_index, prior_page = prior
+                    prior_record = recovered[prior_index]
+                    same_bubble_across_adjacent_viewport = (
+                        len(recovered) > prior_index
+                        and abs(page_index - prior_page) <= 1
+                    )
+                    compatible_sender = (
+                        not prior_record.get("sender")
+                        or not record.get("sender")
+                        or prior_record.get("sender") == record.get("sender")
+                    )
+                    if same_bubble_across_adjacent_viewport and compatible_sender:
+                        seen.add(fingerprint)
+                        if record.get("sender") and not prior_record.get("sender"):
+                            recovered[prior_index] = record
+                            long_content_index[content_key] = (prior_index, page_index)
+                        continue
                 seen.add(fingerprint)
                 recovered.append(record)
+                if len(body) >= 80:
+                    long_content_index[content_key] = (len(recovered) - 1, page_index)
         return recovered
 
     def load_snapshot(self, chat: str) -> list[str] | None:
@@ -3455,7 +3555,12 @@ class AndroidBridge:
             event["msgtype"] = "combined_forward"
         return event
 
-    def invoke_ingest(self, event: dict[str, Any]) -> dict[str, Any]:
+    def invoke_ingest(
+        self,
+        event: dict[str, Any],
+        *,
+        reconsider_processed: bool = False,
+    ) -> dict[str, Any]:
         runtime = self.staging_dir / "events"
         runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
         with tempfile.NamedTemporaryFile(
@@ -3465,18 +3570,21 @@ class AndroidBridge:
             event_path = Path(handle.name)
         os.chmod(event_path, 0o600)
         try:
+            command = [
+                sys.executable,
+                str(INGEST),
+                "--event-file",
+                str(event_path),
+                "--queue",
+                str(self.queue),
+                "--history-db",
+                str(self.history_db),
+                "--json",
+            ]
+            if reconsider_processed:
+                command.append("--reconsider-processed")
             process = self.run(
-                [
-                    sys.executable,
-                    str(INGEST),
-                    "--event-file",
-                    str(event_path),
-                    "--queue",
-                    str(self.queue),
-                    "--history-db",
-                    str(self.history_db),
-                    "--json",
-                ],
+                command,
                 timeout=600,
                 check=False,
             )
@@ -3798,12 +3906,16 @@ class AndroidBridge:
                     surface_state = "anr"
                 elif title:
                     surface_state = "chat"
-                elif self.package in packages:
+                elif package == self.package:
                     surface_state = "wecom_other"
                 else:
                     surface_state = "other_app"
             else:
                 package = self.current_package()
+                if package == self.package:
+                    surface_state = "wecom_other"
+                elif package:
+                    surface_state = "other_app"
         healthy = bool(
             authorized
             and health.get("poll_healthy")
@@ -3841,17 +3953,9 @@ class AndroidBridge:
                     self.record_poll_failure(error_text)
                     recovery: dict[str, Any] | None = None
                     if self.surface_failure_text(error_text):
-                        try:
-                            with self.serialized(timeout_seconds=30.0):
-                                recovery = self.recover_transport_surface(reason="poll_exception")
-                        except Exception as recovery_exc:
-                            recovery = {
-                                "ok": False,
-                                "error": (
-                                    f"{type(recovery_exc).__name__}: "
-                                    f"{str(recovery_exc)[:500]}"
-                                ),
-                            }
+                        recovery = self.recover_transport_surface_bounded(
+                            reason="poll_exception"
+                        )
                     print(
                         json.dumps(
                             {"ok": False, "error": error_text, "recovery": recovery},
@@ -3863,17 +3967,9 @@ class AndroidBridge:
                 surface_error = self.surface_failure_text(result)
                 if surface_error:
                     self.record_poll_failure(surface_error)
-                    try:
-                        with self.serialized(timeout_seconds=30.0):
-                            recovery = self.recover_transport_surface(reason="poll_result")
-                    except Exception as recovery_exc:
-                        recovery = {
-                            "ok": False,
-                            "error": (
-                                f"{type(recovery_exc).__name__}: "
-                                f"{str(recovery_exc)[:500]}"
-                            ),
-                        }
+                    recovery = self.recover_transport_surface_bounded(
+                        reason="poll_result"
+                    )
                     print(
                         json.dumps(
                             {"ok": False, "result": result, "recovery": recovery},
@@ -4013,6 +4109,26 @@ def make_api_handler(bridge: AndroidBridge):
     return Handler
 
 
+def running_service_status(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Read health from the persistent relay instead of a fresh bridge object."""
+    port = bounded_int(config.get("local_api_port"), 19581, 1024, 65535)
+    token = str(config.get("local_api_token") or "")
+    if not token:
+        return None
+    request = urlrequest.Request(
+        f"http://127.0.0.1:{port}/v1/status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urlrequest.urlopen(request, timeout=1.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, TimeoutError, ValueError, urlerror.URLError):
+        return None
+    if not isinstance(payload, dict) or payload.get("transport") != "wecom_android":
+        return None
+    return payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -4062,45 +4178,60 @@ def main() -> int:
                 force=args.force,
             )
         else:
-            bridge = AndroidBridge(load_config(args.config), config_path=args.config)
+            config = load_config(args.config)
             if args.command == "status":
-                payload = bridge.status()
-            elif args.command == "chats":
-                payload = bridge.list_chats()
-            elif args.command == "open":
-                with bridge.serialized():
-                    root = bridge.open_chat(args.chat)
-                payload = {"ok": True, "chat": args.chat, "visible_title": visible_chat_title(root)}
-            elif args.command == "messages":
-                payload = bridge.snapshot(
-                    args.chat,
-                    enqueue=args.enqueue,
-                    history_pages=bounded_int(args.history_pages, 0, 0, 8),
-                )
-            elif args.command == "send":
-                if not args.message.strip() and not args.files:
-                    raise BridgeError("send requires --message and/or --file")
-                if not args.live:
+                payload = running_service_status(config)
+                if payload is None:
+                    payload = AndroidBridge(
+                        config, config_path=args.config
+                    ).status()
+            else:
+                bridge = AndroidBridge(config, config_path=args.config)
+                if args.command == "chats":
+                    payload = bridge.list_chats()
+                elif args.command == "open":
+                    with bridge.serialized():
+                        root = bridge.open_chat(args.chat)
                     payload = {
                         "ok": True,
-                        "dry_run": True,
                         "chat": args.chat,
-                        "message_bytes": len(args.message.encode("utf-8")),
-                        "mentions": validate_mentions(args.mentions),
-                        "files": [str(path.expanduser().resolve()) for path in args.files],
+                        "visible_title": visible_chat_title(root),
                     }
-                else:
-                    payload = bridge.send(
+                elif args.command == "messages":
+                    payload = bridge.snapshot(
                         args.chat,
-                        args.message,
-                        args.files,
-                        task_id=args.task_id,
-                        mentions=args.mentions,
-                        force_resend=args.force_resend,
+                        enqueue=args.enqueue,
+                        history_pages=bounded_int(
+                            args.history_pages, 0, 0, MAX_RECOVERY_HISTORY_PAGES
+                        ),
                     )
-            else:
-                bridge.serve_forever()
-                return 0
+                elif args.command == "send":
+                    if not args.message.strip() and not args.files:
+                        raise BridgeError("send requires --message and/or --file")
+                    if not args.live:
+                        payload = {
+                            "ok": True,
+                            "dry_run": True,
+                            "chat": args.chat,
+                            "message_bytes": len(args.message.encode("utf-8")),
+                            "mentions": validate_mentions(args.mentions),
+                            "files": [
+                                str(path.expanduser().resolve())
+                                for path in args.files
+                            ],
+                        }
+                    else:
+                        payload = bridge.send(
+                            args.chat,
+                            args.message,
+                            args.files,
+                            task_id=args.task_id,
+                            mentions=args.mentions,
+                            force_resend=args.force_resend,
+                        )
+                else:
+                    bridge.serve_forever()
+                    return 0
     except Exception as exc:
         payload = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:1000]}"}
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))

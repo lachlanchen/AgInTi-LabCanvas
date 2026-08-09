@@ -157,6 +157,23 @@ vision-capable worker runs; ambiguous or unverifiable media remains pending
 instead of using a nearby thumbnail. See
 [`docs/ANDROID_RELAY_INTERFACE.md`](docs/ANDROID_RELAY_INTERFACE.md).
 
+Android relay health uses the normal three-minute/20-cycle deadline while the
+poller is idle. A poll actively performing bounded reconciliation or history
+scanning gets a 15-minute deadline so a healthy native scan is not repeatedly
+restarted; set `poll_in_progress_stale_seconds` in the ignored Android config
+only when that bounded deadline needs tuning. An active poll beyond the
+deadline remains unhealthy and eligible for an Android-relay-only restart.
+Native-surface recovery is independently rate-limited to one attempt every five
+minutes by default (`surface_recovery_cooldown_seconds`). A reachable relay that
+reports only that WeCom could not reach the foreground stays degraded without
+being process-restarted. A reachable relay reporting a locked Android keyguard
+is handled the same way: health stays degraded for a normal human unlock, with
+no automated unlock or relay restart loop. Stale or unreachable relays remain
+restart-eligible.
+The minute-level autostart supervisor also fingerprints the health-guard source
+and reloads only its non-GUI tmux window after an on-disk guard update. This
+activates recovery-policy fixes without restarting either logged-in client.
+
 On Linux, the official download page does not provide a native desktop build.
 The optional enrollment helper installs Tencent's official Windows client in a
 dedicated ignored Wine prefix and exposes only that client on localhost noVNC:
@@ -244,6 +261,9 @@ evidence. Active or recently terminal messages that remain unverified still
 degrade health and trigger bounded repair. Older terminal rows remain listed as
 `historical_coverage_unresolved_ids`, but they do not keep the transport
 permanently degraded and are never replayed after a restart.
+Scheduled personal-WeChat career and MEMO deliveries likewise remain healthy
+while their scheduler has a persisted future retry; they become overdue only
+after that retry is actually missed.
 `historical_coverage_categories` separates delivered-but-unverified results,
 expired delivery, and worker failures without spending model tokens. Backend
 stderr and diagnostic payloads remain private. A legacy task whose chat scope

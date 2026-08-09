@@ -48,6 +48,8 @@ QUIET_START = 20
 QUIET_END = 8
 DAILY_PDF_HOUR = 6
 DAILY_PDF_RETRY_SECONDS = 30 * 60
+LESSON_RETRY_BASE_SECONDS = 30 * 60
+LESSON_RETRY_MAX_SECONDS = 4 * 60 * 60
 SCHEDULER_POLL_SECONDS = 5 * 60
 PERIODIC_MAX_CHARS = int(os.environ.get("ECHOMIND_LANGUAGE_MAX_CHARS", "1400"))
 PERIODIC_MODEL = os.environ.get("ECHOMIND_LANGUAGE_MODEL", "gpt-5.3-codex-spark")
@@ -192,6 +194,51 @@ def seconds_until_due(state: dict, interval_seconds: int, *, now: datetime | Non
     return max(0.0, (due_at - current.astimezone(timezone.utc)).total_seconds())
 
 
+def pending_lesson_retry_seconds(
+    pending: dict, *, now: datetime | None = None
+) -> float:
+    raw = str(pending.get("next_attempt_at") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        retry_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return max(0.0, (retry_at - current.astimezone(timezone.utc)).total_seconds())
+
+
+def schedule_pending_lesson_retry(
+    state: dict, pending: dict, *, now: datetime | None = None
+) -> float:
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    attempts = int(pending.get("delivery_attempts") or 0) + 1
+    delay = min(
+        LESSON_RETRY_MAX_SECONDS,
+        LESSON_RETRY_BASE_SECONDS * (2 ** max(0, attempts - 1)),
+    )
+    pending["delivery_attempts"] = attempts
+    pending["last_attempt_at"] = current.isoformat(timespec="seconds")
+    pending["next_attempt_at"] = (
+        current + timedelta(seconds=delay)
+    ).isoformat(timespec="seconds")
+    state["pending_lesson"] = pending
+    state["last_delivery_error_at"] = current.isoformat(timespec="seconds")
+    scheduler_heartbeat(
+        state,
+        "lesson_retry_wait",
+        lesson_retry_in_seconds=int(delay),
+    )
+    return float(delay)
+
+
 def quiet_seconds(*, now: datetime | None = None) -> float:
     """Return the next quiet-hours wake without sleeping past the 06:00 PDF."""
     now = now or datetime.now(LOCAL_TZ)
@@ -302,6 +349,9 @@ def run_daily_pdf(
     if isinstance(pending, dict) and str(pending.get("date") or "") == yesterday:
         pending_pdf = Path(str(pending.get("pdf") or "")).expanduser()
         if pending_pdf.is_file() and pending_pdf.stat().st_size > 0:
+            state["last_daily_pdf_attempt_date"] = yesterday
+            state["last_daily_pdf_attempt_at"] = current.isoformat(timespec="seconds")
+            save_state(state)
             already_delivered = daily_pdf_delivery_recorded(config, pending_pdf)
             if deliver and not already_delivered:
                 send_scheduled_file(pending_pdf, config)
@@ -434,6 +484,18 @@ def run_once(*, deliver: bool = True, interval_seconds: int = INTERVAL) -> dict:
     state = load_state()
     pending = state.get("pending_lesson")
     if isinstance(pending, dict) and str(pending.get("message") or "").strip():
+        retry_seconds = pending_lesson_retry_seconds(pending)
+        if deliver and retry_seconds > 0:
+            scheduler_heartbeat(
+                state,
+                "lesson_retry_wait",
+                lesson_retry_in_seconds=int(retry_seconds),
+            )
+            return {
+                "ok": True,
+                "status": "delivery_deferred",
+                "retry_in_seconds": int(retry_seconds),
+            }
         return deliver_pending_lesson(
             config,
             state,
@@ -538,7 +600,7 @@ def deliver_pending_lesson(
                 delivery = {"requested": True, "status": "sent_verified", "screenshot": screenshot}
         except Exception as exc:
             state["last_delivery_error"] = f"{type(exc).__name__}: {exc}"
-            scheduler_heartbeat(state, "lesson_delivery_deferred")
+            schedule_pending_lesson_retry(state, pending)
             raise
     state.update({
         "last_run_at": now,
@@ -635,13 +697,15 @@ def main() -> int:
                 time.sleep(min(remaining, SCHEDULER_POLL_SECONDS))
                 continue
         try:
-            print(
-                json.dumps(
-                    run_once(deliver=not args.no_send, interval_seconds=interval),
-                    ensure_ascii=False,
-                ),
-                flush=True,
-            )
+            result = run_once(deliver=not args.no_send, interval_seconds=interval)
+            print(json.dumps(result, ensure_ascii=False), flush=True)
+            if result.get("status") == "delivery_deferred" and args.loop:
+                time.sleep(
+                    min(
+                        max(5.0, float(result.get("retry_in_seconds") or 0)),
+                        SCHEDULER_POLL_SECONDS,
+                    )
+                )
         except Exception as exc:
             print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False), flush=True)
             if not args.loop:

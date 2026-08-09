@@ -153,7 +153,40 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
 
         agent.assert_called_once()
         self.assertEqual(stored["pending_lesson"]["message"], "new lesson")
-        self.assertEqual(stored["scheduler_phase"], "lesson_delivery_deferred")
+        self.assertEqual(stored["scheduler_phase"], "lesson_retry_wait")
+        self.assertEqual(stored["pending_lesson"]["delivery_attempts"], 1)
+        self.assertTrue(stored["pending_lesson"]["next_attempt_at"])
+
+    def test_pending_lesson_waits_for_durable_retry_without_sending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "pending_lesson": {
+                            "message": "lesson",
+                            "next_attempt_at": "2099-01-01T00:00:00+00:00",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(scheduler, "STATE", state_path),
+                mock.patch.object(
+                    scheduler.direct,
+                    "load_config",
+                    return_value={"chat_name": "EchoMind"},
+                ),
+                mock.patch.object(scheduler.direct, "send_gui_message") as send,
+            ):
+                result = scheduler.run_once()
+                stored = scheduler.load_state()
+
+        self.assertEqual(result["status"], "delivery_deferred")
+        self.assertGreater(result["retry_in_seconds"], 0)
+        send.assert_not_called()
+        self.assertEqual(stored["scheduler_phase"], "lesson_retry_wait")
 
     def test_pending_daily_pdf_reserves_lane_and_retries_without_regeneration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -191,6 +224,54 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         self.assertEqual(send.call_count, 2)
         self.assertFalse(priority_path.exists())
         self.assertNotIn("pending_daily_pdf", state)
+        self.assertEqual(state["last_daily_pdf_attempt_date"], "2026-07-22")
+        self.assertEqual(
+            state["last_daily_pdf_attempt_at"],
+            "2026-07-23T06:05:00+08:00",
+        )
+
+    def test_pending_daily_pdf_persists_retry_timestamp_before_send_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_path = tmp_path / "state.json"
+            priority_path = tmp_path / "priority.json"
+            pdf = tmp_path / "review.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n")
+            state = {
+                "pending_daily_pdf": {
+                    "date": "2026-07-22",
+                    "pdf": str(pdf),
+                }
+            }
+            with (
+                mock.patch.object(scheduler, "STATE", state_path),
+                mock.patch.object(scheduler, "GUI_SEND_PRIORITY", priority_path),
+                mock.patch.object(
+                    scheduler,
+                    "daily_pdf_delivery_recorded",
+                    return_value=False,
+                ),
+                mock.patch.object(
+                    scheduler,
+                    "send_file",
+                    side_effect=RuntimeError("delivery unavailable"),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "delivery unavailable"):
+                    scheduler.run_daily_pdf(
+                        {"chat_name": "EchoMind"},
+                        state,
+                        now=datetime(2026, 7, 23, 6, 5, tzinfo=scheduler.LOCAL_TZ),
+                        force=True,
+                    )
+                stored = scheduler.load_state()
+
+        self.assertIn("pending_daily_pdf", stored)
+        self.assertEqual(stored["last_daily_pdf_attempt_date"], "2026-07-22")
+        self.assertEqual(
+            stored["last_daily_pdf_attempt_at"],
+            "2026-07-23T06:05:00+08:00",
+        )
 
     def test_priority_marker_is_visible_during_scheduled_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

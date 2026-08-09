@@ -37,6 +37,7 @@ HEALTH_GUARD="$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_transport_stal
 HEALTH_LOG="$LOG_DIR/transport-health.log"
 HEALTH_STATE="$ROOT/output/transport-health/state.json"
 HEALTH_SNAPSHOT="$ROOT/output/transport-health/latest.json"
+HEALTH_GUARD_SIGNATURE="$ROOT/output/transport-health/health-guard.sha256"
 QUOTA_MONITOR="$ROOT/agentic_tools/wechat_gui_agent/scripts/codex_quota_status.py"
 QUOTA_LOG="$LOG_DIR/codex-quota.log"
 MUTATION_LOCK="${WECOM_TMUX_MUTATION_LOCK:-$TOOL_ROOT/.private/wecom_tmux.lock}"
@@ -137,7 +138,7 @@ ensure_core_windows() {
       "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 '$KNOWLEDGE_INDEXER' loop --queue '$QUEUE' >> '$KNOWLEDGE_LOG' 2>&1"
   fi
   remove_dead_window health
-  if ! window_exists health; then
+  if ! window_exists health || health_guard_reload_needed; then
     start_health_window
   fi
   remove_dead_window quota
@@ -165,7 +166,17 @@ start_health_window() {
   kill_window_if_present health
   tmux new-window -t "$SESSION" -n health \
     "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 -u '$HEALTH_GUARD' --loop --repair --repair-agent --json-lines --changes-only --state-path '$HEALTH_STATE' --snapshot-path '$HEALTH_SNAPSHOT' >> '$HEALTH_LOG' 2>&1"
+  mkdir -p "$(dirname "$HEALTH_GUARD_SIGNATURE")"
+  sha256sum "$HEALTH_GUARD" | awk '{print $1}' >"$HEALTH_GUARD_SIGNATURE"
   echo "Restarted shared token-free health guard and bounded repair agent."
+}
+
+health_guard_reload_needed() {
+  local current recorded=""
+  current="$(sha256sum "$HEALTH_GUARD" | awk '{print $1}')"
+  [[ -f "$HEALTH_GUARD_SIGNATURE" ]] \
+    && recorded="$(head -n 1 "$HEALTH_GUARD_SIGNATURE")"
+  [[ "$current" != "$recorded" ]]
 }
 
 gui_enabled() {

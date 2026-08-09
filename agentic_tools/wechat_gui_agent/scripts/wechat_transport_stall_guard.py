@@ -70,6 +70,8 @@ ECHOMIND_SCHEDULE_SESSION = "labcanvas-echomind-language"
 CAREER_SCHEDULE_SESSION = "labcanvas-career-daily"
 ECHOMIND_INTERVAL_SECONDS = 3 * 60 * 60
 ECHOMIND_HEARTBEAT_STALE_SECONDS = 12 * 60
+ECHOMIND_PENDING_DELIVERY_GRACE_SECONDS = 10 * 60
+ECHOMIND_DAILY_PDF_RETRY_SECONDS = 30 * 60
 CAREER_HEARTBEAT_STALE_SECONDS = 30 * 60
 TERMINAL_FAILURE_STATUSES = {"failed", "worker_failed"}
 QUOTA_FAILURE_MARKERS = (
@@ -485,10 +487,82 @@ def schedule_health(
         echo_heartbeat_age is not None
         and echo_heartbeat_age <= ECHOMIND_HEARTBEAT_STALE_SECONDS
     )
-    echomind_pending_lesson = bool(echo_state.get("pending_lesson"))
-    echomind_pending_daily_pdf = bool(echo_state.get("pending_daily_pdf"))
+    pending_lesson = echo_state.get("pending_lesson")
+    echomind_pending_lesson = bool(pending_lesson)
+    pending_lesson_generated_at = parse_timestamp(
+        pending_lesson.get("generated_at")
+        if isinstance(pending_lesson, dict)
+        else ""
+    )
+    pending_lesson_age = (
+        max(0.0, (current - pending_lesson_generated_at).total_seconds())
+        if pending_lesson_generated_at
+        else None
+    )
+    echomind_phase = str(echo_state.get("scheduler_phase") or "unknown")
+    pending_lesson_in_progress = bool(
+        echomind_pending_lesson
+        and echomind_phase == "lesson_delivery_attempt"
+        and echomind_heartbeat_ok
+    )
+    pending_lesson_quiet_hours_deferred = bool(
+        echomind_pending_lesson and echomind_phase == "quiet_hours"
+    )
+    pending_lesson_retry_at = parse_timestamp(
+        pending_lesson.get("next_attempt_at")
+        if isinstance(pending_lesson, dict)
+        else ""
+    )
+    pending_lesson_retry_pending = bool(
+        pending_lesson_retry_at and pending_lesson_retry_at > current
+    )
+    pending_lesson_actionable = bool(
+        echomind_pending_lesson
+        and not pending_lesson_in_progress
+        and not pending_lesson_quiet_hours_deferred
+        and not pending_lesson_retry_pending
+        and (
+            pending_lesson_age is None
+            or pending_lesson_age > ECHOMIND_PENDING_DELIVERY_GRACE_SECONDS
+        )
+    )
+    pending_daily_pdf = echo_state.get("pending_daily_pdf")
+    echomind_pending_daily_pdf = bool(pending_daily_pdf)
+    pending_daily_generated_at = parse_timestamp(
+        pending_daily_pdf.get("generated_at")
+        if isinstance(pending_daily_pdf, dict)
+        else ""
+    )
+    pending_daily_pdf_age = (
+        max(0.0, (current - pending_daily_generated_at).total_seconds())
+        if pending_daily_generated_at
+        else None
+    )
+    pending_daily_attempt_at = parse_timestamp(
+        echo_state.get("last_daily_pdf_attempt_at")
+    )
+    pending_daily_retry_at = (
+        pending_daily_attempt_at
+        + timedelta(seconds=ECHOMIND_DAILY_PDF_RETRY_SECONDS)
+        if pending_daily_attempt_at
+        and isinstance(pending_daily_pdf, dict)
+        and str(echo_state.get("last_daily_pdf_attempt_date") or "")
+        == str(pending_daily_pdf.get("date") or "")
+        else None
+    )
+    pending_daily_retry_pending = bool(
+        pending_daily_retry_at and pending_daily_retry_at > current
+    )
+    pending_daily_pdf_actionable = bool(
+        echomind_pending_daily_pdf
+        and not pending_daily_retry_pending
+        and (
+            pending_daily_pdf_age is None
+            or pending_daily_pdf_age > ECHOMIND_PENDING_DELIVERY_GRACE_SECONDS
+        )
+    )
     echomind_delivery_pending = (
-        echomind_pending_lesson or echomind_pending_daily_pdf
+        pending_lesson_actionable or pending_daily_pdf_actionable
     )
     echomind_ok = (
         echomind_running
@@ -500,11 +574,32 @@ def schedule_health(
         if career_heartbeat
         else None
     )
-    career_overdue = bool(career_state.get("career_overdue"))
-    organizer_overdue = bool(career_state.get("organizer_overdue"))
     career_heartbeat_ok = (
         career_heartbeat_age is not None
         and career_heartbeat_age <= career_stale_seconds
+    )
+    career_phase = str(career_state.get("phase") or "missing")
+    career_in_progress = career_phase == "career_running" and career_heartbeat_ok
+    organizer_in_progress = (
+        career_phase == "organizer_running" and career_heartbeat_ok
+    )
+    career_retry_at = parse_timestamp(career_state.get("career_next_attempt_at"))
+    organizer_retry_at = parse_timestamp(
+        career_state.get("organizer_next_attempt_at")
+    )
+    career_retry_pending = bool(career_retry_at and career_retry_at > current)
+    organizer_retry_pending = bool(
+        organizer_retry_at and organizer_retry_at > current
+    )
+    career_overdue = bool(
+        career_state.get("career_overdue")
+        and not career_retry_pending
+        and not career_in_progress
+    )
+    organizer_overdue = bool(
+        career_state.get("organizer_overdue")
+        and not organizer_retry_pending
+        and not organizer_in_progress
     )
     career_ok = (
         career_running
@@ -532,10 +627,38 @@ def schedule_health(
             "expected_interval_seconds": ECHOMIND_INTERVAL_SECONDS,
             "heartbeat_age_seconds": int(echo_heartbeat_age) if echo_heartbeat_age is not None else None,
             "stale_after_seconds": ECHOMIND_HEARTBEAT_STALE_SECONDS,
-            "phase": str(echo_state.get("scheduler_phase") or "unknown"),
+            "phase": echomind_phase,
             "pending_delivery": echomind_delivery_pending,
             "pending_lesson": echomind_pending_lesson,
+            "pending_lesson_actionable": pending_lesson_actionable,
+            "pending_lesson_in_progress": pending_lesson_in_progress,
+            "pending_lesson_quiet_hours_deferred": (
+                pending_lesson_quiet_hours_deferred
+            ),
+            "pending_lesson_retry_pending": pending_lesson_retry_pending,
+            "pending_lesson_next_attempt_at": (
+                str(pending_lesson.get("next_attempt_at") or "")
+                if isinstance(pending_lesson, dict)
+                else ""
+            ),
+            "pending_lesson_age_seconds": (
+                int(pending_lesson_age)
+                if pending_lesson_age is not None
+                else None
+            ),
             "pending_daily_pdf": echomind_pending_daily_pdf,
+            "pending_daily_pdf_actionable": pending_daily_pdf_actionable,
+            "pending_daily_pdf_retry_pending": pending_daily_retry_pending,
+            "pending_daily_pdf_next_attempt_at": (
+                pending_daily_retry_at.isoformat()
+                if pending_daily_retry_at is not None
+                else ""
+            ),
+            "pending_daily_pdf_age_seconds": (
+                int(pending_daily_pdf_age)
+                if pending_daily_pdf_age is not None
+                else None
+            ),
             "daily_pdf_error": str(echo_state.get("last_daily_pdf_error") or ""),
         },
         "career_daily": {
@@ -547,7 +670,7 @@ def schedule_health(
                 else None
             ),
             "stale_after_seconds": int(career_stale_seconds),
-            "phase": str(career_state.get("phase") or "missing"),
+            "phase": career_phase,
             "date": str(career_state.get("date") or ""),
             "morning_time": str(career_state.get("morning_time") or ""),
             "career_complete": bool(career_state.get("career_complete")),
@@ -555,6 +678,16 @@ def schedule_health(
             "organizer_complete": bool(career_state.get("organizer_complete")),
             "career_overdue": career_overdue,
             "organizer_overdue": organizer_overdue,
+            "career_retry_pending": career_retry_pending,
+            "organizer_retry_pending": organizer_retry_pending,
+            "career_in_progress": career_in_progress,
+            "organizer_in_progress": organizer_in_progress,
+            "career_next_attempt_at": str(
+                career_state.get("career_next_attempt_at") or ""
+            ),
+            "organizer_next_attempt_at": str(
+                career_state.get("organizer_next_attempt_at") or ""
+            ),
             "career_status": str(career_state.get("career_status") or ""),
             "organizer_status": str(career_state.get("organizer_status") or ""),
         },
@@ -993,13 +1126,13 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         > schedules["echomind"]["stale_after_seconds"]
     ):
         issue("schedule_echomind_stalled", "degraded", "EchoMind scheduler heartbeat is stale")
-    elif schedules["echomind"]["pending_daily_pdf"]:
+    elif schedules["echomind"]["pending_daily_pdf_actionable"]:
         issue(
             "schedule_echomind_daily_delivery_pending",
             "degraded",
             "EchoMind daily PDF is generated but not delivered",
         )
-    elif schedules["echomind"]["pending_lesson"]:
+    elif schedules["echomind"]["pending_lesson_actionable"]:
         issue(
             "schedule_echomind_lesson_delivery_pending",
             "degraded",
@@ -1151,6 +1284,24 @@ def run_repair(label: str, command: list[str]) -> dict[str, Any]:
     }
 
 
+def android_poll_stall_requires_relay_restart(android: dict[str, Any]) -> bool:
+    """Keep a live relay when only its bounded native-app recovery failed."""
+    error_text = str(android.get("last_poll_error") or "").casefold()
+    native_surface_blocked = any(
+        marker in error_text
+        for marker in (
+            "did not reach the foreground",
+            "android keyguard is locked",
+        )
+    )
+    return not (
+        android.get("endpoint_reachable")
+        and native_surface_blocked
+        and not android.get("poll_stale")
+        and not android.get("poll_in_progress")
+    )
+
+
 def perform_repairs(
     snapshot: dict[str, Any],
     state: dict[str, Any],
@@ -1204,6 +1355,10 @@ def perform_repairs(
     if (
         not repaired_wecom
         and issue_codes.intersection({"android_endpoint_down", "android_poll_stalled"})
+        and (
+            "android_endpoint_down" in issue_codes
+            or android_poll_stall_requires_relay_restart(snapshot.get("android") or {})
+        )
         and repair_due(
             (
                 "android_poll_stalled"
