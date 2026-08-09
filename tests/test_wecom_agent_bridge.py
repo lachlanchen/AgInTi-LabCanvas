@@ -82,6 +82,22 @@ def load_gui_bridge():
 
 
 class WeComAgentBridgeTests(unittest.TestCase):
+    def test_wecom_router_preserves_complete_long_response(self) -> None:
+        ingest = load_ingest()
+        answer = "完整回答。" * 500
+
+        self.assertEqual(ingest.sanitize_chat_response(answer), answer)
+
+    def test_wecom_gui_chunks_are_readable_numbered_and_lossless(self) -> None:
+        bridge = load_gui_bridge()
+        text = "".join(f"段落{index:03d}。" for index in range(100))
+
+        parts = bridge.chunk_text(text, 240)
+
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(all(len(part) <= 240 for part in parts))
+        self.assertEqual("".join(part.split("\n", 1)[1] for part in parts), text)
+
     def sample_event(self, **updates):
         event = {
             "transport": "wecom",
@@ -1750,6 +1766,46 @@ class WeComAgentBridgeTests(unittest.TestCase):
             route = ingest.route_event(event, ingest.event_request(event), [])
 
         self.assertFalse(route["public_publish_allowed"])
+
+    def test_long_direct_wecom_answer_moves_to_lossless_worker_delivery(self) -> None:
+        ingest = load_ingest()
+        answer = "完整回答。" * 500
+        response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": False,
+                    "route_kind": "chat_only",
+                    "response": answer,
+                    "task": "",
+                    "ack": "",
+                    "message_role": "ordinary_chat",
+                    "public_publish_allowed": False,
+                },
+                ensure_ascii=False,
+            ),
+        }
+        event = self.sample_event(text="请完整说明。")
+
+        with mock.patch.object(ingest, "run_agent_session", return_value=response):
+            route = ingest.route_event(event, ingest.event_request(event), [])
+
+        self.assertTrue(route["worker_needed"])
+        self.assertTrue(route["long_response_deferred"])
+        self.assertEqual(route["route_kind"], "other_worker")
+        self.assertEqual(route["response"], "")
+        with tempfile.TemporaryDirectory() as tmp:
+            task = ingest.build_task(
+                event,
+                ingest.canonical_chat_name(event),
+                ingest.event_request(event),
+                [],
+                route,
+                Path(tmp) / "queue.jsonl",
+            )
+        self.assertEqual(task["status"], "send_deferred_artifact")
+        self.assertEqual(task["result"]["message"], answer)
+        self.assertEqual(task["send_deferred_reason"], "long_response_delivery")
 
     def test_route_report_decision_becomes_required_delivery_contract(self) -> None:
         ingest = load_ingest()

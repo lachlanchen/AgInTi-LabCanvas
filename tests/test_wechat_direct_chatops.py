@@ -39,6 +39,16 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             "mirror_db": self.mirror_db,
         }
 
+    def test_long_fast_reply_is_deferred_without_clipping(self) -> None:
+        config = {"max_reply_chars": 1200}
+        answer = "完整回答。" * 300
+
+        self.assertTrue(direct_chatops.direct_reply_requires_worker_delivery(config, answer))
+        self.assertEqual(direct_chatops.clamp_reused_reply(config, answer), answer)
+        self.assertFalse(
+            direct_chatops.direct_reply_requires_worker_delivery(config, "简短回答。")
+        )
+
     def backend_chat_config(self, chat_name: str, purpose: str = "research") -> dict[str, object]:
         return {
             "chat_name": chat_name,

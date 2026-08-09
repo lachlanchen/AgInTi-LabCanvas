@@ -59,6 +59,46 @@ def load_ingest():
 
 
 class WeComAndroidBridgeTests(unittest.TestCase):
+    def test_long_text_is_split_at_readable_numbered_boundaries(self) -> None:
+        bridge = load_bridge()
+        text = "".join(f"研究段落{index:03d}。" for index in range(100))
+
+        parts = bridge.chunk_text_for_delivery(text, 240)
+
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(all(len(part) <= 240 for part in parts))
+        self.assertEqual("".join(part.split("\n", 1)[1] for part in parts), text)
+
+    def test_android_long_text_wrapper_mentions_only_first_part(self) -> None:
+        bridge = load_bridge()
+        instance = object.__new__(bridge.AndroidBridge)
+        instance.component_key = mock.Mock(return_value="whole-key")
+        instance.component_sent = mock.Mock(return_value=False)
+        instance.component_record = mock.Mock(return_value={"updated_at": "2026-08-09T10:00:00"})
+        instance.mark_component = mock.Mock()
+        instance._send_text_chunk_locked = mock.Mock(
+            side_effect=lambda _chat, part, *, task_id, mentions: {
+                "ok": True,
+                "sent_messages": [part],
+                "mentioned_users": mentions,
+            }
+        )
+        text = "".join(f"段落{index:03d}。" for index in range(100))
+
+        with mock.patch.dict(bridge.os.environ, {"WECOM_ANDROID_TEXT_CHUNK_CHARS": "240"}):
+            result = instance.send_text_locked(
+                "LabAgent",
+                text,
+                task_id="task-long",
+                mentions=["Prof Ma"],
+            )
+
+        calls = instance._send_text_chunk_locked.call_args_list
+        self.assertGreater(len(calls), 1)
+        self.assertEqual(calls[0].kwargs["mentions"], ["Prof Ma"])
+        self.assertTrue(all(call.kwargs["mentions"] == [] for call in calls[1:]))
+        self.assertEqual(result["sent_messages"], [text])
+        self.assertEqual(result["part_count"], len(calls))
     def test_bounds_and_chat_title_are_exact(self) -> None:
         bridge = load_bridge()
 

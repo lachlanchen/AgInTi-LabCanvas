@@ -538,6 +538,25 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                         task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=context_rows)
                         task_enqueued = task["id"]
                     reply_text = routed["chat"] or routed["ack"]
+        if (
+            reply_text
+            and not is_no_reply_control(reply_text)
+            and direct_reply_requires_worker_delivery(config, reply_text)
+        ):
+            deferred = enqueue_deferred_reply(
+                config,
+                trigger_row,
+                reply_text,
+                context_rows=context_rows,
+                route_decision={
+                    "route_kind": "other_worker",
+                    "reason": "long_response_delivery",
+                },
+                reason="long_response_delivery",
+            )
+            task_enqueued = deferred["id"]
+            metrics["long_response_deferred"] = len(reply_text)
+            reply_text = ""
         if reply_text and not is_no_reply_control(reply_text):
             status = "dry-run-response"
             screenshot = None
@@ -2654,11 +2673,15 @@ def is_reusable_outbound_result(text: str) -> bool:
 
 def clamp_reused_reply(config: dict[str, Any], text: str) -> str:
     reply = str(text or "").strip()
-    max_chars = max(200, int(config.get("max_reply_chars", 1200)))
-    if len(reply) <= max_chars:
-        return reply
-    note = "\n\n（上一条结果较长，先重发前半部分；需要全文可以继续说“发全文”。）"
-    return reply[: max_chars - len(note)] + note
+    return reply
+
+
+def direct_reply_requires_worker_delivery(
+    config: dict[str, Any], text: str
+) -> bool:
+    """Defer long fast replies to the complete, retry-safe worker sender."""
+    max_chars = max(400, int(config.get("max_reply_chars", 1200)))
+    return len(str(text or "").strip()) > max_chars
 
 
 def immediate_task_route(
@@ -6272,8 +6295,7 @@ def run_codex(
     )
     if not result["ok"]:
         return "NO_REPLY"
-    response = str(result.get("message") or "").strip()
-    return response[: int(config.get("max_reply_chars", 1200))]
+    return str(result.get("message") or "").strip()
 
 
 def agent_backend_config(config: dict[str, Any], backend: str) -> dict[str, Any]:
@@ -7143,7 +7165,11 @@ def enqueue_deferred_reply(
         "chat": config["chat_name"],
         "session_scope": agent_session_chat_name(config),
         "request": "Deferred fast WeChat reply; send stored result only, do not rerun backend work.",
-        "status": "send_deferred_locked",
+        "status": (
+            "send_deferred_artifact"
+            if reason == "long_response_delivery"
+            else "send_deferred_locked"
+        ),
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "completed_at": datetime.now().isoformat(timespec="seconds"),
         "last_send_attempt_at": datetime.now().isoformat(timespec="seconds"),
@@ -7192,7 +7218,7 @@ def enqueue_deferred_reply(
         action="deferred_fast_reply_enqueue",
         direction="internal",
         message=reply_text,
-        status="send_deferred_locked",
+        status=str(task["status"]),
         db_path=Path(config.get("mirror_db", DEFAULT_DB)),
         metadata=task,
     )

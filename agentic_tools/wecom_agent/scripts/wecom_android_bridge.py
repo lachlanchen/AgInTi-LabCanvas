@@ -57,6 +57,7 @@ REMOTE_STAGING = "/sdcard/Download"
 MAX_API_BODY = 2 * 1024 * 1024
 MAX_MENTIONS = 4
 MAX_RECOVERY_HISTORY_PAGES = 40
+DEFAULT_TEXT_CHUNK_CHARS = 1600
 # WeCom exposes the same rich mention span with or without a literal leading
 # `@` depending on keyboard/composer state.
 MENTION_TOKEN_RE = re.compile(r"@?\ufff3[^\ufff0]+\ufff0")
@@ -421,6 +422,64 @@ def text_component_value_hash(message: str, mentions: list[str]) -> str:
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
+
+
+def chunk_text_for_delivery(text: str, max_chars: int | None = None) -> list[str]:
+    """Split a message at readable boundaries without losing its content."""
+    value = str(text or "").strip()
+    if not value:
+        return []
+    limit = max(
+        240,
+        int(
+            max_chars
+            or os.environ.get(
+                "WECOM_ANDROID_TEXT_CHUNK_CHARS",
+                str(DEFAULT_TEXT_CHUNK_CHARS),
+            )
+        ),
+    )
+    if len(value) <= limit:
+        return [value]
+
+    body_limit = max(200, limit - 16)
+    raw_parts: list[str] = []
+    remainder = value
+    while len(remainder) > body_limit:
+        floor = max(1, int(body_limit * 0.55))
+        cut = -1
+        for marker in (
+            "\n\n",
+            "\n",
+            "。",
+            "！",
+            "？",
+            ". ",
+            "! ",
+            "? ",
+            "；",
+            "; ",
+            "，",
+            ", ",
+        ):
+            candidate = remainder.rfind(marker, floor, body_limit + 1)
+            if candidate >= floor:
+                cut = max(cut, candidate + len(marker))
+        if cut < floor:
+            cut = body_limit
+        part = remainder[:cut].strip()
+        if part:
+            raw_parts.append(part)
+        remainder = remainder[cut:].strip()
+    if remainder:
+        raw_parts.append(remainder)
+    if len(raw_parts) <= 1:
+        return raw_parts or [value]
+    total = len(raw_parts)
+    return [
+        f"[{index}/{total}]\n{part}"
+        for index, part in enumerate(raw_parts, start=1)
+    ]
 
 
 def recoverable_native_mention_error(exc: BaseException) -> bool:
@@ -1826,6 +1885,73 @@ class AndroidBridge:
             )
 
     def send_text_locked(
+        self,
+        chat: str,
+        text: str,
+        *,
+        task_id: str,
+        mentions: list[str] | None = None,
+    ) -> dict[str, Any]:
+        exact_mentions = validate_mentions(mentions or [])
+        value_hash = text_component_value_hash(text, exact_mentions)
+        key = self.component_key(task_id, chat, "text", value_hash)
+        if self.component_sent(key):
+            sent_at = str(self.component_record(key).get("updated_at") or "")
+            return {
+                "ok": True,
+                "duplicate": True,
+                "sent_messages": [text],
+                "sent_message_times": {text: sent_at} if sent_at else {},
+                "sent_files": [],
+                "mentioned_users": exact_mentions,
+            }
+
+        parts = chunk_text_for_delivery(text)
+        if len(parts) <= 1:
+            return self._send_text_chunk_locked(
+                chat,
+                text,
+                task_id=task_id,
+                mentions=exact_mentions,
+            )
+
+        mentioned_users: list[str] = []
+        for index, part in enumerate(parts, start=1):
+            result = self._send_text_chunk_locked(
+                chat,
+                part,
+                task_id=f"{task_id}:part:{index}-of-{len(parts)}",
+                mentions=exact_mentions if index == 1 else [],
+            )
+            for name in result.get("mentioned_users") or []:
+                if name not in mentioned_users:
+                    mentioned_users.append(name)
+
+        self.mark_component(
+            key,
+            task_id=task_id,
+            chat=chat,
+            kind="text",
+            value_hash=value_hash,
+            status="sent",
+            details={
+                "mentioned_users": mentioned_users,
+                "part_count": len(parts),
+                "delivery_strategy": "numbered_parts",
+            },
+        )
+        sent_at = str(self.component_record(key).get("updated_at") or "")
+        return {
+            "ok": True,
+            "sent_messages": [text],
+            "sent_message_times": {text: sent_at} if sent_at else {},
+            "sent_files": [],
+            "mentioned_users": mentioned_users,
+            "errors": [],
+            "part_count": len(parts),
+        }
+
+    def _send_text_chunk_locked(
         self,
         chat: str,
         text: str,

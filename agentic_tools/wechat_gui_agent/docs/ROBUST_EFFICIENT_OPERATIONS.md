@@ -578,6 +578,28 @@ The stable interface and recovery commands are documented in
   confirmation surfaces back to the exact chat composer, and submit only the
   ledger-confirmed pending components. A partial response must not cause a
   whole-batch retry or duplicate a PDF already visible in chat.
+- Never truncate an agent result before transport delivery. Sanitizers remove
+  backend diagnostics but preserve the complete answer. A reply that fits in
+  one message stays unchanged; a moderate reply is split at paragraph or
+  sentence boundaries into at most three numbered, retry-safe parts. If it
+  would require more than three parts, save the complete Markdown under the
+  exact task artifact directory, compile `complete-response.pdf`, send that PDF
+  once, and keep only a concise contextual preview in chat. The PDF is a
+  transport-preservation fallback, not permission to generate unsolicited
+  research reports or expose Markdown source files.
+- Track every numbered text part as its own delivery component. Personal
+  WeChat stores part hashes in the durable task; WeCom GUI and Android relays
+  use stable component/task keys and mention the intended member only in the
+  first part. A retry sends only missing parts. If PDF compilation fails, keep
+  and send every numbered text part rather than clipping the answer. If a
+  backend itself returns an explicit `[truncated]` or `[已截断]` marker, the
+  completion audit requests one corrective full-answer turn before delivery.
+- Tune the shared policy only when a transport changes: use
+  `WECHAT_WORKER_CHAT_PART_CHARS` (default `1200`) and
+  `WECHAT_WORKER_CHAT_MAX_PARTS` (default `3`). Native Android composition may
+  additionally use `WECOM_ANDROID_TEXT_CHUNK_CHARS` (default `1600`), while the
+  legacy visible WeChat relay uses `WECHAT_GUI_MESSAGE_PART_CHARS` (default
+  `1200`).
 - For a mixed artifact-and-text result, send all artifacts before completion
   text. Native mention selection is a best-effort notification layer and must
   not be allowed to disturb the exact chat before required files reach it.

@@ -750,6 +750,24 @@ Current exact-chat active task, if any:
     if reply_mode not in {"reply", "ack_then_work"}:
         reply_mode = "ack_then_work" if worker_needed else "reply"
     ack = sanitize_chat_response(payload.get("ack"))
+    long_response_deferred = False
+    deferred_response = ""
+    direct_reply_limit = max(
+        400,
+        int(os.environ.get("WECOM_DIRECT_REPLY_MAX_CHARS", "1800")),
+    )
+    if not worker_needed and len(response) > direct_reply_limit:
+        # Preserve the complete answer by moving delivery to the shared worker.
+        # The worker will send coherent parts or compile a PDF; the router text
+        # is never clipped at this boundary.
+        deferred_response = response
+        worker_needed = True
+        long_response_deferred = True
+        reply_mode = "ack_then_work"
+        if route_kind == "chat_only":
+            route_kind = "other_worker"
+        response = ""
+        ack = ack or "这条回复较长，我会整理完整后发回来。"
     active_task_relation = str(
         payload.get("active_task_relation") or "independent"
     ).strip().casefold()
@@ -806,6 +824,8 @@ Current exact-chat active task, if any:
         "inspiration_interest_mode": inspiration_interest_mode,
         "report_required": report_required,
         "external_fact_grounding_required": external_fact_grounding_required,
+        "long_response_deferred": long_response_deferred,
+        "deferred_response": deferred_response if long_response_deferred else "",
         "message_role": message_role,
         "reply_mode": reply_mode,
         "active_task_relation": active_task_relation,
@@ -1309,6 +1329,36 @@ def build_task(
             .resolve()
         ),
     }
+    deferred_response = str(route.get("deferred_response") or "").strip()
+    if bool(route.get("long_response_deferred")) and deferred_response:
+        task.update(
+            {
+                "status": "send_deferred_artifact",
+                "completed_at": now.isoformat(timespec="seconds"),
+                "last_send_attempt_at": now.isoformat(timespec="seconds"),
+                "send_expires_at": (
+                    now
+                    + timedelta(
+                        seconds=int(
+                            os.environ.get(
+                                "WECOM_DEFERRED_SEND_TTL_SECONDS",
+                                "3600",
+                            )
+                        )
+                    )
+                ).isoformat(timespec="seconds"),
+                "send_deferred_reason": "long_response_delivery",
+                "result": {
+                    "message": deferred_response,
+                    "confirmation": "",
+                    "files": [],
+                    "raw": deferred_response,
+                    "data": {
+                        "long_response_delivery_pending": True,
+                    },
+                },
+            }
+        )
     ensure_task_routine_contract(task)
     return task
 
@@ -1665,11 +1715,13 @@ def current_message_explicitly_publishes(text: str) -> bool:
     return action and platform
 
 
-def sanitize_chat_response(value: Any, max_chars: int = 1800) -> str:
+def sanitize_chat_response(value: Any, max_chars: int | None = None) -> str:
     text = str(value or "").strip()
     if not text or re.fullmatch(r"no[\s_-]*reply(?:\s*[:：].*)?", text, re.I | re.S):
         return ""
-    return text if len(text) <= max_chars else text[: max_chars - 12].rstrip() + "\n...[truncated]"
+    # Length belongs to the transport-aware delivery layer. Keeping the full
+    # response here allows that layer to split it or compile a PDF losslessly.
+    return text
 
 
 def safe_slug(value: str, *, max_len: int = 64) -> str:

@@ -153,6 +153,15 @@ PDF companions, for example `YYYY-MM-DD-career-strategy.zh.pdf` and
 `YYYY-MM-DD-career-strategy.en.pdf`. General worker Markdown-to-PDF companions
 are opt-in with `WECHAT_MARKDOWN_PDF_COMPANIONS=1`.
 
+Long-response preservation is separate from those content defaults. The worker
+never clips an answer: it sends a moderate answer as at most three coherent,
+numbered, retry-safe chat parts. If more parts would be required, it keeps the
+complete Markdown in the ignored exact-task artifact directory and sends one
+compiled `complete-response.pdf` with a concise chat preview. A failed PDF
+compile falls back to all numbered parts, not a truncated prefix. Configure the
+boundary with `WECHAT_WORKER_CHAT_PART_CHARS` and
+`WECHAT_WORKER_CHAT_MAX_PARTS`.
+
 For source-reading chats, the preferred WeChat output is a short, grounded
 message. `鏈接` should try to read links/channel videos/articles and state the
 real accessible evidence. `写作 外语 挣钱` should turn shared material into

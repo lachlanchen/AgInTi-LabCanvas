@@ -362,34 +362,86 @@ def clean_response(response: str, max_chars: int) -> str:
         text = text.strip("`").strip()
     if is_no_reply_control(text):
         return ""
-    if len(text) > max_chars:
-        text = text[: max_chars - 20].rstrip() + "\n...[truncated]"
     return text
 
 
 def send_current_chat(env: dict[str, str], window: Any, message: str, output_dir: Path, prefix: str) -> Path:
-    focus(env, window)
-    run_gui(
-        [
-            "xdotool",
-            "mousemove",
-            str(window.x + int(window.width * 0.66)),
-            str(window.y + window.height - 90),
-            "click",
-            "1",
-        ],
-        env=env,
+    parts = split_chat_text(
+        message,
+        max_chars=max(400, int(os.environ.get("WECHAT_GUI_MESSAGE_PART_CHARS", "1200"))),
     )
-    time.sleep(0.4)
-    paste_text(env, message)
-    time.sleep(0.4)
-    composed = output_dir / f"{prefix}-composed.png"
-    run_gui(["import", "-window", "root", str(composed)], env=env, check=False)
-    run_gui(["xdotool", "key", "Return"], env=env)
-    time.sleep(1.0)
     sent = output_dir / f"{prefix}-sent.png"
-    run_gui(["import", "-window", "root", str(sent)], env=env, check=False)
+    for index, part in enumerate(parts, start=1):
+        focus(env, window)
+        run_gui(
+            [
+                "xdotool",
+                "mousemove",
+                str(window.x + int(window.width * 0.66)),
+                str(window.y + window.height - 90),
+                "click",
+                "1",
+            ],
+            env=env,
+        )
+        time.sleep(0.4)
+        paste_text(env, part)
+        time.sleep(0.4)
+        suffix = f"-{index}" if len(parts) > 1 else ""
+        composed = output_dir / f"{prefix}{suffix}-composed.png"
+        run_gui(["import", "-window", "root", str(composed)], env=env, check=False)
+        run_gui(["xdotool", "key", "Return"], env=env)
+        time.sleep(1.0)
+        sent = output_dir / f"{prefix}{suffix}-sent.png"
+        run_gui(["import", "-window", "root", str(sent)], env=env, check=False)
     return sent
+
+
+def split_chat_text(text: str, *, max_chars: int) -> list[str]:
+    value = str(text or "").strip()
+    if not value:
+        return []
+    limit = max(240, int(max_chars))
+    if len(value) <= limit:
+        return [value]
+    body_limit = max(200, limit - 16)
+    raw_parts: list[str] = []
+    remainder = value
+    while len(remainder) > body_limit:
+        floor = max(1, int(body_limit * 0.55))
+        cut = -1
+        for marker in (
+            "\n\n",
+            "\n",
+            "。",
+            "！",
+            "？",
+            ". ",
+            "! ",
+            "? ",
+            "；",
+            "; ",
+            "，",
+            ", ",
+        ):
+            candidate = remainder.rfind(marker, floor, body_limit + 1)
+            if candidate >= floor:
+                cut = max(cut, candidate + len(marker))
+        if cut < floor:
+            cut = body_limit
+        part = remainder[:cut].strip()
+        if part:
+            raw_parts.append(part)
+        remainder = remainder[cut:].strip()
+    if remainder:
+        raw_parts.append(remainder)
+    if len(raw_parts) <= 1:
+        return raw_parts or [value]
+    total = len(raw_parts)
+    return [
+        f"[{index}/{total}]\n{part}"
+        for index, part in enumerate(raw_parts, start=1)
+    ]
 
 
 def send_file_current_chat(env: dict[str, str], window: Any, file_path: Path, output_dir: Path, prefix: str) -> Path:

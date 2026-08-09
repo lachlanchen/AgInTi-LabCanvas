@@ -23,6 +23,12 @@ NEGATED_PDF_RE = re.compile(
     re.I | re.S,
 )
 PDF_REQUEST_RE = re.compile(r"(?:\bpdf\b|\.pdf\b|PDF)", re.I)
+TRUNCATED_RESULT_RE = re.compile(
+    r"(?:\.\.\.|…)?\s*\[(?:truncated|已截断|已截斷)\]\s*$|"
+    r"(?:response|answer|output|回复|回答|内容|內容).{0,24}"
+    r"(?:was\s+truncated|is\s+truncated|已截断|已截斷)\s*$",
+    re.I | re.S,
+)
 PUBLISH_CONFIRMATION_REQUIREMENT_RE = re.compile(
     r"(?:publish|publication|public_publish|waiting_confirmation|"
     r"发布|發佈|公开|公開).{0,80}"
@@ -341,6 +347,22 @@ def deterministic_missing_requirements(
             {
                 "item_id": first_pdf_item_id(items),
                 "requirement": "Provide a direct human answer or concise report summary with the PDF.",
+                "kind": "reply",
+            }
+        )
+    candidate_text = "\n\n".join(
+        str(result.get(field) or "").strip()
+        for field in ("message", "confirmation")
+        if str(result.get(field) or "").strip()
+    )
+    if candidate_text and TRUNCATED_RESULT_RE.search(candidate_text):
+        missing.append(
+            {
+                "item_id": str(items[0].get("item_id") or "source") if items else "source",
+                "requirement": (
+                    "Return the complete answer. The candidate ended with an explicit "
+                    "truncation marker; do not send only the clipped prefix."
+                ),
                 "kind": "reply",
             }
         )

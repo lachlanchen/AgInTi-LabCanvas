@@ -106,6 +106,8 @@ DEFAULT_TRANSPORT_RECOVERY_MAX_ATTEMPTS = 2
 DEFAULT_TRANSIENT_SEND_MAX_RETRIES = 2
 DEFAULT_VERIFIED_PUBLISH_SEND_MAX_RETRIES = 3
 DEFAULT_SEND_FAILURE_HISTORY_LIMIT = 20
+DEFAULT_CHAT_MESSAGE_PART_CHARS = 1200
+DEFAULT_CHAT_MESSAGE_MAX_PARTS = 3
 DEFAULT_GENERATED_VIDEO_POLL_BACKOFF_SECONDS = 5 * 60
 DEFAULT_GENERATED_VIDEO_WATCH_POLLS_PER_CYCLE = 1
 DEFAULT_GENERATED_VIDEO_LAZYEDIT_TIMEOUT_SECONDS = 6 * 60 * 60
@@ -1965,6 +1967,7 @@ def send_result_with_retries(
 ) -> list[str]:
     if task is not None:
         enforce_worker_result_response_policy(task, result)
+        prepare_long_response_delivery(task, result)
     attempts = max(1, int(os.environ.get("WECHAT_WORKER_SEND_RETRIES", "2")))
     delay = max(0.0, float(os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY", "1.5")))
     errors: list[str] = []
@@ -2129,12 +2132,244 @@ def send_result_once(
 
     if require_file_delivery:
         send_files()
-    if message:
-        send_message(message, target_chat, send_targets, target=target)
-    if confirmation:
-        send_message(confirmation, target_chat, send_targets, target=target)
+    send_result_text_parts(
+        message,
+        field="message",
+        task=task,
+        target_chat=target_chat,
+        send_targets=send_targets,
+        target=target,
+    )
+    send_result_text_parts(
+        confirmation,
+        field="confirmation",
+        task=task,
+        target_chat=target_chat,
+        send_targets=send_targets,
+        target=target,
+    )
     if not require_file_delivery:
         send_files()
+
+
+def send_result_text_parts(
+    text: str,
+    *,
+    field: str,
+    task: dict[str, Any] | None,
+    target_chat: str,
+    send_targets: Path,
+    target: dict[str, Any] | None,
+) -> None:
+    """Send a complete message in bounded, retry-safe chat components."""
+    if not str(text or "").strip():
+        return
+    sent_hashes = {
+        str(value)
+        for value in (task or {}).get("sent_message_part_hashes") or []
+        if str(value)
+    }
+    for part in split_chat_message(text):
+        fingerprint = hashlib.sha256(
+            f"{field}\0{part}".encode("utf-8")
+        ).hexdigest()[:24]
+        if fingerprint in sent_hashes:
+            continue
+        send_message(part, target_chat, send_targets, target=target)
+        sent_hashes.add(fingerprint)
+        if task is not None:
+            task["sent_message_part_hashes"] = sorted(sent_hashes)
+            persist_task_progress(task)
+
+
+def split_chat_message(text: str, *, max_chars: int | None = None) -> list[str]:
+    """Split text at readable boundaries without dropping any non-space text."""
+    value = str(text or "").strip()
+    if not value:
+        return []
+    limit = max(
+        240,
+        int(
+            max_chars
+            or os.environ.get(
+                "WECHAT_WORKER_CHAT_PART_CHARS",
+                str(DEFAULT_CHAT_MESSAGE_PART_CHARS),
+            )
+        ),
+    )
+    if len(value) <= limit:
+        return [value]
+
+    # Reserve room for a stable [n/N] marker before choosing boundaries.
+    body_limit = max(200, limit - 16)
+    raw_parts: list[str] = []
+    remainder = value
+    while len(remainder) > body_limit:
+        floor = max(1, int(body_limit * 0.55))
+        cut = -1
+        for marker in ("\n\n", "\n", "。", "！", "？", ". ", "! ", "? ", "；", "; ", "，", ", "):
+            candidate = remainder.rfind(marker, floor, body_limit + 1)
+            if candidate >= floor:
+                candidate += len(marker)
+                cut = max(cut, candidate)
+        if cut < floor:
+            cut = body_limit
+        part = remainder[:cut].strip()
+        if part:
+            raw_parts.append(part)
+        remainder = remainder[cut:].strip()
+    if remainder:
+        raw_parts.append(remainder)
+    if len(raw_parts) <= 1:
+        return raw_parts or [value]
+    total = len(raw_parts)
+    return [f"[{index}/{total}]\n{part}" for index, part in enumerate(raw_parts, start=1)]
+
+
+def prepare_long_response_delivery(
+    task: dict[str, Any], result: dict[str, Any]
+) -> dict[str, Any]:
+    """Convert chat-spamming answers into one verified full-response PDF.
+
+    Short and moderately long answers remain text and are split at send time.
+    The source answer is never clipped. When more than the configured number of
+    chat parts would be needed, the complete answer is compiled and the chat
+    receives a concise preview plus the PDF.
+    """
+    if result_is_no_reply(result):
+        return result
+    message = str(result.get("message") or "").strip()
+    confirmation = str(result.get("confirmation") or "").strip()
+    fields = [value for value in (message, confirmation) if value]
+    if not fields:
+        return result
+
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    existing = (
+        data.get("long_response_delivery")
+        if isinstance(data.get("long_response_delivery"), dict)
+        else {}
+    )
+    if str(existing.get("status") or "") == "compiled":
+        return result
+
+    part_limit = max(
+        240,
+        int(
+            os.environ.get(
+                "WECHAT_WORKER_CHAT_PART_CHARS",
+                str(DEFAULT_CHAT_MESSAGE_PART_CHARS),
+            )
+        ),
+    )
+    max_parts = max(
+        1,
+        int(
+            os.environ.get(
+                "WECHAT_WORKER_CHAT_MAX_PARTS",
+                str(DEFAULT_CHAT_MESSAGE_MAX_PARTS),
+            )
+        ),
+    )
+    required_parts = sum(
+        len(split_chat_message(value, max_chars=part_limit)) for value in fields
+    )
+    if required_parts <= max_parts:
+        if required_parts > len(fields):
+            delivery = {
+                "status": "parts",
+                "part_count": required_parts,
+                "part_chars": part_limit,
+                "complete_text_preserved": True,
+            }
+            data = {**data, "long_response_delivery": delivery}
+            result["data"] = data
+            task["long_response_delivery"] = delivery
+            persist_task_progress(task)
+        return result
+
+    artifact_dir = Path(
+        str(task.get("artifact_dir") or worker_artifact_dir(task))
+    ).expanduser().resolve()
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    markdown_path = artifact_dir / "complete-response.md"
+    pdf_path = artifact_dir / "complete-response.pdf"
+    cjk = bool(re.search(r"[\u3400-\u9fff]", "\n".join(fields)))
+    title = "完整回复" if cjk else "Complete Response"
+    sections = [f"# {title}", "", message]
+    if confirmation:
+        sections.extend(
+            [
+                "",
+                "## 需要确认" if cjk else "## Confirmation",
+                "",
+                confirmation,
+            ]
+        )
+    markdown_path.write_text("\n".join(sections).rstrip() + "\n", encoding="utf-8")
+    compiled = render_markdown_pdf(markdown_path, pdf_path)
+    if compiled is None or not compiled.is_file() or compiled.stat().st_size <= 0:
+        delivery = {
+            "status": "pdf_compile_failed_parts_preserved",
+            "part_count": required_parts,
+            "part_chars": part_limit,
+            "complete_text_preserved": True,
+        }
+        data = {**data, "long_response_delivery": delivery}
+        result["data"] = data
+        task["long_response_delivery"] = delivery
+        persist_task_progress(task)
+        return result
+
+    preview = long_response_chat_preview(message, max_chars=min(640, part_limit - 100))
+    notice = (
+        "完整内容较长，已附上 PDF。"
+        if cjk
+        else "The complete response is attached as a PDF because it is too long for one reliable chat delivery."
+    )
+    result["message"] = "\n\n".join(value for value in (preview, notice) if value)
+    if confirmation and len(confirmation) > part_limit:
+        result["confirmation"] = (
+            "需要确认的完整说明在 PDF 末尾，请按其中的问题回复。"
+            if cjk
+            else "The full confirmation details are at the end of the PDF; please reply to the question there."
+        )
+    result["files"] = unique_strings(
+        [*(str(value) for value in result.get("files") or []), str(pdf_path)]
+    )
+    delivery = {
+        "status": "compiled",
+        "strategy": "pdf",
+        "original_chars": sum(len(value) for value in fields),
+        "estimated_chat_parts": required_parts,
+        "source_markdown": str(markdown_path),
+        "pdf": str(pdf_path),
+        "complete_text_preserved": True,
+    }
+    data = {
+        **data,
+        "require_file_delivery": True,
+        "long_response_delivery": delivery,
+    }
+    result["data"] = data
+    task["long_response_delivery"] = delivery
+    persist_task_progress(task)
+    return result
+
+
+def long_response_chat_preview(text: str, *, max_chars: int) -> str:
+    value = str(text or "").strip()
+    if len(value) <= max_chars:
+        return value
+    floor = max(80, int(max_chars * 0.55))
+    cut = -1
+    for marker in ("\n\n", "\n", "。", "！", "？", ". ", "! ", "? "):
+        candidate = value.rfind(marker, floor, max_chars + 1)
+        if candidate >= floor:
+            cut = max(cut, candidate + len(marker))
+    if cut < floor:
+        cut = max_chars
+    return value[:cut].rstrip() + "…"
 
 
 def task_transport_kind(task: dict[str, Any]) -> str:
@@ -15292,8 +15527,15 @@ NOISY_BACKEND_LINE_PATTERNS = (
 )
 
 
-def sanitize_worker_chat_message(text: str, *, max_chars: int = 1200) -> str:
-    """Return a compact human-facing message from unstructured backend text."""
+def sanitize_worker_chat_message(
+    text: str, *, max_chars: int | None = None
+) -> str:
+    """Remove backend logs while preserving the complete human-facing text.
+
+    ``max_chars`` remains accepted for older callers, but length management now
+    belongs to the retry-safe delivery layer. Sanitization must never destroy
+    answer content before that layer can split it or compile a PDF.
+    """
     raw = str(text or "").strip()
     if not raw:
         return ""
@@ -15317,8 +15559,6 @@ def sanitize_worker_chat_message(text: str, *, max_chars: int = 1200) -> str:
     message = "\n".join(kept).strip()
     if is_no_reply_control(message):
         return ""
-    if len(message) > max_chars:
-        message = message[: max_chars - 18].rstrip() + "\n...[已截断]"
     return message
 
 

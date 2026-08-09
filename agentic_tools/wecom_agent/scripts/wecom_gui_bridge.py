@@ -2715,7 +2715,47 @@ def chunk_text(text: str, max_chars: int) -> list[str]:
     value = str(text or "").strip()
     if not value:
         return []
-    return [value[index : index + max_chars] for index in range(0, len(value), max_chars)]
+    limit = max(240, int(max_chars))
+    if len(value) <= limit:
+        return [value]
+    body_limit = max(200, limit - 16)
+    raw_parts: list[str] = []
+    remainder = value
+    while len(remainder) > body_limit:
+        floor = max(1, int(body_limit * 0.55))
+        cut = -1
+        for marker in (
+            "\n\n",
+            "\n",
+            "。",
+            "！",
+            "？",
+            ". ",
+            "! ",
+            "? ",
+            "；",
+            "; ",
+            "，",
+            ", ",
+        ):
+            candidate = remainder.rfind(marker, floor, body_limit + 1)
+            if candidate >= floor:
+                cut = max(cut, candidate + len(marker))
+        if cut < floor:
+            cut = body_limit
+        part = remainder[:cut].strip()
+        if part:
+            raw_parts.append(part)
+        remainder = remainder[cut:].strip()
+    if remainder:
+        raw_parts.append(remainder)
+    if len(raw_parts) <= 1:
+        return raw_parts or [value]
+    total = len(raw_parts)
+    return [
+        f"[{index}/{total}]\n{part}"
+        for index, part in enumerate(raw_parts, start=1)
+    ]
 
 
 def parse_shell_values(text: str) -> dict[str, str]:

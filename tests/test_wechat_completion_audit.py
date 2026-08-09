@@ -238,6 +238,21 @@ class WeChatCompletionAuditTests(unittest.TestCase):
         self.assertEqual([item["kind"] for item in no_answer], ["reply"])
         self.assertEqual(complete, [])
 
+    def test_explicit_truncation_marker_requires_complete_repair(self) -> None:
+        task = {
+            "id": "plain-long-1",
+            "original_request": "请完整回答这个问题。",
+            "source": {"local_id": 1},
+        }
+
+        missing = audit.deterministic_missing_requirements(
+            task,
+            {"message": "回答只有开头。\n...[已截断]", "files": []},
+        )
+
+        self.assertTrue(any(item["kind"] == "reply" for item in missing))
+        self.assertTrue(any("complete answer" in item["requirement"] for item in missing))
+
     def test_checker_marks_an_undecided_numbered_message_missing(self) -> None:
         def runner(_prompt: str, **_kwargs: object) -> dict:
             return {

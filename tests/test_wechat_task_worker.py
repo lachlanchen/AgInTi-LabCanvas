@@ -8236,6 +8236,119 @@ stderr: noisy internal trace
         self.assertEqual(errors, [])
         self.assertEqual(len(calls), 2)
 
+    def test_worker_sanitizer_preserves_complete_long_answer(self) -> None:
+        worker = load_worker()
+        answer = "完整回答。" * 600
+
+        cleaned = worker.sanitize_worker_chat_message(answer, max_chars=1200)
+
+        self.assertEqual(cleaned, answer)
+        self.assertNotIn("已截断", cleaned)
+
+    def test_chat_message_split_is_numbered_and_lossless(self) -> None:
+        worker = load_worker()
+        answer = "".join(f"句子{index:03d}。" for index in range(120))
+
+        parts = worker.split_chat_message(answer, max_chars=240)
+
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(all(len(part) <= 240 for part in parts))
+        bodies = [part.split("\n", 1)[1] for part in parts]
+        self.assertEqual("".join(bodies), answer)
+        self.assertTrue(parts[0].startswith(f"[1/{len(parts)}]\n"))
+
+    def test_chat_message_parts_are_retry_safe(self) -> None:
+        worker = load_worker()
+        task: dict[str, object] = {}
+        answer = "".join(f"段落{index:03d}。" for index in range(300))
+        sent: list[str] = []
+        original_send = worker.send_message
+        try:
+            worker.send_message = lambda message, *_args, **_kwargs: sent.append(message)
+            worker.send_result_text_parts(
+                answer,
+                field="message",
+                task=task,
+                target_chat="EchoMind",
+                send_targets=Path("/tmp/no-targets.json"),
+                target={"name": "EchoMind"},
+            )
+            first_count = len(sent)
+            worker.send_result_text_parts(
+                answer,
+                field="message",
+                task=task,
+                target_chat="EchoMind",
+                send_targets=Path("/tmp/no-targets.json"),
+                target={"name": "EchoMind"},
+            )
+        finally:
+            worker.send_message = original_send
+
+        self.assertGreater(first_count, 1)
+        self.assertEqual(len(sent), first_count)
+        self.assertEqual(len(task["sent_message_part_hashes"]), first_count)
+
+    def test_very_long_answer_becomes_complete_pdf_delivery(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            task: dict[str, object] = {
+                "id": "long-answer-1",
+                "chat": "LabAgent",
+                "artifact_dir": str(artifact_dir),
+            }
+            answer = "完整的研究说明。" * 1000
+            result: dict[str, object] = {
+                "message": answer,
+                "confirmation": "",
+                "files": [],
+            }
+
+            def fake_render(source: Path, output: Path) -> Path:
+                self.assertIn(answer, source.read_text(encoding="utf-8"))
+                output.write_bytes(b"%PDF-1.4\ncomplete")
+                return output
+
+            with mock.patch.object(worker, "render_markdown_pdf", side_effect=fake_render):
+                worker.prepare_long_response_delivery(task, result)
+
+            pdf = artifact_dir / "complete-response.pdf"
+            markdown = artifact_dir / "complete-response.md"
+            self.assertTrue(pdf.is_file())
+            self.assertIn(answer, markdown.read_text(encoding="utf-8"))
+            self.assertEqual(result["files"], [str(pdf)])
+            self.assertTrue(result["data"]["require_file_delivery"])
+            self.assertEqual(
+                result["data"]["long_response_delivery"]["status"],
+                "compiled",
+            )
+            self.assertNotIn("已截断", str(result["message"]))
+
+    def test_pdf_compile_failure_keeps_all_numbered_text(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            task: dict[str, object] = {
+                "id": "long-answer-2",
+                "chat": "LabAgent",
+                "artifact_dir": tmp,
+            }
+            answer = "不能丢失的内容。" * 1000
+            result: dict[str, object] = {
+                "message": answer,
+                "confirmation": "",
+                "files": [],
+            }
+            with mock.patch.object(worker, "render_markdown_pdf", return_value=None):
+                worker.prepare_long_response_delivery(task, result)
+
+        self.assertEqual(result["message"], answer)
+        self.assertEqual(result["files"], [])
+        self.assertEqual(
+            result["data"]["long_response_delivery"]["status"],
+            "pdf_compile_failed_parts_preserved",
+        )
+
     def test_send_result_defers_immediately_when_wechat_locked(self) -> None:
         worker = load_worker()
         calls = []
