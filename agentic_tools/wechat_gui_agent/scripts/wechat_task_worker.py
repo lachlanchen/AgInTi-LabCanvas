@@ -2203,6 +2203,82 @@ def record_wecom_delivery_payload(
         "pending_files": payload.get("pending_files") or [],
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
+    record_verified_wecom_delivery_history(task, payload)
+
+
+def wecom_history_db_for_task(task: dict[str, Any]) -> Path | None:
+    raw = str(task.get("wecom_history_db") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    queue_path = str(task.get("queue_path") or "").strip()
+    if not queue_path:
+        return None
+    queue = Path(queue_path).expanduser().resolve()
+    if queue.name != "wecom_task_queue.jsonl":
+        return None
+    return queue.with_name("wecom_messages.local.sqlite")
+
+
+def record_verified_wecom_delivery_history(
+    task: dict[str, Any], payload: dict[str, Any]
+) -> int:
+    """Mirror only transport-confirmed WeCom text into router context."""
+    messages = unique_strings(
+        [
+            str(value).strip()
+            for value in payload.get("sent_messages") or []
+            if str(value or "").strip()
+        ]
+    )
+    if not messages:
+        return 0
+    history_db = wecom_history_db_for_task(task)
+    chat = str(task.get("chat") or "").strip()
+    task_id = str(task.get("id") or "").strip()
+    if history_db is None or not chat.startswith("wecom:") or not task_id:
+        return 0
+    scripts = ROOT / "agentic_tools" / "wecom_agent" / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    try:
+        from wecom_ingest import record_verified_worker_outbound
+
+        sent_message_times = (
+            payload.get("sent_message_times")
+            if isinstance(payload.get("sent_message_times"), dict)
+            else {}
+        )
+        fallback_sent_at = str(
+            (task.get("wecom_delivery") or {}).get("updated_at") or ""
+        )
+        inserted = sum(
+            bool(
+                record_verified_worker_outbound(
+                    history_db,
+                    task_id=task_id,
+                    chat=chat,
+                    body=message,
+                    sent_at=str(sent_message_times.get(message) or fallback_sent_at),
+                )
+            )
+            for message in messages
+        )
+    except Exception as exc:
+        task["wecom_history_record_error"] = (
+            f"{type(exc).__name__}: {str(exc)[:500]}"
+        )
+        return 0
+    task.pop("wecom_history_record_error", None)
+    recorded = {
+        str(value)
+        for value in task.get("wecom_history_recorded_message_hashes") or []
+    }
+    recorded.update(
+        hashlib.sha256(message.encode("utf-8")).hexdigest()[:16]
+        for message in messages
+    )
+    task["wecom_history_recorded_message_hashes"] = sorted(recorded)
+    return inserted
 
 
 def query_wecom_delivery_status(

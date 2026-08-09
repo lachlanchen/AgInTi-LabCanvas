@@ -249,6 +249,41 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(status["sent_files"], [str(artifact.resolve())])
         self.assertEqual(status["pending_files"], [])
 
+    def test_delivery_status_preserves_verified_text_component_time(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            message = "Research complete."
+            value_hash = bridge.text_component_value_hash(message, [])
+            key = runtime.component_key(
+                "task-text", "LabAgent", "text", value_hash
+            )
+            runtime.mark_component(
+                key,
+                task_id="task-text",
+                chat="LabAgent",
+                kind="text",
+                value_hash=value_hash,
+                status="sent",
+            )
+            expected_sent_at = runtime.component_record(key)["updated_at"]
+
+            status = runtime.delivery_status(
+                "LabAgent", message, [], task_id="task-text"
+            )
+
+        self.assertTrue(status["complete"])
+        self.assertEqual(status["sent_messages"], [message])
+        self.assertEqual(status["sent_message_times"], {message: expected_sent_at})
+
     def test_delivery_status_deduplicates_same_file_bytes_across_tasks(self) -> None:
         bridge = load_bridge()
         with tempfile.TemporaryDirectory() as tmp:

@@ -342,6 +342,7 @@ def ingest_event(
         context,
         route,
         queue,
+        history_db=history_db,
         member_memory=memory_context,
     )
     appended = append_task_once(queue, task)
@@ -617,8 +618,10 @@ Rules:
 - Distinguish scientific discussion from instructions addressed to LabCanvas itself. A request to research a mechanism is `research_request`; feedback about how the agent should draw, use image generation, use BioRender, revise an artifact, or improve its workflow is `artifact_instruction` or `system_guidance`, not a research question.
 - When recent same-chat context contains several fragments of one instruction, use all fragments as one intent. Apply concrete guidance to the active artifact or tool workflow instead of saying that you are waiting for another person after that guidance has already arrived.
 - Never drop a visible contribution merely because another sender posted at nearly the same time. If one coherent response materially addresses related messages from multiple people, put their exact `sender_display` values in `reply_to_senders`; otherwise leave it empty and reply only to the current sender.
-- Messages clearly directed from one human to another are `peer_conversation`. Use `reply_mode=silent` when an AI response would add no value. Direct guidance, questions, and commands addressed to the agent use `reply` or `ack_then_work`.
+- Messages clearly directed from one human to another may be labeled `peer_conversation`. This requires positive conversational evidence such as an explicit human addressee or a clear person-to-person exchange; the absence of an agent mention is not evidence.
+- `peer_conversation` describes conversational context, not a fixed no-reply rule. Be more restrained in such exchanges, but still participate naturally when a concise clarification, correction, synthesis, connection, or useful next step would improve the conversation. Stay silent only when joining would be intrusive, repetitive, private, or add no real value. Decide this from the full recent context rather than a keyword, punctuation mark, fixed threshold, or mandatory template.
 - Do not infer `peer_conversation` or silence merely because a message lacks an @ mention. A concrete scientific proposal, experimental next-step question, or group-level request such as asking whether to start with a particular experiment is reply-worthy when the agent can materially clarify the design, tradeoffs, evidence, or next action. Use the same-chat context to decide whether to answer briefly or start durable work.
+- Follow-up fragments may refine a question or idea expressed in earlier messages. Read them together before deciding whether to respond, and never treat the final fragment as the whole intent.
 - A substantive user-authored analysis, hypothesis, roadmap, or research proposal shared without an explicit command is still a meaningful group contribution. Give a concise thoughtful response when the agent can test an assumption, connect it to the current discussion, or suggest a useful next step; reserve silence for casual or clearly private human-to-human chatter where the agent adds no value.
 - Use `active_task_relation=interrupt` only when this message corrects, extends, answers a pending decision for, or otherwise materially steers the exact active task shown below. This may come from a different participant, but preserve that person's authorship. Use `context_only` for relevant discussion that should be remembered without creating another worker turn. Use `independent` for a separate request.
 - Do not claim an attachment was read in the acknowledgement.
@@ -656,7 +659,7 @@ Current exact-chat active task, if any:
         prompt,
         backend=os.environ.get("WECOM_AGENT_BACKEND", "codex"),
         chat_name=canonical_chat_name(event),
-        role="route",
+        role=os.environ.get("WECOM_ROUTE_SESSION_ROLE", "route-context-v3"),
         model=model,
         reasoning_effort=effort,
         sandbox="read-only",
@@ -684,6 +687,21 @@ Current exact-chat active task, if any:
     payload = extract_json_object(str(result.get("message") or ""))
     if not isinstance(payload, dict):
         return fallback_route(event, request)
+    if (
+        not bool(payload.get("worker_needed"))
+        and not sanitize_chat_response(payload.get("response"))
+        and str(payload.get("message_role") or "").strip().casefold()
+        == "peer_conversation"
+        and str(payload.get("reply_mode") or "").strip().casefold() == "silent"
+    ):
+        review = review_peer_conversation_route(
+            event,
+            request,
+            context,
+            active_task=active_task,
+        )
+        if review is not None:
+            payload = {**payload, **review}
     route_kind = str(payload.get("route_kind") or "other_worker")
     if route_kind not in ROUTE_KINDS:
         route_kind = "other_worker"
@@ -715,6 +733,7 @@ Current exact-chat active task, if any:
     ).strip().casefold()
     if reply_mode not in {"reply", "ack_then_work", "silent"}:
         reply_mode = "ack_then_work" if worker_needed else "reply"
+    ack = sanitize_chat_response(payload.get("ack"))
     active_task_relation = str(
         payload.get("active_task_relation") or "independent"
     ).strip().casefold()
@@ -760,7 +779,7 @@ Current exact-chat active task, if any:
         "route_kind": route_kind,
         "response": response,
         "task": task_text,
-        "ack": sanitize_chat_response(payload.get("ack")),
+        "ack": ack,
         "daily_topic": daily_topic,
         "inspiration_interest": inspiration_interest,
         "inspiration_interest_mode": inspiration_interest_mode,
@@ -777,6 +796,93 @@ Current exact-chat active task, if any:
         "memory_items": normalize_memory_items(payload.get("memory_items")),
         "public_publish_allowed": False,
     }
+
+
+def review_peer_conversation_route(
+    event: dict[str, Any],
+    request: str,
+    context: list[dict[str, Any]],
+    *,
+    active_task: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Give an ambiguous silent peer classification an independent agent review."""
+    prompt = f"""You are the second-pass conversation judgment for a WeCom research group.
+The first router tentatively labeled the current message as peer conversation and chose silence. Review that decision from the full context. Do not automatically preserve it and do not automatically force a reply.
+
+Act like a thoughtful, restrained human collaborator:
+- Peer conversation is context, not a no-reply rule.
+- Participate when a concise clarification, synthesis, correction, connection, or next step would materially improve the discussion.
+- Be restrained when people are talking to each other: avoid dominating, repeating, answering every fragment, or inserting generic acknowledgements.
+- Stay silent when joining would be intrusive, private, repetitive, already covered, or add no real value.
+- Read consecutive fragments as one developing thought. Do not judge only the final line.
+- A useful direct response should sound natural. Substantial work may be delegated to the durable worker with a short natural acknowledgement.
+- Make the decision semantically from the complete conversation. Do not use keyword rules, punctuation rules, fixed length thresholds, or a mandatory reply/no-reply template.
+
+Return one strict JSON object and no prose:
+{{
+  "worker_needed": false,
+  "route_kind": "chat_only",
+  "response": "concise natural response when replying directly, otherwise empty",
+  "task": "complete worker instruction only when worker_needed is true",
+  "ack": "short natural acknowledgement only when worker_needed is true",
+  "report_required": false,
+  "message_role": "peer_conversation|ordinary_chat|research_request|artifact_instruction|system_guidance",
+  "reply_mode": "reply|ack_then_work|silent",
+  "active_task_relation": "independent|interrupt|context_only"
+}}
+
+Current sender: {event.get('sender_display') or event.get('sender_userid') or 'unknown'}
+Current message:
+{request[:9000]}
+
+Recent same-chat context:
+{json.dumps(context[-10:], ensure_ascii=False)[:12000]}
+
+Current exact-chat active task, if any:
+{json.dumps(active_task or {}, ensure_ascii=False)[:5000]}
+"""
+    model = os.environ.get(
+        "WECOM_PEER_REVIEW_MODEL",
+        os.environ.get("WECOM_ROUTE_MODEL", "gpt-5.6-sol"),
+    )
+    effort = os.environ.get("WECOM_PEER_REVIEW_EFFORT", "medium")
+    timeout = max(5, int(os.environ.get("WECOM_PEER_REVIEW_TIMEOUT_SECONDS", "60")))
+    result = run_agent_session(
+        prompt,
+        backend=os.environ.get("WECOM_AGENT_BACKEND", "codex"),
+        chat_name=canonical_chat_name(event),
+        role=os.environ.get(
+            "WECOM_PEER_REVIEW_SESSION_ROLE",
+            "peer-context-review-v1",
+        ),
+        model=model,
+        reasoning_effort=effort,
+        sandbox="read-only",
+        timeout_seconds=timeout,
+        workdir=ROOT,
+        reuse=True,
+        backend_config={
+            "agent_fallbacks": {
+                "enabled": True,
+                "quota_fallback_model": "gpt-5.6-sol",
+                "quota_fallback_reasoning_effort": "low",
+                "fallback_to_aginti": True,
+                "fallback_on_timeout": True,
+            },
+            "aginti": {
+                "command": os.environ.get("WECOM_AGINTI_COMMAND", "aginti"),
+                "workspace": os.environ.get(
+                    "WECOM_AGINTI_WORKSPACE", "../Agent/AgInTiFlow"
+                ),
+                "timeout_seconds": 120,
+                "wrap_prompt": True,
+            },
+        },
+    )
+    if not result.get("ok"):
+        return None
+    payload = extract_json_object(str(result.get("message") or ""))
+    return payload if isinstance(payload, dict) else None
 
 
 def member_prefers_pdf_reports(memory_context: dict[str, Any] | None) -> bool:
@@ -1039,6 +1145,7 @@ def build_task(
     route: dict[str, Any],
     queue: Path,
     *,
+    history_db: Path | None = None,
     member_memory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = datetime.now()
@@ -1168,6 +1275,11 @@ def build_task(
         "member_memory": member_memory or {},
         "transport_preflight": wecom_transport_preflight(event),
         "queue_path": str(queue),
+        "wecom_history_db": str(
+            (history_db or queue.with_name("wecom_messages.local.sqlite"))
+            .expanduser()
+            .resolve()
+        ),
     }
     ensure_task_routine_contract(task)
     return task
@@ -1353,9 +1465,9 @@ def record_history_message(
     body: str,
     *,
     direction: str,
-) -> None:
+) -> bool:
     with sqlite3.connect(path) as conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT OR IGNORE INTO messages(
                 message_id, chat, direction, sender, sender_display, sender_mention,
@@ -1394,6 +1506,57 @@ def record_history_message(
                 datetime.now().isoformat(timespec="seconds"),
             ),
         )
+    return bool(cursor.rowcount)
+
+
+def record_verified_worker_outbound(
+    path: Path,
+    *,
+    task_id: str,
+    chat: str,
+    body: str,
+    sent_at: str = "",
+) -> bool:
+    """Add one transport-verified worker reply to exact-chat routing history."""
+    normalized = str(body or "").strip()
+    if not normalized:
+        return False
+    init_history_db(path)
+    message_id = "worker-reply:" + short_hash(
+        f"{str(task_id or '').strip()}\0{str(chat or '').strip()}\0{normalized}"
+    )
+    create_time = int(datetime.now().timestamp())
+    normalized_sent_at = str(sent_at or "").strip()
+    if normalized_sent_at:
+        try:
+            create_time = int(
+                datetime.fromisoformat(
+                    normalized_sent_at.replace("Z", "+00:00")
+                ).timestamp()
+            )
+        except ValueError:
+            normalized_sent_at = ""
+    inserted = record_history_message(
+        path,
+        {
+            "message_id": message_id,
+            "sender_userid": "LabAgent",
+            "sender_display": "LabAgent",
+            "sender_identity_confidence": "self",
+            "create_time": create_time,
+        },
+        str(chat or "").strip(),
+        normalized,
+        direction="outbound",
+    )
+    if normalized_sent_at:
+        with sqlite3.connect(path) as conn:
+            conn.execute(
+                "UPDATE messages SET create_time = ?, created_at = ? "
+                "WHERE message_id = ?",
+                (create_time, normalized_sent_at, message_id),
+            )
+    return inserted
 
 
 def recent_history(path: Path, chat: str, *, limit: int) -> list[dict[str, Any]]:
@@ -1401,7 +1564,9 @@ def recent_history(path: Path, chat: str, *, limit: int) -> list[dict[str, Any]]
         rows = conn.execute(
             "SELECT id, direction, sender, sender_display, sender_mention, "
             "sender_identity_confidence, sender_evidence_json, body, create_time "
-            "FROM messages WHERE chat = ? ORDER BY id DESC LIMIT ?",
+            "FROM messages WHERE chat = ? ORDER BY "
+            "COALESCE(NULLIF(create_time, 0), CAST(strftime('%s', created_at) AS INTEGER), id) "
+            "DESC, id DESC LIMIT ?",
             (chat, limit),
         ).fetchall()
     result = []

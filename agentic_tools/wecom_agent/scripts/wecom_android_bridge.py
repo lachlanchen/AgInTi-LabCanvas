@@ -1837,10 +1837,12 @@ class AndroidBridge:
         value_hash = text_component_value_hash(text, exact_mentions)
         key = self.component_key(task_id, chat, "text", value_hash)
         if self.component_sent(key):
+            sent_at = str(self.component_record(key).get("updated_at") or "")
             return {
                 "ok": True,
                 "duplicate": True,
                 "sent_messages": [text],
+                "sent_message_times": {text: sent_at} if sent_at else {},
                 "sent_files": [],
                 "mentioned_users": exact_mentions,
             }
@@ -1940,9 +1942,11 @@ class AndroidBridge:
                     status="sent",
                     details={"mentioned_users": selected_mentions},
                 )
+                sent_at = str(self.component_record(key).get("updated_at") or "")
                 return {
                     "ok": True,
                     "sent_messages": [text],
+                    "sent_message_times": {text: sent_at} if sent_at else {},
                     "sent_files": [],
                     "mentioned_users": selected_mentions,
                     "errors": [],
@@ -2329,13 +2333,21 @@ class AndroidBridge:
         exact_mentions = validate_mentions(mentions or [])
         delivery_message = strip_redundant_leading_mentions(message, exact_mentions)
         sent_messages: list[str] = []
+        sent_message_times: dict[str, str] = {}
         pending_messages: list[str] = []
         sent_files: list[str] = []
         pending_files: list[str] = []
         if delivery_message.strip():
             value_hash = text_component_value_hash(delivery_message, exact_mentions)
             key = self.component_key(task_id, chat, "text", value_hash)
-            (sent_messages if self.component_sent(key) else pending_messages).append(message)
+            record = self.component_record(key)
+            if str(record.get("status") or "") in {"sent", "deduplicated"}:
+                sent_messages.append(message)
+                sent_at = str(record.get("updated_at") or "")
+                if sent_at:
+                    sent_message_times[message] = sent_at
+            else:
+                pending_messages.append(message)
         for path in files:
             resolved = path.expanduser().resolve()
             if not resolved.is_file():
@@ -2353,6 +2365,7 @@ class AndroidBridge:
             "transport": "wecom_android",
             "chat_id": f"gui:{chat}",
             "sent_messages": sent_messages,
+            "sent_message_times": sent_message_times,
             "pending_messages": pending_messages,
             "sent_files": sent_files,
             "pending_files": pending_files,
@@ -2380,6 +2393,7 @@ class AndroidBridge:
             raise BridgeError("send requires a message and/or artifact")
         with self.serialized(timeout_seconds=60.0):
             sent_messages: list[str] = []
+            sent_message_times: dict[str, str] = {}
             sent_files: list[str] = []
             mentioned_users: list[str] = []
             errors: list[dict[str, str]] = []
@@ -2415,6 +2429,14 @@ class AndroidBridge:
                     )
                     if result.get("sent_messages"):
                         sent_messages.append(message)
+                        result_times = (
+                            result.get("sent_message_times")
+                            if isinstance(result.get("sent_message_times"), dict)
+                            else {}
+                        )
+                        sent_at = str(result_times.get(delivery_message) or "")
+                        if sent_at:
+                            sent_message_times[message] = sent_at
                     mentioned_users.extend(result.get("mentioned_users") or [])
                 except Exception as exc:
                     errors.append({"kind": "text", "error": f"{type(exc).__name__}: {str(exc)[:500]}"})
@@ -2423,6 +2445,7 @@ class AndroidBridge:
                 "transport": "wecom_android",
                 "chat_id": f"gui:{chat}",
                 "sent_messages": sent_messages,
+                "sent_message_times": sent_message_times,
                 "sent_files": sent_files,
                 "mentioned_users": unique_nonempty(mentioned_users),
                 "errors": errors,

@@ -394,6 +394,106 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("lacks an @ mention", prompts[0])
         self.assertIn("experimental next-step question", prompts[0])
 
+    def test_peer_conversation_prompt_is_restrained_not_forced_silent(self) -> None:
+        ingest = load_ingest()
+        restrained_reply = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": False,
+                    "route_kind": "chat_only",
+                    "response": "这个方向可以继续收窄成可验证的产品假设。",
+                    "task": "",
+                    "ack": "",
+                    "message_role": "peer_conversation",
+                    "reply_mode": "reply",
+                    "public_publish_allowed": False,
+                }
+            ),
+        }
+        request = "比如像味之素公司一样，让类器官生产什么，思考，计算，传感"
+        prompts: list[str] = []
+
+        def fake_agent(prompt: str, **_kwargs: object) -> dict[str, object]:
+            prompts.append(prompt)
+            return restrained_reply
+
+        with mock.patch.object(ingest, "run_agent_session", side_effect=fake_agent) as agent:
+            route = ingest.route_event(
+                self.sample_event(text=request),
+                request,
+                [{"sender_display": "陈苗", "content": "类器官服务其他行业。"}],
+            )
+
+        self.assertFalse(route["worker_needed"])
+        self.assertEqual(route["message_role"], "peer_conversation")
+        self.assertEqual(route["reply_mode"], "reply")
+        self.assertTrue(route["response"])
+        self.assertIn("not a fixed no-reply rule", prompts[0])
+        self.assertIn("more restrained", prompts[0])
+        self.assertIn("full recent context", prompts[0])
+        self.assertEqual(agent.call_args.kwargs["role"], "route-context-v3")
+
+    def test_silent_peer_conversation_gets_agent_only_context_review(self) -> None:
+        ingest = load_ingest()
+        silent = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": False,
+                    "route_kind": "chat_only",
+                    "response": "",
+                    "task": "",
+                    "ack": "",
+                    "message_role": "peer_conversation",
+                    "reply_mode": "silent",
+                    "public_publish_allowed": False,
+                }
+            ),
+        }
+        reviewed = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": False,
+                    "route_kind": "chat_only",
+                    "response": "这里可以把思考、计算和传感拆成三个可验证的产品方向。",
+                    "task": "",
+                    "ack": "",
+                    "report_required": False,
+                    "message_role": "peer_conversation",
+                    "reply_mode": "reply",
+                    "active_task_relation": "independent",
+                }
+            ),
+        }
+        prompts: list[str] = []
+
+        def fake_agent(prompt: str, **_kwargs: object) -> dict[str, object]:
+            prompts.append(prompt)
+            return silent if len(prompts) == 1 else reviewed
+
+        request = "比如像味之素公司一样，让类器官生产什么，思考，计算，传感"
+        with mock.patch.object(ingest, "run_agent_session", side_effect=fake_agent) as agent:
+            route = ingest.route_event(
+                self.sample_event(text=request),
+                request,
+                [{"sender_display": "陈苗", "content": "让类器官服务其他行业。"}],
+            )
+
+        self.assertFalse(route["worker_needed"])
+        self.assertEqual(route["message_role"], "peer_conversation")
+        self.assertEqual(route["reply_mode"], "reply")
+        self.assertTrue(route["response"])
+        self.assertEqual(agent.call_count, 2)
+        self.assertEqual(
+            agent.call_args_list[1].kwargs["role"],
+            "peer-context-review-v1",
+        )
+        self.assertIn("not a no-reply rule", prompts[1])
+        self.assertIn("Do not automatically preserve", prompts[1])
+        self.assertIn("complete conversation", prompts[1])
+
     def test_processed_no_reply_message_can_be_reconsidered_without_duplicate_history(self) -> None:
         ingest = load_ingest()
         silent = {
@@ -1757,6 +1857,50 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(rows[0]["sender_mention"], "sunnyyty@微信")
         self.assertEqual(rows[0]["sender_identity_confidence"], "visible_row_label")
         self.assertEqual(rows[0]["sender_evidence"]["sender_candidate_count"], "1")
+
+    def test_verified_worker_reply_becomes_same_chat_agent_context_once(self) -> None:
+        ingest = load_ingest()
+        first = self.sample_event(
+            text="提出一个类器官产品方向。", create_time=1784300000
+        )
+        follow_up = self.sample_event(
+            text="比如让它承担传感和计算。", create_time=1784300002
+        )
+        follow_up["message_id"] = "wecom-follow-up-2"
+        with tempfile.TemporaryDirectory() as tmp:
+            history = Path(tmp) / "history.sqlite"
+            ingest.init_history_db(history)
+            chat = ingest.canonical_chat_name(first)
+            ingest.record_history_message(
+                history, first, chat, first["text"], direction="inbound"
+            )
+            inserted = ingest.record_verified_worker_outbound(
+                history,
+                task_id="worker-task-1",
+                chat=chat,
+                body="可以先拆成传感、计算和产品化三个可验证方向。",
+                sent_at=datetime.fromtimestamp(1784300001).isoformat(),
+            )
+            duplicate = ingest.record_verified_worker_outbound(
+                history,
+                task_id="worker-task-1",
+                chat=chat,
+                body="可以先拆成传感、计算和产品化三个可验证方向。",
+                sent_at=datetime.fromtimestamp(1784300001).isoformat(),
+            )
+            ingest.record_history_message(
+                history,
+                follow_up,
+                chat,
+                follow_up["text"],
+                direction="inbound",
+            )
+            rows = ingest.recent_history(history, chat, limit=5)
+
+        self.assertTrue(inserted)
+        self.assertFalse(duplicate)
+        self.assertEqual([row["is_self"] for row in rows], [False, True, False])
+        self.assertIn("三个可验证方向", rows[1]["content"])
 
     def test_incomplete_ingest_can_retry_same_message(self) -> None:
         ingest = load_ingest()

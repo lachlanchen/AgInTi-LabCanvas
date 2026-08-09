@@ -10032,6 +10032,57 @@ stderr: noisy internal trace
         urlopen.assert_not_called()
         self.assertEqual(task["sent_file_paths"], [str(report.resolve())])
 
+    def test_wecom_delivery_records_only_verified_sent_text_in_router_history(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            history = Path(tmp) / "history.sqlite"
+            task = {
+                "id": "task-history",
+                "chat": "wecom:default:group:abc",
+                "wecom_history_db": str(history),
+            }
+            payload = {
+                "ok": True,
+                "complete": True,
+                "sent_messages": ["Research complete."],
+                "pending_messages": [],
+                "sent_files": [],
+                "pending_files": [],
+            }
+
+            worker.record_wecom_delivery_payload(task, payload, source="send_response")
+            worker.record_wecom_delivery_payload(task, payload, source="component_ledger")
+            with sqlite3.connect(history) as conn:
+                rows = conn.execute(
+                    "SELECT direction, sender_display, body FROM messages ORDER BY id"
+                ).fetchall()
+
+        self.assertEqual(rows, [("outbound", "LabAgent", "Research complete.")])
+        self.assertEqual(len(task["wecom_history_recorded_message_hashes"]), 1)
+
+    def test_wecom_pending_text_does_not_create_outbound_router_history(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            history = Path(tmp) / "history.sqlite"
+            task = {
+                "id": "task-pending-history",
+                "chat": "wecom:default:group:abc",
+                "wecom_history_db": str(history),
+            }
+            payload = {
+                "ok": False,
+                "complete": False,
+                "sent_messages": [],
+                "pending_messages": ["Still pending."],
+                "sent_files": [],
+                "pending_files": [],
+            }
+
+            worker.record_wecom_delivery_payload(task, payload, source="partial_send_response")
+
+        self.assertFalse(history.exists())
+        self.assertNotIn("wecom_history_recorded_message_hashes", task)
+
     def test_wecom_partial_ledger_retries_only_missing_file(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
