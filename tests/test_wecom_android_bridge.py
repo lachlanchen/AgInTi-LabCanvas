@@ -1468,6 +1468,157 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             "wecom_android_native_full_view",
         )
 
+    def test_visible_image_preview_is_persisted_with_exact_visual_identity(self) -> None:
+        bridge = load_bridge()
+        width, height = 80, 80
+        rgba = bytes((20, 40, 60, 255)) * width * height
+        screenshot = bridge.RawScreenshot(width, height, rgba)
+        bounds = "[10,12][70,68]"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            record = {
+                "fingerprint": "exact-image-preview",
+                "direction": "inbound",
+                "sender": "陈苗",
+                "body": "[图片]",
+                "source_kind": bridge.IMAGE_KIND,
+                "image_bounds": bounds,
+                "image_visual_id": bridge.screenshot_region_visual_id(
+                    screenshot, bounds
+                ),
+            }
+
+            preserved = runtime.persist_visible_image_preview(
+                "LabAgent", record, screenshot
+            )
+            preview = Path(preserved["exact_preview_path"])
+
+            self.assertTrue(preview.is_file())
+            self.assertEqual(
+                preserved["exact_preview_sha256"], bridge.sha256_file(preview)
+            )
+            self.assertEqual(preserved["exact_preview_width"], "60")
+            self.assertEqual(preserved["exact_preview_height"], "56")
+
+    def test_image_materialization_uses_exact_saved_preview_if_bubble_scrolled_away(self) -> None:
+        bridge = load_bridge()
+        width, height = 80, 80
+        screenshot = bridge.RawScreenshot(
+            width,
+            height,
+            bytes((20, 40, 60, 255)) * width * height,
+        )
+        bounds = "[10,12][70,68]"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            record = runtime.persist_visible_image_preview(
+                "LabAgent",
+                {
+                    "fingerprint": "exact-image-fallback",
+                    "direction": "inbound",
+                    "sender": "陈苗",
+                    "body": "[图片]",
+                    "source_kind": bridge.IMAGE_KIND,
+                    "image_bounds": bounds,
+                    "image_visual_id": bridge.screenshot_region_visual_id(
+                        screenshot, bounds
+                    ),
+                },
+                screenshot,
+            )
+            with mock.patch.object(
+                runtime,
+                "find_image_node_for_record",
+                side_effect=bridge.BridgeError("image scrolled away"),
+            ):
+                materialized = runtime.materialize_image_record(
+                    "LabAgent", record
+                )
+
+            self.assertEqual(
+                materialized["attachment_path"], record["exact_preview_path"]
+            )
+            self.assertEqual(
+                materialized["attachment_capture_kind"],
+                "wecom_android_exact_visible_image_preview_fallback",
+            )
+
+    def test_find_image_node_scans_recent_history_by_visual_identity(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root_path = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root_path / "state.sqlite"),
+                    "staging_dir": str(root_path / "staging"),
+                    "inbound_image_search_pages": 2,
+                }
+            )
+            root = ET.fromstring(
+                '<hierarchy><node text="LabAgent" '
+                'resource-id="com.tencent.wework:id/n5i" '
+                'package="com.tencent.wework" /></hierarchy>'
+            )
+            node = ET.fromstring(
+                '<node class="android.widget.ImageView" '
+                'package="com.tencent.wework" bounds="[10,20][30,40]" />'
+            )
+            screenshot = bridge.RawScreenshot(1, 1, b"\x00\x00\x00\xff")
+            record = {
+                "source_kind": "image",
+                "sender": "陈苗",
+                "image_bounds": "[164,1552][552,1770]",
+                "image_visual_id": "exact-visual-id",
+            }
+            with mock.patch.object(
+                runtime, "open_chat", return_value=root
+            ), mock.patch.object(
+                runtime, "move_chat_to_live_tail", return_value=root
+            ), mock.patch.object(
+                runtime, "capture_raw_screenshot", return_value=screenshot
+            ), mock.patch.object(
+                runtime,
+                "image_node_for_record",
+                side_effect=[
+                    bridge.BridgeError("not in live viewport"),
+                    node,
+                ],
+            ) as locate, mock.patch.object(
+                runtime, "adb_shell", return_value=""
+            ) as adb_shell, mock.patch.object(
+                runtime, "dump_hierarchy", return_value=root
+            ):
+                found_root, found_screenshot, found_node = (
+                    runtime.find_image_node_for_record("LabAgent", record)
+                )
+
+        self.assertIs(found_root, root)
+        self.assertIs(found_screenshot, screenshot)
+        self.assertIs(found_node, node)
+        self.assertEqual(locate.call_count, 2)
+        self.assertEqual(locate.call_args_list[1].args[2]["image_bounds"], "")
+        adb_shell.assert_called_once_with(
+            "input", "swipe", "520", "350", "520", "1450", "500"
+        )
+
     def test_parse_messages_recovers_native_inbound_document_event(self) -> None:
         bridge = load_bridge()
         xml = """

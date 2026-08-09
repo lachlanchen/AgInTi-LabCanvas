@@ -312,18 +312,24 @@ def ingest_event(
             )
             inspiration_note = f"已更新群组灵感关注：{'；'.join(settings['topics'])}。"
 
+    if (
+        not bool(route.get("worker_needed"))
+        and not sanitize_chat_response(route.get("response"))
+    ):
+        # A genuine inbound contribution must never disappear because a
+        # legacy router returned `silent` or an empty response. Let the durable
+        # per-chat agent produce the contextual response instead.
+        route = {
+            **route,
+            "worker_needed": True,
+            "route_kind": str(route.get("route_kind") or "other_worker"),
+            "task": str(route.get("task") or request),
+            "ack": str(route.get("ack") or "我会结合前面的讨论看完整，再接着回应。"),
+            "reply_mode": "ack_then_work",
+        }
+
     if not bool(route.get("worker_needed")):
         response = str(route.get("response") or "").strip()
-        if not response:
-            mark_message_processed(history_db, str(event["message_id"]))
-            return {
-                "duplicate": False,
-                "queued": False,
-                "chat": chat,
-                "reply": "",
-                "no_reply": True,
-                "message_role": str(route.get("message_role") or "peer_conversation"),
-            }
         if daily_topic:
             response = f"已设置每日研究主题：{daily_topic}\n\n{response}"
         if inspiration_note:
@@ -589,7 +595,7 @@ Return one strict JSON object and no prose:
   "inspiration_interest_mode": "none|add|replace|remove|disable",
   "report_required": false,
   "message_role": "research_request|artifact_instruction|system_guidance|peer_conversation|ordinary_chat",
-  "reply_mode": "reply|ack_then_work|silent",
+  "reply_mode": "reply|ack_then_work",
   "active_task_relation": "independent|interrupt|context_only",
   "reply_to_senders": ["exact sender_display names only when one reply materially addresses their related messages"],
   "memory_items": [{{"kind": "idea|insight|intuition|interest|hypothesis|decision|preference|question|note", "title": "short title", "content": "durable user-authored knowledge", "tags": ["optional"]}}],
@@ -611,7 +617,7 @@ Rules:
 - Set `report_required` true exactly when the worker is required to create and return that report. This structured flag is the artifact-delivery contract; do not rely on the user literally writing "PDF".
 - Treat a mechanism question, research hypothesis, experimental-design problem, literature comparison, roadmap request, or quoted scientific follow-up as a research idea unless the context clearly makes it a small factual query. Such ideas normally require the two-track response and a report.
 - Judge value from the actual research question and same-chat context, not from a keyword such as "paper" or "PDF". Deep reports must cite traceable primary or authoritative sources, separate direct evidence from indirect evidence and hypotheses, state uncertainty, and analyze mechanisms, limitations, and actionable experiments rather than merely list knowledge points.
-- Decide naturally whether to reply from the full recent conversation. Always answer direct questions, requests, mentions, and useful follow-ups. It is valid to stay silent when people are talking to each other and an AI reply would interrupt or add no value. Never emit a mechanical acknowledgement merely to prove receipt.
+- Decide how to reply from the full recent conversation. Every genuine inbound contribution receives a natural visible response, including messages exchanged between people. Never emit a mechanical acknowledgement merely to prove receipt.
 - Reply to several consecutive messages from the same sender as one coherent turn using all of them; do not emit one mechanical response per fragment.
 - Every source message remains separately recorded even when one response covers several messages. "Do not miss" means retain and consider each contribution; it does not mean replying to each row.
 - Sender attribution is message-level evidence. Never describe one person's statement, criticism, preference, or request as coming from another person. Related messages from different people may inform one task, but their authors must remain distinct.
@@ -619,10 +625,11 @@ Rules:
 - When recent same-chat context contains several fragments of one instruction, use all fragments as one intent. Apply concrete guidance to the active artifact or tool workflow instead of saying that you are waiting for another person after that guidance has already arrived.
 - Never drop a visible contribution merely because another sender posted at nearly the same time. If one coherent response materially addresses related messages from multiple people, put their exact `sender_display` values in `reply_to_senders`; otherwise leave it empty and reply only to the current sender.
 - Messages clearly directed from one human to another may be labeled `peer_conversation`. This requires positive conversational evidence such as an explicit human addressee or a clear person-to-person exchange; the absence of an agent mention is not evidence.
-- `peer_conversation` describes conversational context, not a fixed no-reply rule. Be more restrained in such exchanges, but still participate naturally when a concise clarification, correction, synthesis, connection, or useful next step would improve the conversation. Stay silent only when joining would be intrusive, repetitive, private, or add no real value. Decide this from the full recent context rather than a keyword, punctuation mark, fixed threshold, or mandatory template.
+- `peer_conversation` changes only the conversational stance, not whether or how fully to reply. Respond as a thoughtful participant: synthesize the exchange, extend useful ideas, clarify confusion, or ask a relevant question without pretending every line directly addressed the agent.
+- Do not answer each fragment mechanically. When several people or consecutive messages develop one thought, respond to their combined meaning in one coherent turn and preserve each person's authorship. Decide content and tone semantically from the full recent context rather than a keyword, punctuation mark, fixed length threshold, or mandatory prose template.
 - Do not infer `peer_conversation` or silence merely because a message lacks an @ mention. A concrete scientific proposal, experimental next-step question, or group-level request such as asking whether to start with a particular experiment is reply-worthy when the agent can materially clarify the design, tradeoffs, evidence, or next action. Use the same-chat context to decide whether to answer briefly or start durable work.
 - Follow-up fragments may refine a question or idea expressed in earlier messages. Read them together before deciding whether to respond, and never treat the final fragment as the whole intent.
-- A substantive user-authored analysis, hypothesis, roadmap, or research proposal shared without an explicit command is still a meaningful group contribution. Give a concise thoughtful response when the agent can test an assumption, connect it to the current discussion, or suggest a useful next step; reserve silence for casual or clearly private human-to-human chatter where the agent adds no value.
+- A substantive user-authored analysis, hypothesis, roadmap, or research proposal shared without an explicit command is still a meaningful group contribution. Give a thoughtful response that tests an assumption, connects it to the current discussion, or suggests a useful next step.
 - Use `active_task_relation=interrupt` only when this message corrects, extends, answers a pending decision for, or otherwise materially steers the exact active task shown below. This may come from a different participant, but preserve that person's authorship. Use `context_only` for relevant discussion that should be remembered without creating another worker turn. Use `independent` for a separate request.
 - Do not claim an attachment was read in the acknowledgement.
 - Soft-filter dangerous or clearly out-of-scope requests with a concise natural refusal or a safer research/design alternative. Do not mechanically refuse ordinary scientific work.
@@ -692,7 +699,6 @@ Current exact-chat active task, if any:
         and not sanitize_chat_response(payload.get("response"))
         and str(payload.get("message_role") or "").strip().casefold()
         == "peer_conversation"
-        and str(payload.get("reply_mode") or "").strip().casefold() == "silent"
     ):
         review = review_peer_conversation_route(
             event,
@@ -731,7 +737,7 @@ Current exact-chat active task, if any:
     reply_mode = str(
         payload.get("reply_mode") or ("ack_then_work" if worker_needed else "reply")
     ).strip().casefold()
-    if reply_mode not in {"reply", "ack_then_work", "silent"}:
+    if reply_mode not in {"reply", "ack_then_work"}:
         reply_mode = "ack_then_work" if worker_needed else "reply"
     ack = sanitize_chat_response(payload.get("ack"))
     active_task_relation = str(
@@ -750,11 +756,15 @@ Current exact-chat active task, if any:
     ):
         worker_needed = False
         if not response:
-            reply_mode = "silent"
+            worker_needed = True
+            reply_mode = "ack_then_work"
+            if active_task:
+                active_task_relation = "interrupt"
     elif active_task_relation == "interrupt":
         active_task_relation = "independent"
-    if not worker_needed and not response and reply_mode != "silent":
+    if not worker_needed and not response:
         worker_needed = True
+        reply_mode = "ack_then_work"
     task_text = str(payload.get("task") or "").strip() or request
     daily_topic = " ".join(str(payload.get("daily_topic") or "").split())[:1000]
     inspiration_interest = " ".join(str(payload.get("inspiration_interest") or "").split())[:1000]
@@ -805,29 +815,28 @@ def review_peer_conversation_route(
     *,
     active_task: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Give an ambiguous silent peer classification an independent agent review."""
+    """Turn an empty peer classification into a contextual response."""
     prompt = f"""You are the second-pass conversation judgment for a WeCom research group.
-The first router tentatively labeled the current message as peer conversation and chose silence. Review that decision from the full context. Do not automatically preserve it and do not automatically force a reply.
+The first router tentatively labeled the current message as peer conversation and chose silence. Correct that decision from the full context: every genuine inbound contribution receives a natural visible response, while peer conversation changes only how the response joins the discussion.
 
-Act like a thoughtful, restrained human collaborator:
-- Peer conversation is context, not a no-reply rule.
-- Participate when a concise clarification, synthesis, correction, connection, or next step would materially improve the discussion.
-- Be restrained when people are talking to each other: avoid dominating, repeating, answering every fragment, or inserting generic acknowledgements.
-- Stay silent when joining would be intrusive, private, repetitive, already covered, or add no real value.
-- Read consecutive fragments as one developing thought. Do not judge only the final line.
+Act like a thoughtful human collaborator:
+- Peer conversation is context, never a reason to drop or skip the message.
+- Respond differently when people are talking to each other: use a conversational synthesis, extension, clarification, or relevant question instead of acting as though every line directly addressed the agent.
+- Read consecutive fragments as one developing thought and answer their combined meaning in one coherent turn. Do not judge or echo only the final line.
+- Avoid generic acknowledgements, unnecessary repetition, and domination of the discussion, but do provide a useful response.
 - A useful direct response should sound natural. Substantial work may be delegated to the durable worker with a short natural acknowledgement.
-- Make the decision semantically from the complete conversation. Do not use keyword rules, punctuation rules, fixed length thresholds, or a mandatory reply/no-reply template.
+- Make the response semantically from the complete conversation. Do not use keyword rules, punctuation rules, fixed length thresholds, or a mandatory prose template.
 
 Return one strict JSON object and no prose:
 {{
   "worker_needed": false,
   "route_kind": "chat_only",
-  "response": "concise natural response when replying directly, otherwise empty",
+  "response": "natural contextual response when worker_needed is false",
   "task": "complete worker instruction only when worker_needed is true",
   "ack": "short natural acknowledgement only when worker_needed is true",
   "report_required": false,
   "message_role": "peer_conversation|ordinary_chat|research_request|artifact_instruction|system_guidance",
-  "reply_mode": "reply|ack_then_work|silent",
+  "reply_mode": "reply|ack_then_work",
   "active_task_relation": "independent|interrupt|context_only"
 }}
 
@@ -908,10 +917,10 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
     }
     research = request_has_explicit_research_intent(request)
     attachments = normalized_attachments(event)
-    actionable = looks_like_actionable_worker_request(request)
-    worker_needed = bool(
-        attachments or grant or presentation or source_card or research or actionable
-    )
+    # The durable per-chat worker has an independent backend fallback chain.
+    # Route every genuine inbound contribution there when the fast router is
+    # unavailable instead of silently dropping ordinary conversation.
+    worker_needed = True
     return {
         "worker_needed": worker_needed,
         "route_kind": (
@@ -929,7 +938,7 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
                         else (
                             "research_or_summary"
                             if research
-                            else ("other_worker" if actionable else "chat_only")
+                            else "other_worker"
                         )
                     )
                 )
@@ -937,11 +946,7 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         ),
         "response": "",
         "task": request,
-        "ack": (
-            "任务已进入 LabCanvas 队列，完成后会把结果发回这个会话。"
-            if worker_needed
-            else ""
-        ),
+        "ack": "我会结合前面的讨论看完整，再接着回应。",
         "daily_topic": "",
         "inspiration_interest": "",
         "inspiration_interest_mode": "none",
@@ -949,9 +954,9 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         "message_role": (
             "research_request"
             if grant or research
-            else ("ordinary_chat" if worker_needed else "peer_conversation")
+            else "ordinary_chat"
         ),
-        "reply_mode": "ack_then_work" if worker_needed else "silent",
+        "reply_mode": "ack_then_work",
         "active_task_relation": "independent",
         "active_task_id": "",
         "reply_to_senders": [],

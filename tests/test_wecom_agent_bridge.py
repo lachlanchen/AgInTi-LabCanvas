@@ -331,7 +331,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         self.assertEqual(result, "继续处理。")
 
-    def test_peer_conversation_can_be_silent_without_worker_queue(self) -> None:
+    def test_legacy_silent_peer_conversation_enters_worker_queue(self) -> None:
         ingest = load_ingest()
         route = {
             "worker_needed": False,
@@ -354,10 +354,11 @@ class WeComAgentBridgeTests(unittest.TestCase):
                     history_db=root / "history.sqlite",
                     route_with_agent=True,
                 )
+                queue_exists = (root / "queue.jsonl").exists()
 
-        self.assertFalse(result["queued"])
-        self.assertTrue(result["no_reply"])
-        self.assertFalse((root / "queue.jsonl").exists())
+        self.assertTrue(result["queued"])
+        self.assertTrue(result["ack"])
+        self.assertTrue(queue_exists)
 
     def test_router_prompt_does_not_silence_group_level_experiment_question(self) -> None:
         ingest = load_ingest()
@@ -394,9 +395,9 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("lacks an @ mention", prompts[0])
         self.assertIn("experimental next-step question", prompts[0])
 
-    def test_peer_conversation_prompt_is_restrained_not_forced_silent(self) -> None:
+    def test_peer_conversation_prompt_changes_stance_but_still_replies(self) -> None:
         ingest = load_ingest()
-        restrained_reply = {
+        natural_reply = {
             "ok": True,
             "message": json.dumps(
                 {
@@ -416,7 +417,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
 
         def fake_agent(prompt: str, **_kwargs: object) -> dict[str, object]:
             prompts.append(prompt)
-            return restrained_reply
+            return natural_reply
 
         with mock.patch.object(ingest, "run_agent_session", side_effect=fake_agent) as agent:
             route = ingest.route_event(
@@ -429,8 +430,9 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(route["message_role"], "peer_conversation")
         self.assertEqual(route["reply_mode"], "reply")
         self.assertTrue(route["response"])
-        self.assertIn("not a fixed no-reply rule", prompts[0])
-        self.assertIn("more restrained", prompts[0])
+        self.assertIn("Every genuine inbound contribution", prompts[0])
+        self.assertIn("changes only the conversational stance", prompts[0])
+        self.assertIn("combined meaning", prompts[0])
         self.assertIn("full recent context", prompts[0])
         self.assertEqual(agent.call_args.kwargs["role"], "route-context-v3")
 
@@ -490,11 +492,47 @@ class WeComAgentBridgeTests(unittest.TestCase):
             agent.call_args_list[1].kwargs["role"],
             "peer-context-review-v1",
         )
-        self.assertIn("not a no-reply rule", prompts[1])
-        self.assertIn("Do not automatically preserve", prompts[1])
+        self.assertIn("every genuine inbound contribution", prompts[1])
+        self.assertIn("never a reason to drop or skip", prompts[1])
         self.assertIn("complete conversation", prompts[1])
 
-    def test_processed_no_reply_message_can_be_reconsidered_without_duplicate_history(self) -> None:
+    def test_empty_context_only_route_interrupts_active_task_instead_of_silence(self) -> None:
+        ingest = load_ingest()
+        response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": False,
+                    "route_kind": "chat_only",
+                    "response": "",
+                    "task": "Use this contribution when continuing the active discussion.",
+                    "ack": "",
+                    "message_role": "ordinary_chat",
+                    "reply_mode": "reply",
+                    "active_task_relation": "context_only",
+                }
+            ),
+        }
+        active = {
+            "id": "wecom-active-context",
+            "status": "in_progress",
+            "request": "Develop the current research idea.",
+        }
+
+        with mock.patch.object(ingest, "run_agent_session", return_value=response):
+            route = ingest.route_event(
+                self.sample_event(text="再把传感这个方向也考虑进去"),
+                "再把传感这个方向也考虑进去",
+                [{"sender_display": "陈苗", "content": "讨论类器官计算。"}],
+                active_task=active,
+            )
+
+        self.assertTrue(route["worker_needed"])
+        self.assertEqual(route["reply_mode"], "ack_then_work")
+        self.assertEqual(route["active_task_relation"], "interrupt")
+        self.assertEqual(route["active_task_id"], "wecom-active-context")
+
+    def test_legacy_silent_message_can_be_reconsidered_without_duplicate_history(self) -> None:
         ingest = load_ingest()
         silent = {
             "worker_needed": False,
@@ -542,7 +580,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
                     (event["message_id"],),
                 ).fetchone()[0]
 
-        self.assertTrue(first["no_reply"])
+        self.assertTrue(first["queued"])
         self.assertEqual(second["reply"], "可以，先收窄变量并定义对照组。")
         self.assertEqual(inbound_count, 1)
 
@@ -627,7 +665,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(route["worker_needed"])
         self.assertEqual(route["route_kind"], "presentation_generation")
 
-    def test_backend_outage_fallback_keeps_peer_conversation_without_queueing(self) -> None:
+    def test_backend_outage_fallback_queues_conversation_instead_of_dropping_it(self) -> None:
         ingest = load_ingest()
 
         route = ingest.fallback_route(
@@ -635,10 +673,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
             "这个方向我也觉得很有意思",
         )
 
-        self.assertFalse(route["worker_needed"])
-        self.assertEqual(route["route_kind"], "chat_only")
-        self.assertEqual(route["reply_mode"], "silent")
-        self.assertEqual(route["ack"], "")
+        self.assertTrue(route["worker_needed"])
+        self.assertEqual(route["route_kind"], "other_worker")
+        self.assertEqual(route["reply_mode"], "ack_then_work")
+        self.assertTrue(route["ack"])
 
     def test_backend_outage_fallback_still_routes_explicit_design_work(self) -> None:
         ingest = load_ingest()

@@ -2976,6 +2976,38 @@ class AndroidBridge:
         label = "Shipinhao card" if source_kind == SHIPINHAO_CARD_KIND else "image bubble"
         raise BridgeError(f"exact inbound WeCom {label} is not uniquely visible")
 
+    def find_image_node_for_record(
+        self,
+        chat: str,
+        record: dict[str, str],
+    ) -> tuple[ET.Element, RawScreenshot, ET.Element]:
+        """Locate an exact visual image identity in recent same-chat history."""
+        root = self.open_chat(chat)
+        root = self.move_chat_to_live_tail(chat, root)
+        pages = bounded_int(
+            self.config.get("inbound_image_search_pages"),
+            8,
+            0,
+            8,
+        )
+        last_error = ""
+        for page in range(pages + 1):
+            screenshot = self.capture_raw_screenshot()
+            candidate = record if page == 0 else {**record, "image_bounds": ""}
+            try:
+                node = self.image_node_for_record(root, screenshot, candidate)
+                return root, screenshot, node
+            except BridgeError as exc:
+                last_error = str(exc)
+            if page >= pages:
+                break
+            self.adb_shell("input", "swipe", "520", "350", "520", "1450", "500")
+            time.sleep(0.55)
+            root = self.dump_hierarchy(attempts=3)
+            if not chat_title_matches(visible_chat_title(root), chat):
+                raise BridgeError("WeCom changed chat while locating the image bubble")
+        raise BridgeError(last_error or "exact inbound WeCom image bubble is not visible")
+
     def materialize_shipinhao_card_record(
         self,
         chat: str,
@@ -3084,6 +3116,50 @@ class AndroidBridge:
         )
         return result
 
+    def persist_visible_image_preview(
+        self,
+        chat: str,
+        record: dict[str, str],
+        screenshot: RawScreenshot,
+    ) -> dict[str, str]:
+        """Persist an exact inbound image crop while its bubble is visible."""
+        if chat not in self.target_groups:
+            raise BridgeError("refusing non-allowlisted WeCom Android image source")
+        if str(record.get("direction") or "") != "inbound":
+            raise BridgeError("refusing to preserve an outbound WeCom image")
+        if str(record.get("source_kind") or "") != IMAGE_KIND:
+            return dict(record)
+        fingerprint = str(record.get("fingerprint") or "")
+        bounds = str(record.get("image_bounds") or "")
+        expected_visual_id = str(record.get("image_visual_id") or "")
+        if not fingerprint or not bounds or not expected_visual_id:
+            raise BridgeError("visible WeCom image lacks exact visual identity")
+        actual_visual_id = screenshot_region_visual_id(screenshot, bounds)
+        if actual_visual_id != expected_visual_id:
+            raise BridgeError("visible WeCom image identity changed before capture")
+        target = (
+            self.staging_dir
+            / "inbound-media"
+            / short_hash(chat, 16)
+            / f"wecom-image-preview-{fingerprint[:32]}.png"
+        )
+        capture = crop_raw_screenshot(screenshot, bounds)
+        write_private_bytes(target, encode_rgba_png(capture))
+        result = dict(record)
+        result.update(
+            {
+                "exact_preview_path": str(target),
+                "exact_preview_size_bytes": str(target.stat().st_size),
+                "exact_preview_sha256": sha256_file(target),
+                "exact_preview_width": str(capture.width),
+                "exact_preview_height": str(capture.height),
+                "exact_preview_capture_kind": (
+                    "wecom_android_exact_visible_image_preview"
+                ),
+            }
+        )
+        return result
+
     def wait_for_image_viewer(self, *, timeout_seconds: float = 8.0) -> ET.Element:
         deadline = time.monotonic() + max(1.0, timeout_seconds)
         last_title = ""
@@ -3127,31 +3203,50 @@ class AndroidBridge:
             / f"wecom-image-{fingerprint[:32]}.png"
         )
         capture: RawScreenshot | None = None
-        if not (target.is_file() and target.stat().st_size > 64 and target.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"):
-            root = self.open_chat(chat)
-            chat_screenshot = self.capture_raw_screenshot()
-            node = self.image_node_for_record(root, chat_screenshot, record)
-            viewer_open = False
-            try:
-                self.tap_node(root, node)
-                self.wait_for_image_viewer()
-                viewer_open = True
-                time.sleep(
-                    bounded_float(
-                        self.config.get("inbound_image_capture_wait_seconds"),
-                        1.25,
-                        0.25,
-                        5.0,
+        capture_kind = "wecom_android_native_full_view"
+        try:
+            if not (
+                target.is_file()
+                and target.stat().st_size > 64
+                and target.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+            ):
+                root, _, node = self.find_image_node_for_record(chat, record)
+                viewer_open = False
+                try:
+                    self.tap_node(root, node)
+                    self.wait_for_image_viewer()
+                    viewer_open = True
+                    time.sleep(
+                        bounded_float(
+                            self.config.get("inbound_image_capture_wait_seconds"),
+                            1.25,
+                            0.25,
+                            5.0,
+                        )
                     )
-                )
-                capture = self.capture_raw_screenshot()
-                write_private_bytes(target, encode_rgba_png(capture))
-            finally:
-                if viewer_open:
-                    self.press_back()
-                restored = self.open_chat(chat)
-                if not chat_title_matches(visible_chat_title(restored), chat):
-                    raise BridgeError("WeCom did not return to the exact image source chat")
+                    capture = self.capture_raw_screenshot()
+                    write_private_bytes(target, encode_rgba_png(capture))
+                finally:
+                    if viewer_open:
+                        self.press_back()
+                    restored = self.open_chat(chat)
+                    restored = self.move_chat_to_live_tail(chat, restored)
+                    if not chat_title_matches(visible_chat_title(restored), chat):
+                        raise BridgeError(
+                            "WeCom did not return to the exact image source chat"
+                        )
+        except Exception:
+            preview = Path(str(record.get("exact_preview_path") or "")).expanduser()
+            if not (
+                preview.is_file()
+                and preview.stat().st_size > 64
+                and preview.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+                and str(record.get("exact_preview_sha256") or "")
+                == sha256_file(preview)
+            ):
+                raise
+            target = preview
+            capture_kind = "wecom_android_exact_visible_image_preview_fallback"
         result = dict(record)
         result.update(
             {
@@ -3159,9 +3254,13 @@ class AndroidBridge:
                 "attachment_filename": target.name,
                 "attachment_size_bytes": str(target.stat().st_size),
                 "attachment_sha256": sha256_file(target),
-                "attachment_width": str(capture.width if capture else ""),
-                "attachment_height": str(capture.height if capture else ""),
-                "attachment_capture_kind": "wecom_android_native_full_view",
+                "attachment_width": str(
+                    capture.width if capture else record.get("exact_preview_width") or ""
+                ),
+                "attachment_height": str(
+                    capture.height if capture else record.get("exact_preview_height") or ""
+                ),
+                "attachment_capture_kind": capture_kind,
             }
         )
         return result
@@ -3636,14 +3735,32 @@ class AndroidBridge:
             root = self.open_chat(chat)
             root = self.move_chat_to_live_tail(chat, root)
             current_records = self.parse_messages(root)
+            current_screenshot: RawScreenshot | None = None
             if any(
                 record.get("source_kind") in {IMAGE_KIND, SHIPINHAO_CARD_KIND}
                 for record in current_records
             ):
+                current_screenshot = self.capture_raw_screenshot()
                 current_records = self.parse_messages(
                     root,
-                    screenshot=self.capture_raw_screenshot(),
+                    screenshot=current_screenshot,
                 )
+                for index, record in enumerate(current_records):
+                    if not (
+                        record.get("direction") == "inbound"
+                        and record.get("source_kind") == IMAGE_KIND
+                    ):
+                        continue
+                    try:
+                        current_records[index] = self.persist_visible_image_preview(
+                            chat,
+                            record,
+                            current_screenshot,
+                        )
+                    except BridgeError:
+                        # Full-view materialization below remains available.
+                        # Never weaken exact identity merely to save a preview.
+                        pass
             sequence = [record["fingerprint"] for record in current_records]
             history_records: list[dict[str, str]] = []
             if history_pages:
