@@ -594,6 +594,7 @@ Return one strict JSON object and no prose:
   "inspiration_interest": "group-scoped inspiration interest only when the current message explicitly sets or updates it, otherwise empty",
   "inspiration_interest_mode": "none|add|replace|remove|disable",
   "report_required": false,
+  "external_fact_grounding_required": false,
   "message_role": "research_request|artifact_instruction|system_guidance|peer_conversation|ordinary_chat",
   "reply_mode": "reply|ack_then_work",
   "active_task_relation": "independent|interrupt|context_only",
@@ -617,6 +618,8 @@ Rules:
 - Set `report_required` true exactly when the worker is required to create and return that report. This structured flag is the artifact-delivery contract; do not rely on the user literally writing "PDF".
 - Treat a mechanism question, research hypothesis, experimental-design problem, literature comparison, roadmap request, or quoted scientific follow-up as a research idea unless the context clearly makes it a small factual query. Such ideas normally require the two-track response and a report.
 - Judge value from the actual research question and same-chat context, not from a keyword such as "paper" or "PDF". Deep reports must cite traceable primary or authoritative sources, separate direct evidence from indirect evidence and hypotheses, state uncertainty, and analyze mechanisms, limitations, and actionable experiments rather than merely list knowledge points.
+- Set `external_fact_grounding_required=true` whenever a useful answer depends on identifying or validating a named real-world company, product, person, paper, method, technology, standard, or event that is not already established by reliable evidence in the bounded context. This includes messages that use a named example as an analogy rather than phrasing it as an explicit research request.
+- When external grounding is required, route to the worker for live source checking. The answer must first establish what the named example actually is and what it does, then use that verified premise in the requested comparison or reasoning. Never skip the premise and jump directly to an attractive analogy.
 - Decide how to reply from the full recent conversation. Every genuine inbound contribution receives a natural visible response, including messages exchanged between people. Never emit a mechanical acknowledgement merely to prove receipt.
 - Reply to several consecutive messages from the same sender as one coherent turn using all of them; do not emit one mechanical response per fragment.
 - Every source message remains separately recorded even when one response covers several messages. "Do not miss" means retain and consider each contribution; it does not mean replying to each row.
@@ -713,6 +716,13 @@ Current exact-chat active task, if any:
         route_kind = "other_worker"
     attachments = normalized_attachments(event)
     worker_needed = bool(payload.get("worker_needed")) or bool(attachments)
+    external_fact_grounding_required = bool(
+        payload.get("external_fact_grounding_required")
+    )
+    if external_fact_grounding_required:
+        worker_needed = True
+        if route_kind in {"chat_only", "other_worker"}:
+            route_kind = "research_or_summary"
     response = sanitize_chat_response(payload.get("response"))
     message_role = str(payload.get("message_role") or "ordinary_chat").strip().casefold()
     if message_role not in {
@@ -778,6 +788,7 @@ Current exact-chat active task, if any:
     if (
         worker_needed
         and member_prefers_pdf_reports(memory_context)
+        and not external_fact_grounding_required
         and (
             route_kind in {"research_or_summary", "grant_proposal"}
             or message_role == "research_request"
@@ -794,6 +805,7 @@ Current exact-chat active task, if any:
         "inspiration_interest": inspiration_interest,
         "inspiration_interest_mode": inspiration_interest_mode,
         "report_required": report_required,
+        "external_fact_grounding_required": external_fact_grounding_required,
         "message_role": message_role,
         "reply_mode": reply_mode,
         "active_task_relation": active_task_relation,
@@ -951,6 +963,7 @@ def fallback_route(event: dict[str, Any], request: str) -> dict[str, Any]:
         "inspiration_interest": "",
         "inspiration_interest_mode": "none",
         "report_required": grant,
+        "external_fact_grounding_required": False,
         "message_role": (
             "research_request"
             if grant or research
@@ -1162,6 +1175,13 @@ def build_task(
         and isinstance(member_memory.get("preferences"), dict)
         else {}
     )
+    external_fact_grounding_required = bool(
+        route.get("external_fact_grounding_required")
+    )
+    research_evidence_required = bool(
+        str(route.get("route_kind") or "") == "research_or_summary"
+        or external_fact_grounding_required
+    )
     task = {
         "id": f"wecom-{now.strftime('%Y%m%d%H%M%S')}-{short_hash(message_id)}",
         "chat": chat,
@@ -1202,6 +1222,7 @@ def build_task(
             "inspiration_interest": str(route.get("inspiration_interest") or ""),
             "inspiration_interest_mode": str(route.get("inspiration_interest_mode") or "none"),
             "require_file_delivery": bool(route.get("report_required")),
+            "external_fact_grounding_required": external_fact_grounding_required,
             "worker_plan": str(route.get("task") or "").strip(),
             "message_role": str(route.get("message_role") or "ordinary_chat"),
             "reply_mode": str(route.get("reply_mode") or "ack_then_work"),
@@ -1224,6 +1245,7 @@ def build_task(
             "public_video_publication_forbidden": True,
             "router_plan_is_advisory": True,
             "resolve_uncertain_entities_with_evidence_before_clarifying": True,
+            "verify_named_external_premises_before_analogy": True,
             "research_requests_use_live_web_search": True,
             "distinguish_research_from_agent_guidance": True,
             "combine_consecutive_instruction_fragments": True,
@@ -1242,11 +1264,12 @@ def build_task(
             "required_artifacts": ["pdf"] if route.get("report_required") else [],
             "member_artifact_preferences": artifact_preferences,
             "research_evidence": {
-                "required": str(route.get("route_kind") or "") == "research_or_summary",
-                "target_primary_or_authoritative_sources": 3 if str(route.get("route_kind") or "") == "research_or_summary" else 0,
-                "minimum_traceable_sources": 2 if str(route.get("route_kind") or "") == "research_or_summary" else 0,
-                "separate_direct_indirect_hypothesis": str(route.get("route_kind") or "") == "research_or_summary",
-                "state_uncertainty_and_limitations": str(route.get("route_kind") or "") == "research_or_summary",
+                "required": research_evidence_required,
+                "external_fact_grounding_required": external_fact_grounding_required,
+                "target_primary_or_authoritative_sources": 3 if research_evidence_required else 0,
+                "minimum_traceable_sources": 2 if research_evidence_required else 0,
+                "separate_direct_indirect_hypothesis": research_evidence_required,
+                "state_uncertainty_and_limitations": research_evidence_required,
                 "include_actionable_next_steps": bool(route.get("report_required")),
             },
         },

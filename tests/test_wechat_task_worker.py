@@ -730,6 +730,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         prompt = str(calls[0]["prompt"])
         self.assertIn("Never transfer one person's statement", prompt)
         self.assertIn("Do not append English/Japanese translations", prompt)
+        self.assertIn("verify that premise before extending it", prompt)
+        self.assertIn("Do not replace factual identification", prompt)
         self.assertIn('"sender_display": "megamonster"', prompt)
         self.assertIn('"sender_display": "sunnyyty"', prompt)
         self.assertNotIn("This exact chat is a multilingual language-teaching chat", prompt)

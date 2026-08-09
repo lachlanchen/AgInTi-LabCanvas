@@ -27,6 +27,26 @@ SPEC.loader.exec_module(audit)
 
 
 class WeChatCompletionAuditTests(unittest.TestCase):
+    def test_audit_requires_named_external_premise_grounding(self) -> None:
+        task = self.task()
+        task["route_decision"] = {
+            "route_kind": "research_or_summary",
+            "external_fact_grounding_required": True,
+        }
+
+        prompt = audit.completion_audit_prompt(
+            task,
+            {"message": "This analogy suggests a useful platform strategy.", "files": []},
+            audit.coverage_items(task),
+        )
+        packet = json.loads(prompt.split("Task packet:\n", 1)[1])
+
+        self.assertTrue(
+            packet["current_route_state"]["external_fact_grounding_required"]
+        )
+        self.assertIn("actual relevant identity, product, mechanism, or role", prompt)
+        self.assertIn("skips the named premise", prompt)
+
     def test_audit_prompt_distinguishes_local_sources_from_outbound_files(self) -> None:
         task = self.task()
         output_root = audit.ROOT / "output"

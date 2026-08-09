@@ -691,6 +691,9 @@ def completion_audit_prompt(
         "route_kind": str(route.get("route_kind") or ""),
         "current_route_state": {
             "public_publish_allowed": bool(route.get("public_publish_allowed")),
+            "external_fact_grounding_required": bool(
+                route.get("external_fact_grounding_required")
+            ),
             "requires_third_party_publish_confirmation": bool(
                 route.get("requires_third_party_publish_confirmation")
             ),
@@ -719,6 +722,7 @@ Do not perform the task and do not write files. Check whether the candidate resu
 Rules:
 - Keep consecutive messages as separate checklist items. Never silently drop an earlier independent request because a newer message exists.
 - A newer explicit contradiction may update an older detail, but unrelated requirements remain active.
+- When `current_route_state.external_fact_grounding_required` is true, the candidate must establish the named external example's actual relevant identity, product, mechanism, or role with traceable authoritative evidence before extending the comparison. A generic analogy that assumes what the example means, or an answer that skips the named premise and discusses only the surrounding topic, is missing the core action.
 - Preserve sender attribution. Do not transfer one member's request or preference to another member.
 - `candidate_result.files` is the outbound attachment list. A requested chat
   delivery is covered only when the file appears there.

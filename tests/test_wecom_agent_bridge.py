@@ -436,6 +436,70 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("full recent context", prompts[0])
         self.assertEqual(agent.call_args.kwargs["role"], "route-context-v3")
 
+    def test_named_external_example_requires_grounded_worker_research(self) -> None:
+        ingest = load_ingest()
+        response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": False,
+                    "route_kind": "chat_only",
+                    "response": "这个例子可以启发平台化思考。",
+                    "task": "",
+                    "ack": "",
+                    "report_required": False,
+                    "external_fact_grounding_required": True,
+                    "message_role": "peer_conversation",
+                    "reply_mode": "reply",
+                    "active_task_relation": "independent",
+                    "public_publish_allowed": False,
+                }
+            ),
+        }
+        prompts: list[str] = []
+
+        def fake_agent(prompt: str, **_kwargs: object) -> dict[str, object]:
+            prompts.append(prompt)
+            return response
+
+        request = "比如像某家材料公司一样，把我们的生物能力做成跨行业产品"
+        with mock.patch.object(ingest, "run_agent_session", side_effect=fake_agent):
+            event = self.sample_event(text=request)
+            route = ingest.route_event(
+                event,
+                request,
+                [{"sender_display": "陈苗", "content": "讨论可出售的平台能力。"}],
+                memory_context={
+                    "preferences": {
+                        "pdf_reports": {"preferred_for_substantial_research": True}
+                    }
+                },
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            task = ingest.build_task(
+                event,
+                ingest.canonical_chat_name(event),
+                request,
+                [],
+                route,
+                Path(tmp) / "queue.jsonl",
+            )
+
+        self.assertTrue(route["worker_needed"])
+        self.assertEqual(route["route_kind"], "research_or_summary")
+        self.assertTrue(route["external_fact_grounding_required"])
+        self.assertFalse(route["report_required"])
+        self.assertTrue(
+            task["instruction_contract"]["verify_named_external_premises_before_analogy"]
+        )
+        self.assertTrue(
+            task["execution_contract"]["research_evidence"][
+                "external_fact_grounding_required"
+            ]
+        )
+        self.assertIn("named real-world company", prompts[0])
+        self.assertIn("first establish what the named example actually is", prompts[0])
+
     def test_silent_peer_conversation_gets_agent_only_context_review(self) -> None:
         ingest = load_ingest()
         silent = {
