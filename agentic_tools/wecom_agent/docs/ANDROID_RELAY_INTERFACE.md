@@ -158,10 +158,20 @@ artifact-only supplemental recovery without repeating the research.
 
 LabAgent can maintain a low-frequency group inspiration routine. The routine
 waits until the group has been quiet for three hours, then queues one concise
-agent-written knowledge point or useful connection. It uses the accumulated
-same-group discussion, active member `#daily` interests, explicit group
-interests, and prior inspiration outputs; it does not send a canned heartbeat.
+agent-written knowledge point or useful connection. Active conversation context
+contains only human messages newer than both the previous inspiration and the
+24-hour age cap. Active member `#daily` interests and explicit group interests
+remain durable selection priors. Prior inspiration points are novelty
+exclusions, while completed daily research is not imported into the proactive
+turn. The scheduler therefore cannot repeatedly excavate an old link, paper,
+video, question, or completed task. It does not send a canned heartbeat.
 The first point is queued immediately when a group explicitly changes focus.
+Each group uses a dedicated reusable inspiration-agent session rather than its
+interactive worker session. This preserves novelty across scheduled turns without
+importing old operational requests into proactive research.
+The periodic turn is explicitly message-only; old member preferences or a
+negated artifact term cannot make its completion checker demand a PDF or other
+file.
 
 ```text
 #interest organoids; biomanufacturing; speculative design
@@ -177,6 +187,10 @@ never duplicated. Inspiration also yields whenever that exact group has active
 interactive work, research, confirmation, or artifact delivery; it does not
 create a delayed chat burst. Group interests are public group-scoped settings;
 they do not merge private member records or authorize public posting.
+`WECOM_INSPIRATION_CONTEXT_MAX_AGE_HOURS` may narrow the active context window
+from its 24-hour default (bounded to 1-48 hours). When no new human message is in
+that window, the agent must select a fresh direction from explicit interests
+instead of continuing archived conversation.
 
 ## Native Mentions
 

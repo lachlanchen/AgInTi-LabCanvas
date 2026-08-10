@@ -1197,9 +1197,13 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(repeated["actions"], [])
         self.assertEqual(len(captured), 1)
         self.assertTrue(captured[0]["route_decision"]["scheduled_group_inspiration"])
+        self.assertEqual(
+            captured[0]["session_scope"],
+            f"{chat}::scheduled-group-inspiration",
+        )
         self.assertIn("substantive content", captured[0]["request"])
 
-    def test_group_inspiration_uses_exact_chat_durable_memory(self) -> None:
+    def test_group_inspiration_uses_only_exact_chat_durable_interests(self) -> None:
         daily = load_daily()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1231,10 +1235,28 @@ class WeComAgentBridgeTests(unittest.TestCase):
                             "same",
                             "member-a",
                             "wecom:default:group:labagent",
-                            "insight",
+                            "interest",
                             "Mechanobiology direction",
                             "Connect organoid force maps with optical phenotyping.",
                             "2026-07-28T10:00:00",
+                        ),
+                        (
+                            "stale-question",
+                            "member-a",
+                            "wecom:default:group:labagent",
+                            "question",
+                            "Old completed request",
+                            "Re-open a paper that was already handled.",
+                            "2026-07-28T10:30:00",
+                        ),
+                        (
+                            "old-pdf-preference",
+                            "member-a",
+                            "wecom:default:group:labagent",
+                            "preference",
+                            "Old report preference",
+                            "Always create a complete PDF for product research.",
+                            "2026-07-28T10:45:00",
                         ),
                         (
                             "other",
@@ -1272,7 +1294,6 @@ class WeComAgentBridgeTests(unittest.TestCase):
                     ],
                     historical_memory=memory,
                     previous=[],
-                    prior_research=[],
                     now=datetime(
                         2026,
                         7,
@@ -1288,11 +1309,79 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(len(memory), 1)
         self.assertIn("mechanical transitions", task["request"])
         self.assertIn("organoid force maps", task["request"])
+        self.assertNotIn("Re-open a paper", task["request"])
+        self.assertNotIn("complete PDF", task["request"])
         self.assertNotIn("Private other-group note", task["request"])
+        self.assertTrue(task["route_decision"]["message_only"])
+        self.assertEqual(task["execution_contract"]["required_artifacts"], [])
         self.assertEqual(
             task["group_inspiration"]["historical_memory"][0]["kind"],
-            "insight",
+            "interest",
         )
+
+    def test_group_inspiration_context_excludes_stale_consumed_and_outbound_messages(self) -> None:
+        daily = load_daily()
+        timezone = ZoneInfo("Asia/Hong_Kong")
+        now = datetime(2026, 7, 29, 12, 0, tzinfo=timezone)
+        after = datetime(2026, 7, 29, 9, 0, tzinfo=timezone)
+        with tempfile.TemporaryDirectory() as tmp:
+            history = Path(tmp) / "history.sqlite"
+            with sqlite3.connect(history) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE messages (
+                        id INTEGER PRIMARY KEY,
+                        chat TEXT,
+                        direction TEXT,
+                        body TEXT,
+                        create_time INTEGER,
+                        created_at TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    "INSERT INTO messages(chat, direction, body, create_time, created_at) VALUES (?, ?, ?, ?, ?)",
+                    [
+                        (
+                            "wecom:default:group:labagent",
+                            "inbound",
+                            "old archive topic",
+                            int(datetime(2026, 7, 27, 8, 0, tzinfo=timezone).timestamp()),
+                            "2026-07-27T08:00:00+08:00",
+                        ),
+                        (
+                            "wecom:default:group:labagent",
+                            "inbound",
+                            "already consumed topic",
+                            int(datetime(2026, 7, 29, 8, 30, tzinfo=timezone).timestamp()),
+                            "2026-07-29T08:30:00+08:00",
+                        ),
+                        (
+                            "wecom:default:group:labagent",
+                            "inbound",
+                            "new human direction",
+                            int(datetime(2026, 7, 29, 10, 0, tzinfo=timezone).timestamp()),
+                            "2026-07-29T10:00:00+08:00",
+                        ),
+                        (
+                            "wecom:default:group:labagent",
+                            "outbound",
+                            "agent answer must not steer the next schedule",
+                            int(datetime(2026, 7, 29, 11, 0, tzinfo=timezone).timestamp()),
+                            "2026-07-29T11:00:00+08:00",
+                        ),
+                    ],
+                )
+
+            context = daily.recent_group_inspiration_context(
+                history,
+                "wecom:default:group:labagent",
+                now=now,
+                after=after,
+                max_age_seconds=24 * 3600,
+            )
+
+        self.assertEqual([item["content"] for item in context], ["new human direction"])
 
     def test_group_inspiration_defers_while_exact_chat_has_active_work(self) -> None:
         daily = load_daily()

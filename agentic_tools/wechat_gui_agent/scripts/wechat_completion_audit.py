@@ -331,7 +331,17 @@ def deterministic_missing_requirements(
 ) -> list[dict[str, str]]:
     items = coverage_items(task)
     missing: list[dict[str, str]] = []
-    if explicit_pdf_requested(items) and ".pdf" not in result_file_suffixes(result):
+    route = (
+        task.get("route_decision")
+        if isinstance(task.get("route_decision"), dict)
+        else {}
+    )
+    message_only = bool(route.get("message_only"))
+    if (
+        not message_only
+        and explicit_pdf_requested(items)
+        and ".pdf" not in result_file_suffixes(result)
+    ):
         missing.append(
             {
                 "item_id": first_pdf_item_id(items),
@@ -339,7 +349,7 @@ def deterministic_missing_requirements(
                 "kind": "artifact",
             }
         )
-    if explicit_pdf_requested(items) and not (
+    if not message_only and explicit_pdf_requested(items) and not (
         str(result.get("message") or "").strip()
         or str(result.get("confirmation") or "").strip()
     ):
@@ -650,6 +660,15 @@ def ground_model_missing_requirements(
         source_requests_pdf = bool(PDF_REQUEST_RE.search(source_text)) and not bool(
             NEGATED_PDF_RE.search(source_text)
         )
+        route = (
+            task.get("route_decision")
+            if isinstance(task.get("route_decision"), dict)
+            else {}
+        )
+        if kind == "artifact" and bool(route.get("message_only")):
+            if item_id:
+                rejected_ids.add(item_id)
+            continue
         if claims_pdf and not source_requests_pdf:
             if item_id:
                 rejected_ids.add(item_id)

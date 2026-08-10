@@ -238,6 +238,31 @@ class WeChatCompletionAuditTests(unittest.TestCase):
         self.assertEqual([item["kind"] for item in no_answer], ["reply"])
         self.assertEqual(complete, [])
 
+    def test_message_only_schedule_cannot_infer_or_force_pdf_artifact(self) -> None:
+        task = self.task()
+        task["route_decision"] = {"message_only": True}
+
+        missing = audit.deterministic_missing_requirements(
+            task,
+            {"message": "One concise inspiration message.", "files": []},
+        )
+        items = audit.coverage_items(task)
+        grounded, rejected = audit.ground_model_missing_requirements(
+            task,
+            items,
+            [
+                {
+                    "item_id": items[0]["item_id"],
+                    "requirement": "Create and return the explicitly requested PDF artifact.",
+                    "kind": "artifact",
+                }
+            ],
+        )
+
+        self.assertEqual(missing, [])
+        self.assertEqual(grounded, [])
+        self.assertEqual(rejected, {items[0]["item_id"]})
+
     def test_explicit_truncation_marker_requires_complete_repair(self) -> None:
         task = {
             "id": "plain-long-1",

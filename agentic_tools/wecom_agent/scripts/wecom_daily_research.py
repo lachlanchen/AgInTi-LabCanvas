@@ -70,6 +70,8 @@ CHAT_BUSY_STATUSES = {
 }
 QUIET_START_HOUR = 20
 QUIET_END_HOUR = 8
+DEFAULT_INSPIRATION_CONTEXT_MAX_AGE_HOURS = 24.0
+DEFAULT_INSPIRATION_CONTEXT_LIMIT = 20
 
 
 def in_scheduled_quiet_hours(now: datetime | None = None) -> bool:
@@ -933,33 +935,7 @@ def previous_inspiration_outputs(queue: Path, chat: str, *, limit: int = 5) -> l
             continue
         text = str(result.get("message") or "").strip()
         if text:
-            outputs.append(text[:900])
-    return outputs[-limit:]
-
-
-def previous_group_research_outputs(queue: Path, chat: str, *, limit: int = 6) -> list[str]:
-    """Return bounded prior research results as leads for the next inspiration turn."""
-    if not queue.is_file():
-        return []
-    outputs: list[str] = []
-    try:
-        rows = queue.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
-    for line in rows:
-        try:
-            task = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        source = task.get("source") if isinstance(task.get("source"), dict) else {}
-        result = task.get("result") if isinstance(task.get("result"), dict) else {}
-        if str(task.get("chat") or "") != chat:
-            continue
-        if str(source.get("local_type") or "") not in {"scheduled_daily_research", "immediate_daily_research"}:
-            continue
-        text = str(result.get("message") or "").strip()
-        if text:
-            outputs.append(text[:1400])
+            outputs.append(text[:500])
     return outputs[-limit:]
 
 
@@ -974,62 +950,64 @@ def build_group_inspiration_task(
     context: list[dict[str, Any]],
     historical_memory: list[dict[str, Any]],
     previous: list[str],
-    prior_research: list[str],
     now: datetime,
     queue: Path,
     interval_seconds: int,
     source_suffix: str = "",
+    context_after: datetime | None = None,
+    context_max_age_seconds: int | None = None,
 ) -> dict[str, Any]:
-    topic_text = "；".join(topics) or "未指定；从群内长期讨论、问题、研究兴趣和近期方向中发现连接"
+    topic_text = "；".join(topics) or "未指定；从群内明确保存的研究兴趣中选择一个新方向"
     context_text = "\n".join(
         f"- {item.get('direction', 'inbound')}: {str(item.get('content') or '')[:900]}"
-        for item in context[-60:]
-    ) or "- 群内还没有足够的历史讨论。"
+        for item in context[-DEFAULT_INSPIRATION_CONTEXT_LIMIT:]
+    ) or "- 自上次灵感消息后没有新的群成员消息。"
     memory_text = "\n".join(
         (
             f"- [{item.get('kind', 'summary')}] "
             f"{str(item.get('title') or '').strip()}: "
             f"{str(item.get('content') or '')[:1000]}"
         ).strip()
-        for item in historical_memory[-24:]
-    ) or "- 暂无更早的群内摘要或长期兴趣记录。"
-    previous_text = "\n".join(f"- {item}" for item in previous) or "- 暂无历史灵感提示。"
-    research_text = "\n".join(f"- {item}" for item in prior_research) or "- 暂无历史研究结果。"
+        for item in historical_memory[-8:]
+    ) or "- 暂无明确保存的长期兴趣。"
+    previous_text = "\n".join(f"- {item}" for item in previous) or "- 暂无。"
     slot = now.strftime("%Y%m%d%H%M")
     source_id = f"inspiration:{slot}:{short_hash(chat)}{':' + source_suffix if source_suffix else ''}"
     task_id = f"wecom-inspiration-{slot}-{short_hash(chat)}{('-' + short_hash(source_suffix) if source_suffix else '')}"
     request_text = f"""Create one concise, genuinely useful inspiration point for this WeCom group after a quiet period.
 
+Output contract: return exactly one natural chat message. Create no files or attachments.
+
 Group steering interests:
 {topic_text}
 
-Recent and accumulated public group context (use all relevant threads, not only the last line):
+New human messages since the previous inspiration (the only active conversation context):
 {context_text}
 
-Durable summaries distilled from older messages, member interests, ideas, and prior findings in this exact group:
+Durable explicit interests from this exact group (selection priors only, never unfinished current requests):
 {memory_text}
 
-Previous inspiration points; avoid repeating them:
+Novelty exclusions: previous inspiration points. Do not continue, summarize, or research these unless they also appear in the new human messages above:
 {previous_text}
-
-Prior group research results and paper leads:
-{research_text}
 
 Requirements:
 - Respond as a thoughtful human collaborator, not a template or status report.
 - Find one meaningful connection, question, experiment, design direction, writing angle, or research opportunity that could inspire this group.
 - Explore adjacent topics when they illuminate the group's direction, but explain the connection instead of drifting into a generic news list.
-- Base it on the group context and interests. When a paper, report, or source has already appeared, inspect its substantive content when available: identify the actual result, method or evidence, limitation, and an unresolved question. Do not merely repeat its title or abstract.
-- Treat current/recent messages as the immediate direction and the durable summaries as continuity from older discussion. Web or literature search should update, test, or extend that context rather than replace it with a generic AI-generated topic.
+- New human messages may steer the turn. Never resurrect an old question, link, video, paper, or completed task merely because it appears in durable memory or novelty exclusions.
+- If there are no new human messages, choose a fresh direction from the explicit steering interests and current reliable research. Do not perform history archaeology.
+- Durable interests may influence topic selection, but they are not evidence that anyone currently asked to revisit an old thread.
+- When a source appears in the new human messages, inspect its substantive content when available: identify the actual result, method or evidence, limitation, and an unresolved question. Do not merely repeat its title or abstract.
 - If a current factual claim is needed, verify it with reliable sources and include at most two compact links; do not invent citations.
 - Keep it concise enough for a group message, but include why it matters and one possible next step.
 - Clearly separate a sourced fact from your own proposed idea.
-- Do not create a PDF, image, or other artifact unless the group has explicitly requested one.
+- Return only the concise chat message required by this scheduled turn.
 - Do not publish publicly, spend money, change credentials, or take irreversible actions.
 """.strip()
     task = {
         "id": task_id,
         "chat": chat,
+        "session_scope": f"{chat}::scheduled-group-inspiration",
         "request": request_text,
         "original_request": request_text,
         "route_plan": "Use the persistent LabCanvas worker to synthesize one non-repetitive group inspiration point.",
@@ -1054,6 +1032,7 @@ Requirements:
             "transport": "wecom",
             "transport_channel": transport_channel,
             "scheduled_group_inspiration": True,
+            "message_only": True,
             "no_fixed_deadline": True,
         },
         "instruction_contract": {
@@ -1068,7 +1047,11 @@ Requirements:
             "transport": transport_channel,
             "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
             "agent_entrypoint": "wechat_agent_backend.run_agent_session",
-            "session": {"chat": chat, "role": "worker", "reuse": True},
+            "session": {
+                "chat": f"{chat}::scheduled-group-inspiration",
+                "role": "worker",
+                "reuse": True,
+            },
             "required_artifacts": [],
             "queue_mode": "single_worker_sequential",
         },
@@ -1088,14 +1071,20 @@ Requirements:
             "kind": "scheduled_group_inspiration",
             "authorization_role": "system_safe_read_only",
         },
-        "context": context[-60:],
+        "context": context[-DEFAULT_INSPIRATION_CONTEXT_LIMIT:],
         "group_inspiration": {
             "topics": topics,
             "interval_seconds": interval_seconds,
-            "historical_memory": historical_memory[-24:],
+            "historical_memory": historical_memory[-8:],
             "previous_outputs": previous,
-            "prior_research_outputs": prior_research,
             "source_context_count": len(context),
+            "context_policy": "new_human_messages_since_previous_inspiration_with_age_cap",
+            "context_after": context_after.isoformat(timespec="seconds") if context_after else "",
+            "context_max_age_seconds": int(
+                context_max_age_seconds
+                if context_max_age_seconds is not None
+                else inspiration_context_max_age_seconds()
+            ),
         },
         "transport_preflight": {},
         "queue_path": str(queue),
@@ -1131,10 +1120,14 @@ def enqueue_initial_group_inspiration(
         chat_type=str(event.get("chat_type") or "group"),
         transport_channel=str(event.get("transport_channel") or "wecom_bot_websocket"),
         topics=topics,
-        context=recent_group_context(history_db, chat, limit=60),
-        historical_memory=historical_group_memory(history_db, chat, limit=24),
+        context=recent_group_inspiration_context(
+            history_db,
+            chat,
+            now=current,
+            limit=DEFAULT_INSPIRATION_CONTEXT_LIMIT,
+        ),
+        historical_memory=historical_group_memory(history_db, chat, limit=8),
         previous=previous_inspiration_outputs(queue, chat),
-        prior_research=previous_group_research_outputs(queue, chat),
         now=current,
         queue=queue,
         interval_seconds=settings["interval_seconds"],
@@ -1194,9 +1187,15 @@ def run_inspiration_cycle(
         if active_chat_work_task(queue, chat):
             busy_chats.append(chat)
             continue
-        context = recent_group_context(history_db, chat, limit=60)
+        context_after = parse_task_datetime(last_enqueued, timezone)
+        context = recent_group_inspiration_context(
+            history_db,
+            chat,
+            now=current,
+            after=context_after,
+            limit=DEFAULT_INSPIRATION_CONTEXT_LIMIT,
+        )
         previous = previous_inspiration_outputs(queue, chat)
-        prior_research = previous_group_research_outputs(queue, chat)
         task = build_group_inspiration_task(
             chat=chat,
             account_id=account_id,
@@ -1205,12 +1204,13 @@ def run_inspiration_cycle(
             transport_channel=transport_channel,
             topics=topics,
             context=context,
-            historical_memory=historical_group_memory(history_db, chat, limit=24),
+            historical_memory=historical_group_memory(history_db, chat, limit=8),
             previous=previous,
-            prior_research=prior_research,
             now=current,
             queue=queue,
             interval_seconds=interval_seconds,
+            context_after=context_after,
+            context_max_age_seconds=inspiration_context_max_age_seconds(),
         )
         appended = append(queue, task)
         stamp = current.isoformat(timespec="seconds")
@@ -1497,8 +1497,71 @@ def recent_group_context(path: Path, chat: str, *, limit: int) -> list[dict[str,
     ]
 
 
+def inspiration_context_max_age_seconds() -> int:
+    """Return the bounded active-context age for periodic inspiration."""
+
+    raw = os.environ.get(
+        "WECOM_INSPIRATION_CONTEXT_MAX_AGE_HOURS",
+        str(DEFAULT_INSPIRATION_CONTEXT_MAX_AGE_HOURS),
+    )
+    try:
+        hours = float(raw)
+    except (TypeError, ValueError):
+        hours = DEFAULT_INSPIRATION_CONTEXT_MAX_AGE_HOURS
+    return int(max(1.0, min(48.0, hours)) * 3600)
+
+
+def recent_group_inspiration_context(
+    path: Path,
+    chat: str,
+    *,
+    now: datetime,
+    after: datetime | None = None,
+    limit: int = DEFAULT_INSPIRATION_CONTEXT_LIMIT,
+    max_age_seconds: int | None = None,
+) -> list[dict[str, Any]]:
+    """Return only new, genuinely recent human messages for one inspiration turn."""
+
+    if not path.is_file():
+        return []
+    timezone = configured_timezone()
+    current = now.astimezone(timezone) if now.tzinfo else now.replace(tzinfo=timezone)
+    age_seconds = max_age_seconds if max_age_seconds is not None else inspiration_context_max_age_seconds()
+    age_seconds = max(3600, min(172800, int(age_seconds)))
+    cutoff = current - timedelta(seconds=age_seconds)
+    if after is not None:
+        normalized_after = after.astimezone(timezone) if after.tzinfo else after.replace(tzinfo=timezone)
+        cutoff = max(cutoff, normalized_after)
+    bounded = max(1, min(DEFAULT_INSPIRATION_CONTEXT_LIMIT, int(limit)))
+    try:
+        with sqlite3.connect(path) as conn:
+            rows = conn.execute(
+                """
+                SELECT direction, body, create_time
+                FROM messages
+                WHERE chat = ?
+                  AND direction = 'inbound'
+                  AND COALESCE(
+                        NULLIF(create_time, 0),
+                        CAST(strftime('%s', created_at) AS INTEGER),
+                        0
+                      ) > ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (chat, int(cutoff.timestamp()), bounded),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [
+        {"direction": direction, "content": body, "create_time": create_time or 0, "kind": "text"}
+        for direction, body, create_time in reversed(rows)
+        if str(body or "").strip()
+    ]
+
+
 def historical_group_memory(path: Path, chat: str, *, limit: int) -> list[dict[str, Any]]:
-    """Return bounded, provenance-aware summaries for this exact group only."""
+    """Return only explicit durable interests for this exact group."""
 
     db = knowledge_db_for_history(path)
     if not db.is_file():
@@ -1511,10 +1574,7 @@ def historical_group_memory(path: Path, chat: str, *, limit: int) -> list[dict[s
                 SELECT kind, title, content, updated_at
                 FROM knowledge_items
                 WHERE chat = ?
-                  AND kind IN (
-                    'idea', 'insight', 'intuition', 'interest', 'hypothesis',
-                    'decision', 'preference', 'question', 'note', 'agent_summary'
-                  )
+                  AND kind = 'interest'
                 ORDER BY updated_at DESC
                 LIMIT ?
                 """,
