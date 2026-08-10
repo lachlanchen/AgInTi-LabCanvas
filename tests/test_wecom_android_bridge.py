@@ -1490,7 +1490,11 @@ class WeComAndroidBridgeTests(unittest.TestCase):
                     "attachment_sha256": bridge.sha256_file(image),
                     "attachment_width": str(width),
                     "attachment_height": str(height),
-                    "attachment_capture_kind": "wecom_android_native_full_view",
+                    "attachment_capture_kind": (
+                        "wecom_android_original_media_store_export"
+                    ),
+                    "attachment_fidelity": "native_transmitted_original",
+                    "attachment_original_resolution_verified": "true",
                 }
             )
             event = runtime.build_event("LabAgent", record)
@@ -1505,7 +1509,14 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(event["attachments"][0]["path"], str(image))
         self.assertEqual(
             event["attachments"][0]["capture_kind"],
-            "wecom_android_native_full_view",
+            "wecom_android_original_media_store_export",
+        )
+        self.assertEqual(
+            event["attachments"][0]["fidelity"],
+            "native_transmitted_original",
+        )
+        self.assertTrue(
+            event["attachments"][0]["original_resolution_verified"]
         )
 
     def test_visible_image_preview_is_persisted_with_exact_visual_identity(self) -> None:
@@ -1565,6 +1576,7 @@ class WeComAndroidBridgeTests(unittest.TestCase):
                     "target_groups": ["LabAgent"],
                     "state_db": str(root / "state.sqlite"),
                     "staging_dir": str(root / "staging"),
+                    "allow_inbound_image_preview_fallback": True,
                 }
             )
             record = runtime.persist_visible_image_preview(
@@ -1597,6 +1609,187 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             self.assertEqual(
                 materialized["attachment_capture_kind"],
                 "wecom_android_exact_visible_image_preview_fallback",
+            )
+            self.assertEqual(
+                materialized["attachment_fidelity"],
+                "degraded_visible_thumbnail",
+            )
+            self.assertEqual(
+                materialized["attachment_original_resolution_verified"],
+                "false",
+            )
+
+    def test_image_materialization_rejects_preview_fallback_by_default(self) -> None:
+        bridge = load_bridge()
+        width, height = 80, 80
+        screenshot = bridge.RawScreenshot(
+            width,
+            height,
+            bytes((20, 40, 60, 255)) * width * height,
+        )
+        bounds = "[10,12][70,68]"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                }
+            )
+            record = runtime.persist_visible_image_preview(
+                "LabAgent",
+                {
+                    "fingerprint": "exact-image-no-fallback",
+                    "direction": "inbound",
+                    "sender": "陈苗",
+                    "body": "[图片]",
+                    "source_kind": bridge.IMAGE_KIND,
+                    "image_bounds": bounds,
+                    "image_visual_id": bridge.screenshot_region_visual_id(
+                        screenshot, bounds
+                    ),
+                },
+                screenshot,
+            )
+            with mock.patch.object(
+                runtime,
+                "find_image_node_for_record",
+                side_effect=bridge.BridgeError("image scrolled away"),
+            ), self.assertRaisesRegex(
+                bridge.BridgeError,
+                "native-resolution WeCom image recovery failed",
+            ):
+                runtime.materialize_image_record("LabAgent", record)
+
+    def test_media_store_parser_preserves_original_image_metadata(self) -> None:
+        bridge = load_bridge()
+        payload = (
+            "Row: 0 _id=36763, "
+            "_data=/storage/emulated/0/Pictures/WeiXin/mmexport.png, "
+            "_display_name=mmexport.png, _size=2456789, width=3840, "
+            "height=2160, date_added=1786331000, relative_path=Pictures/WeiXin/\n"
+        )
+
+        parsed = bridge.parse_media_store_images(payload)
+
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].media_id, 36763)
+        self.assertEqual(parsed[0].size_bytes, 2456789)
+        self.assertEqual((parsed[0].width, parsed[0].height), (3840, 2160))
+        self.assertEqual(parsed[0].display_name, "mmexport.png")
+
+    def test_image_viewer_accepts_native_surface_with_stale_chat_title(self) -> None:
+        bridge = load_bridge()
+        root = ET.fromstring(
+            """
+            <hierarchy>
+              <node package="com.tencent.wework">
+                <node text="LabAgent(6)" resource-id="com.tencent.wework:id/n5i"
+                      package="com.tencent.wework" bounds="[399,89][681,153]" />
+                <node resource-id="com.tencent.wework:id/nxh"
+                      package="com.tencent.wework" bounds="[0,80][1080,2080]" />
+              </node>
+            </hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(base / "state.sqlite"),
+                    "staging_dir": str(base / "staging"),
+                }
+            )
+            with mock.patch.object(runtime, "dump_hierarchy", return_value=root):
+                visible = runtime.wait_for_image_viewer(timeout_seconds=1)
+
+        self.assertIs(visible, root)
+
+    def test_image_materialization_prefers_native_media_store_export(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(base / "state.sqlite"),
+                    "staging_dir": str(base / "staging"),
+                }
+            )
+            root = ET.fromstring(
+                '<hierarchy><node package="com.tencent.wework" '
+                'resource-id="com.tencent.wework:id/nxh" bounds="[0,0][100,100]" />'
+                "</hierarchy>"
+            )
+            node = next(root.iter("node"))
+            screenshot = bridge.RawScreenshot(1, 1, b"\x00\x00\x00\xff")
+            exported = bridge.MediaStoreImage(
+                media_id=36763,
+                path="/storage/emulated/0/Pictures/WeiXin/mmexport.png",
+                display_name="mmexport.png",
+                size_bytes=128,
+                width=3840,
+                height=2160,
+                date_added=1786331000,
+                relative_path="Pictures/WeiXin/",
+            )
+            original = base / "staging" / "native.png"
+            original.parent.mkdir(parents=True, exist_ok=True)
+            original.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 120)
+            record = {
+                "fingerprint": "native-image-export",
+                "direction": "inbound",
+                "sender": "陈苗",
+                "body": "[图片]",
+                "source_kind": bridge.IMAGE_KIND,
+                "image_visual_id": "visual",
+            }
+            with mock.patch.object(
+                runtime,
+                "find_image_node_for_record",
+                return_value=(root, screenshot, node),
+            ), mock.patch.object(
+                runtime, "tap_node"
+            ), mock.patch.object(
+                runtime, "wait_for_image_viewer", return_value=root
+            ), mock.patch.object(
+                runtime, "request_original_image", return_value=True
+            ), mock.patch.object(
+                runtime, "save_image_from_viewer", return_value=exported
+            ), mock.patch.object(
+                runtime, "pull_saved_image", return_value=original
+            ), mock.patch.object(
+                runtime, "press_back"
+            ), mock.patch.object(
+                runtime, "open_chat", return_value=root
+            ), mock.patch.object(
+                runtime, "move_chat_to_live_tail", return_value=root
+            ), mock.patch.object(
+                bridge, "visible_chat_title", return_value="LabAgent"
+            ):
+                materialized = runtime.materialize_image_record(
+                    "LabAgent", record
+                )
+
+            self.assertEqual(materialized["attachment_path"], str(original))
+            self.assertEqual(materialized["attachment_width"], "3840")
+            self.assertEqual(materialized["attachment_height"], "2160")
+            self.assertEqual(
+                materialized["attachment_capture_kind"],
+                "wecom_android_original_media_store_export",
+            )
+            self.assertEqual(
+                materialized["attachment_fidelity"],
+                "native_transmitted_original",
+            )
+            self.assertEqual(
+                materialized["attachment_original_resolution_verified"],
+                "true",
             )
 
     def test_find_image_node_scans_recent_history_by_visual_identity(self) -> None:

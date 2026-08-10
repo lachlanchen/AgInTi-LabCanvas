@@ -1318,6 +1318,8 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertIn("start_health_window", wecom)
         self.assertIn("health_guard_reload_needed", wecom)
         self.assertIn("sha256sum \"$HEALTH_GUARD\"", wecom)
+        self.assertIn("android_bridge_reload_needed", wecom)
+        self.assertIn("sha256sum \"$ANDROID_BRIDGE\"", wecom)
         self.assertIn("kill_window_if_present", wecom)
         self.assertIn("external_required", wecom)
         self.assertIn("message_permission_unavailable", wecom)

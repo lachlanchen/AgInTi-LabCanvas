@@ -564,10 +564,16 @@ def normalized_attachments(event: dict[str, Any]) -> list[dict[str, Any]]:
             "status": "ready",
             "task_copy_path": str(path),
         }
-        for key in ("sha256", "width", "height", "capture_kind"):
+        for key in ("sha256", "width", "height", "capture_kind", "fidelity"):
             value = str(item.get(key) or "").strip()
             if value:
                 normalized[key] = value
+        if "original_resolution_verified" in item:
+            original_value = item.get("original_resolution_verified")
+            normalized["original_resolution_verified"] = (
+                original_value is True
+                or str(original_value).strip().lower() in {"1", "true", "yes"}
+            )
         result.append(normalized)
     return result
 

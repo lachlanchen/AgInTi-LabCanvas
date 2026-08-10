@@ -4182,6 +4182,51 @@ stderr: noisy internal trace
         self.assertNotIn("sha256", payload["message"].lower())
         self.assertEqual(payload["data"]["status"], "image_read")
 
+    def test_degraded_wecom_thumbnail_never_reaches_vision_or_ocr(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            image = root / "wecom-preview.png"
+            image.write_bytes(b"not-used-by-the-fidelity-gate")
+            copied = [
+                {
+                    "task_copy_path": str(image),
+                    "suffix": ".png",
+                    "capture_kind": (
+                        "wecom_android_exact_visible_image_preview_fallback"
+                    ),
+                    "fidelity": "degraded_visible_thumbnail",
+                    "original_resolution_verified": False,
+                    "image_metadata": {
+                        "status": "ok",
+                        "width": 388,
+                        "height": 217,
+                        "format": "PNG",
+                    },
+                }
+            ]
+
+            with mock.patch.object(
+                worker,
+                "codex_read_image_file",
+                side_effect=AssertionError("thumbnail must not reach vision"),
+            ), mock.patch.object(
+                worker,
+                "ocr_image_file",
+                side_effect=AssertionError("thumbnail must not reach OCR"),
+            ):
+                worker.enrich_media_resolution_copies_with_image_read(
+                    copied,
+                    root / "artifact",
+                )
+
+        self.assertEqual(copied[0]["vision"]["status"], "deferred")
+        self.assertEqual(
+            copied[0]["vision"]["reason"],
+            "native_resolution_source_required",
+        )
+        self.assertEqual(copied[0]["ocr"], copied[0]["vision"])
+
     def test_file_intake_naturalizes_legacy_labeled_image_read(self) -> None:
         worker = load_worker()
         message = worker.image_intake_description_message(

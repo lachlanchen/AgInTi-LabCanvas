@@ -152,9 +152,12 @@ sender through WeCom's real member picker. Plain `@name` text is not treated as
 a mention. External member rows may carry WeCom's native `@微信` suffix; the
 bridge accepts that one exact suffix while preserving case and rejecting
 ambiguous or broadcast matches. Inbound image bubbles are opened in WeCom's
-native full-image viewer and captured into ignored private staging before the
-vision-capable worker runs; ambiguous or unverifiable media remains pending
-instead of using a nearby thumbnail. See
+native full-image viewer, `查看原图` is requested when available, and the exact
+saved image is pulled from Android MediaStore into ignored private staging
+before the vision-capable worker runs. The bridge verifies the exported byte
+size, image signature, dimensions, and exact source identity. Chat-bubble crops,
+viewer screenshots, and other compressed previews are disabled by default;
+ambiguous or unverifiable media remains pending instead of reaching vision. See
 [`docs/ANDROID_RELAY_INTERFACE.md`](docs/ANDROID_RELAY_INTERFACE.md).
 
 Android relay health uses the normal three-minute/20-cycle deadline while the
@@ -170,9 +173,11 @@ being process-restarted. A reachable relay reporting a locked Android keyguard
 is handled the same way: health stays degraded for a normal human unlock, with
 no automated unlock or relay restart loop. Stale or unreachable relays remain
 restart-eligible.
-The minute-level autostart supervisor also fingerprints the health-guard source
-and reloads only its non-GUI tmux window after an on-disk guard update. This
-activates recovery-policy fixes without restarting either logged-in client.
+The minute-level autostart supervisor fingerprints both the health-guard source
+and the Android bridge source. An on-disk guard update reloads only the
+non-GUI health window; an Android bridge update reloads only `android-relay`,
+preserving WeCom app data and the logged-in account. This activates bounded
+recovery fixes without restarting either desktop client.
 
 On Linux, the official download page does not provide a native desktop build.
 The optional enrollment helper installs Tencent's official Windows client in a

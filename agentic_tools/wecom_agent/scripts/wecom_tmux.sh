@@ -33,6 +33,7 @@ WINDOWS_CLIENT="$TOOL_ROOT/scripts/wecom_windows_client.sh"
 ANDROID_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_android_bridge.local.json"
 ANDROID_BRIDGE="$TOOL_ROOT/scripts/wecom_android_bridge.py"
 ANDROID_BRIDGE_LOG="$LOG_DIR/android-relay.log"
+ANDROID_BRIDGE_SIGNATURE="$ROOT/output/transport-health/android-relay.sha256"
 HEALTH_GUARD="$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_transport_stall_guard.py"
 HEALTH_LOG="$LOG_DIR/transport-health.log"
 HEALTH_STATE="$ROOT/output/transport-health/state.json"
@@ -67,14 +68,26 @@ start_android_window() {
   kill_window_if_present android-relay
   tmux new-window -t "$SESSION" -n android-relay \
     "cd '$ROOT' && '$ROOT/scripts/mix2s' on --serial '$serial' >> '$ANDROID_BRIDGE_LOG' 2>&1 && exec python3 '$ANDROID_BRIDGE' --config '$ANDROID_BRIDGE_CONFIG' serve >> '$ANDROID_BRIDGE_LOG' 2>&1"
+  mkdir -p "$(dirname "$ANDROID_BRIDGE_SIGNATURE")"
+  sha256sum "$ANDROID_BRIDGE" | awk '{print $1}' >"$ANDROID_BRIDGE_SIGNATURE"
   echo "Started allowlisted Android WeCom relay window."
 }
 
 ensure_android_window() {
   remove_dead_window android-relay
-  if android_enabled && ! window_exists android-relay; then
-    start_android_window
+  if android_enabled; then
+    if ! window_exists android-relay || android_bridge_reload_needed; then
+      start_android_window
+    fi
   fi
+}
+
+android_bridge_reload_needed() {
+  local current recorded=""
+  current="$(sha256sum "$ANDROID_BRIDGE" | awk '{print $1}')"
+  [[ -f "$ANDROID_BRIDGE_SIGNATURE" ]] \
+    && recorded="$(head -n 1 "$ANDROID_BRIDGE_SIGNATURE")"
+  [[ "$current" != "$recorded" ]]
 }
 
 window_id_by_name() {

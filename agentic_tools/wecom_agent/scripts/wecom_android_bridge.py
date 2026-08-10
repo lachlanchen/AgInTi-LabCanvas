@@ -85,6 +85,17 @@ MERGED_HISTORY_KIND = "merged_chat_history"
 IMAGE_BUBBLE_RESOURCE_SUFFIX = ":id/kfb"
 IMAGE_KIND = "image"
 IMAGE_VIEWER_RESOURCE_SUFFIX = ":id/nxh"
+IMAGE_ORIGINAL_LABEL_PREFIXES = ("查看原图", "查看原圖")
+IMAGE_ORIGINAL_FAILURE_LABELS = ("原图下载失败", "原圖下載失敗")
+IMAGE_SAVE_LABELS = (
+    "保存图片",
+    "保存圖片",
+    "保存图片到手机",
+    "保存圖片到手機",
+    "保存到手机",
+    "儲存到手機",
+)
+MEDIASTORE_IMAGES_URI = "content://media/external/images/media"
 SHIPINHAO_CARD_THUMBNAIL_RESOURCE_SUFFIX = ":id/og2"
 SHIPINHAO_CARD_ACCOUNT_RESOURCE_SUFFIX = ":id/og3"
 SHIPINHAO_CARD_KIND = "shipinhao_card"
@@ -122,6 +133,18 @@ class RawScreenshot:
     rgba: bytes
 
 
+@dataclass(frozen=True)
+class MediaStoreImage:
+    media_id: int
+    path: str
+    display_name: str
+    size_bytes: int
+    width: int
+    height: int
+    date_added: int
+    relative_path: str
+
+
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
@@ -140,6 +163,38 @@ def bounded_float(value: Any, default: float, minimum: float, maximum: float) ->
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+MEDIASTORE_IMAGE_ROW_RE = re.compile(
+    r"^Row:\s+\d+\s+_id=(?P<media_id>\d+),\s+"
+    r"_data=(?P<path>.*?),\s+_display_name=(?P<display_name>.*?),\s+"
+    r"_size=(?P<size_bytes>\d+),\s+width=(?P<width>-?\d+),\s+"
+    r"height=(?P<height>-?\d+),\s+date_added=(?P<date_added>\d+),\s+"
+    r"relative_path=(?P<relative_path>.*)$"
+)
+
+
+def parse_media_store_images(payload: str) -> list[MediaStoreImage]:
+    """Parse Android MediaStore rows without depending on app-private paths."""
+    images: list[MediaStoreImage] = []
+    for raw_line in str(payload or "").splitlines():
+        match = MEDIASTORE_IMAGE_ROW_RE.match(raw_line.strip())
+        if not match:
+            continue
+        values = match.groupdict()
+        images.append(
+            MediaStoreImage(
+                media_id=int(values["media_id"]),
+                path=values["path"],
+                display_name=values["display_name"],
+                size_bytes=int(values["size_bytes"]),
+                width=int(values["width"]),
+                height=int(values["height"]),
+                date_added=int(values["date_added"]),
+                relative_path=values["relative_path"],
+            )
+        )
+    return sorted(images, key=lambda item: item.media_id)
 
 
 def unique_nonempty(values: Any) -> list[str]:
@@ -679,6 +734,21 @@ def initialize_config(
         ),
         "history_scan_pages": bounded_int(
             existing.get("history_scan_pages"), 3, 0, 8
+        ),
+        "inbound_image_original_timeout_seconds": bounded_float(
+            existing.get("inbound_image_original_timeout_seconds"),
+            180.0,
+            10.0,
+            1800.0,
+        ),
+        "inbound_image_save_timeout_seconds": bounded_float(
+            existing.get("inbound_image_save_timeout_seconds"),
+            45.0,
+            5.0,
+            300.0,
+        ),
+        "allow_inbound_image_preview_fallback": bool(
+            existing.get("allow_inbound_image_preview_fallback", False)
         ),
         "max_send_file_bytes": bounded_int(
             existing.get("max_send_file_bytes"), 100 * 1024 * 1024, 1, 1024 * 1024 * 1024
@@ -3286,33 +3356,234 @@ class AndroidBridge:
         )
         return result
 
+    def image_viewer_nodes(self, root: ET.Element) -> list[ET.Element]:
+        return [
+            node
+            for node in root.iter("node")
+            if node.attrib.get("package") == self.package
+            and node.attrib.get("resource-id", "").endswith(
+                IMAGE_VIEWER_RESOURCE_SUFFIX
+            )
+            and node.attrib.get("bounds")
+        ]
+
+    def original_image_action_nodes(self, root: ET.Element) -> list[ET.Element]:
+        return [
+            node
+            for node in root.iter("node")
+            if node.attrib.get("package") == self.package
+            and any(
+                node_text(node).startswith(prefix)
+                for prefix in IMAGE_ORIGINAL_LABEL_PREFIXES
+            )
+            and node.attrib.get("bounds")
+        ]
+
     def wait_for_image_viewer(self, *, timeout_seconds: float = 8.0) -> ET.Element:
         deadline = time.monotonic() + max(1.0, timeout_seconds)
         last_title = ""
         while time.monotonic() < deadline:
             root = self.dump_hierarchy(attempts=2)
             last_title = visible_chat_title(root)
-            viewer_nodes = [
-                node
-                for node in root.iter("node")
-                if node.attrib.get("package") == self.package
-                and node.attrib.get("resource-id", "").endswith(
-                    IMAGE_VIEWER_RESOURCE_SUFFIX
-                )
-            ]
-            if viewer_nodes and not last_title:
+            # UIAutomator can retain the underlying chat title while the native
+            # image viewer is visibly on top. The exact viewer node or its
+            # original-image control is the stronger post-tap surface proof.
+            if self.image_viewer_nodes(root) or self.original_image_action_nodes(root):
                 return root
             time.sleep(0.25)
         raise BridgeError(
             f"WeCom image viewer did not open from the exact bubble (visible title: {last_title!r})"
         )
 
+    def request_original_image(self, root: ET.Element) -> bool:
+        """Load the sender's native-resolution image before exporting it."""
+        actions = self.original_image_action_nodes(root)
+        if not actions:
+            return False
+        if len(actions) != 1:
+            raise BridgeError("WeCom image viewer exposes multiple original-image controls")
+        self.tap_node(root, actions[0])
+        deadline = time.monotonic() + bounded_float(
+            self.config.get("inbound_image_original_timeout_seconds"),
+            180.0,
+            10.0,
+            1800.0,
+        )
+        while time.monotonic() < deadline:
+            current = self.dump_hierarchy(attempts=2)
+            visible = hierarchy_visible_texts(current)
+            if any(label in visible for label in IMAGE_ORIGINAL_FAILURE_LABELS):
+                raise BridgeError("WeCom reported that the original image download failed")
+            if not self.original_image_action_nodes(current):
+                return True
+            time.sleep(0.5)
+        raise BridgeError("WeCom original image did not finish loading before timeout")
+
+    def media_store_images(self, *, after_id: int = 0) -> list[MediaStoreImage]:
+        projection = (
+            "_id:_data:_display_name:_size:width:height:date_added:relative_path"
+        )
+        command = (
+            f"content query --uri {shlex.quote(MEDIASTORE_IMAGES_URI)} "
+            f"--projection {shlex.quote(projection)}"
+        )
+        if after_id > 0:
+            command += f" --where {shlex.quote(f'_id>{int(after_id)}')}"
+        output = self.adb_shell(command, timeout=30, check=False)
+        return parse_media_store_images(output)
+
+    def media_store_max_image_id(self) -> int:
+        images = self.media_store_images()
+        return max((image.media_id for image in images), default=0)
+
+    def wait_for_saved_image(
+        self,
+        baseline_id: int,
+        *,
+        started_at: float,
+    ) -> MediaStoreImage:
+        deadline = time.monotonic() + bounded_float(
+            self.config.get("inbound_image_save_timeout_seconds"),
+            45.0,
+            5.0,
+            300.0,
+        )
+        stable: dict[int, tuple[int, int]] = {}
+        while time.monotonic() < deadline:
+            candidates = [
+                image
+                for image in self.media_store_images(after_id=baseline_id)
+                if image.path.startswith(("/storage/emulated/0/", "/sdcard/"))
+                and image.size_bytes > 0
+                and image.width > 0
+                and image.height > 0
+                and image.date_added >= int(started_at) - 5
+            ]
+            for image in candidates:
+                previous_size, count = stable.get(image.media_id, (0, 0))
+                stable[image.media_id] = (
+                    image.size_bytes,
+                    count + 1 if previous_size == image.size_bytes else 1,
+                )
+            ready = [
+                image
+                for image in candidates
+                if stable.get(image.media_id, (0, 0))[1] >= 2
+            ]
+            if len(ready) == 1:
+                return ready[0]
+            if len(ready) > 1:
+                raise BridgeError(
+                    "multiple new Android gallery images appeared during exact image export"
+                )
+            time.sleep(0.5)
+        raise BridgeError("WeCom did not export the original image to Android MediaStore")
+
+    def save_image_from_viewer(self, root: ET.Element) -> MediaStoreImage:
+        viewer_nodes = self.image_viewer_nodes(root)
+        if not viewer_nodes:
+            root = self.dump_hierarchy(attempts=3)
+            viewer_nodes = self.image_viewer_nodes(root)
+        if not viewer_nodes:
+            raise BridgeError("WeCom original image viewer has no exact image surface")
+        viewer = max(
+            viewer_nodes,
+            key=lambda node: (
+                parse_bounds(node.attrib.get("bounds", ""))[2]
+                - parse_bounds(node.attrib.get("bounds", ""))[0]
+            )
+            * (
+                parse_bounds(node.attrib.get("bounds", ""))[3]
+                - parse_bounds(node.attrib.get("bounds", ""))[1]
+            ),
+        )
+        x, y = bounds_center(viewer.attrib.get("bounds", ""))
+        baseline_id = self.media_store_max_image_id()
+        started_at = time.time()
+        self.adb_shell(
+            "input",
+            "swipe",
+            str(x),
+            str(y),
+            str(x),
+            str(y),
+            "900",
+        )
+        deadline = time.monotonic() + 8.0
+        action_root: ET.Element | None = None
+        save_nodes: list[ET.Element] = []
+        while time.monotonic() < deadline:
+            action_root = self.dump_hierarchy(attempts=2)
+            save_nodes = [
+                node
+                for node in action_root.iter("node")
+                if node.attrib.get("package") == self.package
+                and node_text(node) in IMAGE_SAVE_LABELS
+                and node.attrib.get("bounds")
+            ]
+            if save_nodes:
+                break
+            time.sleep(0.25)
+        if action_root is None or len(save_nodes) != 1:
+            raise BridgeError("WeCom image menu did not expose one exact save-image action")
+        self.tap_node(action_root, save_nodes[0])
+        return self.wait_for_saved_image(baseline_id, started_at=started_at)
+
+    def pull_saved_image(
+        self,
+        chat: str,
+        fingerprint: str,
+        image: MediaStoreImage,
+    ) -> Path:
+        maximum = bounded_int(
+            self.config.get("max_inbound_file_bytes"),
+            200 * 1024 * 1024,
+            1,
+            1024 * 1024 * 1024,
+        )
+        if image.size_bytes <= 0 or image.size_bytes > maximum:
+            raise BridgeError("saved WeCom image exceeds the inbound size contract")
+        if not image.path.startswith(("/storage/emulated/0/", "/sdcard/")):
+            raise BridgeError("saved WeCom image is outside shared Android storage")
+        filename = safe_file_name(Path(image.display_name or image.path))
+        target = (
+            self.staging_dir
+            / "inbound-media"
+            / short_hash(chat, 16)
+            / fingerprint[:32]
+            / filename
+        )
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+        try:
+            self.adb("pull", image.path, str(temporary), timeout=300)
+            if temporary.stat().st_size != image.size_bytes:
+                raise BridgeError("saved WeCom image size changed during pull")
+            signature = temporary.read_bytes()[:16]
+            if not (
+                signature.startswith((b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF8"))
+                or (signature.startswith(b"RIFF") and signature[8:12] == b"WEBP")
+                or signature[4:12] in {b"ftypheic", b"ftypheix", b"ftypmif1"}
+            ):
+                raise BridgeError("saved WeCom image has an invalid image signature")
+            os.chmod(temporary, 0o600)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return target
+
     def materialize_image_record(
         self,
         chat: str,
         record: dict[str, str],
     ) -> dict[str, str]:
-        """Capture one exact same-chat image through WeCom's native full viewer."""
+        """Export one exact same-chat image at its native transmitted resolution."""
         if chat not in self.target_groups:
             raise BridgeError("refusing non-allowlisted WeCom Android image source")
         if str(record.get("direction") or "") != "inbound":
@@ -3322,46 +3593,26 @@ class AndroidBridge:
         fingerprint = str(record.get("fingerprint") or "")
         if not fingerprint:
             raise BridgeError("WeCom image record is missing its visual fingerprint")
-        target = (
-            self.staging_dir
-            / "inbound-media"
-            / short_hash(chat, 16)
-            / f"wecom-image-{fingerprint[:32]}.png"
-        )
-        capture: RawScreenshot | None = None
-        capture_kind = "wecom_android_native_full_view"
+        target: Path | None = None
+        saved_image: MediaStoreImage | None = None
+        original_requested = False
+        capture_kind = "wecom_android_original_media_store_export"
+        restore_error = ""
+        viewer_open = False
         try:
-            if not (
-                target.is_file()
-                and target.stat().st_size > 64
-                and target.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
-            ):
-                root, _, node = self.find_image_node_for_record(chat, record)
-                viewer_open = False
-                try:
-                    self.tap_node(root, node)
-                    self.wait_for_image_viewer()
-                    viewer_open = True
-                    time.sleep(
-                        bounded_float(
-                            self.config.get("inbound_image_capture_wait_seconds"),
-                            1.25,
-                            0.25,
-                            5.0,
-                        )
-                    )
-                    capture = self.capture_raw_screenshot()
-                    write_private_bytes(target, encode_rgba_png(capture))
-                finally:
-                    if viewer_open:
-                        self.press_back()
-                    restored = self.open_chat(chat)
-                    restored = self.move_chat_to_live_tail(chat, restored)
-                    if not chat_title_matches(visible_chat_title(restored), chat):
-                        raise BridgeError(
-                            "WeCom did not return to the exact image source chat"
-                        )
-        except Exception:
+            root, _, node = self.find_image_node_for_record(chat, record)
+            self.tap_node(root, node)
+            viewer_root = self.wait_for_image_viewer()
+            viewer_open = True
+            original_requested = self.request_original_image(viewer_root)
+            viewer_root = self.wait_for_image_viewer()
+            saved_image = self.save_image_from_viewer(viewer_root)
+            target = self.pull_saved_image(chat, fingerprint, saved_image)
+        except Exception as exc:
+            if not bool(self.config.get("allow_inbound_image_preview_fallback", False)):
+                raise BridgeError(
+                    f"native-resolution WeCom image recovery failed: {str(exc)[:500]}"
+                ) from exc
             preview = Path(str(record.get("exact_preview_path") or "")).expanduser()
             if not (
                 preview.is_file()
@@ -3373,20 +3624,52 @@ class AndroidBridge:
                 raise
             target = preview
             capture_kind = "wecom_android_exact_visible_image_preview_fallback"
+        finally:
+            if viewer_open:
+                self.press_back()
+            try:
+                restored = self.open_chat(chat)
+                restored = self.move_chat_to_live_tail(chat, restored)
+                if not chat_title_matches(visible_chat_title(restored), chat):
+                    raise BridgeError(
+                        "WeCom did not return to the exact image source chat"
+                    )
+            except Exception as exc:
+                restore_error = f"{type(exc).__name__}: {str(exc)[:300]}"
+        if target is None or not target.is_file() or target.stat().st_size <= 0:
+            raise BridgeError("materialized WeCom image is missing after native export")
         result = dict(record)
         result.update(
             {
                 "attachment_path": str(target),
-                "attachment_filename": target.name,
+                "attachment_filename": (
+                    saved_image.display_name if saved_image is not None else target.name
+                ),
                 "attachment_size_bytes": str(target.stat().st_size),
                 "attachment_sha256": sha256_file(target),
                 "attachment_width": str(
-                    capture.width if capture else record.get("exact_preview_width") or ""
+                    saved_image.width
+                    if saved_image is not None
+                    else record.get("exact_preview_width") or ""
                 ),
                 "attachment_height": str(
-                    capture.height if capture else record.get("exact_preview_height") or ""
+                    saved_image.height
+                    if saved_image is not None
+                    else record.get("exact_preview_height") or ""
                 ),
                 "attachment_capture_kind": capture_kind,
+                "attachment_fidelity": (
+                    "native_transmitted_original"
+                    if saved_image is not None
+                    else "degraded_visible_thumbnail"
+                ),
+                "attachment_original_resolution_verified": (
+                    "true" if saved_image is not None else "false"
+                ),
+                "attachment_original_control_used": (
+                    "true" if original_requested else "false"
+                ),
+                "attachment_restore_error": restore_error,
             }
         )
         return result
@@ -3694,6 +3977,11 @@ class AndroidBridge:
                             record.get("attachment_capture_kind")
                             or "wecom_android_native_full_view"
                         ),
+                        "fidelity": str(record.get("attachment_fidelity") or ""),
+                        "original_resolution_verified": str(
+                            record.get("attachment_original_resolution_verified") or ""
+                        ).lower()
+                        == "true",
                     }
                 )
             attachments.append(attachment_payload)

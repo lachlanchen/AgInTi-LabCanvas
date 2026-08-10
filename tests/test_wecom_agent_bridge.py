@@ -227,7 +227,19 @@ class WeComAgentBridgeTests(unittest.TestCase):
             event = self.sample_event(
                 msgtype="image",
                 text="What is shown in this image?",
-                attachments=[{"kind": "image", "filename": image.name, "path": str(image), "size_bytes": image.stat().st_size}],
+                attachments=[
+                    {
+                        "kind": "image",
+                        "filename": image.name,
+                        "path": str(image),
+                        "size_bytes": image.stat().st_size,
+                        "capture_kind": (
+                            "wecom_android_original_media_store_export"
+                        ),
+                        "fidelity": "native_transmitted_original",
+                        "original_resolution_verified": True,
+                    }
+                ],
             )
             queue = root / "queue.jsonl"
             history = root / "history.sqlite"
@@ -245,7 +257,10 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(task["source"]["member_key"], ingest.short_hash(event["sender_userid"]))
         self.assertEqual(task["member_memory"].get("scope"), "exact_member_and_chat")
         self.assertEqual(task["route"]["transport"], "wecom")
-        self.assertEqual(task["transport_preflight"]["wecom_media"]["copied"][0]["task_copy_path"], str(image))
+        copied = task["transport_preflight"]["wecom_media"]["copied"][0]
+        self.assertEqual(copied["task_copy_path"], str(image))
+        self.assertEqual(copied["fidelity"], "native_transmitted_original")
+        self.assertTrue(copied["original_resolution_verified"])
         self.assertEqual(task["routine"]["id"], "file_intake")
 
     def test_cli_channel_is_preserved_without_personal_wechat_fallback(self) -> None:
@@ -3944,6 +3959,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("window_exists quota", tmux_source)
         self.assertIn("health_guard_reload_needed", tmux_source)
         self.assertIn("HEALTH_GUARD_SIGNATURE", tmux_source)
+        self.assertIn("android_bridge_reload_needed", tmux_source)
+        self.assertIn("ANDROID_BRIDGE_SIGNATURE", tmux_source)
         self.assertIn("missing windows repaired", tmux_source)
         self.assertNotIn("xwechat_files", source)
         self.assertNotIn("wechat_gui_agent", source)
@@ -3976,6 +3993,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("ensure_gui_client_window", tmux_source)
         self.assertIn("ensure_gui_windows", tmux_source)
         self.assertIn("if ! window_exists external-gui", tmux_source)
+        self.assertIn("android_bridge_reload_needed", tmux_source)
+        self.assertIn("ANDROID_BRIDGE_SIGNATURE", tmux_source)
 
     def test_wecom_autostart_docs_define_persisted_profile_boundary(self) -> None:
         readme = (

@@ -109,13 +109,16 @@ consume model tokens.
 
 Native image bubbles are materialized before ingest. The relay identifies the
 exact same-chat bubble from its sender, row geometry, and visual fingerprint,
-opens that bubble in WeCom's full-image viewer, captures a private PNG, records
-its SHA-256 and dimensions, and returns to the verified source chat. Only that
-captured attachment enters `transport_preflight.wecom_media`; the worker's
-vision-capable agent explains the image naturally from the current conversation.
-If the bubble is ambiguous, the viewer does not open, or the source chat cannot
-be restored, the message remains pending. The relay never substitutes an
-avatar, article thumbnail, nearby image, or OCR-only reconstruction.
+opens it in WeCom's full-image viewer, requests `查看原图` when available, invokes
+the native save action, and pulls the resulting Android MediaStore object. It
+verifies the saved byte size, image signature, dimensions, and exact source
+identity before returning to the source chat. Only that native export enters
+`transport_preflight.wecom_media`; the worker's vision-capable agent explains
+the image naturally from the current conversation. If the bubble is ambiguous,
+the viewer/export fails, or the source chat cannot be restored, the message
+remains pending. The relay never substitutes a chat-bubble crop, viewer
+screenshot, avatar, article thumbnail, nearby image, or OCR-only reconstruction.
+The worker also rejects any legacy attachment marked as a degraded preview.
 
 Shipinhao/Finder cards use a separate rich-card path. The relay recognizes the
 native card thumbnail and account label, captures an exact private preview

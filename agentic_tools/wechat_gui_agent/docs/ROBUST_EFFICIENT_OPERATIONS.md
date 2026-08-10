@@ -862,13 +862,17 @@ The stable interface and recovery commands are documented in
   suffix. Missing, ambiguous, broadcast, or wrong-chat targets fail closed.
 - For inbound WeCom Android images, identify the native image bubble by exact
   chat, sender, row geometry, and a viewport-independent visual fingerprint.
-  Open that bubble in WeCom's native full-image viewer and persist the captured
-  PNG, checksum, and dimensions in ignored private staging before enqueueing.
-  Feed only this exact attachment through `transport_preflight.wecom_media` to
-  the vision-capable worker, which should answer naturally rather than expose
-  OCR or capture diagnostics. If identity, viewer opening, or return-to-chat
-  verification fails, retain the row as pending; never use an avatar, article
-  thumbnail, nearby media, or screenshot of a later bot response as fallback.
+  Open that bubble in WeCom's native full-image viewer, tap `查看原图` when the
+  control exists, use the native save action, and pull the resulting Android
+  MediaStore object. Verify its byte size, image signature, dimensions, and
+  source identity before enqueueing. Feed only this exact attachment through
+  `transport_preflight.wecom_media` to the vision-capable worker, which should
+  answer naturally rather than expose OCR or capture diagnostics. Chat-bubble
+  crops, full-screen viewer screenshots, and other compressed previews are not
+  valid image-reading input. Keep a failed row pending and never use an avatar,
+  article thumbnail, nearby media, or screenshot of a later bot response.
+  Legacy preview retention is diagnostic-only and opt-in; the worker's separate
+  fidelity gate must still defer both vision and OCR for degraded thumbnails.
 - For inbound WeCom Android documents, parse the native `j2k` filename and
   `j2g` displayed size as one exact-card identity. Click that same sender/card,
   let the official phone client populate its private `filecache`, then pull the
@@ -1549,6 +1553,10 @@ non-destructive Android **Wait** action, backs out of WeCom's native
 article/document viewer, and uses one `am force-stop` plus launcher restart only
 when bounded navigation cannot recover. It never clears app data or changes the
 logged-in account.
+The minute-level WeCom autostart supervisor fingerprints the Android bridge
+source and reloads only the `android-relay` tmux window when that source
+changes. This lets bounded native-surface recovery fixes take effect without
+restarting the healthy logged-in desktop GUI or switching accounts.
 
 Repairs require repeated observations and preserve the logged-in clients. A
 stalled direct monitor reloads only monitor/chat-sync windows; a missing runtime

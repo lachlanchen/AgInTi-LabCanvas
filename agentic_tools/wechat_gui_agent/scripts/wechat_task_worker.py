@@ -9430,6 +9430,30 @@ def enrich_media_resolution_copies_with_image_read(
         metadata = item.get("image_metadata") if isinstance(item.get("image_metadata"), dict) else image_file_metadata(path)
         if metadata:
             item["image_metadata"] = metadata
+        capture_kind = str(item.get("capture_kind") or "").strip()
+        fidelity = str(item.get("fidelity") or "").strip()
+        resolution_marker = item.get("original_resolution_verified")
+        explicitly_unverified = (
+            "original_resolution_verified" in item
+            and not (
+                resolution_marker is True
+                or str(resolution_marker).strip().lower() in {"1", "true", "yes"}
+            )
+        )
+        if (
+            "preview_fallback" in capture_kind
+            or fidelity == "degraded_visible_thumbnail"
+            or explicitly_unverified
+        ):
+            item["vision"] = {
+                "status": "deferred",
+                "reason": "native_resolution_source_required",
+            }
+            item["ocr"] = {
+                "status": "deferred",
+                "reason": "native_resolution_source_required",
+            }
+            continue
         if metadata.get("status") not in {"ok", "metadata_unavailable"}:
             item["ocr"] = {"status": "skipped", "reason": metadata.get("status") or "image_unreadable"}
             continue
@@ -9722,6 +9746,11 @@ def prepare_file_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> d
                 "matched_by",
                 "metadata",
                 "document_read",
+                "capture_kind",
+                "fidelity",
+                "original_resolution_verified",
+                "width",
+                "height",
             ):
                 if key in item:
                     copied_item[key] = item[key]
@@ -12405,7 +12434,7 @@ def image_intake_description_message(item: dict[str, Any]) -> str:
         if "\n" in ocr_text or len(ocr_text) > 120:
             return "这张图以文字内容为主，能辨认出的主要内容是：\n" + ocr_text
         return f"这张图以文字内容为主，能辨认出的关键信息是“{ocr_text}”。"
-    return "这张图目前不够清晰，我还不能可靠判断它的内容。可以点开原图后再发一次，我会直接按图片内容来解释。"
+    return "当前只取得了聊天缩略图，系统会继续恢复原图；在原图验证完成前，我不会根据缩略图猜测内容。"
 
 
 def naturalize_legacy_image_read(text: str) -> str:
