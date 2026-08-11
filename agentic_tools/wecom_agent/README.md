@@ -173,6 +173,24 @@ being process-restarted. A reachable relay reporting a locked Android keyguard
 is handled the same way: health stays degraded for a normal human unlock, with
 no automated unlock or relay restart loop. Stale or unreachable relays remain
 restart-eligible.
+
+On a dedicated transport phone, an Android freeform/floating app can remain
+above WeCom even after `am start` succeeds. This machine opts into a narrow
+recovery in the ignored Android config:
+
+```json
+{
+  "dismiss_foreground_conflicts": true,
+  "foreground_conflict_packages": ["com.tencent.mm"]
+}
+```
+
+The bridge force-stops only the currently focused package when it exactly
+matches that private allowlist, then starts WeCom again. It never clears app
+data, changes an account, or closes an unrelated foreground package. Leave the
+option disabled on a phone where the listed app must remain interactively
+active.
+
 The minute-level autostart supervisor fingerprints both the health-guard source
 and the Android bridge source. An on-disk guard update reloads only the
 non-GUI health window; an Android bridge update reloads only `android-relay`,

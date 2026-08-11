@@ -757,6 +757,12 @@ def initialize_config(
         "local_api_port": bounded_int(existing.get("local_api_port"), 19581, 1024, 65535),
         "local_api_token": str(existing.get("local_api_token") or secrets.token_hex(32)),
         "disable_host_media_automount": bool(existing.get("disable_host_media_automount", True)),
+        "dismiss_foreground_conflicts": bool(
+            existing.get("dismiss_foreground_conflicts", False)
+        ),
+        "foreground_conflict_packages": unique_nonempty(
+            existing.get("foreground_conflict_packages") or []
+        ),
     }
     write_private_json(path, payload)
     return {
@@ -1188,6 +1194,29 @@ class AndroidBridge:
             return True
         return self.current_package() == self.package
 
+    def dismiss_foreground_conflict(self) -> str:
+        """Close only an explicitly configured app that prevents WeCom focus."""
+        if not bool(self.config.get("dismiss_foreground_conflicts", False)):
+            return ""
+        conflicts = set(
+            unique_nonempty(self.config.get("foreground_conflict_packages") or [])
+        )
+        conflicts.discard(self.package)
+        focused_package = self.current_package()
+        if focused_package not in conflicts:
+            return ""
+        self.adb_shell("am", "force-stop", focused_package, check=False)
+        self.record_recovery(f"foreground_conflict:{focused_package}")
+        time.sleep(0.8)
+        return focused_package
+
+    def start_wecom_component(self) -> None:
+        component = str(
+            self.config.get("launch_component")
+            or f"{self.package}/{WECOM_LAUNCH_COMPONENT}"
+        )
+        self.adb_shell("am", "start", "-n", component, timeout=30)
+
     def launch_wecom(self) -> None:
         self.prepare_device()
         try:
@@ -1196,11 +1225,8 @@ class AndroidBridge:
             root = None
         if root is not None and self.wecom_is_foreground(root) and not is_anr_dialog(root):
             return
-        component = str(
-            self.config.get("launch_component")
-            or f"{self.package}/{WECOM_LAUNCH_COMPONENT}"
-        )
-        self.adb_shell("am", "start", "-n", component, timeout=30)
+        self.start_wecom_component()
+        conflict_dismissed = False
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             try:
@@ -1215,6 +1241,9 @@ class AndroidBridge:
                 continue
             if self.wecom_is_foreground(root):
                 return
+            if not conflict_dismissed and self.dismiss_foreground_conflict():
+                conflict_dismissed = True
+                self.start_wecom_component()
             time.sleep(0.5)
         raise BridgeError("WeCom did not reach the foreground")
 

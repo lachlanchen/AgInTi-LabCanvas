@@ -533,6 +533,75 @@ class WeComAndroidBridgeTests(unittest.TestCase):
 
         runtime.adb_shell.assert_not_called()
 
+    def test_launch_wecom_dismisses_only_configured_foreground_conflict(self) -> None:
+        bridge = load_bridge()
+        foreign = ET.fromstring('<hierarchy><node package="com.tencent.mm" /></hierarchy>')
+        wecom = ET.fromstring('<hierarchy><node package="com.tencent.wework" /></hierarchy>')
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                    "dismiss_foreground_conflicts": True,
+                    "foreground_conflict_packages": ["com.tencent.mm"],
+                }
+            )
+            runtime.prepare_device = mock.Mock()
+            runtime.dump_hierarchy = mock.Mock(side_effect=[foreign, foreign, wecom])
+            runtime.current_package = mock.Mock(return_value="com.tencent.mm")
+            runtime.adb_shell = mock.Mock(return_value="")
+            runtime.record_recovery = mock.Mock()
+
+            with mock.patch.object(bridge.time, "sleep"):
+                runtime.launch_wecom()
+
+        self.assertEqual(
+            runtime.adb_shell.call_args_list,
+            [
+                mock.call(
+                    "am",
+                    "start",
+                    "-n",
+                    "com.tencent.wework/.launch.LaunchSplashActivity",
+                    timeout=30,
+                ),
+                mock.call("am", "force-stop", "com.tencent.mm", check=False),
+                mock.call(
+                    "am",
+                    "start",
+                    "-n",
+                    "com.tencent.wework/.launch.LaunchSplashActivity",
+                    timeout=30,
+                ),
+            ],
+        )
+        runtime.record_recovery.assert_called_once_with(
+            "foreground_conflict:com.tencent.mm"
+        )
+
+    def test_foreground_conflict_does_not_touch_unlisted_package(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                    "dismiss_foreground_conflicts": True,
+                    "foreground_conflict_packages": ["com.tencent.mm"],
+                }
+            )
+            runtime.current_package = mock.Mock(return_value="com.example.notes")
+            runtime.adb_shell = mock.Mock()
+
+            result = runtime.dismiss_foreground_conflict()
+
+        self.assertEqual(result, "")
+        runtime.adb_shell.assert_not_called()
+
     def test_status_uses_focused_activity_when_hierarchy_is_unreadable(self) -> None:
         bridge = load_bridge()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2791,6 +2860,8 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             self.assertEqual(payload["reconcile_seconds"], 20.0)
             self.assertEqual(payload["history_scan_seconds"], 180.0)
             self.assertEqual(payload["history_scan_pages"], 3)
+            self.assertFalse(payload["dismiss_foreground_conflicts"])
+            self.assertEqual(payload["foreground_conflict_packages"], [])
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_poll_cycle_reconciles_all_chats_without_unread_badges(self) -> None:

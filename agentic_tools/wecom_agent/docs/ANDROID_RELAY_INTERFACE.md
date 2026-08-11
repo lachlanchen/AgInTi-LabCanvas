@@ -25,6 +25,21 @@ while connected, disables UI animations, and locks UI rotation to portrait.
 It never bypasses Android's secure keyguard. If the device is locked or ADB is
 not authorized, writes fail closed.
 
+If a dedicated transport phone also has an app that can leave a floating task
+above WeCom, recovery can be enabled in the ignored local config:
+
+```json
+{
+  "dismiss_foreground_conflicts": true,
+  "foreground_conflict_packages": ["com.tencent.mm"]
+}
+```
+
+This is exact-package and opt-in. When WeCom cannot gain focus, the bridge may
+force-stop only the currently focused allowlisted package and relaunch WeCom.
+It does not clear app data or log out either account, and it never touches an
+unlisted app. Keep the list empty on a general-purpose phone.
+
 ## Read And Send
 
 ```bash
