@@ -61,6 +61,12 @@ AGINTI_INTERNAL_REPORT_RE = re.compile(
 AGINTI_INTERNAL_OUTPUT_LINE_RE = re.compile(
     r"(?im)^\s*(?:tool|output|artifact|step budget|surgical context)\s*:\s*.+$"
 )
+GENERIC_EXECUTION_EVIDENCE_REFUSAL_RE = re.compile(
+    r"I could not verify that the requested action was executed.*?"
+    r"Missing evidence categories:.*?"
+    r"Retry with an enabled execution tool",
+    re.IGNORECASE | re.DOTALL,
+)
 AGINTI_MANAGED_VALUE_ARGS = {
     "-s",
     "--safety",
@@ -246,6 +252,23 @@ def run_agent_session(
             backend_config=config,
         )
         usable_message = user_facing_backend_message(result.get("message"))
+        if (
+            result.get("ok")
+            and str(role or "").strip().casefold() in {"fast", "route"}
+            and is_generic_execution_evidence_refusal(usable_message)
+        ):
+            result = {
+                **result,
+                "ok": False,
+                "message": "",
+                "reason": "invalid_conversational_evidence_refusal",
+                "returncode": int(result.get("returncode") or 1),
+                "stderr_tail": (
+                    "Conversational fallback returned a generic execution-evidence "
+                    "refusal instead of the requested chat or routing response."
+                ),
+            }
+            usable_message = ""
         if result.get("ok") and usable_message:
             result["message"] = usable_message
             attempt_summaries.append(summarize_attempt(attempt, result))
@@ -574,7 +597,10 @@ def is_spark_model(model: str) -> bool:
 
 
 def classify_backend_failure(result: dict[str, Any]) -> str:
-    if str(result.get("reason") or "") == "empty_response":
+    if str(result.get("reason") or "") in {
+        "empty_response",
+        "invalid_conversational_evidence_refusal",
+    }:
         return "empty"
     if result.get("ok"):
         return ""
@@ -612,6 +638,12 @@ def user_facing_backend_message(value: Any) -> str:
     if all(BACKEND_METADATA_LINE_RE.fullmatch(line) or line in {"Plan:", "Output:"} for line in lines):
         return ""
     return text
+
+
+def is_generic_execution_evidence_refusal(value: Any) -> bool:
+    """Detect AgInTi's task-execution guard leaking into conversational roles."""
+
+    return bool(GENERIC_EXECUTION_EVIDENCE_REFUSAL_RE.search(str(value or "")))
 
 
 def summarize_attempt(attempt: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:

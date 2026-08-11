@@ -968,6 +968,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "all monitored chats route explicit backend/tool/artifact requests through the shared routine skill surface",
             "EchoMind remains language-learning by default while explicit backend instructions enqueue worker routines",
             "backend runtime session metadata can never become a user-facing WeChat reply",
+            "chat-only memo routes use the route agent's natural reply without a second agent turn or execution worker",
+            "generic execution-evidence refusals can never become fast conversational replies",
             "backend failure diagnostics remain private and cannot become a chat reply",
             "an interactive task gets one short source-scoped terminal receipt after all backends fail",
             "legacy WeCom tasks can never fall back to the personal-WeChat sender",
@@ -1171,6 +1173,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "backend_session_metadata_not_chat",
             "test": backend_prefix + "test_metadata_only_aginti_fallback_is_rejected",
+        },
+        {
+            "id": "memo_chat_route_reply_direct",
+            "test": direct_prefix + "test_run_once_uses_agent_route_chat_reply_without_second_agent_or_worker",
+        },
+        {
+            "id": "fast_evidence_refusal_not_chat",
+            "test": backend_prefix + "test_fast_role_rejects_generic_aginti_execution_evidence_refusal",
         },
         {
             "id": "backend_failure_diagnostics_not_chat",

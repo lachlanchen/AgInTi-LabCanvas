@@ -3326,6 +3326,63 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
 
         self.assertIsNone(route)
 
+    def test_agent_first_chat_only_can_return_natural_memo_reply(self) -> None:
+        config = self.backend_chat_config(
+            "MEMO写作—外语—挣钱",
+            "personal_organizer",
+        )
+        config["agent_bridge_mode"] = True
+        config["agent_route_enabled"] = True
+        config["agent_route_prefilter"] = "agent_first"
+        row = self.row(
+            "書加地圖 ai agent\n圖形化的語言模型\n擴散模型",
+            local_id=168,
+            server_id="srv-168",
+        )
+        decision = {
+            "route_kind": "chat_only",
+            "worker_needed": False,
+            "reason": "idea fragments can be connected conversationally",
+            "chat_reply": "这三条可以连成一个产品方向：用地图组织书中世界，再用图形化语言模型表达关系，扩散模型负责视觉生成。",
+            "confidence": 0.93,
+        }
+
+        with mock.patch.object(
+            direct_chatops,
+            "agent_route_decision",
+            return_value=decision,
+        ):
+            route = direct_chatops.immediate_task_route(
+                config,
+                row,
+                [row],
+                focus_rows=[row],
+            )
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        self.assertEqual(route["task"], "")
+        self.assertEqual(route["ack"], "")
+        self.assertIn("地图组织书中世界", route["reply"])
+
+    def test_route_prompt_marks_plain_memo_as_chat_not_execution_evidence(self) -> None:
+        config = self.backend_chat_config(
+            "MEMO写作—外语—挣钱",
+            "personal_organizer",
+        )
+        row = self.row("古文觀止 尚書 人間詞話", local_id=170)
+
+        prompt = direct_chatops.build_agent_route_prompt(
+            config,
+            row,
+            [row],
+            focus_rows=[row],
+        )
+
+        self.assertIn('"chat_reply"', prompt)
+        self.assertIn("A memo, reading list, idea fragment", prompt)
+        self.assertIn("Never demand file, command, browser", prompt)
+
     def test_agent_first_failure_without_heuristic_does_not_enqueue_everything(self) -> None:
         config = {
             "chat_name": "懒人科研",
@@ -4056,6 +4113,57 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("notes, memos, todos, groceries, calendar items", prompt)
         self.assertIn("Do not mention the database", prompt)
         self.assertNotIn("For research chat purpose", prompt)
+
+    def test_run_once_uses_agent_route_chat_reply_without_second_agent_or_worker(self) -> None:
+        config = self.backend_chat_config(
+            "MEMO写作—外语—挣钱",
+            purpose="personal_organizer",
+        )
+        config["agent_route_enabled"] = True
+        config["immediate_ack_enabled"] = False
+        config["organizer"] = {"enabled": False}
+        row = self.row(
+            "请把书加地图、图形化语言模型和扩散模型这几个想法联系起来。",
+            server_id="memo-route-1",
+            local_id=1,
+        )
+        state: dict[str, object] = {"last_local_id": 0}
+        direct_reply = "这三个想法可以合成一种空间化阅读工具：地图组织知识，图形界面呈现语言关系，扩散模型负责生成辅助视觉材料。"
+
+        with (
+            mock.patch.object(direct_chatops, "read_new_messages", return_value=[row]),
+            mock.patch.object(direct_chatops, "read_recent_history", return_value=[row]),
+            mock.patch.object(
+                direct_chatops,
+                "immediate_task_route",
+                return_value={
+                    "ack": "",
+                    "reply": direct_reply,
+                    "task": "",
+                    "route_decision": {
+                        "route_kind": "chat_only",
+                        "requires_worker": False,
+                    },
+                },
+            ),
+            mock.patch.object(
+                direct_chatops,
+                "run_codex",
+                side_effect=AssertionError("route reply must avoid a second fast-agent turn"),
+            ),
+            mock.patch.object(
+                direct_chatops,
+                "enqueue_worker_task",
+                side_effect=AssertionError("chat-only memo reply must not enqueue a worker"),
+            ),
+        ):
+            result = direct_chatops.run_once(config, state, send=False, no_decrypt=True)
+
+        self.assertEqual(result["response_sent"], direct_reply)
+        self.assertEqual(result["responses_sent"], 1)
+        self.assertEqual(result["tasks_enqueued"], 0)
+        self.assertNotIn("codex_ms", result["metrics"])
+        self.assertEqual(result["state"]["responded_server_ids"], ["memo-route-1"])
 
     def test_organizer_error_is_recorded_without_stopping_monitor(self) -> None:
         config = self.base_config()

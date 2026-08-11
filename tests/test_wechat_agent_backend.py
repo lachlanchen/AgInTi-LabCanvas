@@ -329,6 +329,95 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(result["backend_attempts"][0]["failure_kind"], "timeout")
         self.assertEqual(result["backend_attempts"][-1]["backend"], "aginti")
 
+    def test_fast_role_rejects_generic_aginti_execution_evidence_refusal(self) -> None:
+        backend = load_backend()
+        refusal = (
+            "I could not verify that the requested action was executed, so I "
+            "stopped instead of claiming success. Missing evidence categories: "
+            "file, command, artifact, browser, visual, publish. Retry with an "
+            "enabled execution tool or resolve the reported environment blocker."
+        )
+        with (
+            mock.patch.object(
+                backend,
+                "run_codex_session",
+                return_value={
+                    "ok": False,
+                    "message": "Codex timed out",
+                    "returncode": 124,
+                    "stderr_tail": "timeout",
+                },
+            ),
+            mock.patch.object(
+                backend,
+                "run_aginti_session",
+                return_value={
+                    "ok": True,
+                    "message": refusal,
+                    "thread_id": "",
+                    "returncode": 0,
+                },
+            ),
+        ):
+            result = backend.run_agent_session(
+                "Answer this ordinary memo naturally.",
+                backend="codex",
+                chat_name="MEMO写作—外语—挣钱",
+                role="fast",
+                model="gpt-5.6-sol",
+                reasoning_effort="low",
+                sandbox="read-only",
+                timeout_seconds=25,
+                workdir=ROOT,
+                backend_config={
+                    "agent_fallbacks": {"fallback_to_aginti": True},
+                },
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["message"], "")
+        self.assertEqual(
+            result["reason"],
+            "invalid_conversational_evidence_refusal",
+        )
+        self.assertEqual(result["backend_attempts"][-1]["failure_kind"], "empty")
+
+    def test_worker_role_preserves_real_execution_evidence_blocker(self) -> None:
+        backend = load_backend()
+        refusal = (
+            "I could not verify that the requested action was executed, so I "
+            "stopped instead of claiming success. Missing evidence categories: "
+            "file, command, artifact, browser, visual, publish. Retry with an "
+            "enabled execution tool or resolve the reported environment blocker."
+        )
+        with mock.patch.object(
+            backend,
+            "run_aginti_session",
+            return_value={
+                "ok": True,
+                "message": refusal,
+                "thread_id": "",
+                "returncode": 0,
+            },
+        ):
+            result = backend.run_agent_session(
+                "Create and verify the requested artifact.",
+                backend="aginti",
+                chat_name="MEMO写作—外语—挣钱",
+                role="worker",
+                model="aginti",
+                reasoning_effort="medium",
+                sandbox="danger-full-access",
+                timeout_seconds=60,
+                workdir=ROOT,
+                backend_config={
+                    "agent_fallbacks": {"fallback_to_aginti": False},
+                },
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["message"], refusal)
+
     def test_backend_session_banner_is_not_user_facing_content(self) -> None:
         backend = load_backend()
 

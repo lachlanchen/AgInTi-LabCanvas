@@ -520,15 +520,19 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
             else:
                 immediate = immediate_task_route(config, trigger_row, context_rows, focus_rows=focus_rows)
                 if immediate:
-                    task = enqueue_worker_task(
-                        config,
-                        trigger_row,
-                        immediate["task"],
-                        context_rows=context_rows,
-                        route_decision=immediate.get("route_decision") if isinstance(immediate.get("route_decision"), dict) else None,
-                    )
-                    task_enqueued = task["id"]
-                    reply_text = immediate["ack"]
+                    immediate_task = str(immediate.get("task") or "").strip()
+                    if immediate_task:
+                        task = enqueue_worker_task(
+                            config,
+                            trigger_row,
+                            immediate_task,
+                            context_rows=context_rows,
+                            route_decision=immediate.get("route_decision") if isinstance(immediate.get("route_decision"), dict) else None,
+                        )
+                        task_enqueued = task["id"]
+                    reply_text = str(
+                        immediate.get("reply") or immediate.get("ack") or ""
+                    ).strip()
                 else:
                     started = time.monotonic()
                     response = run_codex(config, trigger_row, context_rows, focus_rows=focus_rows)
@@ -2737,6 +2741,14 @@ def immediate_task_route(
                 explicit_fallback["route_agent_original_reason"] = str(route_decision.get("reason") or "")[:300]
                 route_decision = explicit_fallback
         if not route_decision_requires_worker(route_decision):
+            chat_reply = route_chat_reply(route_decision)
+            if chat_reply:
+                return {
+                    "ack": "",
+                    "reply": chat_reply,
+                    "task": "",
+                    "route_decision": route_decision,
+                }
             if bridge_mode or is_language_analysis_mode(config):
                 return None
             if route_agent_chat_only_is_completion_status(route_decision) or looks_like_bot_self_reply(config, visible_message_text(row)):
@@ -2870,6 +2882,21 @@ def immediate_task_route(
     # for the same source adds noise and can look like a second analysis.
     ack = "" if link_inbox_summary_task else task_ack_text(config, route_decision)
     return {"ack": ack, "task": task, "route_decision": route_decision}
+
+
+def route_chat_reply(
+    route_decision: dict[str, Any],
+) -> str:
+    """Return the user-facing reply from a genuine chat-only route decision."""
+
+    if str(route_decision.get("route_kind") or "").strip() != "chat_only":
+        return ""
+    if route_decision_requires_worker(route_decision):
+        return ""
+    reply = user_facing_backend_message(route_decision.get("chat_reply"))
+    if not reply or is_no_reply_control(reply):
+        return ""
+    return reply
 
 
 def maybe_handle_third_party_publish_consent(
@@ -3644,6 +3671,7 @@ Important distinction:
 - A video-generation request should use local/default reference assets unless the current request says this/that/same/attached/quoted video/image.
 - Plain story/script/plot writing or revision should use story_or_script. Do not choose generate_image unless the current request explicitly asks for an image/figure/diagram/illustration. Do not choose generate_video unless the current request explicitly asks for video/animation/小云雀/Seedance/XYQ.
 - Return chat_only with worker_needed=false when the user is only chatting or when no backend/tool/file/artifact work is useful.
+- For `chat_only`, put the actual short, natural response in `chat_reply`. This is the user-facing answer, not an acknowledgement and not an execution report. A memo, reading list, idea fragment, reflection, or ordinary question can be answered, connected to recent context, or briefly acknowledged without files or tools. Never demand file, command, browser, visual, artifact, or publish evidence for `chat_only`. Use an empty `chat_reply` only when a silent save or no response is genuinely the most natural choice.
 - Use other_worker only when a backend Codex worker can materially finish the request; do not use it just because the message is ambiguous.
 - When worker_needed=true, write `ack` as one natural, non-mechanical chat acknowledgement only if an immediate acknowledgement is useful. It should reflect the concrete task without promising that the source has already been read. Avoid boilerplate like "收到，我先处理"; for link/read-later messages, a short silent enqueue is often better than a visible ack.
 - When worker_needed=false, use an empty `ack`.
@@ -3664,6 +3692,7 @@ JSON schema:
   "source_policy": "current_request_only|current_plus_explicit_refs|recent_media",
   "reason": "short reason",
   "ack": "short natural acknowledgement for WeChat, or empty string",
+  "chat_reply": "short natural answer when route_kind is chat_only, otherwise empty",
   "confidence": 0.0
 }}
 
@@ -6394,6 +6423,7 @@ Rules:
 For personal organizer chat purpose:
 - Treat the group as a shared inbox for notes, memos, todos, groceries, calendar items, beat-board/story ideas, writing/language/money ideas, and lightweight requests.
 - The local organizer has already saved and tagged incoming messages. Do not mention the database or storage implementation.
+- A plain memo, title list, reading list, or idea fragment is not a failed tool task. Respond with a natural concise connection, interpretation, or useful acknowledgement when that helps; otherwise use NO_REPLY. Never answer an ordinary note with missing file, command, browser, artifact, visual, or publish evidence language.
 - Reply when the latest context asks you to save, organize, list, summarize, schedule, remind, plan, or clarify something. For plain side conversation, return NO_REPLY.
 - Reply to simple health-check messages such as "ping", "test", "best", "在吗", or "测试" with one short acknowledgement.
 - Keep confirmations short. Use ACK+TASK for export, long summaries, files, calendar planning, or backend work.
