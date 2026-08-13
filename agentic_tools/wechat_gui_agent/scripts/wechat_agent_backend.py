@@ -755,7 +755,8 @@ def run_aginti_session(
             "backend": "aginti",
         }
     executable = command[0]
-    if not command_available(executable):
+    resolved_executable = resolve_command_executable(executable)
+    if not resolved_executable:
         return {
             "ok": False,
             "message": f"AgInTi failed: command not found: {executable}",
@@ -767,6 +768,7 @@ def run_aginti_session(
             "fallback_started": False,
             "backend": "aginti",
         }
+    command[0] = resolved_executable
     aginti_workdir = aginti_workdir_from_config(backend_config, workdir)
     wrapped_prompt = aginti_prompt(
         prompt,
@@ -1217,6 +1219,29 @@ def command_available(executable: str) -> bool:
         path = Path(executable).expanduser()
         return path.exists() and os.access(path, os.X_OK)
     return shutil.which(executable) is not None
+
+
+def resolve_command_executable(executable: str) -> str:
+    """Resolve commands launched by boot services with an intentionally small PATH."""
+    if not executable:
+        return ""
+    if "/" in executable:
+        path = Path(executable).expanduser()
+        return str(path.resolve()) if path.exists() and os.access(path, os.X_OK) else ""
+    resolved = shutil.which(executable)
+    if resolved:
+        return resolved
+    if executable != "aginti":
+        return ""
+    candidates = sorted(
+        (Path.home() / ".nvm" / "versions" / "node").glob("*/bin/aginti"),
+        key=lambda path: path.stat().st_mtime if path.exists() else 0.0,
+        reverse=True,
+    )
+    return next(
+        (str(path.resolve()) for path in candidates if path.is_file() and os.access(path, os.X_OK)),
+        "",
+    )
 
 
 def claude_model(codex_model: str, *, role: str, backend_config: dict[str, Any]) -> str:

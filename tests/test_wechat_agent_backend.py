@@ -516,12 +516,27 @@ class WeChatAgentBackendTests(unittest.TestCase):
             )
 
         command = run.call_args.args[0]
-        self.assertEqual(command[:4], ["aginti", "run", "--stdin", "--json"])
+        self.assertEqual(Path(command[0]).name, "aginti")
+        self.assertEqual(command[1:4], ["run", "--stdin", "--json"])
         self.assertEqual(run.call_args.kwargs["input"], "original prompt")
         self.assertTrue(result["ok"])
         self.assertEqual(result["message"], "CHAT: actual answer")
         self.assertEqual(result["message_source"], "machine_json")
         self.assertEqual(result["stdout_tail"], "")
+
+    def test_aginti_resolves_from_nvm_when_service_path_is_minimal(self) -> None:
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as tmp:
+            executable = Path(tmp) / ".nvm" / "versions" / "node" / "v22.0.0" / "bin" / "aginti"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            executable.chmod(0o755)
+            with mock.patch.object(backend.shutil, "which", return_value=None), mock.patch.object(
+                backend.Path, "home", return_value=Path(tmp)
+            ):
+                resolved = backend.resolve_command_executable("aginti")
+
+        self.assertEqual(resolved, str(executable.resolve()))
 
     def test_aginti_message_comes_from_final_session_assistant_turn(self) -> None:
         backend = load_backend()
