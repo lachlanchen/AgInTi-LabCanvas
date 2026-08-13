@@ -168,6 +168,12 @@ real accessible evidence. `写作 外语 挣钱` should turn shared material int
 high-quality writing/career/money ideas. `🍓我的设备`, `懒人科研`, and
 `lachlanchan` may run the full LabCanvas/LazyEdit/video/CAD/PCB tool surface
 when explicitly requested. `EchoMind` remains language teaching first.
+Its periodic lesson runs every six hours and stays within one concise message.
+Each example aligns Chinese, English, and Japanese, with tone-marked pinyin,
+Japanese inline ruby/furigana such as `予約（よやく）`, and romaji. The separate
+previous-day XeLaTeX review remains scheduled at 06:00 HKT. Oversized or
+incomplete periodic drafts go through a bounded agent editing pass; never clip
+a lesson mid-example merely to satisfy the chat length limit.
 
 File attachments use the official Linux file chooser with clipboard path paste
 (`Ctrl+L`, paste absolute path, `Enter`) so the chosen file remains reviewable.

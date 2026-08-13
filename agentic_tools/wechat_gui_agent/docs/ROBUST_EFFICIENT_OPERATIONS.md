@@ -569,7 +569,7 @@ The stable interface and recovery commands are documented in
   sections, pinyin, Japanese ruby furigana, pronunciation, grammar, and
   exercises, and is delivered through the normal verified file gate with a
   date-based deduplication record. This daily transaction is independent of the
-  three-hour lesson and catches up after 06:00 or a scheduler restart. Recover
+  six-hour lesson and catches up after 06:00 or a scheduler restart. Recover
   it explicitly with `echomind_language_scheduler.py --daily-pdf-now`.
 - Every successful WeChat file delivery records a private same-chat file
   fingerprint. If that attachment later appears as a self-authored database
@@ -829,8 +829,12 @@ The stable interface and recovery commands are documented in
   EchoMind's 06:00 daily PDF remain active, retain date-based deduplication, and
   catch up after a missed clock or restart. Explicit user requests and
   interactive replies also remain available overnight.
-- EchoMind's periodic multilingual teaching cadence is three hours
-  (`10800` seconds), not one hour. The scheduler records the last successful
+- EchoMind's periodic multilingual teaching cadence is six hours
+  (`21600` seconds). Each compact lesson aligns Chinese, English, and Japanese,
+  includes full tone-marked pinyin, Japanese inline ruby/furigana, and romaji.
+  Oversized or incomplete drafts use one bounded agent editing pass and must
+  pass the delivery contract; character clipping is not an acceptable repair.
+  The scheduler records the last successful
   delivery and waits out the remaining interval after a restart, preventing a
   reboot or tmux recovery from sending an extra lesson. Each periodic output is
   one compact text lesson, not a PDF or multi-part report.
@@ -1560,7 +1564,7 @@ PYTHONPATH=src python agentic_tools/wechat_gui_agent/scripts/wechat_transport_st
 The persistent guard runs in `labcanvas-wecom:health`. It checks the WeChat and
 WeCom tmux runtimes, all configured direct-monitor `last_loop_at` heartbeats,
 `chat-sync`, sender-lock ownership, active queue clocks, the Android relay,
-the three-hour EchoMind scheduler, and the daily career scheduler. A configured
+the six-hour EchoMind scheduler, and the daily career scheduler. A configured
 official WeCom CLI route is optional when its private state says
 `message_permission_unavailable`; the healthy GUI/Android routes must not be
 reported as degraded merely because the tenant does not grant that permission.
@@ -1587,7 +1591,7 @@ Repairs require repeated observations and preserve the logged-in clients. A
 stalled direct monitor reloads only monitor/chat-sync windows; a missing runtime
 uses the idempotent supervisor `ensure` path. EchoMind is managed by
 `echomind_language_scheduler_tmux.sh`, which reuses its ignored state and waits
-the remainder of the three-hour interval after restart instead of sending a
+the remainder of the six-hour interval after restart instead of sending a
 duplicate lesson. `wechat_stack_tmux.sh start` restores both EchoMind and the
 daily career scheduler after reboot.
 - Healthy 30-second health polls read local process, tmux, heartbeat, queue, and
@@ -1681,7 +1685,7 @@ Expected signs:
 - no unexpected `pending`, stale `in_progress`, stale `send_retrying`, or
   wrong-chat send errors.
 - `direct_monitors.healthy` equals `direct_monitors.configured`, schedules report
-  EchoMind at `10800` seconds, and `agent_failures.quota_failure_count` is zero.
+  EchoMind at `21600` seconds, and `agent_failures.quota_failure_count` is zero.
 
 ### Black noVNC Canvas
 
@@ -1985,7 +1989,7 @@ Unified runtime and per-chat profiles:
   Chinese XeLaTeX PDF, and sends only that PDF.
 - `EchoMind` defaults to multilingual teaching, but explicit CAD, PCB,
   research, figure, media, presentation, or publication requests still route
-  to the shared worker. Its only proactive outputs remain the three-hour
+  to the shared worker. Its only proactive outputs remain the six-hour
   compact lesson and one previous-day 06:00 PDF.
 - `lachlanchan` remains the private daily career/report destination and a full
   general worker DM.

@@ -127,7 +127,7 @@ PROFILES: dict[str, dict[str, Any]] = {
             "An explicit tool or artifact request overrides this default focus and must execute."
         ),
         "proactive_policy": (
-            "Only the configured three-hour compact lesson and one previous-day 06:00 PDF may "
+            "Only the configured six-hour compact lesson and one previous-day 06:00 PDF may "
             "speak proactively."
         ),
     },

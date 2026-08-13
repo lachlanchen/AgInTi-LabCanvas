@@ -68,7 +68,7 @@ ECHOMIND_SCHEDULE_HELPER = (
 WECHAT_STACK = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_stack_tmux.sh"
 ECHOMIND_SCHEDULE_SESSION = "labcanvas-echomind-language"
 CAREER_SCHEDULE_SESSION = "labcanvas-career-daily"
-ECHOMIND_INTERVAL_SECONDS = 3 * 60 * 60
+ECHOMIND_INTERVAL_SECONDS = 6 * 60 * 60
 ECHOMIND_HEARTBEAT_STALE_SECONDS = 12 * 60
 ECHOMIND_PENDING_DELIVERY_GRACE_SECONDS = 10 * 60
 ECHOMIND_DAILY_PDF_RETRY_SECONDS = 30 * 60
@@ -1713,9 +1713,9 @@ def health_alert_message(codes: list[str], *, recovered: bool = False) -> str:
         "schedule_career_missing": "每日分析定时任务未运行",
         "schedule_career_stalled": "每日职业分析定时任务心跳停止",
         "schedule_memo_delivery_overdue": "MEMO 每日完整整理 PDF 超时未交付",
-        "schedule_echomind_cadence": "EchoMind 教学周期不是 3 小时",
+        "schedule_echomind_cadence": "EchoMind 教学周期不是 6 小时",
         "schedule_echomind_daily_delivery_pending": "EchoMind 每日 PDF 已生成但尚未交付",
-        "schedule_echomind_lesson_delivery_pending": "EchoMind 三小时课程已生成但尚未交付",
+        "schedule_echomind_lesson_delivery_pending": "EchoMind 六小时课程已生成但尚未交付",
         "schedule_echomind_missing": "EchoMind 教学定时任务未运行",
         "schedule_echomind_stalled": "EchoMind 教学定时任务心跳停止",
         "schedule_labagent_stalled": "LabAgent 三小时空闲灵感任务心跳停止",

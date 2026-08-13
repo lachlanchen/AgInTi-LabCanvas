@@ -11,8 +11,8 @@ from agentic_tools.wechat_gui_agent.scripts import echomind_language_scheduler a
 
 
 class EchoMindLanguageSchedulerTests(unittest.TestCase):
-    def test_default_interval_is_three_hours(self) -> None:
-        self.assertEqual(scheduler.INTERVAL, 10_800)
+    def test_default_interval_is_six_hours(self) -> None:
+        self.assertEqual(scheduler.INTERVAL, 21_600)
         self.assertEqual(scheduler.PERIODIC_MODEL, "gpt-5.3-codex-spark")
 
     def test_restart_waits_for_remaining_interval(self) -> None:
@@ -21,11 +21,11 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
 
         remaining = scheduler.seconds_until_due(state, scheduler.INTERVAL, now=now)
 
-        self.assertEqual(remaining, 9_000)
+        self.assertEqual(remaining, 19_800)
 
-    def test_due_when_three_hours_have_elapsed(self) -> None:
+    def test_due_when_six_hours_have_elapsed(self) -> None:
         state = {"last_run_at": "2026-07-22T07:02:37+00:00"}
-        now = datetime(2026, 7, 22, 10, 2, 37, tzinfo=timezone.utc)
+        now = datetime(2026, 7, 22, 13, 2, 37, tzinfo=timezone.utc)
 
         remaining = scheduler.seconds_until_due(state, scheduler.INTERVAL, now=now)
 
@@ -69,13 +69,84 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         self.assertIn("\\usepackage{tipa}", document)
         self.assertIn("IPA: /tɛst/", document)
 
-    def test_periodic_lesson_is_compact_for_one_chat_message(self) -> None:
+    def test_periodic_lesson_contract_rejects_clipping_prone_output(self) -> None:
         oversized = ("一句有用的三语课程。" * 300) + "\n\n不应到达这里。"
 
-        compact = scheduler.compact_periodic_lesson(oversized, max_chars=800)
+        issues = scheduler.periodic_lesson_contract_issues(oversized, max_chars=800)
 
-        self.assertLessEqual(len(compact), 800)
-        self.assertNotIn("不应到达这里", compact)
+        self.assertIn("too_long", issues)
+        self.assertIn("missing_inline_furigana", issues)
+        self.assertIn("missing_tone_marked_pinyin", issues)
+
+    def test_periodic_prompt_requires_complete_aligned_trilingual_readings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            state_path.write_text("{}", encoding="utf-8")
+            observed: dict[str, str] = {}
+
+            def agent(prompt: str, **_kwargs):
+                observed["prompt"] = prompt
+                return {
+                    "ok": True,
+                    "message": "场景：预约。\n中文：我想预约。\n拼音：Wǒ xiǎng yùyuē.\nEnglish: I'd like to make a reservation.\n日本語：予約（よやく）したいです。\nRomaji: Yoyaku shitai desu.\n对照：三语都先表达意愿。\n易错：不要直译语序。\n练习：改成明天。\n答案：我想预约明天。",
+                    "backend": "codex",
+                    "model": "gpt-5.3-codex-spark",
+                }
+
+            with (
+                mock.patch.object(scheduler, "STATE", state_path),
+                mock.patch.object(
+                    scheduler.direct,
+                    "load_config",
+                    return_value={"chat_name": "EchoMind", "agent_fallbacks": {}},
+                ),
+                mock.patch.object(scheduler.direct, "read_recent_history", return_value=[]),
+                mock.patch.object(scheduler, "run_agent_session", side_effect=agent),
+            ):
+                result = scheduler.run_once(deliver=False)
+
+        self.assertTrue(result["ok"])
+        self.assertIn("full-sentence pinyin with tone marks", observed["prompt"])
+        self.assertIn("予約（よやく）", observed["prompt"])
+        self.assertIn("plus romaji", observed["prompt"])
+        self.assertIn("exactly one aligned core example", observed["prompt"])
+
+    def test_incomplete_periodic_lesson_is_agent_edited_before_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            state_path.write_text("{}", encoding="utf-8")
+            repaired = "场景：购物。\n中文：这个多少钱？\n拼音：Zhège duōshao qián?\nEnglish: How much is this?\n日本語：これは幾（いく）らですか。\nRomaji: Kore wa ikura desu ka.\n对照：三语都可直接询价。\n易错：英语需要 is。\n练习：问两个多少钱。\n答案：这两个多少钱？"
+            results = [
+                {
+                    "ok": True,
+                    "message": "过长而且不完整。" * 200,
+                    "backend": "codex",
+                    "model": "gpt-5.3-codex-spark",
+                },
+                {
+                    "ok": True,
+                    "message": repaired,
+                    "backend": "codex",
+                    "model": "gpt-5.6-sol",
+                },
+            ]
+            with (
+                mock.patch.object(scheduler, "STATE", state_path),
+                mock.patch.object(
+                    scheduler.direct,
+                    "load_config",
+                    return_value={"chat_name": "EchoMind", "agent_fallbacks": {}},
+                ),
+                mock.patch.object(scheduler.direct, "read_recent_history", return_value=[]),
+                mock.patch.object(scheduler, "run_agent_session", side_effect=results) as agent,
+            ):
+                result = scheduler.run_once(deliver=False)
+                stored = scheduler.load_state()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(agent.call_count, 2)
+        self.assertEqual(stored["last_message"], repaired)
+        self.assertEqual(stored["last_model"], "gpt-5.6-sol")
 
     def test_pending_lesson_retries_delivery_without_regenerating(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,6 +198,7 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
             state_path = Path(tmp) / "state.json"
             state_path.write_text("{}", encoding="utf-8")
             config = {"chat_name": "EchoMind", "history_limit": 5, "agent_fallbacks": {}}
+            lesson = "场景：问路。\n中文：地铁站在哪里？\n拼音：Dìtiě zhàn zài nǎlǐ?\nEnglish: Where is the metro station?\n日本語：地下鉄（ちかてつ）の駅（えき）はどこですか。\nRomaji: Chikatetsu no eki wa doko desu ka.\n对照：三语都询问地点。\n易错：英语需要 is。\n练习：改成洗手间。\n答案：洗手间在哪里？"
             with (
                 mock.patch.object(scheduler, "STATE", state_path),
                 mock.patch.object(scheduler.direct, "load_config", return_value=config),
@@ -136,7 +208,7 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
                     "run_agent_session",
                     return_value={
                         "ok": True,
-                        "message": "new lesson",
+                        "message": lesson,
                         "backend": "codex",
                         "model": "gpt-5.3-codex-spark",
                     },
@@ -152,7 +224,7 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
                 stored = scheduler.load_state()
 
         agent.assert_called_once()
-        self.assertEqual(stored["pending_lesson"]["message"], "new lesson")
+        self.assertEqual(stored["pending_lesson"]["message"], lesson)
         self.assertEqual(stored["scheduler_phase"], "lesson_retry_wait")
         self.assertEqual(stored["pending_lesson"]["delivery_attempts"], 1)
         self.assertTrue(stored["pending_lesson"]["next_attempt_at"])

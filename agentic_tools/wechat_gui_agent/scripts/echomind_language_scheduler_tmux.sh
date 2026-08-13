@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 SESSION="${ECHOMIND_LANGUAGE_TMUX_SESSION:-labcanvas-echomind-language}"
-INTERVAL_SECONDS="${ECHOMIND_LANGUAGE_INTERVAL_SECONDS:-10800}"
+INTERVAL_SECONDS="${ECHOMIND_LANGUAGE_INTERVAL_SECONDS:-21600}"
 LOG_DIR="$ROOT/output/wechat_gui_agent/$(date +%F)"
 LOG_FILE="$LOG_DIR/echomind-language-scheduler.log"
 SCRIPT="$ROOT/agentic_tools/wechat_gui_agent/scripts/echomind_language_scheduler.py"
@@ -17,7 +17,7 @@ start() {
   fi
   tmux new-session -d -s "$SESSION" -n scheduler \
     "cd '$ROOT' && exec python3 -u '$SCRIPT' --loop --interval-seconds '$INTERVAL_SECONDS' >> '$LOG_FILE' 2>&1"
-  echo "Started EchoMind three-hour scheduler: $SESSION"
+  echo "Started EchoMind six-hour scheduler: $SESSION"
 }
 
 stop() {

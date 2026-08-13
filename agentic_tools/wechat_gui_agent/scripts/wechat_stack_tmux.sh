@@ -25,7 +25,7 @@ Starts or stops the complete reusable WeChat chatops stack:
   - labcanvas-wechat tmux supervisor for WeChat desktop, fast monitor, worker, and media sync
   - labcanvas-web-wechat tmux web app session for the browser control panel
   - labcanvas-career-daily tmux session for daily career/self-analysis reports
-  - labcanvas-echomind-language tmux session for restart-safe three-hour lessons
+  - labcanvas-echomind-language tmux session for restart-safe six-hour lessons
 
 Normal restart preserves the official WeChat GUI and reloads only monitor,
 worker, media-sync, web app, and daily scheduler processes. Use restart-all,
