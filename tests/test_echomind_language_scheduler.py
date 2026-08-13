@@ -188,6 +188,44 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         send.assert_not_called()
         self.assertEqual(stored["scheduler_phase"], "lesson_retry_wait")
 
+    def test_forced_pending_retry_sends_existing_lesson_immediately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "pending_lesson": {
+                            "message": "lesson",
+                            "next_attempt_at": "2099-01-01T00:00:00+00:00",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            screenshot = Path(tmp) / "sent.png"
+            screenshot.write_bytes(b"png")
+            with (
+                mock.patch.object(scheduler, "STATE", state_path),
+                mock.patch.object(
+                    scheduler.direct,
+                    "load_config",
+                    return_value={"chat_name": "EchoMind"},
+                ),
+                mock.patch.object(
+                    scheduler.direct,
+                    "send_gui_message",
+                    return_value=str(screenshot),
+                ) as send,
+                mock.patch.object(scheduler, "run_agent_session") as agent,
+            ):
+                result = scheduler.run_once(force_pending_retry=True)
+                stored = scheduler.load_state()
+
+        self.assertTrue(result["ok"])
+        send.assert_called_once()
+        agent.assert_not_called()
+        self.assertNotIn("pending_lesson", stored)
+
     def test_pending_daily_pdf_reserves_lane_and_retries_without_regeneration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

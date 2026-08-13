@@ -151,6 +151,38 @@ class WeChatDesktopUnlockWatchdogTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         restore.assert_called_once_with("adb", "physical-phone", "com.tencent.wework")
 
+    def test_entry_required_uses_phone_confirmation_and_restores_wecom(self) -> None:
+        lease = mock.MagicMock()
+        lock_states = [
+            {"ok": True, "status": "entry_required"},
+            {"ok": True, "status": "entry_required"},
+            {"ok": True, "status": "unlocked"},
+        ]
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(watchdog, "apply_desktop_keep_awake"),
+            mock.patch.object(watchdog, "desktop_lock_state", side_effect=lock_states),
+            mock.patch.object(watchdog, "enter_weixin_on_desktop", return_value={"ok": True}),
+            mock.patch.object(watchdog, "require_serial", return_value="physical-phone"),
+            mock.patch.object(watchdog, "acquire_android_lease", return_value=lease),
+            mock.patch.object(
+                watchdog,
+                "focused_window",
+                return_value="mCurrentFocus=Window{ u0 com.tencent.wework/.launch.WwMainActivity}",
+            ),
+            mock.patch.object(watchdog, "keep_android_awake"),
+            mock.patch.object(watchdog, "start_android_package", return_value=True),
+            mock.patch.object(watchdog, "restore_android_package") as restore,
+            mock.patch.object(watchdog, "release_android_lease") as release,
+            mock.patch.object(watchdog.time, "sleep"),
+        ):
+            result = watchdog.watchdog_once(args(tmp))
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "enter_weixin_and_confirm_phone")
+        restore.assert_called_once_with("adb", "physical-phone", "com.tencent.wework")
+        release.assert_called_once_with(lease)
+
     def test_phone_unlocked_label_uses_reset_cycle_not_single_lock_tap(self) -> None:
         screenshot = Path("/tmp/watchdog-test.png")
         with (
@@ -228,18 +260,60 @@ class WeChatDesktopUnlockWatchdogTests(unittest.TestCase):
         self.assertEqual(watchdog.focused_package(focus), "com.tencent.wework")
 
     def test_known_android_apps_use_explicit_components(self) -> None:
-        with mock.patch.object(
-            watchdog,
-            "adb_shell",
-            return_value=subprocess.CompletedProcess([], 0, "", ""),
-        ) as shell:
-            watchdog.start_android_package("adb", "physical-phone", "com.tencent.mm")
+        with (
+            mock.patch.object(
+                watchdog,
+                "adb_shell",
+                return_value=subprocess.CompletedProcess([], 0, "", ""),
+            ) as shell,
+            mock.patch.object(
+                watchdog,
+                "focused_window",
+                return_value="mCurrentFocus=Window{ u0 com.tencent.mm/.ui.LauncherUI}",
+            ),
+            mock.patch.object(watchdog.time, "sleep"),
+        ):
+            result = watchdog.start_android_package(
+                "adb", "physical-phone", "com.tencent.mm"
+            )
 
+        self.assertTrue(result)
         shell.assert_called_once_with(
             "adb",
             "physical-phone",
             ["am", "start", "-n", "com.tencent.mm/.ui.LauncherUI"],
             check=False,
+        )
+
+    def test_android_app_start_falls_back_when_component_does_not_focus(self) -> None:
+        with (
+            mock.patch.object(
+                watchdog,
+                "adb_shell",
+                side_effect=[
+                    subprocess.CompletedProcess([], 0, "", ""),
+                    subprocess.CompletedProcess([], 0, "", ""),
+                ],
+            ) as shell,
+            mock.patch.object(
+                watchdog,
+                "focused_window",
+                side_effect=[
+                    "mCurrentFocus=Window{ u0 com.miui.home/.launcher.Launcher}",
+                    "mCurrentFocus=Window{ u0 com.tencent.mm/.ui.LauncherUI}",
+                ],
+            ),
+            mock.patch.object(watchdog.time, "sleep"),
+        ):
+            result = watchdog.start_android_package(
+                "adb", "physical-phone", "com.tencent.mm"
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(shell.call_count, 2)
+        self.assertEqual(
+            shell.call_args_list[1].args[2],
+            ["monkey", "-p", "com.tencent.mm", "-c", "android.intent.category.LAUNCHER", "1"],
         )
 
 

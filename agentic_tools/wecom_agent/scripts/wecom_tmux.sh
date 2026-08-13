@@ -121,12 +121,24 @@ kill_window_if_present() {
 }
 
 acquire_mutation_lock() {
+  if [[ "${WECOM_TMUX_LOCK_HELD:-0}" == "1" ]]; then
+    return 0
+  fi
+  echo "Internal error: mutation action was not entered through the lock wrapper." >&2
+  return 1
+}
+
+run_with_mutation_lock() {
+  local rc=0
   mkdir -p "$(dirname "$MUTATION_LOCK")"
-  exec 9>"$MUTATION_LOCK"
-  if ! flock -w "${WECOM_TMUX_LOCK_TIMEOUT_SECONDS:-45}" 9; then
+  flock --close --conflict-exit-code 75 \
+    -w "${WECOM_TMUX_LOCK_TIMEOUT_SECONDS:-45}" \
+    "$MUTATION_LOCK" env WECOM_TMUX_LOCK_HELD=1 "$0" "$@" || rc=$?
+  if (( rc == 75 )); then
     echo "Timed out waiting for WeCom tmux mutation lock: $MUTATION_LOCK" >&2
     return 1
   fi
+  return "$rc"
 }
 
 ensure_core_windows() {
@@ -335,6 +347,14 @@ status_stack() {
 }
 
 action="${1:-status}"
+case "$action" in
+  start|stop|restart|worker-restart|daily-restart|health-restart|external-restart|gui-restart|android-start|android-restart)
+    if [[ "${WECOM_TMUX_LOCK_HELD:-0}" != "1" ]]; then
+      run_with_mutation_lock "$@"
+      exit $?
+    fi
+    ;;
+esac
 case "$action" in
   start)
     acquire_mutation_lock

@@ -1014,6 +1014,8 @@ class AndroidBridge:
         self._history_scan_cursor = 0
         self._stop = threading.Event()
         self._health_lock = threading.Lock()
+        self._outbound_waiter_lock = threading.Lock()
+        self._outbound_waiters = 0
         self.surface_recovery_cooldown_seconds = bounded_float(
             config.get("surface_recovery_cooldown_seconds"), 300.0, 30.0, 3600.0
         )
@@ -1107,6 +1109,26 @@ class AndroidBridge:
                 yield
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
+
+    def outbound_waiting(self) -> bool:
+        with self._outbound_waiter_lock:
+            return self._outbound_waiters > 0
+
+    @contextmanager
+    def outbound_serialized(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> Iterator[None]:
+        """Prioritize a queued send over the next passive polling segment."""
+        with self._outbound_waiter_lock:
+            self._outbound_waiters += 1
+        try:
+            with self.serialized(timeout_seconds=timeout_seconds):
+                yield
+        finally:
+            with self._outbound_waiter_lock:
+                self._outbound_waiters = max(0, self._outbound_waiters - 1)
 
     def run(
         self,
@@ -2616,7 +2638,13 @@ class AndroidBridge:
             raise BridgeError("mentions require a text message")
         if not delivery_message.strip() and not files:
             raise BridgeError("send requires a message and/or artifact")
-        with self.serialized(timeout_seconds=60.0):
+        outbound_timeout = bounded_float(
+            self.config.get("outbound_serialization_timeout_seconds"),
+            180.0,
+            60.0,
+            600.0,
+        )
+        with self.outbound_serialized(timeout_seconds=outbound_timeout):
             sent_messages: list[str] = []
             sent_message_times: dict[str, str] = {}
             sent_files: list[str] = []
@@ -4352,7 +4380,7 @@ class AndroidBridge:
         reply_errors: list[dict[str, str]] = []
         for response, mentions, task_id in pending_replies:
             try:
-                with self.serialized(timeout_seconds=30.0):
+                with self.outbound_serialized(timeout_seconds=60.0):
                     sent = self.send_text_resilient_locked(
                         chat,
                         response,
@@ -4388,6 +4416,19 @@ class AndroidBridge:
         }
 
     def poll_cycle(self) -> dict[str, Any]:
+        if self.outbound_waiting():
+            return {
+                "ok": True,
+                "due_chats": [],
+                "unread_chats": [],
+                "reconciliation": False,
+                "history_scan_chat": "",
+                "processed": 0,
+                "results": [],
+                "restore_error": "",
+                "deferred_for_outbound": True,
+                "deferred_chats": list(self.target_groups),
+            }
         now = time.monotonic()
         due = [chat for chat in self.target_groups if self.load_snapshot(chat) is None]
         unread: list[str] = []
@@ -4416,7 +4457,14 @@ class AndroidBridge:
             self._next_history_scan_at = now + self.history_scan_seconds
             due = unique_nonempty([*due, history_scan_chat])
         results: list[dict[str, Any]] = []
-        for chat in due:
+        deferred_chats: list[str] = []
+        for index, chat in enumerate(due):
+            if self.outbound_waiting():
+                deferred_chats = due[index:]
+                self._next_reconcile_at = 0.0
+                if history_scan_chat in deferred_chats:
+                    self._next_history_scan_at = 0.0
+                break
             try:
                 results.append(
                     self.snapshot(
@@ -4437,7 +4485,7 @@ class AndroidBridge:
                     }
                 )
         restore_error = ""
-        if due:
+        if due and not self.outbound_waiting():
             try:
                 with self.serialized(timeout_seconds=5.0):
                     self.open_chat_list()
@@ -4452,6 +4500,8 @@ class AndroidBridge:
             "processed": sum(int(result.get("processed") or 0) for result in results),
             "results": results,
             "restore_error": restore_error,
+            "deferred_for_outbound": bool(deferred_chats),
+            "deferred_chats": deferred_chats,
         }
 
     def list_chats(self) -> dict[str, Any]:

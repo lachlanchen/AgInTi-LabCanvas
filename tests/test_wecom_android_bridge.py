@@ -1255,6 +1255,30 @@ class WeComAndroidBridgeTests(unittest.TestCase):
                     with runtime.serialized(timeout_seconds=0.1):
                         self.fail("busy lock must not be entered")
 
+    def test_outbound_serialized_marks_waiter_before_taking_gui_lock(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+
+            @bridge.contextmanager
+            def inspect_waiter(*, timeout_seconds=None):
+                self.assertTrue(runtime.outbound_waiting())
+                self.assertEqual(timeout_seconds, 180.0)
+                yield
+
+            with mock.patch.object(runtime, "serialized", side_effect=inspect_waiter):
+                with runtime.outbound_serialized(timeout_seconds=180.0):
+                    self.assertTrue(runtime.outbound_waiting())
+
+            self.assertFalse(runtime.outbound_waiting())
+
     def test_parse_messages_distinguishes_inbound_and_own_rows(self) -> None:
         bridge = load_bridge()
         xml = """
@@ -2899,6 +2923,29 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             [call.args[0] for call in snapshot.call_args_list],
             ["LabAgent", "AgentTest"],
         )
+
+    def test_poll_cycle_defers_before_touching_gui_when_send_is_waiting(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent", "AgentTest"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime._outbound_waiters = 1
+            with mock.patch.object(runtime, "open_chat_list") as open_chat_list, mock.patch.object(
+                runtime, "snapshot"
+            ) as snapshot:
+                result = runtime.poll_cycle()
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["deferred_for_outbound"])
+        self.assertEqual(result["deferred_chats"], ["LabAgent", "AgentTest"])
+        open_chat_list.assert_not_called()
+        snapshot.assert_not_called()
 
     def test_poll_cycle_uses_unread_only_between_reconciliations(self) -> None:
         bridge = load_bridge()

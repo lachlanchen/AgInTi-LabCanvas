@@ -193,6 +193,71 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["recent_failed_ids"], ["failed-recent"])
 
+    def test_queue_health_ignores_delivered_proactive_inspiration_failure(self) -> None:
+        now = datetime(2026, 8, 11, 9, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "wecom-inspiration-202608111400-member",
+                        "status": "worker_failed",
+                        "coverage_status": "unresolved_after_retry",
+                        "completed_at": "2026-08-11T08:30:00+00:00",
+                        "group_inspiration": {"interval_seconds": 10800},
+                        "wecom_delivery": {
+                            "status": "sent",
+                            "sent_messages": [{"part": 1}],
+                            "pending_messages": [],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = guard.queue_health(queue, now=now)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["recent_failed_ids"], [])
+        self.assertEqual(result["coverage_unresolved_ids"], [])
+        self.assertEqual(result["historical_coverage_unresolved_count"], 0)
+
+    def test_queue_health_keeps_undelivered_proactive_inspiration_failure(self) -> None:
+        now = datetime(2026, 8, 11, 9, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "wecom-inspiration-202608111400-member",
+                        "status": "worker_failed",
+                        "coverage_status": "unresolved_after_retry",
+                        "completed_at": "2026-08-11T08:30:00+00:00",
+                        "group_inspiration": {"interval_seconds": 10800},
+                        "wecom_delivery": {
+                            "status": "deferred",
+                            "sent_messages": [],
+                            "pending_messages": [{"part": 1}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = guard.queue_health(queue, now=now)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["recent_failed_ids"],
+            ["wecom-inspiration-202608111400-member"],
+        )
+        self.assertEqual(
+            result["coverage_unresolved_ids"],
+            ["wecom-inspiration-202608111400-member"],
+        )
+
     def test_queue_health_exposes_numbered_messages_unresolved_after_retry(self) -> None:
         now = datetime(2026, 7, 30, 8, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

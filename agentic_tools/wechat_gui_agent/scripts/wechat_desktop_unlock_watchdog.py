@@ -130,7 +130,16 @@ def watchdog_once(args: argparse.Namespace) -> dict[str, Any]:
         entered = enter_weixin_on_desktop(args.display, lock_state)
         time.sleep(3.0)
         after = desktop_lock_state(args.display, args.output_dir)
+        mobile_confirmation: dict[str, Any] | None = None
+        if after.get("status") in {"locked", "entry_required"}:
+            mobile_confirmation = confirm_desktop_entry_from_mobile(args)
+            confirmed_after = mobile_confirmation.get("after")
+            if isinstance(confirmed_after, dict):
+                after = confirmed_after
         payload.update({"action": "enter_weixin", "entry": entered, "after": after})
+        if mobile_confirmation is not None:
+            payload["action"] = "enter_weixin_and_confirm_phone"
+            payload["mobile_confirmation"] = mobile_confirmation
         payload["ok"] = bool(entered.get("ok")) and after.get("status") not in {"locked", "entry_required", "no_window"}
         if payload["ok"] and args.flush_deferred:
             payload["flush_deferred"] = flush_deferred_once()
@@ -181,6 +190,70 @@ def watchdog_once(args: argparse.Namespace) -> dict[str, Any]:
     if payload["ok"] and args.flush_deferred:
         payload["flush_deferred"] = flush_deferred_once()
     return payload
+
+
+def confirm_desktop_entry_from_mobile(args: argparse.Namespace) -> dict[str, Any]:
+    """Foreground the owner's phone WeChat so its normal desktop approval can complete."""
+    serial = require_serial(args.adb, args.serial)
+    lease = acquire_android_lease(
+        args.android_lock,
+        timeout_seconds=max(
+            0.0,
+            float(getattr(args, "android_lock_timeout", 30.0)),
+        ),
+    )
+    if lease is None:
+        return {
+            "ok": False,
+            "deferred": True,
+            "reason": "android_busy",
+            "serial": redact_serial(serial),
+        }
+    package_before = ""
+    try:
+        focus_before = focused_window(args.adb, serial)
+        package_before = focused_package(focus_before)
+        if package_before in set(args.protected_package):
+            return {
+                "ok": False,
+                "deferred": True,
+                "reason": "protected_app_in_use",
+                "protected_package": package_before,
+                "serial": redact_serial(serial),
+            }
+        keep_android_awake(args.adb, serial)
+        foregrounded = start_android_package(args.adb, serial, "com.tencent.mm")
+        after: dict[str, Any] = {"ok": False, "status": "entry_required"}
+        if foregrounded:
+            for _ in range(6):
+                after = desktop_lock_state(args.display, args.output_dir)
+                if after.get("status") not in {"entry_required", "no_window"}:
+                    break
+                time.sleep(2.0)
+        mobile_unlock: dict[str, Any] | None = None
+        if after.get("status") == "locked":
+            mobile_unlock = unlock_desktop_from_mobile(
+                args.adb,
+                serial,
+                parse_point(args.banner_tap),
+                parse_point(args.lock_tap),
+                args.android_output_dir,
+            )
+            time.sleep(2.0)
+            after = desktop_lock_state(args.display, args.output_dir)
+        return {
+            "ok": bool(foregrounded)
+            and after.get("status") not in {"locked", "entry_required", "no_window"},
+            "serial": redact_serial(serial),
+            "foregrounded": bool(foregrounded),
+            "package_before": package_before,
+            "mobile_unlock": mobile_unlock,
+            "after": after,
+        }
+    finally:
+        if package_before == "com.tencent.wework":
+            restore_android_package(args.adb, serial, package_before)
+        release_android_lease(lease)
 
 
 def desktop_lock_state(display: str, output_dir: Path) -> dict[str, Any]:
@@ -473,7 +546,7 @@ def restore_android_package(adb: str, serial: str, package: str) -> None:
     start_android_package(adb, serial, package)
 
 
-def start_android_package(adb: str, serial: str, package: str) -> None:
+def start_android_package(adb: str, serial: str, package: str) -> bool:
     components = {
         "com.tencent.mm": "com.tencent.mm/.ui.LauncherUI",
         "com.tencent.wework": "com.tencent.wework/.launch.WwMainActivity",
@@ -482,13 +555,17 @@ def start_android_package(adb: str, serial: str, package: str) -> None:
     if component:
         proc = adb_shell(adb, serial, ["am", "start", "-n", component], check=False)
         if proc.returncode == 0:
-            return
+            time.sleep(0.5)
+            if focused_package(focused_window(adb, serial)) == package:
+                return True
     adb_shell(
         adb,
         serial,
         ["monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"],
         check=False,
     )
+    time.sleep(0.5)
+    return focused_package(focused_window(adb, serial)) == package
 
 
 def flush_deferred_once() -> dict[str, Any]:

@@ -606,6 +606,8 @@ Then inspect fresh logs under `output/wechat_gui_agent/YYYY-MM-DD/`.
 | Task replies to wrong chat | Treat as a bug; check route contract, send target, state path, and title guard logs. |
 | File missing | Run same-chat media sync and verify exact local/server ids before retrying. |
 | Worker hangs | Check queue status, worker log, and Codex session registry; stale claims are reclaimable. |
+| WeCom missing-window repair always times out on `wecom_tmux.lock` | Confirm the lease outlives both the 45-second action wait and 180-second autostart repair bound. The supervisor must acquire mutations through its parent `flock --close` wrapper so a new tmux server cannot inherit the lock. Preserve the old locked inode before replacing it; then let `wecom_autostart.sh` recreate only missing windows. |
+| Scheduled report exists locally but did not arrive | Inspect trigger, artifact, transport, and delivery-ledger state separately. Recover the exact stored artifact without rerunning research. For WeChat, let the watchdog complete normal phone confirmation; for WeCom, ensure the Android relay is foregrounded and outbound delivery is not waiting behind passive polling. |
 | Risky action requested | Mark `waiting_confirmation` or open browser assist; do not bypass protections. |
 
 ## Non-Goals

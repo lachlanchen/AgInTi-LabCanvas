@@ -188,9 +188,28 @@ interval. It must:
   token-free transport-health guard windows;
 - use the tmux mutation lock so the general `create_tmux_session.sh` fallback
   and the dedicated service may start concurrently without duplicate windows;
+- hold that lock in the parent `flock --close` wrapper. Do not pass a lock file
+  descriptor into a newly created tmux server, because the long-lived server
+  would retain an orphaned lease and block every later missing-window repair;
 - leave healthy windows and the authenticated GUI process untouched;
 - never enter account-switch/QR login, send a message, replay an old queue, or
   bypass Tencent authentication as part of boot repair.
+
+Schedule health has four separate gates: trigger, agent/artifact generation,
+transport delivery, and delivery-ledger confirmation. Diagnose them separately.
+A generated PDF is not a completed scheduled job until the exact-chat sender
+records the file as delivered (or persists a bounded retry). Desktop WeChat's
+small `entry_required` window is recoverable through the normal **Enter Weixin**
+button followed by foregrounding the already-authorized phone WeChat app; the
+watchdog must verify the resulting desktop state and restore WeCom afterward.
+It must still defer while a protected phone app owns the foreground.
+
+The WeCom Android relay gives outbound message/file sends priority over passive
+inbound reconciliation. A sender registers its intent before waiting for the
+GUI lock, passive polling yields before its next chat, and the sender has a
+longer bounded wait for an already-running native snapshot to finish. This
+prevents a six-second poll loop from starving a completed daily PDF while
+preserving one serialized phone controller.
 
 The Wine client supervisor owns Xvfb, x11vnc, websockify, noVNC, native window
 fitting, and bounded persisted-profile relaunch. If authentication is no longer
@@ -937,6 +956,12 @@ still unresolved after that retry remains visible as
 `coverage_status=unresolved_after_retry`; the transport guard reports it as a
 degraded queue instead of treating it as silent success. This guarantees that
 queue rows are never silently canceled merely because they were adjacent.
+The numbered-message health alert excludes only exact proactive WeCom
+inspiration rows whose delivery ledger says `sent`, contains at least one sent
+part, and contains no pending parts. Such rows can retain a terminal worker or
+coverage audit status after delivery, but replaying them would duplicate an
+already delivered proactive message. An inspiration row without that complete
+delivery evidence remains actionable and visible.
 An explicit PDF request is a deterministic delivery contract: coverage needs
 both a useful direct answer and a real `.pdf` artifact unless a genuine
 approval, access, source, or safety blocker was explained.

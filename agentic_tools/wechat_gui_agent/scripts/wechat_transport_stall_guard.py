@@ -816,7 +816,8 @@ def queue_health(
     recent_failed_ids: list[str] = []
     for task_id, task in latest.items():
         status = str(task.get("status") or "")
-        if status in {"worker_failed", "failed", "error"}:
+        delivered_proactive = delivered_proactive_inspiration(task_id, task)
+        if status in {"worker_failed", "failed", "error"} and not delivered_proactive:
             failed_at = parse_timestamp(
                 task.get("completed_at")
                 or task.get("updated_at")
@@ -829,7 +830,10 @@ def queue_health(
             )
             if failed_at is None or failed_age < failure_alert_seconds:
                 recent_failed_ids.append(task_id)
-        if str(task.get("coverage_status") or "") == "unresolved_after_retry":
+        if (
+            str(task.get("coverage_status") or "") == "unresolved_after_retry"
+            and not delivered_proactive
+        ):
             completed = parse_timestamp(
                 task.get("completed_at")
                 or task.get("updated_at")
@@ -885,6 +889,25 @@ def queue_health(
         ),
         "invalid_lines": invalid_lines,
     }
+
+
+def delivered_proactive_inspiration(task_id: str, task: dict[str, Any]) -> bool:
+    """Return true only for a fully delivered proactive inspiration task."""
+    if not task_id.startswith("wecom-inspiration-"):
+        return False
+    if not isinstance(task.get("group_inspiration"), dict):
+        return False
+    delivery = task.get("wecom_delivery")
+    if not isinstance(delivery, dict):
+        return False
+    sent_messages = delivery.get("sent_messages")
+    pending_messages = delivery.get("pending_messages")
+    return (
+        str(delivery.get("status") or "").strip().casefold() == "sent"
+        and isinstance(sent_messages, list)
+        and bool(sent_messages)
+        and (pending_messages is None or pending_messages == [])
+    )
 
 
 def historical_coverage_category(task: dict[str, Any]) -> str:

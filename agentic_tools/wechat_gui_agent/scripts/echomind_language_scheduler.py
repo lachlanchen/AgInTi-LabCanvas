@@ -479,13 +479,18 @@ def build_row() -> dict:
     }
 
 
-def run_once(*, deliver: bool = True, interval_seconds: int = INTERVAL) -> dict:
+def run_once(
+    *,
+    deliver: bool = True,
+    interval_seconds: int = INTERVAL,
+    force_pending_retry: bool = False,
+) -> dict:
     config = direct.load_config(CONFIG)
     state = load_state()
     pending = state.get("pending_lesson")
     if isinstance(pending, dict) and str(pending.get("message") or "").strip():
         retry_seconds = pending_lesson_retry_seconds(pending)
-        if deliver and retry_seconds > 0:
+        if deliver and retry_seconds > 0 and not force_pending_retry:
             scheduler_heartbeat(
                 state,
                 "lesson_retry_wait",
@@ -697,7 +702,11 @@ def main() -> int:
                 time.sleep(min(remaining, SCHEDULER_POLL_SECONDS))
                 continue
         try:
-            result = run_once(deliver=not args.no_send, interval_seconds=interval)
+            result = run_once(
+                deliver=not args.no_send,
+                interval_seconds=interval,
+                force_pending_retry=bool(args.once),
+            )
             print(json.dumps(result, ensure_ascii=False), flush=True)
             if result.get("status") == "delivery_deferred" and args.loop:
                 time.sleep(
