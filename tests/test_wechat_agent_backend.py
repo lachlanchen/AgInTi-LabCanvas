@@ -500,7 +500,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
             stderr="",
         )
         with (
-            mock.patch.object(backend, "command_available", return_value=True),
+            mock.patch.object(backend, "resolve_command_executable", return_value="aginti"),
             mock.patch.object(backend, "run_process_group", return_value=completed) as run,
         ):
             result = backend.run_aginti_session(
