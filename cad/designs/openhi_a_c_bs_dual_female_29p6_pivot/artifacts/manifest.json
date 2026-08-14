@@ -1,0 +1,289 @@
+{
+  "name": "openhi_a_c_bs_dual_female_29p6_pivot",
+  "design_date": "2026-08-14",
+  "units": "mm",
+  "source": {
+    "step": "cad/extracted/OpenHI_STEP/A+ C + BS.step",
+    "step_sha256": "a482dfec0e2a44833f9250559d1d98f9de0df8565c0b0c1cd1b3ed983ed24d14",
+    "shapr": "cad/extracted/OpenHI.shapr",
+    "shapr_sha256": "f0d1dd3c06bae3a82ceebc902fa4e8084dd132dfdb8ffda300d613008f62e104",
+    "authority": "STEP B-rep; Shapr stores this object as imported bodies"
+  },
+  "scope": {
+    "modified": [
+      "A+ C + BS lower/A-branch female receiver",
+      "A+ C + BS side/C-branch female receiver"
+    ],
+    "explicitly_unchanged": [
+      "cad/extracted/OpenHI_STEP/A.step",
+      "cad/extracted/OpenHI_STEP/C.step",
+      "all A+ C + BS geometry outside the two receiver interiors"
+    ]
+  },
+  "thread": {
+    "female_pivot_mm": 29.6,
+    "female_groove_mm": 30.4,
+    "pitch_mm": 0.8,
+    "radial_tooth_height_mm": 0.4,
+    "tooth_base_mm": 0.8,
+    "hand": "right-hand",
+    "construction_runout_each_end_mm": 1.2,
+    "runout_policy": "construct beyond both ends, then clip to true interval"
+  },
+  "lower_receiver": {
+    "axis": "Z",
+    "center_mm": [
+      255.0,
+      210.0
+    ],
+    "mouth_z_range_mm": [
+      535.1,
+      540.3
+    ],
+    "thread_z_range_mm": [
+      540.3,
+      547.95
+    ],
+    "lens_transition_z_range_mm": [
+      547.95,
+      550.0
+    ],
+    "chamfer_angle_deg": 45.0,
+    "lens_seat_diameter_mm": 25.5
+  },
+  "side_receiver": {
+    "axis": "X",
+    "center_mm": [
+      210.0,
+      600.0
+    ],
+    "thread_x_range_mm": [
+      270.0,
+      275.0
+    ]
+  },
+  "outputs": {
+    "root_step": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/USE_THIS_openhi_a_c_bs_dual_female_29p6_pivot.step",
+    "root_3mf": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/USE_THIS_openhi_a_c_bs_dual_female_29p6_pivot.3mf",
+    "assembly_step": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/openhi_a_c_bs_dual_female_29p6_pivot.step",
+    "assembly_stl": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/openhi_a_c_bs_dual_female_29p6_pivot.stl",
+    "assembly_3mf": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/openhi_a_c_bs_dual_female_29p6_pivot.3mf",
+    "lower_receiver_cutter_step": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/openhi_a_c_bs_dual_female_29p6_pivot_lower_receiver_cutter.step",
+    "side_receiver_cutter_step": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/openhi_a_c_bs_dual_female_29p6_pivot_side_receiver_cutter.step",
+    "full_render_png": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/openhi_a_c_bs_dual_female_29p6_pivot_render.png",
+    "cutaway_render_png": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/openhi_a_c_bs_dual_female_29p6_pivot_thread_cutaway.png",
+    "blend": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/openhi_a_c_bs_dual_female_29p6_pivot.blend",
+    "manifest": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/manifest.json"
+  },
+  "validation": {
+    "source": {
+      "bbox": {
+        "min": [
+          235.0,
+          190.0,
+          535.1
+        ],
+        "max": [
+          275.0,
+          230.0,
+          620.0
+        ],
+        "size": [
+          40.0,
+          40.0,
+          84.9
+        ]
+      },
+      "solid_count": 1,
+      "shell_count": 1,
+      "face_count": 52,
+      "edge_count": 119,
+      "volume_mm3": 46328.645325,
+      "area_mm2": 17260.682874,
+      "occt_valid": true
+    },
+    "output": {
+      "bbox": {
+        "min": [
+          235.0,
+          190.0,
+          535.1
+        ],
+        "max": [
+          275.0,
+          230.0,
+          620.0
+        ],
+        "size": [
+          40.0,
+          40.0,
+          84.9
+        ]
+      },
+      "solid_count": 1,
+      "shell_count": 1,
+      "face_count": 68,
+      "edge_count": 162,
+      "volume_mm3": 46784.23072,
+      "area_mm2": 18678.409267,
+      "occt_valid": true
+    },
+    "change_scope": {
+      "removed_total_mm3": 2.606306,
+      "added_total_mm3": 457.382382,
+      "removed_outside_receiver_envelopes_mm3": 0.0,
+      "added_outside_receiver_envelopes_mm3": 0.0
+    },
+    "thread_probes": {
+      "lower_A_receiver": {
+        "cylinder_diameters_mm": [
+          25.5,
+          29.6,
+          40.0
+        ],
+        "bspline_sample_min_diameter_mm": 29.6,
+        "bspline_sample_max_diameter_mm": 30.4,
+        "matched_bspline_axial_bounds_mm": [
+          [
+            540.3,
+            547.95
+          ],
+          [
+            540.3,
+            547.95
+          ]
+        ],
+        "cone_surfaces": [
+          {
+            "semi_angle_deg": 45.0,
+            "axial_bounds_mm": [
+              547.95,
+              550.0
+            ]
+          },
+          {
+            "semi_angle_deg": 45.0,
+            "axial_bounds_mm": [
+              539.5,
+              540.3
+            ]
+          },
+          {
+            "semi_angle_deg": 45.0,
+            "axial_bounds_mm": [
+              535.1,
+              539.5
+            ]
+          }
+        ]
+      },
+      "side_C_receiver": {
+        "cylinder_diameters_mm": [
+          29.6,
+          40.0
+        ],
+        "bspline_sample_min_diameter_mm": 29.6,
+        "bspline_sample_max_diameter_mm": 30.4001,
+        "matched_bspline_axial_bounds_mm": [
+          [
+            270.0,
+            275.0
+          ],
+          [
+            270.0,
+            275.0
+          ]
+        ],
+        "cone_surfaces": [
+          {
+            "semi_angle_deg": 45.0,
+            "axial_bounds_mm": [
+              239.4,
+              270.6
+            ]
+          },
+          {
+            "semi_angle_deg": 45.0,
+            "axial_bounds_mm": [
+              235.0,
+              275.0
+            ]
+          }
+        ]
+      }
+    },
+    "checks": {
+      "single_solid": true,
+      "occt_valid": true,
+      "external_bbox_preserved": true,
+      "changes_confined_to_two_receiver_envelopes": true,
+      "lower_pivot_is_29p6": true,
+      "lower_groove_is_30p4": true,
+      "side_pivot_is_29p6": true,
+      "side_groove_is_30p4": true,
+      "lower_thread_clipped_to_receiver": true,
+      "side_thread_clipped_to_receiver": true,
+      "lower_chamfers_are_45_degrees": true,
+      "mesh_is_watertight": true,
+      "mesh_winding_is_consistent": true,
+      "mesh_is_one_component": true,
+      "three_mf_is_watertight": true,
+      "three_mf_indices_are_valid": true,
+      "three_mf_winding_is_consistent": true,
+      "three_mf_is_one_component": true,
+      "three_mf_bounds_match_stl": true,
+      "all_pass": true
+    },
+    "mesh": {
+      "path": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/openhi_a_c_bs_dual_female_29p6_pivot.stl",
+      "vertices": 11005,
+      "faces": 22014,
+      "component_count": 1,
+      "body_count": 1,
+      "watertight": true,
+      "winding_consistent": true,
+      "volume_mm3": 46770.471029,
+      "bounds_mm": [
+        [
+          235.0,
+          190.0,
+          535.099976
+        ],
+        [
+          275.0,
+          230.0,
+          620.0
+        ]
+      ]
+    },
+    "three_mf": {
+      "path": "cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/artifacts/openhi_a_c_bs_dual_female_29p6_pivot.3mf",
+      "unit": "millimeter",
+      "mesh_object_count": 1,
+      "vertices": 11005,
+      "faces": 22014,
+      "component_count": 1,
+      "body_count": 1,
+      "indices_valid": true,
+      "watertight": true,
+      "winding_consistent": true,
+      "bounds_mm": [
+        [
+          235.0,
+          190.0,
+          535.099976
+        ],
+        [
+          275.0,
+          230.0,
+          620.0
+        ]
+      ]
+    }
+  },
+  "nutstore": {
+    "folder": "/home/lachlan/Nutstore Files/Projects/LabCanvas/openhi_a_c_bs_dual_female_29p6_pivot",
+    "direct_step": "/home/lachlan/Nutstore Files/Projects/LabCanvas/USE_THIS_openhi_a_c_bs_dual_female_29p6_pivot.step",
+    "direct_3mf": "/home/lachlan/Nutstore Files/Projects/LabCanvas/USE_THIS_openhi_a_c_bs_dual_female_29p6_pivot.3mf"
+  }
+}
