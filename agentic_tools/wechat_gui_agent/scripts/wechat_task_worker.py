@@ -6625,7 +6625,7 @@ If an authenticated download, account action, purchase, publication, deletion, o
 Open a human-assist browser in the isolated virtual desktop with:
 PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --wait-seconds 8 --capture --close-after --json
 Then return a confirmation telling the user to complete the manual step in noVNC and approve continuation.
-For LazyEdit video work, preserve the current request's explicit background/canvas fill, crop/padding, subtitle on/off, subtitle language/order, correction context, metadata context, logo, and platform choices. Do not silently replace them with chat-profile defaults. If unspecified, inherit LazyEdit's current settings. Generation, local processing, and public publication remain separate permissions.
+For LazyEdit video work, preserve the current request's explicit background/canvas fill, crop/padding, subtitle on/off, subtitle language/order, correction context, metadata context, logo, and platform choices. Do not silently replace them with chat-profile defaults. If unspecified, inherit LazyEdit's current settings. A `bottom_anchored` subtitle band means `liftRatio=0.0`; a `lifted` band means `liftRatio=0.1`. Both are valid one-shot styles, and neither changes Studio defaults. Generation, local processing, and public publication remain separate permissions.
 For `task.routine.id=video_publish_existing`, you are the execution supervisor, not a commentator. After confirming `public_publish_allowed=true` and the exact same-chat `task.preflight.autopublish_video.target`, use the checked-in LazyEdit publish skill and invoke LazyEdit's `scripts/lazyedit_publish.py` workflow for the exact current-message platform allowlist in `task.preflight.publish_platforms`. Read the correction and metadata prompt paths from `task.preflight.lazyedit_context`, and apply every one-shot layout/language flag in `task.preflight.lazyedit_options`. Prefer an exact imported `video_id`; if import is still pending, probe briefly or use the exact target without selecting any nearby video. Submit the durable LazyEdit job with `--no-wait` and one literal `--platforms` value; never use repeated `--platform` flags or merge saved platform toggles. Inspect the created job and require its platform set to equal the allowlist. Do not resubmit after a mismatch; do not hold this agent turn with `--wait`, `--guided-monitor`, long sleeps, or browser polling. Return the real submitted job/video IDs. The deterministic worker poststage owns long monitoring, duplicate prevention, login/QR handoff, retries, and terminal platform verification.
 When Shipinhao publication reaches a QR/login blocker, return one concise human message with the available noVNC URL and QR/screenshot artifact. Do not send browser diagnostics or repeatedly retry the public action while login is pending.
 If other external tools or files are not available, say exactly what is needed next.
@@ -6715,7 +6715,7 @@ Read the checked-in LazyEdit publishing skill before acting. Treat the packet be
 
 Use the exact `target` file. Probe it with ffprobe. Ensure the LazyEdit backend is reachable, starting the existing `/home/lachlan/DiskMech/Projects/lazyedit/start_lazyedit.sh` only if its single service is absent. If this exact file is already imported, use its exact `video_id`; otherwise invoke `scripts/lazyedit_publish.py --video TARGET` so import does not depend on a background folder watcher.
 
-Pass the two prompt files separately. Apply every explicit one-shot flag in `lazyedit_options`; `languages` is bottom-to-top. Use one literal `--platforms` value exactly matching the packet. Include `--use-current-settings --correct-subtitles --correction-source polished --no-wait --json`. Do not persist UI settings. Do not wait for remote publication in this model turn. Confirm that the submitted local job belongs to the exact video and has exactly the requested platform set, then return concise JSON with the real `video_id`, local job ID when available, current nonterminal/terminal status, and no private logs.
+Pass the two prompt files separately. Apply every explicit one-shot flag in `lazyedit_options`; `languages` is bottom-to-top. `subtitle_band_style` is explanatory evidence: use its companion `subtitle_lift_ratio` as the actual CLI value. A missing style or lift value means inherit Studio settings, not guess. Use one literal `--platforms` value exactly matching the packet. Include `--use-current-settings --correct-subtitles --correction-source polished --no-wait --json`. Do not persist UI settings. Do not wait for remote publication in this model turn. Confirm that the submitted local job belongs to the exact video and has exactly the requested platform set, then return concise JSON with the real `video_id`, local job ID when available, current nonterminal/terminal status, and no private logs.
 
 If a durable matching job already exists, do not submit another. If login or QR is required, return that blocker and its safe artifact. Never claim publication is complete until terminal platform evidence exists; the deterministic poststage will monitor it.
 
@@ -13947,6 +13947,52 @@ def detect_publish_platforms(task: dict[str, Any], *, current_only: bool = False
     return platforms
 
 
+SUBTITLE_BAND_STYLE_LIFT_RATIOS = {
+    "bottom_anchored": 0.0,
+    "lifted": 0.1,
+}
+
+
+def detect_subtitle_band_style(text: str) -> str:
+    """Return an explicit semantic subtitle-band style, if one was requested."""
+
+    normalized = str(text or "").casefold()
+    lifted_markers = (
+        "lifted subtitle band",
+        "lift the subtitle band",
+        "move subtitles up",
+        "extra bottom clearance",
+        "字幕整体上移",
+        "字幕带上移",
+        "字幕帶上移",
+        "抬高字幕",
+    )
+    bottom_anchored_markers = (
+        "bottom anchored",
+        "bottom-anchored",
+        "no subtitle lift",
+        "no lift",
+        "reduce total lift",
+        "keep english at the same height",
+        "keep the top language at the same height",
+        "at bottom",
+        "on the bottom",
+        "字幕整体不抬高",
+        "字幕整體不抬高",
+        "保持英文高度",
+        "减少整体上移",
+        "減少整體上移",
+        "字幕置底",
+        "字幕在底部",
+        "底部字幕",
+    )
+    if any(marker in normalized for marker in lifted_markers):
+        return "lifted"
+    if any(marker in normalized for marker in bottom_anchored_markers):
+        return "bottom_anchored"
+    return ""
+
+
 def detect_lazyedit_publish_options(task: dict[str, Any]) -> dict[str, Any]:
     """Translate explicit chat layout requests into one-shot LazyEdit flags."""
 
@@ -13985,8 +14031,10 @@ def detect_lazyedit_publish_options(task: dict[str, Any]) -> dict[str, Any]:
             for language in ("fr", "zh-Hant", "ja", "en")
             if language_markers[language]
         ]
-    if any(marker in text for marker in ("at bottom", "on the bottom", "字幕置底", "字幕在底部", "底部字幕")):
-        options["subtitle_lift_ratio"] = 0.0
+    subtitle_band_style = detect_subtitle_band_style(text)
+    if subtitle_band_style:
+        options["subtitle_band_style"] = subtitle_band_style
+        options["subtitle_lift_ratio"] = SUBTITLE_BAND_STYLE_LIFT_RATIOS[subtitle_band_style]
     return options
 
 

@@ -211,6 +211,22 @@ python scripts/lazyedit_publish.py \
   --publish-timeout 7200
 ```
 
+### Four-language vertical styles
+
+For the established top-to-bottom `en`, `ja`, `zh-Hant`, `fr` stack, pass
+`--languages fr,zh-Hant,ja,en`. Two verified one-shot vertical styles are
+supported:
+
+- `lifted`: `--subtitle-lift-ratio 0.1`; moves the complete band upward.
+- `bottom_anchored`: `--subtitle-lift-ratio 0`; keeps the complete band at the
+  bottom and leaves the upper rows visually closer to an unlifted
+  three-language layout.
+
+Neither is a universal default. If the current request does not choose a
+vertical style, omit `--subtitle-lift-ratio` and inherit Studio settings. See
+`references/lazyedit-subtitle-band-lift-variants-2026-08-16.md` for the verified
+Paris and robotic-arm comparison and renderer math.
+
 ## Agent-Supervised Execution
 
 Use Codex/AgInTi worker-agent supervision for generation and publication stages.

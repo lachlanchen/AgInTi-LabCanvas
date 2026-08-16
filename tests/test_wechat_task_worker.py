@@ -7659,7 +7659,34 @@ stderr: noisy internal trace
 
         self.assertEqual(options["languages"], ["fr", "zh-Hant", "ja", "en"])
         self.assertTrue(options["portrait_blur_fill"])
+        self.assertEqual(options["subtitle_band_style"], "bottom_anchored")
         self.assertEqual(options["subtitle_lift_ratio"], 0.0)
+
+    def test_lazyedit_publish_options_support_lifted_subtitle_band(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": (
+                "Publish with English, Japanese, Chinese, and French at the bottom, "
+                "but keep a lifted subtitle band for extra bottom clearance"
+            )
+        }
+
+        options = worker.detect_lazyedit_publish_options(task)
+
+        self.assertEqual(options["languages"], ["fr", "zh-Hant", "ja", "en"])
+        self.assertEqual(options["subtitle_band_style"], "lifted")
+        self.assertEqual(options["subtitle_lift_ratio"], 0.1)
+
+    def test_lazyedit_publish_options_leave_silent_layout_on_studio_settings(self) -> None:
+        worker = load_worker()
+
+        options = worker.detect_lazyedit_publish_options(
+            {"request": "Publish with English, Japanese, Chinese, and French subtitles"}
+        )
+
+        self.assertEqual(options["languages"], ["fr", "zh-Hant", "ja", "en"])
+        self.assertNotIn("subtitle_band_style", options)
+        self.assertNotIn("subtitle_lift_ratio", options)
 
     def test_lazyedit_publish_command_applies_one_shot_layout_options(self) -> None:
         worker = load_worker()

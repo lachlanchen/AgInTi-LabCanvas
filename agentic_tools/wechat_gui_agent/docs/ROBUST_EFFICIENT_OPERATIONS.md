@@ -2015,6 +2015,11 @@ Unified runtime and per-chat profiles:
 - LazyEdit inherits current Studio settings only when the request is silent.
   Explicit background fill/crop, subtitle on/off and language order, correction
   context, metadata context, logo, and platform choices remain authoritative.
+  Four-language vertical placement has two accepted one-shot styles:
+  `lifted` maps to `--subtitle-lift-ratio 0.1`, while `bottom_anchored` maps to
+  `--subtitle-lift-ratio 0`. If neither is requested, omit the override. The
+  verified comparison is in
+  `references/lazyedit-subtitle-band-lift-variants-2026-08-16.md`.
   A Shipinhao QR/login blocker yields one concise noVNC/QR handoff and pauses
   publication without repeated retries or diagnostic chatter.
 

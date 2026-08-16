@@ -22,6 +22,10 @@ contract, not the individual publication.
 - The missed LabAgent three-hour inspiration was invoked once immediately and
   its resulting message was verified in the WeCom delivery ledger.
 
+The robotic-arm final used the accepted `bottom_anchored` subtitle-band style
+with `liftRatio=0.0`. Its comparison with the Paris `lifted` style is recorded
+in `references/lazyedit-subtitle-band-lift-variants-2026-08-16.md`.
+
 ## Failure Chain
 
 The publication exposed four independent weaknesses:
