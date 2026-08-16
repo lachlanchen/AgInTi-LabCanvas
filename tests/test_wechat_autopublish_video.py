@@ -151,8 +151,11 @@ class WeChatAutoPublishVideoTests(unittest.TestCase):
 
     def test_thumbnail_template_match_returns_chat_relative_center(self) -> None:
         sys.path.insert(0, str(SCRIPT.parent))
-        import cv2
-        import numpy as np
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            self.skipTest("optional OpenCV visual integration is not installed")
         import wechat_autopublish_video
 
         with tempfile.TemporaryDirectory() as tmp:
