@@ -1,0 +1,1784 @@
+{
+  "name": "openhi_abc_exact_parametric_baseline",
+  "purpose": "exact current A/B/C geometry with reusable pivot parameters",
+  "units": "mm",
+  "source_shapr": {
+    "path": "cad/extracted/OpenHI.shapr",
+    "exists": true,
+    "role": "Identity/history evidence. The exact geometry authority is the flattened OpenHI_STEP export because the Shapr package stores imported bodies.",
+    "sha256": "f0d1dd3c06bae3a82ceebc902fa4e8084dd132dfdb8ffda300d613008f62e104",
+    "zip_entry_count": 2,
+    "contains_workspace": true
+  },
+  "sources": {
+    "A": "cad/extracted/OpenHI_STEP/A.step",
+    "B": "cad/extracted/OpenHI_STEP/B.step",
+    "C": "cad/extracted/OpenHI_STEP/C.step"
+  },
+  "source_hashes": {
+    "A": "87e7e658d040bd8eadbdfb978c29bb37644eeab8ee2b923fc05e9931d4b209c5",
+    "B": "e2d083b6a4d8806e6daea08aaa377515afbf8dc6d60b70441e3648d36c0fc9b8",
+    "C": "bbd8be083766aebfc6bf4ab9bc63f5593f7b8dcf8529fa4039a086cb7e369446"
+  },
+  "original_pivots_mm": {
+    "a_top": 29.8,
+    "b_lens": 29.6,
+    "b_camera": 24.4,
+    "c_lens": 29.6,
+    "c_camera": 24.4
+  },
+  "requested_pivots_mm": {
+    "a_top": 29.8,
+    "b_lens": 29.6,
+    "b_camera": 24.4,
+    "c_lens": 29.6,
+    "c_camera": 24.4
+  },
+  "geometry_changed": false,
+  "thread_spec": {
+    "pitch_mm": 0.8,
+    "radial_tooth_height_mm": 0.4,
+    "diameter_tooth_height_mm": 0.8,
+    "tooth_base_mm": 0.8,
+    "hand": "right-hand"
+  },
+  "construction_contract": {
+    "default_mode": "preserve complete imported source compounds",
+    "variant_mode": "rebuild only explicitly changed thread tooth and root region",
+    "source_files_modified": false,
+    "simplified_threads": false,
+    "placement_preserved": true,
+    "compound_solid_counts_preserved": true
+  },
+  "run_name": "run-2-qidi-single-object-build-plate-20260816T135323Z",
+  "outputs": {
+    "A": {
+      "step": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_A_exact_current_geometry.step",
+      "stl": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_A_exact_current_geometry.stl",
+      "3mf": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_A_exact_current_geometry.3mf",
+      "root_step": "cad/designs/openhi_abc_exact_parametric_baseline/USE_THIS_OpenHI_A_exact_current_geometry.step",
+      "print_step": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/PRINT_THIS_OpenHI_A_exact_current_geometry.step",
+      "print_stl": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/PRINT_THIS_OpenHI_A_exact_current_geometry.stl",
+      "print_3mf": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/PRINT_THIS_OpenHI_A_exact_current_geometry.3mf",
+      "root_print_step": "cad/designs/openhi_abc_exact_parametric_baseline/PRINT_THIS_OpenHI_A_exact_current_geometry.step",
+      "root_print_stl": "cad/designs/openhi_abc_exact_parametric_baseline/PRINT_THIS_OpenHI_A_exact_current_geometry.stl",
+      "root_print_3mf": "cad/designs/openhi_abc_exact_parametric_baseline/PRINT_THIS_OpenHI_A_exact_current_geometry.3mf",
+      "render": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_A_exact_current_geometry_render.png",
+      "component_stls": [
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_A_exact_current_geometry_solid_1.stl",
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_A_exact_current_geometry_solid_2.stl",
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_A_exact_current_geometry_solid_3.stl"
+      ],
+      "print_component_stls": [
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/print_components/PRINT_THIS_OpenHI_A_exact_current_geometry_solid_1.stl"
+      ]
+    },
+    "B": {
+      "step": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_B_exact_current_geometry.step",
+      "stl": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_B_exact_current_geometry.stl",
+      "3mf": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_B_exact_current_geometry.3mf",
+      "root_step": "cad/designs/openhi_abc_exact_parametric_baseline/USE_THIS_OpenHI_B_exact_current_geometry.step",
+      "print_step": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/PRINT_THIS_OpenHI_B_exact_current_geometry.step",
+      "print_stl": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/PRINT_THIS_OpenHI_B_exact_current_geometry.stl",
+      "print_3mf": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/PRINT_THIS_OpenHI_B_exact_current_geometry.3mf",
+      "root_print_step": "cad/designs/openhi_abc_exact_parametric_baseline/PRINT_THIS_OpenHI_B_exact_current_geometry.step",
+      "root_print_stl": "cad/designs/openhi_abc_exact_parametric_baseline/PRINT_THIS_OpenHI_B_exact_current_geometry.stl",
+      "root_print_3mf": "cad/designs/openhi_abc_exact_parametric_baseline/PRINT_THIS_OpenHI_B_exact_current_geometry.3mf",
+      "render": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_B_exact_current_geometry_render.png",
+      "component_stls": [
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_B_exact_current_geometry_solid_1.stl",
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_B_exact_current_geometry_solid_2.stl",
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_B_exact_current_geometry_solid_3.stl",
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_B_exact_current_geometry_solid_4.stl"
+      ],
+      "print_component_stls": [
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/print_components/PRINT_THIS_OpenHI_B_exact_current_geometry_solid_1.stl"
+      ]
+    },
+    "C": {
+      "step": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_C_exact_current_geometry.step",
+      "stl": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_C_exact_current_geometry.stl",
+      "3mf": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_C_exact_current_geometry.3mf",
+      "root_step": "cad/designs/openhi_abc_exact_parametric_baseline/USE_THIS_OpenHI_C_exact_current_geometry.step",
+      "print_step": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/PRINT_THIS_OpenHI_C_exact_current_geometry.step",
+      "print_stl": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/PRINT_THIS_OpenHI_C_exact_current_geometry.stl",
+      "print_3mf": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/PRINT_THIS_OpenHI_C_exact_current_geometry.3mf",
+      "root_print_step": "cad/designs/openhi_abc_exact_parametric_baseline/PRINT_THIS_OpenHI_C_exact_current_geometry.step",
+      "root_print_stl": "cad/designs/openhi_abc_exact_parametric_baseline/PRINT_THIS_OpenHI_C_exact_current_geometry.stl",
+      "root_print_3mf": "cad/designs/openhi_abc_exact_parametric_baseline/PRINT_THIS_OpenHI_C_exact_current_geometry.3mf",
+      "render": "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_C_exact_current_geometry_render.png",
+      "component_stls": [
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_C_exact_current_geometry_solid_1.stl",
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_C_exact_current_geometry_solid_2.stl",
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_C_exact_current_geometry_solid_3.stl",
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/components/OpenHI_C_exact_current_geometry_solid_4.stl"
+      ],
+      "print_component_stls": [
+        "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/print_components/PRINT_THIS_OpenHI_C_exact_current_geometry_solid_1.stl"
+      ]
+    }
+  },
+  "renders": [
+    "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_A_exact_current_geometry_render.png",
+    "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_B_exact_current_geometry_render.png",
+    "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_C_exact_current_geometry_render.png",
+    "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_ABC_exact_current_geometry_overview.png",
+    "cad/designs/openhi_abc_exact_parametric_baseline/artifacts/OpenHI_ABC_PRINT_THIS_build_plate_overview.png"
+  ],
+  "validation": {
+    "A": {
+      "source_step": "cad/extracted/OpenHI_STEP/A.step",
+      "source_sha256": "87e7e658d040bd8eadbdfb978c29bb37644eeab8ee2b923fc05e9931d4b209c5",
+      "regenerated_step_sha256": "793fcfe6f733b08251f174da27e29ae38634ff5be4222575197e959d1dc453c1",
+      "source": {
+        "shape_type": "Compound",
+        "bbox": {
+          "min": [
+            234.9999999,
+            189.9999999,
+            479.7999999
+          ],
+          "max": [
+            275.0000001,
+            230.0000001,
+            529.8
+          ],
+          "size": [
+            40.0000002,
+            40.0000002,
+            50.0000001
+          ]
+        },
+        "solid_count": 3,
+        "shell_count": 3,
+        "face_count": 24,
+        "edge_count": 53,
+        "volume_mm3": 31633.375958322,
+        "area_mm2": 14363.624929802,
+        "valid": true,
+        "surface_counts": {
+          "bspline": 6,
+          "cone": 4,
+          "cylinder": 8,
+          "plane": 6
+        },
+        "solids": [
+          {
+            "bbox": {
+              "min": [
+                234.9999999,
+                189.9999999,
+                479.7999999
+              ],
+              "max": [
+                275.0000001,
+                230.0000001,
+                492.2740001
+              ],
+              "size": [
+                40.0000002,
+                40.0000002,
+                12.4740002
+              ]
+            },
+            "faces": 8,
+            "edges": 17,
+            "volume_mm3": 9491.81902726,
+            "area_mm2": 4193.416135686,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 3,
+              "cylinder": 2,
+              "plane": 3
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                235.0,
+                190.0,
+                492.274
+              ],
+              "max": [
+                275.0,
+                230.0,
+                529.8
+              ],
+              "size": [
+                40.0,
+                40.0,
+                37.526
+              ]
+            },
+            "faces": 10,
+            "edges": 23,
+            "volume_mm3": 21989.343736482,
+            "area_mm2": 8339.806280844,
+            "valid": true,
+            "surface_counts": {
+              "cone": 4,
+              "cylinder": 5,
+              "plane": 1
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                239.6999999,
+                194.6999999,
+                519.2999999
+              ],
+              "max": [
+                270.3000001,
+                225.3000001,
+                527.6500001
+              ],
+              "size": [
+                30.6000002,
+                30.600000199,
+                8.3500002
+              ]
+            },
+            "faces": 6,
+            "edges": 13,
+            "volume_mm3": 151.236559327,
+            "area_mm2": 1830.402513273,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 3,
+              "cylinder": 1,
+              "plane": 2
+            }
+          }
+        ]
+      },
+      "regenerated": {
+        "shape_type": "Compound",
+        "bbox": {
+          "min": [
+            234.9999999,
+            189.9999999,
+            479.7999999
+          ],
+          "max": [
+            275.0000001,
+            230.0000001,
+            529.8
+          ],
+          "size": [
+            40.0000002,
+            40.0000002,
+            50.0000001
+          ]
+        },
+        "solid_count": 3,
+        "shell_count": 3,
+        "face_count": 24,
+        "edge_count": 53,
+        "volume_mm3": 31633.375945463,
+        "area_mm2": 14363.62597249,
+        "valid": true,
+        "surface_counts": {
+          "bspline": 6,
+          "cone": 4,
+          "cylinder": 8,
+          "plane": 6
+        },
+        "solids": [
+          {
+            "bbox": {
+              "min": [
+                234.9999999,
+                189.9999999,
+                479.7999999
+              ],
+              "max": [
+                275.0000001,
+                230.0000001,
+                492.2740001
+              ],
+              "size": [
+                40.0000002,
+                40.0000002,
+                12.4740002
+              ]
+            },
+            "faces": 8,
+            "edges": 17,
+            "volume_mm3": 9491.81902726,
+            "area_mm2": 4193.416135687,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 3,
+              "cylinder": 2,
+              "plane": 3
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                235.0,
+                190.0,
+                492.274
+              ],
+              "max": [
+                275.0,
+                230.0,
+                529.8
+              ],
+              "size": [
+                40.0,
+                40.0,
+                37.526
+              ]
+            },
+            "faces": 10,
+            "edges": 23,
+            "volume_mm3": 21989.343736479,
+            "area_mm2": 8339.806280844,
+            "valid": true,
+            "surface_counts": {
+              "cone": 4,
+              "cylinder": 5,
+              "plane": 1
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                239.6999999,
+                194.6999999,
+                519.2999999
+              ],
+              "max": [
+                270.3000001,
+                225.3000001,
+                527.6500001
+              ],
+              "size": [
+                30.6000002,
+                30.600000199,
+                8.3500002
+              ]
+            },
+            "faces": 6,
+            "edges": 13,
+            "volume_mm3": 151.23652239,
+            "area_mm2": 1830.403555959,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 3,
+              "cylinder": 1,
+              "plane": 2
+            }
+          }
+        ]
+      },
+      "geometry_comparison": {
+        "bbox_min_abs_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "bbox_max_abs_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "bbox_size_abs_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "volume_abs_delta_mm3": 1.2859e-05,
+        "area_abs_delta_mm2": 0.001042688,
+        "topology_counts_same": true,
+        "source_valid": true,
+        "output_valid": true,
+        "all_geometry_checks_pass": true
+      },
+      "stl": {
+        "exists": true,
+        "bytes": 868484,
+        "vertices": 52104,
+        "faces": 17368,
+        "component_count": 3,
+        "component_face_counts": [
+          8156,
+          3950,
+          5262
+        ],
+        "assembly_triangle_count_matches_components": true,
+        "all_components_watertight": true,
+        "bbox_mm": [
+          40.0,
+          39.992096,
+          50.0
+        ],
+        "bbox_abs_delta_mm": [
+          0.0,
+          0.007904,
+          0.0
+        ],
+        "bbox_matches": true,
+        "bbox_note": "A tessellated mesh may omit a zero-area half-pitch runout extremum; the authoritative STEP retains the complete analytic/B-spline B-rep."
+      },
+      "3mf": {
+        "exists": true,
+        "bytes": 223841,
+        "members": [
+          "3D/3dmodel.model",
+          "[Content_Types].xml",
+          "_rels/.rels"
+        ],
+        "zip_valid": true,
+        "model_present": true,
+        "vertex_count": 8684,
+        "triangle_count": 17368,
+        "triangle_count_matches_stl": true,
+        "object_count": 3,
+        "build_item_count": 3,
+        "object_count_matches_solids": true
+      },
+      "print_ready": {
+        "fused_source": {
+          "shape_type": "Compound",
+          "bbox": {
+            "min": [
+              234.9999999,
+              189.9999999,
+              479.7999999
+            ],
+            "max": [
+              275.0000001,
+              230.0000001,
+              529.8
+            ],
+            "size": [
+              40.0000002,
+              40.0000002,
+              50.0000001
+            ]
+          },
+          "solid_count": 1,
+          "shell_count": 1,
+          "face_count": 18,
+          "edge_count": 44,
+          "volume_mm3": 31628.205441258,
+          "area_mm2": 11327.167484413,
+          "valid": true,
+          "surface_counts": {
+            "bspline": 5,
+            "cone": 4,
+            "cylinder": 6,
+            "plane": 3
+          },
+          "solids": [
+            {
+              "bbox": {
+                "min": [
+                  234.9999999,
+                  189.9999999,
+                  479.7999999
+                ],
+                "max": [
+                  275.0000001,
+                  230.0000001,
+                  529.8
+                ],
+                "size": [
+                  40.0000002,
+                  40.0000002,
+                  50.0000001
+                ]
+              },
+              "faces": 18,
+              "edges": 44,
+              "volume_mm3": 31628.205441258,
+              "area_mm2": 11327.167484413,
+              "valid": true,
+              "surface_counts": {
+                "bspline": 5,
+                "cone": 4,
+                "cylinder": 6,
+                "plane": 3
+              }
+            }
+          ]
+        },
+        "step": {
+          "shape_type": "Solid",
+          "bbox": {
+            "min": [
+              -20.0000001,
+              -20.0000001,
+              0.0
+            ],
+            "max": [
+              20.0000001,
+              20.0000001,
+              50.0000001
+            ],
+            "size": [
+              40.0000002,
+              40.0000002,
+              50.0000001
+            ]
+          },
+          "solid_count": 1,
+          "shell_count": 1,
+          "face_count": 18,
+          "edge_count": 44,
+          "volume_mm3": 31628.205435359,
+          "area_mm2": 11327.168766752,
+          "valid": true,
+          "surface_counts": {
+            "bspline": 5,
+            "cone": 4,
+            "cylinder": 6,
+            "plane": 3
+          },
+          "solids": [
+            {
+              "bbox": {
+                "min": [
+                  -20.0000001,
+                  -20.0000001,
+                  0.0
+                ],
+                "max": [
+                  20.0000001,
+                  20.0000001,
+                  50.0000001
+                ],
+                "size": [
+                  40.0000002,
+                  40.0000002,
+                  50.0000001
+                ]
+              },
+              "faces": 18,
+              "edges": 44,
+              "volume_mm3": 31628.205435359,
+              "area_mm2": 11327.168766752,
+              "valid": true,
+              "surface_counts": {
+                "bspline": 5,
+                "cone": 4,
+                "cylinder": 6,
+                "plane": 3
+              }
+            }
+          ]
+        },
+        "rigid_geometry_comparison": {
+          "sorted_bbox_size_abs_delta_mm": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "volume_abs_delta_mm3": 5.899e-06,
+          "area_abs_delta_mm2": 0.001282339,
+          "topology_counts_same": true,
+          "source_valid": true,
+          "output_valid": true,
+          "all_rigid_geometry_checks_pass": true
+        },
+        "stl": {
+          "exists": true,
+          "bytes": 808284,
+          "vertices": 48492,
+          "faces": 16164,
+          "component_count": 1,
+          "all_components_watertight": true,
+          "bbox_mm": [
+            40.0,
+            39.992092,
+            50.0
+          ],
+          "sorted_bbox_abs_delta_mm": [
+            0.007908,
+            0.0,
+            0.0
+          ],
+          "bbox_matches_rigid_transform": true,
+          "min_z_mm": 0.0,
+          "max_z_mm": 50.0,
+          "on_build_plate": true,
+          "first_layer_triangle_count": 1227,
+          "first_layer_nonempty": true
+        },
+        "3mf": {
+          "exists": true,
+          "bytes": 205337,
+          "members": [
+            "3D/3dmodel.model",
+            "[Content_Types].xml",
+            "_rels/.rels"
+          ],
+          "zip_valid": true,
+          "model_present": true,
+          "vertex_count": 8082,
+          "triangle_count": 16164,
+          "triangle_count_matches_stl": true,
+          "object_count": 1,
+          "build_item_count": 1,
+          "object_count_matches_solids": true
+        },
+        "all_pass": true
+      },
+      "all_pass": true
+    },
+    "B": {
+      "source_step": "cad/extracted/OpenHI_STEP/B.step",
+      "source_sha256": "e2d083b6a4d8806e6daea08aaa377515afbf8dc6d60b70441e3648d36c0fc9b8",
+      "regenerated_step_sha256": "e52e605372bbfc5b1f015fc88a52370c6fee3a22bec69336926278790d7a025d",
+      "source": {
+        "shape_type": "Compound",
+        "bbox": {
+          "min": [
+            235.0,
+            190.0,
+            670.0
+          ],
+          "max": [
+            275.0,
+            230.0,
+            724.400000085
+          ],
+          "size": [
+            40.0,
+            40.0,
+            54.400000085
+          ]
+        },
+        "solid_count": 4,
+        "shell_count": 4,
+        "face_count": 41,
+        "edge_count": 94,
+        "volume_mm3": 34853.533699355,
+        "area_mm2": 14944.835214081,
+        "valid": true,
+        "surface_counts": {
+          "bspline": 4,
+          "cone": 5,
+          "cylinder": 25,
+          "plane": 7
+        },
+        "solids": [
+          {
+            "bbox": {
+              "min": [
+                235.0,
+                190.0,
+                670.0
+              ],
+              "max": [
+                275.0,
+                230.0,
+                705.013
+              ],
+              "size": [
+                40.0,
+                40.0,
+                35.013
+              ]
+            },
+            "faces": 10,
+            "edges": 21,
+            "volume_mm3": 23753.095637159,
+            "area_mm2": 7633.854571035,
+            "valid": true,
+            "surface_counts": {
+              "cone": 4,
+              "cylinder": 5,
+              "plane": 1
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                235.0,
+                190.0,
+                705.013
+              ],
+              "max": [
+                275.0,
+                230.0,
+                724.0
+              ],
+              "size": [
+                40.0,
+                40.0,
+                18.987
+              ]
+            },
+            "faces": 6,
+            "edges": 10,
+            "volume_mm3": 10880.413710166,
+            "area_mm2": 4614.688207352,
+            "valid": true,
+            "surface_counts": {
+              "cone": 1,
+              "cylinder": 3,
+              "plane": 2
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                239.7999999,
+                194.7999999,
+                671.7499999
+              ],
+              "max": [
+                270.2000001,
+                225.2000001,
+                680.8000001
+              ],
+              "size": [
+                30.4000002,
+                30.400000201,
+                9.0500002
+              ]
+            },
+            "faces": 15,
+            "edges": 39,
+            "volume_mm3": 154.525093686,
+            "area_mm2": 1880.978065347,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 2,
+              "cylinder": 11,
+              "plane": 2
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                242.3999999,
+                197.3999999,
+                719.2999999
+              ],
+              "max": [
+                267.6000001,
+                222.6000001,
+                724.400000085
+              ],
+              "size": [
+                25.2000002,
+                25.200000199,
+                5.100000185
+              ]
+            },
+            "faces": 10,
+            "edges": 24,
+            "volume_mm3": 66.812670245,
+            "area_mm2": 815.314370347,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 2,
+              "cylinder": 6,
+              "plane": 2
+            }
+          }
+        ]
+      },
+      "regenerated": {
+        "shape_type": "Compound",
+        "bbox": {
+          "min": [
+            235.0,
+            190.0,
+            670.0
+          ],
+          "max": [
+            275.0,
+            230.0,
+            724.400000085
+          ],
+          "size": [
+            40.0,
+            40.0,
+            54.400000085
+          ]
+        },
+        "solid_count": 4,
+        "shell_count": 4,
+        "face_count": 41,
+        "edge_count": 94,
+        "volume_mm3": 34853.522286438,
+        "area_mm2": 14944.833842933,
+        "valid": true,
+        "surface_counts": {
+          "bspline": 4,
+          "cone": 5,
+          "cylinder": 25,
+          "plane": 7
+        },
+        "solids": [
+          {
+            "bbox": {
+              "min": [
+                235.0,
+                190.0,
+                670.0
+              ],
+              "max": [
+                275.0,
+                230.0,
+                705.013
+              ],
+              "size": [
+                40.0,
+                40.0,
+                35.013
+              ]
+            },
+            "faces": 10,
+            "edges": 21,
+            "volume_mm3": 23753.095637157,
+            "area_mm2": 7633.854571035,
+            "valid": true,
+            "surface_counts": {
+              "cone": 4,
+              "cylinder": 5,
+              "plane": 1
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                235.0,
+                190.0,
+                705.013
+              ],
+              "max": [
+                275.0,
+                230.0,
+                724.0
+              ],
+              "size": [
+                40.0,
+                40.0,
+                18.987
+              ]
+            },
+            "faces": 6,
+            "edges": 10,
+            "volume_mm3": 10880.413710166,
+            "area_mm2": 4614.688207352,
+            "valid": true,
+            "surface_counts": {
+              "cone": 1,
+              "cylinder": 3,
+              "plane": 2
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                239.7999999,
+                194.7999999,
+                671.7499999
+              ],
+              "max": [
+                270.2000001,
+                225.2000001,
+                680.8000001
+              ],
+              "size": [
+                30.4000002,
+                30.400000201,
+                9.0500002
+              ]
+            },
+            "faces": 15,
+            "edges": 39,
+            "volume_mm3": 154.526199593,
+            "area_mm2": 1880.978229793,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 2,
+              "cylinder": 11,
+              "plane": 2
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                242.3999999,
+                197.3999999,
+                719.2999999
+              ],
+              "max": [
+                267.6000001,
+                222.6000001,
+                724.400000085
+              ],
+              "size": [
+                25.2000002,
+                25.200000199,
+                5.100000185
+              ]
+            },
+            "faces": 10,
+            "edges": 24,
+            "volume_mm3": 66.804751019,
+            "area_mm2": 815.312834753,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 2,
+              "cylinder": 6,
+              "plane": 2
+            }
+          }
+        ]
+      },
+      "geometry_comparison": {
+        "bbox_min_abs_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "bbox_max_abs_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "bbox_size_abs_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "volume_abs_delta_mm3": 0.011412917,
+        "area_abs_delta_mm2": 0.001371148,
+        "topology_counts_same": true,
+        "source_valid": true,
+        "output_valid": true,
+        "all_geometry_checks_pass": true
+      },
+      "stl": {
+        "exists": true,
+        "bytes": 15647184,
+        "vertices": 938826,
+        "faces": 312942,
+        "component_count": 4,
+        "component_face_counts": [
+          254606,
+          51542,
+          4424,
+          2370
+        ],
+        "assembly_triangle_count_matches_components": true,
+        "all_components_watertight": true,
+        "bbox_mm": [
+          40.0,
+          39.992096,
+          54.0
+        ],
+        "bbox_abs_delta_mm": [
+          0.0,
+          0.007904,
+          0.4
+        ],
+        "bbox_matches": true,
+        "bbox_note": "A tessellated mesh may omit a zero-area half-pitch runout extremum; the authoritative STEP retains the complete analytic/B-spline B-rep."
+      },
+      "3mf": {
+        "exists": true,
+        "bytes": 4334820,
+        "members": [
+          "3D/3dmodel.model",
+          "[Content_Types].xml",
+          "_rels/.rels"
+        ],
+        "zip_valid": true,
+        "model_present": true,
+        "vertex_count": 156475,
+        "triangle_count": 312942,
+        "triangle_count_matches_stl": true,
+        "object_count": 4,
+        "build_item_count": 4,
+        "object_count_matches_solids": true
+      },
+      "print_ready": {
+        "fused_source": {
+          "shape_type": "Compound",
+          "bbox": {
+            "min": [
+              234.9999999,
+              189.9999999,
+              670.0
+            ],
+            "max": [
+              275.0000001,
+              230.0000001,
+              724.400000085
+            ],
+            "size": [
+              40.0000002,
+              40.0000002,
+              54.400000085
+            ]
+          },
+          "solid_count": 1,
+          "shell_count": 1,
+          "face_count": 35,
+          "edge_count": 123,
+          "volume_mm3": 34844.940455995,
+          "area_mm2": 10908.423492905,
+          "valid": true,
+          "surface_counts": {
+            "bspline": 4,
+            "cone": 5,
+            "cylinder": 23,
+            "plane": 3
+          },
+          "solids": [
+            {
+              "bbox": {
+                "min": [
+                  234.9999999,
+                  189.9999999,
+                  670.0
+                ],
+                "max": [
+                  275.0000001,
+                  230.0000001,
+                  724.400000085
+                ],
+                "size": [
+                  40.0000002,
+                  40.0000002,
+                  54.400000085
+                ]
+              },
+              "faces": 35,
+              "edges": 123,
+              "volume_mm3": 34844.940455995,
+              "area_mm2": 10908.423492905,
+              "valid": true,
+              "surface_counts": {
+                "bspline": 4,
+                "cone": 5,
+                "cylinder": 23,
+                "plane": 3
+              }
+            }
+          ]
+        },
+        "step": {
+          "shape_type": "Solid",
+          "bbox": {
+            "min": [
+              -20.0000001,
+              -20.0000001,
+              0.0
+            ],
+            "max": [
+              20.0000001,
+              20.0000001,
+              54.400000085
+            ],
+            "size": [
+              40.0000002,
+              40.0000002,
+              54.400000085
+            ]
+          },
+          "solid_count": 1,
+          "shell_count": 1,
+          "face_count": 35,
+          "edge_count": 123,
+          "volume_mm3": 34844.9404563,
+          "area_mm2": 10908.423492927,
+          "valid": true,
+          "surface_counts": {
+            "bspline": 4,
+            "cone": 5,
+            "cylinder": 23,
+            "plane": 3
+          },
+          "solids": [
+            {
+              "bbox": {
+                "min": [
+                  -20.0000001,
+                  -20.0000001,
+                  0.0
+                ],
+                "max": [
+                  20.0000001,
+                  20.0000001,
+                  54.400000085
+                ],
+                "size": [
+                  40.0000002,
+                  40.0000002,
+                  54.400000085
+                ]
+              },
+              "faces": 35,
+              "edges": 123,
+              "volume_mm3": 34844.9404563,
+              "area_mm2": 10908.423492927,
+              "valid": true,
+              "surface_counts": {
+                "bspline": 4,
+                "cone": 5,
+                "cylinder": 23,
+                "plane": 3
+              }
+            }
+          ]
+        },
+        "rigid_geometry_comparison": {
+          "sorted_bbox_size_abs_delta_mm": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "volume_abs_delta_mm3": 3.05e-07,
+          "area_abs_delta_mm2": 2.2e-08,
+          "topology_counts_same": true,
+          "source_valid": true,
+          "output_valid": true,
+          "all_rigid_geometry_checks_pass": true
+        },
+        "stl": {
+          "exists": true,
+          "bytes": 14784784,
+          "vertices": 887082,
+          "faces": 295694,
+          "component_count": 1,
+          "all_components_watertight": true,
+          "bbox_mm": [
+            40.0,
+            39.992092,
+            54.0
+          ],
+          "sorted_bbox_abs_delta_mm": [
+            0.007908,
+            0.0,
+            0.4
+          ],
+          "bbox_matches_rigid_transform": true,
+          "min_z_mm": 0.0,
+          "max_z_mm": 54.0,
+          "on_build_plate": true,
+          "first_layer_triangle_count": 553,
+          "first_layer_nonempty": true
+        },
+        "3mf": {
+          "exists": true,
+          "bytes": 4035365,
+          "members": [
+            "3D/3dmodel.model",
+            "[Content_Types].xml",
+            "_rels/.rels"
+          ],
+          "zip_valid": true,
+          "model_present": true,
+          "vertex_count": 147847,
+          "triangle_count": 295694,
+          "triangle_count_matches_stl": true,
+          "object_count": 1,
+          "build_item_count": 1,
+          "object_count_matches_solids": true
+        },
+        "all_pass": true
+      },
+      "all_pass": true
+    },
+    "C": {
+      "source_step": "cad/extracted/OpenHI_STEP/C.step",
+      "source_sha256": "bbd8be083766aebfc6bf4ab9bc63f5593f7b8dcf8529fa4039a086cb7e369446",
+      "regenerated_step_sha256": "fab6a77cebd3efd0542a13dfdbab0dc5bb1c2d3132518a7ac71d5e7619faaa2b",
+      "source": {
+        "shape_type": "Compound",
+        "bbox": {
+          "min": [
+            375.0,
+            190.0,
+            580.0
+          ],
+          "max": [
+            429.0000001,
+            230.0,
+            620.0
+          ],
+          "size": [
+            54.0000001,
+            40.0,
+            40.0
+          ]
+        },
+        "solid_count": 4,
+        "shell_count": 4,
+        "face_count": 38,
+        "edge_count": 86,
+        "volume_mm3": 34854.531947972,
+        "area_mm2": 14952.674634515,
+        "valid": true,
+        "surface_counts": {
+          "bspline": 5,
+          "cone": 7,
+          "cylinder": 20,
+          "plane": 6
+        },
+        "solids": [
+          {
+            "bbox": {
+              "min": [
+                375.0,
+                190.0,
+                580.0
+              ],
+              "max": [
+                410.013,
+                230.0,
+                620.0
+              ],
+              "size": [
+                35.013,
+                40.0,
+                40.0
+              ]
+            },
+            "faces": 10,
+            "edges": 21,
+            "volume_mm3": 23753.095637206,
+            "area_mm2": 7633.854570978,
+            "valid": true,
+            "surface_counts": {
+              "cone": 4,
+              "cylinder": 5,
+              "plane": 1
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                377.04999963,
+                194.7999999,
+                584.7999999
+              ],
+              "max": [
+                385.8000001,
+                225.2000001,
+                615.2000001
+              ],
+              "size": [
+                8.75000047,
+                30.400000201,
+                30.4000002
+              ]
+            },
+            "faces": 16,
+            "edges": 42,
+            "volume_mm3": 154.93811845,
+            "area_mm2": 1884.773953729,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 2,
+              "cone": 2,
+              "cylinder": 11,
+              "plane": 1
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                410.013,
+                190.0,
+                580.0
+              ],
+              "max": [
+                429.0,
+                230.0,
+                620.0
+              ],
+              "size": [
+                18.987,
+                40.0,
+                40.0
+              ]
+            },
+            "faces": 6,
+            "edges": 10,
+            "volume_mm3": 10880.413710166,
+            "area_mm2": 4614.688207352,
+            "valid": true,
+            "surface_counts": {
+              "cone": 1,
+              "cylinder": 3,
+              "plane": 2
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                424.2999999,
+                197.3999999,
+                587.3999999
+              ],
+              "max": [
+                429.0000001,
+                222.6000001,
+                612.6000001
+              ],
+              "size": [
+                4.7000002,
+                25.200000199,
+                25.2000002
+              ]
+            },
+            "faces": 6,
+            "edges": 13,
+            "volume_mm3": 66.418817481,
+            "area_mm2": 819.357902456,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 3,
+              "cylinder": 1,
+              "plane": 2
+            }
+          }
+        ]
+      },
+      "regenerated": {
+        "shape_type": "Compound",
+        "bbox": {
+          "min": [
+            375.0,
+            190.0,
+            580.0
+          ],
+          "max": [
+            429.0000001,
+            230.0,
+            620.0
+          ],
+          "size": [
+            54.0000001,
+            40.0,
+            40.0
+          ]
+        },
+        "solid_count": 4,
+        "shell_count": 4,
+        "face_count": 38,
+        "edge_count": 86,
+        "volume_mm3": 34854.531968713,
+        "area_mm2": 14952.675461969,
+        "valid": true,
+        "surface_counts": {
+          "bspline": 5,
+          "cone": 7,
+          "cylinder": 20,
+          "plane": 6
+        },
+        "solids": [
+          {
+            "bbox": {
+              "min": [
+                375.0,
+                190.0,
+                580.0
+              ],
+              "max": [
+                410.013,
+                230.0,
+                620.0
+              ],
+              "size": [
+                35.013,
+                40.0,
+                40.0
+              ]
+            },
+            "faces": 10,
+            "edges": 21,
+            "volume_mm3": 23753.095637204,
+            "area_mm2": 7633.854570978,
+            "valid": true,
+            "surface_counts": {
+              "cone": 4,
+              "cylinder": 5,
+              "plane": 1
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                377.04999963,
+                194.7999999,
+                584.7999999
+              ],
+              "max": [
+                385.8000001,
+                225.2000001,
+                615.2000001
+              ],
+              "size": [
+                8.75000047,
+                30.400000201,
+                30.4000002
+              ]
+            },
+            "faces": 16,
+            "edges": 42,
+            "volume_mm3": 154.938119413,
+            "area_mm2": 1884.773953574,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 2,
+              "cone": 2,
+              "cylinder": 11,
+              "plane": 1
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                410.013,
+                190.0,
+                580.0
+              ],
+              "max": [
+                429.0,
+                230.0,
+                620.0
+              ],
+              "size": [
+                18.987,
+                40.0,
+                40.0
+              ]
+            },
+            "faces": 6,
+            "edges": 10,
+            "volume_mm3": 10880.413710166,
+            "area_mm2": 4614.688207352,
+            "valid": true,
+            "surface_counts": {
+              "cone": 1,
+              "cylinder": 3,
+              "plane": 2
+            }
+          },
+          {
+            "bbox": {
+              "min": [
+                424.2999999,
+                197.3999999,
+                587.3999999
+              ],
+              "max": [
+                429.0000001,
+                222.6000001,
+                612.6000001
+              ],
+              "size": [
+                4.7000002,
+                25.200000199,
+                25.2000002
+              ]
+            },
+            "faces": 6,
+            "edges": 13,
+            "volume_mm3": 66.418800456,
+            "area_mm2": 819.358730065,
+            "valid": true,
+            "surface_counts": {
+              "bspline": 3,
+              "cylinder": 1,
+              "plane": 2
+            }
+          }
+        ]
+      },
+      "geometry_comparison": {
+        "bbox_min_abs_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "bbox_max_abs_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "bbox_size_abs_delta_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "volume_abs_delta_mm3": 2.0741e-05,
+        "area_abs_delta_mm2": 0.000827454,
+        "topology_counts_same": true,
+        "source_valid": true,
+        "output_valid": true,
+        "all_geometry_checks_pass": true
+      },
+      "stl": {
+        "exists": true,
+        "bytes": 1236984,
+        "vertices": 74214,
+        "faces": 24738,
+        "component_count": 4,
+        "component_face_counts": [
+          5028,
+          12916,
+          4424,
+          2370
+        ],
+        "assembly_triangle_count_matches_components": true,
+        "all_components_watertight": true,
+        "bbox_mm": [
+          54.0,
+          39.992096,
+          40.0
+        ],
+        "bbox_abs_delta_mm": [
+          0.0,
+          0.007904,
+          0.0
+        ],
+        "bbox_matches": true,
+        "bbox_note": "A tessellated mesh may omit a zero-area half-pitch runout extremum; the authoritative STEP retains the complete analytic/B-spline B-rep."
+      },
+      "3mf": {
+        "exists": true,
+        "bytes": 297586,
+        "members": [
+          "3D/3dmodel.model",
+          "[Content_Types].xml",
+          "_rels/.rels"
+        ],
+        "zip_valid": true,
+        "model_present": true,
+        "vertex_count": 12371,
+        "triangle_count": 24738,
+        "triangle_count_matches_stl": true,
+        "object_count": 4,
+        "build_item_count": 4,
+        "object_count_matches_solids": true
+      },
+      "print_ready": {
+        "fused_source": {
+          "shape_type": "Compound",
+          "bbox": {
+            "min": [
+              375.0,
+              189.9999999,
+              579.9999999
+            ],
+            "max": [
+              429.0000001,
+              230.0000001,
+              620.0000001
+            ],
+            "size": [
+              54.0000001,
+              40.0000002,
+              40.0000002
+            ]
+          },
+          "solid_count": 1,
+          "shell_count": 1,
+          "face_count": 30,
+          "edge_count": 96,
+          "volume_mm3": 34845.713128769,
+          "area_mm2": 10894.254330196,
+          "valid": true,
+          "surface_counts": {
+            "bspline": 4,
+            "cone": 7,
+            "cylinder": 17,
+            "plane": 2
+          },
+          "solids": [
+            {
+              "bbox": {
+                "min": [
+                  375.0,
+                  189.9999999,
+                  579.9999999
+                ],
+                "max": [
+                  429.0000001,
+                  230.0000001,
+                  620.0000001
+                ],
+                "size": [
+                  54.0000001,
+                  40.0000002,
+                  40.0000002
+                ]
+              },
+              "faces": 30,
+              "edges": 96,
+              "volume_mm3": 34845.713128769,
+              "area_mm2": 10894.254330196,
+              "valid": true,
+              "surface_counts": {
+                "bspline": 4,
+                "cone": 7,
+                "cylinder": 17,
+                "plane": 2
+              }
+            }
+          ]
+        },
+        "step": {
+          "shape_type": "Solid",
+          "bbox": {
+            "min": [
+              -20.0000001,
+              -20.0000001,
+              0.0
+            ],
+            "max": [
+              20.0000001,
+              20.0000001,
+              54.0000001
+            ],
+            "size": [
+              40.0000002,
+              40.0000002,
+              54.0000001
+            ]
+          },
+          "solid_count": 1,
+          "shell_count": 1,
+          "face_count": 30,
+          "edge_count": 96,
+          "volume_mm3": 34845.71500939,
+          "area_mm2": 10894.254723124,
+          "valid": true,
+          "surface_counts": {
+            "bspline": 4,
+            "cone": 7,
+            "cylinder": 17,
+            "plane": 2
+          },
+          "solids": [
+            {
+              "bbox": {
+                "min": [
+                  -20.0000001,
+                  -20.0000001,
+                  0.0
+                ],
+                "max": [
+                  20.0000001,
+                  20.0000001,
+                  54.0000001
+                ],
+                "size": [
+                  40.0000002,
+                  40.0000002,
+                  54.0000001
+                ]
+              },
+              "faces": 30,
+              "edges": 96,
+              "volume_mm3": 34845.71500939,
+              "area_mm2": 10894.254723124,
+              "valid": true,
+              "surface_counts": {
+                "bspline": 4,
+                "cone": 7,
+                "cylinder": 17,
+                "plane": 2
+              }
+            }
+          ]
+        },
+        "rigid_geometry_comparison": {
+          "sorted_bbox_size_abs_delta_mm": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "volume_abs_delta_mm3": 0.001880621,
+          "area_abs_delta_mm2": 0.000392928,
+          "topology_counts_same": true,
+          "source_valid": true,
+          "output_valid": true,
+          "all_rigid_geometry_checks_pass": true
+        },
+        "stl": {
+          "exists": true,
+          "bytes": 1099784,
+          "vertices": 65982,
+          "faces": 21994,
+          "component_count": 1,
+          "all_components_watertight": true,
+          "bbox_mm": [
+            40.0,
+            39.992092,
+            54.0
+          ],
+          "sorted_bbox_abs_delta_mm": [
+            0.007908,
+            0.0,
+            0.0
+          ],
+          "bbox_matches_rigid_transform": true,
+          "min_z_mm": 0.0,
+          "max_z_mm": 54.0,
+          "on_build_plate": true,
+          "first_layer_triangle_count": 553,
+          "first_layer_nonempty": true
+        },
+        "3mf": {
+          "exists": true,
+          "bytes": 258758,
+          "members": [
+            "3D/3dmodel.model",
+            "[Content_Types].xml",
+            "_rels/.rels"
+          ],
+          "zip_valid": true,
+          "model_present": true,
+          "vertex_count": 10997,
+          "triangle_count": 21994,
+          "triangle_count_matches_stl": true,
+          "object_count": 1,
+          "build_item_count": 1,
+          "object_count_matches_solids": true
+        },
+        "all_pass": true
+      },
+      "all_pass": true
+    },
+    "all_pass": true
+  },
+  "run_files": [
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/README.md",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/manifest.json",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/build_openhi_abc_exact_parametric_baseline.py",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/render_openhi_abc_exact_parametric_baseline.py",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/USE_THIS_OpenHI_A_exact_current_geometry.step",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/USE_THIS_OpenHI_B_exact_current_geometry.step",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/USE_THIS_OpenHI_C_exact_current_geometry.step",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/PRINT_THIS_OpenHI_A_exact_current_geometry.step",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/PRINT_THIS_OpenHI_A_exact_current_geometry.stl",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/PRINT_THIS_OpenHI_A_exact_current_geometry.3mf",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/PRINT_THIS_OpenHI_B_exact_current_geometry.step",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/PRINT_THIS_OpenHI_B_exact_current_geometry.stl",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/PRINT_THIS_OpenHI_B_exact_current_geometry.3mf",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/PRINT_THIS_OpenHI_C_exact_current_geometry.step",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/PRINT_THIS_OpenHI_C_exact_current_geometry.stl",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/PRINT_THIS_OpenHI_C_exact_current_geometry.3mf",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/OpenHI_A_exact_current_geometry_render.png",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/OpenHI_B_exact_current_geometry_render.png",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/OpenHI_C_exact_current_geometry_render.png",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/OpenHI_ABC_exact_current_geometry_overview.png",
+    "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/runs/run-2-qidi-single-object-build-plate-20260816T135323Z/OpenHI_ABC_PRINT_THIS_build_plate_overview.png"
+  ],
+  "nutstore_files": []
+}

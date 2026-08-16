@@ -1,0 +1,9 @@
+__pycache__/
+artifacts/*.blend
+artifacts/*.blend1
+artifacts/components/
+artifacts/print_components/
+artifacts/*.step
+artifacts/*.stl
+artifacts/*.3mf
+runs/run-1-exact-current-geometry-parametric-baseline-20260816T131516Z/
