@@ -6783,6 +6783,13 @@ def interruption_routes_compatible(candidate: dict[str, Any], incoming: dict[str
     if relation == "interrupt" and related_task_id == str(candidate.get("id") or ""):
         return True
 
+    if (
+        publish_task_waiting_for_exact_source(candidate)
+        and source_video_reference_local_ids(candidate)
+        & source_video_reference_local_ids(incoming)
+    ):
+        return True
+
     candidate_kind = str(candidate_route.get("route_kind") or "").strip()
     incoming_kind = str(incoming_route.get("route_kind") or "").strip()
     if candidate_kind in NON_INTERRUPTIBLE_ROUTE_KINDS:
@@ -6877,6 +6884,8 @@ def is_interruptible_task(task: dict[str, Any]) -> bool:
     route_kind = str(route.get("route_kind") or "")
     routine_id = str(routine.get("id") or "")
     project = str(route.get("project") or "").lower()
+    if publish_task_waiting_for_exact_source(task):
+        return True
     if route_kind in NON_INTERRUPTIBLE_ROUTE_KINDS or routine_id in NON_INTERRUPTIBLE_ROUTINE_IDS:
         return False
     if bool(task.get("agent_bridge_mode")) or bool(route.get("agent_bridge_mode")):
@@ -6887,6 +6896,40 @@ def is_interruptible_task(task: dict[str, Any]) -> bool:
         return True
     text = str(task.get("request") or "").lower()
     return any(marker in text for marker in ("lalachan", "raraxia", "ayachan", "sasakun", "小云雀", "啦啦侠", "阿芽酱", "飒飒君"))
+
+
+def publish_task_waiting_for_exact_source(task: dict[str, Any]) -> bool:
+    routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
+    route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    if str(routine.get("id") or "") != "video_publish_existing" and str(route.get("route_kind") or "") != "publish_video":
+        return False
+    poststage = (
+        task.get("existing_video_publish_poststage")
+        if isinstance(task.get("existing_video_publish_poststage"), dict)
+        else {}
+    )
+    return str(poststage.get("stage") or "") == "source_resolution"
+
+
+def source_video_reference_local_ids(task: dict[str, Any]) -> set[int]:
+    local_ids: set[int] = set()
+    rows = list(task.get("context") or [])
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    if source:
+        rows.append(source)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        local_type = int_or_none(row.get("local_type"))
+        kind = str(row.get("kind") or "").strip().casefold()
+        if local_type is not None and (local_type & 0xFFFFFFFF) != 43 and kind != "video":
+            continue
+        if local_type is None and kind != "video":
+            continue
+        local_id = int_or_none(row.get("local_id"))
+        if local_id is not None:
+            local_ids.add(local_id)
+    return local_ids
 
 
 def promote_story_target_for_generation_interruption(task: dict[str, Any], interruption: dict[str, Any]) -> bool:

@@ -1436,6 +1436,47 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(len(resumed["actions"]), 1)
         self.assertEqual(len(captured), 1)
 
+    def test_waiting_confirmation_does_not_disable_idle_inspiration(self) -> None:
+        daily = load_daily()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state.sqlite"
+            queue = root / "queue.jsonl"
+            chat = "wecom:default:group:labagent"
+            event = self.sample_event(text="hello")
+            daily.register_group(state, event, chat)
+            daily.update_group_inspiration(
+                state,
+                chat,
+                ["organoids"],
+                now=datetime(2026, 7, 21, 8, 0, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+            )
+            queue.write_text(
+                json.dumps(
+                    {
+                        "id": "confirmation",
+                        "chat": chat,
+                        "status": "waiting_confirmation",
+                        "source": {"local_type": "text"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            captured: list[dict] = []
+
+            result = daily.run_inspiration_cycle(
+                state_db=state,
+                history_db=state,
+                queue=queue,
+                now=datetime(2026, 7, 21, 11, 1, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+                append_func=lambda _queue, task: captured.append(task) or True,
+            )
+
+        self.assertEqual(result["busy_chats"], [])
+        self.assertEqual(len(result["actions"]), 1)
+        self.assertEqual(len(captured), 1)
+
     def test_terminal_send_failure_does_not_block_next_group_inspiration(self) -> None:
         daily = load_daily()
         with tempfile.TemporaryDirectory() as tmp:

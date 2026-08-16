@@ -1077,6 +1077,77 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(tasks[0]["interruptions"][0]["source"]["local_id"], 202)
         self.assertIn("First update the story", tasks[0]["request"])
 
+    def test_exact_video_followup_joins_publish_waiting_for_same_source(self) -> None:
+        now = int(time.time())
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            original_task = {
+                "id": "publish-41",
+                "chat": "My devices",
+                "status": "publish_poststage_pending",
+                "agent_bridge_mode": True,
+                "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+                "source": {
+                    "config_id": "devices",
+                    "message_table": "MSG",
+                    "server_id": "srv-41",
+                    "local_id": 41,
+                    "create_time": now,
+                },
+                "context": [{"local_id": 40, "local_type": 43, "kind": "video"}],
+                "routine": {"id": "video_publish_existing"},
+                "existing_video_publish_poststage": {
+                    "stage": "source_resolution",
+                    "message_local_ids": [40],
+                },
+            }
+            queue.write_text(json.dumps(original_task) + "\n", encoding="utf-8")
+            incoming = {
+                "id": "context-42",
+                "chat": "My devices",
+                "status": "pending",
+                "agent_bridge_mode": True,
+                "request": "Use the robotic arms context for subtitles and metadata.",
+                "route_decision": {"route_kind": "edit_existing_media", "needs_recent_media": True},
+                "source": {
+                    "config_id": "devices",
+                    "message_table": "MSG",
+                    "server_id": "srv-42",
+                    "local_id": 42,
+                    "create_time": now + 1,
+                },
+                "context": [{"local_id": 40, "local_type": 43, "kind": "video"}],
+                "routine": {"id": "editable_figure_image"},
+            }
+
+            merged, appended = direct_chatops.append_worker_task_once(queue, incoming)
+            tasks = direct_chatops.read_worker_queue_tasks(queue)
+
+        self.assertFalse(appended)
+        self.assertTrue(merged["interruption_appended"])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["status"], "pending")
+        self.assertIn("robotic arms", tasks[0]["request"])
+        self.assertEqual(tasks[0]["route_decision"]["route_kind"], "publish_video")
+        self.assertTrue(tasks[0]["route_decision"]["public_publish_allowed"])
+
+    def test_video_followup_does_not_join_publish_for_different_source(self) -> None:
+        candidate = {
+            "id": "publish-41",
+            "chat": "My devices",
+            "status": "publish_poststage_pending",
+            "route_decision": {"route_kind": "publish_video"},
+            "routine": {"id": "video_publish_existing"},
+            "existing_video_publish_poststage": {"stage": "source_resolution"},
+            "context": [{"local_id": 40, "local_type": 43, "kind": "video"}],
+        }
+        incoming = {
+            "route_decision": {"route_kind": "edit_existing_media"},
+            "context": [{"local_id": 55, "local_type": 43, "kind": "video"}],
+        }
+
+        self.assertFalse(direct_chatops.interruption_routes_compatible(candidate, incoming))
+
     def test_followup_revives_abandoned_generation_after_proven_pre_submit_failure(self) -> None:
         now = int(time.time())
         with tempfile.TemporaryDirectory() as tmp:

@@ -5909,6 +5909,7 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
                 "result_excerpt": collapse_context_text(agent_result, max_len=1800),
             }
         )
+        record_existing_video_publish_agent_evidence(task, agent_result)
         persist_task_progress(task)
         deterministic = deterministic_preflight_result(task)
         if deterministic is not None:
@@ -6625,13 +6626,15 @@ Open a human-assist browser in the isolated virtual desktop with:
 PYTHONPATH=src python -m agenticapp wechat browser-assist --url "<url>" --wait-seconds 8 --capture --close-after --json
 Then return a confirmation telling the user to complete the manual step in noVNC and approve continuation.
 For LazyEdit video work, preserve the current request's explicit background/canvas fill, crop/padding, subtitle on/off, subtitle language/order, correction context, metadata context, logo, and platform choices. Do not silently replace them with chat-profile defaults. If unspecified, inherit LazyEdit's current settings. Generation, local processing, and public publication remain separate permissions.
-For `task.routine.id=video_publish_existing`, you are the execution supervisor, not a commentator. After confirming `public_publish_allowed=true` and the exact same-chat `task.preflight.autopublish_video.target`, use the checked-in LazyEdit publish skill and invoke LazyEdit's `scripts/lazyedit_publish.py` workflow for the exact current-message platform allowlist in `task.preflight.publish_platforms`. Read the correction and metadata prompt paths from `task.preflight.lazyedit_context`. Prefer an exact imported `video_id`; if import is still pending, probe briefly or use the exact target without selecting any nearby video. Submit the durable LazyEdit job with `--no-wait` and one literal `--platforms` value; never use repeated `--platform` flags or merge saved platform toggles. Inspect the created job and require its platform set to equal the allowlist. Do not resubmit after a mismatch; do not hold this agent turn with `--wait`, `--guided-monitor`, long sleeps, or browser polling. Return the real submitted job/video IDs. The deterministic worker poststage owns long monitoring, duplicate prevention, login/QR handoff, retries, and terminal platform verification.
+For `task.routine.id=video_publish_existing`, you are the execution supervisor, not a commentator. After confirming `public_publish_allowed=true` and the exact same-chat `task.preflight.autopublish_video.target`, use the checked-in LazyEdit publish skill and invoke LazyEdit's `scripts/lazyedit_publish.py` workflow for the exact current-message platform allowlist in `task.preflight.publish_platforms`. Read the correction and metadata prompt paths from `task.preflight.lazyedit_context`, and apply every one-shot layout/language flag in `task.preflight.lazyedit_options`. Prefer an exact imported `video_id`; if import is still pending, probe briefly or use the exact target without selecting any nearby video. Submit the durable LazyEdit job with `--no-wait` and one literal `--platforms` value; never use repeated `--platform` flags or merge saved platform toggles. Inspect the created job and require its platform set to equal the allowlist. Do not resubmit after a mismatch; do not hold this agent turn with `--wait`, `--guided-monitor`, long sleeps, or browser polling. Return the real submitted job/video IDs. The deterministic worker poststage owns long monitoring, duplicate prevention, login/QR handoff, retries, and terminal platform verification.
 When Shipinhao publication reaches a QR/login blocker, return one concise human message with the available noVNC URL and QR/screenshot artifact. Do not send browser diagnostics or repeatedly retry the public action while login is pending.
 If other external tools or files are not available, say exactly what is needed next.
 
 Bounded task packet:
 {task_packet}
 """
+    if is_video_publish_task(task) and should_deterministic_video_publish(task):
+        prompt = build_existing_video_publish_agent_prompt(task)
     backend = (
         "codex"
         if isinstance(task.get("completion_audit_repair"), dict)
@@ -6675,6 +6678,111 @@ Bounded task packet:
         "backend_fallback_used": bool(result.get("backend_fallback_used")),
     }
     return str(result.get("message") or "").strip()
+
+
+def build_existing_video_publish_agent_prompt(task: dict[str, Any]) -> str:
+    """Build a small exact-source packet that also fits the AgInTi fallback."""
+
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    autopub = preflight.get("autopublish_video") if isinstance(preflight.get("autopublish_video"), dict) else {}
+    context = preflight.get("lazyedit_context") if isinstance(preflight.get("lazyedit_context"), dict) else {}
+    options = preflight.get("lazyedit_options") if isinstance(preflight.get("lazyedit_options"), dict) else {}
+    platform_policy = preflight.get("publish_platforms") if isinstance(preflight.get("publish_platforms"), dict) else {}
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    packet = {
+        "task_id": str(task.get("id") or ""),
+        "chat": str(task.get("chat") or ""),
+        "current_request": sanitize_worker_agent_text(task_focus_text(task), max_len=2400),
+        "source": {
+            key: source.get(key)
+            for key in ("local_id", "server_id", "sender_display", "create_time")
+            if source.get(key) not in (None, "")
+        },
+        "public_publish_allowed": bool(task_route_decision(task).get("public_publish_allowed")),
+        "exact_video": {
+            key: autopub.get(key)
+            for key in ("ok", "status", "target", "source_path", "bytes", "message_ref", "message_local_ids")
+            if autopub.get(key) not in (None, "", [], {})
+        },
+        "platforms": platform_policy,
+        "lazyedit_context": context,
+        "lazyedit_options": options,
+        "reprocess_reason": sanitize_worker_agent_text(task.get("reprocess_reason"), max_len=800),
+    }
+    return f"""You supervise one exact WeChat video-publication task. Use the mature LazyEdit CLI; do not merely describe commands.
+
+Read the checked-in LazyEdit publishing skill before acting. Treat the packet below as the complete source and permission boundary. Do not inspect or select a nearby video, another chat, or an old LazyEdit item. The current request explicitly authorizes publication only to the listed platforms.
+
+Use the exact `target` file. Probe it with ffprobe. Ensure the LazyEdit backend is reachable, starting the existing `/home/lachlan/DiskMech/Projects/lazyedit/start_lazyedit.sh` only if its single service is absent. If this exact file is already imported, use its exact `video_id`; otherwise invoke `scripts/lazyedit_publish.py --video TARGET` so import does not depend on a background folder watcher.
+
+Pass the two prompt files separately. Apply every explicit one-shot flag in `lazyedit_options`; `languages` is bottom-to-top. Use one literal `--platforms` value exactly matching the packet. Include `--use-current-settings --correct-subtitles --correction-source polished --no-wait --json`. Do not persist UI settings. Do not wait for remote publication in this model turn. Confirm that the submitted local job belongs to the exact video and has exactly the requested platform set, then return concise JSON with the real `video_id`, local job ID when available, current nonterminal/terminal status, and no private logs.
+
+If a durable matching job already exists, do not submit another. If login or QR is required, return that blocker and its safe artifact. Never claim publication is complete until terminal platform evidence exists; the deterministic poststage will monitor it.
+
+Exact task packet:
+```json
+{json.dumps(packet, ensure_ascii=False, indent=2)}
+```
+
+Return `{{"message":"...","files":[],"confirmation":""}}`.
+"""
+
+
+def record_existing_video_publish_agent_evidence(task: dict[str, Any], result: str) -> None:
+    """Carry exact LazyEdit IDs from agent supervision into deterministic state."""
+
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    autopub = preflight.get("autopublish_video") if isinstance(preflight.get("autopublish_video"), dict) else {}
+    if not autopub.get("ok") or not autopub.get("target"):
+        return
+    payload = extract_worker_json_payload(str(result or ""))
+    payload = payload if isinstance(payload, dict) else {}
+    message = "\n".join(
+        str(value or "")
+        for value in (
+            payload.get("message"),
+            payload.get("status"),
+            result,
+        )
+    )
+    video_id = int_or_none(payload.get("video_id"))
+    if video_id is None and isinstance(payload.get("publish_stage"), dict):
+        video_id = int_or_none(payload["publish_stage"].get("video_id"))
+    if video_id is None:
+        match = re.search(r"\bvideo[_ ]?id\s*(?:[=:]\s*|\s+)(\d+)\b", message, flags=re.I)
+        video_id = int(match.group(1)) if match else None
+    job_id = int_or_none(payload.get("job_id") or payload.get("publish_job_id"))
+    if job_id is None:
+        match = re.search(r"\b(?:local\s+)?job(?:[_ ]?id)?\s*(?:[=:]\s*|\s+)(\d+)\b", message, flags=re.I)
+        job_id = int(match.group(1)) if match else None
+    if video_id is not None:
+        autopub["lazyedit_video_id"] = video_id
+        task["publish_agent_supervision"]["video_id"] = video_id
+    if job_id is not None:
+        autopub["publish_job_id"] = job_id
+        task["publish_agent_supervision"]["job_id"] = job_id
+
+
+def preserve_known_lazyedit_publish_identity(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+) -> None:
+    """Preserve exact LazyEdit IDs only when the recovered source is unchanged."""
+
+    if not previous or not current.get("ok"):
+        return
+    previous_target = Path(str(previous.get("target") or previous.get("target_name") or "")).name
+    current_target = Path(str(current.get("target") or current.get("target_name") or "")).name
+    if not previous_target or previous_target != current_target:
+        return
+    previous_refs = {str(item) for item in previous.get("message_refs") or [] if item}
+    current_refs = {str(item) for item in current.get("message_refs") or [] if item}
+    if previous_refs and current_refs and previous_refs.isdisjoint(current_refs):
+        return
+    for key in ("video_id", "lazyedit_video_id", "publish_job_id"):
+        value = int_or_none(previous.get(key))
+        if value is not None:
+            current[key] = value
 
 
 def audit_and_repair_worker_completion(
@@ -7268,6 +7376,12 @@ def merge_interruption_wecom_media(
 
 def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    previous_preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    previous_autopub = (
+        previous_preflight.get("autopublish_video")
+        if isinstance(previous_preflight.get("autopublish_video"), dict)
+        else {}
+    )
     supplied = task.get("transport_preflight") if isinstance(task.get("transport_preflight"), dict) else {}
     preflight: dict[str, Any] = dict(supplied)
     native_wechat_transport = task_transport_kind(task) != "wecom"
@@ -7335,6 +7449,7 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         "metadata_prompt_file": str(metadata_path),
         "rule": "Pass correction_prompt_file to --correction-prompt-file and metadata_prompt_file to --metadata-prompt-file.",
     }
+    preflight["lazyedit_options"] = detect_lazyedit_publish_options(task)
     requested_platforms = detect_publish_platforms(task, current_only=True)
     preflight["publish_platforms"] = {
         "requested": requested_platforms,
@@ -7350,10 +7465,13 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         if "resolved_video_artifact" not in preflight:
             autopub = run_autopublish_video_preflight(task)
             if bool(autopub.get("ok")):
+                preserve_known_lazyedit_publish_identity(previous_autopub, autopub)
                 preflight["autopublish_video"] = autopub
+                clear_source_resolution_publish_retry(task)
             else:
                 artifact_resolution = resolve_exact_video_artifact_preflight(task, autopub)
                 if bool(artifact_resolution.get("ok")):
+                    preserve_known_lazyedit_publish_identity(previous_autopub, artifact_resolution)
                     preflight["autopublish_video"] = artifact_resolution
                 else:
                     autopub["artifact_resolution"] = artifact_resolution
@@ -11453,36 +11571,178 @@ def has_public_publish_intent(text: str) -> bool:
     return False
 
 
+def is_internal_or_transport_context_text(value: Any) -> bool:
+    """Reject orchestration prose and attachment payloads from editorial prompts."""
+    text = str(value or "").strip()
+    if not text:
+        return True
+    lowered = text.casefold()
+    markers = (
+        "treat this as a message forwarded from wechat",
+        "agent route decision:",
+        "routine supervisor contract:",
+        "automatic media sync:",
+        "recent synced wechat files:",
+        "video publish/subtitle context bundle:",
+        "<?xml",
+        "<videomsg",
+        "cdnthumburl=",
+        "cdnvideourl=",
+        "aeskey=",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def lazyedit_human_context_candidates(
+    task: dict[str, Any],
+    *,
+    limit: int = 6,
+    max_len: int = 600,
+) -> list[str]:
+    """Return bounded requester-authored context without transport internals."""
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    source_sender = str(source.get("sender_userid") or source.get("sender") or "").strip()
+    candidates: list[str] = []
+    for row in reversed(task.get("context") or []):
+        if not isinstance(row, dict) or bool(row.get("is_self")):
+            continue
+        if not task_context_row_is_human_text(row):
+            continue
+        row_sender = str(row.get("sender_userid") or row.get("sender") or "").strip()
+        if source_sender and row_sender and row_sender != source_sender:
+            continue
+        text = str(row.get("content") or "").strip()
+        if is_internal_or_transport_context_text(text):
+            continue
+        collapsed = collapse_context_text(text, max_len=max_len)
+        if collapsed and collapsed not in candidates:
+            candidates.append(collapsed)
+        if len(candidates) >= limit:
+            break
+    candidates.reverse()
+    return candidates
+
+
+def lazyedit_focused_human_request(task: dict[str, Any], *, max_len: int = 3000) -> str:
+    """Keep exact source wording plus any legacy natural request detail."""
+    parts: list[str] = []
+    values = (
+        task_focus_text(task),
+        task.get("original_request"),
+        task.get("request"),
+    )
+    for value in values:
+        if is_internal_or_transport_context_text(value):
+            continue
+        text = collapse_context_text(value, max_len=max_len)
+        if text and text not in parts:
+            parts.append(text)
+    return "\n".join(parts)
+
+
+def lazyedit_source_material_context(task: dict[str, Any], preflight: dict[str, Any] | None) -> list[str]:
+    """Return only source-linked story/material excerpts suitable for editing."""
+    source_task: dict[str, Any] = {}
+    autopub = (preflight or {}).get("autopublish_video") if isinstance(preflight, dict) else None
+    resolved_video = (preflight or {}).get("resolved_video_artifact") if isinstance(preflight, dict) else None
+    if isinstance(autopub, dict) and isinstance(autopub.get("source_task"), dict):
+        source_task = autopub["source_task"]
+    elif isinstance(resolved_video, dict) and isinstance(resolved_video.get("source_task"), dict):
+        source_task = resolved_video["source_task"]
+    if not source_task:
+        return []
+
+    excerpts: list[str] = []
+    values: list[Any] = [
+        source_task.get("request_excerpt"),
+        source_task.get("result_message_excerpt"),
+    ]
+    supporting_materials = source_task.get("supporting_materials")
+    if isinstance(supporting_materials, list):
+        values.extend(
+            item.get("excerpt")
+            for item in supporting_materials[:8]
+            if isinstance(item, dict)
+        )
+    for value in values:
+        if is_internal_or_transport_context_text(value):
+            continue
+        excerpt = collapse_context_text(value, max_len=600)
+        if excerpt and excerpt not in excerpts:
+            excerpts.append(excerpt)
+    return excerpts[:6]
+
+
+def exact_lazyedit_media_tokens(task: dict[str, Any], preflight: dict[str, Any] | None) -> list[str]:
+    """Keep correction identity tokens scoped to the selected source video."""
+    autopub = (preflight or {}).get("autopublish_video") if isinstance(preflight, dict) else None
+    selected_ids = {
+        int(value)
+        for value in ((autopub or {}).get("message_local_ids") or [])
+        if int_or_none(value) is not None
+    }
+    if not selected_ids:
+        selected_ids = set(extract_video_local_ids_from_task(task))
+    selected_rows = [
+        row
+        for row in task.get("context") or []
+        if isinstance(row, dict) and int_or_none(row.get("local_id")) in selected_ids
+    ]
+    scoped_task = {"request": "", "context": selected_rows}
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    if int_or_none(source.get("local_id")) in selected_ids:
+        scoped_task["source"] = source
+    tokens = extract_media_tokens_from_task(scoped_task)
+    if isinstance(autopub, dict):
+        token = str(autopub.get("md5") or "").strip().lower()
+        if re.fullmatch(r"[0-9a-f]{16,64}", token) and token not in tokens:
+            tokens.append(token)
+    return tokens
+
+
 def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[str, Any] | None = None) -> str:
     autopub = (preflight or {}).get("autopublish_video") if isinstance(preflight, dict) else None
     resolved_video = (preflight or {}).get("resolved_video_artifact") if isinstance(preflight, dict) else None
-    resolved_by_artifact = isinstance(autopub, dict) and str(autopub.get("status") or "") == "artifact-ledger-match"
+    resolved_by_artifact = (
+        isinstance(autopub, dict)
+        and str(autopub.get("status") or "") == "artifact-ledger-match"
+    )
+    focused_request = lazyedit_focused_human_request(task, max_len=3000)
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
     lines = [
         "# LazyEdit Correction Context",
         "",
         "Use this as evidence for subtitle correction. Do not invent dialogue unsupported by the audio/video.",
         "",
-        "## Request",
-        str(task.get("request") or "").strip() or "(empty)",
+        "## Focused Human Request",
+        focused_request or "(empty)",
         "",
-        "## Source",
-        json.dumps(task.get("source") or {}, ensure_ascii=False, indent=2),
+        "## Exact Source Identity",
+        json.dumps(
+            {
+                "message_db": source.get("message_db"),
+                "local_id": source.get("local_id"),
+                "server_id": source.get("server_id"),
+                "sender_display": source.get("sender_display"),
+                "kind": source.get("kind"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         "",
-        "## Recent Same-Chat Context",
+        "## Relevant Same-Requester Context",
     ]
-    for row in task.get("context") or []:
-        if not isinstance(row, dict):
-            continue
-        content = collapse_context_text(row.get("content"))
-        marker = " "
-        if resolved_by_artifact and is_obsolete_video_cache_refusal(content):
-            marker = " OBSOLETE-CACHE-MISS "
-        elif is_unverified_publish_claim(content):
-            marker = " OBSOLETE-UNVERIFIED-PUBLISH "
-        lines.append(
-            f"-{marker}local_id={row.get('local_id')} sender={row.get('sender_display') or row.get('sender')}: "
-            f"{content}"
-        )
+    context_candidates = lazyedit_human_context_candidates(task)
+    if context_candidates:
+        for content in context_candidates:
+            marker = ""
+            if resolved_by_artifact and is_obsolete_video_cache_refusal(content):
+                marker = "OBSOLETE-CACHE-MISS: "
+            elif is_unverified_publish_claim(content):
+                marker = "OBSOLETE-UNVERIFIED-PUBLISH: "
+            lines.append(f"- {marker}{content}")
+    else:
+        lines.append("- (none)")
     if isinstance(autopub, dict):
         lines.extend(
             [
@@ -11503,17 +11763,10 @@ def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[s
                 ),
             ]
         )
-        source_task = autopub.get("source_task") if isinstance(autopub.get("source_task"), dict) else {}
-        supporting_materials = source_task.get("supporting_materials") if isinstance(source_task, dict) else []
-        if isinstance(supporting_materials, list) and supporting_materials:
+        source_material = lazyedit_source_material_context(task, preflight)
+        if source_material:
             lines.extend(["", "## Source Generation / Prompt Material"])
-            for item in supporting_materials[:8]:
-                if not isinstance(item, dict):
-                    continue
-                title = str(item.get("title") or item.get("path") or "supporting material")
-                excerpt = collapse_context_text(item.get("excerpt"), max_len=1200)
-                if excerpt:
-                    lines.append(f"- {title}: {excerpt}")
+            lines.extend(f"- {excerpt}" for excerpt in source_material)
     if isinstance(resolved_video, dict):
         lines.extend(
             [
@@ -11536,7 +11789,7 @@ def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[s
         [
             "",
             "## Media Reference Tokens",
-            ", ".join(extract_media_tokens_from_task(task)) or "(none)",
+            ", ".join(exact_lazyedit_media_tokens(task, preflight)) or "(none)",
             "",
             "## Instructions",
             "- Fix clear ASR mistakes, names, terms, and broken phrases based on the context above.",
@@ -11548,45 +11801,18 @@ def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[s
 
 
 def build_lazyedit_metadata_brief(task: dict[str, Any], *, preflight: dict[str, Any] | None = None) -> str:
-    request = collapse_context_text(task.get("request")) or "WeChat video publish request"
-    focused_request = collapse_context_text(task_focus_text(task), max_len=800)
-    context_lines = []
-    for row in task.get("context") or []:
-        if not isinstance(row, dict):
-            continue
-        text = collapse_context_text(row.get("content"))
-        if text:
-            context_lines.append(text)
-    source_task = {}
-    autopub = (preflight or {}).get("autopublish_video") if isinstance(preflight, dict) else None
-    resolved_video = (preflight or {}).get("resolved_video_artifact") if isinstance(preflight, dict) else None
-    if isinstance(autopub, dict) and isinstance(autopub.get("source_task"), dict):
-        source_task = autopub["source_task"]
-    elif isinstance(resolved_video, dict) and isinstance(resolved_video.get("source_task"), dict):
-        source_task = resolved_video["source_task"]
-    if source_task:
-        excerpt = collapse_context_text(source_task.get("request_excerpt"), max_len=360)
-        if excerpt:
-            context_lines.append(excerpt)
-        result_excerpt = collapse_context_text(source_task.get("result_message_excerpt"), max_len=360)
-        if result_excerpt:
-            context_lines.append(result_excerpt)
-        supporting_materials = source_task.get("supporting_materials")
-        if isinstance(supporting_materials, list):
-            for item in supporting_materials:
-                if not isinstance(item, dict):
-                    continue
-                excerpt = collapse_context_text(item.get("excerpt"), max_len=360)
-                if excerpt:
-                    context_lines.append(excerpt)
+    focused_request = lazyedit_focused_human_request(task, max_len=1200)
+    source_material = lazyedit_source_material_context(task, preflight)
+    content_section = "\n".join(f"- {line}" for line in source_material)
+    if not content_section:
+        content_section = "- Use only the focused request and evidence from the actual video/audio."
     return (
         "# LazyEdit Metadata Brief\n\n"
         "Use this only for public-facing title, description, keywords, and platform notes.\n"
         "Do not expose private chat logs, internal agent workflow, or every subtitle-correction detail.\n\n"
-        f"Current user request: {focused_request or request[:800]}\n\n"
-        f"Request summary: {request[:800]}\n\n"
-        "Relevant public context candidates:\n"
-        + "\n".join(f"- {line[:360]}" for line in context_lines[-6:])
+        f"Current user request: {focused_request or 'Publish the exact source video.'}\n\n"
+        "Source-linked content context:\n"
+        + content_section
         + "\n\nSuggested metadata style: concise, natural, viewer-facing.\n"
     )
 
@@ -12300,7 +12526,52 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
         "为了避免误发布，我已按 exact-source fail-closed 规则停止，没有使用附近的旧视频或上一次视频。"
         "请重新发送原视频，或在 WeChat 里点开这条视频让客户端缓存完整 MP4；如果这是我生成过的视频，请确保对应任务 artifact 仍在本机输出目录。"
     )
-    return json.dumps({"message": message, "files": [], "confirmation": ""}, ensure_ascii=False)
+    retry_seconds = max(
+        60,
+        int(os.environ.get("WECHAT_WORKER_SOURCE_VIDEO_RETRY_SECONDS", "120")),
+    )
+    source_retry = {
+        "status": "waiting_source_media",
+        "stage": "source_resolution",
+        "retry_seconds": retry_seconds,
+        "poststage": {
+            "stage": "source_resolution",
+            "message_local_ids": list(message_local_ids),
+            "message_refs": list(autopub.get("message_refs") or []),
+        },
+        "outcome": {
+            "error": str(autopub.get("error") or "exact source video is not cached"),
+        },
+    }
+    return json.dumps(
+        {
+            "message": message,
+            "files": [],
+            "confirmation": "",
+            "publish_poststage_retry": source_retry,
+        },
+        ensure_ascii=False,
+    )
+
+
+def clear_source_resolution_publish_retry(task: dict[str, Any]) -> None:
+    poststage = (
+        task.get("existing_video_publish_poststage")
+        if isinstance(task.get("existing_video_publish_poststage"), dict)
+        else {}
+    )
+    if str(poststage.get("stage") or "") != "source_resolution":
+        return
+    for field in (
+        "existing_video_publish_poststage",
+        "next_publish_poststage_at",
+        "next_publish_poststage_at_iso",
+        "publish_poststage_queued_at",
+        "publish_poststage_last_status",
+        "publish_poststage_last_outcome",
+    ):
+        task.pop(field, None)
+    task["source_resolution_recovered_at"] = datetime.now().isoformat(timespec="seconds")
 
 
 def deterministic_local_download_save_result(task: dict[str, Any]) -> str | None:
@@ -13470,14 +13741,39 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
     else:
         timeout = 0.0
     if video_id is None:
+        retry_seconds = max(
+            30,
+            int(os.environ.get("WECHAT_WORKER_LAZYEDIT_IMPORT_RETRY_SECONDS", "60")),
+        )
+        retry = {
+            "status": "waiting_import",
+            "stage": "waiting_import",
+            "retry_seconds": retry_seconds,
+            "poststage": {
+                "kind": "existing_video_publish",
+                "stage": "waiting_import",
+                "platforms": detect_publish_platforms(task, current_only=True),
+                "target": str(target),
+                "target_name": target.name,
+                "source_path": autopub.get("source_path"),
+                "autopublish_video": autopub,
+                "lazyedit_context": ((task.get("preflight") or {}).get("lazyedit_context") or {}),
+                "lazyedit_options": ((task.get("preflight") or {}).get("lazyedit_options") or {}),
+            },
+            "outcome": {
+                "status": "waiting_import",
+                "timeout_seconds": timeout,
+            },
+        }
         return json.dumps(
             {
                 "message": (
-                    f"视频已保存到 AutoPublish 文件夹：{target.name}，但 LazyEdit 在 {int(timeout)} 秒内还没有显示导入结果。"
-                    "我没有切换到旧视频；稍后会由队列继续或请再发“继续发布”。"
+                    f"视频已准确保存为 {target.name}，LazyEdit 尚未完成导入。"
+                    "任务已保留并会自动继续，不会换用旧视频或重复提交。"
                 ),
                 "files": [],
                 "confirmation": "",
+                "publish_poststage_retry": retry,
             },
             ensure_ascii=False,
         )
@@ -13485,7 +13781,16 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
     lazy_context = ((task.get("preflight") or {}).get("lazyedit_context") if isinstance(task.get("preflight"), dict) else {}) or {}
     correction_prompt = str(lazy_context.get("correction_prompt_file") or "")
     metadata_prompt = str(lazy_context.get("metadata_prompt_file") or "")
-    verification = verify_lazyedit_publish_stage(video_id, platforms, target, {"status": "preflight"})
+    lazyedit_options = ((task.get("preflight") or {}).get("lazyedit_options") if isinstance(task.get("preflight"), dict) else {}) or {}
+    verification = verify_lazyedit_publish_stage(
+        video_id,
+        platforms,
+        target,
+        {
+            "status": "preflight",
+            "job_id": autopub.get("publish_job_id"),
+        },
+    )
     if bool(verification.get("verified")):
         outcome = {"ok": True, "status": "already_verified", "duplicate_publish_guard": True}
     elif str(verification.get("stage") or "") in {
@@ -13505,6 +13810,7 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
             platforms=platforms,
             correction_prompt=correction_prompt,
             metadata_prompt=metadata_prompt,
+            publish_options=lazyedit_options,
             target=target,
         )
         verification = verify_lazyedit_publish_stage(video_id, platforms, target, outcome)
@@ -13526,6 +13832,7 @@ def run_deterministic_lazyedit_publish(task: dict[str, Any], autopub: dict[str, 
             "source_path": autopub.get("source_path"),
             "autopublish_video": autopub,
             "lazyedit_context": lazy_context,
+            "lazyedit_options": lazyedit_options,
         }
         latest_job = next(
             (
@@ -13640,12 +13947,56 @@ def detect_publish_platforms(task: dict[str, Any], *, current_only: bool = False
     return platforms
 
 
+def detect_lazyedit_publish_options(task: dict[str, Any]) -> dict[str, Any]:
+    """Translate explicit chat layout requests into one-shot LazyEdit flags."""
+
+    text = task_focus_text(task).casefold()
+    options: dict[str, Any] = {}
+    no_fill = any(
+        marker in text
+        for marker in (
+            "no bg fill",
+            "no background fill",
+            "without background fill",
+            "不要背景填充",
+            "不用背景填充",
+        )
+    )
+    wants_fill = bool(
+        re.search(r"\b(?:bg|background)\s*(?:blur\s*)?fill\b", text)
+        or any(marker in text for marker in ("背景填充", "补背景", "補背景"))
+    )
+    if no_fill:
+        options["portrait_blur_fill"] = False
+    elif wants_fill:
+        options["portrait_blur_fill"] = True
+
+    language_markers = {
+        "en": bool(re.search(r"\b(?:en|eng|english)\b", text) or "英语" in text or "英文" in text),
+        "ja": bool(re.search(r"\b(?:ja|jp|jpn|japanese)\b", text) or "日语" in text or "日文" in text),
+        "zh-Hant": bool(re.search(r"\b(?:zh|zho|chi|chinese)\b", text) or "中文" in text or "汉语" in text or "漢語" in text),
+        "fr": bool(re.search(r"\b(?:fr|fre|fra|french)\b", text) or "法语" in text or "法文" in text),
+    }
+    if sum(language_markers.values()) >= 2:
+        # LazyEdit expects bottom-to-top order. Keep the established multilingual
+        # stack and place the added French line at the bottom.
+        options["languages"] = [
+            language
+            for language in ("fr", "zh-Hant", "ja", "en")
+            if language_markers[language]
+        ]
+    if any(marker in text for marker in ("at bottom", "on the bottom", "字幕置底", "字幕在底部", "底部字幕")):
+        options["subtitle_lift_ratio"] = 0.0
+    return options
+
+
 def run_lazyedit_publish_command(
     *,
     video_id: int,
     platforms: list[str],
     correction_prompt: str,
     metadata_prompt: str,
+    publish_options: dict[str, Any] | None = None,
     target: Path | None = None,
 ) -> dict[str, Any]:
     timeout = float(os.environ.get("WECHAT_WORKER_LAZYEDIT_PUBLISH_TIMEOUT", "10800"))
@@ -13665,6 +14016,16 @@ def run_lazyedit_publish_command(
         f"--publish-timeout {publish_timeout}",
         "--json",
     ]
+    publish_options = publish_options or {}
+    languages = [str(item) for item in publish_options.get("languages") or [] if str(item)]
+    if languages:
+        command_parts.append(f"--languages {shell_quote(','.join(languages))}")
+    if publish_options.get("portrait_blur_fill") is True:
+        command_parts.append("--portrait-blur-fill")
+    elif publish_options.get("portrait_blur_fill") is False:
+        command_parts.append("--no-portrait-blur-fill")
+    if publish_options.get("subtitle_lift_ratio") is not None:
+        command_parts.append(f"--subtitle-lift-ratio {float(publish_options['subtitle_lift_ratio']):g}")
     if LAZYEDIT_REMOTE_LOG_COMMAND:
         command_parts.append(f"--remote-log-command {shell_quote(LAZYEDIT_REMOTE_LOG_COMMAND)}")
     if correction_prompt:
@@ -13925,6 +14286,11 @@ def run_existing_video_publish_from_poststage(
         platforms=platforms,
         correction_prompt=str(lazy_context.get("correction_prompt_file") or ""),
         metadata_prompt=str(lazy_context.get("metadata_prompt_file") or ""),
+        publish_options=(
+            poststage.get("lazyedit_options")
+            if isinstance(poststage.get("lazyedit_options"), dict)
+            else ((task.get("preflight") or {}).get("lazyedit_options") or {})
+        ),
         target=target,
     )
 

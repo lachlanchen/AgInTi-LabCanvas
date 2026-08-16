@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -98,6 +99,87 @@ class WeChatAutoPublishVideoTests(unittest.TestCase):
         self.assertIn("c347ab61d55d3e4ee3b2653c17263c4f", stems)
         self.assertIn(13616508, sizes)
         self.assertIn(129918644, sizes)
+
+    def test_parse_video_thumbnail_metadata_preserves_exact_identity(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        xml = '<msg><videomsg cdnthumblength="4767" cdnthumbwidth="288" cdnthumbheight="162" /></msg>'
+
+        sizes, width, height = wechat_autopublish_video.parse_video_thumbnail_metadata(xml, b"", b"")
+
+        self.assertEqual(sizes, [4767])
+        self.assertEqual((width, height), (288, 162))
+
+    def test_strict_video_match_does_not_accept_unrelated_new_file(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            thumb = root / "exact-cache-stem_thumb.jpg"
+            thumb.write_bytes(b"t" * 4767)
+            video = root / "different-new-video.mp4"
+            video.write_bytes(b"unrelated video")
+            now = int(time.time())
+            for path in (thumb, video):
+                os.utime(path, (now, now))
+            message = wechat_autopublish_video.VideoMessage(
+                chat_name="My devices",
+                local_id=40,
+                create_time=now,
+                stems=("message-md5",),
+                sizes=(5019645,),
+                thumbnail_sizes=(4767,),
+            )
+            with mock.patch.object(wechat_autopublish_video, "video_roots", return_value=[root]):
+                strict = wechat_autopublish_video.matching_video_files(
+                    message,
+                    since_minutes=60,
+                    started_at=now - 1,
+                    strict_identity=True,
+                )
+                legacy = wechat_autopublish_video.matching_video_files(
+                    message,
+                    since_minutes=60,
+                    started_at=now - 1,
+                    strict_identity=False,
+                )
+
+        self.assertEqual(strict, [])
+        self.assertEqual(legacy, [video])
+
+    def test_thumbnail_template_match_returns_chat_relative_center(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import cv2
+        import numpy as np
+        import wechat_autopublish_video
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            thumbnail = np.zeros((162, 288, 3), dtype=np.uint8)
+            thumbnail[:, :, 1] = np.tile(np.arange(288, dtype=np.uint8), (162, 1))
+            cv2.rectangle(thumbnail, (30, 25), (250, 140), (180, 60, 220), 5)
+            screen = np.full((739, 1020, 3), 235, dtype=np.uint8)
+            screen[180:342, 510:798] = thumbnail
+            cv2.circle(screen, (654, 261), 18, (255, 255, 255), 3)
+            screen_path = root / "screen.png"
+            thumb_path = root / "thumb.jpg"
+            cv2.imwrite(str(screen_path), screen)
+            cv2.imwrite(str(thumb_path), thumbnail)
+
+            match = wechat_autopublish_video.match_thumbnail_in_chat(
+                screen_path,
+                thumb_path,
+                window_width=1020,
+                window_height=739,
+            )
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertGreater(float(match["score"]), 0.52)
+        self.assertLess(abs(int(match["center_x"]) - 654), 8)
+        self.assertLess(abs(int(match["center_y"]) - 261), 8)
 
     def test_copies_latest_mirrored_video_with_completed_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

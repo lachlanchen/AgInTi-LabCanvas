@@ -66,8 +66,9 @@ CHAT_BUSY_STATUSES = {
     "send_deferred_artifact",
     "send_deferred_locked",
     "send_retrying",
-    "waiting_confirmation",
 }
+# A confirmation can remain open for days without consuming a worker. Treating
+# it as active work permanently disables otherwise-due idle inspiration.
 QUIET_START_HOUR = 20
 QUIET_END_HOUR = 8
 DEFAULT_INSPIRATION_CONTEXT_MAX_AGE_HOURS = 24.0
@@ -892,7 +893,9 @@ def active_chat_work_task(queue: Path, chat: str) -> bool:
     """Return whether normal work is active for this exact group.
 
     Scheduled inspiration is opportunistic. It must not compete with a live
-    question, report, artifact delivery, confirmation, or long-running task.
+    question, report, artifact delivery, or long-running task. A task merely
+    waiting for human confirmation does not consume work and does not block a
+    later idle-period inspiration turn.
     Failed/finished work does not block the next quiet-period attempt.
     """
     if not queue.is_file():

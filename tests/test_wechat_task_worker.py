@@ -3057,6 +3057,88 @@ stderr: noisy internal trace
         self.assertIn("message_1.db:14", calls[0])
         self.assertIn("--fetch-gui", calls[0])
 
+    def test_lazyedit_prompts_exclude_transport_wrapper_and_raw_media_xml(self) -> None:
+        worker = load_worker()
+        wrapper = (
+            "Treat this as a message forwarded from WeChat into the backend Codex session "
+            "for this chat. Agent route decision: internal-only.\n\n"
+            "Current coalesced request:\nPublish this exact video with background fill.\n\n"
+            "Recent history:\ninternal transport history"
+        )
+        task = {
+            "request": wrapper,
+            "source": {
+                "local_id": 16,
+                "sender": "requester",
+                "sender_display": "Requester",
+                "kind": "text",
+                "message_db": "message_1.db",
+            },
+            "context": [
+                {
+                    "local_id": 10,
+                    "sender": "requester",
+                    "sender_display": "Requester",
+                    "kind": "text",
+                    "local_type": 1,
+                    "content": "The video shows robotic arms built by the creator.",
+                },
+                {
+                    "local_id": 14,
+                    "sender": "requester",
+                    "kind": "video",
+                    "local_type": 43,
+                    "content": '<?xml version="1.0"?><msg><videomsg md5="abc123abc123abc1" /></msg>',
+                },
+                {
+                    "local_id": 13,
+                    "sender": "requester",
+                    "kind": "image",
+                    "local_type": 3,
+                    "content": '<?xml version="1.0"?><msg><img md5="ffffeeeeffffeeee" /></msg>',
+                },
+                {
+                    "local_id": 15,
+                    "sender": "labcanvas-bot",
+                    "kind": "text",
+                    "local_type": 1,
+                    "content": "Routine supervisor contract: do not expose this.",
+                },
+                {
+                    "local_id": 16,
+                    "sender": "requester",
+                    "sender_display": "Requester",
+                    "kind": "text",
+                    "local_type": 1,
+                    "content": "Publish with English, Japanese, Chinese, and French subtitles.",
+                },
+            ],
+            "interruptions": [
+                {
+                    "request": (
+                        "Treat this as a message forwarded from WeChat into the backend Codex session "
+                        "for this chat.\n\nCurrent coalesced request:\n"
+                        "Use the robotic-arm context to correct subtitles and metadata."
+                    )
+                }
+            ],
+        }
+
+        correction = worker.build_lazyedit_correction_context(task)
+        metadata = worker.build_lazyedit_metadata_brief(task)
+
+        self.assertIn("robotic arms built by the creator", correction)
+        self.assertIn("robotic-arm context", correction)
+        self.assertIn("robotic-arm context", metadata)
+        self.assertNotIn("Treat this as a message forwarded", correction)
+        self.assertNotIn("Treat this as a message forwarded", metadata)
+        self.assertNotIn("Routine supervisor contract", correction)
+        self.assertNotIn("<?xml", correction)
+        self.assertNotIn("<?xml", metadata)
+        self.assertIn("abc123abc123abc1", correction)
+        self.assertNotIn("ffffeeeeffffeeee", correction)
+        self.assertNotIn("Request summary:", metadata)
+
     def test_video_message_ref_uses_newest_matching_shard_when_local_id_restarts(self) -> None:
         worker = load_worker()
         task = {
@@ -4797,7 +4879,7 @@ stderr: noisy internal trace
         self.assertFalse(worker.should_preflight_autopublish(task))
         self.assertFalse(worker.should_deterministic_video_publish(task))
 
-    def test_generate_video_publish_route_keeps_lazyedit_context_without_old_autopublish(self) -> None:
+    def test_generate_video_publish_route_excludes_old_media_from_lazyedit_context(self) -> None:
         worker = load_worker()
         task = {
             "id": "task-generate-and-publish-video",
@@ -4846,7 +4928,8 @@ stderr: noisy internal trace
         self.assertTrue(contract_data["stage_permissions"]["public_publish"])
         self.assertIn("resumed Codex worker agent", " ".join(contract_data["rules"]))
         self.assertIn("WeChat message sent with the video", " ".join(contract_data["rules"]))
-        self.assertIn("old-video", context_text)
+        self.assertIn("Generate a 30s video", context_text)
+        self.assertNotIn("old-video", context_text)
 
     def test_generate_video_route_rewrites_false_publish_result(self) -> None:
         worker = load_worker()
@@ -7426,6 +7509,38 @@ stderr: noisy internal trace
         self.assertIn("fail-closed", payload["message"])
         self.assertIn("旧视频", payload["message"])
         self.assertEqual(payload["files"], [])
+        retry = payload["publish_poststage_retry"]
+        self.assertEqual(retry["stage"], "source_resolution")
+        self.assertEqual(retry["poststage"]["message_local_ids"], [14])
+
+    def test_successful_video_preflight_clears_source_resolution_retry(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            task = {
+                "id": "publish-41",
+                "chat": "My devices",
+                "request": "publish the video to youtube",
+                "route_decision": {"route_kind": "publish_video", "public_publish_allowed": True},
+                "routine": {"id": "video_publish_existing"},
+                "context": [{"local_id": 40, "local_type": 43, "kind": "video"}],
+                "existing_video_publish_poststage": {
+                    "stage": "source_resolution",
+                    "message_local_ids": [40],
+                },
+                "next_publish_poststage_at": 123.0,
+            }
+            recovered = {
+                "ok": True,
+                "target": str(Path(tmp) / "video_COMPLETED.mp4"),
+                "message_local_ids": [40],
+            }
+            with mock.patch.object(worker, "run_autopublish_video_preflight", return_value=recovered):
+                preflight = worker.prepare_worker_preflight(task, Path(tmp))
+
+        self.assertTrue(preflight["autopublish_video"]["ok"])
+        self.assertNotIn("existing_video_publish_poststage", task)
+        self.assertNotIn("next_publish_poststage_at", task)
+        self.assertIn("source_resolution_recovered_at", task)
 
     def test_exact_video_preflight_success_does_not_duplicate_running_publish(self) -> None:
         worker = load_worker()
@@ -7497,6 +7612,184 @@ stderr: noisy internal trace
         payload = json.loads(raw or "{}")
         self.assertEqual(seen, [source])
         self.assertEqual(payload["publish_stage"]["stage"], "publish_running")
+
+    def test_exact_video_import_timeout_stays_resumable(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "exact_video_COMPLETED.mp4"
+            target.write_bytes(b"video")
+            task = {
+                "request": "publish this video to YouTube",
+                "preflight": {
+                    "autopublish_video": {"ok": True, "target": str(target)},
+                    "lazyedit_context": {},
+                    "lazyedit_options": {},
+                },
+            }
+            with mock.patch.object(worker, "wait_for_lazyedit_import", return_value=None):
+                raw = worker.run_deterministic_lazyedit_publish(
+                    task,
+                    task["preflight"]["autopublish_video"],
+                )
+
+        payload = json.loads(raw or "{}")
+        retry = payload["publish_poststage_retry"]
+        self.assertEqual(retry["stage"], "waiting_import")
+        self.assertEqual(retry["poststage"]["target"], str(target))
+        self.assertIn("自动继续", payload["message"])
+        self.assertNotIn("请再发", payload["message"])
+
+        result = worker.parse_worker_result(raw or "")
+        worker.apply_send_outcome(task, result, [])
+
+        self.assertEqual(task["status"], worker.EXISTING_VIDEO_PUBLISH_PENDING_STATUS)
+        self.assertEqual(task["existing_video_publish_poststage"]["target"], str(target))
+        self.assertEqual(task["publish_poststage_last_status"], "waiting_import")
+
+    def test_lazyedit_publish_options_preserve_explicit_layout_and_languages(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": (
+                "Help me publish the video with bg fill and en/jp/zh/french at bottom\n"
+                "The video is about the robotic arms built and use it to correct subtitles and metadata"
+            )
+        }
+
+        options = worker.detect_lazyedit_publish_options(task)
+
+        self.assertEqual(options["languages"], ["fr", "zh-Hant", "ja", "en"])
+        self.assertTrue(options["portrait_blur_fill"])
+        self.assertEqual(options["subtitle_lift_ratio"], 0.0)
+
+    def test_lazyedit_publish_command_applies_one_shot_layout_options(self) -> None:
+        worker = load_worker()
+        captured: list[list[str]] = []
+
+        def fake_run(command: list[str], **_: object) -> dict[str, object]:
+            captured.append(command)
+            return {"ok": True, "status": "submitted"}
+
+        with mock.patch.object(worker, "run_lazyedit_publish_subprocess", side_effect=fake_run):
+            worker.run_lazyedit_publish_command(
+                video_id=393,
+                platforms=["shipinhao", "youtube", "instagram"],
+                correction_prompt="/tmp/correction.md",
+                metadata_prompt="/tmp/metadata.md",
+                publish_options={
+                    "languages": ["fr", "zh-Hant", "ja", "en"],
+                    "portrait_blur_fill": True,
+                    "subtitle_lift_ratio": 0.0,
+                },
+            )
+
+        command = captured[0][2]
+        self.assertIn("--languages 'fr,zh-Hant,ja,en'", command)
+        self.assertIn("--portrait-blur-fill", command)
+        self.assertIn("--subtitle-lift-ratio 0", command)
+
+    def test_publish_agent_prompt_is_compact_and_source_scoped(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "publish-41",
+            "chat": "My devices",
+            "request": "publish this robotic-arm video with bg fill and en jp zh french",
+            "source": {"local_id": 41, "server_id": 99, "sender_display": "Tester"},
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_allowed": True,
+            },
+            "routine": {"id": "video_publish_existing"},
+            "preflight": {
+                "autopublish_video": {
+                    "ok": True,
+                    "target": "/tmp/exact_COMPLETED.mp4",
+                    "message_local_ids": [40],
+                },
+                "publish_platforms": {
+                    "requested": ["shipinhao", "youtube", "instagram"],
+                    "cli_value": "shipinhao,youtube,instagram",
+                },
+                "lazyedit_context": {
+                    "correction_prompt_file": "/tmp/correction.md",
+                    "metadata_prompt_file": "/tmp/metadata.md",
+                },
+                "lazyedit_options": {
+                    "languages": ["fr", "zh-Hant", "ja", "en"],
+                    "portrait_blur_fill": True,
+                },
+            },
+            "context": [{"content": "x" * 100_000}],
+        }
+
+        prompt = worker.build_existing_video_publish_agent_prompt(task)
+
+        self.assertLess(len(prompt), 12_000)
+        self.assertIn("/tmp/exact_COMPLETED.mp4", prompt)
+        self.assertIn("fr", prompt)
+        self.assertIn("shipinhao,youtube,instagram", prompt)
+        self.assertNotIn("x" * 1000, prompt)
+
+    def test_publish_agent_ids_are_carried_into_exact_deterministic_state(self) -> None:
+        worker = load_worker()
+        task = {
+            "preflight": {
+                "autopublish_video": {
+                    "ok": True,
+                    "target": "/tmp/exact_COMPLETED.mp4",
+                    "message_refs": ["message_1.db:40"],
+                }
+            },
+            "publish_agent_supervision": {"status": "completed"},
+        }
+
+        worker.record_existing_video_publish_agent_evidence(
+            task,
+            '{"message":"Exact source imported as video_id 521; matching LazyEdit job 354 failed before remote submission."}',
+        )
+
+        autopub = task["preflight"]["autopublish_video"]
+        self.assertEqual(autopub["lazyedit_video_id"], 521)
+        self.assertEqual(autopub["publish_job_id"], 354)
+        self.assertEqual(task["publish_agent_supervision"]["video_id"], 521)
+        self.assertEqual(task["publish_agent_supervision"]["job_id"], 354)
+
+    def test_exact_publish_identity_survives_same_source_preflight_refresh(self) -> None:
+        worker = load_worker()
+        previous = {
+            "ok": True,
+            "target": "/tmp/exact_COMPLETED.mp4",
+            "message_refs": ["message_1.db:40"],
+            "lazyedit_video_id": 521,
+            "publish_job_id": 354,
+        }
+        current = {
+            "ok": True,
+            "target": "/other/exact_COMPLETED.mp4",
+            "message_refs": ["message_1.db:40"],
+        }
+
+        worker.preserve_known_lazyedit_publish_identity(previous, current)
+
+        self.assertEqual(current["lazyedit_video_id"], 521)
+        self.assertEqual(current["publish_job_id"], 354)
+
+    def test_exact_publish_identity_rejects_different_message_reference(self) -> None:
+        worker = load_worker()
+        previous = {
+            "ok": True,
+            "target": "/tmp/exact_COMPLETED.mp4",
+            "message_refs": ["message_1.db:40"],
+            "lazyedit_video_id": 521,
+        }
+        current = {
+            "ok": True,
+            "target": "/tmp/exact_COMPLETED.mp4",
+            "message_refs": ["message_1.db:99"],
+        }
+
+        worker.preserve_known_lazyedit_publish_identity(previous, current)
+
+        self.assertNotIn("lazyedit_video_id", current)
 
     def test_exact_video_publish_uses_known_id_without_duplicate_running_publish(self) -> None:
         worker = load_worker()

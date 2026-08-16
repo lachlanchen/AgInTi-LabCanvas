@@ -2038,6 +2038,28 @@ Malformed worker tool invocation:
   (default 1), after which normal effort escalation or terminal failure rules
   apply. This prevents both premature failure and retry loops.
 
+Exact existing-video publication recovery:
+
+- persist a resumed agent's exact LazyEdit `video_id` and local publish job ID
+  before rebuilding preflight or entering deterministic monitoring;
+- preserve those IDs across retries only while the exact source target/message
+  identity is unchanged;
+- keep `publish_poststage_retry` at the queue row's top level so the guarded
+  worker loop can resume it;
+- scope correction identity tokens to the selected video, and keep forwarding
+  wrappers, routine JSON, raw media XML, signed URLs, unrelated media, and old
+  worker status out of correction and public metadata prompts;
+- never scan the entire LazyEdit library or submit another job when an exact
+  job/video identity is already known;
+- keep synchronous media probing out of LazyEdit request handlers. Preview
+  `ffprobe`, proxy, and poster work belongs on its bounded executor;
+- treat WeCom `waiting_confirmation` as idle for periodic inspiration. It is a
+  durable human gate, not active worker occupancy.
+
+The full incident analysis, tests, ownership boundary, and validation commands
+are in
+`references/wechat-exact-video-publish-and-labagent-schedule-recovery-2026-08-16.md`.
+
 ## Change Checklist
 
 Before committing changes that affect WeChat automation:

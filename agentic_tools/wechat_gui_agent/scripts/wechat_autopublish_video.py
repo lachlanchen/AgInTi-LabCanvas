@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
@@ -15,7 +16,9 @@ import sqlite3
 import subprocess
 import sys
 import time
-from typing import Any
+from typing import Any, Iterator
+
+from file_lock import fcntl_compat as fcntl
 
 from wechat_message_shards import (
     list_message_db_paths,
@@ -23,11 +26,15 @@ from wechat_message_shards import (
     parse_message_ref,
 )
 from wechat_mirror import DEFAULT_DB
+import wechat_gui_send as gui
 
 
 ROOT = Path(__file__).resolve().parents[3]
+PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
+GUI_LOCK = PRIVATE / "wechat_gui_send.lock"
 DEFAULT_AUTOPUBLISH_DIR = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR", "/home/lachlan/Nutstore Files/AutoPublish/AutoPublish"))
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+THUMBNAIL_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 TRANSCODE_SOURCE_WINDOW_SECONDS = 120
 
 
@@ -53,6 +60,9 @@ class VideoMessage:
     create_time: int
     stems: tuple[str, ...]
     sizes: tuple[int, ...]
+    thumbnail_sizes: tuple[int, ...] = ()
+    thumbnail_width: int = 0
+    thumbnail_height: int = 0
     message_db: str = ""
 
 
@@ -474,30 +484,87 @@ def fetch_latest_video_via_gui(
     attempts: list[dict[str, object]] = []
     click_points = video_clicks or default_video_clicks()
     per_click_wait = max(2.0, float(os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_CLICK_WAIT_SECONDS", "12")))
-    while time.monotonic() < deadline:
-        for click_point in click_points:
+    strict_identity = bool(message_local_ids or message_refs)
+    try:
+        with exclusive_gui_lock(GUI_LOCK, timeout_seconds=max(1.0, deadline - time.monotonic())):
             try:
-                open_chat_and_click_video(message.chat_name, display=display, video_click=click_point)
+                matched_attempts = open_chat_and_click_exact_video(
+                    message,
+                    display=display,
+                    deadline=deadline,
+                )
             except RuntimeError as exc:
                 return {"ok": False, "chat": message.chat_name, "error": str(exc), "attempts": attempts}
-            attempts.append({"click": click_point, "at": datetime.now().isoformat(timespec="seconds")})
-            click_deadline = min(deadline, time.monotonic() + per_click_wait)
-            while time.monotonic() < click_deadline:
-                matches = matching_video_files(message, since_minutes=since_minutes, started_at=start)
-                if matches:
-                    return {
-                        "ok": True,
-                        "chat": message.chat_name,
-                        "status": "fetched",
-                        "name": matches[0].name,
-                        "bytes": matches[0].stat().st_size,
-                        "path": str(matches[0]),
-                        "attempts": attempts,
-                    }
-                time.sleep(1.0)
-            if time.monotonic() >= deadline:
-                break
+            attempts.extend(matched_attempts)
+            if not matched_attempts and strict_identity:
+                return {
+                    "ok": False,
+                    "chat": message.chat_name,
+                    "error": "exact source video thumbnail was not visible in the guarded chat history",
+                    "attempts": attempts,
+                }
+            if not matched_attempts and not strict_identity:
+                for click_point in click_points:
+                    if time.monotonic() >= deadline:
+                        break
+                    open_chat_and_click_video(message.chat_name, display=display, video_click=click_point)
+                    attempts.append({"click": click_point, "method": "legacy-point", "at": datetime.now().isoformat(timespec="seconds")})
+                    click_deadline = min(deadline, time.monotonic() + per_click_wait)
+                    match = wait_for_matching_video(
+                        message,
+                        since_minutes=since_minutes,
+                        started_at=start,
+                        deadline=click_deadline,
+                        strict_identity=False,
+                    )
+                    if match:
+                        return fetched_payload(message, match, attempts)
+            elif matched_attempts:
+                match = wait_for_matching_video(
+                    message,
+                    since_minutes=since_minutes,
+                    started_at=start,
+                    deadline=deadline,
+                    strict_identity=strict_identity,
+                )
+                if match:
+                    return fetched_payload(message, match, attempts)
+    except TimeoutError as exc:
+        return {"ok": False, "chat": message.chat_name, "error": str(exc), "attempts": attempts}
     return {"ok": False, "chat": message.chat_name, "error": "video cache did not appear before timeout", "attempts": attempts}
+
+
+def fetched_payload(message: VideoMessage, match: Path, attempts: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "ok": True,
+        "chat": message.chat_name,
+        "status": "fetched",
+        "name": match.name,
+        "bytes": match.stat().st_size,
+        "path": str(match),
+        "attempts": attempts,
+    }
+
+
+def wait_for_matching_video(
+    message: VideoMessage,
+    *,
+    since_minutes: float,
+    started_at: float,
+    deadline: float,
+    strict_identity: bool,
+) -> Path | None:
+    while time.monotonic() < deadline:
+        matches = matching_video_files(
+            message,
+            since_minutes=since_minutes,
+            started_at=started_at,
+            strict_identity=strict_identity,
+        )
+        if matches:
+            return matches[0]
+        time.sleep(1.0)
+    return None
 
 
 def parse_message_refs(values: list[str]) -> list[tuple[str, int]]:
@@ -582,6 +649,9 @@ def recent_video_messages(
                     continue
                 for row in rows:
                     stems, sizes = parse_video_metadata(row[2], row[3], row[4])
+                    thumbnail_sizes, thumbnail_width, thumbnail_height = parse_video_thumbnail_metadata(
+                        row[2], row[3], row[4]
+                    )
                     messages.append(
                         VideoMessage(
                             chat_name=chat_name,
@@ -589,6 +659,9 @@ def recent_video_messages(
                             create_time=int(row[1] or 0),
                             stems=tuple(stems),
                             sizes=tuple(sizes),
+                            thumbnail_sizes=tuple(thumbnail_sizes),
+                            thumbnail_width=thumbnail_width,
+                            thumbnail_height=thumbnail_height,
                             message_db=db_path.name,
                         )
                     )
@@ -617,6 +690,26 @@ def parse_video_metadata(message_content: Any, source: Any, packed_info_data: An
     return stems, sizes
 
 
+def parse_video_thumbnail_metadata(
+    message_content: Any,
+    source: Any,
+    packed_info_data: Any,
+) -> tuple[list[int], int, int]:
+    text = "\n".join(decode_blob(item) for item in (message_content, source, packed_info_data))
+    sizes: list[int] = []
+    for value in re.findall(r'cdnthumblength="([0-9]+)"', text):
+        number = int(value)
+        if number > 0:
+            add_unique(sizes, number)
+    width_match = re.search(r'cdnthumbwidth="([0-9]+)"', text)
+    height_match = re.search(r'cdnthumbheight="([0-9]+)"', text)
+    return (
+        sizes,
+        int(width_match.group(1)) if width_match else 0,
+        int(height_match.group(1)) if height_match else 0,
+    )
+
+
 def decode_blob(value: Any) -> str:
     if value is None:
         return ""
@@ -632,10 +725,20 @@ def decode_blob(value: Any) -> str:
     return data.decode("utf-8", errors="ignore")
 
 
-def matching_video_files(message: VideoMessage, *, since_minutes: float, started_at: float) -> list[Path]:
+def matching_video_files(
+    message: VideoMessage,
+    *,
+    since_minutes: float,
+    started_at: float,
+    strict_identity: bool = True,
+) -> list[Path]:
     cutoff = (datetime.now() - timedelta(minutes=since_minutes)).timestamp()
     month = datetime.fromtimestamp(message.create_time).strftime("%Y-%m") if message.create_time else ""
     roots = video_roots(month)
+    thumbnail_stems = {
+        thumbnail_video_stem(path)
+        for path in message_thumbnail_files(message)
+    }
     matches: list[Path] = []
     for root in roots:
         for path in root.iterdir() if root.is_dir() else []:
@@ -647,13 +750,45 @@ def matching_video_files(message: VideoMessage, *, since_minutes: float, started
                 continue
             if stat.st_mtime < cutoff:
                 continue
-            stem_match = path.stem.lower() in message.stems
+            stem_match = path.stem.lower() in message.stems or path.stem.lower() in thumbnail_stems
             size_match = stat.st_size in message.sizes
-            new_match = bool(started_at and stat.st_mtime >= started_at)
+            new_match = bool(not strict_identity and started_at and stat.st_mtime >= started_at)
             if stem_match or size_match or new_match:
                 matches.append(path)
     matches.sort(key=lambda item: item.stat().st_mtime, reverse=True)
     return matches
+
+
+def message_thumbnail_files(message: VideoMessage) -> list[Path]:
+    month = datetime.fromtimestamp(message.create_time).strftime("%Y-%m") if message.create_time else ""
+    matches: list[Path] = []
+    for root in video_roots(month):
+        for path in root.iterdir() if root.is_dir() else []:
+            if not path.is_file() or path.suffix.lower() not in THUMBNAIL_SUFFIXES:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            size_match = bool(message.thumbnail_sizes and stat.st_size in message.thumbnail_sizes)
+            time_match = bool(
+                message.create_time
+                and abs(stat.st_mtime - message.create_time) <= TRANSCODE_SOURCE_WINDOW_SECONDS
+            )
+            if "thumb" in path.stem.lower() and size_match and time_match:
+                matches.append(path)
+    matches.sort(
+        key=lambda item: (
+            int(item.stat().st_size in message.thumbnail_sizes),
+            -abs(item.stat().st_mtime - message.create_time),
+        ),
+        reverse=True,
+    )
+    return matches
+
+
+def thumbnail_video_stem(path: Path) -> str:
+    return re.sub(r"(?:[_-]?thumb(?:nail)?)$", "", path.stem.lower())
 
 
 def video_roots(month: str) -> list[Path]:
@@ -670,26 +805,211 @@ def video_roots(month: str) -> list[Path]:
     return roots
 
 
-def open_chat_and_click_video(chat: str, *, display: str, video_click: tuple[int, int]) -> None:
-    target = (load_direct_config(chat).get("send_target") or {}) if chat else {}
-    query = str(target.get("query") or chat)
-    result_click = parse_click(target.get("result_click")) or (165, 125)
-    env = os.environ.copy()
-    env["DISPLAY"] = display
-    env["XAUTHORITY"] = env.get("XAUTHORITY", "")
+def open_chat_and_click_exact_video(
+    message: VideoMessage,
+    *,
+    display: str,
+    deadline: float,
+) -> list[dict[str, object]]:
+    thumbnails = message_thumbnail_files(message)
+    if not thumbnails:
+        return []
+    env = gui_environment(display)
     window = find_wechat_window(env)
     if not window:
         raise RuntimeError(f"No visible WeChat window found on DISPLAY={display}")
-    focus(env, window[0])
-    click(env, window[1] + 118, window[2] + 46)
-    time.sleep(0.3)
-    key(env, "ctrl+a")
-    key(env, "BackSpace")
-    paste_text(env, query)
-    time.sleep(1.2)
-    click(env, window[1] + result_click[0], window[2] + result_click[1])
-    time.sleep(1.0)
+    open_chat(message.chat_name, env=env, window=window)
+    evidence_dir = (
+        ROOT
+        / "output"
+        / "wechat_gui_agent"
+        / "video_fetch"
+        / f"{safe_filename(message.chat_name)}-{message.message_db or 'message'}-{message.local_id}"
+    )
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    max_pages = max(1, int(os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_SCAN_PAGES", "10")))
+    threshold = float(os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_TEMPLATE_THRESHOLD", "0.52"))
+    best_score = 0.0
+    for page in range(max_pages):
+        if time.monotonic() >= deadline:
+            break
+        screenshot_path = evidence_dir / f"page-{page:02d}.png"
+        capture_window(env, window, screenshot_path)
+        for thumbnail in thumbnails:
+            match = match_thumbnail_in_chat(
+                screenshot_path,
+                thumbnail,
+                window_width=window[3],
+                window_height=window[4],
+            )
+            if not match:
+                continue
+            best_score = max(best_score, float(match["score"]))
+            if float(match["score"]) < threshold:
+                continue
+            point = (int(match["center_x"]), int(match["center_y"]))
+            click(env, window[1] + point[0], window[2] + point[1])
+            return [
+                {
+                    "click": point,
+                    "method": "exact-thumbnail-template",
+                    "score": round(float(match["score"]), 4),
+                    "thumbnail": thumbnail.name,
+                    "page": page,
+                    "screenshot": str(screenshot_path),
+                    "at": datetime.now().isoformat(timespec="seconds"),
+                }
+            ]
+        scroll_chat_history_up(env, window)
+        time.sleep(0.65)
+    raise RuntimeError(
+        "exact source video thumbnail was not found after guarded history scan "
+        f"(best template score {best_score:.3f})"
+    )
+
+
+def match_thumbnail_in_chat(
+    screenshot_path: Path,
+    thumbnail_path: Path,
+    *,
+    window_width: int,
+    window_height: int,
+) -> dict[str, float | int] | None:
+    try:
+        import cv2
+    except ImportError:
+        return None
+    screen = cv2.imread(str(screenshot_path), cv2.IMREAD_COLOR)
+    thumbnail = cv2.imread(str(thumbnail_path), cv2.IMREAD_COLOR)
+    if screen is None or thumbnail is None:
+        return None
+    height, width = screen.shape[:2]
+    width = min(width, window_width)
+    height = min(height, window_height)
+    left = min(width - 1, max(0, int(width * 0.35)))
+    top = min(height - 1, max(0, int(height * 0.12)))
+    right = width
+    bottom = min(height, max(top + 1, int(height * 0.82)))
+    roi = screen[top:bottom, left:right]
+    if roi.size == 0:
+        return None
+    best: dict[str, float | int] | None = None
+    for scale in (0.45, 0.55, 0.65, 0.75, 0.85, 0.95, 1.0, 1.05, 1.15):
+        candidate_width = max(8, int(thumbnail.shape[1] * scale))
+        candidate_height = max(8, int(thumbnail.shape[0] * scale))
+        if candidate_width > roi.shape[1] or candidate_height > roi.shape[0]:
+            continue
+        resized = cv2.resize(thumbnail, (candidate_width, candidate_height), interpolation=cv2.INTER_AREA)
+        scores = cv2.matchTemplate(roi, resized, cv2.TM_CCOEFF_NORMED)
+        _, score, _, location = cv2.minMaxLoc(scores)
+        current = {
+            "score": float(score),
+            "center_x": int(left + location[0] + candidate_width / 2),
+            "center_y": int(top + location[1] + candidate_height / 2),
+            "width": candidate_width,
+            "height": candidate_height,
+            "scale": scale,
+        }
+        if best is None or float(current["score"]) > float(best["score"]):
+            best = current
+    return best
+
+
+def scroll_chat_history_up(env: dict[str, str], window: tuple[str, int, int, int, int]) -> None:
+    x = window[1] + int(window[3] * 0.68)
+    y = window[2] + int(window[4] * 0.42)
+    run(
+        [
+            "xdotool",
+            "mousemove",
+            str(x),
+            str(y),
+            "click",
+            "--repeat",
+            "6",
+            "--delay",
+            "70",
+            "4",
+        ],
+        env=env,
+    )
+
+
+def capture_window(env: dict[str, str], window: tuple[str, int, int, int, int], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    run(["import", "-window", window[0], str(path)], env=env)
+
+
+def open_chat_and_click_video(chat: str, *, display: str, video_click: tuple[int, int]) -> None:
+    env = gui_environment(display)
+    window = find_wechat_window(env)
+    if not window:
+        raise RuntimeError(f"No visible WeChat window found on DISPLAY={display}")
+    open_chat(chat, env=env, window=window)
     click(env, window[1] + video_click[0], window[2] + video_click[1])
+
+
+def open_chat(
+    chat: str,
+    *,
+    env: dict[str, str],
+    window: tuple[str, int, int, int, int],
+) -> None:
+    targets_file = PRIVATE / "wechat_send_targets.local.json"
+    targets, _ = gui.load_targets([chat], targets_file if targets_file.exists() else None, "")
+    if len(targets) != 1:
+        raise RuntimeError(f"No unique guarded WeChat target is configured for {chat}")
+    target = targets[0]
+    out_dir = ROOT / "output" / "wechat_gui_agent" / "video_fetch" / safe_filename(chat) / "chat-open"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    gui_window = gui.Window(window[0], window[1], window[2], window[3], window[4])
+    gui.focus(env, gui_window)
+    guard = gui.open_target(
+        env,
+        gui_window,
+        target,
+        pause=0.45,
+        out_dir=out_dir,
+        shot_prefix="exact-video",
+        skip_title_guard=False,
+        prefer_current=True,
+        allow_search=True,
+        relaxed_visible_fallback_allowed=target.allow_title_guard_fallback,
+    )
+    if not guard.get("ok"):
+        method = str(guard.get("method") or "unknown")
+        observed = str(guard.get("ocr_text") or "").strip().replace("\n", " ")
+        raise RuntimeError(
+            f"Could not open exact WeChat chat {chat!r} (method={method}, observed={observed[:160]!r})"
+        )
+
+
+def gui_environment(display: str) -> dict[str, str]:
+    env = os.environ.copy()
+    env["DISPLAY"] = display
+    env["XAUTHORITY"] = env.get("XAUTHORITY", "")
+    return env
+
+
+@contextmanager
+def exclusive_gui_lock(path: Path, *, timeout_seconds: float) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "WECHAT_SEND_BUSY: exact video fetch could not acquire the shared GUI lane"
+                    ) from exc
+                time.sleep(0.25)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def find_wechat_window(env: dict[str, str]) -> tuple[str, int, int, int, int] | None:
