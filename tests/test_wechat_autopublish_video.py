@@ -149,6 +149,33 @@ class WeChatAutoPublishVideoTests(unittest.TestCase):
         self.assertEqual(strict, [])
         self.assertEqual(legacy, [video])
 
+    def test_strict_video_match_rejects_stale_size_only_candidate(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stale = root / "unrelated-old-video.mp4"
+            stale.write_bytes(b"same-size")
+            now = int(time.time())
+            os.utime(stale, (now - 600, now - 600))
+            message = wechat_autopublish_video.VideoMessage(
+                chat_name="My devices",
+                local_id=59,
+                create_time=now,
+                stems=("different-exact-stem",),
+                sizes=(stale.stat().st_size,),
+            )
+            with mock.patch.object(wechat_autopublish_video, "video_roots", return_value=[root]):
+                matches = wechat_autopublish_video.matching_video_files(
+                    message,
+                    since_minutes=60,
+                    started_at=0,
+                    strict_identity=True,
+                )
+
+        self.assertEqual(matches, [])
+
     def test_thumbnail_template_match_returns_chat_relative_center(self) -> None:
         sys.path.insert(0, str(SCRIPT.parent))
         try:
@@ -317,6 +344,60 @@ class WeChatAutoPublishVideoTests(unittest.TestCase):
         self.assertEqual(candidates[0].matched_by, "message-ref:message_2.db:4")
         self.assertEqual(candidates[0].message_db, "message_2.db")
         self.assertEqual(candidates[0].message_local_id, 4)
+
+    def test_exact_message_candidates_never_fall_back_to_older_referenced_video(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old_video = Path(tmp) / "old-video.mp4"
+            old_video.write_bytes(b"old-video")
+            now = int(time.time())
+            newest = wechat_autopublish_video.VideoMessage(
+                chat_name="My devices",
+                local_id=59,
+                create_time=now,
+                stems=("new-video",),
+                sizes=(4881427,),
+                message_db="message_1.db",
+            )
+            older = wechat_autopublish_video.VideoMessage(
+                chat_name="My devices",
+                local_id=53,
+                create_time=now - 1200,
+                stems=("old-video",),
+                sizes=(old_video.stat().st_size,),
+                message_db="message_1.db",
+            )
+
+            def matches(message: object, **_kwargs: object) -> list[Path]:
+                return [old_video] if getattr(message, "local_id") == 53 else []
+
+            with mock.patch.object(
+                wechat_autopublish_video,
+                "recent_video_messages",
+                return_value=[newest, older],
+            ):
+                with mock.patch.object(
+                    wechat_autopublish_video,
+                    "matching_video_files",
+                    side_effect=matches,
+                ) as matching:
+                    with mock.patch.object(
+                        wechat_autopublish_video,
+                        "mirrored_message_video_files",
+                        return_value=[],
+                    ):
+                        candidates = wechat_autopublish_video.exact_message_candidates(
+                            chats=["My devices"],
+                            since_minutes=720,
+                            message_local_ids=[53, 59],
+                            message_refs=[("message_1.db", 53), ("message_1.db", 59)],
+                        )
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(matching.call_count, 1)
+        self.assertEqual(matching.call_args.args[0].local_id, 59)
 
     def test_exact_message_candidates_prefer_original_send_temp_over_playback_transcode(self) -> None:
         sys.path.insert(0, str(SCRIPT.parent))

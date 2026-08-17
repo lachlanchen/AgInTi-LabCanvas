@@ -3259,6 +3259,77 @@ stderr: noisy internal trace
         self.assertEqual(worker.extract_video_local_ids_from_task(task), [7])
         self.assertEqual(worker.extract_video_message_refs_from_task(task), ["message_1.db:7"])
 
+    def test_video_source_ignores_transport_wrapper_reference_row_ids(self) -> None:
+        worker = load_worker()
+        task = {
+            "source": {
+                "local_id": 60,
+                "message_db": "message_1.db",
+                "local_type": 1,
+            },
+            "request": (
+                "Treat this as a message forwarded from WeChat.\n\n"
+                "Chat: My devices\n"
+                "Source/reference rows: local_id=53, local_id=59, local_id=60\n\n"
+                "Current coalesced request:\n"
+                "Also publish this video about a 3D print that went wrong.\n\n"
+                "Recent history:\nold context"
+            ),
+            "context": [
+                {
+                    "local_id": 53,
+                    "message_db": "message_1.db",
+                    "local_type": 43,
+                    "create_time": 100,
+                    "content": '<msg><videomsg md5="' + ("a" * 32) + '" length="16693976" /></msg>',
+                },
+                {
+                    "local_id": 54,
+                    "message_db": "message_1.db",
+                    "local_type": 1,
+                    "create_time": 101,
+                    "content": "The previous robot video should have Korean subtitles.",
+                },
+                {
+                    "local_id": 59,
+                    "message_db": "message_1.db",
+                    "local_type": 43,
+                    "create_time": 200,
+                    "content": '<msg><videomsg md5="' + ("b" * 32) + '" length="4881427" /></msg>',
+                },
+                {
+                    "local_id": 60,
+                    "message_db": "message_1.db",
+                    "local_type": 1,
+                    "create_time": 201,
+                    "content": "Also publish this video about a 3D print that went wrong.",
+                },
+            ],
+        }
+
+        self.assertEqual(worker.extract_video_local_ids_from_task(task), [59])
+        self.assertEqual(worker.extract_video_message_refs_from_task(task), ["message_1.db:59"])
+        correction = worker.build_lazyedit_correction_context(
+            task,
+            preflight={
+                "audio_intake": {
+                    "status": "transcribed",
+                    "text": "这个怎么回事？怎么打印成这样了？",
+                    "segments": [
+                        {"start": 0.0, "end": 2.8, "text": "这个怎么回事？怎么打印成这样了？"}
+                    ],
+                }
+            },
+        )
+        metadata = worker.build_lazyedit_metadata_brief(task)
+        self.assertIn("3D print that went wrong", correction)
+        self.assertIn("3D print that went wrong", metadata)
+        self.assertNotIn("previous robot video", correction)
+        self.assertIn('"local_id": 59', correction)
+        self.assertNotIn('"local_id": 60', correction)
+        self.assertIn("Verified Exact-Source Audio Transcript", correction)
+        self.assertIn("怎么打印成这样", correction)
+
     def test_nonpublish_direct_video_preflight_saves_under_task_artifacts(self) -> None:
         worker = load_worker()
         task = {
@@ -3333,6 +3404,16 @@ stderr: noisy internal trace
                         "send_errors": ["timeout"],
                         "wecom_delivery": {"status": "sent"},
                         "existing_video_publish_poststage": {"video_id": 395},
+                        "publish_agent_bypassed": {"video_id": 395, "stage": "published_verified"},
+                        "publish_agent_supervision": {"status": "completed"},
+                        "publish_agent_evidence": {"video_id": 395},
+                        "publish_poststage_history": [{"video_id": 395}],
+                        "completion_audit": {"status": "checked"},
+                        "message_coverage": {"status": "covered"},
+                        "sent_message_part_hashes": ["old-result"],
+                        "coverage_status": "covered",
+                        "coverage_checked_at": "2026-06-25T10:39:57",
+                        "coverage_parent_task_id": "task-1",
                         "completed_at": "2026-06-25T10:39:57",
                     }
                 ],
@@ -3366,6 +3447,16 @@ stderr: noisy internal trace
         self.assertNotIn("send_errors", stored)
         self.assertNotIn("wecom_delivery", stored)
         self.assertNotIn("existing_video_publish_poststage", stored)
+        self.assertNotIn("publish_agent_bypassed", stored)
+        self.assertNotIn("publish_agent_supervision", stored)
+        self.assertNotIn("publish_agent_evidence", stored)
+        self.assertNotIn("publish_poststage_history", stored)
+        self.assertNotIn("completion_audit", stored)
+        self.assertNotIn("message_coverage", stored)
+        self.assertNotIn("sent_message_part_hashes", stored)
+        self.assertNotIn("coverage_status", stored)
+        self.assertNotIn("coverage_checked_at", stored)
+        self.assertNotIn("coverage_parent_task_id", stored)
         self.assertIn("expires_at", stored)
         self.assertEqual(stored["reprocess_reason"], "source resolver fixed")
         self.assertEqual(stored["reprocess_history"][0]["previous_status"], "send_retrying")
@@ -4583,6 +4674,68 @@ stderr: noisy internal trace
             ):
                 candidates = worker.resolve_synced_media_from_mirror(task)
 
+        self.assertEqual(candidates, [])
+
+    def test_video_file_intake_does_not_borrow_appended_recent_files(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            exact = root / "source_media" / "current-thumb.jpg"
+            old_video = root / "downloads" / "old-video.mp4"
+            exact.parent.mkdir(parents=True)
+            old_video.parent.mkdir(parents=True)
+            exact.write_bytes(b"current")
+            old_video.write_bytes(b"old-video")
+            task = {
+                "source": {"local_id": 59, "kind": "video", "local_type": 43},
+                "route_decision": {"route_kind": "file_intake", "needs_recent_media": True},
+                "request": (
+                    "Current coalesced request:\nNew WeChat video received.\n\n"
+                    "Recent synced WeChat files:\n"
+                    f"- {old_video} ({old_video.stat().st_size} bytes)"
+                ),
+                "preflight": {
+                    "media_resolution": {
+                        "copied": [
+                            {
+                                "task_copy_path": str(exact),
+                                "suffix": ".jpg",
+                                "matched_by": "exact-source-token",
+                            }
+                        ]
+                    }
+                },
+            }
+
+            self.assertFalse(worker.file_intake_has_explicit_non_image_request_files(task))
+            items = worker.extract_file_intake_source_items(task)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(Path(items[0]["task_copy_path"]), exact)
+
+    def test_audio_intake_rejects_video_candidate_bound_to_multiple_rows(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_video = Path(tmp) / "old.mp4"
+            old_video.write_bytes(b"old")
+            task = {
+                "source": {"local_id": 60, "local_type": 1},
+                "request": "Current coalesced request:\npublish this video",
+                "context": [
+                    {"local_id": 53, "local_type": 43, "content": "[WeChat video] old"},
+                    {"local_id": 59, "local_type": 43, "content": "[WeChat video] current"},
+                ],
+                "preflight": {
+                    "autopublish_video": {
+                        "target": str(old_video),
+                        "message_local_ids": [53, 59],
+                    }
+                },
+            }
+
+            candidates = worker.audio_intake_media_candidates(task)
+
+        self.assertEqual(worker.extract_video_local_ids_from_task(task), [59])
         self.assertEqual(candidates, [])
 
     def test_media_resolution_rejects_readable_candidate_without_exact_media_token(self) -> None:

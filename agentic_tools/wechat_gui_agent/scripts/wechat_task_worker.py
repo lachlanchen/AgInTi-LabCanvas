@@ -618,6 +618,10 @@ def reprocess_task(
         "send_retry_count",
         "resent_at",
         "existing_video_publish_poststage",
+        "publish_agent_bypassed",
+        "publish_agent_supervision",
+        "publish_agent_evidence",
+        "publish_poststage_history",
         "next_publish_poststage_at",
         "publish_poststage_queued_at",
         "publish_poststage_last_status",
@@ -628,6 +632,12 @@ def reprocess_task(
         "superseded_by",
         "superseded_reason",
         "wecom_delivery",
+        "completion_audit",
+        "message_coverage",
+        "sent_message_part_hashes",
+        "coverage_status",
+        "coverage_checked_at",
+        "coverage_parent_task_id",
         "expires_at",
         "send_expires_at",
     ]
@@ -8173,6 +8183,7 @@ def audio_intake_media_candidates(task: dict[str, Any]) -> list[dict[str, Any]]:
     )
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
+    expected_video_ids = set(extract_video_local_ids_from_task(task))
     for source in (preflight, transport_preflight):
         for section_name in ("wecom_media", "media_resolution", "file_intake"):
             section = source.get(section_name) if isinstance(source.get(section_name), dict) else {}
@@ -8186,6 +8197,13 @@ def audio_intake_media_candidates(task: dict[str, Any]) -> list[dict[str, Any]]:
                 suffix = str(item.get("suffix") or path.suffix).lower()
                 if suffix not in AUDIO_SUFFIXES | VIDEO_SUFFIXES or not path.is_file():
                     continue
+                candidate_ids = {
+                    int(value)
+                    for value in item.get("message_local_ids") or []
+                    if int_or_none(value) is not None
+                }
+                if expected_video_ids and candidate_ids and candidate_ids != expected_video_ids:
+                    continue
                 resolved = str(path.resolve())
                 if resolved in seen:
                     continue
@@ -8196,6 +8214,13 @@ def audio_intake_media_candidates(task: dict[str, Any]) -> list[dict[str, Any]]:
         if raw_path:
             media_path = Path(str(raw_path)).expanduser()
             suffix = media_path.suffix.lower()
+            candidate_ids = {
+                int(value)
+                for value in autopublish.get("message_local_ids") or []
+                if int_or_none(value) is not None
+            }
+            if expected_video_ids and candidate_ids != expected_video_ids:
+                continue
             if suffix in AUDIO_SUFFIXES | VIDEO_SUFFIXES and media_path.is_file():
                 resolved = str(media_path.resolve())
                 if resolved not in seen:
@@ -8261,12 +8286,19 @@ def prepare_audio_intake_preflight(task: dict[str, Any], artifact_dir: Path) -> 
 
     candidates = audio_intake_media_candidates(task)
     if candidates:
-        source = Path(str(candidates[0]["task_copy_path"]))
+        candidate = candidates[0]
+        source = Path(str(candidate["task_copy_path"]))
         source_info = task.get("source") if isinstance(task.get("source"), dict) else {}
+        candidate_ids = [
+            int(value)
+            for value in candidate.get("message_local_ids") or []
+            if int_or_none(value) is not None
+        ]
+        source_local_id = candidate_ids[0] if len(candidate_ids) == 1 else int_or_none(source_info.get("local_id"))
         return run_audio_intake_transcriber(
             source,
             output_dir=output_dir,
-            source_local_id=int_or_none(source_info.get("local_id")),
+            source_local_id=source_local_id,
         )
     if finder:
         return write_audio_intake_manifest(output_dir, finder_audio_intake_alias(task, finder))
@@ -9116,6 +9148,14 @@ def source_scoped_file_intake_task(task: dict[str, Any]) -> dict[str, Any]:
 def file_intake_has_explicit_non_image_request_files(task: dict[str, Any]) -> bool:
     if not is_file_intake_task(task) or task_source_is_image(task):
         return False
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    source_kind = str(source.get("kind") or "").strip().casefold()
+    source_type = wechat_base_message_type(source.get("local_type"))
+    if source_kind in {"video", "voice", "audio"} or source_type in {34, 43}:
+        return False
+    scoped_paths = extract_request_synced_files_from_task(source_scoped_file_intake_task(task))
+    if scoped_paths:
+        return True
     paths = extract_request_synced_files_from_task(task)
     return bool(paths)
 
@@ -10151,9 +10191,6 @@ def enrich_copies_with_document_read(copied: list[dict[str, Any]], output_root: 
 
 
 def extract_file_intake_source_items(task: dict[str, Any]) -> list[dict[str, Any] | Path]:
-    request_paths = extract_request_synced_files_from_task(task)
-    if request_paths and not task_source_is_image(task):
-        return request_paths
     media_resolution = (task.get("preflight") or {}).get("media_resolution") if isinstance(task.get("preflight"), dict) else {}
     if isinstance(media_resolution, dict):
         resolved = [
@@ -10163,9 +10200,19 @@ def extract_file_intake_source_items(task: dict[str, Any]) -> list[dict[str, Any
         ]
         if resolved:
             return resolved
+    scoped_task = source_scoped_file_intake_task(task)
+    request_paths = extract_request_synced_files_from_task(scoped_task)
     if request_paths:
         return request_paths
-    return extract_recent_synced_files_from_task(task)
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    source_kind = str(source.get("kind") or "").strip().casefold()
+    source_type = wechat_base_message_type(source.get("local_type"))
+    if task_source_is_image(task) or source_kind in {"video", "voice", "audio"} or source_type in {3, 34, 43}:
+        return extract_recent_synced_files_from_task(scoped_task)
+    request_paths = extract_request_synced_files_from_task(task)
+    if request_paths:
+        return request_paths
+    return extract_recent_synced_files_from_task(scoped_task)
 
 
 def source_item_path(item: dict[str, Any] | Path) -> Path:
@@ -11830,6 +11877,15 @@ def lazyedit_human_context_candidates(
     """Return bounded requester-authored context without transport internals."""
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
     source_sender = str(source.get("sender_userid") or source.get("sender") or "").strip()
+    selected_video_ids = set(extract_video_local_ids_from_task(task))
+    selected_video_times = [
+        int_or_none(row.get("create_time"))
+        for row in task.get("context") or []
+        if isinstance(row, dict)
+        and int_or_none(row.get("local_id")) in selected_video_ids
+        and int_or_none(row.get("create_time")) is not None
+    ]
+    source_time_floor = max(selected_video_times) if selected_video_times else None
     candidates: list[str] = []
     for row in reversed(task.get("context") or []):
         if not isinstance(row, dict) or bool(row.get("is_self")):
@@ -11838,6 +11894,9 @@ def lazyedit_human_context_candidates(
             continue
         row_sender = str(row.get("sender_userid") or row.get("sender") or "").strip()
         if source_sender and row_sender and row_sender != source_sender:
+            continue
+        row_time = int_or_none(row.get("create_time"))
+        if source_time_floor is not None and row_time is not None and row_time < source_time_floor:
             continue
         text = str(row.get("content") or "").strip()
         if is_internal_or_transport_context_text(text):
@@ -11937,6 +11996,18 @@ def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[s
     )
     focused_request = lazyedit_focused_human_request(task, max_len=3000)
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    selected_video_ids = set(extract_video_local_ids_from_task(task))
+    selected_video_rows = [
+        row
+        for row in task.get("context") or []
+        if isinstance(row, dict) and int_or_none(row.get("local_id")) in selected_video_ids
+    ]
+    if selected_video_rows:
+        source = max(
+            selected_video_rows,
+            key=lambda row: int_or_none(row.get("create_time")) or 0,
+        )
+    audio_intake = (preflight or {}).get("audio_intake") if isinstance(preflight, dict) else None
     lines = [
         "# LazyEdit Correction Context",
         "",
@@ -11971,6 +12042,33 @@ def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[s
             lines.append(f"- {marker}{content}")
     else:
         lines.append("- (none)")
+    if isinstance(audio_intake, dict) and str(audio_intake.get("status") or "") == "transcribed":
+        transcript = collapse_context_text(audio_intake.get("text"), max_len=12000)
+        if transcript:
+            lines.extend(
+                [
+                    "",
+                    "## Verified Exact-Source Audio Transcript",
+                    transcript,
+                ]
+            )
+        segments = [
+            {
+                "start": item.get("start"),
+                "end": item.get("end"),
+                "text": collapse_context_text(item.get("text"), max_len=500),
+            }
+            for item in audio_intake.get("segments") or []
+            if isinstance(item, dict) and collapse_context_text(item.get("text"), max_len=500)
+        ][:40]
+        if segments:
+            lines.extend(
+                [
+                    "",
+                    "## Verified Timestamped Segments",
+                    json.dumps(segments, ensure_ascii=False, indent=2),
+                ]
+            )
     if isinstance(autopub, dict):
         lines.extend(
             [
@@ -12021,6 +12119,7 @@ def build_lazyedit_correction_context(task: dict[str, Any], *, preflight: dict[s
             "",
             "## Instructions",
             "- Fix clear ASR mistakes, names, terms, and broken phrases based on the context above.",
+            "- Treat the verified exact-source transcript and timestamped segments as primary evidence; do not borrow wording from an older video.",
             "- Preserve timing and line count where practical.",
             "- Use a separate metadata brief for public title/description/hashtags.",
         ]
@@ -15129,7 +15228,10 @@ def extract_video_local_ids_from_task(task: dict[str, Any]) -> list[int]:
             if "<videomsg" in content or "[WeChat video]" in content:
                 return [source_local_id]
     requested: set[int] = set()
-    for groups in re.findall(r"local_id\s*[=:]?\s*(\d+)|local_id(\d+)", str(task.get("request") or "")):
+    # The transport wrapper lists every nearby source/reference local_id.
+    # Only the focused human request may explicitly select an older video.
+    focused_request = task_focus_text(task)
+    for groups in re.findall(r"local_id\s*[=:]?\s*(\d+)|local_id(\d+)", focused_request):
         for value in groups:
             if value:
                 requested.add(int(value))

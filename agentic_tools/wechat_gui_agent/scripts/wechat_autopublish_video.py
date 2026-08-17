@@ -128,6 +128,8 @@ def main() -> int:
                     candidate_from_source(
                         Path(str(fetch_payload["path"])),
                         str(fetch_payload.get("chat") or (args.chat[0] if args.chat else "manual")),
+                        message_db=str(fetch_payload.get("message_db") or ""),
+                        message_local_id=int(fetch_payload.get("message_local_id") or 0),
                     )
                 ]
             if fetch_payload.get("ok"):
@@ -216,6 +218,9 @@ def exact_message_candidates(
         message_local_ids=message_local_ids,
         message_refs=message_refs,
     )
+    # This command copies one video. If transport context contains several
+    # historical references, only the newest exact row may satisfy the task.
+    messages = messages[:1]
     candidates: list[VideoCandidate] = []
     for message in messages:
         paths = matching_video_files(message, since_minutes=since_minutes, started_at=0)
@@ -436,7 +441,13 @@ def find_video_candidates(
     return candidates
 
 
-def candidate_from_source(path: Path, chat_name: str) -> VideoCandidate:
+def candidate_from_source(
+    path: Path,
+    chat_name: str,
+    *,
+    message_db: str = "",
+    message_local_id: int = 0,
+) -> VideoCandidate:
     resolved = path.expanduser().resolve()
     if not resolved.is_file():
         raise SystemExit(f"Source video not found: {path}")
@@ -453,7 +464,13 @@ def candidate_from_source(path: Path, chat_name: str) -> VideoCandidate:
         source_mtime=stat.st_mtime,
         updated_at=datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
         status="manual",
-        matched_by="source",
+        matched_by=(
+            f"message-ref:{message_db}:{message_local_id}"
+            if message_db and message_local_id > 0
+            else "source"
+        ),
+        message_db=message_db,
+        message_local_id=message_local_id,
     )
 
 
@@ -535,7 +552,7 @@ def fetch_latest_video_via_gui(
 
 
 def fetched_payload(message: VideoMessage, match: Path, attempts: list[dict[str, object]]) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "ok": True,
         "chat": message.chat_name,
         "status": "fetched",
@@ -543,7 +560,12 @@ def fetched_payload(message: VideoMessage, match: Path, attempts: list[dict[str,
         "bytes": match.stat().st_size,
         "path": str(match),
         "attempts": attempts,
+        "message_local_id": message.local_id,
     }
+    if message.message_db:
+        payload["message_db"] = message.message_db
+        payload["message_ref"] = f"{message.message_db}:{message.local_id}"
+    return payload
 
 
 def wait_for_matching_video(
@@ -752,8 +774,18 @@ def matching_video_files(
                 continue
             stem_match = path.stem.lower() in message.stems or path.stem.lower() in thumbnail_stems
             size_match = stat.st_size in message.sizes
+            size_identity_match = bool(
+                size_match
+                and (
+                    (started_at and stat.st_mtime >= started_at)
+                    or (
+                        message.create_time
+                        and abs(stat.st_mtime - message.create_time) <= TRANSCODE_SOURCE_WINDOW_SECONDS
+                    )
+                )
+            )
             new_match = bool(not strict_identity and started_at and stat.st_mtime >= started_at)
-            if stem_match or size_match or new_match:
+            if stem_match or size_identity_match or new_match:
                 matches.append(path)
     matches.sort(key=lambda item: item.stat().st_mtime, reverse=True)
     return matches
@@ -1201,6 +1233,7 @@ def copy_candidate(candidate: VideoCandidate, *, dest_dir: Path, title: str, rep
     }
     if candidate.message_db:
         payload["message_ref"] = f"{candidate.message_db}:{candidate.message_local_id}"
+        payload["message_local_id"] = candidate.message_local_id
     if dry_run:
         return payload
     if target.exists():
