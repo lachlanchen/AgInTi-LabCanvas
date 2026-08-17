@@ -201,6 +201,30 @@ class WeChatRoutineTests(unittest.TestCase):
         self.assertIn("chip in", rules)
         self.assertIn("gpt-5.6-sol", rules)
 
+    def test_scheduled_research_route_is_not_overridden_by_briefing_in_history(self) -> None:
+        routines = load_routines()
+        routine_id = routines.routine_id_for_route(
+            {
+                "route_kind": "research_or_summary",
+                "scheduled_daily_research": True,
+            },
+            (
+                "Prepare the daily research report as Markdown, LaTeX, and PDF.\n"
+                "Recent discussion: 李飞飞在联合国简报中谈空间智能。"
+            ),
+        )
+
+        self.assertEqual(routine_id, "research_summary")
+
+    def test_ambiguous_chinese_briefing_word_does_not_request_powerpoint(self) -> None:
+        routines = load_routines()
+        routine_id = routines.routine_id_for_route(
+            {},
+            "总结李飞飞联合国简报中的空间智能观点。",
+        )
+
+        self.assertEqual(routine_id, "research_summary")
+
     def test_contract_contains_stages_rules_and_artifact_policy(self) -> None:
         routines = load_routines()
         contract = routines.build_routine_contract(

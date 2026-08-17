@@ -913,6 +913,13 @@ def routine_id_for_route(route_decision: dict[str, Any] | None, request_text: st
     route = route_decision if isinstance(route_decision, dict) else {}
     route_kind = str(route.get("route_kind") or "").strip()
     lowered = str(request_text or "").lower()
+
+    # A specific agent route is authoritative. Scheduled requests include
+    # recent chat context, where ordinary phrases such as "UN briefing" must
+    # not silently replace a research/PDF contract with a presentation deck.
+    # Keep text inference only for an absent or deliberately generic route.
+    if route_kind in ROUTE_TO_ROUTINE and route_kind != "other_worker":
+        return ROUTE_TO_ROUTINE[route_kind]
     if any(
         marker in lowered
         for marker in (
@@ -922,7 +929,6 @@ def routine_id_for_route(route_decision: dict[str, Any] | None, request_text: st
             "presentation deck",
             "演示文稿",
             "幻灯片",
-            "简报",
         )
     ):
         return "presentation_deck"
