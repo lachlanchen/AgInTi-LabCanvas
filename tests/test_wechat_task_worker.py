@@ -11813,6 +11813,47 @@ stderr: noisy internal trace
 
         self.assertFalse(worker.should_prepare_media_resolution(task))
 
+    def test_publish_video_audio_uses_exact_autopublish_copy(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            video = root / "source_media" / "exact-video.mp4"
+            video.parent.mkdir()
+            video.write_bytes(b"video")
+            task = {
+                "id": "publish-video-audio",
+                "chat": "My devices",
+                "source": {"local_id": 91, "local_type": 43, "kind": "video"},
+                "route_decision": {
+                    "route_kind": "publish_video",
+                    "needs_recent_media": True,
+                    "public_publish_allowed": True,
+                },
+                "routine": {"id": "video_publish_existing"},
+                "request": "Publish this exact video to YouTube.",
+            }
+            copied = {
+                "ok": True,
+                "status": "copied",
+                "target": str(video),
+                "message_local_ids": [91],
+            }
+            audio = {
+                "status": "transcribed",
+                "input_kind": "local_wechat_media",
+                "agent_context_path": str(root / "audio_intake" / "agent-context.md"),
+            }
+            with mock.patch.object(worker, "run_autopublish_video_preflight", return_value=copied):
+                with mock.patch.object(worker, "run_audio_intake_transcriber", return_value=audio) as transcribe:
+                    preflight = worker.prepare_worker_preflight(task, root / "task")
+
+        self.assertEqual(preflight["audio_intake"], audio)
+        transcribe.assert_called_once_with(
+            video.resolve(),
+            output_dir=root / "task" / "audio_intake",
+            source_local_id=91,
+        )
+
     def test_resumed_worker_prompt_requires_audio_context_before_reasoning(self) -> None:
         worker = load_worker()
         calls: list[str] = []

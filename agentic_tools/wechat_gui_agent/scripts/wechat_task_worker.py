@@ -7642,7 +7642,7 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
     if should_prepare_shipinhao_media_transcript(task):
         preflight["shipinhao_media_transcript"] = prepare_shipinhao_media_transcript_preflight(task, artifact_dir)
         task["preflight"] = preflight
-    if should_prepare_audio_intake(task):
+    if should_prepare_audio_intake(task) and not is_video_publish_task(task):
         preflight["audio_intake"] = prepare_audio_intake_preflight(task, artifact_dir)
         task["preflight"] = preflight
     if should_prepare_shipinhao_comment_intel(task):
@@ -7684,6 +7684,9 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
                 else:
                     autopub["artifact_resolution"] = artifact_resolution
                     preflight["autopublish_video"] = autopub
+    if should_prepare_audio_intake(task):
+        preflight["audio_intake"] = prepare_audio_intake_preflight(task, artifact_dir)
+        task["preflight"] = preflight
     context_path.write_text(build_lazyedit_correction_context(task, preflight=preflight), encoding="utf-8")
     metadata_path.write_text(build_lazyedit_metadata_brief(task, preflight=preflight), encoding="utf-8")
     return preflight
@@ -8188,6 +8191,23 @@ def audio_intake_media_candidates(task: dict[str, Any]) -> list[dict[str, Any]]:
                     continue
                 seen.add(resolved)
                 candidates.append({**item, "task_copy_path": resolved, "suffix": suffix})
+        autopublish = source.get("autopublish_video") if isinstance(source.get("autopublish_video"), dict) else {}
+        raw_path = autopublish.get("target") or autopublish.get("source_path")
+        if raw_path:
+            media_path = Path(str(raw_path)).expanduser()
+            suffix = media_path.suffix.lower()
+            if suffix in AUDIO_SUFFIXES | VIDEO_SUFFIXES and media_path.is_file():
+                resolved = str(media_path.resolve())
+                if resolved not in seen:
+                    seen.add(resolved)
+                    candidates.append(
+                        {
+                            "task_copy_path": resolved,
+                            "suffix": suffix,
+                            "source": "autopublish_video",
+                            "message_local_ids": list(autopublish.get("message_local_ids") or []),
+                        }
+                    )
     return candidates[:4]
 
 
