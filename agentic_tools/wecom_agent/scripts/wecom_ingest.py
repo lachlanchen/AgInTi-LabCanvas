@@ -692,7 +692,10 @@ Current exact-chat active task, if any:
             },
             "aginti": {
                 "command": os.environ.get("WECOM_AGINTI_COMMAND", "aginti"),
-                "workspace": os.environ.get("WECOM_AGINTI_WORKSPACE", "../Agent/AgInTiFlow"),
+                "workspace": os.environ.get("WECOM_AGINTI_WORKSPACE", ""),
+                "provider_chain": os.environ.get(
+                    "WECOM_AGINTI_PROVIDER_CHAIN", "deepseek,localllm"
+                ),
                 "timeout_seconds": 120,
                 "wrap_prompt": True,
             },
@@ -918,8 +921,9 @@ Current exact-chat active task, if any:
             },
             "aginti": {
                 "command": os.environ.get("WECOM_AGINTI_COMMAND", "aginti"),
-                "workspace": os.environ.get(
-                    "WECOM_AGINTI_WORKSPACE", "../Agent/AgInTiFlow"
+                "workspace": os.environ.get("WECOM_AGINTI_WORKSPACE", ""),
+                "provider_chain": os.environ.get(
+                    "WECOM_AGINTI_PROVIDER_CHAIN", "deepseek,localllm"
                 ),
                 "timeout_seconds": 120,
                 "wrap_prompt": True,

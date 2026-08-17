@@ -187,7 +187,10 @@ def load_config(path: Path) -> dict[str, Any]:
             "command": os.environ.get("WECHAT_AGINTI_COMMAND", "aginti"),
             "args": os.environ.get("WECHAT_AGINTI_ARGS", ""),
             "prompt_mode": os.environ.get("WECHAT_AGINTI_PROMPT_MODE", ""),
-            "workspace": os.environ.get("WECHAT_AGINTI_WORKSPACE", "../Agent/AgInTiFlow"),
+            "workspace": os.environ.get("WECHAT_AGINTI_WORKSPACE", ""),
+            "provider_chain": os.environ.get(
+                "WECHAT_AGINTI_PROVIDER_CHAIN", "deepseek,localllm"
+            ),
             "timeout_seconds": 120,
             "wrap_prompt": True,
         },

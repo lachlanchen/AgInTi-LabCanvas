@@ -970,6 +970,10 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "backend runtime session metadata can never become a user-facing WeChat reply",
             "chat-only memo routes use the route agent's natural reply without a second agent turn or execution worker",
             "generic execution-evidence refusals can never become fast conversational replies",
+            "AgInTi receives a bounded selected-routine prompt instead of the full Codex worker handbook",
+            "AgInTi provider fallback retries only verified pre-inference failures",
+            "the shared AgInTi backend honors transport-specific WeCom provider settings",
+            "AgInTi worker packets preserve current intent and latest interruptions within LocalLLM context limits",
             "backend failure diagnostics remain private and cannot become a chat reply",
             "an interactive task gets one short source-scoped terminal receipt after all backends fail",
             "legacy WeCom tasks can never fall back to the personal-WeChat sender",
@@ -1181,6 +1185,22 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "fast_evidence_refusal_not_chat",
             "test": backend_prefix + "test_fast_role_rejects_generic_aginti_execution_evidence_refusal",
+        },
+        {
+            "id": "aginti_backend_specific_prompt",
+            "test": backend_prefix + "test_backend_specific_prompt_replaces_oversized_codex_prompt_for_aginti",
+        },
+        {
+            "id": "aginti_provider_fallback_pre_inference_only",
+            "test": backend_prefix + "test_aginti_retries_explicit_provider_only_for_pre_inference_failure",
+        },
+        {
+            "id": "aginti_wecom_provider_environment",
+            "test": backend_prefix + "test_aginti_shared_backend_reads_wecom_provider_environment",
+        },
+        {
+            "id": "aginti_worker_packet_bounded",
+            "test": worker_prefix + "test_aginti_worker_prompt_is_bounded_and_uses_one_selected_routine",
         },
         {
             "id": "backend_failure_diagnostics_not_chat",

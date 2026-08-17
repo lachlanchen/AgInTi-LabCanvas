@@ -177,7 +177,10 @@ WECOM_PENDING_TTL_SECONDS=3600
 WECOM_TASK_QUEUE={TOOL_ROOT / '.private' / 'wecom_task_queue.jsonl'}
 WECOM_MIRROR_DB={PACKAGE_ROOT / 'output' / 'wecom' / 'wecom_mirror.sqlite'}
 WECOM_AGINTI_COMMAND=aginti
-WECOM_AGINTI_WORKSPACE=../Agent/AgInTiFlow
+# Empty means the current LabCanvas repository, where the selected routine and
+# exact-task artifacts live. AgInTiFlow is the runtime, not the task workspace.
+WECOM_AGINTI_WORKSPACE=
+WECOM_AGINTI_PROVIDER_CHAIN=deepseek,localllm
 
 # Per-group #daily research scheduler. Times use WECOM_DAILY_TIMEZONE.
 WECOM_DAILY_RESEARCH_TIME=06:00

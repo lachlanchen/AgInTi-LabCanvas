@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -443,6 +444,28 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertIn("--no-mcp", command)
         self.assertIn("host", command)
 
+    def test_named_route_role_stays_conversational_and_scopes_evidence(self) -> None:
+        backend = load_backend()
+        command = backend.aginti_command(
+            model="aginti",
+            role="route-context-v3",
+            sandbox="read-only",
+            backend_config={},
+        )
+        prompt = backend.aginti_prompt(
+            "Return strict routing JSON.",
+            chat_name="LabAgent",
+            role="route-context-v3",
+            model="aginti",
+            reasoning_effort="low",
+            sandbox="read-only",
+            backend_config={},
+        )
+
+        self.assertIn("--no-shell", command)
+        self.assertIn("--no-file-tools", command)
+        self.assertIn('"mode":"chat-response"', prompt)
+
     def test_aginti_machine_command_cannot_override_managed_sandbox_args(self) -> None:
         backend = load_backend()
 
@@ -523,6 +546,149 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(result["message"], "CHAT: actual answer")
         self.assertEqual(result["message_source"], "machine_json")
         self.assertEqual(result["stdout_tail"], "")
+
+    def test_backend_specific_prompt_replaces_oversized_codex_prompt_for_aginti(self) -> None:
+        backend = load_backend()
+        codex_prompts: list[str] = []
+        aginti_prompts: list[str] = []
+
+        def codex(prompt: str, **_kwargs: object) -> dict[str, object]:
+            codex_prompts.append(prompt)
+            return {
+                "ok": False,
+                "message": "quota exceeded",
+                "returncode": 1,
+                "stderr_tail": "quota exceeded",
+            }
+
+        def aginti(prompt: str, **_kwargs: object) -> dict[str, object]:
+            aginti_prompts.append(prompt)
+            return {
+                "ok": True,
+                "message": "CHAT: compact fallback worked",
+                "returncode": 0,
+                "thread_id": "",
+            }
+
+        with (
+            mock.patch.object(backend, "run_codex_session", side_effect=codex),
+            mock.patch.object(backend, "run_aginti_session", side_effect=aginti),
+        ):
+            result = backend.run_agent_session(
+                "FULL " + ("global handbook " * 5000),
+                backend="codex",
+                chat_name="LabAgent",
+                role="worker",
+                model="gpt-5.6-sol",
+                reasoning_effort="medium",
+                sandbox="read-only",
+                timeout_seconds=30,
+                workdir=ROOT,
+                backend_config={
+                    "agent_fallbacks": {
+                        "fallback_to_aginti": True,
+                        "purchased_credit_retry": False,
+                    }
+                },
+                backend_prompts={"aginti": "COMPACT exact routine packet"},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(codex_prompts), 1)
+        self.assertGreater(len(codex_prompts[0]), 50000)
+        self.assertEqual(aginti_prompts, ["COMPACT exact routine packet"])
+
+    def test_aginti_retries_explicit_provider_only_for_pre_inference_failure(self) -> None:
+        backend = load_backend()
+        failed = subprocess.CompletedProcess(
+            ["aginti", "run"],
+            1,
+            stdout='{"ok":false,"reason":"DeepSeek API key is not configured"}',
+            stderr="",
+        )
+        succeeded = subprocess.CompletedProcess(
+            ["aginti", "run"],
+            0,
+            stdout='{"ok":true,"sessionId":"test","result":"CHAT: local fallback worked","failed":false}',
+            stderr="",
+        )
+        with (
+            mock.patch.object(backend, "resolve_command_executable", return_value="aginti"),
+            mock.patch.object(
+                backend,
+                "run_process_group",
+                side_effect=[failed, succeeded],
+            ) as run,
+        ):
+            result = backend.run_aginti_session(
+                "exact prompt",
+                chat_name="LabAgent",
+                role="worker",
+                model="aginti",
+                reasoning_effort="medium",
+                sandbox="read-only",
+                timeout_seconds=120,
+                workdir=ROOT,
+                backend_config={
+                    "wrap_prompt": False,
+                    "provider_chain": ["deepseek", "localllm"],
+                },
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "localllm")
+        self.assertEqual([item["provider"] for item in result["provider_attempts"]], ["deepseek", "localllm"])
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(commands[0][commands[0].index("--provider") + 1], "deepseek")
+        self.assertEqual(commands[1][commands[1].index("--provider") + 1], "localllm")
+
+    def test_aginti_shared_backend_reads_wecom_provider_environment(self) -> None:
+        backend = load_backend()
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "WECOM_AGINTI_PROVIDER_CHAIN": "localllm,deepseek",
+                "WECOM_AGINTI_WORKSPACE": str(ROOT),
+            },
+            clear=True,
+        ):
+            providers = backend.aginti_provider_chain({})
+            workdir = backend.aginti_workdir_from_config({}, ROOT.parent)
+
+        self.assertEqual(providers, ["localllm", "deepseek"])
+        self.assertEqual(workdir, ROOT)
+
+    def test_aginti_does_not_replay_unknown_task_failure_on_another_provider(self) -> None:
+        backend = load_backend()
+        failed = subprocess.CompletedProcess(
+            ["aginti", "run"],
+            1,
+            stdout='{"ok":false,"reason":"artifact validation failed after execution"}',
+            stderr="",
+        )
+        with (
+            mock.patch.object(backend, "resolve_command_executable", return_value="aginti"),
+            mock.patch.object(backend, "run_process_group", return_value=failed) as run,
+        ):
+            result = backend.run_aginti_session(
+                "exact prompt",
+                chat_name="LabAgent",
+                role="worker",
+                model="aginti",
+                reasoning_effort="medium",
+                sandbox="read-only",
+                timeout_seconds=120,
+                workdir=ROOT,
+                backend_config={
+                    "wrap_prompt": False,
+                    "provider_chain": ["deepseek", "localllm"],
+                },
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(result["provider"], "deepseek")
 
     def test_aginti_resolves_from_nvm_when_service_path_is_minimal(self) -> None:
         backend = load_backend()

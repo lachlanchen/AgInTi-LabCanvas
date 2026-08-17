@@ -2433,6 +2433,93 @@ stderr: noisy internal trace
         self.assertNotIn("source.mp4", json.dumps(packet, ensure_ascii=False))
         self.assertLess(len(json.dumps(packet, ensure_ascii=False)), len(json.dumps(task, ensure_ascii=False)))
 
+    def test_aginti_worker_prompt_is_bounded_and_uses_one_selected_routine(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "bounded-aginti-task",
+            "chat": "LabAgent",
+            "status": "running",
+            "request": "Current coalesced request:\nCreate the requested PDF and send it back.",
+            "source": {"local_id": 81, "sender_display": "Researcher"},
+            "route_decision": {"route_kind": "research", "worker_needed": True},
+            "routine": {
+                "id": "general_worker",
+                "title": "General worker",
+                "purpose": "Use established project routines.",
+                "rules": ["Do not redesign mature routines."],
+                "stages": [{"id": "execute", "owner": "agent"}],
+            },
+            "routine_contract": {
+                "json": "/tmp/exact-task/routine_contract.json",
+                "markdown": "/tmp/exact-task/routine_contract.md",
+                "cheat_sheet": "/tmp/exact-task/agent_routine_cheat_sheet.md",
+            },
+            "context": [
+                {
+                    "local_id": index,
+                    "sender_display": "Researcher",
+                    "content": f"context-{index} " + ("detail " * 1000),
+                }
+                for index in range(30)
+            ],
+            "interruptions": [
+                {
+                    "at": str(index),
+                    "request": f"new-request-{index} " + ("update " * 1000),
+                    "source": {"local_id": 100 + index, "sender_display": "Researcher"},
+                }
+                for index in range(20)
+            ],
+        }
+
+        prompt = worker.build_aginti_worker_prompt(task)
+
+        self.assertLess(len(prompt), 32000)
+        self.assertIn("routine_contract.json", prompt)
+        self.assertIn("new-request-19", prompt)
+        self.assertIn("Create the requested PDF", prompt)
+        self.assertIn("Do not redesign those systems", prompt)
+        self.assertNotIn("For `task.routine.id=video_publish_existing`", prompt)
+
+    def test_worker_session_passes_compact_prompt_only_to_aginti(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+        task = {
+            "id": "backend-prompt-task",
+            "chat": "LabAgent",
+            "request": "Create a concise research PDF.",
+            "route_decision": {"route_kind": "research_or_summary"},
+            "routine": {
+                "id": "general_worker",
+                "title": "General worker",
+                "purpose": "Complete the selected task.",
+                "stages": [{"id": "execute", "owner": "agent"}],
+            },
+            "routine_contract": {"json": "/tmp/task/routine_contract.json"},
+        }
+
+        def fake_agent(prompt: str, **kwargs: object) -> dict[str, object]:
+            calls.append({"prompt": prompt, **kwargs})
+            return {"ok": True, "message": "done", "thread_id": "worker"}
+
+        with mock.patch.object(worker, "run_codex_session", side_effect=fake_agent):
+            result = worker.run_worker_agent_session(
+                task,
+                {
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "medium",
+                    "sandbox": "danger-full-access",
+                    "timeout_seconds": 300,
+                },
+            )
+
+        self.assertEqual(result, "done")
+        self.assertIn("Bounded task packet", calls[0]["prompt"])
+        backend_prompts = calls[0]["backend_prompts"]
+        self.assertIsInstance(backend_prompts, dict)
+        self.assertIn("Exact task packet", backend_prompts["aginti"])
+        self.assertLess(len(backend_prompts["aginti"]), len(calls[0]["prompt"]))
+
     def test_orchestrator_runs_deterministic_stage_without_codex_session(self) -> None:
         worker = load_worker()
         task = {

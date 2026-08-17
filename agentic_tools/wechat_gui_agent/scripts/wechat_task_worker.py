@@ -6256,6 +6256,209 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
     return view
 
 
+def aginti_worker_task_view(task: dict[str, Any]) -> dict[str, Any]:
+    """Build the compact execution packet used only by the AgInTi fallback."""
+
+    full = worker_agent_task_view(task)
+    routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
+    routine_paths = (
+        task.get("routine_contract")
+        if isinstance(task.get("routine_contract"), dict)
+        else {}
+    )
+    response_policy = (
+        full.get("response_policy")
+        if isinstance(full.get("response_policy"), dict)
+        else {}
+    )
+    packet: dict[str, Any] = {
+        "schema": "labcanvas-aginti-task-v1",
+        "id": full.get("id"),
+        "chat": full.get("chat"),
+        "status": full.get("status"),
+        "current_request": sanitize_worker_agent_text(
+            full.get("current_request"), max_len=5000
+        ),
+        "source": full.get("source") or {},
+        "route_decision": full.get("route_decision") or {},
+        "routine": {
+            key: routine.get(key)
+            for key in (
+                "id",
+                "title",
+                "purpose",
+                "default_effort",
+                "artifact_policy",
+                "required_gates",
+                "rules",
+                "stages",
+                "state_policy",
+            )
+            if routine.get(key) not in (None, "", [], {})
+        },
+        "routine_contract_files": {
+            key: routine_paths.get(key)
+            for key in ("json", "markdown", "cheat_sheet")
+            if routine_paths.get(key)
+        },
+        "orchestrator": full.get("orchestrator") or {},
+        "response_policy": {
+            key: response_policy.get(key)
+            for key in (
+                "chat_purpose",
+                "language",
+                "style",
+                "artifact_delivery",
+                "no_reply_allowed",
+                "capability_profile",
+            )
+            if response_policy.get(key) not in (None, "", [], {})
+        },
+        "artifact_dir": str(worker_artifact_dir(task)),
+        "public_publish_allowed": bool(
+            task_route_decision(task).get("public_publish_allowed")
+        ),
+    }
+    context_rows: list[dict[str, Any]] = []
+    for row in (full.get("recent_same_chat_context") or [])[-8:]:
+        if not isinstance(row, dict):
+            continue
+        compact = dict(row)
+        if compact.get("content"):
+            compact["content"] = sanitize_worker_agent_text(
+                compact.get("content"), max_len=800
+            )
+        context_rows.append(compact)
+    if context_rows:
+        packet["recent_same_chat_context"] = context_rows
+    interruptions: list[dict[str, Any]] = []
+    for item in (full.get("interruptions") or [])[-6:]:
+        if not isinstance(item, dict):
+            continue
+        compact = dict(item)
+        compact["request"] = sanitize_worker_agent_text(
+            compact.get("request"), max_len=1200
+        )
+        interruptions.append(compact)
+    if interruptions:
+        packet["interruptions"] = interruptions
+    for key in (
+        "preflight",
+        "grant_workspace",
+        "completion_audit_repair",
+        "coverage_followup",
+        "worker_retry_context",
+        "generated_video_monitor",
+        "generated_video_submit_probe",
+        "generated_video_poststage",
+        "existing_video_publish_poststage",
+        "story_confirmation_result",
+        "monitor_only_no_resubmit",
+    ):
+        if full.get(key) not in (None, "", [], {}):
+            packet[key] = full[key]
+    if full.get("member_memory") not in (None, "", [], {}):
+        packet["member_memory_summary"] = sanitize_worker_agent_text(
+            json.dumps(full["member_memory"], ensure_ascii=False),
+            max_len=2400,
+        )
+    return bound_aginti_worker_packet(packet)
+
+
+def bound_aginti_worker_packet(
+    packet: dict[str, Any], *, max_chars: int = 22000
+) -> dict[str, Any]:
+    """Keep LocalLLM fallback input bounded while preserving current intent."""
+
+    serialized = json.dumps(packet, ensure_ascii=False)
+    if len(serialized) <= max_chars:
+        return packet
+    bounded = dict(packet)
+    bounded["recent_same_chat_context"] = [
+        {
+            **item,
+            "content": sanitize_worker_agent_text(item.get("content"), max_len=400),
+        }
+        for item in (packet.get("recent_same_chat_context") or [])[-4:]
+        if isinstance(item, dict)
+    ]
+    bounded["interruptions"] = [
+        {
+            **item,
+            "request": sanitize_worker_agent_text(item.get("request"), max_len=700),
+        }
+        for item in (packet.get("interruptions") or [])[-4:]
+        if isinstance(item, dict)
+    ]
+    for key in ("member_memory_summary", "worker_retry_context", "coverage_followup"):
+        if bounded.get(key) not in (None, "", [], {}):
+            bounded[key] = sanitize_worker_agent_text(
+                json.dumps(bounded[key], ensure_ascii=False), max_len=1200
+            )
+    serialized = json.dumps(bounded, ensure_ascii=False)
+    if len(serialized) <= max_chars:
+        return bounded
+    essentials = {
+        key: bounded.get(key)
+        for key in (
+            "schema",
+            "id",
+            "chat",
+            "status",
+            "current_request",
+            "source",
+            "route_decision",
+            "routine",
+            "routine_contract_files",
+            "orchestrator",
+            "artifact_dir",
+            "public_publish_allowed",
+            "recent_same_chat_context",
+            "interruptions",
+            "preflight",
+        )
+        if bounded.get(key) not in (None, "", [], {})
+    }
+    essentials["packet_compacted"] = True
+    return essentials
+
+
+def build_aginti_worker_prompt(task: dict[str, Any]) -> str:
+    """Give AgInTi one exact routine, not LabCanvas's entire tool handbook."""
+
+    packet_view = aginti_worker_task_view(task)
+    packet = json.dumps(packet_view, ensure_ascii=False, indent=2)
+    evidence_scope = json.dumps(
+        {
+            "mode": "task",
+            "request": str(packet_view.get("current_request") or ""),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"""You are AgInTi executing one exact LabCanvas chat task.
+AGINTI_EVIDENCE_SCOPE_JSON: {evidence_scope}
+
+LabCanvas already owns message intake, exact-chat isolation, scheduling, deterministic preflight, routine selection, queue state, and delivery. Do not redesign those systems. Work inside the current AgenticApp repository, follow AGENTS.md, and read the selected routine contract files in the packet before acting. Use established scripts and CLI entrypoints from that contract. The agent supplies judgment; deterministic routines supply repeatable mechanics.
+
+Treat the current request and later same-chat interruptions as authoritative. Keep every source and artifact scoped to this task and chat. Do not use nearby media or another group's context. Do not repeat completed stages. Never retry a payment, public publication, external send, destructive change, or other irreversible action without the packet's explicit gate and current authorization. Persist long work through the existing routine instead of holding a model call.
+
+Answer naturally and concisely. Do not expose model names, plans, tool logs, paths intended to remain private, stack traces, or runtime diagnostics. Return real artifact paths only when they exist and belong to this task. If blocked, state the exact blocker and resumable next action without claiming success.
+
+Return one strict JSON object and no prose:
+{{
+  "message": "natural source-chat response",
+  "files": ["verified task-scoped artifact path"],
+  "confirmation": "only when a real gate or human action is required",
+  "knowledge_items": [],
+  "upstream_feedback": []
+}}
+
+Exact task packet:
+{packet}
+"""
+
+
 def compact_worker_preflight_for_agent(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -6633,8 +6836,10 @@ If other external tools or files are not available, say exactly what is needed n
 Bounded task packet:
 {task_packet}
 """
+    aginti_backend_prompt = build_aginti_worker_prompt(task)
     if is_video_publish_task(task) and should_deterministic_video_publish(task):
         prompt = build_existing_video_publish_agent_prompt(task)
+        aginti_backend_prompt = prompt
     backend = (
         "codex"
         if isinstance(task.get("completion_audit_repair"), dict)
@@ -6655,6 +6860,7 @@ Bounded task packet:
         backend_config=worker_backend_config(task, backend),
         fallback_model=model_policy.get("fallback_model", "gpt-5.6-sol"),
         fallback_reasoning_effort=model_policy.get("fallback_reasoning_effort", str(policy["reasoning_effort"])),
+        backend_prompts={"aginti": aginti_backend_prompt},
     )
     if not result["ok"]:
         actual_backend = str(result.get("backend") or backend)
@@ -6669,6 +6875,8 @@ Bounded task packet:
         "fallback_started": bool(result.get("fallback_started")),
         "backend_fallback_used": bool(result.get("backend_fallback_used")),
         "backend_attempts": result.get("backend_attempts") if isinstance(result.get("backend_attempts"), list) else [],
+        "provider": str(result.get("provider") or ""),
+        "provider_attempts": result.get("provider_attempts") if isinstance(result.get("provider_attempts"), list) else [],
     }
     task["codex_session"] = {
         "role": "worker",

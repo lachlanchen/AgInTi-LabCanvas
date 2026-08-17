@@ -41,6 +41,7 @@ DEFAULT_FALLBACK_REASONING_EFFORT = "low"
 DEFAULT_LOW_QUOTA_SPARK_MODEL = "gpt-5.3-codex-spark"
 DEFAULT_LOW_QUOTA_THRESHOLD_PERCENT = 25.0
 LOW_QUOTA_SPARK_ROLES = frozenset({"fast", "route"})
+DEFAULT_AGINTI_PROVIDER_CHAIN = ("deepseek", "localllm")
 AGINTI_SESSION_RE = re.compile(r"^Session:\s*(web-agent-[0-9A-Za-z-]+)\s*$", re.MULTILINE)
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 BACKEND_METADATA_LINE_RE = re.compile(
@@ -79,6 +80,7 @@ AGINTI_MANAGED_VALUE_ARGS = {
     "--scout-count",
     "--wrapper",
     "--preferred-wrapper",
+    "--provider",
 }
 AGINTI_MANAGED_FLAG_ARGS = {
     "--approve-package-installs",
@@ -144,6 +146,33 @@ UNAVAILABLE_FAILURE_MARKERS = (
     "service unavailable",
     "temporarily unavailable",
 )
+AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS = (
+    "401",
+    "403",
+    "429",
+    "api key",
+    "authentication",
+    "context budget",
+    "context window",
+    "connection refused",
+    "credits exhausted",
+    "econnrefused",
+    "envelope exceeds",
+    "fetch failed",
+    "insufficient_quota",
+    "invalid api key",
+    "localllm_context_budget_exceeded",
+    "missing key",
+    "model not found",
+    "not configured",
+    "out of quota",
+    "provider unavailable",
+    "quota",
+    "rate limit",
+    "service unavailable",
+    "temporarily unavailable",
+    "unauthorized",
+)
 
 
 def select_agent_backend(config: dict[str, Any] | None = None) -> str:
@@ -195,6 +224,7 @@ def run_agent_session(
     backend_config: dict[str, Any] | None = None,
     fallback_model: str = "",
     fallback_reasoning_effort: str = "",
+    backend_prompts: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run one backend turn with system-level quota/unavailable fallback."""
     selected = normalize_backend(backend)
@@ -240,8 +270,13 @@ def run_agent_session(
             }
             return attach_attempt_summary(result, attempt_summaries)
         seen.add(signature)
-        result = run_single_backend_attempt(
+        attempt_prompt = prompt_for_backend(
             prompt,
+            str(attempt.get("backend") or selected),
+            backend_prompts,
+        )
+        result = run_single_backend_attempt(
+            attempt_prompt,
             attempt=attempt,
             primary_backend=selected,
             chat_name=chat_name,
@@ -254,7 +289,7 @@ def run_agent_session(
         usable_message = user_facing_backend_message(result.get("message"))
         if (
             result.get("ok")
-            and str(role or "").strip().casefold() in {"fast", "route"}
+            and is_conversational_agent_role(role)
             and is_generic_execution_evidence_refusal(usable_message)
         ):
             result = {
@@ -295,6 +330,20 @@ def run_agent_session(
         if next_attempt is None:
             return attach_attempt_summary(result, attempt_summaries)
         attempt = next_attempt
+
+
+def prompt_for_backend(
+    default_prompt: str,
+    backend: str,
+    backend_prompts: dict[str, str] | None,
+) -> str:
+    """Return a backend-sized prompt without changing the task or fallback plan."""
+
+    if not isinstance(backend_prompts, dict):
+        return default_prompt
+    selected = normalize_backend(backend)
+    candidate = backend_prompts.get(selected)
+    return str(candidate) if candidate is not None else default_prompt
 
 
 def run_single_backend_attempt(
@@ -736,11 +785,71 @@ def run_aginti_session(
     workdir: Path,
     backend_config: dict[str, Any],
 ) -> dict[str, Any]:
+    provider_attempts: list[dict[str, Any]] = []
+    providers = aginti_provider_chain(backend_config)
+    result: dict[str, Any] = {
+        "ok": False,
+        "message": "AgInTi failed: no provider was configured.",
+        "thread_id": "",
+        "returncode": 1,
+        "stderr_tail": "no AgInTi provider configured",
+        "stdout_tail": "",
+        "resumed": False,
+        "fallback_started": False,
+        "backend": "aginti",
+    }
+    for index, provider in enumerate(providers):
+        result = run_aginti_provider_once(
+            prompt,
+            chat_name=chat_name,
+            role=role,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            sandbox=sandbox,
+            timeout_seconds=timeout_seconds,
+            workdir=workdir,
+            backend_config=backend_config,
+            provider=provider,
+        )
+        provider_attempts.append(
+            {
+                "provider": provider,
+                "ok": bool(result.get("ok")),
+                "returncode": result.get("returncode"),
+                "failure_kind": classify_backend_failure(result),
+                "retry_safe": aginti_provider_retry_is_safe(result),
+            }
+        )
+        result["provider"] = provider
+        result["provider_attempts"] = provider_attempts
+        if result.get("ok"):
+            return result
+        if index + 1 >= len(providers) or not aginti_provider_retry_is_safe(result):
+            return result
+    return result
+
+
+def run_aginti_provider_once(
+    prompt: str,
+    *,
+    chat_name: str,
+    role: str,
+    model: str,
+    reasoning_effort: str,
+    sandbox: str,
+    timeout_seconds: int,
+    workdir: Path,
+    backend_config: dict[str, Any],
+    provider: str,
+) -> dict[str, Any]:
+    """Run one explicit AgInTi provider without replaying task side effects."""
+
     command = aginti_command(
         model=model,
         role=role,
         sandbox=sandbox,
         backend_config=backend_config,
+        provider=provider,
     )
     if not command:
         return {
@@ -781,7 +890,7 @@ def run_aginti_session(
     )
     machine_mode = bool(backend_config.get("machine_mode", True))
     configured_prompt_mode = str(
-        backend_config.get("prompt_mode") or os.environ.get("WECHAT_AGINTI_PROMPT_MODE") or ""
+        backend_config.get("prompt_mode") or aginti_env_value("PROMPT_MODE")
     ).strip()
     prompt_mode = configured_prompt_mode or ("stdin" if "--stdin" in command else "arg")
     run_command = list(command)
@@ -856,6 +965,62 @@ def run_aginti_session(
     }
 
 
+def aginti_env_value(suffix: str) -> str:
+    """Read the shared backend setting from either transport environment."""
+
+    normalized = str(suffix or "").strip().upper()
+    if not normalized:
+        return ""
+    for prefix in ("WECHAT", "WECOM", "LABCANVAS"):
+        value = os.environ.get(f"{prefix}_AGINTI_{normalized}")
+        if value is not None:
+            return value
+    return ""
+
+
+def aginti_provider_chain(backend_config: dict[str, Any]) -> list[str]:
+    raw = (
+        backend_config.get("provider_chain")
+        or backend_config.get("providers")
+        or aginti_env_value("PROVIDER_CHAIN")
+    )
+    if raw is None:
+        explicit = str(
+            backend_config.get("provider")
+            or aginti_env_value("PROVIDER")
+            or ""
+        ).strip()
+        raw = [explicit] if explicit else list(DEFAULT_AGINTI_PROVIDER_CHAIN)
+    if isinstance(raw, str):
+        values = re.split(r"[,\s]+", raw)
+    elif isinstance(raw, (list, tuple)):
+        values = [str(item) for item in raw]
+    else:
+        values = []
+    providers: list[str] = []
+    for value in values:
+        provider = str(value or "").strip().casefold()
+        if provider and provider not in providers:
+            providers.append(provider)
+    return providers or list(DEFAULT_AGINTI_PROVIDER_CHAIN)
+
+
+def aginti_provider_retry_is_safe(result: dict[str, Any]) -> bool:
+    """Retry another provider only for failures known to precede task execution."""
+
+    if result.get("ok") or int(result.get("returncode") or 0) in {124, 127}:
+        return False
+    if user_facing_backend_message(result.get("message")):
+        return False
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("stderr_tail", "stdout_tail", "reason", "message_source")
+    ).casefold()
+    if "timeout" in text or "timed out" in text:
+        return False
+    return any(marker in text for marker in AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS)
+
+
 def claude_command(
     *,
     role: str,
@@ -897,11 +1062,12 @@ def aginti_command(
     role: str,
     sandbox: str,
     backend_config: dict[str, Any],
+    provider: str = "",
 ) -> list[str]:
     raw_command = (
         backend_config.get("command")
         or backend_config.get("bin")
-        or os.environ.get("WECHAT_AGINTI_COMMAND")
+        or aginti_env_value("COMMAND")
         or "aginti"
     )
     if isinstance(raw_command, list):
@@ -913,7 +1079,7 @@ def aginti_command(
     machine_mode = bool(backend_config.get("machine_mode", True))
     raw_args = backend_config.get("args")
     if raw_args is None:
-        raw_args = os.environ.get("WECHAT_AGINTI_ARGS") or ""
+        raw_args = aginti_env_value("ARGS")
     if isinstance(raw_args, list):
         extra_args = [str(item) for item in raw_args if str(item).strip()]
     else:
@@ -943,6 +1109,9 @@ def aginti_command(
                 "block",
             ]
         )
+        selected_provider = str(provider or aginti_provider_chain(backend_config)[0]).strip()
+        if selected_provider:
+            command.extend(["--provider", selected_provider])
         if not bool(backend_config.get("allow_mcp", False)):
             command.append("--no-mcp")
         command.extend(
@@ -1002,7 +1171,7 @@ def aginti_sandbox_args(
     allow_danger = bool(backend_config.get("allow_dangerous_host", False))
     if explicit == "danger" and not allow_danger:
         explicit = "normal"
-    if role in {"fast", "route"}:
+    if is_conversational_agent_role(role):
         return [
             "--permission-mode",
             "safe",
@@ -1173,7 +1342,9 @@ def extract_agent_protocol_block(stdout: str) -> str:
 
 
 def aginti_workdir_from_config(backend_config: dict[str, Any], fallback: Path) -> Path:
-    raw = str(backend_config.get("workspace") or os.environ.get("WECHAT_AGINTI_WORKSPACE") or "").strip()
+    raw = str(
+        backend_config.get("workspace") or aginti_env_value("WORKSPACE")
+    ).strip()
     if not raw:
         return fallback
     path = Path(raw).expanduser()
@@ -1194,7 +1365,15 @@ def aginti_prompt(
 ) -> str:
     if not bool(backend_config.get("wrap_prompt", True)):
         return prompt
+    evidence_scope = ""
+    if is_conversational_agent_role(role):
+        evidence_scope = (
+            'AGINTI_EVIDENCE_SCOPE_JSON: {"mode":"chat-response",'
+            '"request":"Produce only the requested chat or routing response; '
+            'this role performs no external action."}\n'
+        )
     return f"""You are AgInTi acting as a fallback backend for LabCanvas WeChat automation.
+{evidence_scope}
 The exact current request below is the only task. Do not continue an old AgInTi session, reuse an unrelated artifact, or substitute a nearby workspace task.
 Preserve the requested output shape exactly. If the original prompt asks for JSON, return only valid JSON. If it asks for CHAT:/ACK:/TASK:, follow that protocol.
 Use the same source-isolation, safety, artifact-return, and chat-purpose rules in the original prompt. Do not invent unavailable files or claim browser/platform work completed without evidence.
@@ -1210,6 +1389,13 @@ Sandbox: {sandbox}
 Original prompt:
 {prompt}
 """
+
+
+def is_conversational_agent_role(role: str) -> bool:
+    normalized = str(role or "").strip().casefold().replace("_", "-")
+    return normalized in {"fast", "route"} or normalized.startswith(
+        ("fast-", "route-", "peer-", "chat-")
+    )
 
 
 def command_available(executable: str) -> bool:
