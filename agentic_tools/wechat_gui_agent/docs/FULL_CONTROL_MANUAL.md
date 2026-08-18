@@ -377,6 +377,12 @@ ledger, and file-send failure keeps the task retryable instead of marking it
 done by moving it to `send_deferred_artifact` or `send_deferred_locked`. It returns
 plain text or JSON:
 
+For an incoming video with no accompanying text instruction, the transport
+only caches the exact same-chat source privately. It does not transcribe,
+process, return, or publish the video. A later explicit same-chat text command
+promotes that exact source row into the requested routine; old history never
+supplies the authorization.
+
 ```json
 {
   "message": "Finished the render.",

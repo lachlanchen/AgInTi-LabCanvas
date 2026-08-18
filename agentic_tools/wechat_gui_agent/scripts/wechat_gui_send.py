@@ -1337,31 +1337,42 @@ def visible_chat_list_match_from_tsv(tsv_text: str, target: TargetSpec) -> dict[
     matches: list[dict[str, Any]] = []
     for words in rows.values():
         words.sort(key=lambda item: (int(item["left"]), int(item["top"])))
-        text = "".join(str(item["text"]) for item in words)
-        normalized = normalize_title(text)
-        identity = visible_chat_row_identity(text, expected_titles, allow_ocr_repair=target.allow_title_guard_fallback)
-        if not normalized or not identity:
-            continue
-        min_left = min(int(item["left"]) for item in words)
-        max_right = max(int(item["left"]) + int(item["width"]) for item in words)
-        min_top = min(int(item["top"]) for item in words)
-        max_bottom = max(int(item["top"]) + int(item["height"]) for item in words)
-        # Chat titles normally start after the avatar column. This avoids
-        # matching incidental text in timestamps, previews, or the side rail.
-        if min_left < 45 or min_left > 145:
-            continue
-        matches.append(
-            {
-                "text": text,
-                "normalized": normalized,
-                "left": min_left,
-                "top": min_top,
-                "right": max_right,
-                "bottom": max_bottom,
-                "center_y": (min_top + max_bottom) / 2.0,
-                "identity_mode": identity,
-            }
-        )
+        # Tesseract sometimes puts a few pixels from the avatar into the same
+        # TSV line as the title. Try bounded title prefixes that begin in the
+        # title column instead of rejecting the whole row because of that
+        # unrelated leading token. Prefixes also avoid appending a timestamp
+        # that Tesseract occasionally groups onto the same line.
+        for start, first in enumerate(words):
+            first_left = int(first["left"])
+            if first_left < 45 or first_left > 145:
+                continue
+            for end in range(start + 1, len(words) + 1):
+                title_words = words[start:end]
+                text = "".join(str(item["text"]) for item in title_words)
+                normalized = normalize_title(text)
+                identity = visible_chat_row_identity(
+                    text,
+                    expected_titles,
+                    allow_ocr_repair=target.allow_title_guard_fallback,
+                )
+                if not normalized or not identity:
+                    continue
+                min_left = int(title_words[0]["left"])
+                max_right = max(int(item["left"]) + int(item["width"]) for item in title_words)
+                min_top = min(int(item["top"]) for item in title_words)
+                max_bottom = max(int(item["top"]) + int(item["height"]) for item in title_words)
+                matches.append(
+                    {
+                        "text": text,
+                        "normalized": normalized,
+                        "left": min_left,
+                        "top": min_top,
+                        "right": max_right,
+                        "bottom": max_bottom,
+                        "center_y": (min_top + max_bottom) / 2.0,
+                        "identity_mode": identity,
+                    }
+                )
     if not matches:
         return None
     matches.sort(key=lambda item: (int(item["top"]), abs(int(item["left"]) - 65)))

@@ -936,6 +936,13 @@ def repair_explicit_research_task_contract(task: dict[str, Any]) -> bool:
 
 
 def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFAULT_SEND_TARGETS, log_idle: bool = True) -> bool:
+    promoted = reconcile_passive_video_publish_followups(queue)
+    if promoted:
+        log_worker_event(
+            "passive-video-publish-promoted",
+            {"count": promoted, "queue": str(queue)},
+        )
+        return True
     coverage_requeued = reconcile_numbered_message_coverage(queue)
     if coverage_requeued:
         log_worker_event(
@@ -3811,6 +3818,7 @@ def merge_existing_pending_interruptions(path: Path) -> int:
                 tasks[incoming_index] = incoming
                 merged += 1
                 continue
+            passive_publish_promoted = promote_passive_video_intake_for_publish(target, incoming, interruption)
             target.setdefault("interruptions", []).append(interruption)
             target["interruption_pending"] = True
             target["interruption_count"] = len(target["interruptions"])
@@ -3821,6 +3829,9 @@ def merge_existing_pending_interruptions(path: Path) -> int:
             if is_interruptible_story_video_task(target):
                 promote_story_target_for_generation_interruption(target, interruption)
             status = str(target.get("status") or "")
+            if passive_publish_promoted and status != CLAIMED_STATUS:
+                target["status"] = "pending"
+                status = "pending"
             if status in REQUEUE_ON_INTERRUPT_STATUSES:
                 target["status"] = "pending"
                 target["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
@@ -3864,13 +3875,17 @@ def find_interruption_target_index(tasks: list[dict[str, Any]], incoming_index: 
 
 
 def same_chat_interruption_target(target: dict[str, Any], incoming: dict[str, Any]) -> bool:
-    if not is_interruptible_worker_task(target):
+    passive_publish_followup = passive_video_publish_followup_compatible(target, incoming)
+    if not passive_publish_followup and not is_interruptible_worker_task(target):
         return False
     if target.get("coverage_followup") or incoming.get("coverage_followup"):
         return False
     if is_isolated_scheduled_task(target) or is_isolated_scheduled_task(incoming):
         return False
-    if str(target.get("status") or "") not in INTERRUPTIBLE_TASK_STATUSES:
+    target_status = str(target.get("status") or "")
+    if target_status not in INTERRUPTIBLE_TASK_STATUSES and not (
+        passive_publish_followup and target_status == "done"
+    ):
         return False
     if str(target.get("chat") or "") != str(incoming.get("chat") or ""):
         return False
@@ -3912,6 +3927,9 @@ def interruption_routes_compatible(target: dict[str, Any], incoming: dict[str, A
     relation = str(incoming_route.get("active_task_relation") or "").strip().casefold()
     related_task_id = str(incoming_route.get("active_task_id") or "").strip()
     if relation == "interrupt" and related_task_id == str(target.get("id") or ""):
+        return True
+
+    if passive_video_publish_followup_compatible(target, incoming):
         return True
 
     target_kind = str(target_route.get("route_kind") or "").strip()
@@ -3966,9 +3984,231 @@ def is_interruptible_worker_task(task: dict[str, Any]) -> bool:
     route_kind = str(route.get("route_kind") or "").strip()
     routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
     routine_id = str(routine.get("id") or "").strip()
+    if is_passive_video_intake_task(task):
+        return True
     if route_kind in NON_INTERRUPTIBLE_ROUTE_KINDS or routine_id in NON_INTERRUPTIBLE_ROUTINE_IDS:
         return False
     return bool(task.get("routine") or task.get("execution_contract") or route_kind)
+
+
+def is_passive_video_intake_task(task: dict[str, Any]) -> bool:
+    route = task_route_decision(task)
+    if bool(route.get("passive_video_intake")):
+        return True
+    if bool(route.get("public_publish_allowed")):
+        return False
+    route_kind = str(route.get("route_kind") or "").strip()
+    if route_kind not in {"file_download_or_save", "process_existing_video"}:
+        return False
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    local_type = int_or_none(source.get("local_type"))
+    if local_type is None or (local_type & 0xFFFFFFFF) != 43:
+        return False
+    evidence = "\n".join(
+        [
+            str(route.get("reason") or ""),
+            str(task.get("original_request") or ""),
+            str(task.get("request") or ""),
+        ]
+    ).casefold()
+    return any(
+        marker in evidence
+        for marker in (
+            "bare wechat video",
+            "bare video attachment",
+            "new wechat video item received",
+            "passive exact-source video intake",
+        )
+    )
+
+
+def primary_source_video_local_id(task: dict[str, Any]) -> int | None:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    local_type = int_or_none(source.get("local_type"))
+    if local_type is not None and (local_type & 0xFFFFFFFF) == 43:
+        return int_or_none(source.get("local_id"))
+    local_ids = extract_video_local_ids_from_task(task)
+    return local_ids[-1] if local_ids else None
+
+
+def passive_video_publish_followup_compatible(target: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    if not is_passive_video_intake_task(target):
+        return False
+    incoming_route = task_route_decision(incoming)
+    if str(incoming_route.get("route_kind") or "") != "publish_video":
+        return False
+    if not bool(incoming_route.get("public_publish_allowed")):
+        return False
+    local_id = primary_source_video_local_id(target)
+    return local_id is not None and local_id in extract_video_local_ids_from_task(incoming)
+
+
+def merge_task_context_rows(target: dict[str, Any], incoming: dict[str, Any]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    positions: dict[tuple[str, str, str], int] = {}
+    for row in [*(target.get("context") or []), *(incoming.get("context") or [])]:
+        if not isinstance(row, dict):
+            continue
+        key = (
+            str(row.get("message_table") or row.get("message_db") or ""),
+            str(row.get("server_id") or ""),
+            str(row.get("local_id") or ""),
+        )
+        if key in positions:
+            merged[positions[key]] = row
+        else:
+            positions[key] = len(merged)
+            merged.append(row)
+    return merged[-24:]
+
+
+def promote_passive_video_intake_for_publish(
+    target: dict[str, Any], incoming: dict[str, Any], interruption: dict[str, Any]
+) -> bool:
+    if not passive_video_publish_followup_compatible(target, incoming):
+        return False
+    local_id = primary_source_video_local_id(target)
+    incoming_route = task_route_decision(incoming)
+    incoming_source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
+    route = dict(incoming_route)
+    route.update(
+        {
+            "route_kind": "publish_video",
+            "project": "lazyedit",
+            "worker_needed": True,
+            "needs_recent_media": True,
+            "public_publish_intent": True,
+            "public_publish_allowed": True,
+            "external_action_allowed": True,
+            "source_policy": "current_plus_explicit_refs",
+            "passive_video_intake": False,
+            "exact_source_video_local_id": local_id,
+            "publish_authorization_source": {
+                "local_id": incoming_source.get("local_id"),
+                "server_id": incoming_source.get("server_id"),
+                "message_table": incoming_source.get("message_table"),
+            },
+        }
+    )
+    target["route_decision"] = route
+    incoming_routine = incoming.get("routine") if isinstance(incoming.get("routine"), dict) else {}
+    routine = dict(incoming_routine)
+    routine.update(
+        {
+            "id": "video_publish_existing",
+            "task_id": target.get("id"),
+            "chat": target.get("chat"),
+            "source": target.get("source") if isinstance(target.get("source"), dict) else {},
+            "route_kind": "publish_video",
+            "project": "lazyedit",
+            "public_publish_allowed": True,
+            "selected_by": "wechat_task_worker.promote_passive_video_intake_for_publish",
+        }
+    )
+    target["routine"] = routine
+    for field in ("instruction_contract", "execution_contract"):
+        if isinstance(incoming.get(field), dict):
+            target[field] = dict(incoming[field])
+    target["context"] = merge_task_context_rows(target, incoming)
+    target["publish_authorized_at"] = interruption.get("at")
+    target["publish_authorized_by"] = interruption.get("source")
+    target["passive_video_promoted_at"] = interruption.get("at")
+    target["passive_video_promoted_from_task"] = incoming.get("id")
+    for field in (
+        "preflight",
+        "result",
+        "existing_video_publish_poststage",
+        "next_publish_poststage_at",
+        "next_publish_poststage_at_iso",
+        "publish_poststage_queued_at",
+        "publish_poststage_last_status",
+        "publish_poststage_last_outcome",
+        "worker_result_ready_at",
+        "worker_error",
+        "send_errors",
+        "send_suppressed_at",
+        "send_suppressed_reason",
+        "completed_at",
+        "abandoned_at",
+        "abandoned_reason",
+    ):
+        target.pop(field, None)
+    return True
+
+
+def reconcile_passive_video_publish_followups(path: Path) -> int:
+    """Collapse legacy split intake/publish rows into one exact-source task."""
+    if not path.exists():
+        return 0
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    now = datetime.now()
+    now_text = now.isoformat(timespec="seconds")
+    changed = 0
+    eligible_incoming = {
+        "pending",
+        "worker_abandoned",
+        EXISTING_VIDEO_PUBLISH_PENDING_STATUS,
+        SEND_DEFERRED_ARTIFACT_STATUS,
+        SEND_DEFERRED_LOCKED_STATUS,
+        SEND_RETRYING_STATUS,
+    }
+    eligible_target = eligible_incoming | {"done", "send_failed"}
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        tasks = read_tasks(path)
+        for incoming_index, incoming in enumerate(tasks):
+            if str(incoming.get("status") or "") not in eligible_incoming:
+                continue
+            incoming_route = task_route_decision(incoming)
+            if str(incoming_route.get("route_kind") or "") != "publish_video" or not bool(
+                incoming_route.get("public_publish_allowed")
+            ):
+                continue
+            for target_index in range(incoming_index - 1, -1, -1):
+                target = tasks[target_index]
+                if str(target.get("status") or "") not in eligible_target:
+                    continue
+                if str(target.get("chat") or "") != str(incoming.get("chat") or ""):
+                    continue
+                target_source = target.get("source") if isinstance(target.get("source"), dict) else {}
+                incoming_source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
+                if not same_optional_field(target_source, incoming_source, "message_table"):
+                    continue
+                if not same_optional_field(target_source, incoming_source, "config_id"):
+                    continue
+                if not interruption_target_recent_enough(target, incoming):
+                    continue
+                if not passive_video_publish_followup_compatible(target, incoming):
+                    continue
+                interruption = build_task_interruption(target, incoming)
+                promote_passive_video_intake_for_publish(target, incoming, interruption)
+                target.setdefault("interruptions", []).append(interruption)
+                target["interruptions"] = target["interruptions"][-20:]
+                target["interruption_pending"] = True
+                target["interruption_count"] = len(target["interruptions"])
+                target["last_interruption_at"] = interruption["at"]
+                target["last_interruption_source"] = interruption["source"]
+                target["interruption_policy"] = interruption_policy_for_task(target)
+                target["request"] = append_interruption_notice_to_request(target.get("request"), interruption)
+                target["status"] = "pending"
+                target["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
+                target["reprocess_requested_at"] = now_text
+                target["reprocess_reason"] = "explicit_text_promoted_passive_video_intake"
+                for field in ("claimed_at", "worker_id", "send_suppressed_reason"):
+                    target.pop(field, None)
+                incoming["status"] = "canceled_superseded"
+                incoming["completed_at"] = now_text
+                incoming["superseded_at"] = now_text
+                incoming["superseded_by"] = target.get("id")
+                incoming["superseded_reason"] = "explicit_publish_promoted_exact_passive_video_source"
+                tasks[target_index] = target
+                tasks[incoming_index] = incoming
+                changed += 1
+                break
+        if changed:
+            write_tasks(path, tasks)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    return changed
 
 
 def same_optional_field(left: dict[str, Any], right: dict[str, Any], key: str) -> bool:
@@ -4484,7 +4724,7 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
                 or existing_video_publish_poststage_ready(task, now)
             ):
                 chat = str(task.get("chat") or "")
-                if status == "pending" and chat and chat in active_chats:
+                if status != CLAIMED_STATUS and chat and chat in active_chats:
                     continue
                 candidates.append((claim_ready_sort_key(task, status, index), index, status))
         if not candidates:
@@ -7722,6 +7962,27 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
         task["preflight"] = preflight
     if not is_video_publish_task(task):
         return preflight
+    if not generate_video_task and should_preflight_autopublish(task):
+        if "resolved_video_artifact" not in preflight:
+            autopub = run_autopublish_video_preflight(task)
+            if bool(autopub.get("ok")):
+                preserve_known_lazyedit_publish_identity(previous_autopub, autopub)
+                preflight["autopublish_video"] = autopub
+                clear_source_resolution_publish_retry(task)
+            else:
+                artifact_resolution = resolve_exact_video_artifact_preflight(task, autopub)
+                if bool(artifact_resolution.get("ok")):
+                    preserve_known_lazyedit_publish_identity(previous_autopub, artifact_resolution)
+                    preflight["autopublish_video"] = artifact_resolution
+                else:
+                    autopub["artifact_resolution"] = artifact_resolution
+                    preflight["autopublish_video"] = autopub
+    if is_passive_video_intake_task(task):
+        # Attachment-only video intake ends after exact-source persistence.
+        # Do not probe audio, create LazyEdit prompts, call an agent, or infer
+        # publication work until a later same-chat text request promotes it.
+        task["preflight"] = preflight
+        return preflight
     context_path = artifact_dir / "lazyedit_correction_context.md"
     metadata_path = artifact_dir / "lazyedit_metadata_brief.md"
     preflight["lazyedit_context"] = {
@@ -7741,21 +8002,6 @@ def prepare_worker_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[s
             "Current Studio settings may supply layout defaults but must not add a platform."
         ),
     }
-    if not generate_video_task and should_preflight_autopublish(task):
-        if "resolved_video_artifact" not in preflight:
-            autopub = run_autopublish_video_preflight(task)
-            if bool(autopub.get("ok")):
-                preserve_known_lazyedit_publish_identity(previous_autopub, autopub)
-                preflight["autopublish_video"] = autopub
-                clear_source_resolution_publish_retry(task)
-            else:
-                artifact_resolution = resolve_exact_video_artifact_preflight(task, autopub)
-                if bool(artifact_resolution.get("ok")):
-                    preserve_known_lazyedit_publish_identity(previous_autopub, artifact_resolution)
-                    preflight["autopublish_video"] = artifact_resolution
-                else:
-                    autopub["artifact_resolution"] = artifact_resolution
-                    preflight["autopublish_video"] = autopub
     if should_prepare_audio_intake(task):
         preflight["audio_intake"] = prepare_audio_intake_preflight(task, artifact_dir)
         task["preflight"] = preflight
@@ -11111,6 +11357,8 @@ def task_focus_text(task: dict[str, Any]) -> str:
 
 
 def is_video_publish_task(task: dict[str, Any]) -> bool:
+    if is_passive_video_intake_task(task):
+        return True
     routine = task.get("routine") if isinstance(task.get("routine"), dict) else {}
     if str(routine.get("id") or "") == "video_publish_existing":
         return True
@@ -11975,10 +12223,16 @@ def lazyedit_human_context_candidates(
 def lazyedit_focused_human_request(task: dict[str, Any], *, max_len: int = 3000) -> str:
     """Keep exact source wording plus any legacy natural request detail."""
     parts: list[str] = []
-    values = (
+    values = [
         task_focus_text(task),
         task.get("original_request"),
         task.get("request"),
+    ]
+    # A passive attachment promoted by a later text command keeps the video
+    # row as its immutable source. Preserve the requester-authored follow-up
+    # even when the surrounding task wrapper still contains transport prose.
+    values.extend(
+        lazyedit_human_context_candidates(task, limit=6, max_len=max_len)
     )
     for value in values:
         if is_internal_or_transport_context_text(value):
@@ -12845,6 +13099,9 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
     manual_handoff = deterministic_manual_generated_video_handoff_result(task)
     if manual_handoff is not None:
         return manual_handoff
+    passive_video = deterministic_passive_video_intake_result(task)
+    if passive_video is not None:
+        return passive_video
     existing_publish = deterministic_existing_video_publish_poststage_result(task)
     if existing_publish is not None:
         return existing_publish
@@ -12938,6 +13195,80 @@ def deterministic_preflight_result(task: dict[str, Any]) -> str | None:
             "files": [],
             "confirmation": "",
             "publish_poststage_retry": source_retry,
+        },
+        ensure_ascii=False,
+    )
+
+
+def deterministic_passive_video_intake_result(task: dict[str, Any]) -> str | None:
+    """Cache a bare video without invoking an agent, LazyEdit, or chat send."""
+    if not is_passive_video_intake_task(task):
+        return None
+    preflight = task.get("preflight") if isinstance(task.get("preflight"), dict) else {}
+    autopub = preflight.get("autopublish_video") if isinstance(preflight.get("autopublish_video"), dict) else None
+    if not isinstance(autopub, dict):
+        return None
+    if bool(autopub.get("ok")):
+        target_raw = str(autopub.get("target") or autopub.get("source_path") or "")
+        target = Path(target_raw).expanduser() if target_raw else None
+        if target is not None and target.is_file() and target.stat().st_size > 0:
+            task["passive_video_intake"] = {
+                "status": "cached",
+                "saved_path": str(target.resolve()),
+                "bytes": target.stat().st_size,
+                "message_local_ids": list(autopub.get("message_local_ids") or []),
+                "message_refs": list(autopub.get("message_refs") or []),
+                "cached_at": datetime.now().isoformat(timespec="seconds"),
+                "publication_authorized": False,
+            }
+            return json.dumps(
+                {
+                    "message": "",
+                    "confirmation": "",
+                    "files": [],
+                    "no_reply": True,
+                    "data": {
+                        "passive_video_intake": task["passive_video_intake"],
+                        "require_file_delivery": False,
+                    },
+                },
+                ensure_ascii=False,
+            )
+    message_local_ids = list(autopub.get("message_local_ids") or [])
+    if not message_local_ids:
+        return None
+    retry_seconds = max(
+        60,
+        int(os.environ.get("WECHAT_WORKER_SOURCE_VIDEO_RETRY_SECONDS", "120")),
+    )
+    retry = {
+        "status": "waiting_source_media",
+        "stage": "source_resolution",
+        "retry_seconds": retry_seconds,
+        "poststage": {
+            "stage": "source_resolution",
+            "message_local_ids": message_local_ids,
+            "message_refs": list(autopub.get("message_refs") or []),
+            "passive_video_intake": True,
+        },
+        "outcome": {
+            "error": str(autopub.get("error") or "exact source video is not cached"),
+        },
+    }
+    return json.dumps(
+        {
+            "message": "",
+            "confirmation": "",
+            "files": [],
+            "no_reply": True,
+            "publish_poststage_retry": retry,
+            "data": {
+                "publish_poststage_retry": retry,
+                "passive_video_intake": {
+                    "status": "waiting_source_media",
+                    "publication_authorized": False,
+                },
+            },
         },
         ensure_ascii=False,
     )
@@ -16232,7 +16563,7 @@ def parse_worker_result(text: str) -> dict[str, Any]:
     if isinstance(data, dict):
         raw_message = str(data.get("message") or "")
         raw_confirmation = str(data.get("confirmation") or data.get("confirm") or "")
-        no_reply = is_no_reply_control(raw_message) or is_no_reply_control(raw_confirmation)
+        no_reply = bool(data.get("no_reply")) or is_no_reply_control(raw_message) or is_no_reply_control(raw_confirmation)
         message = sanitize_worker_chat_message(raw_message)
         confirmation = sanitize_worker_chat_message(raw_confirmation)
         files = [] if json_payload_is_file_intake_receipt(data) else file_entries_from_json(data)

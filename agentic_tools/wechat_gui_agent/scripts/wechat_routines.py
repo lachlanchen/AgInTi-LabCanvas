@@ -340,6 +340,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
         + (
             "Never use nearby media if exact local_id/token matching fails.",
             "Passive cache or background intake stays silent; only an explicit local-save request gets a completion receipt.",
+            "A bare video attachment authorizes exact-source caching only. Transcription, LazyEdit processing, return delivery, and public publication require a separate same-chat text instruction.",
             "Use browser assist for login/CAPTCHA/download consent instead of bypassing the site.",
         ),
     ),

@@ -3466,6 +3466,57 @@ stderr: noisy internal trace
         self.assertEqual(payload["message_local_ids"], [57])
         self.assertEqual(payload["private_save_dest"], str(artifact_dir / "source_media"))
 
+    def test_passive_video_preflight_stops_after_exact_source_save(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "passive-video-task",
+            "chat": "🍓My devices",
+            "source": {
+                "local_id": 64,
+                "local_type": 43,
+                "message_table": "Msg_exact",
+            },
+            "route_decision": {
+                "route_kind": "file_download_or_save",
+                "needs_recent_media": True,
+                "passive_video_intake": True,
+                "public_publish_allowed": False,
+            },
+            "request": "New WeChat video item received with no text instruction.",
+            "context": [
+                {
+                    "local_id": 64,
+                    "local_type": 43,
+                    "content": '<msg><videomsg md5="' + ("a" * 32) + '" length="3230161" /></msg>',
+                }
+            ],
+        }
+        saved = {
+            "ok": True,
+            "status": "copied",
+            "target": "/tmp/passive/source_video.mp4",
+            "message_local_ids": [64],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp) / "artifact"
+            with mock.patch.object(worker, "should_resolve_recent_video_artifact", return_value=False):
+                with mock.patch.object(worker, "should_prepare_media_resolution", return_value=False):
+                    with mock.patch.object(worker, "task_requests_local_download_save", return_value=False):
+                        with mock.patch.object(worker, "should_preflight_autopublish", return_value=True):
+                            with mock.patch.object(worker, "run_autopublish_video_preflight", return_value=saved) as save:
+                                with mock.patch.object(worker, "should_prepare_audio_intake", return_value=True):
+                                    with mock.patch.object(worker, "prepare_audio_intake_preflight") as audio:
+                                        payload = worker.prepare_worker_preflight(task, artifact_dir)
+
+        save.assert_called_once_with(task)
+        audio.assert_not_called()
+        self.assertEqual(payload["autopublish_video"], saved)
+        self.assertNotIn("audio_intake", payload)
+        self.assertNotIn("lazyedit_context", payload)
+        self.assertNotIn("lazyedit_options", payload)
+        self.assertNotIn("publish_platforms", payload)
+
     def test_reprocess_task_clears_stale_result_and_preserves_source_context(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -6337,6 +6388,163 @@ stderr: noisy internal trace
         self.assertTrue(tasks[0]["interruption_pending"])
         self.assertEqual(tasks[0]["interruptions"][0]["source"]["local_id"], 202)
         self.assertEqual(tasks[1]["status"], "canceled_superseded")
+
+    def test_worker_reconciles_legacy_bare_video_and_explicit_publish_rows(self) -> None:
+        worker = load_worker()
+        now = int(datetime.now().timestamp())
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "video-64",
+                        "chat": "🍓My devices",
+                        "status": "worker_abandoned",
+                        "request": "New WeChat video item received; inspect the bare WeChat video upload.",
+                        "route_decision": {
+                            "route_kind": "process_existing_video",
+                            "public_publish_allowed": False,
+                            "reason": "new bare WeChat video upload",
+                        },
+                        "routine": {"id": "video_publish_existing"},
+                        "source": {
+                            "message_table": "MSG",
+                            "config_id": "devices",
+                            "server_id": "srv-64",
+                            "local_id": 64,
+                            "local_type": 43,
+                            "create_time": now,
+                        },
+                        "context": [
+                            {
+                                "message_table": "MSG",
+                                "server_id": "srv-64",
+                                "local_id": 64,
+                                "local_type": 43,
+                                "kind": "video",
+                                "content": "<msg><videomsg /></msg>",
+                            }
+                        ],
+                        "worker_result_ready_at": "2026-08-18T11:58:00",
+                        "send_suppressed_reason": "agent_no_reply",
+                    },
+                    {
+                        "id": "publish-65",
+                        "chat": "🍓My devices",
+                        "status": "worker_abandoned",
+                        "request": "Current coalesced request:\n帮我发布这个视频",
+                        "route_decision": {
+                            "route_kind": "publish_video",
+                            "public_publish_allowed": True,
+                            "public_publish_intent": True,
+                        },
+                        "routine": {"id": "video_publish_existing"},
+                        "source": {
+                            "message_table": "MSG",
+                            "config_id": "devices",
+                            "server_id": "srv-65",
+                            "local_id": 65,
+                            "local_type": 1,
+                            "create_time": now + 1,
+                        },
+                        "context": [
+                            {
+                                "message_table": "MSG",
+                                "server_id": "srv-64",
+                                "local_id": 64,
+                                "local_type": 43,
+                                "kind": "video",
+                                "content": "<msg><videomsg /></msg>",
+                            },
+                            {
+                                "message_table": "MSG",
+                                "server_id": "srv-65",
+                                "local_id": 65,
+                                "local_type": 1,
+                                "kind": "text",
+                                "content": "帮我发布这个视频",
+                            },
+                        ],
+                    },
+                ],
+            )
+
+            promoted = worker.reconcile_passive_video_publish_followups(queue)
+            tasks = worker.read_tasks(queue)
+
+        self.assertEqual(promoted, 1)
+        self.assertEqual(tasks[0]["status"], "pending")
+        self.assertEqual(tasks[0]["source"]["local_id"], 64)
+        self.assertEqual(tasks[0]["route_decision"]["route_kind"], "publish_video")
+        self.assertTrue(tasks[0]["route_decision"]["public_publish_allowed"])
+        self.assertEqual(tasks[0]["route_decision"]["exact_source_video_local_id"], 64)
+        self.assertNotIn("worker_result_ready_at", tasks[0])
+        self.assertNotIn("send_suppressed_reason", tasks[0])
+        self.assertEqual(tasks[1]["status"], "canceled_superseded")
+        self.assertEqual(tasks[1]["superseded_by"], "video-64")
+        self.assertIn(
+            "帮我发布这个视频",
+            worker.build_lazyedit_metadata_brief(tasks[0]),
+        )
+
+    def test_passive_video_intake_success_is_private_and_skips_delivery(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "source.mp4"
+            video.write_bytes(b"exact-video")
+            task = {
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "passive_video_intake": True,
+                    "public_publish_allowed": False,
+                },
+                "source": {"local_id": 64, "local_type": 43},
+                "preflight": {
+                    "autopublish_video": {
+                        "ok": True,
+                        "target": str(video),
+                        "message_local_ids": [64],
+                    }
+                },
+            }
+
+            raw = worker.deterministic_preflight_result(task)
+
+        self.assertIsNotNone(raw)
+        payload = json.loads(raw or "{}")
+        self.assertTrue(payload["no_reply"])
+        self.assertEqual(payload["files"], [])
+        self.assertEqual(payload["data"]["passive_video_intake"]["status"], "cached")
+        self.assertFalse(payload["data"]["passive_video_intake"]["publication_authorized"])
+
+    def test_passive_video_intake_missing_source_retries_without_chat_message(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {
+                "route_kind": "file_download_or_save",
+                "passive_video_intake": True,
+                "public_publish_allowed": False,
+            },
+            "source": {"local_id": 64, "local_type": 43},
+            "preflight": {
+                "autopublish_video": {
+                    "ok": False,
+                    "error": "exact source video is not cached",
+                    "message_local_ids": [64],
+                    "message_refs": ["message_1.db:64"],
+                }
+            },
+        }
+
+        raw = worker.deterministic_preflight_result(task)
+        result = worker.parse_worker_result(raw or "")
+        worker.apply_send_outcome(task, result, [])
+
+        self.assertTrue(result["no_reply"])
+        self.assertEqual(task["status"], worker.EXISTING_VIDEO_PUBLISH_PENDING_STATUS)
+        self.assertEqual(task["existing_video_publish_poststage"]["message_local_ids"], [64])
+        self.assertTrue(task["existing_video_publish_poststage"]["passive_video_intake"])
 
     def test_worker_merges_consecutive_research_followup_into_active_session(self) -> None:
         worker = load_worker()
@@ -11905,6 +12113,43 @@ stderr: noisy internal trace
                         "chat": "Shares",
                         "status": "pending",
                         "created_at": now_text,
+                    },
+                    {
+                        "id": "research-next",
+                        "chat": "LazyResearch",
+                        "status": "pending",
+                        "created_at": now_text,
+                    },
+                ],
+            )
+
+            with mock.patch.object(worker, "process_alive", return_value=True):
+                claimed = worker.claim_next_pending(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], "research-next")
+
+    def test_claim_next_pending_serializes_due_poststage_for_active_chat(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            now_text = datetime.now().isoformat(timespec="seconds")
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "devices-active",
+                        "chat": "🍓My devices",
+                        "status": worker.CLAIMED_STATUS,
+                        "worker_id": "pid:111",
+                        "claimed_at": now_text,
+                    },
+                    {
+                        "id": "devices-publish-poll",
+                        "chat": "🍓My devices",
+                        "status": worker.EXISTING_VIDEO_PUBLISH_PENDING_STATUS,
+                        "next_publish_poststage_at": 0,
                     },
                     {
                         "id": "research-next",

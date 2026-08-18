@@ -2403,6 +2403,33 @@ def is_bare_image_intake_request(row: dict[str, Any], text: str) -> bool:
     )
 
 
+def is_bare_video_intake_request(row: dict[str, Any], text: str) -> bool:
+    """Keep a video-only message as passive exact-source intake.
+
+    A video attachment is source material, not authorization to transcribe,
+    process through LazyEdit, or publish. A later same-chat text message may
+    promote this exact local_id into an authorized task.
+    """
+    local_type, _ = split_message_type(row.get("local_type"))
+    if local_type != 43:
+        return False
+    visible_normalized = collapse_text(visible_message_text(row)).lower()
+    request_normalized = collapse_text(text).lower()
+    internal_intake_terms = [
+        "new wechat video item received",
+        "bare wechat video upload",
+        "passive exact-source video intake",
+        "cache/save the exact source video",
+    ]
+    if any(term in request_normalized for term in internal_intake_terms):
+        return True
+    return (
+        not request_normalized
+        or request_normalized == visible_normalized
+        or request_normalized.startswith("[wechat video]")
+    )
+
+
 def text_contains_web_source(text: str) -> bool:
     lowered = str(text or "").lower()
     markers = [
@@ -3789,8 +3816,11 @@ def fallback_route_decision(
         is_quote_reply_message(row) and references_recent_media(text)
     )
     manual_handoff = is_manual_generated_video_handoff_update(text)
+    bare_video_intake = is_bare_video_intake_request(row, text)
     if manual_handoff:
         route_kind = "generate_video"
+    elif bare_video_intake:
+        route_kind = "file_download_or_save"
     elif is_bare_file_intake_request(row, text) or is_bare_image_intake_request(row, text):
         route_kind = "file_intake"
     elif link_inbox_summary_task:
@@ -3882,7 +3912,21 @@ def fallback_route_decision(
         "route_agent_model": "fallback",
     }
     if route_kind == "file_download_or_save":
-        route["delivery_mode"] = file_download_delivery_mode(text)
+        route["delivery_mode"] = "passive_cache" if bare_video_intake else file_download_delivery_mode(text)
+    if bare_video_intake:
+        route.update(
+            {
+                "project": "generic",
+                "worker_needed": True,
+                "needs_recent_media": True,
+                "passive_video_intake": True,
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+                "external_action_allowed": True,
+                "source_policy": "current_source_only",
+                "reason": "bare video attachment: cache the exact source only; await a separate same-chat text instruction",
+            }
+        )
     if permission_question:
         route.update(
             {
@@ -3970,6 +4014,13 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
             str(parsed.get("reason") or fallback.get("reason") or "")
             + " | bare attachment upload kept as lightweight intake"
         ).strip()
+    passive_video_intake = bool(fallback.get("passive_video_intake"))
+    if passive_video_intake:
+        route_kind = "file_download_or_save"
+        parsed["reason"] = (
+            str(parsed.get("reason") or fallback.get("reason") or "")
+            + " | bare video kept as passive exact-source cache; text authorization required for processing or publication"
+        ).strip()
     if route_kind in {"generate_image", "generate_video"} and is_story_or_script_task(current_request):
         if route_kind == "generate_image" and not has_visual_generation_intent(current_request):
             route_kind = "story_or_script"
@@ -3987,7 +4038,7 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         needs_recent_media = True
     elif route_kind in {"generate_video", "generate_image"} and not references_recent_media(current_request):
         needs_recent_media = False
-    if route_kind == "file_intake":
+    if route_kind == "file_intake" or passive_video_intake:
         needs_recent_media = True
     project = str(parsed.get("project") or fallback.get("project") or "unknown")
     fallback_project = str(fallback.get("project") or "")
@@ -4007,7 +4058,20 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         }
     )
     if route_kind == "file_download_or_save":
-        parsed["delivery_mode"] = file_download_delivery_mode(current_request)
+        parsed["delivery_mode"] = "passive_cache" if passive_video_intake else file_download_delivery_mode(current_request)
+    if passive_video_intake:
+        parsed.update(
+            {
+                "project": "generic",
+                "worker_needed": True,
+                "needs_recent_media": True,
+                "passive_video_intake": True,
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+                "external_action_allowed": True,
+                "source_policy": "current_source_only",
+            }
+        )
     if permission_question:
         parsed["project"] = str(parsed.get("project") or "lazyedit")
         parsed["public_publish_allowed"] = False
@@ -5921,6 +5985,12 @@ def attachment_request_text(row: dict[str, Any]) -> str:
             "then safely inspect ZIP/Word/PDF/text content and give a concise natural preliminary summary. "
             "Do not execute archive contents, Office macros, or embedded programs."
         )
+    if split_message_type(row.get("local_type"))[0] == 43:
+        return (
+            "New WeChat video item received with no text instruction; perform passive exact-source video intake only. "
+            "Cache/save the exact source video for a possible same-chat follow-up. Do not transcribe, process through "
+            "LazyEdit, send it back, or publish it until a separate user text message explicitly requests that action."
+        )
     return (
         f"New WeChat {message_kind(row)} item received; inspect its message metadata, "
         "card/link fields, and recent synced files/media, then summarize or process it."
@@ -6636,6 +6706,7 @@ def append_same_chat_task_interruption(tasks: list[dict[str, Any]], incoming: di
             apply_manual_generated_video_handoff(candidate, incoming, interruption)
             tasks[index] = candidate
             return candidate
+        passive_publish_promoted = promote_passive_video_intake_for_publish(candidate, incoming, interruption)
         candidate.setdefault("interruptions", []).append(interruption)
         candidate["interruptions"] = candidate["interruptions"][-20:]
         candidate["interruption_pending"] = True
@@ -6656,6 +6727,9 @@ def append_same_chat_task_interruption(tasks: list[dict[str, Any]], incoming: di
         }
         promote_story_target_for_generation_interruption(candidate, interruption)
         status = str(candidate.get("status") or "")
+        if passive_publish_promoted and status != "in_progress":
+            candidate["status"] = "pending"
+            status = "pending"
         if status in REQUEUE_ON_INTERRUPT_STATUSES:
             candidate["status"] = "pending"
             candidate["expires_at"] = (
@@ -6739,12 +6813,19 @@ def apply_manual_generated_video_handoff(candidate: dict[str, Any], incoming: di
 
 
 def same_chat_interruption_target(candidate: dict[str, Any], incoming: dict[str, Any]) -> bool:
-    if not is_interruptible_task(candidate):
+    passive_publish_followup = passive_video_publish_followup_compatible(candidate, incoming)
+    if not passive_publish_followup and not is_interruptible_task(candidate):
         return False
     status = str(candidate.get("status") or "")
-    if status not in INTERRUPTIBLE_TASK_STATUSES:
+    if status not in INTERRUPTIBLE_TASK_STATUSES and not (
+        passive_publish_followup and status == "done"
+    ):
         return False
-    if status == "worker_abandoned" and not abandoned_generation_pre_submit_recoverable(candidate):
+    if (
+        status == "worker_abandoned"
+        and not passive_publish_followup
+        and not abandoned_generation_pre_submit_recoverable(candidate)
+    ):
         return False
     if str(candidate.get("chat") or "") != str(incoming.get("chat") or ""):
         return False
@@ -6784,6 +6865,9 @@ def interruption_routes_compatible(candidate: dict[str, Any], incoming: dict[str
     relation = str(incoming_route.get("active_task_relation") or "").strip().casefold()
     related_task_id = str(incoming_route.get("active_task_id") or "").strip()
     if relation == "interrupt" and related_task_id == str(candidate.get("id") or ""):
+        return True
+
+    if passive_video_publish_followup_compatible(candidate, incoming):
         return True
 
     if (
@@ -6887,7 +6971,7 @@ def is_interruptible_task(task: dict[str, Any]) -> bool:
     route_kind = str(route.get("route_kind") or "")
     routine_id = str(routine.get("id") or "")
     project = str(route.get("project") or "").lower()
-    if publish_task_waiting_for_exact_source(task):
+    if publish_task_waiting_for_exact_source(task) or is_passive_video_intake_task(task):
         return True
     if route_kind in NON_INTERRUPTIBLE_ROUTE_KINDS or routine_id in NON_INTERRUPTIBLE_ROUTINE_IDS:
         return False
@@ -6933,6 +7017,152 @@ def source_video_reference_local_ids(task: dict[str, Any]) -> set[int]:
         if local_id is not None:
             local_ids.add(local_id)
     return local_ids
+
+
+def is_passive_video_intake_task(task: dict[str, Any]) -> bool:
+    route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    if bool(route.get("passive_video_intake")):
+        return True
+    if bool(route.get("public_publish_allowed")):
+        return False
+    route_kind = str(route.get("route_kind") or "").strip()
+    if route_kind not in {"file_download_or_save", "process_existing_video"}:
+        return False
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    local_type = int_or_none(source.get("local_type"))
+    if local_type is None or (local_type & 0xFFFFFFFF) != 43:
+        return False
+    evidence = "\n".join(
+        [
+            str(route.get("reason") or ""),
+            str(task.get("original_request") or ""),
+            str(task.get("request") or ""),
+        ]
+    ).casefold()
+    return any(
+        marker in evidence
+        for marker in (
+            "bare wechat video",
+            "bare video attachment",
+            "new wechat video item received",
+            "passive exact-source video intake",
+        )
+    )
+
+
+def primary_source_video_local_id(task: dict[str, Any]) -> int | None:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    local_type = int_or_none(source.get("local_type"))
+    if local_type is not None and (local_type & 0xFFFFFFFF) == 43:
+        return int_or_none(source.get("local_id"))
+    refs = sorted(source_video_reference_local_ids(task), reverse=True)
+    return refs[0] if refs else None
+
+
+def passive_video_publish_followup_compatible(candidate: dict[str, Any], incoming: dict[str, Any]) -> bool:
+    if not is_passive_video_intake_task(candidate):
+        return False
+    incoming_route = incoming.get("route_decision") if isinstance(incoming.get("route_decision"), dict) else {}
+    if str(incoming_route.get("route_kind") or "") != "publish_video":
+        return False
+    if not bool(incoming_route.get("public_publish_allowed")):
+        return False
+    source_local_id = primary_source_video_local_id(candidate)
+    return source_local_id is not None and source_local_id in source_video_reference_local_ids(incoming)
+
+
+def merge_task_context_rows(candidate: dict[str, Any], incoming: dict[str, Any]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    positions: dict[tuple[str, str, str], int] = {}
+    for row in [*(candidate.get("context") or []), *(incoming.get("context") or [])]:
+        if not isinstance(row, dict):
+            continue
+        key = (
+            str(row.get("message_table") or row.get("message_db") or ""),
+            str(row.get("server_id") or ""),
+            str(row.get("local_id") or ""),
+        )
+        if key in positions:
+            merged[positions[key]] = row
+        else:
+            positions[key] = len(merged)
+            merged.append(row)
+    return merged[-24:]
+
+
+def promote_passive_video_intake_for_publish(
+    candidate: dict[str, Any], incoming: dict[str, Any], interruption: dict[str, Any]
+) -> bool:
+    """Promote one exact cached video after a later explicit text command."""
+    if not passive_video_publish_followup_compatible(candidate, incoming):
+        return False
+    source_local_id = primary_source_video_local_id(candidate)
+    incoming_route = incoming.get("route_decision") if isinstance(incoming.get("route_decision"), dict) else {}
+    incoming_source = incoming.get("source") if isinstance(incoming.get("source"), dict) else {}
+    route = dict(incoming_route)
+    route.update(
+        {
+            "route_kind": "publish_video",
+            "project": "lazyedit",
+            "worker_needed": True,
+            "needs_recent_media": True,
+            "public_publish_intent": True,
+            "public_publish_allowed": True,
+            "external_action_allowed": True,
+            "source_policy": "current_plus_explicit_refs",
+            "passive_video_intake": False,
+            "exact_source_video_local_id": source_local_id,
+            "publish_authorization_source": {
+                "local_id": incoming_source.get("local_id"),
+                "server_id": incoming_source.get("server_id"),
+                "message_table": incoming_source.get("message_table"),
+            },
+        }
+    )
+    candidate["route_decision"] = route
+    incoming_routine = incoming.get("routine") if isinstance(incoming.get("routine"), dict) else {}
+    routine = dict(incoming_routine)
+    routine.update(
+        {
+            "id": "video_publish_existing",
+            "task_id": candidate.get("id"),
+            "chat": candidate.get("chat"),
+            "source": candidate.get("source") if isinstance(candidate.get("source"), dict) else {},
+            "route_kind": "publish_video",
+            "project": "lazyedit",
+            "public_publish_allowed": True,
+            "selected_by": "wechat_direct_chatops.promote_passive_video_intake_for_publish",
+        }
+    )
+    candidate["routine"] = routine
+    for field in ("instruction_contract", "execution_contract"):
+        if isinstance(incoming.get(field), dict):
+            candidate[field] = dict(incoming[field])
+    candidate["context"] = merge_task_context_rows(candidate, incoming)
+    candidate["publish_authorized_at"] = interruption.get("at")
+    candidate["publish_authorized_by"] = interruption.get("source")
+    candidate["passive_video_promoted_at"] = interruption.get("at")
+    candidate["passive_video_promoted_from_task"] = incoming.get("id")
+    for field in (
+        "preflight",
+        "result",
+        "existing_video_publish_poststage",
+        "next_publish_poststage_at",
+        "next_publish_poststage_at_iso",
+        "publish_poststage_queued_at",
+        "publish_poststage_last_status",
+        "publish_poststage_last_outcome",
+        "worker_result_ready_at",
+        "worker_error",
+        "send_errors",
+        "send_suppressed_at",
+        "send_suppressed_reason",
+        "completed_at",
+        "abandoned_at",
+        "abandoned_reason",
+    ):
+        candidate.pop(field, None)
+    return True
 
 
 def promote_story_target_for_generation_interruption(task: dict[str, Any], interruption: dict[str, Any]) -> bool:

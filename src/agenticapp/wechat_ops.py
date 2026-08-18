@@ -948,11 +948,14 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "GUI sender alarm is aligned with the worker send timeout",
             "GUI text sends fail on unconsumed clipboard data and verify the exact composer contents before Enter",
             "GUI navigation rejects preview-text false positives while tolerating only bounded separator OCR variants",
+            "GUI navigation ignores unrelated avatar OCR grouped onto the exact chat-title line",
             "GUI file sends re-verify the exact chat after the native picker and before submission",
             "send_retrying rows are not reclaimed before the active GUI sender timeout plus grace",
             "exact-task media resolution rejects files associated only by modification time",
             "exact media tokens reject unrelated readable files from the same chat",
             "publish-video tasks bypass the generic same-chat media resolver",
+            "a bare video attachment is saved privately without ASR, LazyEdit, an agent turn, a reply, or publication",
+            "a later explicit same-chat publication message promotes only that exact video source into one task",
             "direct publish questions do not invent a third-party confirmation gate",
             "the original requester can replace a consent wait without creating a second task",
             "operator approval refreshes a stale publish task and clears its obsolete denial state",
@@ -1089,6 +1092,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": gui_prefix + "test_visible_chat_list_match_accepts_separator_ocr_variant",
         },
         {
+            "id": "gui_avatar_ocr_ignored",
+            "test": gui_prefix + "test_visible_chat_list_match_ignores_avatar_ocr_on_title_line",
+        },
+        {
             "id": "gui_file_target_rechecked_after_picker",
             "test": gui_prefix + "test_guarded_file_helper_rejects_target_change_after_picker",
         },
@@ -1107,6 +1114,18 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "publish_video_bypasses_generic_media_resolution",
             "test": worker_prefix + "test_publish_video_uses_exact_autopublish_preflight_not_generic_media_resolution",
+        },
+        {
+            "id": "bare_video_route_is_passive",
+            "test": direct_prefix + "test_bare_video_upload_is_passive_cache_even_when_agent_misroutes",
+        },
+        {
+            "id": "bare_video_preflight_stops_after_save",
+            "test": worker_prefix + "test_passive_video_preflight_stops_after_exact_source_save",
+        },
+        {
+            "id": "explicit_text_promotes_exact_bare_video",
+            "test": worker_prefix + "test_worker_reconciles_legacy_bare_video_and_explicit_publish_rows",
         },
         {
             "id": "direct_publish_has_no_third_party_wait",

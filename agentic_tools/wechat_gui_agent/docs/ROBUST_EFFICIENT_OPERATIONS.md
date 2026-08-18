@@ -1371,6 +1371,17 @@ LazyEdit import, AutoPublish, Shipinhao, YouTube, Instagram, or any public
 posting. Uploading reference images/assets into Xiaoyunque is generation-stage
 input handling, not publication.
 
+A bare incoming WeChat video is passive intake. The monitor creates one
+source-scoped `file_download_or_save` task with `delivery_mode=passive_cache`,
+caches only that exact video `local_id`, and sends no receipt. It must not call
+an agent, transcribe, enter LazyEdit, echo the video, or publish. A later
+explicit text instruction in the same chat may promote that same queue row;
+the video row remains the immutable source and the text row becomes the action
+authorization. Promotion is allowed only when the command's selected video
+references the cached `local_id`. Split legacy rows are reconciled into this
+single task before claim, and every claimable status is serialized per exact
+chat so two workers cannot process intake and publication concurrently.
+
 If the MP4 cannot be sent, do not import to LazyEdit or publish. Leave the task
 in `send_deferred_artifact` or `send_deferred_locked`.
 

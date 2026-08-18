@@ -2084,6 +2084,178 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("For ZIP, Word, PDF, and text uploads", route["task"])
         self.assertIn("local_id=61", route["task"])
 
+    def test_bare_video_upload_is_passive_cache_even_when_agent_misroutes(self) -> None:
+        config = self.backend_chat_config("🍓My devices", "personal_organizer")
+        config.update(
+            {
+                "respond_to_attachments": True,
+                "agent_route_enabled": True,
+                "agent_route_prefilter": "agent_first",
+                "auto_media_sync_on_task": False,
+            }
+        )
+        row = self.row(
+            '<msg><videomsg md5="247dd" length="3230161" playlength="28" /></msg>',
+            local_type=43,
+            local_id=64,
+            server_id="srv-64",
+        )
+        original_session = direct_chatops.run_codex_session
+        try:
+            def fake_route_session(_prompt: str, **_kwargs: object) -> dict[str, object]:
+                return {
+                    "ok": True,
+                    "message": json.dumps(
+                        {
+                            "route_kind": "publish_video",
+                            "project": "lazyedit",
+                            "worker_needed": True,
+                            "needs_recent_media": True,
+                            "public_publish_intent": True,
+                            "public_publish_allowed": True,
+                            "external_action_allowed": True,
+                            "source_policy": "recent_media",
+                            "reason": "agent incorrectly treated a bare video as authorization",
+                            "confidence": 0.95,
+                        }
+                    ),
+                }
+
+            direct_chatops.run_codex_session = fake_route_session  # type: ignore[assignment]
+            route = direct_chatops.immediate_task_route(
+                config,
+                row,
+                [row],
+                focus_rows=[row],
+            )
+        finally:
+            direct_chatops.run_codex_session = original_session  # type: ignore[assignment]
+
+        self.assertIsNotNone(route)
+        assert route is not None
+        decision = route["route_decision"]
+        self.assertEqual(decision["route_kind"], "file_download_or_save")
+        self.assertEqual(decision["delivery_mode"], "passive_cache")
+        self.assertTrue(decision["passive_video_intake"])
+        self.assertFalse(decision["public_publish_intent"])
+        self.assertFalse(decision["public_publish_allowed"])
+        self.assertIn("Do not transcribe", route["task"])
+        self.assertIn("File, Media, Or Link Save", route["task"])
+
+    def test_explicit_text_promotes_exact_passive_video_without_second_task(self) -> None:
+        now = int(time.time())
+        candidate = {
+            "id": "video-64",
+            "chat": "🍓My devices",
+            "status": "done",
+            "request": "New WeChat video item received with no text instruction.",
+            "route_decision": {
+                "route_kind": "file_download_or_save",
+                "passive_video_intake": True,
+                "public_publish_allowed": False,
+            },
+            "routine": {"id": "file_download_save"},
+            "source": {
+                "message_table": "MSG",
+                "config_id": "devices",
+                "server_id": "srv-64",
+                "local_id": 64,
+                "local_type": 43,
+                "create_time": now,
+            },
+            "context": [
+                {
+                    "message_table": "MSG",
+                    "server_id": "srv-64",
+                    "local_id": 64,
+                    "local_type": 43,
+                    "kind": "video",
+                    "content": "<msg><videomsg /></msg>",
+                }
+            ],
+            "worker_result_ready_at": "2026-08-18T11:58:00",
+            "send_suppressed_reason": "agent_no_reply",
+        }
+        incoming = {
+            "id": "publish-65",
+            "chat": "🍓My devices",
+            "status": "pending",
+            "request": "Current coalesced request:\n帮我发布这个视频",
+            "route_decision": {
+                "route_kind": "publish_video",
+                "project": "lazyedit",
+                "public_publish_allowed": True,
+                "public_publish_intent": True,
+            },
+            "routine": {"id": "video_publish_existing"},
+            "source": {
+                "message_table": "MSG",
+                "config_id": "devices",
+                "server_id": "srv-65",
+                "local_id": 65,
+                "local_type": 1,
+                "create_time": now + 1,
+            },
+            "context": [
+                {
+                    "message_table": "MSG",
+                    "server_id": "srv-64",
+                    "local_id": 64,
+                    "local_type": 43,
+                    "kind": "video",
+                    "content": "<msg><videomsg /></msg>",
+                },
+                {
+                    "message_table": "MSG",
+                    "server_id": "srv-65",
+                    "local_id": 65,
+                    "local_type": 1,
+                    "kind": "text",
+                    "content": "帮我发布这个视频",
+                },
+            ],
+        }
+
+        tasks = [candidate]
+        merged = direct_chatops.append_same_chat_task_interruption(tasks, incoming)
+
+        self.assertIsNotNone(merged)
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["status"], "pending")
+        self.assertEqual(tasks[0]["source"]["local_id"], 64)
+        self.assertEqual(tasks[0]["route_decision"]["route_kind"], "publish_video")
+        self.assertTrue(tasks[0]["route_decision"]["public_publish_allowed"])
+        self.assertEqual(tasks[0]["route_decision"]["exact_source_video_local_id"], 64)
+        self.assertEqual(tasks[0]["routine"]["id"], "video_publish_existing")
+        self.assertIn(65, {row["local_id"] for row in tasks[0]["context"]})
+        self.assertNotIn("worker_result_ready_at", tasks[0])
+        self.assertNotIn("send_suppressed_reason", tasks[0])
+
+    def test_explicit_publish_does_not_promote_a_different_passive_video(self) -> None:
+        candidate = {
+            "route_decision": {
+                "route_kind": "file_download_or_save",
+                "passive_video_intake": True,
+                "public_publish_allowed": False,
+            },
+            "source": {"local_id": 64, "local_type": 43},
+            "context": [{"local_id": 64, "local_type": 43, "kind": "video"}],
+        }
+        incoming = {
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_allowed": True,
+            },
+            "context": [{"local_id": 70, "local_type": 43, "kind": "video"}],
+        }
+
+        self.assertFalse(
+            direct_chatops.passive_video_publish_followup_compatible(
+                candidate,
+                incoming,
+            )
+        )
+
     def test_transcribed_voice_is_treated_as_text_in_echomind(self) -> None:
         row = self.row(
             '<msg><voicemsg voicelength="2500" length="4096" voiceformat="4" '

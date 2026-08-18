@@ -1018,6 +1018,35 @@ class WeChatGuiSendTests(unittest.TestCase):
         self.assertEqual(match["text"], "懒人科研")
         self.assertGreater(match["center_y"], 160)
 
+    def test_visible_chat_list_match_ignores_avatar_ocr_on_title_line(self):
+        module = load_wechat_gui_send()
+        tsv = "\n".join(
+            [
+                "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+                "5\t1\t10\t1\t1\t1\t18\t16\t44\t34\t35\tsae",
+                "5\t1\t10\t1\t1\t2\t67\t30\t37\t17\t88\t‘@My",
+                "5\t1\t10\t1\t1\t3\t108\t32\t49\t11\t92\tdevices",
+                "5\t1\t10\t1\t1\t4\t269\t33\t23\t8\t90\t11:58",
+            ]
+        )
+
+        match = module.visible_chat_list_match_from_tsv(
+            tsv,
+            module.TargetSpec(
+                name="🍓My devices",
+                query="My devices",
+                expected_title="🍓My devices",
+                expected_title_aliases=("My devices",),
+                allow_title_guard_fallback=True,
+            ),
+        )
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match["text"], "‘@Mydevices")
+        self.assertEqual(match["identity_mode"], "exact")
+        self.assertGreaterEqual(match["left"], 45)
+
     def test_visible_chat_list_match_rejects_preview_that_mentions_target(self):
         module = load_wechat_gui_send()
         tsv = "\n".join(
