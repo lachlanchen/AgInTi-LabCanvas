@@ -12,6 +12,16 @@ from typing import Any
 BIORENDER_MCP_URL = "https://mcp.services.biorender.com/mcp"
 MODEL_POLICY_PATH = Path(__file__).resolve().parents[2] / "configs" / "model-policy.json"
 DEFAULT_MODEL_POLICY: dict[str, Any] = {
+    "primary_backend": "aginti",
+    "aginti": {
+        "primary_provider": "deepseek",
+        "provider_chain": ["deepseek", "localllm"],
+        "provider_models": {
+            "deepseek": "deepseek-v4-flash",
+            "localllm": "localllm-fast",
+        },
+        "session_policy": "resume one durable session per conversation and role",
+    },
     "chat": {"model": "auto-code-review", "reasoning_effort": "low"},
     "task": {"model": "auto-code-review", "reasoning_effort": "medium"},
     "high": {"model": "gpt-5.6-sol", "reasoning_effort": "high"},
@@ -27,8 +37,8 @@ DEFAULT_MODEL_POLICY: dict[str, Any] = {
 DEFAULT_BACKEND_SETTINGS: dict[str, Any] = {
     "agent": {
         "enabled": True,
-        "backend": "auto",
-        "model": "gpt-5.6-sol",
+        "backend": "aginti",
+        "model": "provider-default",
         "reasoning_effort": "auto",
         "mode": "execute",
         "dynamic_routing": True,
@@ -38,6 +48,12 @@ DEFAULT_BACKEND_SETTINGS: dict[str, Any] = {
         "enabled": True,
         "command": "aginti",
         "workspace": ".",
+        "provider_chain": ["deepseek", "localllm"],
+        "provider_models": {
+            "deepseek": "deepseek-v4-flash",
+            "localllm": "localllm-fast",
+        },
+        "task_profile": "auto",
         "image_provider": "grsai",
         "image_model": "nano-banana-2",
         "image_size": "1K",
@@ -105,7 +121,7 @@ def default_backend_settings() -> dict[str, Any]:
 
 
 def load_model_policy(path: str | Path | None = None) -> dict[str, Any]:
-    """Load the shared LabCanvas model policy with a safe built-in fallback."""
+    """Load the shared LabCanvas backend/model policy with a safe built-in fallback."""
     configured = os.environ.get("LABCANVAS_MODEL_POLICY")
     policy_path = Path(path or configured or MODEL_POLICY_PATH).expanduser()
     try:

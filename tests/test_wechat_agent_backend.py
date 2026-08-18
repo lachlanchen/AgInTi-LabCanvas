@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -116,13 +117,13 @@ class WeChatAgentBackendTests(unittest.TestCase):
             backend.run_codex_session = original
         self.assertTrue(result["ok"])
         self.assertEqual(calls[1]["model"], "gpt-5.6-sol")
-    def test_select_backend_defaults_to_codex_and_accepts_aliases(self) -> None:
+    def test_select_backend_defaults_to_aginti_and_accepts_aliases(self) -> None:
         backend = load_backend()
 
-        self.assertEqual(backend.select_agent_backend({}), "codex")
+        self.assertEqual(backend.select_agent_backend({}), "aginti")
         self.assertEqual(backend.select_agent_backend({"agent_backend": "claude-code"}), "claude")
         self.assertEqual(backend.select_agent_backend({"agent_backend": "agintiflow"}), "aginti")
-        self.assertEqual(backend.select_agent_backend({"agent_backend": "unknown"}), "codex")
+        self.assertEqual(backend.select_agent_backend({"agent_backend": "unknown"}), "aginti")
 
     def test_codex_backend_delegates_to_existing_session_runner(self) -> None:
         backend = load_backend()
@@ -535,17 +536,119 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 sandbox="read-only",
                 timeout_seconds=120,
                 workdir=ROOT,
+                reuse=False,
                 backend_config={"wrap_prompt": False},
             )
 
         command = run.call_args.args[0]
         self.assertEqual(Path(command[0]).name, "aginti")
-        self.assertEqual(command[1:4], ["run", "--stdin", "--json"])
+        self.assertEqual(command[1], "run")
+        self.assertIn("--session-id", command)
+        self.assertIn("--stdin", command)
+        self.assertIn("--json", command)
         self.assertEqual(run.call_args.kwargs["input"], "original prompt")
         self.assertTrue(result["ok"])
         self.assertEqual(result["message"], "CHAT: actual answer")
         self.assertEqual(result["message_source"], "machine_json")
         self.assertEqual(result["stdout_tail"], "")
+
+    def test_stopped_aginti_machine_result_is_not_forwarded_to_chat(self) -> None:
+        backend = load_backend()
+        completed = subprocess.CompletedProcess(
+            ["aginti", "run", "--stdin", "--json"],
+            1,
+            stdout=json.dumps(
+                {
+                    "ok": False,
+                    "sessionId": "stopped-session",
+                    "result": "I stopped safely instead of claiming completion.",
+                    "stopped": True,
+                    "failed": True,
+                    "reason": "tool_contract_violation",
+                }
+            ),
+            stderr="",
+        )
+        with (
+            mock.patch.object(backend, "resolve_command_executable", return_value="aginti"),
+            mock.patch.object(backend, "run_process_group", return_value=completed),
+        ):
+            result = backend.run_aginti_session(
+                "original prompt",
+                chat_name="EchoMind",
+                role="fast",
+                model="aginti",
+                reasoning_effort="low",
+                sandbox="read-only",
+                timeout_seconds=120,
+                workdir=ROOT,
+                reuse=False,
+                backend_config={"wrap_prompt": False, "provider_chain": ["deepseek"]},
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["message"], "")
+        self.assertIn("tool_contract_violation", result["stderr_tail"])
+
+    def test_aginti_reuses_one_private_session_per_chat_and_role(self) -> None:
+        backend = load_backend()
+        first = subprocess.CompletedProcess(
+            ["aginti", "run"],
+            0,
+            stdout='{"ok":true,"sessionId":"web-agent-reused","result":"CHAT: first","failed":false}',
+            stderr="",
+        )
+        second = subprocess.CompletedProcess(
+            ["aginti", "resume"],
+            0,
+            stdout='{"ok":true,"sessionId":"web-agent-reused","result":"CHAT: second","failed":false}',
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            session_dir = Path(tmp) / "aginti_sessions"
+            with (
+                mock.patch.object(backend, "AGINTI_SESSION_DIR", session_dir),
+                mock.patch.object(backend, "AGINTI_REGISTRY", session_dir / "sessions.local.json"),
+                mock.patch.object(backend, "resolve_command_executable", return_value="aginti"),
+                mock.patch.object(
+                    backend,
+                    "run_process_group",
+                    side_effect=[first, second],
+                ) as run,
+            ):
+                initial = backend.run_aginti_session(
+                    "first prompt",
+                    chat_name="EchoMind",
+                    role="fast",
+                    model="aginti",
+                    reasoning_effort="low",
+                    sandbox="read-only",
+                    timeout_seconds=120,
+                    workdir=ROOT,
+                    backend_config={"wrap_prompt": False, "provider_chain": ["deepseek"]},
+                )
+                resumed = backend.run_aginti_session(
+                    "follow-up prompt",
+                    chat_name="EchoMind",
+                    role="fast",
+                    model="aginti",
+                    reasoning_effort="low",
+                    sandbox="read-only",
+                    timeout_seconds=120,
+                    workdir=ROOT,
+                    backend_config={"wrap_prompt": False, "provider_chain": ["deepseek"]},
+                )
+
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertEqual(commands[0][1], "run")
+            self.assertIn("--session-id", commands[0])
+            self.assertEqual(commands[1][1:3], ["resume", "web-agent-reused"])
+            self.assertFalse(initial["resumed"])
+            self.assertTrue(resumed["resumed"])
+            registry = json.loads((session_dir / "sessions.local.json").read_text(encoding="utf-8"))
+            record = next(iter(registry.values()))
+            self.assertEqual(record["thread_id"], "web-agent-reused")
+            self.assertEqual(record["turn_count"], 2)
 
     def test_backend_specific_prompt_replaces_oversized_codex_prompt_for_aginti(self) -> None:
         backend = load_backend()
@@ -629,9 +732,11 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 sandbox="read-only",
                 timeout_seconds=120,
                 workdir=ROOT,
+                reuse=False,
                 backend_config={
                     "wrap_prompt": False,
                     "provider_chain": ["deepseek", "localllm"],
+                    "provider_models": {"deepseek": "deepseek-v4-flash", "localllm": "localllm-fast"},
                 },
             )
 
@@ -641,6 +746,16 @@ class WeChatAgentBackendTests(unittest.TestCase):
         commands = [call.args[0] for call in run.call_args_list]
         self.assertEqual(commands[0][commands[0].index("--provider") + 1], "deepseek")
         self.assertEqual(commands[1][commands[1].index("--provider") + 1], "localllm")
+        self.assertEqual(commands[0][commands[0].index("--model") + 1], "deepseek-v4-flash")
+        self.assertEqual(commands[1][commands[1].index("--model") + 1], "localllm-fast")
+        generated_session = commands[0][commands[0].index("--session-id") + 1]
+        self.assertEqual(commands[1][1:3], ["resume", generated_session])
+        prompts = [call.kwargs["input"] for call in run.call_args_list]
+        self.assertEqual(prompts[0], "exact prompt")
+        self.assertIn("Provider handoff", prompts[1])
+        self.assertNotIn("exact prompt", prompts[1])
+        self.assertTrue(result["fallback_continued_same_session"])
+        self.assertFalse(result["resumed"])
 
     def test_aginti_shared_backend_reads_wecom_provider_environment(self) -> None:
         backend = load_backend()
@@ -680,6 +795,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 sandbox="read-only",
                 timeout_seconds=120,
                 workdir=ROOT,
+                reuse=False,
                 backend_config={
                     "wrap_prompt": False,
                     "provider_chain": ["deepseek", "localllm"],
@@ -703,6 +819,14 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 resolved = backend.resolve_command_executable("aginti")
 
         self.assertEqual(resolved, str(executable.resolve()))
+
+    def test_backend_available_checks_aginti_not_codex(self) -> None:
+        backend = load_backend()
+        with mock.patch.object(backend, "resolve_command_executable", return_value="/opt/aginti") as resolve:
+            available = backend.backend_available("aginti")
+
+        self.assertEqual(available, "/opt/aginti")
+        resolve.assert_called_once_with("aginti")
 
     def test_aginti_message_comes_from_final_session_assistant_turn(self) -> None:
         backend = load_backend()

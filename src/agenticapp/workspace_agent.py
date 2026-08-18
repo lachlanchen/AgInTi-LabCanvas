@@ -45,6 +45,9 @@ ARTIFACT_SUFFIXES = {
     ".kicad_pro",
     ".kicad_sch",
     ".md",
+    ".m4a",
+    ".mov",
+    ".mp3",
     ".mp4",
     ".obj",
     ".pdf",
@@ -56,8 +59,10 @@ ARTIFACT_SUFFIXES = {
     ".svg",
     ".tex",
     ".txt",
+    ".wav",
     ".webm",
     ".webp",
+    ".flac",
     ".zip",
 }
 QUOTA_MARKERS = (
@@ -74,6 +79,25 @@ QUOTA_MARKERS = (
     "model not found",
     "invalid model",
     "unsupported model",
+)
+AGINTI_PREFLIGHT_FAILURE_MARKERS = (
+    "api key",
+    "authentication",
+    "connection refused",
+    "context budget",
+    "context window",
+    "fetch failed",
+    "insufficient_quota",
+    "missing key",
+    "model not found",
+    "not configured",
+    "out of quota",
+    "provider unavailable",
+    "quota",
+    "rate limit",
+    "service unavailable",
+    "temporarily unavailable",
+    "unauthorized",
 )
 
 
@@ -233,11 +257,16 @@ def select_agent_policy(
     selected_mode = str(mode or "execute").strip().lower()
     if selected_mode not in {"execute", "plan"}:
         selected_mode = "execute"
+    current_model_policy = model_policy or load_model_policy()
     selected_backend = str(backend or "auto").strip().lower()
     if selected_backend not in {"auto", "codex", "aginti"}:
         selected_backend = "auto"
     if selected_backend == "auto":
-        selected_backend = "codex" if resolve_codex_binary() else "aginti"
+        selected_backend = str(current_model_policy.get("primary_backend") or "aginti").strip().lower()
+        if selected_backend not in {"codex", "aginti"}:
+            selected_backend = "aginti"
+    if selected_backend == "aginti" and model_was_auto:
+        selected_model = "provider-default"
 
     timeout_by_effort = {
         "low": 300,
@@ -297,6 +326,34 @@ def capability_catalog(root: str | Path) -> list[dict[str, Any]]:
             "commands": ["latexmk -pdf", "pdflatex"],
             "paths": ["docs", "references", "cad/reports"],
             "outputs": ["TeX", "PDF", "SVG", "PNG"],
+        },
+        {
+            "id": "lalachan-video",
+            "title": "LALACHAN story and Xiaoyunque video generation",
+            "ready": (project_root.parent / "LALACHAN" / "scripts" / "xyq_cdp_browser.py").is_file(),
+            "commands": [
+                "../LALACHAN/scripts/xyq_cdp_browser.py",
+                "../LALACHAN/scripts/xyq_chrome/watch_thread_dom_download.py",
+            ],
+            "paths": [
+                "../LALACHAN",
+                "references/lalachan-story-video-handoff-for-wechat.md",
+            ],
+            "outputs": ["story Markdown", "generation prompt", "MP4", "screenshots", "run manifest"],
+        },
+        {
+            "id": "lazyedit-video-publish",
+            "title": "LazyEdit processing and approval-gated platform publication",
+            "ready": (home / "DiskMech" / "Projects" / "lazyedit" / "scripts" / "lazyedit_publish.py").is_file(),
+            "commands": [
+                str(home / "DiskMech" / "Projects" / "lazyedit" / "scripts" / "lazyedit_publish.py"),
+                "labcanvas wechat autopublish-video",
+            ],
+            "paths": [
+                str(home / "DiskMech" / "Projects" / "lazyedit"),
+                "agentic_tools/wechat_gui_agent/skills/lazyedit-publish-workflow/SKILL.md",
+            ],
+            "outputs": ["processed MP4", "subtitle files", "metadata", "cover", "publish job evidence"],
         },
         {
             "id": "presentations",
@@ -464,6 +521,43 @@ def capability_catalog(root: str | Path) -> list[dict[str, Any]]:
     return capabilities
 
 
+CAPABILITY_TRIGGER_TERMS: dict[str, tuple[str, ...]] = {
+    "cad-shapr3d": ("cad", "shapr", "step", "stl", "3mf", "holder", "c-mount", "cmount", "3d print", "三维", "支架"),
+    "kicad-pcb": ("kicad", "pcb", "gerber", "schematic", "jlc", "电路板"),
+    "blender-3d": ("blender", "3d render", "animation", "渲染"),
+    "tex-paper": ("latex", "tex", "pdf report", "paper", "manuscript", "论文", "报告"),
+    "presentations": ("presentation", "powerpoint", "ppt", "pptx", "slide deck", "幻灯片"),
+    "musia-music": ("musia", "music", "song", "melody", "vocal", "歌词", "音乐", "歌曲"),
+    "lalachan-video": ("lalachan", "xiaoyunque", "小云雀", "seedance", "generate video", "video generation", "生成视频"),
+    "lazyedit-video-publish": ("lazyedit", "autopublish", "publish video", "shipinhao", "youtube", "instagram", "douyin", "发布视频", "视频号"),
+    "protein-structure": ("alphafold", "protein structure", "protein folding", "蛋白结构", "结构预测"),
+    "wechat-chatops": ("wechat", "wecom", "微信", "企业微信"),
+    "labview-control": ("labview", "virtual instrument", "vi file", "虚拟仪器"),
+    "paper-figures": ("biorender", "paper figure", "scientific figure", "论文图", "机制图"),
+}
+
+
+def selected_routine_contracts(message: str, root: str | Path, *, limit: int = 6) -> list[dict[str, Any]]:
+    """Return only established routine entrypoints relevant to this turn."""
+
+    lowered = " ".join(str(message or "").casefold().split())
+    selected: list[dict[str, Any]] = []
+    for item in capability_catalog(root):
+        terms = CAPABILITY_TRIGGER_TERMS.get(str(item.get("id") or ""), ())
+        if terms and any(term in lowered for term in terms):
+            selected.append(
+                {
+                    "id": item["id"],
+                    "title": item["title"],
+                    "ready": bool(item["ready"]),
+                    "commands": list(item.get("commands") or []),
+                    "paths": list(item.get("paths") or []),
+                    "outputs": list(item.get("outputs") or []),
+                }
+            )
+    return selected[: max(1, limit)]
+
+
 def capability_response(root: str | Path, settings_path: str | Path | None = None) -> dict[str, Any]:
     project_root = Path(root).resolve()
     capabilities = capability_catalog(project_root)
@@ -512,6 +606,12 @@ def build_agent_prompt(
     result_path = Path(task_dir).resolve() / "agent-result.json"
     knowledge = selected_packaged_knowledge(message)
     catalog = capability_catalog(project_root)
+    routines = selected_routine_contracts(message, project_root)
+    routine_context = "\n".join(
+        f"- `{item['id']}` ready={str(item['ready']).lower()}; commands={json.dumps(item['commands'], ensure_ascii=False)}; "
+        f"outputs={json.dumps(item['outputs'], ensure_ascii=False)}"
+        for item in routines
+    ) or "- No domain routine was preselected; inspect the capability catalog only if the request needs one."
     ready = ", ".join(item["id"] for item in catalog if item["ready"])
     references = "\n".join(f"- `{path}`" for path in reference_paths(project_root))
     context_json = json.dumps(context or {}, ensure_ascii=False, indent=2)
@@ -520,10 +620,40 @@ def build_agent_prompt(
         if policy["mode"] == "plan"
         else "Execute the requested work end to end, using the repository's existing routines and tools."
     )
+    evidence_scope = json.dumps(
+        {
+            "mode": "plan-response" if policy["mode"] == "plan" else "task",
+            "request": message.strip(),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    if policy["mode"] == "plan":
+        artifact_contract = """Response contract:
+- Return the inspected plan or answer directly in the final response.
+- Do not create `agent-result.json` or any task artifact in plan mode.
+- Cite the relevant local routine paths or commands when useful."""
+    else:
+        artifact_contract = f"""Artifact contract:
+- Put durable work in the appropriate repository project folder, not only in temporary output.
+- At the end, write `{result_path}` as UTF-8 JSON with this shape:
+  {{
+    "reply": "concise user-facing result",
+    "artifacts": [
+      {{"path": "/absolute/or/repo-relative/file", "title": "name", "kind": "image|model|file|text|json", "preview": "short description"}}
+    ],
+    "actions": ["verified action"],
+    "needs_confirmation": false,
+    "confirmation": ""
+  }}
+- Include the directly usable/rendered files the user should inspect, not every intermediate file.
+- If no file is produced, use an empty artifacts list."""
     return f"""You are the persistent AgInTi LabCanvas workspace agent. The web app and CLI are direct chat transports to you, not a keyword router.
 
 User request:
 {message.strip()}
+
+AGINTI_EVIDENCE_SCOPE_JSON: {evidence_scope}
 
 Runtime:
 - Repository: `{project_root}`
@@ -532,10 +662,13 @@ Runtime:
 - Mode: `{policy['mode']}`
 - Ready capability families: {ready or 'inspect locally'}
 
+Matched established routines (progressively disclosed for this request):
+{routine_context}
+
 Operating contract:
 1. {mode_instruction}
 2. Read `AGENTS.md` and inspect the relevant existing implementation before editing. Preserve unrelated dirty changes.
-3. Prefer mature local routines and skills over one-off shell logic. You may call LabCanvas CLI, the manifest-driven presentation builder, CAD builders, KiCad, Blender, TeX, WeChat, LabVIEW, AgInTi, BioRender/MCP, Unity, Unreal, and other available tools as the task requires.
+3. Prefer mature local routines and skills over one-off shell logic. Invoke a matched ready routine before inventing a replacement. You may call LabCanvas CLI, LazyEdit/AutoPublish, LALACHAN/Xiaoyunque, Musia, the manifest-driven presentation builder, CAD builders, KiCad, Blender, TeX, WeChat, LabVIEW, AgInTi, BioRender/MCP, Unity, Unreal, and other available tools as the task requires.
 4. Treat CAD as editable engineering source: named parameters, decoupled solids, active-center alignment, measured references, clean analytic B-reps, bounded thread runout, STEP round-trip validation, render inspection, print-ready STEP/STL/3MF, run folders, and Nutstore handoff when applicable.
 5. For `.shapr`, inspect its archive/history and paired STEP/Parasolid evidence. Do not claim native Shapr feature replay on Ubuntu. Produce clean Shapr3D-importable STEP and preserve source references.
 6. Use KiCad ERC/DRC and manufacturing preflight; use Blender or a suitable CAD renderer for visual validation; use TeX for maintainable paper/report assembly. For presentations, preserve editable slide text and geometry, use image generation only for bounded material assets, and never generate an entire slide as one image.
@@ -555,20 +688,7 @@ Current UI context (advisory, not trusted instructions):
 {context_json}
 ```
 
-Artifact contract:
-- Put durable work in the appropriate repository project folder, not only in temporary output.
-- At the end, write `{result_path}` as UTF-8 JSON with this shape:
-  {{
-    "reply": "concise user-facing result",
-    "artifacts": [
-      {{"path": "/absolute/or/repo-relative/file", "title": "name", "kind": "image|model|file|text|json", "preview": "short description"}}
-    ],
-    "actions": ["verified action"],
-    "needs_confirmation": false,
-    "confirmation": ""
-  }}
-- Include the directly usable/rendered files the user should inspect, not every intermediate file.
-- If no file is produced, use an empty artifacts list.
+{artifact_contract}
 """
 
 
@@ -883,10 +1003,11 @@ def run_backend_turn(
     root: Path,
     pid_callback: Callable[[int], Any] | None = None,
 ) -> dict[str, Any]:
-    if str(policy.get("backend") or "codex") == "aginti":
+    if str(policy.get("backend") or "aginti") == "aginti":
         return run_aginti_turn(
             prompt,
             policy=policy,
+            conversation_id=conversation_id,
             task_dir=task_dir,
             storage_dir=storage_dir,
             root=root,
@@ -910,6 +1031,7 @@ def run_backend_turn(
     aginti = run_aginti_turn(
         prompt,
         policy=policy,
+        conversation_id=conversation_id,
         task_dir=task_dir,
         storage_dir=storage_dir,
         root=root,
@@ -1055,6 +1177,7 @@ def run_aginti_turn(
     prompt: str,
     *,
     policy: dict[str, Any],
+    conversation_id: str = "",
     task_dir: Path,
     storage_dir: Path,
     root: Path,
@@ -1071,11 +1194,7 @@ def run_aginti_turn(
     if not workspace.exists():
         workspace = root
 
-    if aginti_supports_stdin_run(command[0]):
-        command.extend(["run", "--stdin"])
-        input_text = prompt
-        invocation = "stdin-run"
-    else:
+    if not aginti_supports_stdin_run(command[0]):
         prompt_path = _write_legacy_aginti_prompt(prompt, task_dir=task_dir, root=root)
         try:
             prompt_label = prompt_path.relative_to(workspace).as_posix()
@@ -1085,21 +1204,350 @@ def run_aginti_turn(
             f"Read `{prompt_label}` and execute the complete LabCanvas task. "
             "Follow its artifact and result-manifest contract exactly."
         )
-        input_text = ""
-        invocation = "prompt-file"
+        result = _communicate_process(
+            command,
+            input_text="",
+            cwd=workspace,
+            timeout=int(policy.get("timeout_seconds") or 3600),
+            backend="aginti",
+            output_path=None,
+            pid_callback=pid_callback,
+            env=os.environ.copy(),
+        )
+        result["invocation"] = "prompt-file"
+        return result
 
-    result = _communicate_process(
-        command,
-        input_text=input_text,
-        cwd=workspace,
-        timeout=int(policy.get("timeout_seconds") or 3600),
-        backend="aginti",
-        output_path=None,
-        pid_callback=pid_callback,
-        env=os.environ.copy(),
-    )
-    result["invocation"] = invocation
+    sessions_dir = storage_dir / "agent" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    key = safe_id(conversation_id or "default")
+    registry_path = sessions_dir / "aginti-sessions.json"
+    lock_path = sessions_dir / f"{key}.aginti.lock"
+    with file_lock(lock_path):
+        registry = _load_json_dict(registry_path)
+        previous = registry.get(key, {}) if isinstance(registry.get(key), dict) else {}
+        previous_id = str(previous.get("session_id") or "")
+        new_session_id = "" if previous_id else f"web-agent-labcanvas-{uuid.uuid4()}"
+        result = _run_aginti_provider_chain(
+            command,
+            prompt=prompt,
+            previous_id=previous_id,
+            new_session_id=new_session_id,
+            settings=aginti,
+            policy=policy,
+            workspace=workspace,
+            pid_callback=pid_callback,
+        )
+        if previous_id and _aginti_missing_session(result):
+            new_session_id = f"web-agent-labcanvas-{uuid.uuid4()}"
+            result = _run_aginti_provider_chain(
+                command,
+                prompt=prompt,
+                previous_id="",
+                new_session_id=new_session_id,
+                settings=aginti,
+                policy=policy,
+                workspace=workspace,
+                pid_callback=pid_callback,
+            )
+            result["fallback_started"] = True
+            result["stale_session_recovered"] = True
+        if result.get("ok") and result.get("thread_id"):
+            registry[key] = {
+                "session_id": result["thread_id"],
+                "conversation_id": conversation_id,
+                "provider": result.get("provider"),
+                "created_at": previous.get("created_at") or utc_now(),
+                "last_used_at": utc_now(),
+                "turn_count": int(previous.get("turn_count") or 0) + 1,
+            }
+            _write_json_atomic(registry_path, registry)
+        result["invocation"] = "machine-resume" if previous_id else "machine-run"
+        return result
+
+
+def _run_aginti_provider_chain(
+    base_command: list[str],
+    *,
+    prompt: str,
+    previous_id: str,
+    new_session_id: str,
+    settings: dict[str, Any],
+    policy: dict[str, Any],
+    workspace: Path,
+    pid_callback: Callable[[int], Any] | None,
+) -> dict[str, Any]:
+    providers = _aginti_provider_chain(settings, policy=policy)
+    attempts: list[dict[str, Any]] = []
+    result: dict[str, Any] = {
+        "ok": False,
+        "backend": "aginti",
+        "message": "",
+        "thread_id": previous_id or new_session_id,
+        "stderr_tail": "No AgInTi provider configured.",
+        "returncode": 1,
+    }
+    chain_session_id = previous_id or new_session_id
+    for index, provider in enumerate(providers):
+        continue_existing = bool(previous_id or index > 0)
+        provider_model = _aginti_provider_model(settings, provider, policy=policy)
+        command = _aginti_machine_command(
+            base_command,
+            previous_id=chain_session_id if continue_existing else "",
+            new_session_id="" if continue_existing else chain_session_id,
+            provider=provider,
+            model=provider_model,
+            policy=policy,
+            settings=settings,
+        )
+        raw = _communicate_process(
+            command,
+            input_text=prompt if index == 0 else _aginti_provider_handoff_prompt(),
+            cwd=workspace,
+            timeout=int(policy.get("timeout_seconds") or 3600),
+            backend="aginti",
+            output_path=None,
+            pid_callback=pid_callback,
+            env=os.environ.copy(),
+        )
+        result = _parse_aginti_machine_result(
+            raw,
+            fallback_session_id=chain_session_id,
+        )
+        if index > 0 and not previous_id and _aginti_missing_session(result):
+            command = _aginti_machine_command(
+                base_command,
+                previous_id="",
+                new_session_id=chain_session_id,
+                provider=provider,
+                model=provider_model,
+                policy=policy,
+                settings=settings,
+            )
+            raw = _communicate_process(
+                command,
+                input_text=prompt,
+                cwd=workspace,
+                timeout=int(policy.get("timeout_seconds") or 3600),
+                backend="aginti",
+                output_path=None,
+                pid_callback=pid_callback,
+                env=os.environ.copy(),
+            )
+            result = _parse_aginti_machine_result(raw, fallback_session_id=chain_session_id)
+            result["missing_fallback_session_recovered"] = True
+        chain_session_id = str(result.get("thread_id") or chain_session_id)
+        result["resumed"] = bool(previous_id)
+        result["provider"] = provider
+        retry_safe = _aginti_provider_retry_safe(result)
+        attempts.append(
+            {
+                "provider": provider,
+                "ok": bool(result.get("ok")),
+                "returncode": result.get("returncode"),
+                "retry_safe": retry_safe,
+                "continued_same_session": continue_existing,
+            }
+        )
+        result["fallback_continued_same_session"] = bool(index > 0)
+        result["provider_attempts"] = attempts
+        if result.get("ok") or index + 1 >= len(providers) or not retry_safe:
+            return result
     return result
+
+
+def _aginti_machine_command(
+    base_command: list[str],
+    *,
+    previous_id: str,
+    new_session_id: str,
+    provider: str,
+    model: str = "",
+    policy: dict[str, Any] | None = None,
+    settings: dict[str, Any] | None = None,
+) -> list[str]:
+    command = _sanitize_aginti_base_command(base_command)
+    if previous_id:
+        command.extend(["resume", previous_id])
+    else:
+        command.extend(["run", "--session-id", new_session_id])
+    command.extend(
+        [
+            "--stdin",
+            "--json",
+            "--no-auto-update",
+            "--provider",
+            provider,
+            "--routing",
+            "manual",
+            "--no-scs",
+            "--task-profile",
+            str((settings or {}).get("task_profile") or "auto"),
+            "--no-parallel-scouts",
+            "--package-install-policy",
+            "block",
+        ]
+    )
+    if model:
+        command.extend(["--model", model])
+    if str((policy or {}).get("mode") or "execute") == "plan":
+        command.extend(["--permission-mode", "safe", "--sandbox-mode", "host", "--no-shell", "--allow-file-tools"])
+    else:
+        command.extend(
+            [
+                "--permission-mode",
+                "danger",
+                "--sandbox-mode",
+                "host",
+                "--allow-shell",
+                "--allow-file-tools",
+                "--allow-auxiliary-tools",
+                "--web-search",
+                "--mcp",
+            ]
+        )
+    return command
+
+
+def _aginti_provider_model(settings: dict[str, Any], provider: str, *, policy: dict[str, Any] | None = None) -> str:
+    requested = str((policy or {}).get("model") or "").strip()
+    compatible = (
+        (provider == "openai" and (requested.startswith("gpt-") or requested == "auto-code-review"))
+        or (provider == "deepseek" and requested.startswith("deepseek"))
+        or (provider == "localllm" and requested.startswith("localllm"))
+    )
+    if requested not in {"", "auto", "provider-default"} and compatible:
+        return requested
+    models = settings.get("provider_models") if isinstance(settings.get("provider_models"), dict) else {}
+    return str(models.get(provider) or "").strip()
+
+
+def _aginti_provider_handoff_prompt() -> str:
+    return (
+        "Provider handoff: resume the exact durable goal and current session state. "
+        "Inspect existing tool evidence before acting, preserve all user requirements, do not repeat completed side effects, "
+        "and finish the smallest remaining work with a concise verified result or concrete blocker."
+    )
+
+
+def _sanitize_aginti_base_command(base_command: list[str]) -> list[str]:
+    """Remove transport/session flags owned by the LabCanvas machine host."""
+
+    clean: list[str] = []
+    index = 0
+    value_args = {"--session-id", "--provider"}
+    flag_args = {"--stdin", "--json", "--no-auto-update"}
+    while index < len(base_command):
+        value = str(base_command[index])
+        normalized = value.casefold()
+        if normalized == "run":
+            index += 1
+            continue
+        if normalized == "resume":
+            index += 1
+            if index < len(base_command) and not str(base_command[index]).startswith("-"):
+                index += 1
+            continue
+        if normalized in value_args:
+            index += 2
+            continue
+        if normalized in flag_args:
+            index += 1
+            continue
+        clean.append(value)
+        index += 1
+    return clean
+
+
+def _parse_aginti_machine_result(
+    result: dict[str, Any],
+    *,
+    fallback_session_id: str,
+) -> dict[str, Any]:
+    raw = str(result.get("message") or "").strip()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {
+            **result,
+            "ok": False,
+            "message": "",
+            "thread_id": fallback_session_id,
+            "stderr_tail": str(result.get("stderr_tail") or "AgInTi emitted invalid machine JSON.")[-4000:],
+            "stdout_tail": "",
+            "reason": "invalid_machine_json",
+        }
+    if not isinstance(payload, dict):
+        payload = {}
+    message = str(payload.get("result") or "").strip()
+    stopped = bool(payload.get("stopped"))
+    failed = bool(payload.get("failed"))
+    ok = (
+        bool(payload.get("ok"))
+        and bool(message)
+        and not stopped
+        and not failed
+        and int(result.get("returncode") or 0) == 0
+    )
+    reason = str(payload.get("reason") or ("" if ok else "empty_result"))
+    return {
+        **result,
+        "ok": ok,
+        "message": message if ok else "",
+        "thread_id": str(payload.get("sessionId") or fallback_session_id),
+        "stderr_tail": "" if ok else str(result.get("stderr_tail") or reason)[-4000:],
+        "stdout_tail": "",
+        "reason": reason,
+        "stopped": stopped,
+        "failed": failed,
+        "resumed": False,
+    }
+
+
+def _aginti_provider_chain(settings: dict[str, Any], *, policy: dict[str, Any] | None = None) -> list[str]:
+    raw = settings.get("provider_chain") or os.environ.get("LABCANVAS_AGINTI_PROVIDER_CHAIN") or "deepseek,localllm"
+    values = raw if isinstance(raw, list) else re.split(r"[,\s]+", str(raw))
+    providers: list[str] = []
+    for value in values:
+        provider = str(value or "").strip().casefold()
+        if provider and provider not in providers:
+            providers.append(provider)
+    requested = str((policy or {}).get("model") or "").strip()
+    requested_provider = ""
+    if requested.startswith("gpt-") or requested == "auto-code-review":
+        requested_provider = "openai"
+    elif requested.startswith("deepseek"):
+        requested_provider = "deepseek"
+    elif requested.startswith("localllm"):
+        requested_provider = "localllm"
+    if requested_provider:
+        providers = [requested_provider, *(item for item in providers if item != requested_provider)]
+    return providers
+
+
+def _aginti_provider_retry_safe(result: dict[str, Any]) -> bool:
+    returncode = int(result.get("returncode") or 0)
+    if result.get("ok") or returncode == 127:
+        return False
+    reason = str(result.get("reason") or "").casefold()
+    if reason in {"empty_model_response", "invalid_machine_json", "model_timeout", "provider_unavailable"}:
+        return bool(result.get("thread_id"))
+    if returncode == 124:
+        return bool(result.get("thread_id"))
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("stderr_tail", "stdout_tail", "reason")
+    ).casefold()
+    if "timeout" in text or "timed out" in text:
+        return bool(result.get("thread_id"))
+    return any(marker in text for marker in AGINTI_PREFLIGHT_FAILURE_MARKERS)
+
+
+def _aginti_missing_session(result: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("stderr_tail", "stdout_tail", "reason")
+    ).casefold()
+    return "no saved session found" in text
 
 
 def aginti_supports_stdin_run(executable: str) -> bool:
@@ -1226,6 +1674,7 @@ def collect_task_artifacts(
     storage_dir: Path,
     root: Path,
 ) -> list[dict[str, Any]]:
+    allowed_roots = agent_artifact_roots(root, task_dir=task_dir)
     candidates: list[dict[str, Any]] = []
     for item in declared:
         if isinstance(item, str):
@@ -1253,7 +1702,7 @@ def collect_task_artifacts(
             source = source.resolve()
         if source in seen or not source.is_file() or source.suffix.lower() not in ARTIFACT_SUFFIXES:
             continue
-        if not _inside(source, root) and not _inside(source, task_dir):
+        if not any(_inside(source, allowed_root) for allowed_root in allowed_roots):
             continue
         if source.stat().st_size > 512 * 1024 * 1024:
             continue
@@ -1273,6 +1722,29 @@ def collect_task_artifacts(
             }
         )
     return copied
+
+
+def agent_artifact_roots(root: Path, *, task_dir: Path) -> tuple[Path, ...]:
+    """Allow outputs only from LabCanvas and its established sibling routines."""
+
+    home = Path.home()
+    candidates = [
+        root,
+        task_dir,
+        root / "external" / "ProteinStructure",
+        root.parent / "LALACHAN",
+        root.parent / "Musia",
+        root.parent / "ProteinStructure",
+        root.parent / "ZhJpBook",
+        home / "DiskMech" / "Projects" / "lazyedit",
+        home / "Nutstore Files" / "Projects" / "LabCanvas",
+    ]
+    unique: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved not in unique:
+            unique.append(resolved)
+    return tuple(unique)
 
 
 def register_agent_artifacts(store: ArtifactStore, items: list[dict[str, Any]], *, task_id: str) -> list[dict[str, Any]]:

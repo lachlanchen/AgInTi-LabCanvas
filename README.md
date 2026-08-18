@@ -57,11 +57,13 @@ AgInTi LabCanvas is a small local control plane for agent-assisted scientific vi
 ### Model Policy
 
 Automatic LabCanvas turns use the shared [`configs/model-policy.json`](configs/model-policy.json):
-`auto-code-review` with low reasoning for ordinary chat and medium reasoning for
-ordinary durable tasks. Complex implementation may use `gpt-5.6-sol` high;
-demanding autonomous research, design, and presentation synthesis may use
-`gpt-5.6-sol` xhigh. Matching-effort fallbacks are retained, and explicit
-`--model` and `--effort` selections still win.
+AgInTiFlow is the primary persistent backend, with DeepSeek first and LocalLLM
+as a same-session provider handoff. Established LabCanvas and sibling-project
+routines remain the execution layer. Codex (`auto-code-review` or
+`gpt-5.6-sol`) and Claude Code remain explicit opt-in compatibility backends;
+explicit backend, model, and effort selections still win. See the
+[AgInTi primary-agent handoff](references/aginti-primary-labcanvas-agent-handoff-2026-08-18.md)
+for goal, context, artifact, fallback, and acceptance contracts.
 
 Run from a source checkout:
 

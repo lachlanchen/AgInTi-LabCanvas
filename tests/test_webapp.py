@@ -198,7 +198,8 @@ class WebAppTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["dry_run"])
-        self.assertEqual(result["policy"]["model"], "auto-code-review")
+        self.assertEqual(result["policy"]["backend"], "aginti")
+        self.assertEqual(result["policy"]["model"], "provider-default")
         self.assertEqual(result["policy"]["reasoning_effort"], "medium")
         self.assertIn("WeChat", result["prompt"])
 

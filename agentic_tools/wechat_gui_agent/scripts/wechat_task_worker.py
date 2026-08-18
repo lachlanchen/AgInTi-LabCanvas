@@ -6850,11 +6850,7 @@ Bounded task packet:
     if is_video_publish_task(task) and should_deterministic_video_publish(task):
         prompt = build_existing_video_publish_agent_prompt(task)
         aginti_backend_prompt = prompt
-    backend = (
-        "codex"
-        if isinstance(task.get("completion_audit_repair"), dict)
-        else select_agent_backend(task)
-    )
+    backend = select_agent_backend(task)
     model_policy = load_worker_model_policy(str(policy["reasoning_effort"]))
     result = run_codex_session(
         prompt,
@@ -7338,9 +7334,10 @@ def default_worker_execution_contract(task: dict[str, Any], instruction: dict[st
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
         "agent_backend": select_agent_backend(task),
         "agent_entrypoint": "wechat_agent_backend.run_agent_session",
-        "agent_backend_fallback": "codex Spark quota/empty -> codex gpt-5.6-sol low -> AgInTi; unavailable primary backend -> AgInTi",
-        "codex_entrypoint": "wechat_codex_sessions.run_codex_session",
-        "codex_exec_mode": "resume_per_chat_worker_session",
+        "agent_backend_fallback": "AgInTi same-session provider handoff: DeepSeek -> LocalLLM; explicit Codex/Claude remains opt-in",
+        "aginti_exec_mode": "resume_per_chat_worker_session_with_durable_goal_and_evidence",
+        "codex_entrypoint": "wechat_codex_sessions.run_codex_session (opt-in compatibility)",
+        "codex_exec_mode": "resume_per_chat_worker_session_when_explicitly_selected",
         "claude_exec_mode": "stable_per_chat_role_session_id",
         "response_policy": worker_response_policy(task),
         "codex_session": {

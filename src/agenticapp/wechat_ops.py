@@ -96,7 +96,7 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     init_config.add_argument("--chatroom-id", default="")
     init_config.add_argument("--message-table", default="")
     init_config.add_argument("--self-wxid", default="")
-    init_config.add_argument("--agent-backend", choices=["codex", "claude"], default="codex", help="AI backend for direct monitor and worker tasks.")
+    init_config.add_argument("--agent-backend", choices=["aginti", "codex", "claude"], default="aginti", help="AI backend for direct monitor and worker tasks.")
     init_config.add_argument("--force", action="store_true")
     init_config.set_defaults(func=cmd_init_config)
 
@@ -465,7 +465,7 @@ def configured_agent_backends() -> list[str]:
         if backend and backend not in configured:
             configured.append(backend)
     if not configured:
-        configured.append("codex")
+        configured.append("aginti")
     return configured
 
 
@@ -475,6 +475,8 @@ def normalize_agent_backend(value: str) -> str:
         return "claude"
     if normalized in {"codex", "codex-cli", "openai"}:
         return "codex"
+    if normalized in {"aginti", "agintiflow", "aginti-flow", "labcanvas"}:
+        return "aginti"
     return ""
 
 
@@ -842,7 +844,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "ffmpeg",
         "ffprobe",
     ]
-    commands.extend("claude" if backend == "claude" else "codex" for backend in agent_commands)
+    commands.extend("claude" if backend == "claude" else "aginti" if backend == "aginti" else "codex" for backend in agent_commands)
     commands = list(dict.fromkeys(commands))
     checks = {name: shutil.which(name) or "" for name in commands}
     scripts = {
@@ -1371,6 +1373,13 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "db_path": str(PRIVATE / "wechat_mirror.sqlite"),
         "output_dir": str(PACKAGE_ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime("%F")),
         "agent_backend": args.agent_backend,
+        "aginti": {
+            "provider_chain": ["deepseek", "localllm"],
+            "provider_models": {"deepseek": "deepseek-v4-flash", "localllm": "localllm-fast"},
+            "machine_mode": True,
+            "task_profile": "chatops",
+            "timeout_seconds": 3600,
+        },
         "claude": {"model": "", "timeout_seconds": 60, "permission_mode": "bypassPermissions"},
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "workdir": str(PACKAGE_ROOT), "timeout_seconds": 60},
     }
@@ -1418,6 +1427,13 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "poll_seconds": 0.8,
         "catchup_poll_seconds": 0.1,
         "agent_backend": args.agent_backend,
+        "aginti": {
+            "provider_chain": ["deepseek", "localllm"],
+            "provider_models": {"deepseek": "deepseek-v4-flash", "localllm": "localllm-fast"},
+            "machine_mode": True,
+            "task_profile": "chatops",
+            "timeout_seconds": 3600,
+        },
         "claude": {"model": "", "timeout_seconds": 60, "permission_mode": "bypassPermissions"},
         "codex": {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "read-only", "timeout_seconds": 60},
     }

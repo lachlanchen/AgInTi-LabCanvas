@@ -1,8 +1,4 @@
-"""Pluggable agent backend for WeChat chatops.
-
-Codex remains the default. Claude Code is selected only by config/env and uses
-the same chat/role separation expected by the current router and worker.
-"""
+"""Pluggable, session-isolated agent backend for WeChat and WeCom chatops."""
 
 from __future__ import annotations
 
@@ -35,6 +31,8 @@ from wechat_codex_sessions import (
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 CLAUDE_SESSION_DIR = PRIVATE / "claude_sessions"
 CLAUDE_REGISTRY = CLAUDE_SESSION_DIR / "sessions.local.json"
+AGINTI_SESSION_DIR = PRIVATE / "aginti_sessions"
+AGINTI_REGISTRY = AGINTI_SESSION_DIR / "sessions.local.json"
 CLAUDE_READONLY_BLOCK = "Bash,Edit,Write,MultiEdit,NotebookEdit"
 DEFAULT_FALLBACK_MODEL = "gpt-5.6-sol"
 DEFAULT_FALLBACK_REASONING_EFFORT = "low"
@@ -81,6 +79,9 @@ AGINTI_MANAGED_VALUE_ARGS = {
     "--wrapper",
     "--preferred-wrapper",
     "--provider",
+    "--model",
+    "--routing",
+    "--session-id",
 }
 AGINTI_MANAGED_FLAG_ARGS = {
     "--approve-package-installs",
@@ -112,6 +113,9 @@ AGINTI_MANAGED_FLAG_ARGS = {
     "--web",
     "--chat",
     "--interactive",
+    "--stdin",
+    "--json",
+    "--no-auto-update",
 }
 QUOTA_FAILURE_MARKERS = (
     "429",
@@ -176,12 +180,12 @@ AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS = (
 
 
 def select_agent_backend(config: dict[str, Any] | None = None) -> str:
-    """Return the selected agent backend, defaulting to Codex."""
+    """Return the selected agent backend, defaulting to AgInTiFlow."""
     if isinstance(config, dict):
         value = config.get("agent_backend") or config.get("backend")
         if value:
             return normalize_backend(str(value))
-    return normalize_backend(os.environ.get("WECHAT_AGENT_BACKEND") or "codex")
+    return normalize_backend(os.environ.get("WECHAT_AGENT_BACKEND") or "aginti")
 
 
 def normalize_backend(value: str) -> str:
@@ -196,7 +200,7 @@ def normalize_backend(value: str) -> str:
         "codex-cli": "codex",
         "openai": "codex",
     }
-    return aliases.get(normalized, normalized if normalized in {"codex", "claude", "aginti"} else "codex")
+    return aliases.get(normalized, normalized if normalized in {"codex", "claude", "aginti"} else "aginti")
 
 
 def backend_cli_name(backend: str) -> str:
@@ -386,6 +390,7 @@ def run_single_backend_attempt(
             sandbox=sandbox,
             timeout_seconds=configured_timeout(selected_config, role, timeout_seconds),
             workdir=workdir,
+            reuse=reuse,
             backend_config=selected_config,
         )
     else:
@@ -783,24 +788,96 @@ def run_aginti_session(
     sandbox: str,
     timeout_seconds: int,
     workdir: Path,
+    reuse: bool = True,
     backend_config: dict[str, Any],
+) -> dict[str, Any]:
+    if os.environ.get("WECHAT_AGINTI_REUSE_SESSIONS", "1") == "0":
+        reuse = False
+    AGINTI_SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    key = session_key(chat_name, role)
+    execution_lock_path = aginti_execution_lock_path(key)
+    execution_lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with execution_lock_path.open("w", encoding="utf-8") as execution_lock:
+        with exclusive_lock(execution_lock):
+            previous_id = read_aginti_session_id(key) if reuse else ""
+            new_session_id = "" if previous_id else f"web-agent-labcanvas-{uuid.uuid4()}"
+            result = run_aginti_provider_chain(
+                prompt,
+                chat_name=chat_name,
+                role=role,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                sandbox=sandbox,
+                timeout_seconds=timeout_seconds,
+                workdir=workdir,
+                backend_config=backend_config,
+                previous_id=previous_id,
+                new_session_id=new_session_id,
+            )
+            if previous_id and aginti_missing_session_result(result):
+                clear_aginti_session_id(key, expected_session_id=previous_id)
+                new_session_id = f"web-agent-labcanvas-{uuid.uuid4()}" if reuse else ""
+                result = run_aginti_provider_chain(
+                    prompt,
+                    chat_name=chat_name,
+                    role=role,
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                    sandbox=sandbox,
+                    timeout_seconds=timeout_seconds,
+                    workdir=workdir,
+                    backend_config=backend_config,
+                    previous_id="",
+                    new_session_id=new_session_id,
+                )
+                result["fallback_started"] = True
+                result["stale_session_recovered"] = True
+            if reuse and result.get("ok") and result.get("thread_id"):
+                persist_aginti_session(
+                    key,
+                    chat_name=chat_name,
+                    role=role,
+                    result=result,
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                    sandbox=sandbox,
+                    workdir=workdir,
+                )
+            return result
+
+
+def run_aginti_provider_chain(
+    prompt: str,
+    *,
+    chat_name: str,
+    role: str,
+    model: str,
+    reasoning_effort: str,
+    sandbox: str,
+    timeout_seconds: int,
+    workdir: Path,
+    backend_config: dict[str, Any],
+    previous_id: str,
+    new_session_id: str,
 ) -> dict[str, Any]:
     provider_attempts: list[dict[str, Any]] = []
     providers = aginti_provider_chain(backend_config)
     result: dict[str, Any] = {
         "ok": False,
         "message": "AgInTi failed: no provider was configured.",
-        "thread_id": "",
+        "thread_id": previous_id or new_session_id,
         "returncode": 1,
         "stderr_tail": "no AgInTi provider configured",
         "stdout_tail": "",
-        "resumed": False,
+        "resumed": bool(previous_id),
         "fallback_started": False,
         "backend": "aginti",
     }
+    chain_session_id = previous_id or new_session_id
     for index, provider in enumerate(providers):
+        continue_existing = bool(previous_id or index > 0)
         result = run_aginti_provider_once(
-            prompt,
+            prompt if index == 0 else aginti_provider_handoff_prompt(),
             chat_name=chat_name,
             role=role,
             model=model,
@@ -810,7 +887,26 @@ def run_aginti_session(
             workdir=workdir,
             backend_config=backend_config,
             provider=provider,
+            session_id=chain_session_id if continue_existing else "",
+            new_session_id="" if continue_existing else chain_session_id,
         )
+        if index > 0 and not previous_id and aginti_missing_session_result(result):
+            result = run_aginti_provider_once(
+                prompt,
+                chat_name=chat_name,
+                role=role,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                sandbox=sandbox,
+                timeout_seconds=timeout_seconds,
+                workdir=workdir,
+                backend_config=backend_config,
+                provider=provider,
+                session_id="",
+                new_session_id=chain_session_id,
+            )
+            result["missing_fallback_session_recovered"] = True
+        chain_session_id = str(result.get("thread_id") or chain_session_id)
         provider_attempts.append(
             {
                 "provider": provider,
@@ -818,8 +914,11 @@ def run_aginti_session(
                 "returncode": result.get("returncode"),
                 "failure_kind": classify_backend_failure(result),
                 "retry_safe": aginti_provider_retry_is_safe(result),
+                "continued_same_session": continue_existing,
             }
         )
+        result["resumed"] = bool(previous_id)
+        result["fallback_continued_same_session"] = bool(index > 0)
         result["provider"] = provider
         result["provider_attempts"] = provider_attempts
         if result.get("ok"):
@@ -841,6 +940,8 @@ def run_aginti_provider_once(
     workdir: Path,
     backend_config: dict[str, Any],
     provider: str,
+    session_id: str = "",
+    new_session_id: str = "",
 ) -> dict[str, Any]:
     """Run one explicit AgInTi provider without replaying task side effects."""
 
@@ -850,16 +951,18 @@ def run_aginti_provider_once(
         sandbox=sandbox,
         backend_config=backend_config,
         provider=provider,
+        session_id=session_id,
+        new_session_id=new_session_id,
     )
     if not command:
         return {
             "ok": False,
             "message": "AgInTi failed: command is empty.",
-            "thread_id": "",
+            "thread_id": session_id or new_session_id,
             "returncode": 127,
             "stderr_tail": "aginti command is empty",
             "stdout_tail": "",
-            "resumed": False,
+            "resumed": bool(session_id),
             "fallback_started": False,
             "backend": "aginti",
         }
@@ -923,11 +1026,11 @@ def run_aginti_provider_once(
         return {
             "ok": False,
             "message": f"AgInTi failed: executable not found: {exc.filename or executable}",
-            "thread_id": "",
+            "thread_id": session_id or new_session_id,
             "returncode": 127,
             "stderr_tail": str(exc),
             "stdout_tail": "",
-            "resumed": False,
+            "resumed": bool(session_id),
             "fallback_started": False,
             "backend": "aginti",
         }
@@ -951,14 +1054,15 @@ def run_aginti_provider_once(
             else user_facing_backend_message(proc.stderr)
         )
         failure_detail = failure_detail or message_source or "AgInTi returned no valid chat result."
+    machine_session_id = aginti_machine_session_id(stdout)
     return {
         "ok": ok,
         "message": message,
-        "thread_id": "",
+        "thread_id": machine_session_id or session_id or new_session_id,
         "returncode": proc.returncode,
         "stderr_tail": ((proc.stderr or "").strip() or failure_detail)[-2000:],
         "stdout_tail": "" if machine_mode else (proc.stdout or "")[-2000:],
-        "resumed": False,
+        "resumed": bool(session_id),
         "fallback_started": False,
         "backend": "aginti",
         "message_source": message_source,
@@ -1008,7 +1112,8 @@ def aginti_provider_chain(backend_config: dict[str, Any]) -> list[str]:
 def aginti_provider_retry_is_safe(result: dict[str, Any]) -> bool:
     """Retry another provider only for failures known to precede task execution."""
 
-    if result.get("ok") or int(result.get("returncode") or 0) in {124, 127}:
+    returncode = int(result.get("returncode") or 0)
+    if result.get("ok") or returncode == 127:
         return False
     if user_facing_backend_message(result.get("message")):
         return False
@@ -1016,9 +1121,27 @@ def aginti_provider_retry_is_safe(result: dict[str, Any]) -> bool:
         str(result.get(key) or "")
         for key in ("stderr_tail", "stdout_tail", "reason", "message_source")
     ).casefold()
-    if "timeout" in text or "timed out" in text:
-        return False
+    if any(reason in text for reason in ("empty_model_response", "invalid_machine_json", "model_timeout", "provider_unavailable")):
+        return bool(result.get("thread_id"))
+    if returncode == 124 or "timeout" in text or "timed out" in text:
+        return bool(result.get("thread_id"))
     return any(marker in text for marker in AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS)
+
+
+def aginti_provider_handoff_prompt() -> str:
+    return (
+        "Provider handoff: resume the exact durable goal and current session state. "
+        "Inspect existing tool evidence before acting, preserve every user requirement, do not repeat completed side effects, "
+        "and finish the smallest remaining work with a concise verified chat response or concrete blocker."
+    )
+
+
+def aginti_missing_session_result(result: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("stderr_tail", "stdout_tail", "reason", "message_source")
+    ).casefold()
+    return "no saved session found" in text
 
 
 def claude_command(
@@ -1063,6 +1186,8 @@ def aginti_command(
     sandbox: str,
     backend_config: dict[str, Any],
     provider: str = "",
+    session_id: str = "",
+    new_session_id: str = "",
 ) -> list[str]:
     raw_command = (
         backend_config.get("command")
@@ -1087,8 +1212,16 @@ def aginti_command(
     if machine_mode:
         command = [command[0], *strip_aginti_managed_args(command[1:])]
         extra_args = strip_aginti_managed_args(extra_args)
-        if "run" not in command[1:]:
+        if command[1:2] == ["run"]:
+            del command[1]
+        elif command[1:2] == ["resume"]:
+            del command[1:3]
+        if session_id:
+            command.extend(["resume", session_id])
+        else:
             command.append("run")
+            if new_session_id:
+                command.extend(["--session-id", new_session_id])
     command.extend(extra_args)
     if bool(backend_config.get("pass_role", False)):
         command.extend(["--role", role])
@@ -1101,6 +1234,8 @@ def aginti_command(
                 "--stdin",
                 "--json",
                 "--no-auto-update",
+                "--routing",
+                "manual",
                 "--no-scs",
                 "--task-profile",
                 str(backend_config.get("task_profile") or "chatops"),
@@ -1112,6 +1247,10 @@ def aginti_command(
         selected_provider = str(provider or aginti_provider_chain(backend_config)[0]).strip()
         if selected_provider:
             command.extend(["--provider", selected_provider])
+        provider_models = backend_config.get("provider_models") if isinstance(backend_config.get("provider_models"), dict) else {}
+        provider_model = str(provider_models.get(selected_provider) or "").strip()
+        if provider_model:
+            command.extend(["--model", provider_model])
         if not bool(backend_config.get("allow_mcp", False)):
             command.append("--no-mcp")
         command.extend(
@@ -1210,7 +1349,7 @@ def extract_aginti_user_message(
             return "", "invalid_machine_json"
         if not isinstance(payload, dict):
             return "", "invalid_machine_payload"
-        if payload.get("ok") is not True:
+        if payload.get("ok") is not True or bool(payload.get("stopped")) or bool(payload.get("failed")):
             reason = " ".join(str(payload.get("reason") or "").split())[:300]
             return "", f"machine_failure:{reason or 'run_failed'}"
         message = user_facing_backend_message(payload.get("result"))
@@ -1246,6 +1385,14 @@ def extract_aginti_user_message(
     if protocol:
         return protocol, "stdout_protocol"
     return "", "unavailable"
+
+
+def aginti_machine_session_id(stdout: str) -> str:
+    try:
+        payload = json.loads(ANSI_ESCAPE_RE.sub("", str(stdout or "")).strip())
+    except json.JSONDecodeError:
+        return ""
+    return str(payload.get("sessionId") or "") if isinstance(payload, dict) else ""
 
 
 def aginti_machine_failure_reason(stdout: str) -> str:
@@ -1372,9 +1519,9 @@ def aginti_prompt(
             '"request":"Produce only the requested chat or routing response; '
             'this role performs no external action."}\n'
         )
-    return f"""You are AgInTi acting as a fallback backend for LabCanvas WeChat automation.
+    return f"""You are AgInTi, the primary reasoning and tool agent for LabCanvas chat automation.
 {evidence_scope}
-The exact current request below is the only task. Do not continue an old AgInTi session, reuse an unrelated artifact, or substitute a nearby workspace task.
+Treat the exact current request as the authoritative continuation of this chat. Use relevant same-chat session memory and repository instructions, but never continue an unrelated task, reuse an unrelated artifact, or substitute a nearby workspace request.
 Preserve the requested output shape exactly. If the original prompt asks for JSON, return only valid JSON. If it asks for CHAT:/ACK:/TASK:, follow that protocol.
 Use the same source-isolation, safety, artifact-return, and chat-purpose rules in the original prompt. Do not invent unavailable files or claim browser/platform work completed without evidence.
 Do not expose plans, SCS/validator contracts, runtime metadata, model/sandbox details, tool logs, stack traces, or internal diagnostics. For ordinary chat, answer directly without tools or files. For research, use traceable sources and distinguish evidence from inference. For artifact work, create only the requested current-task artifacts.
@@ -1488,6 +1635,78 @@ def update_claude_registry(chat_name: str, role: str, session_id: str, model: st
             CLAUDE_REGISTRY.chmod(0o600)
 
 
+def aginti_execution_lock_path(key: str) -> Path:
+    digest = uuid.uuid5(uuid.NAMESPACE_URL, f"labcanvas-aginti:{key}").hex
+    return AGINTI_SESSION_DIR / "execution-locks" / f"{digest}.lock"
+
+
+def read_aginti_session_id(key: str) -> str:
+    AGINTI_SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = AGINTI_REGISTRY.with_suffix(".lock")
+    with lock_path.open("w", encoding="utf-8") as lock:
+        with exclusive_lock(lock):
+            registry = load_json_dict(AGINTI_REGISTRY)
+            entry = registry.get(key) if isinstance(registry.get(key), dict) else {}
+            return str(entry.get("thread_id") or "")
+
+
+def persist_aginti_session(
+    key: str,
+    *,
+    chat_name: str,
+    role: str,
+    result: dict[str, Any],
+    model: str,
+    reasoning_effort: str,
+    sandbox: str,
+    workdir: Path,
+) -> None:
+    AGINTI_SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    lock_path = AGINTI_REGISTRY.with_suffix(".lock")
+    with lock_path.open("w", encoding="utf-8") as lock:
+        with exclusive_lock(lock):
+            registry = load_json_dict(AGINTI_REGISTRY)
+            previous = registry.get(key, {}) if isinstance(registry.get(key), dict) else {}
+            registry[key] = {
+                "thread_id": str(result.get("thread_id") or ""),
+                "chat_name": chat_name,
+                "role": role,
+                "model": model,
+                "reasoning_effort": reasoning_effort,
+                "sandbox": sandbox,
+                "workdir": str(workdir),
+                "provider": str(result.get("provider") or ""),
+                "created_at": previous.get("created_at") or datetime.now().isoformat(timespec="seconds"),
+                "last_used_at": datetime.now().isoformat(timespec="seconds"),
+                "turn_count": int(previous.get("turn_count") or 0) + 1,
+            }
+            write_private_json_atomic(AGINTI_REGISTRY, registry)
+
+
+def clear_aginti_session_id(key: str, *, expected_session_id: str) -> None:
+    lock_path = AGINTI_REGISTRY.with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lock:
+        with exclusive_lock(lock):
+            registry = load_json_dict(AGINTI_REGISTRY)
+            entry = registry.get(key) if isinstance(registry.get(key), dict) else {}
+            if str(entry.get("thread_id") or "") != expected_session_id:
+                return
+            registry.pop(key, None)
+            write_private_json_atomic(AGINTI_REGISTRY, registry)
+
+
+def write_private_json_atomic(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.chmod(0o600)
+    os.replace(temporary, path)
+
+
 def load_json_dict(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -1502,4 +1721,8 @@ def backend_available(backend: str) -> str:
     selected = normalize_backend(backend)
     if selected == "claude":
         return shutil.which(os.environ.get("WECHAT_CLAUDE_BIN") or "claude") or ""
+    if selected == "aginti":
+        raw = os.environ.get("WECHAT_AGINTI_COMMAND") or os.environ.get("WECOM_AGINTI_COMMAND") or "aginti"
+        command = shlex.split(raw)
+        return resolve_command_executable(command[0]) if command else ""
     return resolve_codex_binary()

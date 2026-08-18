@@ -5,6 +5,8 @@ import unittest
 from unittest.mock import patch
 
 from agenticapp.workspace_agent import (
+    _aginti_machine_command,
+    _parse_aginti_machine_result,
     AgentTaskStore,
     build_agent_prompt,
     cancel_agent_task,
@@ -14,6 +16,7 @@ from agenticapp.workspace_agent import (
     run_agent_task,
     run_codex_turn,
     select_agent_policy,
+    selected_routine_contracts,
     selected_packaged_knowledge,
 )
 from agenticapp.artifacts import artifact_kind_for_path, content_type_for_path
@@ -24,8 +27,34 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WorkspaceAgentTests(unittest.TestCase):
+    def test_aginti_stopped_machine_result_is_not_accepted_as_success(self):
+        parsed = _parse_aginti_machine_result(
+            {
+                "ok": True,
+                "returncode": 0,
+                "message": json.dumps(
+                    {
+                        "ok": True,
+                        "sessionId": "stopped-session",
+                        "result": "I stopped safely instead of claiming completion.",
+                        "stopped": True,
+                        "failed": False,
+                        "reason": "tool_contract_violation",
+                    }
+                ),
+            },
+            fallback_session_id="fallback-session",
+        )
+
+        self.assertFalse(parsed["ok"])
+        self.assertEqual(parsed["message"], "")
+        self.assertTrue(parsed["stopped"])
+        self.assertEqual(parsed["reason"], "tool_contract_violation")
+
     def test_shared_model_policy_uses_low_chat_medium_task_and_sol_fallback(self):
         policy = load_model_policy(ROOT / "configs" / "model-policy.json")
+        self.assertEqual(policy["primary_backend"], "aginti")
+        self.assertEqual(policy["aginti"]["provider_chain"], ["deepseek", "localllm"])
         self.assertEqual(policy["chat"], {"model": "auto-code-review", "reasoning_effort": "low"})
         self.assertEqual(policy["task"], {"model": "auto-code-review", "reasoning_effort": "medium"})
         self.assertEqual(policy["fallback"]["chat"]["model"], "gpt-5.6-sol")
@@ -36,7 +65,8 @@ class WorkspaceAgentTests(unittest.TestCase):
     def test_dynamic_policy_uses_auto_review_and_medium_for_tool_work(self):
         policy = select_agent_policy("Design and render a clean KiCad PCB and CAD holder")
 
-        self.assertEqual(policy["model"], "auto-code-review")
+        self.assertEqual(policy["backend"], "aginti")
+        self.assertEqual(policy["model"], "provider-default")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["sandbox"], "danger-full-access")
 
@@ -53,10 +83,29 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertEqual(policy["effort_label"], "xhigh")
         self.assertEqual(policy["sandbox"], "read-only")
 
+    def test_plan_prompt_scopes_evidence_and_does_not_require_result_file(self):
+        prompt = build_agent_prompt(
+            "Identify the existing LazyEdit routine without changing files.",
+            root=ROOT,
+            task_dir=ROOT / "output" / "test-plan",
+            policy={
+                "backend": "aginti",
+                "model": "provider-default",
+                "reasoning_effort": "low",
+                "mode": "plan",
+            },
+            conversation_id="plan-contract",
+        )
+
+        self.assertIn('AGINTI_EVIDENCE_SCOPE_JSON: {"mode":"plan-response"', prompt)
+        self.assertIn("Do not create `agent-result.json`", prompt)
+        self.assertNotIn("At the end, write", prompt)
+
     def test_protein_structure_work_uses_auto_review_medium(self):
         policy = select_agent_policy("Use AlphaFold to predict COL1A1 and assess inhibitor evidence")
 
-        self.assertEqual(policy["model"], "auto-code-review")
+        self.assertEqual(policy["backend"], "aginti")
+        self.assertEqual(policy["model"], "provider-default")
         self.assertEqual(policy["reasoning_effort"], "medium")
         self.assertEqual(policy["effort_label"], "medium")
 
@@ -87,7 +136,7 @@ class WorkspaceAgentTests(unittest.TestCase):
         ):
             policy = select_agent_policy("Create a polished PowerPoint presentation with editable slides")
 
-        self.assertEqual(policy["model"], "gpt-5.6-sol")
+        self.assertEqual(policy["model"], "provider-default")
         self.assertEqual(policy["reasoning_effort"], "xhigh")
         self.assertEqual(policy["timeout_seconds"], 10800)
         knowledge = selected_packaged_knowledge("Create an editable PPTX presentation")
@@ -138,6 +187,28 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertIn("one durable PocketPolyglot project per book", books)
         self.assertLess(len(short), len(cad))
 
+    def test_routine_registry_progressively_discloses_existing_entrypoints(self):
+        request = (
+            "Generate a LALACHAN Xiaoyunque video, create music with Musia, then publish the final video "
+            "through LazyEdit to YouTube and Instagram."
+        )
+        contracts = selected_routine_contracts(request, ROOT)
+        ids = {item["id"] for item in contracts}
+        policy = select_agent_policy(request, backend="aginti")
+        prompt = build_agent_prompt(
+            request,
+            root=ROOT,
+            task_dir=ROOT / "output" / "webapp" / "agent" / "routine-test",
+            policy=policy,
+            conversation_id="routine-test",
+        )
+
+        self.assertTrue({"lalachan-video", "musia-music", "lazyedit-video-publish"}.issubset(ids))
+        self.assertIn("watch_thread_dom_download.py", prompt)
+        self.assertIn("labcanvas music submit", prompt)
+        self.assertIn("lazyedit_publish.py", prompt)
+        self.assertIn("Invoke a matched ready routine", prompt)
+
     def test_task_runner_registers_declared_artifact(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -180,6 +251,43 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertEqual(stored["actions"], ["validated STEP"])
         self.assertEqual(len(stored["artifacts"]), 1)
         self.assertTrue(stored["artifacts"][0]["path"].endswith(".step"))
+
+    def test_task_runner_accepts_artifact_from_allowlisted_sibling_routine(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "AgenticApp"
+            root.mkdir()
+            storage = root / "output" / "webapp"
+            source = Path(tmp) / "Musia" / "output" / "reviewed-song.mp3"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"ID3\x04\x00\x00")
+            created = create_agent_task(
+                {"message": "Return the reviewed Musia song", "conversation_id": "music-test", "backend": "aginti"},
+                storage,
+                root=root,
+                launch=False,
+            )
+            task_id = created["task"]["id"]
+
+            def fake_runner(_prompt, **kwargs):
+                (kwargs["task_dir"] / "agent-result.json").write_text(
+                    json.dumps(
+                        {
+                            "reply": "The reviewed song is ready.",
+                            "artifacts": [{"path": str(source), "title": "Reviewed song", "kind": "audio"}],
+                            "actions": ["verified sibling routine artifact"],
+                            "needs_confirmation": False,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return {"ok": True, "backend": "aginti", "returncode": 0, "message": "done"}
+
+            result = run_agent_task(task_id, storage, root=root, backend_runner=fake_runner)
+            stored = AgentTaskStore(storage).read(task_id)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(stored["artifacts"]), 1)
+        self.assertTrue(stored["artifacts"][0]["path"].endswith(".mp3"))
 
     def test_codex_sessions_remain_isolated_by_conversation(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -246,7 +354,20 @@ class WorkspaceAgentTests(unittest.TestCase):
                 captured["command"] = command
                 captured["cwd"] = kwargs["cwd"]
                 captured["input_text"] = kwargs["input_text"]
-                return {"ok": True, "backend": "aginti", "returncode": 0, "message": "done"}
+                session_id = command[command.index("--session-id") + 1]
+                return {
+                    "ok": True,
+                    "backend": "aginti",
+                    "returncode": 0,
+                    "message": json.dumps(
+                        {
+                            "ok": True,
+                            "sessionId": session_id,
+                            "result": "done",
+                            "failed": False,
+                        }
+                    ),
+                }
 
             with (
                 patch("agenticapp.workspace_agent.aginti_supports_stdin_run", return_value=True),
@@ -255,6 +376,7 @@ class WorkspaceAgentTests(unittest.TestCase):
                 result = run_aginti_turn(
                     "Inspect the CAD design",
                     policy={"timeout_seconds": 30},
+                    conversation_id="cad-chat",
                     task_dir=storage / "agent" / "tasks" / "test",
                     storage_dir=storage,
                     root=root,
@@ -262,10 +384,91 @@ class WorkspaceAgentTests(unittest.TestCase):
                 )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(captured["command"], ["aginti", "run", "--stdin"])
+        self.assertEqual(captured["command"][0:2], ["aginti", "run"])
+        self.assertIn("--session-id", captured["command"])
+        self.assertIn("--stdin", captured["command"])
+        self.assertIn("--json", captured["command"])
+        self.assertEqual(captured["command"][captured["command"].index("--provider") + 1], "deepseek")
         self.assertEqual(captured["cwd"], root)
         self.assertEqual(captured["input_text"], "Inspect the CAD design")
-        self.assertEqual(result["invocation"], "stdin-run")
+        self.assertEqual(result["invocation"], "machine-run")
+
+    def test_aginti_provider_fallback_continues_the_same_fresh_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = root / "output" / "webapp"
+            commands = []
+            inputs = []
+
+            def fake_process(command, **kwargs):
+                commands.append(command)
+                inputs.append(kwargs["input_text"])
+                if len(commands) == 1:
+                    return {
+                        "ok": False,
+                        "backend": "aginti",
+                        "returncode": 1,
+                        "message": json.dumps(
+                            {"ok": False, "sessionId": command[command.index("--session-id") + 1], "reason": "API key required"}
+                        ),
+                        "stderr_tail": "",
+                    }
+                return {
+                    "ok": True,
+                    "backend": "aginti",
+                    "returncode": 0,
+                    "message": json.dumps(
+                        {"ok": True, "sessionId": command[2], "result": "local fallback completed"}
+                    ),
+                    "stderr_tail": "",
+                }
+
+            settings_path = storage / "settings.json"
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
+            settings_path.write_text(
+                json.dumps({"aginti": {"provider_chain": ["deepseek", "localllm"]}}),
+                encoding="utf-8",
+            )
+            with (
+                patch("agenticapp.workspace_agent.aginti_supports_stdin_run", return_value=True),
+                patch("agenticapp.workspace_agent._communicate_process", side_effect=fake_process),
+            ):
+                result = run_aginti_turn(
+                    "Continue one exact task",
+                    policy={"timeout_seconds": 30},
+                    conversation_id="fallback-chat",
+                    task_dir=storage / "agent" / "tasks" / "fallback",
+                    storage_dir=storage,
+                    root=root,
+                    pid_callback=None,
+                )
+
+        session_id = commands[0][commands[0].index("--session-id") + 1]
+        self.assertEqual(commands[0][0:2], ["aginti", "run"])
+        self.assertEqual(commands[1][0:3], ["aginti", "resume", session_id])
+        self.assertEqual(commands[0][commands[0].index("--provider") + 1], "deepseek")
+        self.assertEqual(commands[1][commands[1].index("--provider") + 1], "localllm")
+        self.assertEqual(commands[0][commands[0].index("--model") + 1], "deepseek-v4-flash")
+        self.assertEqual(commands[1][commands[1].index("--model") + 1], "localllm-fast")
+        self.assertEqual(inputs[0], "Continue one exact task")
+        self.assertIn("Provider handoff", inputs[1])
+        self.assertNotIn("Continue one exact task", inputs[1])
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["resumed"])
+        self.assertTrue(result["fallback_continued_same_session"])
+
+    def test_aginti_machine_command_replaces_managed_transport_args(self):
+        command = _aginti_machine_command(
+            ["aginti", "run", "--session-id", "stale", "--stdin", "--json", "--provider", "openai"],
+            previous_id="live-session",
+            new_session_id="",
+            provider="localllm",
+        )
+
+        self.assertEqual(command[0:3], ["aginti", "resume", "live-session"])
+        self.assertEqual(command.count("resume"), 1)
+        self.assertNotIn("stale", command)
+        self.assertEqual(command[command.index("--provider") + 1], "localllm")
 
     def test_aginti_legacy_fallback_uses_private_prompt_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -286,6 +489,7 @@ class WorkspaceAgentTests(unittest.TestCase):
                 result = run_aginti_turn(
                     "Inspect the private CAD task",
                     policy={"timeout_seconds": 30},
+                    conversation_id="legacy-chat",
                     task_dir=task_dir,
                     storage_dir=storage,
                     root=root,
