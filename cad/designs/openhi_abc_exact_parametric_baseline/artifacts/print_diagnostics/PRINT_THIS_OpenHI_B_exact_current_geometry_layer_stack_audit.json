@@ -1,0 +1,33 @@
+{
+  "watertight": true,
+  "winding_consistent": true,
+  "connected_component_count": 1,
+  "vertex_count": 147847,
+  "face_count": 295694,
+  "bounds_mm": [
+    [
+      -20.0,
+      -19.996046,
+      0.0
+    ],
+    [
+      20.0,
+      19.996046,
+      54.0
+    ]
+  ],
+  "layer_height_mm": 0.2,
+  "sampled_layer_count": 270,
+  "reference_center_xy_mm": [
+    0.0,
+    0.0
+  ],
+  "max_center_offset_mm": 0.199393,
+  "max_consecutive_center_jump_mm": 0.280344,
+  "gross_jump_threshold_mm": 1.0,
+  "gross_jump_count": 0,
+  "gross_jumps": [],
+  "passes_gross_layer_translation_guard": true,
+  "source": "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/PRINT_THIS_OpenHI_B_exact_current_geometry.stl",
+  "source_sha256": "3d62d8345e0e5952bf319e5e78cc864efcc3c2ff2590bd5a5bf3bece7af9e31d"
+}

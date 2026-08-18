@@ -49,3 +49,12 @@ cad/.conda/cad-python/bin/python3.11 cad/designs/openhi_abc_exact_parametric_bas
 ```
 
 Use a new run name for every physical geometry change. Never overwrite the original extracted STEP sources.
+
+## Physical Print Diagnosis
+
+The 2026-08-18 failed A print was audited after repeated lateral staircase
+shifts. The repository mesh and the QIDI-saved project contain one straight,
+centered object with identical triangle topology; the failure is consistent
+with intermittent XY motion loss rather than CAD translation. See
+`PRINT_FAILURE_DIAGNOSIS_2026-08-18.md` and the reusable
+`analyze_layer_stack.py` guard before changing geometry.
