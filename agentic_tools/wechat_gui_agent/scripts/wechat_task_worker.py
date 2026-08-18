@@ -100,6 +100,7 @@ DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS = 5 * 60
 DEFAULT_PENDING_TASK_TTL_SECONDS = 15 * 60
 DEFAULT_DEFERRED_SEND_TTL_SECONDS = 10 * 60
 DEFAULT_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS = 30
+DEFAULT_IDLE_QUEUE_MAINTENANCE_SECONDS = 60.0
 DEFAULT_TRANSPORT_RECOVERY_MAX_AGE_SECONDS = 12 * 60 * 60
 DEFAULT_TRANSPORT_RECOVERY_LIMIT = 3
 DEFAULT_TRANSPORT_RECOVERY_MAX_ATTEMPTS = 2
@@ -302,6 +303,17 @@ def main() -> int:
     parser.add_argument("--once", action="store_true", help="Process one pending task.")
     parser.add_argument("--loop", action="store_true", help="Continuously process pending tasks.")
     parser.add_argument("--poll-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--idle-maintenance-seconds",
+        type=float,
+        default=float(
+            os.environ.get(
+                "WECHAT_WORKER_IDLE_MAINTENANCE_SECONDS",
+                str(DEFAULT_IDLE_QUEUE_MAINTENANCE_SECONDS),
+            )
+        ),
+        help="Rescan an unchanged idle queue for time-based retries. New queue writes are still detected every poll.",
+    )
     parser.add_argument("--send", action="store_true", help="Send worker result back to WeChat.")
     parser.add_argument("--send-targets", type=Path, default=DEFAULT_SEND_TARGETS, help="Ignored JSON mapping chat names to GUI target specs.")
     parser.add_argument("--resend", help="Send an existing task result by task id without rerunning the worker.")
@@ -395,14 +407,41 @@ def main() -> int:
         return 0
 
     if args.once or args.loop:
+        last_idle_signature: tuple[int, int, int, int] | None = None
+        next_maintenance_at = 0.0
+        poll_seconds = max(0.1, float(args.poll_seconds))
+        maintenance_seconds = max(poll_seconds, float(args.idle_maintenance_seconds))
         while True:
-            processed = process_one(args.queue, args.chat, send=args.send, send_targets=args.send_targets, log_idle=not args.loop)
+            now = time.monotonic()
+            signature = queue_activity_signature(args.queue)
+            should_scan = idle_queue_scan_due(
+                loop=args.loop,
+                signature=signature,
+                last_idle_signature=last_idle_signature,
+                now=now,
+                next_maintenance_at=next_maintenance_at,
+            )
+            processed = False
+            if should_scan:
+                processed = process_one(
+                    args.queue,
+                    args.chat,
+                    send=args.send,
+                    send_targets=args.send_targets,
+                    log_idle=not args.loop,
+                )
+                if processed:
+                    # Drain immediately. The next pass reconciles any state
+                    # written by this task before the worker goes idle again.
+                    last_idle_signature = None
+                    next_maintenance_at = 0.0
+                else:
+                    last_idle_signature = queue_activity_signature(args.queue)
+                    next_maintenance_at = time.monotonic() + maintenance_seconds
             if not args.loop:
                 return 0
             if not processed:
-                import time
-
-                time.sleep(args.poll_seconds)
+                time.sleep(poll_seconds)
         return 0
     raise SystemExit(
         "Use --enqueue, --once, --loop, --resend, --repair-stored-result, "
@@ -3463,6 +3502,32 @@ def message_with_saved_file_note(message: str, files: list[Path]) -> str:
     if len(files) > 8:
         lines.append(f"- ... {len(files) - 8} more")
     return "\n".join(lines)
+
+
+def queue_activity_signature(path: Path) -> tuple[int, int, int, int]:
+    """Return a cheap identity that changes for queue append or replacement."""
+
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return (0, 0, 0, 0)
+    return (int(stat.st_dev), int(stat.st_ino), int(stat.st_size), int(stat.st_mtime_ns))
+
+
+def idle_queue_scan_due(
+    *,
+    loop: bool,
+    signature: tuple[int, int, int, int],
+    last_idle_signature: tuple[int, int, int, int] | None,
+    now: float,
+    next_maintenance_at: float,
+) -> bool:
+    return (
+        not loop
+        or last_idle_signature is None
+        or signature != last_idle_signature
+        or now >= next_maintenance_at
+    )
 
 
 def append_jsonl(path: Path, item: dict[str, Any]) -> None:

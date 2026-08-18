@@ -23,6 +23,13 @@ The machine response is successful only when `ok=true`, `stopped=false`, and
 `failed=false`. A useful explanation attached to a stopped run is still a
 failure and enters the fallback/retry policy.
 
+Long-running WeChat and WeCom workers use the queue file's device, inode, size,
+and nanosecond modification time as an idle wake signature. A queue append is
+noticed on the normal short poll, processed work drains immediately, and an
+unchanged queue receives a bounded 60-second maintenance scan for timed retry
+and generation-monitor work. This avoids repeatedly parsing the full 20-40 MB
+private ledger while idle without weakening delivery or restart semantics.
+
 ## Provider Policy
 
 The primary backend is `aginti`, configured in `configs/model-policy.json`.

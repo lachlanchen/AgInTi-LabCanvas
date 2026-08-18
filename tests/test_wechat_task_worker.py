@@ -34,6 +34,103 @@ def load_worker():
 
 
 class WeChatTaskWorkerTests(unittest.TestCase):
+    def test_idle_queue_gate_scans_changes_and_periodic_maintenance_only(self) -> None:
+        worker = load_worker()
+        signature = (1, 2, 100, 200)
+
+        self.assertTrue(
+            worker.idle_queue_scan_due(
+                loop=True,
+                signature=signature,
+                last_idle_signature=None,
+                now=10.0,
+                next_maintenance_at=70.0,
+            )
+        )
+        self.assertFalse(
+            worker.idle_queue_scan_due(
+                loop=True,
+                signature=signature,
+                last_idle_signature=signature,
+                now=20.0,
+                next_maintenance_at=70.0,
+            )
+        )
+        self.assertTrue(
+            worker.idle_queue_scan_due(
+                loop=True,
+                signature=(1, 2, 101, 201),
+                last_idle_signature=signature,
+                now=20.0,
+                next_maintenance_at=70.0,
+            )
+        )
+        self.assertTrue(
+            worker.idle_queue_scan_due(
+                loop=True,
+                signature=signature,
+                last_idle_signature=signature,
+                now=70.0,
+                next_maintenance_at=70.0,
+            )
+        )
+
+    def test_queue_activity_signature_changes_after_append(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            self.assertEqual(worker.queue_activity_signature(queue), (0, 0, 0, 0))
+            worker.append_jsonl(queue, {"id": "one", "status": "pending"})
+            first = worker.queue_activity_signature(queue)
+            worker.append_jsonl(queue, {"id": "two", "status": "pending"})
+            second = worker.queue_activity_signature(queue)
+
+        self.assertNotEqual(first, (0, 0, 0, 0))
+        self.assertNotEqual(first, second)
+        self.assertGreater(second[2], first[2])
+
+    def test_idle_loop_wakes_immediately_after_queue_append(self) -> None:
+        worker = load_worker()
+
+        class StopLoop(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            queue.write_text("", encoding="utf-8")
+            sleeps = 0
+
+            def sleep_and_append(_seconds: float) -> None:
+                nonlocal sleeps
+                sleeps += 1
+                if sleeps == 1:
+                    worker.append_jsonl(queue, {"id": "new", "status": "pending"})
+                    return
+                raise StopLoop
+
+            with (
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "wechat_task_worker.py",
+                        "--queue",
+                        str(queue),
+                        "--loop",
+                        "--poll-seconds",
+                        "0.1",
+                        "--idle-maintenance-seconds",
+                        "60",
+                    ],
+                ),
+                mock.patch.object(worker, "process_one", return_value=False) as process_one,
+                mock.patch.object(worker.time, "sleep", side_effect=sleep_and_append),
+                self.assertRaises(StopLoop),
+            ):
+                worker.main()
+
+        self.assertEqual(process_one.call_count, 2)
+
     def test_completion_audit_repairs_missing_pdf_in_same_worker_session(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
