@@ -45,7 +45,7 @@ MUTATION_LOCK="${WECOM_TMUX_MUTATION_LOCK:-$TOOL_ROOT/.private/wecom_tmux.lock}"
 mkdir -p "$LOG_DIR"
 
 usage() {
-  echo "Usage: wecom_tmux.sh start|stop|restart|worker-restart|daily-restart|health-restart|external-restart|gui-restart|android-start|android-restart|status"
+  echo "Usage: wecom_tmux.sh start|stop|restart|gateway-restart|worker-restart|daily-restart|health-restart|external-restart|gui-restart|android-start|android-restart|status"
 }
 
 android_enabled() {
@@ -171,6 +171,13 @@ ensure_core_windows() {
     tmux new-window -t "$SESSION" -n quota \
       "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec python3 -u '$QUOTA_MONITOR' loop --interval-seconds \"\${LABCANVAS_CODEX_QUOTA_POLL_SECONDS:-60}\" --threshold-percent \"\${LABCANVAS_CODEX_QUOTA_WARNING_THRESHOLD_PERCENT:-5}\" --json >> '$QUOTA_LOG' 2>&1"
   fi
+}
+
+start_gateway_window() {
+  kill_window_if_present gateway
+  tmux new-window -t "$SESSION" -n gateway \
+    "cd '$ROOT' && set -a && source '$PRIVATE_ENV' && set +a && exec node '$TOOL_ROOT/src/bridge.mjs' >> '$GATEWAY_LOG' 2>&1"
+  echo "Restarted the WeCom message gateway without restarting logged-in clients."
 }
 
 start_worker_window() {
@@ -348,7 +355,7 @@ status_stack() {
 
 action="${1:-status}"
 case "$action" in
-  start|stop|restart|worker-restart|daily-restart|health-restart|external-restart|gui-restart|android-start|android-restart)
+  start|stop|restart|gateway-restart|worker-restart|daily-restart|health-restart|external-restart|gui-restart|android-start|android-restart)
     if [[ "${WECOM_TMUX_LOCK_HELD:-0}" != "1" ]]; then
       run_with_mutation_lock "$@"
       exit $?
@@ -369,6 +376,14 @@ case "$action" in
     acquire_mutation_lock
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     start_stack
+    ;;
+  gateway-restart)
+    acquire_mutation_lock
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      start_gateway_window
+    else
+      start_stack
+    fi
     ;;
   worker-restart)
     acquire_mutation_lock

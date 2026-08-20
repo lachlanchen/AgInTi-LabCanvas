@@ -175,3 +175,56 @@ cd /home/lachlan/ProjectsLFS/AgenticApp
 PYTHONPATH=src python -m unittest discover -s tests
 PYTHONPATH=src python -m agenticapp wechat selftest --suite all --json
 ```
+
+### Session And Provider Recovery
+
+Response-only AgInTi roles now retire an oversized saved conversation before
+calling a provider. The default limit is 400,000 stored message characters and
+can be overridden with the transport-specific
+`AGINTI_RESPONSE_SESSION_MAX_CHARS` setting. If a resumed response-only turn
+still returns a context-window refusal, LabCanvas clears that role's registry
+entry and retries once in a fresh session. Tool-capable worker roles are never
+replayed this way because repeating a tool turn could duplicate an external
+action.
+
+AgInTi itself remains responsible for provider-local context adaptation. The
+live 2026-08-20 organizer run proved the complete path: a fresh DeepSeek turn
+became unavailable, the same AgInTi session handed off to LocalLLM, AgInTi
+detected that the initial envelope exceeded the local context window, compacted
+history, retried, and reached `session.finished`. LabCanvas then delivered the
+organizer PDF without starting a second task.
+
+### Scheduler And Runtime Recovery
+
+- Career analysis and memo organization are sequential stages of one daily
+  workflow. While either stage has a fresh heartbeat, the health guard must not
+  restart the scheduler merely because the other stage is still waiting.
+- Stopping a project-owned tmux scheduler captures and terminates its exact pane
+  descendants after killing the session. This prevents a detached `aginti run`
+  or `aginti resume` process from surviving a scheduler replacement.
+- `wecom_tmux.sh gateway-restart` reloads the gateway environment without
+  restarting either logged-in WeCom client. Use the similarly scoped worker and
+  health restart commands instead of replacing the whole GUI stack.
+- A stable session/profile key is not necessarily the text visible in WeChat.
+  When a configured query is unrelated to the guarded visible title, the GUI
+  sender searches the exact expected title while retaining the stable key for
+  session isolation and ledger identity. The exact post-open title guard still
+  fails closed before composition or file submission.
+
+The live career run generated its Chinese and English PDFs through AgInTi. An
+initial file send failed because the stable route alias was not a valid visible
+WeChat search term. After the title/query separation fix, the artifact-only
+retry sent both existing PDFs and the concise message with verified delivery;
+the agent was not rerun and the scheduler reconciled both stages to
+`delivered`.
+
+### Final Validation
+
+- AgInTiFlow source commit: `0c000c0`.
+- Installed and published package: `@lazyingart/agintiflow@0.20.203`.
+- AgInTiFlow full `npm test`: pass.
+- LabCanvas focused regressions: 156 tests passed.
+- LabCanvas full suite: 1,314 tests passed.
+- Complete WeChat self-test: pass.
+- Live WeChat and WeCom health snapshot: pass, with WeCom worker backend
+  verified as `aginti`.

@@ -1186,7 +1186,8 @@ def open_target(
             "attempts": attempts,
         }
 
-    search_for_target(env, window, target.query, pause)
+    search_query = preferred_search_query(target)
+    search_for_target(env, window, search_query, pause)
     screenshot(env, out_dir / f"{shot_prefix}-search.png")
     for label, point in target_click_candidates(target):
         click(env, window.x + point[0], window.y + point[1])
@@ -1199,13 +1200,33 @@ def open_target(
         attempts.append(guard)
         if guard["ok"]:
             return guard
-        search_for_target(env, window, target.query, pause)
+        search_for_target(env, window, search_query, pause)
 
     key(env, "Return")
     guard = verify("return")
     if attempts:
         guard = {**guard, "attempts": attempts}
     return guard
+
+
+def preferred_search_query(target: TargetSpec) -> str:
+    """Separate a stable route key from the title visible in WeChat search.
+
+    A target ``name``/``query`` may intentionally be a durable session scope
+    such as an account alias. When that alias and the guarded visible title are
+    unrelated, searching the alias can produce an empty result surface even
+    though the contact is present. Prefer the guarded title in that case; keep
+    deliberate title prefixes such as ``MEMO写作`` unchanged.
+    """
+    query = target.query.strip()
+    expected = target.expected_title.strip()
+    normalized_query = normalize_title(query)
+    normalized_expected = normalize_title(expected)
+    if not normalized_expected or not normalized_query:
+        return query or expected
+    if normalized_query in normalized_expected or normalized_expected in normalized_query:
+        return query
+    return expected
 
 
 def visible_chat_list_fallback_guard(

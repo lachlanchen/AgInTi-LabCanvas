@@ -1604,6 +1604,26 @@ class WeChatGuiSendTests(unittest.TestCase):
         ):
             self.assertTrue(module.global_search_allowed(True, target))
 
+    def test_preferred_search_query_uses_visible_title_for_stable_route_alias(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="stable-session-key",
+            query="stable-session-key",
+            expected_title="Visible Contact",
+        )
+
+        self.assertEqual(module.preferred_search_query(target), "Visible Contact")
+
+    def test_preferred_search_query_keeps_deliberate_title_prefix(self):
+        module = load_wechat_gui_send()
+        target = module.TargetSpec(
+            name="memo-profile",
+            query="MEMO写作",
+            expected_title="MEMO写作—外语—挣钱",
+        )
+
+        self.assertEqual(module.preferred_search_query(target), "MEMO写作")
+
     def test_close_non_target_wechat_windows_keeps_target_popup(self):
         module = load_wechat_gui_send()
         original_run = module.run

@@ -10,11 +10,33 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from agenticapp import wechat_ops
 
 
 class WeChatOpsHealthTests(unittest.TestCase):
+    def test_kill_tmux_reaps_captured_detached_children(self) -> None:
+        completed = subprocess.CompletedProcess(["tmux"], 0, "", "")
+        with (
+            mock.patch.object(wechat_ops, "run_command", return_value=completed) as run,
+            mock.patch.object(
+                wechat_ops,
+                "tmux_session_descendant_pids",
+                return_value=[101, 202],
+            ) as descendants,
+            mock.patch.object(wechat_ops, "terminate_process_ids") as terminate,
+        ):
+            stopped = wechat_ops.kill_tmux("labcanvas-career-daily")
+
+        self.assertTrue(stopped)
+        descendants.assert_called_once_with("labcanvas-career-daily")
+        terminate.assert_called_once_with([101, 202])
+        self.assertIn(
+            ["tmux", "kill-session", "-t", "labcanvas-career-daily"],
+            [call.args[0] for call in run.call_args_list],
+        )
+
     def test_desktop_status_reports_fresh_watchdog_lock(self) -> None:
         original_run = wechat_ops.run_command
         original_port = wechat_ops.port_listening

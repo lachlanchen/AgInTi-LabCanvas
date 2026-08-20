@@ -960,6 +960,35 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertTrue(result["career_daily"]["career_in_progress"])
         self.assertFalse(result["career_daily"]["career_overdue"])
 
+    def test_active_career_stage_suppresses_waiting_organizer_overdue_repair(self) -> None:
+        now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            heartbeat = Path(tmp) / "daily.health.json"
+            heartbeat.write_text(
+                json.dumps({"checked_at": "2026-07-22T11:59:30+00:00", "status": "ok"}),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(guard, "tmux_session_live", return_value=True),
+                mock.patch.object(
+                    guard,
+                    "read_json",
+                    side_effect=schedule_state_reader(
+                        echo_last_loop_at="2026-07-22T11:59:30+00:00",
+                        career_last_loop_at="2026-07-22T11:59:30+00:00",
+                        career_overdue=True,
+                        organizer_overdue=True,
+                        career_phase="career_running",
+                    ),
+                ),
+            ):
+                result = guard.schedule_health(labagent_heartbeat=heartbeat, now=now)
+
+        self.assertTrue(result["career_daily"]["ok"])
+        self.assertTrue(result["career_daily"]["career_in_progress"])
+        self.assertFalse(result["career_daily"]["career_overdue"])
+        self.assertFalse(result["career_daily"]["organizer_overdue"])
+
     def test_schedule_health_flags_stale_in_progress_career_delivery(self) -> None:
         now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -1381,6 +1410,8 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertIn("window_exists health", wecom)
         self.assertIn("health-restart", wecom)
         self.assertIn("start_health_window", wecom)
+        self.assertIn("gateway-restart", wecom)
+        self.assertIn("start_gateway_window", wecom)
         self.assertIn("health_guard_reload_needed", wecom)
         self.assertIn("sha256sum \"$HEALTH_GUARD\"", wecom)
         self.assertIn("android_bridge_reload_needed", wecom)
@@ -1399,6 +1430,8 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("echomind_language_scheduler_tmux.sh", stack)
         self.assertIn("start_echomind", stack)
+        self.assertIn('CAREER_MODEL="${WECHAT_CAREER_AGENT_MODEL:-gpt-5.6-sol}"', stack)
+        self.assertIn('CAREER_EFFORT="${WECHAT_CAREER_AGENT_EFFORT:-xhigh}"', stack)
 
 
 if __name__ == "__main__":

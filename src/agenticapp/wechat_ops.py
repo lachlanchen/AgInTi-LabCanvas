@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
 
 
@@ -227,8 +228,8 @@ def add_wechat_parser(subparsers: argparse._SubParsersAction) -> None:
     career.add_argument("--force-organize", action="store_true")
     career.add_argument("--morning-time", default="08:30")
     career.add_argument("--session", default="labcanvas-career-daily")
-    career.add_argument("--model", default=os.environ.get("WECHAT_CAREER_AGENT_MODEL", "gpt-5.5"))
-    career.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_CAREER_AGENT_EFFORT", "medium"))
+    career.add_argument("--model", default=os.environ.get("WECHAT_CAREER_AGENT_MODEL", "gpt-5.6-sol"))
+    career.add_argument("--reasoning-effort", default=os.environ.get("WECHAT_CAREER_AGENT_EFFORT", "xhigh"))
     career.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     career.set_defaults(func=cmd_career_agent)
 
@@ -3503,8 +3504,67 @@ def kill_tmux(session: str) -> bool:
         return False
     if run_command(["tmux", "has-session", "-t", session], capture=True).returncode != 0:
         return False
+    descendants = tmux_session_descendant_pids(session)
     run_command(["tmux", "kill-session", "-t", session], capture=True)
+    terminate_process_ids(descendants)
     return True
+
+
+def tmux_session_descendant_pids(session: str) -> list[int]:
+    """Capture pane descendants so detached agent subprocesses cannot survive stop."""
+
+    panes = run_command(
+        ["tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}"],
+        capture=True,
+    )
+    roots: list[int] = []
+    for line in panes.stdout.splitlines():
+        name, separator, raw_pid = line.partition("\t")
+        if separator and name == session:
+            try:
+                roots.append(int(raw_pid))
+            except ValueError:
+                continue
+    descendants: list[int] = []
+    seen = set(roots)
+    stack = list(roots)
+    while stack:
+        parent = stack.pop()
+        children_path = Path(f"/proc/{parent}/task/{parent}/children")
+        try:
+            children = [int(value) for value in children_path.read_text().split()]
+        except (OSError, ValueError):
+            continue
+        for child in children:
+            if child in seen:
+                continue
+            seen.add(child)
+            descendants.append(child)
+            stack.append(child)
+    return descendants
+
+
+def terminate_process_ids(process_ids: list[int], *, grace_seconds: float = 1.0) -> None:
+    """Terminate only PIDs captured from the project-owned tmux session."""
+
+    remaining = {pid for pid in process_ids if pid > 1}
+    for pid in reversed(process_ids):
+        try:
+            os.kill(pid, 15)
+        except (ProcessLookupError, PermissionError):
+            remaining.discard(pid)
+    deadline = time.monotonic() + max(0.0, grace_seconds)
+    while remaining and time.monotonic() < deadline:
+        for pid in tuple(remaining):
+            if not Path(f"/proc/{pid}").exists():
+                remaining.discard(pid)
+        if remaining:
+            time.sleep(0.05)
+    for pid in remaining:
+        try:
+            os.kill(pid, 9)
+        except (ProcessLookupError, PermissionError):
+            pass
 
 
 def port_listening(port: int) -> bool:

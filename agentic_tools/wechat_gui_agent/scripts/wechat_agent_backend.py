@@ -800,6 +800,15 @@ def run_aginti_session(
     with execution_lock_path.open("w", encoding="utf-8") as execution_lock:
         with exclusive_lock(execution_lock):
             previous_id = read_aginti_session_id(key) if reuse else ""
+            context_session_rotated = False
+            if (
+                previous_id
+                and is_response_only_agent_role(role)
+                and aginti_session_context_oversized(previous_id, backend_config)
+            ):
+                clear_aginti_session_id(key, expected_session_id=previous_id)
+                previous_id = ""
+                context_session_rotated = True
             new_session_id = "" if previous_id else f"web-agent-labcanvas-{uuid.uuid4()}"
             result = run_aginti_provider_chain(
                 prompt,
@@ -814,7 +823,16 @@ def run_aginti_session(
                 previous_id=previous_id,
                 new_session_id=new_session_id,
             )
+            recovery_reason = ""
             if previous_id and aginti_missing_session_result(result):
+                recovery_reason = "missing_session"
+            elif (
+                previous_id
+                and is_response_only_agent_role(role)
+                and aginti_context_exhausted_result(result)
+            ):
+                recovery_reason = "context_exhausted"
+            if recovery_reason:
                 clear_aginti_session_id(key, expected_session_id=previous_id)
                 new_session_id = f"web-agent-labcanvas-{uuid.uuid4()}" if reuse else ""
                 result = run_aginti_provider_chain(
@@ -831,7 +849,12 @@ def run_aginti_session(
                     new_session_id=new_session_id,
                 )
                 result["fallback_started"] = True
-                result["stale_session_recovered"] = True
+                if recovery_reason == "missing_session":
+                    result["stale_session_recovered"] = True
+                else:
+                    result["context_session_recovered"] = True
+            if context_session_rotated:
+                result["context_session_rotated"] = True
             if reuse and result.get("ok") and result.get("thread_id"):
                 persist_aginti_session(
                     key,
@@ -1152,6 +1175,66 @@ def aginti_missing_session_result(result: dict[str, Any]) -> bool:
         for key in ("stderr_tail", "stdout_tail", "reason", "message_source")
     ).casefold()
     return "no saved session found" in text
+
+
+def aginti_context_exhausted_result(result: dict[str, Any]) -> bool:
+    """Detect provider refusal before inference because session history is too large."""
+
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("stderr_tail", "stdout_tail", "reason", "message_source", "message")
+    ).casefold()
+    return any(
+        marker in text
+        for marker in (
+            "context_budget_exceeded",
+            "context window",
+            "envelope exceeds",
+            "maximum context length",
+            "reduce the length of the messages",
+        )
+    )
+
+
+def aginti_session_context_oversized(
+    session_id: str,
+    backend_config: dict[str, Any],
+) -> bool:
+    """Bound response-only session history before a provider call is attempted."""
+
+    raw_limit = (
+        backend_config.get("response_session_max_chars")
+        or aginti_env_value("RESPONSE_SESSION_MAX_CHARS")
+        or "400000"
+    )
+    try:
+        limit = max(10000, int(raw_limit))
+    except (TypeError, ValueError):
+        limit = 400000
+    for directory in aginti_session_dirs("", backend_config):
+        state_path = directory / session_id / "state.json"
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        messages = payload.get("messages") if isinstance(payload, dict) else None
+        if not isinstance(messages, list):
+            continue
+        total = 0
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content", "")
+            if isinstance(content, str):
+                total += len(content)
+            else:
+                try:
+                    total += len(json.dumps(content, ensure_ascii=False))
+                except (TypeError, ValueError):
+                    total += len(str(content))
+            if total > limit:
+                return True
+    return False
 
 
 def claude_command(

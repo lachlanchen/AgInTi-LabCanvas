@@ -583,6 +583,7 @@ def schedule_health(
     organizer_in_progress = (
         career_phase == "organizer_running" and career_heartbeat_ok
     )
+    workflow_in_progress = career_in_progress or organizer_in_progress
     career_retry_at = parse_timestamp(career_state.get("career_next_attempt_at"))
     organizer_retry_at = parse_timestamp(
         career_state.get("organizer_next_attempt_at")
@@ -594,12 +595,12 @@ def schedule_health(
     career_overdue = bool(
         career_state.get("career_overdue")
         and not career_retry_pending
-        and not career_in_progress
+        and not workflow_in_progress
     )
     organizer_overdue = bool(
         career_state.get("organizer_overdue")
         and not organizer_retry_pending
-        and not organizer_in_progress
+        and not workflow_in_progress
     )
     career_ok = (
         career_running

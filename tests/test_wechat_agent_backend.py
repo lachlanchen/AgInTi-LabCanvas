@@ -849,6 +849,130 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[1].args[0][1:3], ["resume", "recoverable-session"])
         self.assertIn("Provider handoff", run.call_args_list[1].kwargs["input"])
 
+    def test_response_only_aginti_role_retires_context_exhausted_session(self) -> None:
+        backend = load_backend()
+        exhausted = {
+            "ok": False,
+            "message": "",
+            "thread_id": "old-session",
+            "returncode": 1,
+            "stderr_tail": "envelope exceeds the configured LocalLLM context window",
+        }
+        recovered = {
+            "ok": True,
+            "message": "fresh bounded response",
+            "thread_id": "fresh-session",
+            "returncode": 0,
+        }
+        with (
+            mock.patch.object(backend, "read_aginti_session_id", return_value="old-session"),
+            mock.patch.object(
+                backend,
+                "run_aginti_provider_chain",
+                side_effect=[exhausted, recovered],
+            ) as run,
+            mock.patch.object(backend, "clear_aginti_session_id") as clear,
+            mock.patch.object(backend, "persist_aginti_session") as persist,
+        ):
+            result = backend.run_aginti_session(
+                "current bounded prompt",
+                chat_name="career-daily-test",
+                role="career_daily",
+                model="gpt-5.6-sol",
+                reasoning_effort="xhigh",
+                sandbox="read-only",
+                timeout_seconds=120,
+                workdir=ROOT,
+                reuse=True,
+                backend_config={},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["context_session_recovered"])
+        self.assertTrue(result["fallback_started"])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0].kwargs["previous_id"], "old-session")
+        self.assertEqual(run.call_args_list[1].kwargs["previous_id"], "")
+        self.assertTrue(run.call_args_list[1].kwargs["new_session_id"].startswith("web-agent-labcanvas-"))
+        clear.assert_called_once_with(
+            backend.session_key("career-daily-test", "career_daily"),
+            expected_session_id="old-session",
+        )
+        persist.assert_called_once()
+
+    def test_response_only_aginti_role_rotates_oversized_session_before_call(self) -> None:
+        backend = load_backend()
+        succeeded = {
+            "ok": True,
+            "message": "fresh response",
+            "thread_id": "fresh-session",
+            "returncode": 0,
+        }
+        with (
+            mock.patch.object(backend, "read_aginti_session_id", return_value="old-session"),
+            mock.patch.object(backend, "aginti_session_context_oversized", return_value=True),
+            mock.patch.object(backend, "run_aginti_provider_chain", return_value=succeeded) as run,
+            mock.patch.object(backend, "clear_aginti_session_id") as clear,
+            mock.patch.object(backend, "persist_aginti_session"),
+        ):
+            result = backend.run_aginti_session(
+                "current bounded prompt",
+                chat_name="career-preflight-test",
+                role="career_daily",
+                model="gpt-5.6-sol",
+                reasoning_effort="xhigh",
+                sandbox="read-only",
+                timeout_seconds=120,
+                workdir=ROOT,
+                reuse=True,
+                backend_config={},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["context_session_rotated"])
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.kwargs["previous_id"], "")
+        self.assertTrue(run.call_args.kwargs["new_session_id"].startswith("web-agent-labcanvas-"))
+        clear.assert_called_once_with(
+            backend.session_key("career-preflight-test", "career_daily"),
+            expected_session_id="old-session",
+        )
+
+    def test_tool_capable_aginti_role_does_not_replay_context_failure(self) -> None:
+        backend = load_backend()
+        exhausted = {
+            "ok": False,
+            "message": "",
+            "thread_id": "old-session",
+            "returncode": 1,
+            "stderr_tail": "maximum context length exceeded",
+        }
+        with (
+            mock.patch.object(backend, "read_aginti_session_id", return_value="old-session"),
+            mock.patch.object(
+                backend,
+                "run_aginti_provider_chain",
+                return_value=exhausted,
+            ) as run,
+            mock.patch.object(backend, "clear_aginti_session_id") as clear,
+        ):
+            result = backend.run_aginti_session(
+                "tool-capable task",
+                chat_name="LabAgent",
+                role="worker",
+                model="gpt-5.6-sol",
+                reasoning_effort="medium",
+                sandbox="danger-full-access",
+                timeout_seconds=120,
+                workdir=ROOT,
+                reuse=True,
+                backend_config={},
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(run.call_count, 1)
+        clear.assert_not_called()
+
     def test_aginti_shared_backend_reads_wecom_provider_environment(self) -> None:
         backend = load_backend()
 
