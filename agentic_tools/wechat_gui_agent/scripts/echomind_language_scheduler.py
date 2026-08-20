@@ -25,7 +25,7 @@ if str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts"))
 
 import wechat_direct_chatops as direct  # noqa: E402
-from wechat_agent_backend import run_agent_session  # noqa: E402
+from wechat_agent_backend import run_agent_session, select_agent_backend  # noqa: E402
 from wechat_message_policy import (  # noqa: E402
     file_transport_identity,
     recorded_outbound_echo,
@@ -388,7 +388,7 @@ Use Unicode IPA directly. Do not use \\textipa, Markdown code fences, a document
 Previous-day EchoMind source material:
 {history}
 """
-    result = run_agent_session(prompt, backend="codex", chat_name="EchoMind", role="daily_language_pdf", model="gpt-5.6-sol", reasoning_effort="medium", sandbox="read-only", timeout_seconds=900, reuse=True, backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})})
+    result = run_agent_session(prompt, backend=select_agent_backend(config), chat_name="EchoMind", role="daily_language_pdf", model="gpt-5.6-sol", reasoning_effort="medium", sandbox="read-only", timeout_seconds=900, reuse=True, backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})})
     body = normalize_latex_body(str(result.get("message") or ""))
     if not body:
         raise RuntimeError("daily EchoMind PDF agent returned no LaTeX body")
@@ -534,7 +534,7 @@ Previous scheduled lesson (avoid repeating its topic):
 """
     result = run_agent_session(
         prompt,
-        backend="codex",
+        backend=select_agent_backend(config),
         chat_name="EchoMind",
         role="scheduled_language_teacher",
         model=PERIODIC_MODEL,
@@ -647,7 +647,7 @@ Draft:
 """
     result = run_agent_session(
         prompt,
-        backend="codex",
+        backend=select_agent_backend(config),
         chat_name="EchoMind",
         role="scheduled_language_editor",
         model=PERIODIC_EDITOR_MODEL,

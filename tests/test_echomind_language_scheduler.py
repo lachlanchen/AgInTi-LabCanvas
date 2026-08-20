@@ -101,7 +101,7 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
                     return_value={"chat_name": "EchoMind", "agent_fallbacks": {}},
                 ),
                 mock.patch.object(scheduler.direct, "read_recent_history", return_value=[]),
-                mock.patch.object(scheduler, "run_agent_session", side_effect=agent),
+                mock.patch.object(scheduler, "run_agent_session", side_effect=agent) as agent_mock,
             ):
                 result = scheduler.run_once(deliver=False)
 
@@ -110,6 +110,7 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         self.assertIn("予約（よやく）", observed["prompt"])
         self.assertIn("plus romaji", observed["prompt"])
         self.assertIn("exactly one aligned core example", observed["prompt"])
+        self.assertEqual(agent_mock.call_args.kwargs["backend"], "aginti")
 
     def test_incomplete_periodic_lesson_is_agent_edited_before_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

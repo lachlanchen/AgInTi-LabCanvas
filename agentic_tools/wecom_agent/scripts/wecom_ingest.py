@@ -26,7 +26,7 @@ if str(SHARED_AGENT_SCRIPTS) not in sys.path:
 
 from codex_quota_status import quota_warning_for_request  # noqa: E402
 from wechat_chat_profiles import profile_for_chat  # noqa: E402
-from wechat_agent_backend import run_agent_session  # noqa: E402
+from wechat_agent_backend import run_agent_session, select_agent_backend  # noqa: E402
 from wechat_mirror import record_event  # noqa: E402
 from wechat_routines import (  # noqa: E402
     ensure_task_routine_contract,
@@ -673,7 +673,9 @@ Current exact-chat active task, if any:
     timeout = max(5, int(os.environ.get("WECOM_ROUTE_TIMEOUT_SECONDS", "35")))
     result = run_agent_session(
         prompt,
-        backend=os.environ.get("WECOM_AGENT_BACKEND", "codex"),
+        backend=select_agent_backend(
+            {"agent_backend": os.environ.get("WECOM_AGENT_BACKEND", "")}
+        ),
         chat_name=canonical_chat_name(event),
         role=os.environ.get("WECOM_ROUTE_SESSION_ROLE", "route-context-v3"),
         model=model,
@@ -899,7 +901,9 @@ Current exact-chat active task, if any:
     timeout = max(5, int(os.environ.get("WECOM_PEER_REVIEW_TIMEOUT_SECONDS", "60")))
     result = run_agent_session(
         prompt,
-        backend=os.environ.get("WECOM_AGENT_BACKEND", "codex"),
+        backend=select_agent_backend(
+            {"agent_backend": os.environ.get("WECOM_AGENT_BACKEND", "")}
+        ),
         chat_name=canonical_chat_name(event),
         role=os.environ.get(
             "WECOM_PEER_REVIEW_SESSION_ROLE",
@@ -1223,7 +1227,9 @@ def build_task(
         "status": "pending",
         "created_at": now.isoformat(timespec="seconds"),
         "expires_at": (now + timedelta(seconds=int(os.environ.get("WECOM_PENDING_TTL_SECONDS", "3600")))).isoformat(timespec="seconds"),
-        "agent_backend": os.environ.get("WECOM_AGENT_BACKEND", "codex"),
+        "agent_backend": select_agent_backend(
+            {"agent_backend": os.environ.get("WECOM_AGENT_BACKEND", "")}
+        ),
         "agent_backend_config": {
             "agent_fallbacks": {
                 "enabled": True,

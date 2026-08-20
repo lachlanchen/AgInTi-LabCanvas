@@ -27,6 +27,7 @@ if str(SHARED_AGENT_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SHARED_AGENT_SCRIPTS))
 
 from wechat_routines import ensure_task_routine_contract  # noqa: E402
+from wechat_agent_backend import select_agent_backend  # noqa: E402
 from wecom_member_knowledge import knowledge_db_for_history, member_context  # noqa: E402
 
 
@@ -1016,7 +1017,9 @@ Requirements:
         "route_plan": "Use the persistent LabCanvas worker to synthesize one non-repetitive group inspiration point.",
         "status": "pending",
         "created_at": now.isoformat(timespec="seconds"),
-        "agent_backend": os.environ.get("WECOM_AGENT_BACKEND", "codex"),
+        "agent_backend": select_agent_backend(
+            {"agent_backend": os.environ.get("WECOM_AGENT_BACKEND", "")}
+        ),
         "agent_backend_config": {
             "agent_fallbacks": {
                 "enabled": True,
@@ -1283,7 +1286,9 @@ Requirements:
         "request": request_text,
         "status": "pending",
         "created_at": now.isoformat(timespec="seconds"),
-        "agent_backend": os.environ.get("WECOM_AGENT_BACKEND", "codex"),
+        "agent_backend": select_agent_backend(
+            {"agent_backend": os.environ.get("WECOM_AGENT_BACKEND", "")}
+        ),
         "agent_backend_config": {
             "agent_fallbacks": {
                 "enabled": True,

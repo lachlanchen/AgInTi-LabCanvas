@@ -467,6 +467,42 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertIn("--no-file-tools", command)
         self.assertIn('"mode":"chat-response"', prompt)
 
+    def test_host_managed_content_role_uses_response_only_contract(self) -> None:
+        backend = load_backend()
+        command = backend.aginti_command(
+            model="aginti",
+            role="career_daily",
+            sandbox="read-only",
+            backend_config={},
+        )
+        prompt = backend.aginti_prompt(
+            "Return the report body; the caller writes and compiles it.",
+            chat_name="career-daily-agent",
+            role="career_daily",
+            model="aginti",
+            reasoning_effort="medium",
+            sandbox="read-only",
+            backend_config={},
+        )
+
+        self.assertEqual(command[command.index("--task-profile") + 1], "chatops")
+        self.assertIn("--no-shell", command)
+        self.assertIn("--no-file-tools", command)
+        self.assertIn('"mode":"host-managed-response"', prompt)
+
+    def test_worker_role_defaults_to_general_aginti_profile(self) -> None:
+        backend = load_backend()
+        command = backend.aginti_command(
+            model="aginti",
+            role="worker",
+            sandbox="danger-full-access",
+            backend_config={},
+        )
+
+        self.assertEqual(command[command.index("--task-profile") + 1], "auto")
+        self.assertNotIn("--no-shell", command)
+        self.assertNotIn("--no-file-tools", command)
+
     def test_aginti_machine_command_cannot_override_managed_sandbox_args(self) -> None:
         backend = load_backend()
 
@@ -756,6 +792,62 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertNotIn("exact prompt", prompts[1])
         self.assertTrue(result["fallback_continued_same_session"])
         self.assertFalse(result["resumed"])
+
+    def test_aginti_hands_off_recoverable_runtime_stop_in_same_session(self) -> None:
+        backend = load_backend()
+        failed = subprocess.CompletedProcess(
+            ["aginti", "run"],
+            1,
+            stdout=json.dumps(
+                {
+                    "ok": False,
+                    "sessionId": "recoverable-session",
+                    "result": "Stopped before dispatching an invalid batch.",
+                    "stopped": True,
+                    "failed": True,
+                    "reason": "tool_contract_violation",
+                }
+            ),
+            stderr="",
+        )
+        succeeded = subprocess.CompletedProcess(
+            ["aginti", "resume"],
+            0,
+            stdout=json.dumps(
+                {
+                    "ok": True,
+                    "sessionId": "recoverable-session",
+                    "result": "CHAT: continued with the remaining safe work",
+                    "failed": False,
+                }
+            ),
+            stderr="",
+        )
+        with (
+            mock.patch.object(backend, "resolve_command_executable", return_value="aginti"),
+            mock.patch.object(backend, "run_process_group", side_effect=[failed, succeeded]) as run,
+        ):
+            result = backend.run_aginti_session(
+                "exact prompt",
+                chat_name="LabAgent",
+                role="worker",
+                model="aginti",
+                reasoning_effort="medium",
+                sandbox="danger-full-access",
+                timeout_seconds=120,
+                workdir=ROOT,
+                reuse=False,
+                backend_config={
+                    "wrap_prompt": False,
+                    "provider_chain": ["deepseek", "localllm"],
+                },
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "localllm")
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[1].args[0][1:3], ["resume", "recoverable-session"])
+        self.assertIn("Provider handoff", run.call_args_list[1].kwargs["input"])
 
     def test_aginti_shared_backend_reads_wecom_provider_environment(self) -> None:
         backend = load_backend()

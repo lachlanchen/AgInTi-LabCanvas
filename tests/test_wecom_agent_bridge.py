@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -1197,6 +1198,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertEqual(repeated["actions"], [])
         self.assertEqual(len(captured), 1)
         self.assertTrue(captured[0]["route_decision"]["scheduled_group_inspiration"])
+        self.assertEqual(captured[0]["agent_backend"], "aginti")
         self.assertEqual(
             captured[0]["session_scope"],
             f"{chat}::scheduled-group-inspiration",
@@ -1690,6 +1692,7 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertNotIn("transport sends both", task["request"])
         self.assertTrue(task["route_decision"]["no_fixed_deadline"])
         self.assertFalse(task["agent_backend_config"]["agent_fallbacks"]["fallback_on_timeout"])
+        self.assertEqual(task["agent_backend"], "aginti")
 
     def test_daily_scheduler_keeps_member_jobs_separate_and_serialized(self) -> None:
         daily = load_daily()
@@ -1987,6 +1990,40 @@ class WeComAgentBridgeTests(unittest.TestCase):
         evidence = task["execution_contract"]["research_evidence"]
         self.assertEqual(evidence["minimum_traceable_sources"], 2)
         self.assertTrue(evidence["separate_direct_indirect_hypothesis"])
+
+    def test_wecom_task_honors_explicit_backend_override(self) -> None:
+        ingest = load_ingest()
+        response = {
+            "ok": True,
+            "message": json.dumps(
+                {
+                    "worker_needed": True,
+                    "route_kind": "research_or_summary",
+                    "response": "",
+                    "task": "Research this request.",
+                    "ack": "",
+                    "report_required": False,
+                    "public_publish_allowed": False,
+                }
+            ),
+        }
+        event = self.sample_event(text="Research this request.")
+        with mock.patch.object(ingest, "run_agent_session", return_value=response):
+            route = ingest.route_event(event, ingest.event_request(event), [])
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ,
+            {"WECOM_AGENT_BACKEND": "codex"},
+        ):
+            task = ingest.build_task(
+                event,
+                ingest.canonical_chat_name(event),
+                ingest.event_request(event),
+                [],
+                route,
+                Path(tmp) / "queue.jsonl",
+            )
+
+        self.assertEqual(task["agent_backend"], "codex")
 
     def test_same_member_pdf_preference_upgrades_substantial_research_only(self) -> None:
         ingest = load_ingest()

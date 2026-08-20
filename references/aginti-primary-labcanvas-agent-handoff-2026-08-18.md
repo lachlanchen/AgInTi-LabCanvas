@@ -134,3 +134,44 @@ After publishing a new AgInTi package, update the existing installation and
 restart only the already-owned `agintiflow` tmux runtime. Do not create a
 second web/noVNC stack. Reload the guarded WeChat worker only after package,
 machine protocol, and host acceptance checks pass.
+
+## 2026-08-20 Primary-Backend Hardening
+
+The remaining implicit Codex pins were removed from WeChat defaults, WeCom
+ingest and schedules, EchoMind schedules, completion audits, transport repair,
+grant work, and social-content work. The centralized policy now chooses AgInTi
+by default. `WECHAT_AGENT_BACKEND`, `WECOM_AGENT_BACKEND`, and explicit task
+configuration remain authoritative opt-ins for Codex or Claude Code.
+
+LabCanvas distinguishes two AgInTi execution classes:
+
+- Response-only roles use the `chatops` profile with shell and file tools off.
+  They include routing, chat, completion audit, scheduled lesson editing,
+  translation, career report bodies, and other content that the host will
+  persist or compile.
+- Tool-capable workers use the general `auto` profile and retain the routines
+  required for research, CAD, PCB, Blender, media, publication, and artifact
+  delivery.
+
+Response-only host-managed prompts carry
+`AGINTI_EVIDENCE_SCOPE_JSON.mode=host-managed-response`; AgInTi must return the
+requested content without falsely requiring it to duplicate the host's file,
+compile, or delivery stages.
+
+AgInTi now tolerates a provider that ignores `parallel_tool_calls=false` and
+returns a small valid mixed batch. Only the first tool is dispatched; the rest
+are deferred and must be reconsidered after the result. Invalid schemas,
+duplicate IDs, hidden fields, unavailable tools, and oversized batches remain
+hard failures. A categorized runtime stop can hand off DeepSeek to LocalLLM by
+resuming the same session, never by replaying the original task.
+
+Release validation for this hardening requires:
+
+```bash
+cd /home/lachlan/ProjectsLFS/Agent/AgInTiFlow
+npm test
+
+cd /home/lachlan/ProjectsLFS/AgenticApp
+PYTHONPATH=src python -m unittest discover -s tests
+PYTHONPATH=src python -m agenticapp wechat selftest --suite all --json
+```

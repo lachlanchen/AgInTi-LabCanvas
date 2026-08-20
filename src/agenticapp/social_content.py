@@ -813,9 +813,9 @@ def generate_campaign_drafts(
         model=campaign["model"],
         effort=campaign["effort"],
         mode="plan",
-        backend="codex",
+        backend="auto",
     )
-    policy["fallback_to_aginti"] = False
+    policy["fallback_to_aginti"] = True
     if dry_run:
         return {"ok": True, "dry_run": True, "campaign": campaign, "policy": policy, "prompt": prompt}
     runner = agent_runner or (lambda value, context: _run_social_agent(value, context, store=store, root=root))
@@ -1010,9 +1010,9 @@ def maintain_campaign(
         model=campaign["model"],
         effort=campaign["effort"],
         mode="plan",
-        backend="codex",
+        backend="auto",
     )
-    policy["fallback_to_aginti"] = False
+    policy["fallback_to_aginti"] = True
     if dry_run:
         return {"ok": True, "dry_run": True, "campaign": campaign, "policy": policy, "prompt": prompt, "integrations": integration_map}
 

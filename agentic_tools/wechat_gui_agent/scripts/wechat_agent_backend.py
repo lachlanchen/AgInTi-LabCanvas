@@ -293,7 +293,7 @@ def run_agent_session(
         usable_message = user_facing_backend_message(result.get("message"))
         if (
             result.get("ok")
-            and is_conversational_agent_role(role)
+            and is_response_only_agent_role(role)
             and is_generic_execution_evidence_refusal(usable_message)
         ):
             result = {
@@ -1121,7 +1121,17 @@ def aginti_provider_retry_is_safe(result: dict[str, Any]) -> bool:
         str(result.get(key) or "")
         for key in ("stderr_tail", "stdout_tail", "reason", "message_source")
     ).casefold()
-    if any(reason in text for reason in ("empty_model_response", "invalid_machine_json", "model_timeout", "provider_unavailable")):
+    if any(
+        reason in text
+        for reason in (
+            "empty_model_response",
+            "invalid_machine_json",
+            "model_did_not_execute",
+            "model_timeout",
+            "provider_unavailable",
+            "tool_contract_violation",
+        )
+    ):
         return bool(result.get("thread_id"))
     if returncode == 124 or "timeout" in text or "timed out" in text:
         return bool(result.get("thread_id"))
@@ -1238,7 +1248,7 @@ def aginti_command(
                 "manual",
                 "--no-scs",
                 "--task-profile",
-                str(backend_config.get("task_profile") or "chatops"),
+                aginti_task_profile(role, backend_config),
                 "--no-parallel-scouts",
                 "--package-install-policy",
                 "block",
@@ -1310,7 +1320,7 @@ def aginti_sandbox_args(
     allow_danger = bool(backend_config.get("allow_dangerous_host", False))
     if explicit == "danger" and not allow_danger:
         explicit = "normal"
-    if is_conversational_agent_role(role):
+    if is_response_only_agent_role(role):
         return [
             "--permission-mode",
             "safe",
@@ -1519,6 +1529,12 @@ def aginti_prompt(
             '"request":"Produce only the requested chat or routing response; '
             'this role performs no external action."}\n'
         )
+    elif is_response_only_agent_role(role):
+        evidence_scope = (
+            'AGINTI_EVIDENCE_SCOPE_JSON: {"mode":"host-managed-response",'
+            '"request":"Return only the requested content; the LabCanvas host '
+            'owns persistence, compilation, validation, and delivery."}\n'
+        )
     return f"""You are AgInTi, the primary reasoning and tool agent for LabCanvas chat automation.
 {evidence_scope}
 Treat the exact current request as the authoritative continuation of this chat. Use relevant same-chat session memory and repository instructions, but never continue an unrelated task, reuse an unrelated artifact, or substitute a nearby workspace request.
@@ -1543,6 +1559,27 @@ def is_conversational_agent_role(role: str) -> bool:
     return normalized in {"fast", "route"} or normalized.startswith(
         ("fast-", "route-", "peer-", "chat-")
     )
+
+
+def is_response_only_agent_role(role: str) -> bool:
+    normalized = str(role or "").strip().casefold().replace("_", "-")
+    if is_conversational_agent_role(normalized):
+        return True
+    return normalized in {
+        "career-daily",
+        "completion-audit",
+        "daily-language-pdf",
+        "daily-organizer",
+        "scheduled-language-editor",
+        "scheduled-language-teacher",
+    } or normalized.startswith(("translate-", "translation-"))
+
+
+def aginti_task_profile(role: str, backend_config: dict[str, Any]) -> str:
+    explicit = str(backend_config.get("task_profile") or "").strip()
+    if explicit:
+        return explicit
+    return "chatops" if is_response_only_agent_role(role) else "auto"
 
 
 def command_available(executable: str) -> bool:

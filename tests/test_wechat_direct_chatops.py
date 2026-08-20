@@ -4101,6 +4101,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
                 config = direct_chatops.load_config(Path(handle.name))
 
         self.assertEqual(config["codex"]["model"], "gpt-5.6-sol")
+        self.assertEqual(config["agent_backend"], "aginti")
         self.assertEqual(config["codex"]["reasoning_effort"], "low")
         self.assertEqual(config["codex"]["timeout_seconds"], 25)
         self.assertTrue(config["agent_fallbacks"]["enabled"])

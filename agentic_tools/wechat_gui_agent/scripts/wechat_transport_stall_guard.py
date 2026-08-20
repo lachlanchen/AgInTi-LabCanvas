@@ -29,7 +29,7 @@ SCRIPTS_DIR = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from wechat_agent_backend import run_agent_session  # noqa: E402
+from wechat_agent_backend import run_agent_session, select_agent_backend  # noqa: E402
 
 WECHAT_PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
 WECOM_PRIVATE = ROOT / "agentic_tools" / "wecom_agent" / ".private"
@@ -1602,7 +1602,7 @@ Health context:
 """
     result = run_agent_session(
         prompt,
-        backend="codex",
+        backend=select_agent_backend({}),
         chat_name=REPAIR_AGENT_CHAT,
         role=REPAIR_AGENT_ROLE,
         model=REPAIR_AGENT_MODEL,
@@ -1615,7 +1615,7 @@ Health context:
             "low_quota_spark": {"enabled": False},
             "agent_fallbacks": {
                 "purchased_credit_retry": True,
-                "fallback_to_aginti": False,
+                "fallback_to_aginti": True,
             },
         },
     )

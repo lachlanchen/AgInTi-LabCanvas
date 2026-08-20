@@ -683,7 +683,7 @@ def cmd_grant_run(args: argparse.Namespace) -> int:
     payload = {
         "message": goal_prompt,
         "conversation_id": conversation,
-        "backend": "codex",
+        "backend": "auto",
         "model": args.model,
         "effort": args.effort,
         "mode": "execute",
@@ -692,7 +692,7 @@ def cmd_grant_run(args: argparse.Namespace) -> int:
         "context": {"grant_workspace": workspace},
     }
     if args.dry_run:
-        policy = select_agent_policy(goal_prompt, model=args.model, effort=args.effort, mode="execute", backend="codex")
+        policy = select_agent_policy(goal_prompt, model=args.model, effort=args.effort, mode="execute", backend="auto")
         result = {
             "ok": True,
             "dry_run": True,

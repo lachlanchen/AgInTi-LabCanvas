@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 from typing import Any, Callable
 
-from wechat_agent_backend import run_agent_session
+from wechat_agent_backend import run_agent_session, select_agent_backend
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -445,7 +445,7 @@ def run_completion_audit(
         return {
             "status": "unavailable",
             "model": "",
-            "backend": "codex",
+            "backend": select_agent_backend({}),
             "coverage_complete": not deterministic_missing,
             "expected_item_ids": expected_ids,
             "covered_item_ids": covered_ids,
@@ -515,7 +515,13 @@ def run_completion_audit(
                 if str(audit.get("model") or "")
             )
         ),
-        "backend": "codex",
+        "backend": ",".join(
+            dict.fromkeys(
+                str(audit.get("backend") or "")
+                for audit in audits
+                if str(audit.get("backend") or "")
+            )
+        ) or select_agent_backend({}),
         "coverage_complete": not missing,
         "expected_item_ids": expected_ids,
         "covered_item_ids": covered_ids,
@@ -546,7 +552,7 @@ def run_completion_audit_batch(
     try:
         response = runner(
             prompt,
-            backend="codex",
+            backend=select_agent_backend({}),
             chat_name=str(task.get("chat") or "wechat-chat"),
             role="completion_audit",
             model=os.environ.get("WECHAT_COMPLETION_AUDIT_MODEL", DEFAULT_MODEL),
@@ -567,7 +573,7 @@ def run_completion_audit_batch(
             fallback_reasoning_effort="low",
             backend_config={
                 "agent_fallbacks": {
-                    "fallback_to_aginti": False,
+                    "fallback_to_aginti": True,
                     "purchased_credit_retry": True,
                 }
             },
@@ -622,7 +628,7 @@ def run_completion_audit_batch(
     return {
         "status": "checked",
         "model": str(response.get("model") or DEFAULT_MODEL),
-        "backend": str(response.get("backend") or "codex"),
+        "backend": str(response.get("backend") or select_agent_backend({})),
         "coverage_complete": not missing,
         "expected_item_ids": expected_ids,
         "covered_item_ids": covered_ids,

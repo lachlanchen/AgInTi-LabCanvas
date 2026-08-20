@@ -181,7 +181,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "state_path": str(DEFAULT_STATE),
         "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
         "mirror_db": str(DEFAULT_DB),
-        "agent_backend": "codex",
+        "agent_backend": select_agent_backend({}),
         "claude": {"model": "", "timeout_seconds": 60},
         "aginti": {
             "command": os.environ.get("WECHAT_AGINTI_COMMAND", "aginti"),
