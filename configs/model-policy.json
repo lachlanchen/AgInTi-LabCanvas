@@ -28,6 +28,30 @@
     "model": "gpt-5.6-sol",
     "reasoning_effort": "xhigh"
   },
+  "memory": {
+    "context_window_tokens": {
+      "default": 32768,
+      "localllm": 32768,
+      "localllm-fast": 32768,
+      "deepseek": 65536,
+      "deepseek-v4-flash": 65536,
+      "codex": 114688,
+      "auto-code-review": 114688,
+      "gpt-5.6-sol": 114688
+    },
+    "output_reserve_tokens": 6144,
+    "tool_reserve_tokens": 6144,
+    "minimum_memory_tokens": 2048,
+    "maximum_memory_tokens": 24576,
+    "role_memory_fraction": {
+      "chat": 0.24,
+      "task": 0.34,
+      "research": 0.4,
+      "daily": 0.42,
+      "default": 0.34
+    },
+    "full_memory_fraction": 0.72
+  },
   "fallback": {
     "chat": {
       "model": "gpt-5.6-sol",

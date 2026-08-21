@@ -31,6 +31,7 @@ from wechat_task_worker import (
     send_file,
     send_message,
 )
+from wechat_history_rag import build_history_context
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -53,6 +54,19 @@ DELIVERY_RETRY_MAX_SECONDS = int(os.environ.get("WECHAT_DAILY_DELIVERY_RETRY_MAX
 SCHEDULER_OVERDUE_GRACE_SECONDS = int(
     os.environ.get("WECHAT_DAILY_OVERDUE_GRACE_SECONDS", "5400")
 )
+CAREER_HISTORY_QUERY = """
+writing author story language research career work talent strength opportunity
+income money wealth freedom happiness product service open source publishing
+reader audience customer investment company project experiment evidence shipped
+写作 作者 故事 外语 研究 职业 工作 天赋 优势 机会 收入 挣钱 财富 自由
+幸福 产品 服务 开源 发布 读者 用户 投资 公司 项目 实验 证据 完成 长期 目标
+"""
+ORGANIZER_HISTORY_QUERY = """
+memo todo reminder calendar grocery item resource project idea writing language
+career money question decision status completed open next action
+备忘 待办 提醒 日历 采购 物品 资源 项目 想法 写作 外语 职业 挣钱
+问题 决定 状态 已完成 未完成 下一步
+"""
 
 
 def main() -> int:
@@ -449,7 +463,7 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
     run_id = now.strftime("%Y-%m-%d-%H%M%S")
     trace_dir = private_dir / "runs" / run_id
     trace_dir.mkdir(parents=True, exist_ok=True)
-    evidence = collect_evidence(chats, args.memory_db)
+    evidence = collect_evidence(chats, args.memory_db, model=args.model)
     prompt = build_prompt(evidence)
     (trace_dir / "agent_prompt.md").write_text(prompt, encoding="utf-8")
     write_evidence_artifacts(trace_dir, evidence)
@@ -457,7 +471,7 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
         prompt,
         backend=select_agent_backend({}),
         chat_name="career-daily-agent",
-        role="career_daily",
+        role="career_research",
         model=args.model,
         reasoning_effort=args.reasoning_effort,
         sandbox="read-only",
@@ -743,12 +757,25 @@ def run_organizer(
         }
     result: dict[str, Any] = {}
     if not generated:
+        memory_db = getattr(args, "memory_db", DEFAULT_MEMORY_DB)
+        memory_chats = organizer_memory_chats(chat)
         snapshot = life_memo_snapshot(
-            getattr(args, "memory_db", DEFAULT_MEMORY_DB),
-            organizer_memory_chats(chat),
+            memory_db,
+            memory_chats,
             limit=200,
         )
-        prompt = build_organizer_prompt(chat, snapshot)
+        history = build_history_context(
+            memory_db,
+            memory_chats,
+            ORGANIZER_HISTORY_QUERY,
+            model=args.model,
+            role="daily",
+        )
+        prompt = build_organizer_prompt(
+            chat,
+            snapshot,
+            history_context=str(history.get("snapshot") or ""),
+        )
         result = run_agent_session(
             prompt,
             backend=select_agent_backend({}),
@@ -794,6 +821,7 @@ def run_organizer(
                 "reasoning_effort": args.reasoning_effort,
             },
             "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "history_retrieval": history.get("manifest") or {},
         }
         write_json_file(state_path, state)
 
@@ -874,7 +902,12 @@ def send_organizer_pdf(args: argparse.Namespace, pdf: Path, chat: str) -> dict[s
     return status
 
 
-def build_organizer_prompt(chat: str, snapshot: str) -> str:
+def build_organizer_prompt(
+    chat: str,
+    snapshot: str,
+    *,
+    history_context: str = "",
+) -> str:
     return f"""You organize one private WeChat group's recent notes into a useful daily memo.
 
 Exact chat: {chat}
@@ -892,12 +925,22 @@ and unresolved question in the bounded evidence. Merge duplicate classifier
 rows and closely related fragments, but do not silently drop a concrete item
 just because it does not fit one preferred narrative.
 
-Organize naturally rather than forcing empty sections. Distinguish:
-- concrete open actions for today or this week;
-- later ideas and experiments;
-- writing, language, career, and money signals;
-- factual reminders and explicit dates, only when present;
-- items that need clarification before they become actions.
+Organize naturally rather than forcing empty sections. Before synthesis, sort
+items into the lowest valid category and do not inflate ordinary notes into
+life direction:
+- 待办 / To-do: concrete open actions for today or this week;
+- 物品和资源: objects, parts, books, purchases, tools, and inventory;
+- 小事和日常备忘: factual reminders, errands, explicit dates, and daily notes;
+- 想做的项目和作品: later ideas, experiments, writing, product, repo, video,
+  CAD/PCB, language, career, and money projects;
+- 人生方向 / 长期战略: only signals explicitly framed by the user as life-level
+  intent or corroborated by GitHub, website, local repos, finished artifacts,
+  repeated output, or other strong project evidence.
+
+Items in 物品和资源 or 小事和日常备忘 are logistics by default. Do not turn them
+into symbolism, personality analysis, hidden motivation, a "main bet", or
+life-planning signal unless the evidence explicitly justifies that move. Keep
+the full organization separate from any short direction synthesis.
 
 Be comprehensive, condensed, and substantive. Preserve important technical
 names and quoted intent. Explain useful connections briefly, and end with at
@@ -909,6 +952,13 @@ delivered PDF.
 
 Recent exact-chat evidence:
 {snapshot}
+
+Relevance-ranked longitudinal context from the complete authorized history:
+{history_context or '(no additional longitudinal context found)'}
+
+Use longitudinal context only to resolve names, continuity, repeated projects,
+and explicit prior decisions. It is not today's inbox: never revive a completed
+task or list an old note unless the recent organized evidence makes it current.
 """
 
 
@@ -1134,10 +1184,53 @@ def observed_outbound_file(chat: str, file_path: Path, *, not_before: str = "") 
     )
 
 
-def collect_evidence(chats: list[str], memory_db: Path) -> dict[str, str]:
+def prior_strategy_snapshot(*, char_budget: int | None = None) -> str:
+    """Carry durable decisions forward without replaying every prior report."""
+
+    budget = max(
+        2000,
+        int(
+            char_budget
+            or os.environ.get("WECHAT_CAREER_PRIOR_STRATEGY_CHAR_BUDGET", "14000")
+        ),
+    )
+    if not OUTPUT.is_dir():
+        return "(no prior daily strategy reports found)"
+    lines: list[str] = []
+    used = 0
+    for path in sorted(OUTPUT.glob("*-career-strategy.md"), reverse=True):
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        summary = extract_daily_chat_summary(body) or compact(body, 1200)
+        summary = " ".join(summary.split())
+        if not summary:
+            continue
+        line = f"- {path.stem}: {summary}"
+        if used + len(line) + 1 > budget:
+            continue
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines) if lines else "(no readable prior strategy decisions found)"
+
+
+def collect_evidence(
+    chats: list[str], memory_db: Path, *, model: str = "gpt-5.6-sol"
+) -> dict[str, Any]:
+    history = build_history_context(
+        memory_db,
+        chats,
+        CAREER_HISTORY_QUERY,
+        model=model,
+        role="daily",
+    )
     return {
         "memory_snapshot": memory_snapshot(memory_db, chats),
         "life_memo_snapshot": life_memo_snapshot(memory_db, profile_aliases("writing_money")),
+        "full_history_context": str(history.get("snapshot") or ""),
+        "full_history_manifest": history.get("manifest") or {},
+        "prior_strategy_snapshot": prior_strategy_snapshot(),
         "project_surface": project_surface(),
         "lazyinvestment_snapshot": repo_readme_snapshot(Path("/home/lachlan/ProjectsLFS/LazyInvestment")),
         "voidabyss_snapshot": voidabyss_snapshot(),
@@ -1146,7 +1239,7 @@ def collect_evidence(chats: list[str], memory_db: Path) -> dict[str, str]:
     }
 
 
-def build_prompt(evidence: dict[str, str]) -> str:
+def build_prompt(evidence: dict[str, Any]) -> str:
     return f"""You are the daily career, writing, and opportunity strategy agent for Lachlan.
 
 Goal: give one deep, useful morning note for wealth, freedom, and happiness.
@@ -1154,18 +1247,48 @@ The user prefers substance over format. Do not write a shallow checklist.
 
 Use the evidence below:
 - WeChat memory summary, especially writing/language/money and lachlanchan.
-- The deduplicated life memo from the writing/language/money group.
+- The deduplicated life memo from the writing/language/money group, only as
+  weak context unless it is explicitly tied to a project, repeated action,
+  concrete output, or stated goal.
+- A model-budgeted lifetime-memory hierarchy to which every authorized history
+  row contributed, followed by purpose-ranked raw excerpts for exact wording.
+- Prior daily strategy decisions, so today's note can update or challenge them
+  instead of mechanically repeating a stable profile.
 - Local repo/project surface.
 - LazyInvestment/LazyEdit/LabCanvas/LazySkills/LALACHAN/voidabyss evidence when present.
 - Public profile evidence from GitHub, lazying.art, and the exact Google Scholar
   profile. Verify current facts before recommending companies or stocks and do
   not merge similarly named authors.
+- Use live web/deep research when a recommendation depends on current markets,
+  companies, publications, policies, products, or opportunities. Prefer primary
+  and official sources, retain direct URLs, distinguish publication dates from
+  page-update dates, and state evidence gaps. Do not browse merely to decorate a
+  private reflection that is already supported by local evidence.
 
 Important:
 - Write the main report in Chinese. English terms are fine when they are the natural name of a concept/company/product.
-- Use the strongest evidence. If a point is not supported by the evidence, do not include it.
+- Use an evidence hierarchy. Strong evidence is public/project evidence
+  (GitHub, lazying.art, local repos, finished artifacts, shipped workflows,
+  explicit current requests, and repeated work with outputs). Weak evidence is
+  ordinary memo/todo/inbox/grocery/hardware-list material. Do not treat weak
+  evidence as life-planning signal unless it is corroborated by strong evidence
+  or the user explicitly frames it as a goal.
+- If a daily item is merely a reminder, inventory note, purchase note, or life
+  errand, say it is not strategically relevant today or ignore it. Do not turn
+  it into symbolism, personality analysis, hidden motivation, or a "main bet".
+- Use the user's GitHub, website, local repos, and explicitly stated projects
+  as the anchor for career/money/product analysis. Life memo evidence may
+  suggest logistics, but it must not override project evidence.
+- If a point is not supported by the evidence, do not include it. If evidence is
+  ambiguous, state the uncertainty instead of filling the gap with a narrative.
 - Do not pad. Do not produce generic self-help, generic startup advice, or generic investment themes.
 - Avoid a rigid mechanical template. Use natural memo-style headings only where they help the argument.
+- Read consecutive messages as one unfolding thought when their context supports
+  that interpretation. Do not focus only on the final fragment or silently drop
+  an earlier requirement.
+- Treat compacted lifetime memory as evidence, not destiny. Distinguish Lachlan's own
+  statements from other participants, identify what changed, and avoid repeating
+  yesterday's advice unless new evidence strengthens or overturns it.
 - Give fewer, sharper ideas. Each recommendation should say why it fits this user specifically and what proof would validate it.
 - This is educational analysis, not financial advice. For investments, provide a watchlist/rationale/risk framework, not certainty.
 - Do not expose raw private chat logs. Summarize patterns and evidence.
@@ -1199,6 +1322,12 @@ WeChat memory snapshot:
 Deduplicated life/todo/memo snapshot:
 {evidence.get('life_memo_snapshot', '')}
 
+Full-history compaction and task-relevant exact excerpts:
+{evidence.get('full_history_context', '')}
+
+Prior daily strategy decisions:
+{evidence.get('prior_strategy_snapshot', '')}
+
 Local project surface:
 {evidence.get('project_surface', '')}
 
@@ -1216,10 +1345,12 @@ Public profile surface:
 """
 
 
-def write_evidence_artifacts(trace_dir: Path, evidence: dict[str, str]) -> None:
+def write_evidence_artifacts(trace_dir: Path, evidence: dict[str, Any]) -> None:
     filenames = {
         "memory_snapshot": "memory_snapshot.md",
         "life_memo_snapshot": "life_memo_snapshot.md",
+        "full_history_context": "full_history_context.md",
+        "prior_strategy_snapshot": "prior_strategy_snapshot.md",
         "project_surface": "project_surface.md",
         "lazyinvestment_snapshot": "lazyinvestment_snapshot.md",
         "voidabyss_snapshot": "voidabyss_snapshot.md",
@@ -1228,6 +1359,16 @@ def write_evidence_artifacts(trace_dir: Path, evidence: dict[str, str]) -> None:
     }
     for key, filename in filenames.items():
         (trace_dir / filename).write_text(str(evidence.get(key) or "").rstrip() + "\n", encoding="utf-8")
+    (trace_dir / "full_history_retrieval.json").write_text(
+        json.dumps(
+            evidence.get("full_history_manifest") or {},
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def sanitize_agent_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -1276,6 +1417,9 @@ def build_trace_manifest(
                 "prompt": str(trace_dir / "agent_prompt.md"),
                 "memory_snapshot": str(trace_dir / "memory_snapshot.md"),
                 "life_memo_snapshot": str(trace_dir / "life_memo_snapshot.md"),
+                "full_history_context": str(trace_dir / "full_history_context.md"),
+                "full_history_retrieval": str(trace_dir / "full_history_retrieval.json"),
+                "prior_strategy_snapshot": str(trace_dir / "prior_strategy_snapshot.md"),
                 "project_surface": str(trace_dir / "project_surface.md"),
                 "lazyinvestment_snapshot": str(trace_dir / "lazyinvestment_snapshot.md"),
                 "voidabyss_snapshot": str(trace_dir / "voidabyss_snapshot.md"),

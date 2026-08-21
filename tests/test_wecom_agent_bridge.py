@@ -1321,6 +1321,33 @@ class WeComAgentBridgeTests(unittest.TestCase):
             "interest",
         )
 
+    def test_group_inspiration_marks_full_history_as_prior_not_current_request(self) -> None:
+        daily = load_daily()
+        task = daily.build_group_inspiration_task(
+            chat="wecom:default:group:labagent",
+            account_id="default",
+            chat_id="private-chat",
+            chat_type="group",
+            transport_channel="wecom_bot_websocket",
+            topics=["organoids"],
+            context=[{"direction": "inbound", "content": "new question"}],
+            historical_memory=[],
+            previous=[],
+            now=datetime(2026, 7, 29, 12, 0, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+            queue=Path("/tmp/queue.jsonl"),
+            interval_seconds=10800,
+            history_context="old recurring interest",
+            history_manifest={"scanned_messages": 400},
+        )
+
+        self.assertIn("old recurring interest", task["request"])
+        self.assertIn("not a new request", task["request"])
+        self.assertIn("must never turn an old completed request", task["request"])
+        self.assertEqual(
+            task["group_inspiration"]["history_retrieval"]["scanned_messages"],
+            400,
+        )
+
     def test_group_inspiration_context_excludes_stale_consumed_and_outbound_messages(self) -> None:
         daily = load_daily()
         timezone = ZoneInfo("Asia/Hong_Kong")

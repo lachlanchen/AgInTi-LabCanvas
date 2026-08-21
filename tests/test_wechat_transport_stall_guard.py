@@ -1207,6 +1207,69 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertEqual(result, [])
         repair.assert_not_called()
 
+    def test_live_android_relay_is_not_restarted_during_authentication(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "code": "android_poll_stalled",
+                    "severity": "degraded",
+                    "detail": "surface=authentication, failures=3",
+                }
+            ],
+            "android": {
+                "endpoint_reachable": True,
+                "poll_stale": False,
+                "poll_in_progress": False,
+                "last_poll_error": (
+                    "BridgeError: WeCom authentication is in progress; "
+                    "automated navigation is paused"
+                ),
+            },
+        }
+        state = {"fault_counts": {"android_poll_stalled": 2}}
+        with mock.patch.object(guard, "run_repair") as repair:
+            result = guard.perform_repairs(
+                snapshot,
+                state,
+                consecutive_failures=2,
+                cooldown_seconds=300,
+                max_sender_seconds=180,
+            )
+
+        self.assertEqual(result, [])
+        repair.assert_not_called()
+
+    def test_live_android_relay_is_not_restarted_for_low_storage(self) -> None:
+        snapshot = {
+            "issues": [
+                {
+                    "code": "android_poll_stalled",
+                    "severity": "degraded",
+                    "detail": "surface=wecom_other, failures=3",
+                }
+            ],
+            "android": {
+                "endpoint_reachable": True,
+                "poll_stale": False,
+                "poll_in_progress": False,
+                "last_poll_error": (
+                    "BridgeError: Android /data storage is critically low"
+                ),
+            },
+        }
+        state = {"fault_counts": {"android_poll_stalled": 2}}
+        with mock.patch.object(guard, "run_repair") as repair:
+            result = guard.perform_repairs(
+                snapshot,
+                state,
+                consecutive_failures=2,
+                cooldown_seconds=300,
+                max_sender_seconds=180,
+            )
+
+        self.assertEqual(result, [])
+        repair.assert_not_called()
+
     def test_overdue_daily_delivery_restarts_only_career_scheduler(self) -> None:
         snapshot = {
             "issues": [

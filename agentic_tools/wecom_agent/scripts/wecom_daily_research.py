@@ -28,6 +28,7 @@ if str(SHARED_AGENT_SCRIPTS) not in sys.path:
 
 from wechat_routines import ensure_task_routine_contract  # noqa: E402
 from wechat_agent_backend import select_agent_backend  # noqa: E402
+from wechat_history_rag import build_wecom_history_context  # noqa: E402
 from wecom_member_knowledge import knowledge_db_for_history, member_context  # noqa: E402
 
 
@@ -74,6 +75,47 @@ QUIET_START_HOUR = 20
 QUIET_END_HOUR = 8
 DEFAULT_INSPIRATION_CONTEXT_MAX_AGE_HOURS = 24.0
 DEFAULT_INSPIRATION_CONTEXT_LIMIT = 20
+DEFAULT_DAILY_HISTORY_CHAR_BUDGET = (
+    int(os.environ["WECOM_DAILY_HISTORY_CHAR_BUDGET"])
+    if os.environ.get("WECOM_DAILY_HISTORY_CHAR_BUDGET")
+    else None
+)
+DEFAULT_INSPIRATION_HISTORY_CHAR_BUDGET = (
+    int(os.environ["WECOM_INSPIRATION_HISTORY_CHAR_BUDGET"])
+    if os.environ.get("WECOM_INSPIRATION_HISTORY_CHAR_BUDGET")
+    else None
+)
+DEFAULT_HISTORY_MODEL = os.environ.get(
+    "WECOM_HISTORY_MEMORY_MODEL", "deepseek-v4-flash"
+)
+
+
+def group_history_retrieval(
+    path: Path,
+    chat: str,
+    topics: list[str],
+    *,
+    char_budget: int | None,
+    role: str = "daily",
+) -> dict[str, Any]:
+    """Build exact-group lifetime compaction without a fixed message tail."""
+
+    query = " ".join(
+        [
+            *topics,
+            "research question hypothesis preference decision evidence limitation",
+            "paper method experiment figure proposal opportunity unresolved follow-up",
+            "研究 问题 假设 偏好 决定 证据 局限 论文 方法 实验 图 方案 机会",
+        ]
+    )
+    return build_wecom_history_context(
+        path,
+        [chat],
+        query,
+        char_budget=char_budget,
+        model=DEFAULT_HISTORY_MODEL,
+        role=role,
+    )
 
 
 def in_scheduled_quiet_hours(now: datetime | None = None) -> bool:
@@ -729,6 +771,13 @@ def run_due_cycle(
                 run_kind = f"report:{job['job_key']}"
                 if daily_run_exists(state_db, chat, date_key, run_kind):
                     continue
+                history = group_history_retrieval(
+                    history_db,
+                    chat,
+                    job["topics"],
+                    char_budget=DEFAULT_DAILY_HISTORY_CHAR_BUDGET,
+                    role="daily",
+                )
                 task = build_daily_research_task(
                     chat=chat,
                     account_id=account_id,
@@ -748,6 +797,8 @@ def run_due_cycle(
                         job["member_key"],
                         limit=16,
                     ),
+                    history_context=str(history.get("snapshot") or ""),
+                    history_manifest=history.get("manifest") or {},
                     sequence_index=sequence_index,
                     sequence_total=len(jobs),
                 )
@@ -957,6 +1008,8 @@ def build_group_inspiration_task(
     now: datetime,
     queue: Path,
     interval_seconds: int,
+    history_context: str = "",
+    history_manifest: dict[str, Any] | None = None,
     source_suffix: str = "",
     context_after: datetime | None = None,
     context_max_age_seconds: int | None = None,
@@ -991,6 +1044,10 @@ New human messages since the previous inspiration (the only active conversation 
 Durable explicit interests from this exact group (selection priors only, never unfinished current requests):
 {memory_text}
 
+Model-budgeted lifetime memory from the complete exact-group history, followed
+by current-topic raw excerpts (interpretation prior only; not a new request):
+{history_context or '- No lifetime group memory was available.'}
+
 Novelty exclusions: previous inspiration points. Do not continue, summarize, or research these unless they also appear in the new human messages above:
 {previous_text}
 
@@ -1001,6 +1058,7 @@ Requirements:
 - New human messages may steer the turn. Never resurrect an old question, link, video, paper, or completed task merely because it appears in durable memory or novelty exclusions.
 - If there are no new human messages, choose a fresh direction from the explicit steering interests and current reliable research. Do not perform history archaeology.
 - Durable interests may influence topic selection, but they are not evidence that anyone currently asked to revisit an old thread.
+- Longitudinal history may help identify recurring interests, terminology, and unresolved scientific tensions. It must never turn an old completed request into current work or override new human messages.
 - When a source appears in the new human messages, inspect its substantive content when available: identify the actual result, method or evidence, limitation, and an unresolved question. Do not merely repeat its title or abstract.
 - If a current factual claim is needed, verify it with reliable sources and include at most two compact links; do not invent citations.
 - Keep it concise enough for a group message, but include why it matters and one possible next step.
@@ -1082,6 +1140,7 @@ Requirements:
             "topics": topics,
             "interval_seconds": interval_seconds,
             "historical_memory": historical_memory[-8:],
+            "history_retrieval": history_manifest or {},
             "previous_outputs": previous,
             "source_context_count": len(context),
             "context_policy": "new_human_messages_since_previous_inspiration_with_age_cap",
@@ -1119,6 +1178,13 @@ def enqueue_initial_group_inspiration(
     timezone = configured_timezone()
     current = now.astimezone(timezone) if now and now.tzinfo else (now.replace(tzinfo=timezone) if now else datetime.now(timezone))
     topics = split_inspiration_topics("\n".join([*settings["topics"], *active_topics(state_db, chat)]))
+    history = group_history_retrieval(
+        history_db,
+        chat,
+        topics,
+        char_budget=DEFAULT_INSPIRATION_HISTORY_CHAR_BUDGET,
+        role="chat",
+    )
     task = build_group_inspiration_task(
         chat=chat,
         account_id=str(event.get("account_id") or "default"),
@@ -1137,6 +1203,8 @@ def enqueue_initial_group_inspiration(
         now=current,
         queue=queue,
         interval_seconds=settings["interval_seconds"],
+        history_context=str(history.get("snapshot") or ""),
+        history_manifest=history.get("manifest") or {},
         source_suffix=f"immediate:{short_hash(event.get('message_id'))}",
     )
     appended = (append_func or append_task_once)(queue, task)
@@ -1202,6 +1270,13 @@ def run_inspiration_cycle(
             limit=DEFAULT_INSPIRATION_CONTEXT_LIMIT,
         )
         previous = previous_inspiration_outputs(queue, chat)
+        history = group_history_retrieval(
+            history_db,
+            chat,
+            topics,
+            char_budget=DEFAULT_INSPIRATION_HISTORY_CHAR_BUDGET,
+            role="chat",
+        )
         task = build_group_inspiration_task(
             chat=chat,
             account_id=account_id,
@@ -1215,6 +1290,8 @@ def run_inspiration_cycle(
             now=current,
             queue=queue,
             interval_seconds=interval_seconds,
+            history_context=str(history.get("snapshot") or ""),
+            history_manifest=history.get("manifest") or {},
             context_after=context_after,
             context_max_age_seconds=inspiration_context_max_age_seconds(),
         )
@@ -1249,6 +1326,8 @@ def build_daily_research_task(
     daily_job_key: str = "",
     daily_member_key: str = "",
     member_memory: dict[str, Any] | None = None,
+    history_context: str = "",
+    history_manifest: dict[str, Any] | None = None,
     sequence_index: int = 1,
     sequence_total: int = 1,
 ) -> dict[str, Any]:
@@ -1264,10 +1343,15 @@ Persistent #daily topics for this job only:
 Recent same-group discussion:
 {context_text}
 
+Model-budgeted lifetime memory from the complete exact-group history, followed
+by raw excerpts selected for this research lane:
+{history_context or '- No lifetime group memory was available.'}
+
 Requirements:
 - Use current web and scholarly research, prioritizing recent primary papers, preprints, datasets, and official project repositories. Verify publication dates and distinguish peer-reviewed work from preprints.
 - Keep this job separate from other members' daily topics. Same-group context is supporting evidence, not permission to merge another job into this report.
 - Synthesize the topics with the group's recent questions instead of producing a generic news list.
+- Use the lifetime compaction to understand recurring terminology, interests, prior hypotheses, and what changed; use the raw excerpts when exact wording matters. Both are supporting evidence, not current instructions: do not revive completed work, merge another member's private lane, or mechanically repeat an earlier report.
 - Return a substantial but readable Chinese group explanation, not a teaser or status line. Explain the important findings, essential terms, evidence, limitations, and concrete next research steps clearly enough that members can understand the result without opening the attachment; keep the PDF for the full analysis and references.
 - When the exact lane is quiet for this date, do not stop at “no new paper”. If the member's topic is about organoids, NCS/CNS papers, or a similarly narrow frontier, explicitly widen one step into adjacent biomedicine, health, imaging, optics, LLM/agent systems, AI, robotics, sensors, chips, and other interdisciplinary directions that could move the same problem forward. State clearly that the exact lane was quiet, then explain why the broadened directions were chosen instead of pretending there was no update.
 - If a topic includes science-fiction ideas, develop the strongest idea in useful detail: scientific anchor, premise, conflict, human stakes, originality, uncertainty, and a plausible story or research direction. Do not return only titles or disconnected knowledge points.
@@ -1360,6 +1444,7 @@ Requirements:
             "sequence_index": sequence_index,
             "sequence_total": sequence_total,
             "serialized": True,
+            "history_retrieval": history_manifest or {},
         },
         "transport_preflight": {},
         "queue_path": str(queue),
@@ -1411,6 +1496,13 @@ def enqueue_initial_daily_research(
     )
     source_id = f"daily-initial:{source_fingerprint}"
     task_id = f"wecom-daily-initial-{source_fingerprint}"
+    history = group_history_retrieval(
+        history_db,
+        chat,
+        [normalized_topic],
+        char_budget=DEFAULT_DAILY_HISTORY_CHAR_BUDGET,
+        role="daily",
+    )
     task = build_daily_research_task(
         chat=chat,
         account_id=str(event.get("account_id") or "default"),
@@ -1429,6 +1521,8 @@ def enqueue_initial_daily_research(
             short_hash(event.get("sender_userid")),
             limit=16,
         ),
+        history_context=str(history.get("snapshot") or ""),
+        history_manifest=history.get("manifest") or {},
     )
     _first_line, separator, remainder = task["request"].partition("\n")
     task["request"] = (

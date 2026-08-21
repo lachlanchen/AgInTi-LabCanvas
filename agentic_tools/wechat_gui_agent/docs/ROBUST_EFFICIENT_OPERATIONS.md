@@ -106,11 +106,46 @@ quota telemetry. After a real Codex quota response, retry the same normal Codex
 model once when purchased credits are available before trying AgInTi.
 
 The worker must not dump the whole queue row into the backend prompt. Build a
-bounded task packet containing the current request, exact source IDs, at most 12
-recent same-chat rows, interruptions, route/routine state, and readable context
-paths. Strip raw Finder XML, signed media URLs, cookies, keys, hashes, and unused
-media paths. This keeps the resumed agent focused while deterministic routines
-retain the full private evidence on disk.
+bounded task packet containing the current request, exact source IDs, recent
+same-chat rows, interruptions, route/routine state, readable context paths, and
+the lifetime-memory layers below. Strip raw Finder XML, signed media URLs,
+cookies, keys, hashes, and unused media paths. This keeps the resumed agent
+focused while deterministic routines retain the full private evidence on disk.
+
+## Lifetime Chat Memory
+
+The durable chat databases are the source of truth. Do not implement memory as
+a fixed recent-message window or a one-time relevance query. For every exact
+chat, `wechat_history_rag.py` scans all authorized rows, collapses only exact
+duplicates while preserving recurrence and source-row provenance, and builds
+an incremental hierarchy of time-bounded compaction nodes. Its manifest must
+report `scanned_messages`, `represented_messages`, and `coverage_ratio`; a
+normal complete build has `represented_messages == scanned_messages` and
+`coverage_ratio == 1.0`.
+
+This hierarchy provides lifetime semantic coverage, not impossible verbatim
+retention inside a finite model window. Exact messages remain immutable in the
+private database. A separate high-fidelity query layer selects relevant raw
+wording plus neighboring same-chat context for the current turn. When the two
+layers differ, raw excerpts govern exact wording while the hierarchy supplies
+long-term goals, preferences, recurring topics, participants, and chronology.
+
+Memory size is model-aware. Resolve the backend's practical context window and
+role budget from `configs/model-policy.json`, reserve space for the current
+request, tools, reasoning, and output, then compact only the memory portion.
+Codex, DeepSeek, and LocalLLM therefore receive the same memory semantics at
+different safe sizes. Current messages and interruptions are always
+authoritative: lifetime memory may inform the response but cannot revive old
+work, authorize a write action, override a correction, or cross a chat boundary.
+
+Leaf compaction nodes are cached privately beside the source database using
+stable content digests and atomic per-process temporary files. An unchanged
+history reuses those summaries; appending messages recomputes only the changed
+tail leaf, while aggregate ancestors are cheap deterministic in-memory merges.
+Cache files, fingerprints, raw source IDs, and message text stay out of git and
+out of chat delivery. This keeps lifetime recall cheap enough for normal
+polling without spending model tokens or re-summarizing the complete history on
+every turn.
 
 ## Official WeCom Transport
 
@@ -1593,6 +1628,14 @@ non-destructive Android **Wait** action, backs out of WeCom's native
 article/document viewer, and uses one `am force-stop` plus launcher restart only
 when bounded navigation cannot recover. It never clears app data or changes the
 logged-in account.
+Authentication is a protected transport state, not a stuck viewer. The Android
+relay detects login, WeChat OAuth, permissions, enterprise selection, and
+enterprise entry from both the native hierarchy and resumed activity. It must
+not press Back or restart WeCom there. A reachable relay reporting that state,
+a locked keyguard, a native foreground conflict, or critically low Android
+`/data` storage is not restarted by the health guard. Storage health is reported
+with available bytes, used percentage, and the configured minimum; automatic
+repair never clears user data or application state.
 The minute-level WeCom autostart supervisor fingerprints the Android bridge
 source and reloads only the `android-relay` tmux window when that source
 changes. This lets bounded native-surface recovery fixes take effect without

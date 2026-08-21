@@ -111,7 +111,26 @@ SECURITY_GATE_LABELS = {
     "安全验证",
     "设备验证",
     "请完成验证",
+    "选择企业进入",
+    "创建/加入其他企业",
 }
+AUTHENTICATION_TEXT_MARKERS = (
+    "企业微信申请获得以下权限",
+    "使用微信登录企业微信",
+    "选择企业进入",
+)
+AUTHENTICATION_ACTIVITY_MARKERS = (
+    "login",
+    "oauth",
+    "authorize",
+    "authorization",
+    "permission",
+    "security",
+    "verify",
+    "verification",
+    "enterpriseinfoactivity",
+    "enterpriselistactivity",
+)
 SURFACE_ERROR_MARKERS = (
     "chat list is not visible",
     "exact allowlisted wecom chat is not visible",
@@ -119,6 +138,8 @@ SURFACE_ERROR_MARKERS = (
     "could not read android ui hierarchy",
     "wecom did not reach the foreground",
     "wecom changed chat",
+    "wecom authentication is in progress",
+    "android /data storage is critically low",
 )
 
 
@@ -405,7 +426,18 @@ def is_anr_dialog(root: ET.Element) -> bool:
 
 
 def is_security_gate(root: ET.Element) -> bool:
-    return bool(hierarchy_visible_texts(root).intersection(SECURITY_GATE_LABELS))
+    texts = hierarchy_visible_texts(root)
+    if texts.intersection(SECURITY_GATE_LABELS):
+        return True
+    combined = "\n".join(texts)
+    return any(marker in combined for marker in AUTHENTICATION_TEXT_MARKERS)
+
+
+def activity_is_authentication_gate(activity: str) -> bool:
+    lowered = normalize_visible_text(activity).casefold()
+    return bool(lowered) and any(
+        marker in lowered for marker in AUTHENTICATION_ACTIVITY_MARKERS
+    )
 
 
 def mention_row_matches(row_text: Any, requested_name: str) -> bool:
@@ -757,6 +789,12 @@ def initialize_config(
         "local_api_port": bounded_int(existing.get("local_api_port"), 19581, 1024, 65535),
         "local_api_token": str(existing.get("local_api_token") or secrets.token_hex(32)),
         "disable_host_media_automount": bool(existing.get("disable_host_media_automount", True)),
+        "minimum_free_data_bytes": bounded_int(
+            existing.get("minimum_free_data_bytes"),
+            768 * 1024 * 1024,
+            128 * 1024 * 1024,
+            16 * 1024 * 1024 * 1024,
+        ),
         "dismiss_foreground_conflicts": bool(
             existing.get("dismiss_foreground_conflicts", False)
         ),
@@ -1020,6 +1058,18 @@ class AndroidBridge:
             config.get("surface_recovery_cooldown_seconds"), 300.0, 30.0, 3600.0
         )
         self._next_surface_recovery_at = 0.0
+        self.minimum_free_data_bytes = bounded_int(
+            config.get("minimum_free_data_bytes"),
+            768 * 1024 * 1024,
+            128 * 1024 * 1024,
+            16 * 1024 * 1024 * 1024,
+        )
+        self._last_storage_probe_at = 0.0
+        self._storage_status: dict[str, Any] = {
+            "available_bytes": None,
+            "used_percent": None,
+            "checked_at": "",
+        }
         self._poll_health: dict[str, Any] = {
             "started_at": now_iso(),
             "last_poll_attempt_at": "",
@@ -1181,6 +1231,45 @@ class AndroidBridge:
                 check=False,
             )
 
+    def device_data_storage_status(self, *, force: bool = False) -> dict[str, Any]:
+        """Return a bounded cached `/data` capacity probe for recovery gates."""
+        now = time.monotonic()
+        if not force and self._storage_status.get("checked_at") and (
+            now - self._last_storage_probe_at
+        ) < 60.0:
+            return dict(self._storage_status)
+        output = self.adb_shell("df", "-Pk", "/data", timeout=15, check=False)
+        available_bytes: int | None = None
+        used_percent: int | None = None
+        for line in reversed(output.splitlines()):
+            fields = line.split()
+            if len(fields) < 6 or not fields[3].isdigit():
+                continue
+            available_bytes = int(fields[3]) * 1024
+            percent = fields[4].rstrip("%")
+            used_percent = int(percent) if percent.isdigit() else None
+            break
+        self._last_storage_probe_at = now
+        self._storage_status = {
+            "available_bytes": available_bytes,
+            "used_percent": used_percent,
+            "checked_at": now_iso(),
+        }
+        return dict(self._storage_status)
+
+    def ensure_device_storage(self) -> dict[str, Any]:
+        status = self.device_data_storage_status()
+        available = status.get("available_bytes")
+        if isinstance(available, int) and available < self.minimum_free_data_bytes:
+            available_mib = available // (1024 * 1024)
+            required_mib = self.minimum_free_data_bytes // (1024 * 1024)
+            raise BridgeError(
+                "Android /data storage is critically low "
+                f"({available_mib} MiB free; {required_mib} MiB required); "
+                "automated relaunch and navigation are paused"
+            )
+        return status
+
     def prepare_device(self) -> None:
         self.disable_host_automount()
         if self.adb("get-state", timeout=10).stdout.strip() != "device":
@@ -1188,6 +1277,7 @@ class AndroidBridge:
         packages = self.adb_shell("pm", "list", "packages", self.package)
         if f"package:{self.package}" not in packages:
             raise BridgeError("official WeCom package is not installed on the device")
+        self.ensure_device_storage()
         keyguard = self.adb_shell("dumpsys", "window", timeout=20, check=False)
         if "isStatusBarKeyguard=true" in keyguard:
             raise BridgeError("Android keyguard is locked")
@@ -1209,6 +1299,41 @@ class AndroidBridge:
             if not match:
                 match = re.search(r"topResumedActivity=.*?\s([A-Za-z0-9_.]+)/", activities)
         return match.group(1) if match else ""
+
+    def current_activity(self) -> str:
+        output = str(
+            self.adb_shell(
+                "dumpsys", "activity", "activities", timeout=20, check=False
+            )
+        )
+        for pattern in (
+            r"mResumedActivity:.*?\s([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
+            r"topResumedActivity=.*?\s([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
+            r"\* Hist #0: ActivityRecord\{[^}]*\s([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
+        ):
+            match = re.search(pattern, output)
+            if match:
+                return match.group(1)
+        return ""
+
+    def authentication_gate_reason(self, root: ET.Element | None = None) -> str:
+        if root is not None:
+            if is_security_gate(root):
+                return "protected login, OAuth, permission, or enterprise-selection surface"
+            if self.package not in hierarchy_packages(root):
+                return ""
+        activity = self.current_activity()
+        if activity_is_authentication_gate(activity):
+            return f"protected activity {activity}"
+        return ""
+
+    def ensure_navigation_allowed(self, root: ET.Element | None = None) -> None:
+        reason = self.authentication_gate_reason(root)
+        if reason:
+            raise BridgeError(
+                f"WeCom authentication is in progress ({reason}); "
+                "automated navigation is paused"
+            )
 
     def wecom_is_foreground(self, root: ET.Element | None = None) -> bool:
         """Use the focused Android activity when UIAutomator metadata is stale."""
@@ -1245,6 +1370,7 @@ class AndroidBridge:
             root = self.dump_hierarchy(attempts=1)
         except BridgeError:
             root = None
+        self.ensure_navigation_allowed(root)
         if root is not None and self.wecom_is_foreground(root) and not is_anr_dialog(root):
             return
         self.start_wecom_component()
@@ -1261,6 +1387,7 @@ class AndroidBridge:
             if is_anr_dialog(root):
                 self.dismiss_anr_dialog(root)
                 continue
+            self.ensure_navigation_allowed(root)
             if self.wecom_is_foreground(root):
                 return
             if not conflict_dismissed and self.dismiss_foreground_conflict():
@@ -1294,6 +1421,7 @@ class AndroidBridge:
         self.adb_shell("input", "tap", str(x), str(y))
 
     def press_back(self) -> None:
+        self.ensure_navigation_allowed()
         self.adb_shell("input", "keyevent", "4", check=False)
         time.sleep(0.6)
 
@@ -1316,6 +1444,12 @@ class AndroidBridge:
 
     def restart_wecom_preserving_session(self, *, reason: str) -> ET.Element:
         """Restart only the app process; never clear data or alter the account."""
+        try:
+            current_root = self.dump_hierarchy(attempts=1)
+        except BridgeError:
+            current_root = None
+        self.ensure_navigation_allowed(current_root)
+        self.ensure_device_storage()
         self.adb_shell("am", "force-stop", self.package, check=False)
         time.sleep(1.0)
         component = str(
@@ -1333,8 +1467,7 @@ class AndroidBridge:
             if is_anr_dialog(root):
                 self.dismiss_anr_dialog(root)
                 continue
-            if is_security_gate(root):
-                raise BridgeError("WeCom restart reached a login or security-verification gate")
+            self.ensure_navigation_allowed(root)
             if self.package in hierarchy_packages(root):
                 self.record_recovery(f"app_restart:{reason}")
                 return root
@@ -1563,8 +1696,7 @@ class AndroidBridge:
                 root = self.dump_hierarchy()
                 if self.dismiss_anr_dialog(root):
                     continue
-                if is_security_gate(root):
-                    raise BridgeError("WeCom is waiting at a login or security-verification gate")
+                self.ensure_navigation_allowed(root)
                 if chat_title_matches(visible_chat_title(root), chat):
                     return root
                 rows = find_nodes(
@@ -1583,10 +1715,7 @@ class AndroidBridge:
                         opened = self.dump_hierarchy(attempts=2)
                         if self.dismiss_anr_dialog(opened):
                             continue
-                        if is_security_gate(opened):
-                            raise BridgeError(
-                                "WeCom is waiting at a login or security-verification gate"
-                            )
+                        self.ensure_navigation_allowed(opened)
                         if chat_title_matches(visible_chat_title(opened), chat):
                             return opened
                         if self.package not in hierarchy_packages(opened):
@@ -1649,8 +1778,7 @@ class AndroidBridge:
                 root = self.dump_hierarchy()
                 if self.dismiss_anr_dialog(root):
                     continue
-                if is_security_gate(root):
-                    raise BridgeError("WeCom is waiting at a login or security-verification gate")
+                self.ensure_navigation_allowed(root)
                 title_nodes = find_nodes(
                     root,
                     text="消息",
@@ -4521,6 +4649,7 @@ class AndroidBridge:
         package = ""
         title = ""
         surface_state = "unavailable"
+        authentication_reason = ""
         if authorized and health.get("poll_in_progress"):
             # Health probes must not race UIAutomator against the active poll.
             package = self.package
@@ -4537,6 +4666,8 @@ class AndroidBridge:
                 title = visible_chat_title(root) if self.package in packages else ""
                 if is_anr_dialog(root):
                     surface_state = "anr"
+                elif (authentication_reason := self.authentication_gate_reason(root)):
+                    surface_state = "authentication"
                 elif title:
                     surface_state = "chat"
                 elif package == self.package:
@@ -4545,15 +4676,18 @@ class AndroidBridge:
                     surface_state = "other_app"
             else:
                 package = self.current_package()
-                if package == self.package:
+                if (authentication_reason := self.authentication_gate_reason()):
+                    surface_state = "authentication"
+                elif package == self.package:
                     surface_state = "wecom_other"
                 elif package:
                     surface_state = "other_app"
         healthy = bool(
             authorized
             and health.get("poll_healthy")
-            and surface_state != "anr"
+            and surface_state not in {"anr", "authentication"}
         )
+        storage = self.device_data_storage_status() if authorized else dict(self._storage_status)
         return {
             "ok": healthy,
             "enabled": bool(self.config.get("enabled", True)),
@@ -4562,6 +4696,15 @@ class AndroidBridge:
             "wecom_foreground": surface_state in {"chat", "wecom_other", "polling"},
             "visible_chat": title,
             "surface_state": surface_state,
+            "authentication_reason": authentication_reason,
+            "device_storage": {
+                **storage,
+                "minimum_free_bytes": self.minimum_free_data_bytes,
+                "critically_low": bool(
+                    isinstance(storage.get("available_bytes"), int)
+                    and int(storage["available_bytes"]) < self.minimum_free_data_bytes
+                ),
+            },
             **health,
             "target_groups": self.target_groups,
             "novnc_url": str(self.config.get("novnc_url") or ""),

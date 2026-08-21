@@ -803,7 +803,6 @@ def run_aginti_session(
             context_session_rotated = False
             if (
                 previous_id
-                and is_response_only_agent_role(role)
                 and aginti_session_context_oversized(previous_id, backend_config)
             ):
                 clear_aginti_session_id(key, expected_session_id=previous_id)
@@ -828,7 +827,6 @@ def run_aginti_session(
                 recovery_reason = "missing_session"
             elif (
                 previous_id
-                and is_response_only_agent_role(role)
                 and aginti_context_exhausted_result(result)
             ):
                 recovery_reason = "context_exhausted"
@@ -1200,7 +1198,7 @@ def aginti_session_context_oversized(
     session_id: str,
     backend_config: dict[str, Any],
 ) -> bool:
-    """Bound response-only session history before a provider call is attempted."""
+    """Bound reusable session history before a provider call is attempted."""
 
     raw_limit = (
         backend_config.get("response_session_max_chars")
@@ -1605,21 +1603,25 @@ def aginti_prompt(
 ) -> str:
     if not bool(backend_config.get("wrap_prompt", True)):
         return prompt
-    evidence_scope = ""
-    if is_conversational_agent_role(role):
-        evidence_scope = (
-            'AGINTI_EVIDENCE_SCOPE_JSON: {"mode":"chat-response",'
-            '"request":"Produce only the requested chat or routing response; '
-            'this role performs no external action."}\n'
+    if is_response_only_agent_role(role):
+        mode = (
+            "chat-response"
+            if is_conversational_agent_role(role)
+            else "host-managed-response"
         )
-    elif is_response_only_agent_role(role):
-        evidence_scope = (
-            'AGINTI_EVIDENCE_SCOPE_JSON: {"mode":"host-managed-response",'
-            '"request":"Return only the requested content; the LabCanvas host '
-            'owns persistence, compilation, validation, and delivery."}\n'
-        )
+        return f"""You are AgInTi, the response-only reasoning backend for LabCanvas chat automation.
+AGINTI_EVIDENCE_SCOPE_JSON: {{"mode":"{mode}","request":"Return the requested text only; no external action is requested."}}
+This turn is complete when you return the requested text. Do not use tools, browse, create or inspect files, or demand execution evidence. The LabCanvas host performs any later compilation, validation, persistence, and delivery outside this turn.
+Treat the exact current request as authoritative. Preserve its output shape exactly: return only JSON when it asks for JSON, only LaTeX body text when it asks for a LaTeX body, and only the finished chat response when it asks for chat text.
+Use relevant same-chat context, but never continue an unrelated task or expose plans, runtime metadata, model details, tool logs, stack traces, or internal diagnostics. Do not add a setup confirmation or claim an external action occurred.
+
+Chat: {chat_name}
+Role: {role}
+
+Original prompt:
+{prompt}
+"""
     return f"""You are AgInTi, the primary reasoning and tool agent for LabCanvas chat automation.
-{evidence_scope}
 Treat the exact current request as the authoritative continuation of this chat. Use relevant same-chat session memory and repository instructions, but never continue an unrelated task, reuse an unrelated artifact, or substitute a nearby workspace request.
 Preserve the requested output shape exactly. If the original prompt asks for JSON, return only valid JSON. If it asks for CHAT:/ACK:/TASK:, follow that protocol.
 Use the same source-isolation, safety, artifact-return, and chat-purpose rules in the original prompt. Do not invent unavailable files or claim browser/platform work completed without evidence.

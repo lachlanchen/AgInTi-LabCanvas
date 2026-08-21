@@ -356,6 +356,12 @@ def probe_json_url(url: str, *, timeout: float = 4.0, attempts: int = 2) -> dict
         "last_poll_error": str(payload.get("last_poll_error") or "")[:300],
         "last_recovery_at": str(payload.get("last_recovery_at") or ""),
         "last_recovery_action": str(payload.get("last_recovery_action") or "")[:160],
+        "authentication_reason": str(payload.get("authentication_reason") or "")[:200],
+        "device_storage": (
+            payload.get("device_storage")
+            if isinstance(payload.get("device_storage"), dict)
+            else {}
+        ),
     }
 
 
@@ -1316,6 +1322,8 @@ def android_poll_stall_requires_relay_restart(android: dict[str, Any]) -> bool:
         for marker in (
             "did not reach the foreground",
             "android keyguard is locked",
+            "authentication is in progress",
+            "storage is critically low",
         )
     )
     return not (

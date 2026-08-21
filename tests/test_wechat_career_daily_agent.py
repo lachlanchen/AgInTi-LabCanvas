@@ -148,6 +148,15 @@ class WeChatCareerDailyAgentTests(unittest.TestCase):
         self.assertIn("exactly three self-discovery questions", prompt)
         self.assertIn("specific to", prompt)
         self.assertIn("Q1:", prompt)
+        self.assertIn("Use an evidence hierarchy", prompt)
+        self.assertIn("ordinary memo/todo/inbox/grocery/hardware-list", prompt)
+        self.assertIn("Do not turn", prompt)
+        self.assertIn("GitHub, website, local repos", prompt)
+        self.assertIn("model-budgeted lifetime-memory hierarchy", prompt)
+        self.assertIn("every authorized history", prompt)
+        self.assertIn("raw excerpts for exact wording", prompt)
+        self.assertIn("Prior daily strategy decisions", prompt)
+        self.assertIn("identify what changed", prompt)
 
     def test_extract_self_discovery_questions_for_chat_message(self):
         module = load_wechat_career_daily_agent()
@@ -316,7 +325,7 @@ Why it matters: It turns reflection into evidence.
         module.PRIVATE = root / ".private"
         module.OUTPUT = root / "output"
         module.DEFAULT_SEND_TARGETS = module.PRIVATE / "wechat_send_targets.local.json"
-        module.collect_evidence = lambda _chats, _memory_db: {
+        module.collect_evidence = lambda _chats, _memory_db, **_kwargs: {
             "memory_snapshot": "- private pattern: writing and money",
             "project_surface": "- AgenticApp: local tool surface",
             "lazyinvestment_snapshot": "- LazyInvestment missing in test",
@@ -324,14 +333,20 @@ Why it matters: It turns reflection into evidence.
             "identity_surface": "- lazying.art identity evidence",
         }
         module.select_agent_backend = lambda _config: "codex"
-        module.run_agent_session = lambda *args, **kwargs: {
-            "ok": True,
-            "message": f"# Today\nUse {module.PRIVATE} as private evidence, then write one public action.",
-            "backend": "codex",
-            "thread_id": "thread-test",
-            "resumed": True,
-            "returncode": 0,
-        }
+        agent_calls = []
+
+        def fake_agent(*args, **kwargs):
+            agent_calls.append((args, kwargs))
+            return {
+                "ok": True,
+                "message": f"# Today\nUse {module.PRIVATE} as private evidence, then write one public action.",
+                "backend": "codex",
+                "thread_id": "thread-test",
+                "resumed": True,
+                "returncode": 0,
+            }
+
+        module.run_agent_session = fake_agent
         args = argparse.Namespace(
             chat=[],
             send=False,
@@ -346,6 +361,8 @@ Why it matters: It turns reflection into evidence.
         payload = module.run_daily(args)
 
         self.assertTrue(payload["ok"])
+        self.assertEqual(agent_calls[0][1]["role"], "career_research")
+        self.assertEqual(agent_calls[0][1]["sandbox"], "read-only")
         trace_dir = Path(payload["trace_dir"])
         self.assertTrue((trace_dir / "manifest.json").exists())
         self.assertTrue((trace_dir / "agent_prompt.md").exists())
@@ -465,9 +482,28 @@ Why it matters: It turns reflection into evidence.
         self.assertIn("保留改名前的重要写作想法", snapshot)
         self.assertIn("整理改名后的行动", snapshot)
 
+    def test_organizer_prompt_keeps_daily_notes_below_life_direction(self):
+        module = load_wechat_career_daily_agent()
+        prompt = module.build_organizer_prompt(
+            "写作 外语 挣钱",
+            "- memo: 买锡丝\n- todo: 写 200 字\n- project: EchoMind",
+        )
+
+        self.assertIn("待办 / To-do", prompt)
+        self.assertIn("物品和资源", prompt)
+        self.assertIn("小事和日常备忘", prompt)
+        self.assertIn("想做的项目和作品", prompt)
+        self.assertIn("人生方向 / 长期战略", prompt)
+        self.assertIn("lowest valid category", prompt)
+        self.assertIn("Do not turn them", prompt)
+        self.assertIn("GitHub, website, local repos", prompt)
+
     def test_catch_up_skips_delivered_career_and_runs_organizer_once(self):
         module = load_wechat_career_daily_agent()
         calls = []
+        private_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(private_dir.cleanup)
+        module.PRIVATE = Path(private_dir.name) / ".private"
         module.career_delivery_complete_for_date = lambda *_args, **_kwargs: True
         module.run_daily = lambda _args: self.fail("delivered career must not rerun")
         module.run_organizer = (
@@ -489,6 +525,9 @@ Why it matters: It turns reflection into evidence.
     def test_catch_up_forces_artifact_delivery_without_regenerating(self):
         module = load_wechat_career_daily_agent()
         calls = {}
+        private_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(private_dir.cleanup)
+        module.PRIVATE = Path(private_dir.name) / ".private"
         module.career_delivery_complete_for_date = lambda *_args, **_kwargs: False
         module.retry_existing_career_delivery = (
             lambda _args, stamp, force=False: calls.update(

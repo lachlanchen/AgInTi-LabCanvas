@@ -26,6 +26,11 @@ if str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts") not in sys.path:
 
 import wechat_direct_chatops as direct  # noqa: E402
 from wechat_agent_backend import run_agent_session, select_agent_backend  # noqa: E402
+from wechat_history_rag import (  # noqa: E402
+    build_context_from_messages,
+    build_history_context,
+    load_history,
+)
 from wechat_message_policy import (  # noqa: E402
     file_transport_identity,
     recorded_outbound_echo,
@@ -37,6 +42,9 @@ from wechat_task_worker import send_file  # noqa: E402
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
 STATE = PRIVATE / "echomind-language-schedule.state.json"
 DAILY_PDF_LOCK = PRIVATE / "echomind-language-daily-pdf.lock"
+MEMORY_DB = Path(
+    os.environ.get("WECHAT_MEMORY_DB", str(PRIVATE / "wechat_memory.sqlite"))
+)
 GUI_SEND_PRIORITY = Path(
     os.environ.get(
         "WECHAT_GUI_SEND_PRIORITY_PATH",
@@ -73,6 +81,67 @@ TOPICS = (
     "writing a clear short message or email",
     "politeness, register, and cultural nuance",
 )
+
+
+def long_term_language_context(
+    config: dict,
+    topic: str,
+    *,
+    char_budget: int | None = None,
+    model: str = "",
+    role: str = "chat",
+) -> str:
+    """Compact every exact-chat row, then add topic-relevant raw excerpts."""
+
+    chat = str(config.get("chat_name") or "EchoMind")
+    query = " ".join(
+        (
+            topic,
+            "language learning pronunciation grammar vocabulary correction preference difficulty",
+            "Chinese English Japanese pinyin furigana romaji 中文 英文 日文 拼音 假名 语法 发音",
+        )
+    )
+    payload = build_history_context(
+        MEMORY_DB,
+        [chat],
+        query,
+        char_budget=char_budget,
+        model=model,
+        role=role,
+    )
+    return str(payload.get("snapshot") or "")
+
+
+def previous_day_language_context(
+    config: dict,
+    report_date: str,
+    *,
+    char_budget: int | None = None,
+    model: str = "gpt-5.6-sol",
+) -> str:
+    """Select the actual previous local calendar day rather than a recent-row cap."""
+
+    chat = str(config.get("chat_name") or "EchoMind")
+    try:
+        target = datetime.fromisoformat(report_date).date()
+    except ValueError:
+        return "(invalid report date)"
+    messages = [
+        message
+        for message in load_history(MEMORY_DB, [chat])
+        if message.created_at.astimezone(LOCAL_TZ).date() == target
+    ]
+    payload = build_context_from_messages(
+        messages,
+        (
+            "language lesson sentence correction pronunciation grammar vocabulary "
+            "Chinese English Japanese pinyin furigana romaji 中文 英文 日文 拼音 假名 语法 发音"
+        ),
+        char_budget=char_budget,
+        model=model,
+        role="daily",
+    )
+    return str(payload.get("snapshot") or "")
 
 
 def load_state() -> dict:
@@ -138,7 +207,10 @@ def reserve_gui_send_priority(owner: str, chat: str):
 
 def send_with_busy_retry(sender: Any, *args: Any, **kwargs: Any) -> Any:
     """Wait out an already-running sender after reserving future GUI cycles."""
-    attempts = max(1, int(os.environ.get("WECHAT_DAILY_SEND_ATTEMPTS", "6")))
+    # A passive chat-sync cycle can already own the GUI lane when a scheduled
+    # delivery becomes due.  Reserving priority prevents another cycle from
+    # starting, while this bounded wait lets the current one finish.
+    attempts = max(1, int(os.environ.get("WECHAT_DAILY_SEND_ATTEMPTS", "24")))
     delay = max(0.0, float(os.environ.get("WECHAT_DAILY_SEND_RETRY_DELAY", "5")))
     for attempt in range(1, attempts + 1):
         try:
@@ -377,8 +449,13 @@ def run_daily_pdf(
     state["last_daily_pdf_attempt_date"] = yesterday
     state["last_daily_pdf_attempt_at"] = current.isoformat(timespec="seconds")
     save_state(state)
-    context = direct.read_recent_history(config, 10**18, limit=240)
-    history = "\n".join(f"{item.get('sender_display', 'member')}: {direct.visible_message_text(item)}" for item in context)
+    history = previous_day_language_context(config, yesterday, model="gpt-5.6-sol")
+    longitudinal = long_term_language_context(
+        config,
+        "recurring learner needs and prior corrections",
+        model="gpt-5.6-sol",
+        role="daily",
+    )
     prompt = f"""Create a beautiful previous-day EchoMind language tutorial for {yesterday}.
 Use the source messages and previous lessons below as evidence, but do not invent dialogue or claim content that is absent.
 Return ONLY the LaTeX body, not a preamble. Use \\ruby{{漢字}}{{かな}} for Japanese furigana where useful.
@@ -387,6 +464,10 @@ Use Unicode IPA directly. Do not use \\textipa, Markdown code fences, a document
 
 Previous-day EchoMind source material:
 {history}
+
+Longitudinal learner signals from the complete exact-chat history (use only to
+clarify recurring needs and terminology; do not replace the previous-day source):
+{longitudinal}
 """
     result = run_agent_session(prompt, backend=select_agent_backend(config), chat_name="EchoMind", role="daily_language_pdf", model="gpt-5.6-sol", reasoning_effort="medium", sandbox="read-only", timeout_seconds=900, reuse=True, backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})})
     body = normalize_latex_body(str(result.get("message") or ""))
@@ -509,15 +590,19 @@ def run_once(
             deliver=deliver,
             interval_seconds=interval_seconds,
         )
-    context = direct.read_recent_history(config, 10**18, limit=int(config.get("history_limit", 24)))
-    history = "\n".join(f"{item.get('sender_display', 'member')}: {direct.visible_message_text(item)}" for item in context[-24:])
     topic_index = int(state.get("topic_index", 0)) % len(TOPICS)
     topic = TOPICS[topic_index]
+    history = long_term_language_context(
+        config,
+        topic,
+        model=PERIODIC_MODEL,
+        role="chat",
+    )
     previous = state.get("last_message", "")
     prompt = f"""You are EchoMind, a patient multilingual language teacher. This is an internal scheduled lesson, not a status check.
 Today's required domain is: **{topic}**. Teach a broad, practical lesson in this domain rather than reacting to the group chat. Do not switch back to the previous domain merely because it appears in the history.
 
-The recent chat is only a weak personalization signal. Use at most one short example from it when helpful; otherwise ignore it. Do not summarize the chat, make its latest message the topic, or keep dwelling on one recurring subject. Avoid repeating the previous lesson and vary the everyday domain from recent lessons.
+The lifetime-memory hierarchy below covers the complete exact-chat history and ends with a few topic-relevant raw excerpts. It is only a weak personalization signal. Use at most one short example from it when helpful; otherwise ignore it. Do not summarize the chat, make its latest message the topic, revive an old request, or keep dwelling on one recurring subject. Avoid repeating the previous lesson and vary the everyday domain from recent lessons.
 
 Write one concise but comprehensive lesson suitable for a single chat message, about 500-900 characters total. Use one practical situation and exactly one aligned core example. Include all of the following without omission:
 - natural Chinese and full-sentence pinyin with tone marks;
@@ -526,7 +611,7 @@ Write one concise but comprehensive lesson suitable for a single chat message, a
 
 Use these compact labels exactly once: 场景：, 中文：, 拼音：, English:, 日本語：, Romaji:, 对照：, 易错：, 练习：, 答案：. Keep the labeled prose natural. Finish with one very short three-language grammar contrast, one common mistake, and one tiny exercise with its answer. Keep the three languages semantically aligned. Do not use HTML ruby tags, a PDF, a report, a long essay, status logs, repeated greetings, or unrelated topic sections. Do not say NO_REPLY.
 
-Recent EchoMind history:
+Bounded full-history personalization context:
 {history}
 
 Previous scheduled lesson (avoid repeating its topic):

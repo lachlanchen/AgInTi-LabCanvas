@@ -875,6 +875,56 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(result["message"], message)
         self.assertNotIn("response_policy_adjustments", task)
 
+    def test_response_guard_removes_transport_internal_confirmation(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "wecom:external:group:abc",
+            "request": "给群里一个研究灵感。",
+            "route": {"transport": "wecom"},
+            "response_policy": {"automatic_multilingual": False},
+        }
+        result = {
+            "message": "今天的灵感：把血管接入周龄作为独立实验变量。",
+            "confirmation": (
+                "未在本轮发送；请由 queue_orchestrator 的 "
+                "send_result_with_retries 交付并补齐发送证据。"
+            ),
+            "files": [],
+            "data": {
+                "confirmation": (
+                    "请由 queue_orchestrator 的 send_result_with_retries 交付。"
+                )
+            },
+        }
+
+        worker.enforce_worker_result_response_policy(task, result)
+
+        self.assertEqual(result["confirmation"], "")
+        self.assertEqual(result["data"]["confirmation"], "")
+        self.assertEqual(
+            task["response_policy_adjustments"][0]["kind"],
+            "removed_transport_internal_confirmation",
+        )
+
+    def test_response_guard_preserves_real_human_confirmation(self) -> None:
+        worker = load_worker()
+        task = {
+            "chat": "wecom:external:group:abc",
+            "request": "准备公开视频。",
+            "route": {"transport": "wecom"},
+            "response_policy": {"automatic_multilingual": False},
+        }
+        result = {
+            "message": "视频和字幕已经准备完成。",
+            "confirmation": "是否现在发布到 YouTube？",
+            "files": [],
+        }
+
+        worker.enforce_worker_result_response_policy(task, result)
+
+        self.assertEqual(result["confirmation"], "是否现在发布到 YouTube？")
+        self.assertNotIn("response_policy_adjustments", task)
+
     def test_research_timeout_recovers_exact_task_report_and_latex_pdf(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2510,14 +2560,16 @@ stderr: noisy internal trace
             calls.append({"prompt": prompt, **kwargs})
             return {"ok": True, "message": "done", "thread_id": "thread-worker", "resumed": True}
 
-        with mock.patch.object(worker, "run_codex_session", side_effect=fake_run_codex_session):
+        with mock.patch.object(
+            worker, "run_codex_session", side_effect=fake_run_codex_session
+        ), mock.patch.object(worker, "task_long_term_history_context", return_value={}):
             result = worker.run_worker_agent_session(
                 task,
                 {"model": "gpt-5.5", "reasoning_effort": "medium", "sandbox": "danger-full-access", "timeout_seconds": 300},
             )
+            packet = worker.worker_agent_task_view(task)
 
         prompt = str(calls[0]["prompt"])
-        packet = worker.worker_agent_task_view(task)
         self.assertEqual(result, "done")
         self.assertIn("/tmp/private/shipinhao-audio-transcript.md", prompt)
         self.assertIn("/tmp/private/exact-source-card.txt", prompt)
@@ -2529,6 +2581,54 @@ stderr: noisy internal trace
         self.assertNotIn("stodownload", prompt)
         self.assertNotIn("source.mp4", json.dumps(packet, ensure_ascii=False))
         self.assertLess(len(json.dumps(packet, ensure_ascii=False)), len(json.dumps(task, ensure_ascii=False)))
+
+    def test_worker_packet_retrieves_old_exact_chat_context_without_last_n_limit(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            with sqlite3.connect(db) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE source_messages (
+                        id INTEGER PRIMARY KEY,
+                        chat_name TEXT,
+                        direction TEXT,
+                        sender_display TEXT,
+                        body TEXT,
+                        create_time INTEGER,
+                        observed_at TEXT
+                    )
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO source_messages VALUES (1, ?, 'inbound', 'owner', ?, 1, '')",
+                    ("EchoMind", "Remember the rare uvular pronunciation problem."),
+                )
+                connection.executemany(
+                    "INSERT INTO source_messages VALUES (?, ?, 'inbound', 'owner', ?, ?, '')",
+                    [
+                        (index, "EchoMind", f"ordinary recent row {index}", index)
+                        for index in range(2, 302)
+                    ],
+                )
+            task = {
+                "id": "history-worker",
+                "chat": "EchoMind",
+                "request": "Help with the uvular pronunciation problem again.",
+                "source": {"local_id": 302, "sender_display": "owner"},
+                "routine": {"id": "general_worker", "purpose": "language help"},
+            }
+            with mock.patch.object(worker, "DEFAULT_MEMORY_DB", db):
+                packet = worker.worker_agent_task_view(task)
+
+        self.assertIn(
+            "rare uvular pronunciation",
+            packet["high_fidelity_same_chat_history"],
+        )
+        self.assertEqual(packet["history_compaction"]["scanned_messages"], 301)
+        self.assertEqual(packet["history_compaction"]["represented_messages"], 301)
+        self.assertEqual(packet["history_compaction"]["coverage_ratio"], 1.0)
+        self.assertNotIn("exact_excerpt_source_ids", packet["history_compaction"])
 
     def test_aginti_worker_prompt_is_bounded_and_uses_one_selected_routine(self) -> None:
         worker = load_worker()
@@ -3679,6 +3779,88 @@ stderr: noisy internal trace
         self.assertEqual(updated["result"], result)
         self.assertTrue(updated["delivery_recovery_only"])
         self.assertEqual(updated["send_deferred_reason"], "manual_delivery_recovery")
+
+    def test_reprocess_research_missing_required_pdf_uses_artifact_recovery(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            report = Path(tmp) / "daily_briefing.md"
+            report.write_text("# Daily briefing\n\nEvidence.\n", encoding="utf-8")
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "daily-missing-pdf",
+                        "chat": "wecom:group:labagent",
+                        "status": "send_failed",
+                        "daily_research": {"report_date": "2026-08-21"},
+                        "route_decision": {"route_kind": "research_or_summary"},
+                        "execution_contract": {
+                            "required_artifacts": ["markdown_report", "compiled_pdf"]
+                        },
+                        "result": {
+                            "message": "Research completed.",
+                            "confirmation": "Internal worker confirmation with a local path.",
+                            "files": [str(report)],
+                        },
+                    }
+                ],
+            )
+
+            updated = worker.reprocess_task(
+                queue,
+                "daily-missing-pdf",
+                reason="recover completed report",
+                artifact_recovery_only=True,
+            )
+
+        self.assertEqual(updated["status"], "pending")
+        self.assertTrue(updated["artifact_recovery_only"])
+        self.assertNotIn("delivery_recovery_only", updated)
+        self.assertNotIn("result", updated)
+
+    def test_reprocess_research_existing_pdf_sends_only_pdf_without_stored_text(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            report = Path(tmp) / "daily_briefing.md"
+            report.write_text("# Daily briefing\n\nEvidence.\n", encoding="utf-8")
+            pdf = Path(tmp) / "daily_briefing.zh.pdf"
+            pdf.write_bytes(b"%PDF-1.4\nreport")
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "daily-with-pdf",
+                        "chat": "wecom:group:labagent",
+                        "status": "send_failed",
+                        "daily_research": {"report_date": "2026-08-21"},
+                        "route_decision": {"route_kind": "research_or_summary"},
+                        "execution_contract": {
+                            "required_artifacts": ["markdown_report", "compiled_pdf"]
+                        },
+                        "result": {
+                            "message": "Long report text already delivered.",
+                            "confirmation": "Internal worker confirmation with a local path.",
+                            "files": [str(pdf), str(report)],
+                        },
+                    }
+                ],
+            )
+
+            updated = worker.reprocess_task(
+                queue,
+                "daily-with-pdf",
+                reason="recover completed report",
+                artifact_recovery_only=True,
+            )
+
+        self.assertEqual(updated["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
+        self.assertTrue(updated["delivery_recovery_only"])
+        self.assertEqual(updated["result"]["message"], "")
+        self.assertEqual(updated["result"]["confirmation"], "")
+        self.assertEqual(updated["result"]["files"], [str(pdf.resolve())])
+        self.assertNotIn(str(report.resolve()), updated["result"]["files"])
 
     def test_publish_artifact_recovery_rebuilds_result_from_lazyedit_queue(self) -> None:
         worker = load_worker()
@@ -10927,6 +11109,28 @@ stderr: noisy internal trace
         selected = worker.wecom_research_delivery_files(task, files)
 
         self.assertEqual(selected, [Path("/tmp/report.pdf")])
+
+    def test_wechat_research_required_delivery_ignores_local_markdown_source(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "require_file_delivery": True,
+            },
+            "request": "Please send the finished report PDF.",
+        }
+        result = {
+            "files": [
+                "/tmp/report.pdf",
+                "/tmp/report.md",
+            ]
+        }
+
+        required = worker.required_delivery_file_paths(result, task)
+
+        self.assertEqual(required, [Path("/tmp/report.pdf")])
+        self.assertEqual(task["suppressed_chat_files"], ["/tmp/report.md"])
 
     def test_wecom_research_delivery_allows_explicit_source_request(self) -> None:
         worker = load_worker()

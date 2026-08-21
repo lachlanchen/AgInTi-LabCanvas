@@ -575,6 +575,13 @@ class WeComAndroidBridgeTests(unittest.TestCase):
                     "com.tencent.wework/.launch.LaunchSplashActivity",
                     timeout=30,
                 ),
+                mock.call(
+                    "dumpsys",
+                    "activity",
+                    "activities",
+                    timeout=20,
+                    check=False,
+                ),
             ],
         )
         runtime.record_recovery.assert_called_once_with(
@@ -740,6 +747,97 @@ class WeComAndroidBridgeTests(unittest.TestCase):
 
         self.assertIs(result, chat_list)
         runtime.press_back.assert_called_once_with()
+
+    def test_open_chat_list_never_backs_out_of_enterprise_login(self) -> None:
+        bridge = load_bridge()
+        enterprise_login = ET.fromstring(
+            """
+            <hierarchy><node package="com.tencent.wework">
+              <node text="选择企业进入" package="com.tencent.wework" />
+              <node text="Ma Lab" package="com.tencent.wework" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.launch_wecom = mock.Mock()
+            runtime.dump_hierarchy = mock.Mock(return_value=enterprise_login)
+            runtime.press_back = mock.Mock()
+
+            with self.assertRaisesRegex(
+                bridge.BridgeError, "authentication is in progress"
+            ):
+                runtime.open_chat_list()
+
+        runtime.press_back.assert_not_called()
+
+    def test_press_back_refuses_protected_login_activity(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.current_activity = mock.Mock(
+                return_value=(
+                    "com.tencent.wework/"
+                    ".enterprisemgr.controller.LoginEnterpriseListActivity"
+                )
+            )
+            runtime.adb_shell = mock.Mock()
+
+            with self.assertRaisesRegex(
+                bridge.BridgeError, "authentication is in progress"
+            ):
+                runtime.press_back()
+
+        runtime.adb_shell.assert_not_called()
+
+    def test_prepare_device_refuses_critically_low_data_storage(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                    "minimum_free_data_bytes": 768 * 1024 * 1024,
+                }
+            )
+            runtime.disable_host_automount = mock.Mock()
+            runtime.adb = mock.Mock(
+                return_value=subprocess.CompletedProcess(
+                    [], 0, stdout="device\n", stderr=""
+                )
+            )
+            runtime.adb_shell = mock.Mock(
+                side_effect=[
+                    "package:com.tencent.wework\n",
+                    (
+                        "Filesystem 1K-blocks Used Available Use% Mounted on\n"
+                        "/dev/block/data 1000000 999000 1000 100% /data\n"
+                    ),
+                ]
+            )
+
+            with self.assertRaisesRegex(
+                bridge.BridgeError, "storage is critically low"
+            ):
+                runtime.prepare_device()
+
+        self.assertEqual(runtime.adb_shell.call_count, 2)
 
     def test_open_chat_list_restarts_app_once_after_bounded_navigation(self) -> None:
         bridge = load_bridge()

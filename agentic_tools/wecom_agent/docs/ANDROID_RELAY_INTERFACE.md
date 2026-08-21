@@ -106,6 +106,16 @@ accounts, or bypasses a login/security gate. Repeated poll failures are exposed
 to `wechat_transport_stall_guard.py` as `android_poll_stalled` instead of a
 false green status.
 
+Login, OAuth, permission, enterprise-selection, and enterprise-entry activities
+are protected native surfaces. The relay reports `surface_state=authentication`,
+refuses Android Back, process restart, and chat navigation, and waits for the
+normal account flow to finish. The health guard keeps a reachable relay alive in
+that state instead of recreating it and injecting more navigation. The relay also
+probes free space on Android `/data` before relaunch/navigation; below the
+configured `minimum_free_data_bytes` threshold it pauses recovery and exposes a
+critical-storage blocker. It never clears application data. Cache cleanup remains
+an explicit operator action.
+
 Inbound events retain the exact visible sender name and enter the normal WeCom
 ingest/worker queue with same-chat isolation. The route agent's natural direct
 reply or queued-task acknowledgement is checkpointed, then sent immediately

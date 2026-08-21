@@ -466,6 +466,8 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertIn("--no-shell", command)
         self.assertIn("--no-file-tools", command)
         self.assertIn('"mode":"chat-response"', prompt)
+        self.assertIn("This turn is complete when you return the requested text", prompt)
+        self.assertNotIn("For artifact work", prompt)
 
     def test_host_managed_content_role_uses_response_only_contract(self) -> None:
         backend = load_backend()
@@ -489,6 +491,8 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertIn("--no-shell", command)
         self.assertIn("--no-file-tools", command)
         self.assertIn('"mode":"host-managed-response"', prompt)
+        self.assertIn("only LaTeX body text when it asks for a LaTeX body", prompt)
+        self.assertNotIn("For artifact work", prompt)
 
     def test_worker_role_defaults_to_general_aginti_profile(self) -> None:
         backend = load_backend()
@@ -938,7 +942,7 @@ class WeChatAgentBackendTests(unittest.TestCase):
             expected_session_id="old-session",
         )
 
-    def test_tool_capable_aginti_role_does_not_replay_context_failure(self) -> None:
+    def test_tool_capable_aginti_role_recovers_pre_inference_context_failure(self) -> None:
         backend = load_backend()
         exhausted = {
             "ok": False,
@@ -947,14 +951,21 @@ class WeChatAgentBackendTests(unittest.TestCase):
             "returncode": 1,
             "stderr_tail": "maximum context length exceeded",
         }
+        recovered = {
+            "ok": True,
+            "message": "fresh bounded worker response",
+            "thread_id": "fresh-session",
+            "returncode": 0,
+        }
         with (
             mock.patch.object(backend, "read_aginti_session_id", return_value="old-session"),
             mock.patch.object(
                 backend,
                 "run_aginti_provider_chain",
-                return_value=exhausted,
+                side_effect=[exhausted, recovered],
             ) as run,
             mock.patch.object(backend, "clear_aginti_session_id") as clear,
+            mock.patch.object(backend, "persist_aginti_session"),
         ):
             result = backend.run_aginti_session(
                 "tool-capable task",
@@ -969,9 +980,16 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 backend_config={},
             )
 
-        self.assertFalse(result["ok"])
-        self.assertEqual(run.call_count, 1)
-        clear.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["context_session_recovered"])
+        self.assertTrue(result["fallback_started"])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0].kwargs["previous_id"], "old-session")
+        self.assertEqual(run.call_args_list[1].kwargs["previous_id"], "")
+        clear.assert_called_once_with(
+            backend.session_key("LabAgent", "worker"),
+            expected_session_id="old-session",
+        )
 
     def test_aginti_shared_backend_reads_wecom_provider_environment(self) -> None:
         backend = load_backend()
