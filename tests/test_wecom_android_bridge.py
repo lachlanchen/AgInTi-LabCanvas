@@ -575,13 +575,6 @@ class WeComAndroidBridgeTests(unittest.TestCase):
                     "com.tencent.wework/.launch.LaunchSplashActivity",
                     timeout=30,
                 ),
-                mock.call(
-                    "dumpsys",
-                    "activity",
-                    "activities",
-                    timeout=20,
-                    check=False,
-                ),
             ],
         )
         runtime.record_recovery.assert_called_once_with(

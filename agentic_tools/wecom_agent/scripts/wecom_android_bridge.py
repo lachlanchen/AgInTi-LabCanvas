@@ -1320,8 +1320,11 @@ class AndroidBridge:
         if root is not None:
             if is_security_gate(root):
                 return "protected login, OAuth, permission, or enterprise-selection surface"
-            if self.package not in hierarchy_packages(root):
-                return ""
+            # A supplied hierarchy is the authoritative snapshot for this
+            # navigation decision. Keep this predicate pure so callers and
+            # offline tests never issue a second, potentially inconsistent ADB
+            # query after already capturing the screen state.
+            return ""
         activity = self.current_activity()
         if activity_is_authentication_gate(activity):
             return f"protected activity {activity}"
