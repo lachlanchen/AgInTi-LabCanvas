@@ -89,7 +89,17 @@ MESSAGE_CHROME_TEXT = {
     "重新发送",
     "撤回",
 }
-MESSAGE_ROW_RESOURCE_SUFFIX = ":id/eyy"
+MESSAGE_ROW_RESOURCE_SUFFIXES = (":id/eyy", ":id/cta")
+# Kept for compatibility with callers that import the historical singular
+# constant. New code must use the tuple above.
+MESSAGE_ROW_RESOURCE_SUFFIX = MESSAGE_ROW_RESOURCE_SUFFIXES[0]
+MESSAGE_BODY_RESOURCE_SUFFIXES = (":id/j1l", ":id/ij7")
+MESSAGE_AVATAR_RESOURCE_SUFFIXES = (":id/ja3", ":id/isu")
+CHAT_TITLE_RESOURCE_SUFFIXES = (":id/n5i", ":id/nsm")
+CHAT_LIST_ROW_RESOURCE_SUFFIXES = (":id/iql", ":id/i2e")
+COMPOSER_RESOURCE_SUFFIXES = (":id/j28", ":id/iju")
+ATTACHMENT_RESOURCE_SUFFIXES = (":id/j1v", ":id/ijh", ":id/hvp")
+UNREAD_BADGE_RESOURCE_SUFFIXES = (":id/l07", ":id/l0z")
 ARTICLE_CARD_RESOURCE_SUFFIX = ":id/mww"
 ARTICLE_CARD_KIND = "wechat_article_card"
 MERGED_HISTORY_TITLE_RESOURCE_SUFFIX = ":id/jb2"
@@ -112,8 +122,10 @@ MEDIASTORE_IMAGES_URI = "content://media/external/images/media"
 SHIPINHAO_CARD_THUMBNAIL_RESOURCE_SUFFIX = ":id/og2"
 SHIPINHAO_CARD_ACCOUNT_RESOURCE_SUFFIX = ":id/og3"
 SHIPINHAO_CARD_KIND = "shipinhao_card"
-DOCUMENT_FILENAME_RESOURCE_SUFFIX = ":id/j2k"
-DOCUMENT_SIZE_RESOURCE_SUFFIX = ":id/j2g"
+DOCUMENT_FILENAME_RESOURCE_SUFFIXES = (":id/j2k", ":id/ik8")
+DOCUMENT_SIZE_RESOURCE_SUFFIXES = (":id/j2g", ":id/ik4")
+DOCUMENT_FILENAME_RESOURCE_SUFFIX = DOCUMENT_FILENAME_RESOURCE_SUFFIXES[0]
+DOCUMENT_SIZE_RESOURCE_SUFFIX = DOCUMENT_SIZE_RESOURCE_SUFFIXES[0]
 DOCUMENT_KIND = "document"
 INBOUND_FILECACHE_ROOT = "/sdcard/Android/data/com.tencent.wework/files/filecache"
 SAFE_EXTERNAL_LOG_DIRS = tuple(
@@ -129,6 +141,14 @@ SAFE_EXTERNAL_LOG_DIRS = tuple(
         "zip_log",
     )
 )
+SAFE_EXTERNAL_IMAGE_CACHE_DIRS = tuple(
+    f"/sdcard/Android/data/com.tencent.wework/files/{name}"
+    for name in (
+        "tempimagecache",
+        "r_flutter_image_cache",
+        "imagecache",
+    )
+)
 ANR_MESSAGE_MARKERS = ("没有响应", "isn't responding", "is not responding")
 ANR_WAIT_LABELS = {"等待", "Wait", "WAIT"}
 LOW_STORAGE_DIALOG_TITLES = {
@@ -138,6 +158,22 @@ LOW_STORAGE_DIALOG_TITLES = {
 }
 LOW_STORAGE_DISMISS_LABELS = {"取消", "Cancel", "CANCEL"}
 LOW_STORAGE_CLEANUP_LABELS = {"前往清理", "Clean up", "CLEAN UP"}
+CRASH_REPORT_TITLE_MARKERS = (
+    "屡次停止运行",
+    "屢次停止運行",
+    "keeps stopping",
+    "has stopped",
+    "stopped working",
+)
+CRASH_REPORT_CANCEL_LABELS = {"取消", "Cancel", "CANCEL"}
+CRASH_REPORT_SUBMIT_LABELS = {"报告", "報告", "Report", "REPORT"}
+UIAUTOMATOR_BUSY_MARKERS = (
+    "already registered",
+    "uiautomationservice",
+    "uiautomation service",
+)
+DEFAULT_UI_DUMP_TOTAL_TIMEOUT_SECONDS = 25.0
+DEFAULT_UI_DUMP_ATTEMPT_TIMEOUT_SECONDS = 8.0
 SECURITY_GATE_LABELS = {
     "登录企业微信",
     "扫码登录",
@@ -465,6 +501,21 @@ def is_low_storage_dialog(root: ET.Element) -> bool:
     ) and bool(texts.intersection(LOW_STORAGE_CLEANUP_LABELS))
 
 
+def is_crash_report_dialog(root: ET.Element) -> bool:
+    """Recognize Android/MIUI's app-crash report prompt exactly."""
+    texts = hierarchy_visible_texts(root)
+    has_title = any(
+        marker.casefold() in text.casefold()
+        for marker in CRASH_REPORT_TITLE_MARKERS
+        for text in texts
+    )
+    return (
+        has_title
+        and bool(texts.intersection(CRASH_REPORT_CANCEL_LABELS))
+        and bool(texts.intersection(CRASH_REPORT_SUBMIT_LABELS))
+    )
+
+
 def is_security_gate(root: ET.Element) -> bool:
     texts = hierarchy_visible_texts(root)
     if texts.intersection(SECURITY_GATE_LABELS):
@@ -642,6 +693,117 @@ def composer_text(node: ET.Element) -> str:
     if normalize_visible_text(value).startswith("发消息或按住"):
         return ""
     return value
+
+
+def find_composer_nodes(
+    root: ET.Element,
+    *,
+    package: str = PACKAGE,
+) -> list[ET.Element]:
+    """Find the bottom chat composer across WeCom's obfuscated resource IDs."""
+    known = [
+        node
+        for node in root.iter("node")
+        if str(node.attrib.get("resource-id") or "").startswith(f"{package}:id/")
+        and any(
+            str(node.attrib.get("resource-id") or "").endswith(suffix)
+            for suffix in COMPOSER_RESOURCE_SUFFIXES
+        )
+        and node.attrib.get("package") in {None, "", package}
+    ]
+    if known:
+        return known
+
+    try:
+        screen_bottom = parse_bounds(root.attrib.get("bounds", ""))[3]
+    except BridgeError:
+        screen_bottom = 0
+        for candidate in root.iter("node"):
+            try:
+                screen_bottom = max(
+                    screen_bottom,
+                    parse_bounds(candidate.attrib.get("bounds", ""))[3],
+                )
+            except BridgeError:
+                continue
+    semantic: list[ET.Element] = []
+    for node in root.iter("node"):
+        if node.attrib.get("package") != package:
+            continue
+        if node.attrib.get("class") != "android.widget.EditText":
+            continue
+        try:
+            bounds = parse_bounds(node.attrib.get("bounds", ""))
+        except BridgeError:
+            continue
+        value = normalize_visible_text(node.attrib.get("text"))
+        placeholder = value.startswith(("发消息", "Message", "Send a message"))
+        near_bottom = bool(screen_bottom and bounds[1] >= int(screen_bottom * 0.70))
+        if placeholder or near_bottom:
+            semantic.append(node)
+    return sorted(
+        semantic,
+        key=lambda node: bounds_center(node.attrib.get("bounds", ""))[1],
+    )
+
+
+def find_attachment_button_nodes(
+    root: ET.Element,
+    *,
+    package: str = PACKAGE,
+    composers: list[ET.Element] | None = None,
+) -> list[ET.Element]:
+    """Find the rightmost composer-adjacent attachment icon without parent taps."""
+    composer_candidates = composers if composers is not None else find_composer_nodes(
+        root,
+        package=package,
+    )
+    try:
+        composer_bounds = (
+            parse_bounds(composer_candidates[-1].attrib.get("bounds", ""))
+            if composer_candidates
+            else (0, 0, 0, 0)
+        )
+    except BridgeError:
+        composer_bounds = (0, 0, 0, 0)
+
+    def beside_composer(node: ET.Element) -> bool:
+        try:
+            bounds = parse_bounds(node.attrib.get("bounds", ""))
+        except BridgeError:
+            return False
+        if composer_bounds == (0, 0, 0, 0):
+            return True
+        vertical_overlap = min(bounds[3], composer_bounds[3]) - max(
+            bounds[1], composer_bounds[1]
+        )
+        return vertical_overlap > 0 and bounds[0] >= composer_bounds[2] - 8
+
+    known = [
+        node
+        for node in find_nodes_by_resource_suffix(
+            root,
+            ATTACHMENT_RESOURCE_SUFFIXES,
+            package=package,
+        )
+        if beside_composer(node)
+    ]
+    candidates = known
+    if not candidates and composer_bounds != (0, 0, 0, 0):
+        candidates = [
+            node
+            for node in root.iter("node")
+            if node.attrib.get("package") == package
+            and node.attrib.get("class") in {
+                "android.widget.ImageView",
+                "android.widget.ImageButton",
+            }
+            and beside_composer(node)
+        ]
+    return sorted(
+        candidates,
+        key=lambda node: bounds_center(node.attrib.get("bounds", ""))[0],
+    )
 
 
 def incomplete_native_mention_draft(value: Any) -> bool:
@@ -822,6 +984,9 @@ def initialize_config(
         "allow_inbound_image_preview_fallback": bool(
             existing.get("allow_inbound_image_preview_fallback", False)
         ),
+        "inbound_media_max_recovery_failures": bounded_int(
+            existing.get("inbound_media_max_recovery_failures"), 8, 1, 100
+        ),
         "max_send_file_bytes": bounded_int(
             existing.get("max_send_file_bytes"), 100 * 1024 * 1024, 1, 1024 * 1024 * 1024
         ),
@@ -836,6 +1001,24 @@ def initialize_config(
             16 * 1024 * 1024 * 1024,
         ),
         "auto_prune_safe_logs": bool(existing.get("auto_prune_safe_logs", True)),
+        "auto_prune_safe_image_caches": bool(
+            existing.get("auto_prune_safe_image_caches", True)
+        ),
+        "auto_trim_package_caches": bool(
+            existing.get("auto_trim_package_caches", True)
+        ),
+        "ui_dump_total_timeout_seconds": bounded_float(
+            existing.get("ui_dump_total_timeout_seconds"),
+            DEFAULT_UI_DUMP_TOTAL_TIMEOUT_SECONDS,
+            2.0,
+            60.0,
+        ),
+        "ui_dump_attempt_timeout_seconds": bounded_float(
+            existing.get("ui_dump_attempt_timeout_seconds"),
+            DEFAULT_UI_DUMP_ATTEMPT_TIMEOUT_SECONDS,
+            1.0,
+            15.0,
+        ),
         "storage_prune_headroom_bytes": bounded_int(
             existing.get("storage_prune_headroom_bytes"),
             256 * 1024 * 1024,
@@ -887,6 +1070,230 @@ def find_nodes(
     return matches
 
 
+def resource_id_has_suffix(
+    node: ET.Element,
+    suffixes: tuple[str, ...],
+    *,
+    package: str = PACKAGE,
+) -> bool:
+    resource_id = str(node.attrib.get("resource-id") or "")
+    return node.attrib.get("package") == package and any(
+        resource_id.endswith(suffix) for suffix in suffixes
+    )
+
+
+def find_nodes_by_resource_suffix(
+    root: ET.Element,
+    suffixes: tuple[str, ...],
+    *,
+    text: str | None = None,
+    package: str = PACKAGE,
+) -> list[ET.Element]:
+    expected = normalize_visible_text(text) if text is not None else None
+    return [
+        node
+        for node in root.iter("node")
+        if resource_id_has_suffix(node, suffixes, package=package)
+        and (expected is None or node_text(node) == expected)
+    ]
+
+
+def node_resource_has_any_suffix(
+    node: ET.Element,
+    suffixes: tuple[str, ...],
+    *,
+    package: str = PACKAGE,
+) -> bool:
+    """Match an app resource while tolerating sparse test/accessibility dumps."""
+    resource_id = str(node.attrib.get("resource-id") or "")
+    node_package = str(node.attrib.get("package") or "")
+    return (
+        node_package in {"", package}
+        and resource_id.startswith(f"{package}:id/")
+        and any(resource_id.endswith(suffix) for suffix in suffixes)
+    )
+
+
+def find_message_rows(
+    root: ET.Element,
+    *,
+    package: str = PACKAGE,
+) -> list[ET.Element]:
+    """Find exact chat rows across signed WeCom resource-ID revisions.
+
+    Known IDs are authoritative. The fallback is deliberately limited to
+    direct children of a native ``ListView`` so quick actions, the composer,
+    and unrelated page text cannot be interpreted as chat messages.
+    """
+    known = [
+        node
+        for node in root.iter("node")
+        if node_resource_has_any_suffix(
+            node,
+            MESSAGE_ROW_RESOURCE_SUFFIXES,
+            package=package,
+        )
+    ]
+    if known:
+        return known
+
+    semantic: list[ET.Element] = []
+    for message_list in root.iter("node"):
+        if message_list.attrib.get("class") != "android.widget.ListView":
+            continue
+        if str(message_list.attrib.get("package") or "") not in {"", package}:
+            continue
+        for row in message_list.findall("node"):
+            if str(row.attrib.get("package") or "") not in {"", package}:
+                continue
+            if row.attrib.get("class") not in {
+                "android.widget.FrameLayout",
+                "android.widget.LinearLayout",
+                "android.widget.RelativeLayout",
+            }:
+                continue
+            try:
+                _, top, _, bottom = parse_bounds(row.attrib.get("bounds", ""))
+            except BridgeError:
+                continue
+            if bottom - top <= 8:
+                continue
+            has_content = any(
+                normalize_visible_text(
+                    node.attrib.get("text") or node.attrib.get("content-desc")
+                )
+                or node.attrib.get("class") == "android.widget.ImageView"
+                for node in row.iter("node")
+                if node is not row
+            )
+            if has_content:
+                semantic.append(row)
+    return semantic
+
+
+_DOCUMENT_FILENAME_RE = re.compile(
+    r"\.(?:7z|csv|docx?|epub|gz|json|md|od[st]|pdf|pptx?|rar|rtf|tar|tex|txt|"
+    r"xlsx?|xml|zip)$",
+    re.IGNORECASE,
+)
+_DOCUMENT_SIZE_RE = re.compile(r"^\d+(?:\.\d+)?\s*(?:[KMGT]?B|[KMGT])$", re.IGNORECASE)
+
+
+def find_document_filename_nodes(
+    row: ET.Element,
+    *,
+    package: str = PACKAGE,
+) -> list[ET.Element]:
+    known = [
+        node
+        for node in row.iter("node")
+        if node_text(node)
+        and node_resource_has_any_suffix(
+            node,
+            DOCUMENT_FILENAME_RESOURCE_SUFFIXES,
+            package=package,
+        )
+    ]
+    if known:
+        return known
+    return [
+        node
+        for node in row.iter("node")
+        if str(node.attrib.get("package") or "") in {"", package}
+        and node.attrib.get("class") == "android.widget.TextView"
+        and _DOCUMENT_FILENAME_RE.search(normalize_filename_text(node_text(node)))
+    ]
+
+
+def find_document_size_nodes(
+    row: ET.Element,
+    *,
+    package: str = PACKAGE,
+) -> list[ET.Element]:
+    known = [
+        node
+        for node in row.iter("node")
+        if node_text(node)
+        and node_resource_has_any_suffix(
+            node,
+            DOCUMENT_SIZE_RESOURCE_SUFFIXES,
+            package=package,
+        )
+    ]
+    if known:
+        return known
+    return [
+        node
+        for node in row.iter("node")
+        if str(node.attrib.get("package") or "") in {"", package}
+        and node.attrib.get("class") == "android.widget.TextView"
+        and _DOCUMENT_SIZE_RE.fullmatch(normalize_visible_text(node_text(node)))
+    ]
+
+
+def find_message_body_nodes(
+    row: ET.Element,
+    *,
+    package: str = PACKAGE,
+    semantic_fallback: bool = True,
+) -> list[ET.Element]:
+    known = [
+        node
+        for node in row.iter("node")
+        if node_text(node)
+        and node_resource_has_any_suffix(
+            node,
+            MESSAGE_BODY_RESOURCE_SUFFIXES,
+            package=package,
+        )
+    ]
+    if known or not semantic_fallback:
+        return known
+
+    document_nodes = {
+        id(node)
+        for node in (
+            find_document_filename_nodes(row, package=package)
+            + find_document_size_nodes(row, package=package)
+        )
+    }
+    candidates: list[ET.Element] = []
+    for node in row.iter("node"):
+        text = node_text(node)
+        resource = str(node.attrib.get("resource-id") or "")
+        if (
+            not text
+            or id(node) in document_nodes
+            or text in MESSAGE_CHROME_TEXT
+            or MESSAGE_TIME_RE.fullmatch(text)
+            or QUOTE_RESOURCE_RE.search(resource)
+            or node.attrib.get("class") != "android.widget.TextView"
+            or str(node.attrib.get("package") or "") not in {"", package}
+        ):
+            continue
+        candidates.append(node)
+    if not candidates:
+        return []
+
+    clickable = [node for node in candidates if node.attrib.get("clickable") == "true"]
+    if clickable:
+        return clickable
+
+    # In old/sparse accessibility trees a sender label is above the message.
+    # Prefer the lowest bounded leaf rather than merging every visible label.
+    bounded: list[tuple[int, ET.Element]] = []
+    for node in candidates:
+        try:
+            _, top, _, _ = parse_bounds(node.attrib.get("bounds", ""))
+        except BridgeError:
+            continue
+        bounded.append((top, node))
+    if bounded:
+        lowest_top = max(top for top, _ in bounded)
+        return [node for top, node in bounded if top == lowest_top]
+    return candidates[-1:]
+
+
 def clickable_ancestor(root: ET.Element, node: ET.Element) -> ET.Element:
     parents = parent_map(root)
     current = node
@@ -900,7 +1307,7 @@ def clickable_ancestor(root: ET.Element, node: ET.Element) -> ET.Element:
 
 
 def visible_chat_title(root: ET.Element) -> str:
-    titles = find_nodes(root, resource_id=f"{PACKAGE}:id/n5i", package=PACKAGE)
+    titles = find_nodes_by_resource_suffix(root, CHAT_TITLE_RESOURCE_SUFFIXES)
     for node in titles:
         title = node_text(node)
         if title and title != "消息":
@@ -1028,16 +1435,54 @@ def message_row_sender(
     candidates: list[tuple[str, str]] = []
     external_marker = False
     avatar_bounds = ""
+    body_node_ids = {id(node) for node in body_nodes}
+    try:
+        row_left, _, row_right, _ = parse_bounds(row.attrib.get("bounds", ""))
+    except BridgeError:
+        row_left, row_right = 0, 1080
     for node in row.iter("node"):
         resource = node.attrib.get("resource-id", "")
         text = node_text(node)
         bounds = node.attrib.get("bounds", "")
-        if resource.endswith(":id/ja3") and not avatar_bounds:
-            avatar_bounds = bounds
+        if not avatar_bounds:
+            known_avatar = node_resource_has_any_suffix(
+                node,
+                MESSAGE_AVATAR_RESOURCE_SUFFIXES,
+            )
+            geometric_avatar = False
+            if node.attrib.get("class") == "android.widget.ImageView":
+                try:
+                    left, top, right, bottom = parse_bounds(bounds)
+                    width = right - left
+                    height = bottom - top
+                    geometric_avatar = (
+                        40 <= width <= 150
+                        and 40 <= height <= 150
+                        and (
+                            right <= row_left + 170
+                            or left >= row_right - 170
+                        )
+                    )
+                except BridgeError:
+                    pass
+            if known_avatar or geometric_avatar:
+                avatar_bounds = bounds
         if text in {"＠微信", "@微信"}:
             external_marker = True
             continue
-        if not text or resource or text in MESSAGE_CHROME_TEXT or MESSAGE_TIME_RE.fullmatch(text):
+        if (
+            not text
+            or id(node) in body_node_ids
+            or text in MESSAGE_CHROME_TEXT
+            or MESSAGE_TIME_RE.fullmatch(text)
+            or QUOTE_RESOURCE_RE.search(resource)
+            or node_resource_has_any_suffix(
+                node,
+                MESSAGE_BODY_RESOURCE_SUFFIXES
+                + DOCUMENT_FILENAME_RESOURCE_SUFFIXES
+                + DOCUMENT_SIZE_RESOURCE_SUFFIXES,
+            )
+        ):
             continue
         if node.attrib.get("class", "") not in {"", "android.widget.TextView"}:
             continue
@@ -1083,6 +1528,13 @@ class AndroidBridge:
         self.history_db = Path(str(config.get("history_db") or DEFAULT_HISTORY_DB)).expanduser().resolve()
         self.staging_dir = Path(str(config.get("staging_dir") or DEFAULT_STAGING)).expanduser().resolve()
         self.lock_path = PRIVATE / "wecom_android_bridge.lock"
+        self.outbound_marker_path = PRIVATE / "wecom_android_outbound.active.json"
+        device_key = short_hash(self.serial or "unconfigured", 10)
+        self.ui_dump_lock_path = PRIVATE / f"wecom_android_uiautomator_{device_key}.lock"
+        self.ui_dump_remote_path = (
+            f"/sdcard/labcanvas_wecom_{device_key}_{os.getpid()}.xml"
+        )
+        self._ui_dump_thread_lock = threading.Lock()
         self.control_priority_path = Path(
             str(config.get("control_priority_path") or DEFAULT_CONTROL_PRIORITY)
         ).expanduser().resolve()
@@ -1116,6 +1568,15 @@ class AndroidBridge:
             16 * 1024 * 1024 * 1024,
         )
         self.auto_prune_safe_logs = bool(config.get("auto_prune_safe_logs", True))
+        self.auto_prune_safe_image_caches = bool(
+            config.get("auto_prune_safe_image_caches", True)
+        )
+        self.auto_trim_package_caches = bool(
+            config.get("auto_trim_package_caches", True)
+        )
+        self.inbound_media_max_recovery_failures = bounded_int(
+            config.get("inbound_media_max_recovery_failures"), 8, 1, 100
+        )
         self.storage_prune_headroom_bytes = bounded_int(
             config.get("storage_prune_headroom_bytes"),
             256 * 1024 * 1024,
@@ -1190,6 +1651,11 @@ class AndroidBridge:
                     "ALTER TABLE observed_messages ADD COLUMN "
                     "last_error TEXT NOT NULL DEFAULT ''"
                 )
+            conn.execute(
+                "UPDATE observed_messages SET status = 'media_blocked', retry_after = '' "
+                "WHERE status = 'pending' AND failure_count >= ?",
+                (self.inbound_media_max_recovery_failures,),
+            )
 
     @contextmanager
     def serialized(self, *, timeout_seconds: float | None = None) -> Iterator[None]:
@@ -1247,12 +1713,63 @@ class AndroidBridge:
         """Prioritize a queued send over the next passive polling segment."""
         with self._outbound_waiter_lock:
             self._outbound_waiters += 1
+            if self._outbound_waiters == 1:
+                try:
+                    write_private_json(
+                        self.outbound_marker_path,
+                        {
+                            "pid": os.getpid(),
+                            "started_at": now_iso(),
+                        },
+                    )
+                except OSError:
+                    # The GUI lock still protects correctness. The marker only
+                    # prevents the external supervisor from hot-reloading a
+                    # relay that is waiting to send.
+                    pass
         try:
             with self.serialized(timeout_seconds=timeout_seconds):
                 yield
         finally:
             with self._outbound_waiter_lock:
                 self._outbound_waiters = max(0, self._outbound_waiters - 1)
+                if self._outbound_waiters == 0:
+                    try:
+                        self.outbound_marker_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+
+    @contextmanager
+    def serialized_ui_dump(
+        self,
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> Iterator[None]:
+        """Permit only one UIAutomator registration per device at a time."""
+        timeout = max(0.5, float(timeout_seconds))
+        deadline = time.monotonic() + timeout
+        acquired = self._ui_dump_thread_lock.acquire(timeout=timeout)
+        if not acquired:
+            raise BridgeError("Android UI hierarchy capture is busy")
+        self.ui_dump_lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            with self.ui_dump_lock_path.open("a+", encoding="utf-8") as handle:
+                while True:
+                    try:
+                        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError as exc:
+                        if time.monotonic() >= deadline:
+                            raise BridgeError(
+                                "Android UI hierarchy capture exceeded its serialization timeout"
+                            ) from exc
+                        time.sleep(0.1)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
+        finally:
+            self._ui_dump_thread_lock.release()
 
     @contextmanager
     def passive_serialized(
@@ -1272,6 +1789,8 @@ class AndroidBridge:
                 self._passive_control.active = previous
 
     def assert_passive_control_available(self) -> None:
+        if self.outbound_waiting():
+            raise BridgeError("WECOM_ANDROID_PREEMPTED: wecom_outbound")
         priority = self.external_control_priority()
         if priority is None:
             return
@@ -1366,11 +1885,20 @@ class AndroidBridge:
         if (
             isinstance(available, int)
             and available < prune_threshold
-            and self.auto_prune_safe_logs
+            and (
+                self.auto_trim_package_caches
+                or self.auto_prune_safe_image_caches
+                or self.auto_prune_safe_logs
+            )
             and not self._safe_log_prune_attempted
         ):
             self._safe_log_prune_attempted = True
-            self.prune_safe_external_logs()
+            if self.auto_trim_package_caches:
+                self.trim_android_package_caches(prune_threshold)
+            if self.auto_prune_safe_image_caches:
+                self.prune_safe_external_image_caches()
+            if self.auto_prune_safe_logs:
+                self.prune_safe_external_logs()
             status = self.device_data_storage_status(force=True)
             available = status.get("available_bytes")
         if isinstance(available, int) and available < self.minimum_free_data_bytes:
@@ -1383,11 +1911,46 @@ class AndroidBridge:
             )
         return status
 
+    def trim_android_package_caches(self, desired_free_bytes: int) -> None:
+        """Ask Android to remove only package-managed, recreatable caches."""
+
+        # Older Android package-manager shells can parse a large bare byte
+        # count through a signed integer.  A MiB-suffixed value keeps the
+        # request bounded and has the same meaning without overflow risk.
+        mib = 1024 * 1024
+        desired_mib = max(1, (max(0, int(desired_free_bytes)) + mib - 1) // mib)
+        self.adb_shell(
+            "pm",
+            "trim-caches",
+            f"{desired_mib}M",
+            timeout=180,
+            check=False,
+        )
+        self.record_recovery("safe_android_package_caches_trimmed")
+
     def prune_safe_external_logs(self) -> None:
         """Remove only disposable WeCom external logs under a fixed allowlist."""
         self.adb_shell("rm", "-rf", *SAFE_EXTERNAL_LOG_DIRS, timeout=120, check=False)
         self.adb_shell("mkdir", "-p", *SAFE_EXTERNAL_LOG_DIRS, timeout=30, check=False)
         self.record_recovery("safe_wecom_external_logs_pruned")
+
+    def prune_safe_external_image_caches(self) -> None:
+        """Remove only recreated WeCom image thumbnails, never attachment files."""
+        self.adb_shell(
+            "rm",
+            "-rf",
+            *SAFE_EXTERNAL_IMAGE_CACHE_DIRS,
+            timeout=120,
+            check=False,
+        )
+        self.adb_shell(
+            "mkdir",
+            "-p",
+            *SAFE_EXTERNAL_IMAGE_CACHE_DIRS,
+            timeout=30,
+            check=False,
+        )
+        self.record_recovery("safe_wecom_external_image_caches_pruned")
 
     def prepare_device(self) -> None:
         self.disable_host_automount()
@@ -1493,7 +2056,12 @@ class AndroidBridge:
         except BridgeError:
             root = None
         self.ensure_navigation_allowed(root)
-        if root is not None and self.wecom_is_foreground(root) and not is_anr_dialog(root):
+        if (
+            root is not None
+            and self.wecom_is_foreground(root)
+            and not is_anr_dialog(root)
+            and not is_crash_report_dialog(root)
+        ):
             return
         self.start_wecom_component()
         conflict_dismissed = False
@@ -1505,6 +2073,9 @@ class AndroidBridge:
                 if self.wecom_is_foreground():
                     return
                 time.sleep(0.5)
+                continue
+            if self.dismiss_crash_report_dialog(root):
+                self.start_wecom_component()
                 continue
             if is_anr_dialog(root):
                 self.dismiss_anr_dialog(root)
@@ -1522,21 +2093,104 @@ class AndroidBridge:
 
     def dump_hierarchy(self, *, attempts: int = 5) -> ET.Element:
         last_error = ""
-        for _ in range(max(1, attempts)):
-            self.adb_shell(
-                "uiautomator", "dump", "--compressed", "/sdcard/labcanvas_wecom.xml", timeout=20, check=False
-            )
-            payload = self.adb_shell("cat", "/sdcard/labcanvas_wecom.xml", timeout=10, check=False)
+        total_timeout = bounded_float(
+            self.config.get("ui_dump_total_timeout_seconds"),
+            DEFAULT_UI_DUMP_TOTAL_TIMEOUT_SECONDS,
+            2.0,
+            60.0,
+        )
+        attempt_timeout = bounded_float(
+            self.config.get("ui_dump_attempt_timeout_seconds"),
+            DEFAULT_UI_DUMP_ATTEMPT_TIMEOUT_SECONDS,
+            1.0,
+            15.0,
+        )
+        deadline = time.monotonic() + total_timeout
+
+        def remaining(cap: float) -> float:
+            return max(0.0, min(cap, deadline - time.monotonic()))
+
+        def bounded_sleep(seconds: float) -> None:
+            delay = remaining(seconds)
+            if delay > 0:
+                time.sleep(delay)
+
+        with self.serialized_ui_dump(timeout_seconds=total_timeout):
             try:
-                root = ET.fromstring(payload)
-            except ET.ParseError as exc:
-                last_error = str(exc)
-                time.sleep(0.4)
-                continue
-            if any(True for _ in root.iter("node")):
-                return root
-            last_error = "empty hierarchy"
-            time.sleep(0.4)
+                for attempt in range(max(1, attempts)):
+                    if remaining(attempt_timeout) <= 0:
+                        last_error = "UI hierarchy capture exceeded its total deadline"
+                        break
+                    try:
+                        self.adb_shell(
+                            "rm",
+                            "-f",
+                            self.ui_dump_remote_path,
+                            timeout=max(0.1, remaining(2.0)),
+                            check=False,
+                        )
+                    except subprocess.TimeoutExpired:
+                        last_error = "stale UI hierarchy cleanup timed out"
+                        bounded_sleep(min(0.5, 0.2 + attempt * 0.1))
+                        continue
+                    try:
+                        process = self.adb(
+                            "shell",
+                            "uiautomator",
+                            "dump",
+                            "--compressed",
+                            self.ui_dump_remote_path,
+                            timeout=max(0.1, remaining(attempt_timeout)),
+                            check=False,
+                        )
+                    except subprocess.TimeoutExpired:
+                        last_error = "UIAutomator dump timed out"
+                        bounded_sleep(min(1.0, 0.4 + attempt * 0.15))
+                        continue
+                    diagnostics = "\n".join(
+                        part for part in (process.stdout, process.stderr) if part
+                    ).casefold()
+                    if any(marker in diagnostics for marker in UIAUTOMATOR_BUSY_MARKERS):
+                        last_error = "UIAutomator service is still unregistering"
+                        bounded_sleep(min(1.0, 0.4 + attempt * 0.15))
+                        continue
+                    if remaining(3.0) <= 0:
+                        last_error = "UI hierarchy capture exceeded its total deadline"
+                        break
+                    try:
+                        payload = self.adb_shell(
+                            "cat",
+                            self.ui_dump_remote_path,
+                            timeout=max(0.1, remaining(3.0)),
+                            check=False,
+                        )
+                    except subprocess.TimeoutExpired:
+                        last_error = "UI hierarchy read timed out"
+                        bounded_sleep(0.2)
+                        continue
+                    try:
+                        root = ET.fromstring(payload)
+                    except ET.ParseError as exc:
+                        last_error = str(exc)
+                        bounded_sleep(min(0.75, 0.25 + attempt * 0.1))
+                        continue
+                    if any(True for _ in root.iter("node")):
+                        return root
+                    last_error = "empty hierarchy"
+                    bounded_sleep(min(0.75, 0.25 + attempt * 0.1))
+            finally:
+                cleanup_timeout = remaining(1.0)
+                if cleanup_timeout > 0:
+                    try:
+                        self.adb_shell(
+                            "rm",
+                            "-f",
+                            self.ui_dump_remote_path,
+                            timeout=max(0.1, cleanup_timeout),
+                            check=False,
+                        )
+                    except subprocess.TimeoutExpired:
+                        pass
         raise BridgeError(f"could not read Android UI hierarchy: {last_error}")
 
     def tap_node(self, root: ET.Element, node: ET.Element) -> None:
@@ -1564,6 +2218,31 @@ class AndroidBridge:
         self.tap_node(root, wait_nodes[0])
         self.record_recovery("anr_wait")
         time.sleep(2.0)
+        return True
+
+    def dismiss_crash_report_dialog(self, root: ET.Element) -> bool:
+        """Cancel an Android crash report without ever selecting Report."""
+        if not is_crash_report_dialog(root):
+            return False
+        cancel_nodes = [
+            node
+            for node in root.iter("node")
+            if normalize_visible_text(node_text(node)) in CRASH_REPORT_CANCEL_LABELS
+            and node.attrib.get("clickable") == "true"
+        ]
+        report_nodes = [
+            node
+            for node in root.iter("node")
+            if normalize_visible_text(node_text(node)) in CRASH_REPORT_SUBMIT_LABELS
+            and node.attrib.get("clickable") == "true"
+        ]
+        if len(cancel_nodes) != 1 or not report_nodes:
+            raise BridgeError(
+                "Android crash dialog does not expose one exact Cancel action"
+            )
+        self.tap_node(root, cancel_nodes[0])
+        self.record_recovery("crash_report_cancelled")
+        time.sleep(0.5)
         return True
 
     def dismiss_recovered_low_storage_dialog(self, root: ET.Element) -> bool:
@@ -1607,6 +2286,9 @@ class AndroidBridge:
                 root = self.dump_hierarchy(attempts=1)
             except BridgeError:
                 time.sleep(0.6)
+                continue
+            if self.dismiss_crash_report_dialog(root):
+                self.start_wecom_component()
                 continue
             if is_anr_dialog(root):
                 self.dismiss_anr_dialog(root)
@@ -1774,12 +2456,14 @@ class AndroidBridge:
         """Return to the exact chat composer from a stale picker or attachment sheet."""
         if chat not in self.target_groups:
             raise BridgeError("refusing non-allowlisted WeCom Android chat")
-        for _ in range(6):
+        exact_chat_loading_polls = 0
+        for _ in range(10):
             package = self.current_package()
             if package == DOCUMENTS_PACKAGE:
                 self.press_back()
                 continue
             root = self.open_chat(chat)
+            visible_title = visible_chat_title(root)
             visible = {
                 normalize_visible_text(node_text(node))
                 for node in root.iter("node")
@@ -1794,7 +2478,7 @@ class AndroidBridge:
             if local_choice_open or confirmation_open or attachment_sheet_open:
                 self.press_back()
                 continue
-            composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
+            composers = find_composer_nodes(root, package=self.package)
             if composers:
                 return root
             voice_prompts = find_nodes(
@@ -1822,14 +2506,19 @@ class AndroidBridge:
                     restored = self.dump_hierarchy(attempts=2)
                     if not chat_title_matches(visible_chat_title(restored), chat):
                         break
-                    composers = find_nodes(
-                        restored,
-                        resource_id=f"{self.package}:id/j28",
-                        package=self.package,
-                    )
+                    composers = find_composer_nodes(restored, package=self.package)
                     if composers:
                         return restored
                 continue
+            if chat_title_matches(visible_title, chat):
+                # The external-group title appears before the composer on this
+                # older phone. Backing out during that interval walks a valid
+                # send from the chat to the conversation list.
+                exact_chat_loading_polls += 1
+                if exact_chat_loading_polls <= 4:
+                    time.sleep(0.4)
+                    continue
+            exact_chat_loading_polls = 0
             self.press_back()
         raise BridgeError("WeCom exact chat composer could not be restored")
 
@@ -1840,15 +2529,18 @@ class AndroidBridge:
             self.launch_wecom()
             for _ in range(8):
                 root = self.dump_hierarchy()
+                if self.dismiss_crash_report_dialog(root):
+                    self.start_wecom_component()
+                    continue
                 if self.dismiss_anr_dialog(root):
                     continue
                 self.ensure_navigation_allowed(root)
                 if chat_title_matches(visible_chat_title(root), chat):
                     return root
-                rows = find_nodes(
+                rows = find_nodes_by_resource_suffix(
                     root,
+                    CHAT_LIST_ROW_RESOURCE_SUFFIXES,
                     text=chat,
-                    resource_id=f"{self.package}:id/iql",
                     package=self.package,
                 )
                 if rows:
@@ -1859,6 +2551,9 @@ class AndroidBridge:
                     while time.monotonic() < deadline:
                         time.sleep(0.4)
                         opened = self.dump_hierarchy(attempts=2)
+                        if self.dismiss_crash_report_dialog(opened):
+                            self.start_wecom_component()
+                            break
                         if self.dismiss_anr_dialog(opened):
                             continue
                         self.ensure_navigation_allowed(opened)
@@ -1890,14 +2585,8 @@ class AndroidBridge:
         max_swipes: int = 4,
     ) -> ET.Element:
         """Move an exact chat to its newest viewport before reading messages."""
-        has_message_rows = any(
-            node.attrib.get("resource-id", "").endswith(MESSAGE_ROW_RESOURCE_SUFFIX)
-            for node in root.iter("node")
-        )
-        has_composer = any(
-            node.attrib.get("resource-id") == f"{self.package}:id/j28"
-            for node in root.iter("node")
-        )
+        has_message_rows = bool(find_message_rows(root, package=self.package))
+        has_composer = bool(find_composer_nodes(root, package=self.package))
         if not has_message_rows or not has_composer:
             return root
         previous = ET.tostring(root, encoding="unicode")
@@ -1922,20 +2611,23 @@ class AndroidBridge:
             self.launch_wecom()
             for _ in range(8):
                 root = self.dump_hierarchy()
+                if self.dismiss_crash_report_dialog(root):
+                    self.start_wecom_component()
+                    continue
                 if self.dismiss_anr_dialog(root):
                     continue
                 self.ensure_navigation_allowed(root)
-                title_nodes = find_nodes(
+                title_nodes = find_nodes_by_resource_suffix(
                     root,
+                    CHAT_TITLE_RESOURCE_SUFFIXES,
                     text="消息",
-                    resource_id=f"{self.package}:id/n5i",
                     package=self.package,
                 )
                 if title_nodes and any(
-                    find_nodes(
+                    find_nodes_by_resource_suffix(
                         root,
+                        CHAT_LIST_ROW_RESOURCE_SUFFIXES,
                         text=target,
-                        resource_id=f"{self.package}:id/iql",
                         package=self.package,
                     )
                     for target in self.target_groups
@@ -1950,7 +2642,12 @@ class AndroidBridge:
         parents = parent_map(root)
         result: list[str] = []
         for chat in self.target_groups:
-            nodes = find_nodes(root, text=chat, resource_id=f"{self.package}:id/iql", package=self.package)
+            nodes = find_nodes_by_resource_suffix(
+                root,
+                CHAT_LIST_ROW_RESOURCE_SUFFIXES,
+                text=chat,
+                package=self.package,
+            )
             if not nodes:
                 continue
             row = nodes[0]
@@ -1962,7 +2659,11 @@ class AndroidBridge:
                 if row.attrib.get("clickable") == "true":
                     break
             unread = any(
-                node.attrib.get("resource-id") == f"{self.package}:id/l07"
+                resource_id_has_suffix(
+                    node,
+                    UNREAD_BADGE_RESOURCE_SUFFIXES,
+                    package=self.package,
+                )
                 and node_text(node).isdigit()
                 and int(node_text(node)) > 0
                 for node in row.iter("node")
@@ -2025,7 +2726,7 @@ class AndroidBridge:
             self.press_back()
         else:
             return False
-        composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
+        composers = find_composer_nodes(root, package=self.package)
         if not composers or not composer_text(composers[-1]):
             return True
         self.tap_node(root, composers[-1])
@@ -2049,17 +2750,17 @@ class AndroidBridge:
             cleared = self.ensure_chat_identity(chat)
         except BridgeError:
             return False
-        composers = find_nodes(cleared, resource_id=f"{self.package}:id/j28", package=self.package)
+        composers = find_composer_nodes(cleared, package=self.package)
         return bool(composers and not composer_text(composers[-1]))
 
     def mention_picker(self, *, timeout: float = 5.0) -> ET.Element:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             root = self.dump_hierarchy(attempts=2)
-            title = find_nodes(
+            title = find_nodes_by_resource_suffix(
                 root,
+                CHAT_TITLE_RESOURCE_SUFFIXES,
                 text="选择提醒的人",
-                resource_id=f"{self.package}:id/n5i",
                 package=self.package,
             )
             search = find_nodes(root, resource_id=f"{self.package}:id/g7i", package=self.package)
@@ -2126,7 +2827,7 @@ class AndroidBridge:
         self.tap_node(picker, matches[0])
         time.sleep(0.5)
         root = self.ensure_chat_identity(chat)
-        composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
+        composers = find_composer_nodes(root, package=self.package)
         if not composers or mention_token_count(composer_text(composers[-1])) != expected_count:
             raise BridgeError(f"WeCom did not create a native mention for {mention!r}")
 
@@ -2368,7 +3069,7 @@ class AndroidBridge:
                 "mentioned_users": exact_mentions,
             }
         root = self.normalize_chat_surface(chat)
-        composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
+        composers = find_composer_nodes(root, package=self.package)
         if not composers:
             raise BridgeError("WeCom composer is not visible")
         draft = composer_text(composers[-1])
@@ -2376,7 +3077,7 @@ class AndroidBridge:
             if not self.recover_stale_automation_draft(chat, draft):
                 raise BridgeError("refusing to overwrite a non-empty WeCom draft")
             root = self.normalize_chat_surface(chat)
-            composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
+            composers = find_composer_nodes(root, package=self.package)
             if not composers or composer_text(composers[-1]):
                 raise BridgeError("WeCom composer remained non-empty after automation-draft recovery")
         self.mark_component(
@@ -2419,7 +3120,7 @@ class AndroidBridge:
             )
             if root is None:
                 raise BridgeError("text and native mentions were not reproduced exactly in the WeCom composer")
-            send_buttons = find_nodes(root, text="发送", resource_id=f"{self.package}:id/j24", package=self.package)
+            send_buttons = find_nodes(root, text="发送", package=self.package)
             if not send_buttons:
                 raise BridgeError("WeCom text send button is unavailable")
             self.tap_node(root, send_buttons[-1])
@@ -2447,7 +3148,7 @@ class AndroidBridge:
         while time.monotonic() < deadline:
             time.sleep(0.7)
             current = self.ensure_chat_identity(chat)
-            composers = find_nodes(current, resource_id=f"{self.package}:id/j28", package=self.package)
+            composers = find_composer_nodes(current, package=self.package)
             body_visible = any(
                 normalize_visible_text(text) in node_text(node)
                 for node in current.iter("node")
@@ -2549,7 +3250,7 @@ class AndroidBridge:
         deadline = time.monotonic() + max(0.1, timeout)
         while time.monotonic() < deadline:
             root = self.ensure_chat_identity(chat)
-            composers = find_nodes(root, resource_id=f"{self.package}:id/j28", package=self.package)
+            composers = find_composer_nodes(root, package=self.package)
             if composers and composer_matches_message(
                 composer_text(composers[-1]),
                 text,
@@ -2655,25 +3356,22 @@ class AndroidBridge:
         """
         current = root
         for _ in range(max(1, attempts)):
-            plus: list[ET.Element] = []
-            # ``j1v`` is the attachment control. ``hvp`` is retained only for
-            # older layouts where it genuinely served that role.
-            for resource_name in ("j1v", "hvp"):
-                candidates = [
-                    node
-                    for node in find_nodes(
-                        current,
-                        resource_id=f"{self.package}:id/{resource_name}",
-                        package=self.package,
-                    )
-                    if node.attrib.get("clickable") == "true"
-                ]
-                if candidates:
-                    plus = candidates
-                    break
+            plus = find_attachment_button_nodes(
+                current,
+                package=self.package,
+            )
             if not plus:
                 raise BridgeError("WeCom attachment menu button is unavailable")
-            self.tap_node(current, plus[-1])
+            attachment_button = plus[-1]
+            if attachment_button.attrib.get("clickable") == "true":
+                self.tap_node(current, attachment_button)
+            else:
+                # Signed WeCom 5.0.10 exposes the plus icon with a stable
+                # resource id and bounds but marks it non-clickable. Its broad
+                # clickable parent spans the whole composer, so tapping that
+                # parent's centre would focus text instead of opening files.
+                x, y = bounds_center(attachment_button.attrib.get("bounds", ""))
+                self.adb_shell("input", "tap", str(x), str(y))
             for _ in range(max(1, polls_per_attempt)):
                 time.sleep(0.25)
                 current = self.ensure_chat_identity(chat)
@@ -2984,14 +3682,14 @@ class AndroidBridge:
         *,
         screenshot: RawScreenshot | None = None,
     ) -> list[dict[str, str]]:
-        rows = find_nodes(root, resource_id=f"{self.package}:id/eyy", package=self.package)
+        rows = find_message_rows(root, package=self.package)
         records: list[dict[str, str]] = []
         for row in rows:
-            body_nodes = [
-                node
-                for node in row.iter("node")
-                if node_text(node) and node.attrib.get("resource-id", "").endswith(":id/j1l")
-            ]
+            body_nodes = find_message_body_nodes(
+                row,
+                package=self.package,
+                semantic_fallback=False,
+            )
             source_kind = "text"
             source_title = ""
             image_bounds = ""
@@ -3071,26 +3769,18 @@ class AndroidBridge:
                     source_kind = ARTICLE_CARD_KIND
                     source_title = " ".join(unique_nonempty(node_text(node) for node in body_nodes))
             if not body_nodes:
-                document_nodes = [
-                    node
-                    for node in row.iter("node")
-                    if node_text(node)
-                    and node.attrib.get("resource-id", "").endswith(
-                        DOCUMENT_FILENAME_RESOURCE_SUFFIX
-                    )
-                ]
+                document_nodes = find_document_filename_nodes(
+                    row,
+                    package=self.package,
+                )
                 if document_nodes:
                     source_kind = DOCUMENT_KIND
                     document_filename = normalize_filename_text(node_text(document_nodes[0]))
                     document_bounds = str(document_nodes[0].attrib.get("bounds") or "")
-                    size_nodes = [
-                        node
-                        for node in row.iter("node")
-                        if node_text(node)
-                        and node.attrib.get("resource-id", "").endswith(
-                            DOCUMENT_SIZE_RESOURCE_SUFFIX
-                        )
-                    ]
+                    size_nodes = find_document_size_nodes(
+                        row,
+                        package=self.package,
+                    )
                     body_nodes = [*document_nodes, *size_nodes]
                     document_size_text = (
                         normalize_visible_text(node_text(size_nodes[0])) if size_nodes else ""
@@ -3121,6 +3811,12 @@ class AndroidBridge:
                         except BridgeError:
                             image_preview_sha256 = ""
                             image_visual_id = ""
+            if not body_nodes:
+                body_nodes = find_message_body_nodes(
+                    row,
+                    package=self.package,
+                    semantic_fallback=True,
+                )
             body = "\n".join(unique_nonempty(node_text(node) for node in body_nodes))
             if source_kind == IMAGE_KIND:
                 body = "[图片]"
@@ -3204,20 +3900,15 @@ class AndroidBridge:
         expected_size = normalize_visible_text(record.get("document_size_text"))
         expected_bounds = str(record.get("document_bounds") or "")
         matches: list[ET.Element] = []
-        rows = find_nodes(
-            root,
-            resource_id=f"{self.package}:id/eyy",
-            package=self.package,
-        )
+        rows = find_message_rows(root, package=self.package)
         for row in rows:
             filename_nodes = [
                 node
-                for node in row.iter("node")
-                if node_text(node)
-                and node.attrib.get("resource-id", "").endswith(
-                    DOCUMENT_FILENAME_RESOURCE_SUFFIX
+                for node in find_document_filename_nodes(
+                    row,
+                    package=self.package,
                 )
-                and normalize_filename_text(node_text(node))
+                if normalize_filename_text(node_text(node))
                 == normalize_filename_text(expected_filename)
             ]
             if len(filename_nodes) != 1:
@@ -3228,10 +3919,9 @@ class AndroidBridge:
             if expected_size:
                 size_values = {
                     normalize_visible_text(node_text(node))
-                    for node in row.iter("node")
-                    if node_text(node)
-                    and node.attrib.get("resource-id", "").endswith(
-                        DOCUMENT_SIZE_RESOURCE_SUFFIX
+                    for node in find_document_size_nodes(
+                        row,
+                        package=self.package,
                     )
                 }
                 if expected_size not in size_values:
@@ -3469,7 +4159,7 @@ class AndroidBridge:
             if source_kind == SHIPINHAO_CARD_KIND
             else IMAGE_BUBBLE_RESOURCE_SUFFIX
         )
-        rows = find_nodes(root, resource_id=f"{self.package}:id/eyy", package=self.package)
+        rows = find_message_rows(root, package=self.package)
         for row in rows:
             image_nodes = [
                 node
@@ -4113,7 +4803,13 @@ class AndroidBridge:
         return {str(fingerprint): str(status) for fingerprint, status in rows}
 
     def mark_observed_message(self, chat: str, record: dict[str, str], status: str) -> None:
-        if status not in {"seeded", "observed", "pending", "ingested"}:
+        if status not in {
+            "seeded",
+            "observed",
+            "pending",
+            "ingested",
+            "media_blocked",
+        }:
             raise BridgeError(f"invalid observed-message status: {status}")
         fingerprint = str(record.get("fingerprint") or "")
         if not fingerprint:
@@ -4153,10 +4849,10 @@ class AndroidBridge:
         *,
         base_seconds: float = 30.0,
         max_seconds: float = 900.0,
-    ) -> None:
+    ) -> bool:
         """Back off a recoverable native-media failure without losing the row."""
         if not fingerprint:
-            return
+            return False
         with sqlite3.connect(self.state_db) as conn:
             row = conn.execute(
                 "SELECT failure_count FROM observed_messages "
@@ -4165,13 +4861,21 @@ class AndroidBridge:
             ).fetchone()
             count = int(row[0] or 0) if row else 0
             next_count = count + 1
+            blocked = next_count >= self.inbound_media_max_recovery_failures
             delay = min(float(max_seconds), float(base_seconds) * (2 ** min(count, 5)))
-            retry_after = datetime.now(timezone.utc) + timedelta(seconds=delay)
+            retry_after = (
+                ""
+                if blocked
+                else (
+                    datetime.now(timezone.utc) + timedelta(seconds=delay)
+                ).isoformat(timespec="seconds")
+            )
             conn.execute(
-                "UPDATE observed_messages SET retry_after = ?, failure_count = ?, "
+                "UPDATE observed_messages SET status = ?, retry_after = ?, failure_count = ?, "
                 "last_error = ?, updated_at = ? WHERE chat = ? AND fingerprint = ?",
                 (
-                    retry_after.isoformat(timespec="seconds"),
+                    "media_blocked" if blocked else "pending",
+                    retry_after,
                     next_count,
                     str(error)[:500],
                     now_iso(),
@@ -4179,6 +4883,14 @@ class AndroidBridge:
                     fingerprint,
                 ),
             )
+        return blocked
+
+    def blocked_media_recovery_count(self) -> int:
+        with sqlite3.connect(self.state_db) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM observed_messages WHERE status = 'media_blocked'"
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
 
     def seed_observed_fingerprints(self, chat: str, fingerprints: list[str]) -> None:
         timestamp = now_iso()
@@ -4819,7 +5531,9 @@ class AndroidBridge:
                 packages = hierarchy_packages(root)
                 package = self.package if self.package in packages else self.current_package()
                 title = visible_chat_title(root) if self.package in packages else ""
-                if is_anr_dialog(root):
+                if is_crash_report_dialog(root):
+                    surface_state = "crash_report"
+                elif is_anr_dialog(root):
                     surface_state = "anr"
                 elif (authentication_reason := self.authentication_gate_reason(root)):
                     surface_state = "authentication"
@@ -4840,7 +5554,7 @@ class AndroidBridge:
         healthy = bool(
             authorized
             and health.get("poll_healthy")
-            and surface_state not in {"anr", "authentication"}
+            and surface_state not in {"anr", "authentication", "crash_report"}
         )
         storage = self.device_data_storage_status() if authorized else dict(self._storage_status)
         return {
@@ -4860,6 +5574,7 @@ class AndroidBridge:
                     and int(storage["available_bytes"]) < self.minimum_free_data_bytes
                 ),
             },
+            "blocked_media_recoveries": self.blocked_media_recovery_count(),
             **health,
             "target_groups": self.target_groups,
             "novnc_url": str(self.config.get("novnc_url") or ""),
@@ -4959,7 +5674,7 @@ def make_api_handler(bridge: AndroidBridge):
             self.write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path not in {"/v1/send", "/v1/delivery-status"}:
+            if self.path not in {"/v1/open", "/v1/send", "/v1/delivery-status"}:
                 self.write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
                 return
             if not self.authorized():
@@ -4974,6 +5689,19 @@ def make_api_handler(bridge: AndroidBridge):
                 chat = self.resolve_chat(str(payload.get("chat_id") or ""))
                 if not chat:
                     self.write_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "chat is not allowlisted"})
+                    return
+                if self.path == "/v1/open":
+                    with bridge.outbound_serialized(timeout_seconds=60.0):
+                        root = bridge.open_chat(chat)
+                    self.write_json(
+                        HTTPStatus.OK,
+                        {
+                            "ok": True,
+                            "transport": "wecom_android",
+                            "chat": chat,
+                            "visible_title": visible_chat_title(root),
+                        },
+                    )
                     return
                 raw_files = payload.get("files") or []
                 if not isinstance(raw_files, list) or len(raw_files) > 16:
@@ -5040,21 +5768,56 @@ def make_api_handler(bridge: AndroidBridge):
     return Handler
 
 
-def running_service_status(config: dict[str, Any]) -> dict[str, Any] | None:
-    """Read health from the persistent relay instead of a fresh bridge object."""
+def running_service_request(
+    config: dict[str, Any],
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    timeout_seconds: float = 1.0,
+) -> dict[str, Any] | None:
+    """Use the persistent relay when it is reachable; return None only offline."""
     port = bounded_int(config.get("local_api_port"), 19581, 1024, 65535)
     token = str(config.get("local_api_token") or "")
     if not token:
         return None
-    request = urlrequest.Request(
-        f"http://127.0.0.1:{port}/v1/status",
-        headers={"Authorization": f"Bearer {token}"},
+    body = None
+    headers = {"Authorization": f"Bearer {token}"}
+    method = "GET"
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+        method = "POST"
+    service_request = urlrequest.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=body,
+        headers=headers,
+        method=method,
     )
     try:
-        with urlrequest.urlopen(request, timeout=1.0) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        with urlrequest.urlopen(
+            service_request,
+            timeout=max(0.1, float(timeout_seconds)),
+        ) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urlerror.HTTPError as exc:
+        try:
+            result = json.loads(exc.read().decode("utf-8"))
+        except (OSError, ValueError):
+            result = {
+                "ok": False,
+                "error": f"persistent WeCom relay returned HTTP {exc.code}",
+            }
     except (OSError, TimeoutError, ValueError, urlerror.URLError):
         return None
+    return result if isinstance(result, dict) else {
+        "ok": False,
+        "error": "persistent WeCom relay returned an invalid response",
+    }
+
+
+def running_service_status(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Read health from the persistent relay instead of a fresh bridge object."""
+    payload = running_service_request(config, "/v1/status")
     if not isinstance(payload, dict) or payload.get("transport") != "wecom_android":
         return None
     return payload
@@ -5121,13 +5884,20 @@ def main() -> int:
                 if args.command == "chats":
                     payload = bridge.list_chats()
                 elif args.command == "open":
-                    with bridge.serialized():
-                        root = bridge.open_chat(args.chat)
-                    payload = {
-                        "ok": True,
-                        "chat": args.chat,
-                        "visible_title": visible_chat_title(root),
-                    }
+                    payload = running_service_request(
+                        config,
+                        "/v1/open",
+                        payload={"chat_id": f"gui:{args.chat}"},
+                        timeout_seconds=90.0,
+                    )
+                    if payload is None:
+                        with bridge.outbound_serialized(timeout_seconds=60.0):
+                            root = bridge.open_chat(args.chat)
+                        payload = {
+                            "ok": True,
+                            "chat": args.chat,
+                            "visible_title": visible_chat_title(root),
+                        }
                 elif args.command == "messages":
                     payload = bridge.snapshot(
                         args.chat,
@@ -5152,14 +5922,31 @@ def main() -> int:
                             ],
                         }
                     else:
-                        payload = bridge.send(
-                            args.chat,
-                            args.message,
-                            args.files,
-                            task_id=args.task_id,
-                            mentions=args.mentions,
-                            force_resend=args.force_resend,
+                        payload = running_service_request(
+                            config,
+                            "/v1/send",
+                            payload={
+                                "chat_id": f"gui:{args.chat}",
+                                "message": args.message,
+                                "mentions": args.mentions,
+                                "files": [
+                                    str(path.expanduser().resolve())
+                                    for path in args.files
+                                ],
+                                "task_id": args.task_id,
+                                "force_resend": args.force_resend,
+                            },
+                            timeout_seconds=600.0,
                         )
+                        if payload is None:
+                            payload = bridge.send(
+                                args.chat,
+                                args.message,
+                                args.files,
+                                task_id=args.task_id,
+                                mentions=args.mentions,
+                                force_resend=args.force_resend,
+                            )
                 else:
                     bridge.serve_forever()
                     return 0

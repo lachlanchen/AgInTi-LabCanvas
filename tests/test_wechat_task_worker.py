@@ -1018,7 +1018,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["files"], [str(compiled_pdf)])
-        self.assertEqual(result["message"], "")
+        self.assertEqual(result["message"], "研究报告已完成，PDF 已附上。")
 
     def test_research_recovery_sends_markdown_only_when_delivery_is_explicit(self) -> None:
         worker = load_worker()
@@ -1088,6 +1088,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 "artifact_dir": str(root),
                 "routine": {"id": "research_summary"},
                 "artifact_recovery_only": True,
+                "request": "Prepare an organoid imaging evidence review PDF.",
                 "route_decision": {
                     "route_kind": "research_or_summary",
                     "require_file_delivery": True,
@@ -1095,11 +1096,18 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             }
 
             result = worker.recover_completed_research_artifacts(task, force=True)
+            repeated = worker.recover_completed_research_artifacts(task, force=True)
+            delivered_pdf = Path(result["files"][0])
+            delivery_exists = delivered_pdf.is_file()
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result["files"], [str(pdf.resolve())])
+        self.assertTrue(delivery_exists)
+        self.assertNotEqual(delivered_pdf, pdf.resolve())
+        self.assertIn("organoid-imaging-evidence-review", delivered_pdf.name)
+        self.assertEqual(repeated["files"], result["files"])
         self.assertEqual(result["data"]["recovery_source"], "exact_task_single_pdf")
+        self.assertEqual(result["message"], "研究报告已完成，PDF 已附上。")
 
     def test_research_recovery_rejects_report_without_traceable_sources(self) -> None:
         worker = load_worker()
@@ -3900,7 +3908,10 @@ stderr: noisy internal trace
 
         self.assertEqual(updated["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
         self.assertTrue(updated["delivery_recovery_only"])
-        self.assertEqual(updated["result"]["message"], "")
+        self.assertEqual(
+            updated["result"]["message"],
+            "今日研究简报已完成，PDF 已附上。",
+        )
         self.assertEqual(updated["result"]["confirmation"], "")
         self.assertEqual(updated["result"]["files"], [str(pdf.resolve())])
         self.assertNotIn(str(report.resolve()), updated["result"]["files"])
@@ -7940,6 +7951,21 @@ stderr: noisy internal trace
         )
         self.assertEqual(unknown, "Report: unknown report.pdf 已完成")
 
+    def test_chat_visible_text_removes_private_runtime_diagnostics(self) -> None:
+        worker = load_worker()
+
+        message = worker.sanitize_chat_visible_text(
+            "研究报告已完成。\n"
+            "未在本轮发送；deep_research/finish queue_orchestrator "
+            "群 f8e5aa00112233445566 transport=wecom_android task_id=private-task\n"
+            "PDF 已附上。"
+        )
+
+        self.assertEqual(message, "研究报告已完成。\nPDF 已附上。")
+        self.assertNotIn("queue_orchestrator", message)
+        self.assertNotIn("transport=", message)
+        self.assertNotIn("f8e5aa", message)
+
     def test_file_bridge_unlocks_and_retries_when_wechat_locks(self) -> None:
         worker = load_worker()
         calls: list[list[str]] = []
@@ -9544,6 +9570,11 @@ stderr: noisy internal trace
             self.assertEqual(delivered.read_bytes(), source.read_bytes())
             self.assertEqual(task["delivery_artifact_aliases"][0]["display_name"], delivered.name)
             self.assertTrue(source.is_file())
+
+            with mock.patch.object(worker.os, "link", side_effect=OSError("cross-device")):
+                repeated = worker.ensure_meaningful_delivery_path(source, task)
+            self.assertEqual(repeated, delivered)
+            self.assertEqual(len(task["delivery_artifact_aliases"]), 1)
 
     def test_exact_inbound_file_keeps_its_original_filename(self) -> None:
         worker = load_worker()

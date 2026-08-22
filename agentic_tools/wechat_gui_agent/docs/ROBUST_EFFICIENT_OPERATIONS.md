@@ -1645,11 +1645,37 @@ not press Back or restart WeCom there. A reachable relay reporting that state,
 a locked keyguard, a native foreground conflict, or critically low Android
 `/data` storage is not restarted by the health guard. Storage health is reported
 with available bytes, used percentage, and the configured minimum; automatic
-repair never clears user data or application state.
+repair first asks Android's package manager to trim recreatable app caches, then
+removes only fixed WeCom thumbnail/image-cache and external-log allowlists. The
+attachment `filecache` is explicitly excluded. It never clears chat media,
+downloads, backups, credentials, user data, or application state. If those safe
+sources cannot restore the configured minimum, navigation remains paused and
+the health alert reports the storage blocker instead of deleting broader files.
+The package-manager request uses an explicit MiB suffix so old Android releases
+cannot overflow while parsing a large bare byte count.
 The minute-level WeCom autostart supervisor fingerprints the Android bridge
 source and reloads only the `android-relay` tmux window when that source
 changes. This lets bounded native-surface recovery fixes take effect without
-restarting the healthy logged-in desktop GUI or switching accounts.
+restarting the healthy logged-in desktop GUI or switching accounts. The shared
+transport-health snapshot also
+records the repository primary backend, durable requested backend, effective
+backend, and whether an emergency override is active. Use those fields to catch
+stale private overrides before attributing a task to the wrong agent runtime.
+
+The MIX 2S relay supports the signed WeCom 5.0.10 native resource aliases used
+by its chat header, chat rows, and unread badges. Only one relay process may own
+UIAutomator for the phone. Hierarchy capture has one 25-second total budget and
+an eight-second per-attempt cap; retries share that budget and never reuse a
+stale XML file. If Android presents the exact `keeps stopping` prompt, recovery
+selects **Cancel** only and never submits **Report**, then relaunches the same
+signed client without clearing its account or data.
+
+Every generated artifact passes through the same recipient-name contract,
+including stored-result resend and artifact-only recovery. Generic names such
+as `output.pdf`, UUIDs, task IDs, and checksums are replaced in the ignored task
+delivery directory with a short subject/date/role basename while the original
+file remains unchanged. File-only recovery adds one concise human caption and
+never exposes a local path or internal queue/runtime diagnostics.
 
 Repairs require repeated observations and preserve the logged-in clients. A
 stalled direct monitor reloads only monitor/chat-sync windows; a missing runtime
@@ -2076,6 +2102,21 @@ Unified runtime and per-chat profiles:
 - Worker output is sanitized at the final boundary even when a fallback backend
   returns structured JSON. stdout/stderr, model, sandbox, stack traces, command
   transcripts, private paths, and log-only messages are never sent to chats.
+- Android WeCom parsing recognizes both legacy and current signed-client
+  resource IDs, then uses a bounded native-`ListView` semantic fallback. A
+  healthy poll must therefore correspond to real text/file rows rather than an
+  empty result caused by obfuscated-ID drift. Relay source hot reload waits for
+  a stable file, no active outbound marker, and the shared GUI lock; it never
+  kills an in-flight message or file submission.
+- Native image/document recovery uses exponential backoff and a bounded
+  failure budget. An exact bubble that has scrolled out of recoverable history
+  becomes `media_blocked` and is counted in transport health; it is not retried
+  forever, silently substituted with another attachment, or allowed to delay
+  newer text and file messages.
+- Delivery copies use a concise date, task subject, and artifact role whenever
+  the generated source name is generic. The original source stays unchanged;
+  an ignored hardlink/copy alias is what the chat recipient sees, and its
+  content hash remains part of idempotent delivery evidence.
 - LazyEdit inherits current Studio settings only when the request is silent.
   Explicit background fill/crop, subtitle on/off and language order, correction
   context, metadata context, logo, and platform choices remain authoritative.

@@ -4155,6 +4155,12 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("HEALTH_GUARD_SIGNATURE", tmux_source)
         self.assertIn("android_bridge_reload_needed", tmux_source)
         self.assertIn("ANDROID_BRIDGE_SIGNATURE", tmux_source)
+        self.assertIn("ANDROID_BRIDGE_RELOAD_STABLE_SECONDS", tmux_source)
+        self.assertIn("android_bridge_source_is_stable", tmux_source)
+        self.assertIn("android_bridge_outbound_active", tmux_source)
+        self.assertIn("reload_android_window_if_idle", tmux_source)
+        self.assertIn("wecom_android_outbound.active.json", tmux_source)
+        self.assertIn('flock -n "$reload_fd"', tmux_source)
         self.assertIn("missing windows repaired", tmux_source)
         self.assertNotIn("xwechat_files", source)
         self.assertNotIn("wechat_gui_agent", source)
@@ -4193,6 +4199,8 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("if ! window_exists external-gui", tmux_source)
         self.assertIn("android_bridge_reload_needed", tmux_source)
         self.assertIn("ANDROID_BRIDGE_SIGNATURE", tmux_source)
+        self.assertIn("reload_android_window_if_idle", tmux_source)
+        self.assertIn("android_bridge_outbound_active", tmux_source)
 
     def test_wecom_autostart_docs_define_persisted_profile_boundary(self) -> None:
         readme = (

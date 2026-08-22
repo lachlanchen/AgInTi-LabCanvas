@@ -861,6 +861,7 @@ def prepare_stored_delivery_recovery_result(
         ]
     if task_contract_requires_file_delivery(task) and not delivery_files:
         return None
+    delivery_files = [ensure_meaningful_delivery_path(path, task) for path in delivery_files]
 
     data = dict(result.get("data") or {}) if isinstance(result.get("data"), dict) else {}
     data.update(
@@ -871,7 +872,7 @@ def prepare_stored_delivery_recovery_result(
         }
     )
     return {
-        "message": "",
+        "message": artifact_recovery_delivery_message(task, delivery_files),
         "confirmation": "",
         "files": [str(path) for path in delivery_files],
         "data": data,
@@ -3642,6 +3643,9 @@ def recover_completed_research_artifacts(
             safe_files.append(str(path.resolve()))
     if str(report_pdf.resolve()) not in safe_files:
         return None
+    delivery_files = [
+        ensure_meaningful_delivery_path(Path(path), task) for path in safe_files
+    ]
 
     recovered_at = datetime.now().isoformat(timespec="seconds")
     task["worker_artifact_recovery"] = {
@@ -3656,9 +3660,13 @@ def recover_completed_research_artifacts(
     task["worker_result_exhausted"] = False
     task.pop("worker_error", None)
     return {
-        "message": "" if task.get("artifact_recovery_only") else research_report_chat_message(report),
+        "message": (
+            artifact_recovery_delivery_message(task, delivery_files)
+            if task.get("artifact_recovery_only")
+            else research_report_chat_message(report)
+        ),
         "confirmation": "",
-        "files": safe_files,
+        "files": [str(path) for path in delivery_files],
         "data": {
             "require_file_delivery": True,
             "send_report_to_wechat": True,
@@ -3692,6 +3700,8 @@ def recover_exact_task_pdf_without_markdown(
             relative = path.relative_to(artifact_dir)
         except ValueError:
             continue
+        if relative.parts and relative.parts[0] == "delivery":
+            continue
         if len(relative.parts) > 3:
             continue
         ok, _reason = is_safe_outbound_file(path)
@@ -3707,6 +3717,7 @@ def recover_exact_task_pdf_without_markdown(
     if len(candidates) != 1:
         return None
     report_pdf = candidates[0]
+    delivery_pdf = ensure_meaningful_delivery_path(report_pdf, task)
     recovered_at = datetime.now().isoformat(timespec="seconds")
     task["worker_artifact_recovery"] = {
         "status": "recovered",
@@ -3719,9 +3730,9 @@ def recover_exact_task_pdf_without_markdown(
     task["worker_result_exhausted"] = False
     task.pop("worker_error", None)
     return {
-        "message": "",
+        "message": artifact_recovery_delivery_message(task, [delivery_pdf]),
         "confirmation": "",
-        "files": [str(report_pdf)],
+        "files": [str(delivery_pdf)],
         "data": {
             "require_file_delivery": True,
             "send_report_to_wechat": True,
@@ -3799,6 +3810,12 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
 def select_substantive_research_report(artifact_dir: Path) -> Path | None:
     candidates: list[tuple[int, Path]] = []
     for path in artifact_dir.rglob("*.md"):
+        try:
+            relative = path.relative_to(artifact_dir)
+        except ValueError:
+            continue
+        if relative.parts and relative.parts[0] == "delivery":
+            continue
         lowered = path.name.casefold()
         if lowered in RESEARCH_REPORT_EXCLUDED_MARKDOWN:
             continue
@@ -3843,6 +3860,29 @@ def research_report_chat_message(report: Path) -> str:
     return f"首份 #daily 研究简报已完成：{title}\n\n{block}"
 
 
+def artifact_recovery_delivery_message(
+    task: dict[str, Any],
+    files: list[Path],
+) -> str:
+    """Give deterministic file recovery a concise recipient-facing caption."""
+    suffixes = {path.suffix.lower() for path in files}
+    if isinstance(task.get("daily_research"), dict):
+        message = (
+            "今日研究简报已完成，PDF 已附上。"
+            if ".pdf" in suffixes
+            else "今日研究简报已完成，文件已附上。"
+        )
+    elif task_is_research_summary(task):
+        message = (
+            "研究报告已完成，PDF 已附上。"
+            if ".pdf" in suffixes
+            else "研究报告已完成，文件已附上。"
+        )
+    else:
+        message = "所需文件已整理完成，已附上。"
+    return sanitize_chat_visible_text(message, files)
+
+
 def message_with_saved_file_note(message: str, files: list[Path]) -> str:
     if not files:
         return sanitize_chat_visible_text(message)
@@ -3865,6 +3905,14 @@ POSIX_CHAT_PATH_RE = re.compile(
 WINDOWS_CHAT_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9])(?:[A-Za-z]:\\(?:Users|Temp|tmp)\\)[^\r\n<>\"']+"
 )
+PRIVATE_RUNTIME_FRAGMENT_RE = re.compile(
+    r"(?:queue_orchestrator|send_result_with_retries|deep_research/finish|"
+    r"artifact[_ -]?recovery[_ -]?only|transport\s*=\s*(?:wecom|wechat)|"
+    r"channel\s*=\s*wecom_|(?:task|session|source_local|server|remote_job)_?id\s*[:=]|"
+    r"retry_after\s*[:=])",
+    flags=re.I,
+)
+PRIVATE_OPAQUE_ID_RE = re.compile(r"\b[0-9a-f]{16,}\b", flags=re.I)
 
 
 def local_path_filename(value: str) -> str:
@@ -3893,7 +3941,20 @@ def sanitize_chat_visible_text(value: str, file_paths: list[Path] | tuple[Path, 
     )
     text = POSIX_CHAT_PATH_RE.sub(lambda match: local_path_filename(match.group(0)), text)
     text = WINDOWS_CHAT_PATH_RE.sub(lambda match: local_path_filename(match.group(0)), text)
-    return text
+    visible_lines: list[str] = []
+    for line in text.splitlines():
+        marker = PRIVATE_RUNTIME_FRAGMENT_RE.search(line)
+        if marker:
+            prefix = line[: marker.start()].rstrip(" ,，;；:：-—")
+            if prefix and re.sub(r"\s+", " ", prefix).strip().casefold() not in {
+                "未在本轮发送",
+                "未在本輪發送",
+                "not sent in this turn",
+            }:
+                visible_lines.append(prefix)
+            continue
+        visible_lines.append(PRIVATE_OPAQUE_ID_RE.sub("", line).rstrip())
+    return "\n".join(visible_lines).strip()
 
 
 def queue_activity_signature(path: Path) -> tuple[int, int, int, int]:
@@ -17452,6 +17513,7 @@ def prepare_result_files(
 GENERIC_DELIVERY_STEMS = {
     "analysis",
     "artifact",
+    "compiled-report",
     "complete-response",
     "document",
     "final",
@@ -17463,6 +17525,7 @@ GENERIC_DELIVERY_STEMS = {
     "presentation",
     "report",
     "report-final",
+    "research-report",
     "response",
     "result",
     "slides",
@@ -17519,15 +17582,52 @@ def ensure_meaningful_delivery_path(
 
     delivery_dir = Path(str(task["artifact_dir"])).expanduser().resolve() / "delivery"
     delivery_dir.mkdir(parents=True, exist_ok=True)
+
+    def same_content(candidate: Path) -> bool:
+        try:
+            if candidate.samefile(resolved):
+                return True
+        except OSError:
+            pass
+        try:
+            return (
+                candidate.is_file()
+                and candidate.stat().st_size == resolved.stat().st_size
+                and sha256_file(candidate) == sha256_file(resolved)
+            )
+        except OSError:
+            return False
+
+    aliases = task.setdefault("delivery_artifact_aliases", [])
+    if not isinstance(aliases, list):
+        aliases = []
+        task["delivery_artifact_aliases"] = aliases
+    for item in aliases:
+        if not isinstance(item, dict) or str(item.get("source") or "") != str(resolved):
+            continue
+        prior = Path(str(item.get("delivery") or "")).expanduser()
+        if same_content(prior):
+            return prior.resolve()
+
     basename = meaningful_delivery_basename(resolved, task)
     destination = delivery_dir / basename
     version = 2
     while destination.exists():
-        try:
-            if destination.samefile(resolved):
-                return destination.resolve()
-        except OSError:
-            pass
+        if same_content(destination):
+            if not any(
+                isinstance(item, dict)
+                and str(item.get("source") or "") == str(resolved)
+                and str(item.get("delivery") or "") == str(destination.resolve())
+                for item in aliases
+            ):
+                aliases.append(
+                    {
+                        "source": str(resolved),
+                        "delivery": str(destination.resolve()),
+                        "display_name": destination.name,
+                    }
+                )
+            return destination.resolve()
         destination = delivery_dir / f"{Path(basename).stem}-v{version}{resolved.suffix.lower()}"
         version += 1
 
@@ -17545,7 +17645,7 @@ def ensure_meaningful_delivery_path(
             )
             return resolved
 
-    task.setdefault("delivery_artifact_aliases", []).append(
+    aliases.append(
         {
             "source": str(resolved),
             "delivery": str(destination.resolve()),

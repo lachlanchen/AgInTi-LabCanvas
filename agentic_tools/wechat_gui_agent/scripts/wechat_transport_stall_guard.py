@@ -36,6 +36,7 @@ WECOM_PRIVATE = ROOT / "agentic_tools" / "wecom_agent" / ".private"
 SEND_LOCK = WECHAT_PRIVATE / "wechat_gui_send.lock"
 WECHAT_QUEUE = WECHAT_PRIVATE / "wechat_task_queue.jsonl"
 WECOM_QUEUE = WECOM_PRIVATE / "wecom_task_queue.jsonl"
+MODEL_POLICY_PATH = ROOT / "configs" / "model-policy.json"
 WECHAT_ORGANIZER_DELIVERY = (
     WECHAT_PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
 )
@@ -352,6 +353,7 @@ def probe_json_url(url: str, *, timeout: float = 4.0, attempts: int = 2) -> dict
         "poll_stale": bool(payload.get("poll_stale")),
         "poll_in_progress": bool(payload.get("poll_in_progress")),
         "consecutive_poll_failures": int(payload.get("consecutive_poll_failures") or 0),
+        "blocked_media_recoveries": int(payload.get("blocked_media_recoveries") or 0),
         "last_poll_success_at": str(payload.get("last_poll_success_at") or ""),
         "last_poll_error": str(payload.get("last_poll_error") or "")[:300],
         "last_recovery_at": str(payload.get("last_recovery_at") or ""),
@@ -1089,6 +1091,33 @@ def process_counts(wechat: dict[str, Any], wecom: dict[str, Any]) -> dict[str, i
     }
 
 
+def agent_backend_runtime_status() -> dict[str, Any]:
+    """Expose backend configuration drift without spending model tokens."""
+
+    try:
+        model_policy = json.loads(MODEL_POLICY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        model_policy = {}
+    primary = str(model_policy.get("primary_backend") or "aginti").strip()
+    configured_wecom = str(os.environ.get("WECOM_AGENT_BACKEND") or "").strip()
+    configured_wechat = str(os.environ.get("WECHAT_AGENT_BACKEND") or "").strip()
+    requested = configured_wecom or configured_wechat or primary
+    forced = str(os.environ.get("WECHAT_AGENT_FORCE_BACKEND") or "").strip()
+    effective = select_agent_backend({"agent_backend": requested})
+    aginti_disabled = str(
+        os.environ.get("WECHAT_AGENT_FORCE_DISABLE_AGINTI") or ""
+    ).strip().casefold() in {"1", "true", "yes", "on"}
+    return {
+        "ok": not (effective == "aginti" and aginti_disabled),
+        "primary_backend": primary,
+        "requested_backend": requested,
+        "effective_backend": effective,
+        "override_active": bool(forced),
+        "forced_backend": forced,
+        "aginti_disabled": aginti_disabled,
+    }
+
+
 def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
     wechat = tmux_snapshot(os.environ.get("WECHAT_SUPERVISOR_SESSION", "labcanvas-wechat"))
     wecom = tmux_snapshot(os.environ.get("WECOM_TMUX_SESSION", "labcanvas-wecom"))
@@ -1106,6 +1135,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
     schedules = schedule_health()
     cli_transport = cli_transport_health()
     agent_failures = recent_terminal_agent_failures()
+    agent_backend = agent_backend_runtime_status()
     queues = {
         "wechat": queue_health(WECHAT_QUEUE),
         "wecom": queue_health(WECOM_QUEUE),
@@ -1244,6 +1274,7 @@ def build_snapshot(*, max_sender_seconds: float = 180.0) -> dict[str, Any]:
         "direct_monitors": direct_monitors,
         "schedules": schedules,
         "agent_failures": agent_failures,
+        "agent_backend": agent_backend,
         "sender_lock": sender,
         "wechat_gui_delivery": gui_delivery,
         "queues": queues,

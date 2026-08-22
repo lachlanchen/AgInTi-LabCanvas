@@ -34,6 +34,9 @@ ANDROID_BRIDGE_CONFIG="$TOOL_ROOT/.private/wecom_android_bridge.local.json"
 ANDROID_BRIDGE="$TOOL_ROOT/scripts/wecom_android_bridge.py"
 ANDROID_BRIDGE_LOG="$LOG_DIR/android-relay.log"
 ANDROID_BRIDGE_SIGNATURE="$ROOT/output/transport-health/android-relay.sha256"
+ANDROID_BRIDGE_GUI_LOCK="$TOOL_ROOT/.private/wecom_android_bridge.lock"
+ANDROID_BRIDGE_OUTBOUND_MARKER="$TOOL_ROOT/.private/wecom_android_outbound.active.json"
+ANDROID_BRIDGE_RELOAD_STABLE_SECONDS="${WECOM_ANDROID_RELOAD_STABLE_SECONDS:-90}"
 HEALTH_GUARD="$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_transport_stall_guard.py"
 HEALTH_LOG="$LOG_DIR/transport-health.log"
 HEALTH_STATE="$ROOT/output/transport-health/state.json"
@@ -76,8 +79,10 @@ start_android_window() {
 ensure_android_window() {
   remove_dead_window android-relay
   if android_enabled; then
-    if ! window_exists android-relay || android_bridge_reload_needed; then
+    if ! window_exists android-relay; then
       start_android_window
+    elif android_bridge_reload_needed; then
+      reload_android_window_if_idle
     fi
   fi
 }
@@ -88,6 +93,52 @@ android_bridge_reload_needed() {
   [[ -f "$ANDROID_BRIDGE_SIGNATURE" ]] \
     && recorded="$(head -n 1 "$ANDROID_BRIDGE_SIGNATURE")"
   [[ "$current" != "$recorded" ]]
+}
+
+android_bridge_source_is_stable() {
+  local modified now age
+  modified="$(stat -c %Y "$ANDROID_BRIDGE" 2>/dev/null || echo 0)"
+  now="$(date +%s)"
+  age=$(( now - modified ))
+  (( age >= ANDROID_BRIDGE_RELOAD_STABLE_SECONDS ))
+}
+
+android_bridge_outbound_active() {
+  [[ -f "$ANDROID_BRIDGE_OUTBOUND_MARKER" ]] || return 1
+  local marker_pid=""
+  marker_pid="$(python3 - "$ANDROID_BRIDGE_OUTBOUND_MARKER" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+    print(int(payload.get("pid") or 0))
+except (OSError, ValueError, TypeError, json.JSONDecodeError):
+    print(0)
+PY
+)"
+  if [[ "$marker_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$marker_pid" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$ANDROID_BRIDGE_OUTBOUND_MARKER"
+  return 1
+}
+
+reload_android_window_if_idle() {
+  android_bridge_source_is_stable || return 0
+  android_bridge_outbound_active && return 0
+  mkdir -p "$(dirname "$ANDROID_BRIDGE_GUI_LOCK")"
+  local reload_fd
+  exec {reload_fd}>"$ANDROID_BRIDGE_GUI_LOCK"
+  if ! flock -n "$reload_fd"; then
+    exec {reload_fd}>&-
+    return 0
+  fi
+  if android_bridge_reload_needed && ! android_bridge_outbound_active; then
+    start_android_window
+  fi
+  flock -u "$reload_fd"
+  exec {reload_fd}>&-
 }
 
 window_id_by_name() {

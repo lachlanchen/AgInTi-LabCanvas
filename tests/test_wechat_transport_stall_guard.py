@@ -93,6 +93,25 @@ def schedule_state_reader(
 
 
 class WeChatTransportStallGuardTests(unittest.TestCase):
+    def test_agent_backend_runtime_status_exposes_emergency_override(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "WECOM_AGENT_BACKEND": "aginti",
+                "WECHAT_AGENT_BACKEND": "aginti",
+                "WECHAT_AGENT_FORCE_BACKEND": "codex",
+                "WECHAT_AGENT_FORCE_DISABLE_AGINTI": "1",
+            },
+            clear=False,
+        ):
+            status = guard.agent_backend_runtime_status()
+
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["requested_backend"], "aginti")
+        self.assertEqual(status["effective_backend"], "codex")
+        self.assertTrue(status["override_active"])
+        self.assertTrue(status["aginti_disabled"])
+
     def test_health_alert_can_target_private_personal_wechat_device_inbox(self) -> None:
         completed = subprocess.CompletedProcess(
             ["wechat_gui_send.py"],
@@ -1435,6 +1454,7 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
                 "surface_state": "anr",
                 "poll_healthy": False,
                 "consecutive_poll_failures": 7,
+                "blocked_media_recoveries": 3,
                 "last_poll_error": "BridgeError: WeCom chat list is not visible",
             }
         ).encode()
@@ -1445,6 +1465,7 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
         self.assertFalse(result["poll_healthy"])
         self.assertEqual(result["surface_state"], "anr")
         self.assertEqual(result["consecutive_poll_failures"], 7)
+        self.assertEqual(result["blocked_media_recoveries"], 3)
         self.assertIn("chat list", result["last_poll_error"])
 
     def test_supervisors_use_idempotent_missing_window_repair(self) -> None:
