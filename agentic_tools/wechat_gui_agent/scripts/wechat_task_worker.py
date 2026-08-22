@@ -2280,8 +2280,9 @@ def send_result_once(
     confirmation = "" if is_no_reply_control(raw_confirmation) else sanitize_chat_visible_text(
         raw_confirmation,
         visible_files,
+        task=task,
     )
-    message = sanitize_chat_visible_text(message, visible_files)
+    message = sanitize_chat_visible_text(message, visible_files, task=task)
     require_file_delivery = result_requires_file_delivery(task, result)
     file_errors = []
     sent_files = {str(path) for path in (task or {}).get("sent_file_paths", [])}
@@ -2879,10 +2880,11 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
     raw_confirmation = str(result.get("confirmation") or "")
     message = "" if is_no_reply_control(raw_message) else message_with_saved_file_note(raw_message, note_files)
     visible_files = [*files_to_send, *note_files]
-    message = sanitize_chat_visible_text(message, visible_files)
+    message = sanitize_chat_visible_text(message, visible_files, task=task)
     confirmation = "" if is_no_reply_control(raw_confirmation) else sanitize_chat_visible_text(
         raw_confirmation,
         visible_files,
+        task=task,
     )
     text_parts = [part.strip() for part in (message, confirmation) if part.strip()]
     combined_message = "\n\n".join(text_parts)
@@ -3118,7 +3120,7 @@ def android_text_fallback_allowed(task: dict[str, Any], result: dict[str, Any], 
     }
     if not required.issubset(sent):
         return False
-    return bool(android_fallback_messages(result))
+    return bool(android_fallback_messages(result, task=task))
 
 
 def publish_stage_from_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -3159,14 +3161,16 @@ def android_publish_completion_message(result: dict[str, Any]) -> str:
     return sanitize_android_input_text(". ".join(parts) + ".")
 
 
-def android_fallback_messages(result: dict[str, Any]) -> list[str]:
+def android_fallback_messages(
+    result: dict[str, Any], *, task: dict[str, Any] | None = None
+) -> list[str]:
     files = [Path(str(path)) for path in result.get("files") or []]
     values = []
     for field in ("message", "confirmation"):
         raw = str(result.get(field) or "").strip()
         if not raw or is_no_reply_control(raw):
             continue
-        visible = sanitize_chat_visible_text(raw, files).strip()
+        visible = sanitize_chat_visible_text(raw, files, task=task).strip()
         if visible and visible not in values:
             values.append(visible)
     if values:
@@ -3182,7 +3186,7 @@ def send_result_text_via_android_fallback(
     *,
     send_targets: Path = DEFAULT_SEND_TARGETS,
 ) -> None:
-    messages = android_fallback_messages(result)
+    messages = android_fallback_messages(result, task=task)
     if not messages:
         raise RuntimeError("no android fallback message")
     target = guarded_send_target(target_chat, send_targets, task=task)
@@ -3922,7 +3926,12 @@ def local_path_filename(value: str) -> str:
     return name or "local artifact"
 
 
-def sanitize_chat_visible_text(value: str, file_paths: list[Path] | tuple[Path, ...] = ()) -> str:
+def sanitize_chat_visible_text(
+    value: str,
+    file_paths: list[Path] | tuple[Path, ...] = (),
+    *,
+    task: dict[str, Any] | None = None,
+) -> str:
     """Keep private workstation paths out of outbound chat text."""
     text = str(value or "")
     exact_paths: set[str] = set()
@@ -3933,6 +3942,52 @@ def sanitize_chat_visible_text(value: str, file_paths: list[Path] | tuple[Path, 
             exact_paths.add(str(candidate.resolve()))
         except OSError:
             pass
+    alias_names: list[tuple[str, str]] = []
+    if isinstance(task, dict):
+        aliases = task.get("delivery_artifact_aliases")
+        if isinstance(aliases, list):
+            for item in aliases:
+                if not isinstance(item, dict):
+                    continue
+                source_value = str(item.get("source") or "").strip()
+                delivery_value = str(item.get("delivery") or "").strip()
+                if not source_value and not delivery_value:
+                    continue
+                display_name = str(
+                    item.get("display_name")
+                    or (Path(delivery_value).name if delivery_value else "")
+                ).strip()
+                if not display_name:
+                    continue
+                for raw_candidate in (source_value, delivery_value):
+                    if not raw_candidate:
+                        continue
+                    candidate = Path(raw_candidate).expanduser()
+                    raw = str(candidate)
+                    if raw:
+                        text = text.replace(f"file://{raw}", display_name)
+                        text = text.replace(raw, display_name)
+                    try:
+                        resolved = str(candidate.resolve())
+                    except OSError:
+                        resolved = ""
+                    if resolved:
+                        text = text.replace(f"file://{resolved}", display_name)
+                        text = text.replace(resolved, display_name)
+                if source_value:
+                    source_name = Path(source_value).name
+                    if source_name and source_name != display_name:
+                        alias_names.append((source_name, display_name))
+    for source_name, display_name in sorted(
+        alias_names,
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        text = re.sub(
+            rf"(?<![A-Za-z0-9_.-]){re.escape(source_name)}(?![A-Za-z0-9_.-])",
+            display_name,
+            text,
+        )
     for raw in sorted((item for item in exact_paths if item), key=len, reverse=True):
         text = text.replace(raw, Path(raw).name or "local artifact")
     text = LOCAL_FILE_PATH_WITH_SPACES_RE.sub(

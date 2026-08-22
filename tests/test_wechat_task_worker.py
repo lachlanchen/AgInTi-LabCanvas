@@ -7953,6 +7953,49 @@ stderr: noisy internal trace
         )
         self.assertEqual(unknown, "Report: unknown report.pdf 已完成")
 
+    def test_chat_visible_text_uses_meaningful_delivery_alias(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            source = artifact_dir / "report-final.pdf"
+            source.write_bytes(b"%PDF-1.4\norganoid evidence")
+            task: dict[str, object] = {
+                "id": "20260822124500-456",
+                "chat": "LabAgent",
+                "created_at": "2026-08-22T12:45:00+08:00",
+                "request": "Create an organoid imaging biomarkers review.",
+                "artifact_dir": str(artifact_dir),
+            }
+            prepared = worker.prepare_result_files(
+                {
+                    "message": f"Completed {source}; report-final.pdf is attached.",
+                    "confirmation": "",
+                    "files": [str(source)],
+                },
+                "",
+                task=task,
+            )
+            delivery = Path(prepared["files"][0])
+
+            visible = worker.sanitize_chat_visible_text(
+                str(prepared["message"]),
+                [delivery],
+                task=task,
+            )
+
+        self.assertNotIn(str(source), visible)
+        self.assertNotIn("report-final.pdf", visible)
+        self.assertEqual(visible.count(delivery.name), 2)
+        self.assertIn("organoid-imaging-biomarkers-review-report.pdf", visible)
+
+        malformed_task = {
+            "delivery_artifact_aliases": [{"display_name": "must-not-replace.pdf"}]
+        }
+        self.assertEqual(
+            worker.sanitize_chat_visible_text("Sentence. Still intact.", task=malformed_task),
+            "Sentence. Still intact.",
+        )
+
     def test_chat_visible_text_removes_private_runtime_diagnostics(self) -> None:
         worker = load_worker()
 
