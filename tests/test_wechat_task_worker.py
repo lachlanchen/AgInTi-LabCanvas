@@ -9545,7 +9545,7 @@ stderr: noisy internal trace
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
             artifact_dir = Path(tmp)
-            source = artifact_dir / "report.pdf"
+            source = artifact_dir / "delivery-confirmation.pdf"
             source.write_bytes(b"%PDF-1.4\norganoid evidence")
             task: dict[str, object] = {
                 "id": "20260822124500-123",
@@ -9572,6 +9572,23 @@ stderr: noisy internal trace
             self.assertEqual(delivered.read_bytes(), source.read_bytes())
             self.assertEqual(task["delivery_artifact_aliases"][0]["display_name"], delivered.name)
             self.assertTrue(source.is_file())
+
+            for filename in (
+                "file-v2.txt",
+                "final-report-v3.pdf",
+                "报告.pdf",
+                "結果.docx",
+                "レポート.pdf",
+            ):
+                with self.subTest(filename=filename):
+                    self.assertTrue(
+                        worker.artifact_name_needs_delivery_alias(filename, task)
+                    )
+            self.assertFalse(
+                worker.artifact_name_needs_delivery_alias(
+                    "organoid-review-delivery.pdf", task
+                )
+            )
 
             with mock.patch.object(worker.os, "link", side_effect=OSError("cross-device")):
                 repeated = worker.ensure_meaningful_delivery_path(source, task)

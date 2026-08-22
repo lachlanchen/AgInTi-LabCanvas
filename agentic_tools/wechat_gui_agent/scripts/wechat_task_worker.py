@@ -17520,9 +17520,14 @@ def prepare_result_files(
 GENERIC_DELIVERY_STEMS = {
     "analysis",
     "artifact",
+    "attachment",
     "compiled-report",
     "complete-response",
+    "confirmation",
+    "data",
+    "delivery",
     "document",
+    "file",
     "final",
     "final-report",
     "generated",
@@ -17532,13 +17537,44 @@ GENERIC_DELIVERY_STEMS = {
     "presentation",
     "report",
     "report-final",
+    "receipt",
     "research-report",
     "response",
     "result",
     "slides",
     "summary",
     "task-video",
+    "text",
+    "txt",
     "video",
+}
+
+GENERIC_DELIVERY_LABELS = {
+    "分析",
+    "产物",
+    "產物",
+    "出力",
+    "输出",
+    "輸出",
+    "動画",
+    "图片",
+    "圖片",
+    "图像",
+    "圖像",
+    "报告",
+    "報告",
+    "文件",
+    "文档",
+    "文檔",
+    "摘要",
+    "結果",
+    "结果",
+    "資料",
+    "资料",
+    "レポート",
+    "ファイル",
+    "画像",
+    "要約",
 }
 
 DELIVERY_ROLE_BY_SUFFIX = {
@@ -17667,7 +17703,19 @@ def artifact_name_needs_delivery_alias(
 ) -> bool:
     stem = Path(str(filename or "")).stem.casefold()
     normalized = re.sub(r"[^0-9a-z]+", "-", stem).strip("-")
-    if normalized in GENERIC_DELIVERY_STEMS:
+    compact_label = re.sub(r"[\W_]+", "", stem, flags=re.UNICODE)
+    normalized_tokens = [token for token in normalized.split("-") if token]
+    operational_only = bool(normalized_tokens) and all(
+        token in GENERIC_DELIVERY_STEMS
+        or token in {"complete", "completed", "final", "latest", "new"}
+        or bool(re.fullmatch(r"v?\d+", token))
+        for token in normalized_tokens
+    )
+    if (
+        normalized in GENERIC_DELIVERY_STEMS
+        or compact_label in GENERIC_DELIVERY_LABELS
+        or operational_only
+    ):
         return True
     if re.fullmatch(r"(?:task|job|run)?-?[0-9a-f]{12,}", normalized):
         return True
