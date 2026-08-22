@@ -18,6 +18,7 @@ from agenticapp.workspace_agent import (
     select_agent_policy,
     selected_routine_contracts,
     selected_packaged_knowledge,
+    workspace_artifact_name_is_generic,
 )
 from agenticapp.artifacts import artifact_kind_for_path, content_type_for_path
 from agenticapp.backends import load_model_policy
@@ -168,6 +169,10 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertIn("KiCad", prompt)
         self.assertIn("LabVIEW", prompt)
         self.assertIn("agent-result.json", prompt)
+        self.assertIn(
+            f'"artifact_root":"{ROOT / "output" / "webapp" / "agent" / "test"}"',
+            prompt,
+        )
 
     def test_packaged_knowledge_is_selected_by_domain(self):
         short = selected_packaged_knowledge("Reply with the current status")
@@ -342,6 +347,77 @@ class WorkspaceAgentTests(unittest.TestCase):
             stored["reply"],
             "Completed the report at organoid-imaging-evidence-review.pdf.",
         )
+
+    def test_task_runner_ignores_generic_declared_title_and_uses_exact_content_subject(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = root / "output" / "webapp"
+            source = root / "result.txt"
+            source.write_text(
+                "AgInTi scoped artifact routing is working.", encoding="utf-8"
+            )
+            message = (
+                "Create one plain-text artifact. Use the generic source filename result.txt. "
+                "Its exact content must be: AgInTi scoped artifact routing is working. "
+                "Verify the file before finishing."
+            )
+            created = create_agent_task(
+                {
+                    "message": message,
+                    "conversation_id": "generic-title-fallback",
+                },
+                storage,
+                root=root,
+                launch=False,
+            )
+            task_id = created["task"]["id"]
+
+            def fake_runner(_prompt, **kwargs):
+                (kwargs["task_dir"] / "agent-result.json").write_text(
+                    json.dumps(
+                        {
+                            "reply": "The artifact is ready.",
+                            "artifacts": [
+                                {
+                                    "path": str(source),
+                                    "title": "result.txt",
+                                    "kind": "text",
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return {
+                    "ok": True,
+                    "backend": "aginti",
+                    "returncode": 0,
+                    "message": "done",
+                }
+
+            result = run_agent_task(
+                task_id, storage, root=root, backend_runner=fake_runner
+            )
+            stored = AgentTaskStore(storage).read(task_id)
+
+        self.assertTrue(result["ok"])
+        artifact_name = Path(stored["artifacts"][0]["path"]).name
+        self.assertEqual(
+            artifact_name, "aginti-scoped-artifact-routing-is-working.txt"
+        )
+        self.assertEqual(stored["artifacts"][0]["title"], artifact_name)
+        self.assertNotEqual(artifact_name, "txt.txt")
+
+    def test_generic_artifact_detection_covers_versions_and_non_english_placeholders(self):
+        for filename in (
+            "file-v2.txt",
+            "data-final.csv",
+            "报告.pdf",
+            "結果.docx",
+            "レポート.pdf",
+        ):
+            with self.subTest(filename=filename):
+                self.assertTrue(workspace_artifact_name_is_generic(filename))
 
     def test_task_runner_accepts_artifact_from_allowlisted_sibling_routine(self):
         with tempfile.TemporaryDirectory() as tmp:

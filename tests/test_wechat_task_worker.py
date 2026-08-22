@@ -2686,6 +2686,7 @@ stderr: noisy internal trace
             "chat": "LabAgent",
             "status": "running",
             "request": "Current coalesced request:\nCreate the requested PDF and send it back.",
+            "artifact_dir": "/tmp/exact-task/artifacts",
             "source": {"local_id": 81, "sender_display": "Researcher"},
             "route_decision": {"route_kind": "research", "worker_needed": True},
             "routine": {
@@ -2727,6 +2728,7 @@ stderr: noisy internal trace
         self.assertIn("Do not redesign those systems", prompt)
         self.assertIn("short meaningful basename", prompt)
         self.assertIn("2026-08-22-organoid-imaging-review.pdf", prompt)
+        self.assertIn('"artifact_root":"/tmp/exact-task/artifacts"', prompt)
         self.assertNotIn("For `task.routine.id=video_publish_existing`", prompt)
 
     def test_worker_session_passes_compact_prompt_only_to_aginti(self) -> None:

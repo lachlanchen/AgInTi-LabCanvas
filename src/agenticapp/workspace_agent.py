@@ -603,7 +603,8 @@ def build_agent_prompt(
     context: dict[str, Any] | None = None,
 ) -> str:
     project_root = Path(root).resolve()
-    result_path = Path(task_dir).resolve() / "agent-result.json"
+    task_root = Path(task_dir).resolve()
+    result_path = task_root / "agent-result.json"
     knowledge = selected_packaged_knowledge(message)
     catalog = capability_catalog(project_root)
     routines = selected_routine_contracts(message, project_root)
@@ -620,11 +621,14 @@ def build_agent_prompt(
         if policy["mode"] == "plan"
         else "Execute the requested work end to end, using the repository's existing routines and tools."
     )
+    evidence_scope_payload = {
+        "mode": "plan-response" if policy["mode"] == "plan" else "task",
+        "request": message.strip(),
+    }
+    if policy["mode"] != "plan":
+        evidence_scope_payload["artifact_root"] = str(task_root)
     evidence_scope = json.dumps(
-        {
-            "mode": "plan-response" if policy["mode"] == "plan" else "task",
-            "request": message.strip(),
-        },
+        evidence_scope_payload,
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -636,6 +640,7 @@ def build_agent_prompt(
     else:
         artifact_contract = f"""Artifact contract:
 - Put durable work in the appropriate repository project folder, not only in temporary output.
+- Use `{task_root}` for task-scoped artifacts that do not belong in a durable project folder.
 - At the end, write `{result_path}` as UTF-8 JSON with this shape:
   {{
     "reply": "concise user-facing result",
@@ -1792,7 +1797,9 @@ WORKSPACE_GENERIC_ARTIFACT_STEMS = {
     "analysis",
     "artifact",
     "complete-response",
+    "data",
     "document",
+    "file",
     "final",
     "generated",
     "image",
@@ -1804,7 +1811,37 @@ WORKSPACE_GENERIC_ARTIFACT_STEMS = {
     "result",
     "slides",
     "summary",
+    "text",
+    "txt",
     "video",
+}
+
+WORKSPACE_GENERIC_ARTIFACT_LABELS = {
+    "分析",
+    "产物",
+    "產物",
+    "出力",
+    "输出",
+    "輸出",
+    "動画",
+    "图片",
+    "圖片",
+    "图像",
+    "圖像",
+    "报告",
+    "報告",
+    "文件",
+    "文档",
+    "文檔",
+    "摘要",
+    "結果",
+    "结果",
+    "資料",
+    "资料",
+    "レポート",
+    "ファイル",
+    "画像",
+    "要約",
 }
 
 
@@ -1820,11 +1857,13 @@ def workspace_response_filename(message: str, *, created_at: str = "") -> str:
 def workspace_artifact_name_is_generic(filename: str) -> bool:
     stem = Path(str(filename or "")).stem.casefold()
     normalized = re.sub(r"[^0-9a-z]+", "-", stem).strip("-")
+    compact_label = re.sub(r"[\W_]+", "", stem, flags=re.UNICODE)
     return (
         normalized in WORKSPACE_GENERIC_ARTIFACT_STEMS
+        or compact_label in WORKSPACE_GENERIC_ARTIFACT_LABELS
         or bool(
             re.fullmatch(
-                r"(?:final-)?(?:analysis|artifact|document|image|output|paper|presentation|report|response|result|slides|summary|video)"
+                r"(?:final-)?(?:analysis|artifact|data|document|file|image|output|paper|presentation|report|response|result|slides|summary|text|txt|video)"
                 r"(?:-(?:completed|complete|final|latest|new|v?\d+))*",
                 normalized,
             )
@@ -1845,8 +1884,32 @@ def workspace_artifact_filename(
 ) -> str:
     if not workspace_artifact_name_is_generic(source.name):
         return source.name
-    subject = workspace_filename_subject(title) or workspace_filename_subject(fallback_text)
+    title_subject = ""
+    if title and not workspace_artifact_name_is_generic(Path(title).name):
+        title_subject = workspace_filename_subject(title)
+    subject = title_subject or workspace_artifact_subject(fallback_text)
     return f"{subject or 'labcanvas-artifact'}{source.suffix.lower()}"
+
+
+def workspace_artifact_subject(value: str) -> str:
+    text = str(value or "")
+    exact_content = re.search(
+        r"(?:exact\s+(?:file\s+)?content\s+(?:must\s+be|is)|containing\s+exactly)\s*[:：]\s*(.+)",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if exact_content:
+        candidate = re.split(
+            r"(?:\s+[.!?。！？]?\s*)(?:verify\b|before\s+finishing\b|in\s+your\s+reply\b|do\s+not\b)",
+            exact_content.group(1),
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        candidate = candidate.strip(" \t\r\n\"'`“”‘’.。!?！？:：")
+        subject = workspace_filename_subject(candidate)
+        if subject and not workspace_artifact_name_is_generic(subject):
+            return subject
+    return workspace_filename_subject(text)
 
 
 def workspace_filename_subject(value: str) -> str:

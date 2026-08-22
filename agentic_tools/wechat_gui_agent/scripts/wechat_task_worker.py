@@ -7103,7 +7103,11 @@ def aginti_worker_task_view(task: dict[str, Any]) -> dict[str, Any]:
             )
             if response_policy.get(key) not in (None, "", [], {})
         },
-        "artifact_dir": str(worker_artifact_dir(task)),
+        "artifact_dir": str(
+            Path(str(task.get("artifact_dir") or worker_artifact_dir(task)))
+            .expanduser()
+            .resolve()
+        ),
         "public_publish_allowed": bool(
             task_route_decision(task).get("public_publish_allowed")
         ),
@@ -7230,11 +7234,14 @@ def build_aginti_worker_prompt(task: dict[str, Any]) -> str:
 
     packet_view = aginti_worker_task_view(task)
     packet = json.dumps(packet_view, ensure_ascii=False, indent=2)
+    evidence_scope_payload = {
+        "mode": "task",
+        "request": str(packet_view.get("current_request") or ""),
+    }
+    if packet_view.get("artifact_dir"):
+        evidence_scope_payload["artifact_root"] = str(packet_view["artifact_dir"])
     evidence_scope = json.dumps(
-        {
-            "mode": "task",
-            "request": str(packet_view.get("current_request") or ""),
-        },
+        evidence_scope_payload,
         ensure_ascii=False,
         separators=(",", ":"),
     )
