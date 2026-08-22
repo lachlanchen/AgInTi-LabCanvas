@@ -125,6 +125,26 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(backend.select_agent_backend({"agent_backend": "agintiflow"}), "aginti")
         self.assertEqual(backend.select_agent_backend({"agent_backend": "unknown"}), "aginti")
 
+    def test_emergency_codex_cutover_overrides_stored_backend_and_fallback(self) -> None:
+        backend = load_backend()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "WECHAT_AGENT_FORCE_BACKEND": "codex",
+                "WECHAT_AGENT_FORCE_DISABLE_AGINTI": "1",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                backend.select_agent_backend({"agent_backend": "aginti"}),
+                "codex",
+            )
+            self.assertFalse(
+                backend.fallback_to_aginti_enabled(
+                    {"agent_fallbacks": {"fallback_to_aginti": True}}
+                )
+            )
+
     def test_codex_backend_delegates_to_existing_session_runner(self) -> None:
         backend = load_backend()
         calls: list[dict[str, object]] = []
@@ -280,6 +300,37 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual([call["model"] for call in calls], ["gpt-5.3-codex-spark", "gpt-5.6-sol"])
         self.assertEqual(result["backend_attempts"][0]["failure_kind"], "empty")
 
+    def test_tool_activity_blocks_cross_backend_replay(self) -> None:
+        backend = load_backend()
+        attempt = {
+            "backend": "codex",
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "medium",
+            "sandbox": "danger-full-access",
+            "timeout_seconds": 60,
+            "role": "worker",
+        }
+        result = {
+            "ok": False,
+            "message": "",
+            "returncode": 124,
+            "stderr_tail": "timeout",
+            "tool_activity": True,
+        }
+
+        self.assertIsNone(
+            backend.next_backend_attempt(
+                attempt,
+                result,
+                backend_config={
+                    "agent_fallbacks": {
+                        "fallback_to_aginti": True,
+                        "fallback_on_timeout": True,
+                    }
+                },
+            )
+        )
+
     def test_codex_timeout_falls_back_to_aginti_when_enabled(self) -> None:
         backend = load_backend()
         codex_calls: list[dict[str, object]] = []
@@ -315,7 +366,10 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 workdir=ROOT,
                 backend_config={
                     "_backends": {"aginti": {"model": "aginti-auto", "reasoning_effort": "low"}},
-                    "agent_fallbacks": {"fallback_to_aginti": True},
+                    "agent_fallbacks": {
+                        "fallback_to_aginti": True,
+                        "fallback_on_timeout": True,
+                    },
                 },
             )
         finally:
@@ -372,7 +426,10 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 timeout_seconds=25,
                 workdir=ROOT,
                 backend_config={
-                    "agent_fallbacks": {"fallback_to_aginti": True},
+                    "agent_fallbacks": {
+                        "fallback_to_aginti": True,
+                        "fallback_on_timeout": True,
+                    },
                 },
             )
 
@@ -1221,7 +1278,12 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 sandbox="read-only",
                 timeout_seconds=25,
                 workdir=ROOT,
-                backend_config={"agent_fallbacks": {"fallback_to_aginti": True}},
+                backend_config={
+                    "agent_fallbacks": {
+                        "fallback_to_aginti": True,
+                        "fallback_on_timeout": True,
+                    }
+                },
             )
         finally:
             backend.run_codex_session = original_codex
@@ -1301,7 +1363,10 @@ class WeChatAgentBackendTests(unittest.TestCase):
                 workdir=ROOT,
                 backend_config={
                     "aginti": {"model": "aginti-fast", "reasoning_effort": "low", "timeout_seconds": 88},
-                    "agent_fallbacks": {"fallback_to_aginti": True},
+                    "agent_fallbacks": {
+                        "fallback_to_aginti": True,
+                        "fallback_on_timeout": True,
+                    },
                 },
             )
         finally:

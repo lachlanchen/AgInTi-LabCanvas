@@ -29,6 +29,7 @@ from wechat_codex_sessions import (
 
 
 PRIVATE = ROOT / "agentic_tools" / "wechat_gui_agent" / ".private"
+MODEL_POLICY_PATH = ROOT / "configs" / "model-policy.json"
 CLAUDE_SESSION_DIR = PRIVATE / "claude_sessions"
 CLAUDE_REGISTRY = CLAUDE_SESSION_DIR / "sessions.local.json"
 AGINTI_SESSION_DIR = PRIVATE / "aginti_sessions"
@@ -149,6 +150,10 @@ UNAVAILABLE_FAILURE_MARKERS = (
     "not found in path",
     "service unavailable",
     "temporarily unavailable",
+    "failed to refresh available models",
+    "timeout waiting for child process to exit",
+    "failed to connect to websocket",
+    "failed to connect to responses_websocket",
 )
 AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS = (
     "401",
@@ -180,12 +185,22 @@ AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS = (
 
 
 def select_agent_backend(config: dict[str, Any] | None = None) -> str:
-    """Return the selected agent backend, defaulting to AgInTiFlow."""
+    """Return an explicit backend or the shared LabCanvas production primary."""
+    forced = str(os.environ.get("WECHAT_AGENT_FORCE_BACKEND") or "").strip()
+    if forced:
+        return normalize_backend(forced)
     if isinstance(config, dict):
         value = config.get("agent_backend") or config.get("backend")
         if value:
             return normalize_backend(str(value))
-    return normalize_backend(os.environ.get("WECHAT_AGENT_BACKEND") or "aginti")
+    configured = str(os.environ.get("WECHAT_AGENT_BACKEND") or "").strip()
+    if configured:
+        return normalize_backend(configured)
+    try:
+        policy = json.loads(MODEL_POLICY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        policy = {}
+    return normalize_backend(str(policy.get("primary_backend") or "aginti"))
 
 
 def normalize_backend(value: str) -> str:
@@ -523,6 +538,10 @@ def next_backend_attempt(
     failure_kind = classify_backend_failure(result)
     if failure_kind not in {"quota", "unavailable", "timeout", "empty", "model_unavailable"}:
         return None
+    # A backend switch after a tool started can repeat an unknown side effect.
+    # Keep the exact task resumable instead of replaying it on another model.
+    if result.get("tool_activity"):
+        return None
     backend = normalize_backend(str(attempt.get("backend") or "codex"))
     if backend == "codex" and failure_kind == "model_unavailable":
         preferred_fallback = str(attempt.get("fallback_model") or fallback_model(backend_config))
@@ -582,13 +601,17 @@ def backend_fallbacks_enabled(config: dict[str, Any]) -> bool:
 
 
 def fallback_to_aginti_enabled(config: dict[str, Any]) -> bool:
+    forced_off = str(os.environ.get("WECHAT_AGENT_FORCE_DISABLE_AGINTI") or "").strip()
+    if forced_off.casefold() in {"1", "true", "yes", "on"}:
+        return False
     fallback_config = fallback_config_dict(config)
-    return bool(
-        fallback_config.get(
-            "aginti_enabled",
-            fallback_config.get("fallback_to_aginti", True),
-        )
-    )
+    for key in ("aginti_enabled", "fallback_to_aginti"):
+        if key in fallback_config:
+            return bool(fallback_config[key])
+    explicit = str(os.environ.get("WECHAT_AGENT_FALLBACK_TO_AGINTI") or "").strip()
+    if explicit:
+        return explicit.casefold() not in {"0", "false", "no", "off"}
+    return False
 
 
 def fallback_on_timeout_enabled(config: dict[str, Any]) -> bool:
@@ -596,7 +619,7 @@ def fallback_on_timeout_enabled(config: dict[str, Any]) -> bool:
     return bool(
         fallback_config.get(
             "timeout_enabled",
-            fallback_config.get("fallback_on_timeout", True),
+            fallback_config.get("fallback_on_timeout", False),
         )
     )
 

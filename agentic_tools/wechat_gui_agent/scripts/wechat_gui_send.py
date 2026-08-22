@@ -64,6 +64,13 @@ class Window:
 
 
 @dataclass(frozen=True)
+class WindowIdentity:
+    wid: str
+    title: str
+    window_class: str
+
+
+@dataclass(frozen=True)
 class TargetSpec:
     name: str
     query: str
@@ -116,7 +123,12 @@ def main() -> int:
     outgoing_file = args.file.expanduser().resolve() if args.file else None
     if outgoing_file and not outgoing_file.is_file():
         raise SystemExit(f"File does not exist: {outgoing_file}")
+    lock_wait_seconds = max(
+        0.0,
+        float(os.environ.get("WECHAT_GUI_SEND_LOCK_WAIT_SECONDS", "60")),
+    )
     minimum_timeout = int(args.download_wait_seconds + 30) if args.download_file_title else 0
+    minimum_timeout = max(minimum_timeout, int(lock_wait_seconds + 45))
     install_process_timeout(minimum_seconds=minimum_timeout)
 
     targets, message = load_targets(args.target, args.targets_file, args.message)
@@ -154,10 +166,7 @@ def main() -> int:
     lock_path = PRIVATE / "wechat_gui_send.lock"
     results = []
     with lock_path.open("w", encoding="utf-8") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise SystemExit("WECHAT_SEND_BUSY: serialized GUI sender is already sending; defer this send.")
+        acquire_gui_send_lock(lock, timeout_seconds=lock_wait_seconds)
         for index, target in enumerate(targets, start=1):
             result = send_one(
                 env,
@@ -197,6 +206,22 @@ def main() -> int:
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0
+
+
+def acquire_gui_send_lock(lock: Any, *, timeout_seconds: float) -> None:
+    """Wait briefly for the one GUI lane instead of racing sibling workers."""
+    timeout = max(0.0, float(timeout_seconds))
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError as exc:
+            if time.monotonic() >= deadline:
+                raise SystemExit(
+                    "WECHAT_SEND_BUSY: serialized GUI sender remained busy; defer this send."
+                ) from exc
+            time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
 
 
 def install_process_timeout(*, minimum_seconds: int = 0) -> None:
@@ -538,8 +563,10 @@ def send_file_to_open_chat(
         window.y + window.height - 132,
     )
     time.sleep(max(0.5, pause))
+    chooser = wait_for_verified_file_chooser(env, window)
     paste_path_into_file_chooser(env, path)
     time.sleep(max(0.5, pause))
+    wait_for_wechat_focus_after_picker(env, window)
 
     selected_path = out_dir / f"{shot_prefix}-file-selected.png"
     screenshot(env, selected_path)
@@ -550,6 +577,11 @@ def send_file_to_open_chat(
         out_dir / f"{shot_prefix}-file-selected-lock.png",
         "after file selection",
     )
+    if same_screenshot(preflight_path, selected_path):
+        raise RuntimeError(
+            "WECHAT_FILE_ATTACHMENT_NOT_STAGED: the verified chooser closed "
+            f"without creating a visible attachment draft for {path.name}"
+        )
     selected_guard = verify_opened_title(
         env,
         window,
@@ -589,8 +621,91 @@ def send_file_to_open_chat(
         "filename": path.name,
         "size_bytes": path.stat().st_size,
         "screenshot_path": str(sent_path),
+        "file_chooser": {
+            "title": chooser.title,
+            "window_class": chooser.window_class,
+        },
         "selected_title_guard": selected_guard,
     }
+
+
+def active_window_identity(env: dict[str, str]) -> WindowIdentity | None:
+    active = run(["xdotool", "getactivewindow"], env=env, check=False).stdout.strip()
+    if not active:
+        return None
+    wid = active.splitlines()[-1].strip()
+    title = run(["xdotool", "getwindowname", wid], env=env, check=False).stdout.strip()
+    window_class = run(
+        ["xdotool", "getwindowclassname", wid], env=env, check=False
+    ).stdout.strip()
+    return WindowIdentity(wid=wid, title=title, window_class=window_class)
+
+
+def is_verified_file_chooser(identity: WindowIdentity | None, wechat_window: Window) -> bool:
+    if identity is None or identity.wid == wechat_window.wid:
+        return False
+    folded = f"{identity.title}\n{identity.window_class}".casefold()
+    markers = (
+        "file chooser",
+        "filechooser",
+        "open file",
+        "select file",
+        "choose file",
+        "choose a file",
+        "gtkfilechooserdialog",
+        "xdg-desktop-portal",
+        "打开文件",
+        "打開檔案",
+        "选择文件",
+        "選擇檔案",
+        "选择一个文件",
+        "選擇一個檔案",
+    )
+    return any(marker in folded for marker in markers)
+
+
+def wait_for_verified_file_chooser(
+    env: dict[str, str],
+    wechat_window: Window,
+    *,
+    timeout: float | None = None,
+) -> WindowIdentity:
+    if timeout is None:
+        timeout = float(os.environ.get("WECHAT_FILE_CHOOSER_WAIT_SECONDS", "4"))
+    deadline = time.monotonic() + max(0.1, timeout)
+    last = None
+    while time.monotonic() < deadline:
+        last = active_window_identity(env)
+        if is_verified_file_chooser(last, wechat_window):
+            return last
+        time.sleep(0.1)
+    detail = "none" if last is None else f"{last.title!r}/{last.window_class!r}"
+    raise RuntimeError(
+        "WECHAT_FILE_CHOOSER_NOT_OPEN: refusing to paste a local path because "
+        f"no distinct native file chooser was verified (active={detail})"
+    )
+
+
+def wait_for_wechat_focus_after_picker(
+    env: dict[str, str],
+    wechat_window: Window,
+    *,
+    timeout: float | None = None,
+) -> None:
+    if timeout is None:
+        timeout = float(os.environ.get("WECHAT_FILE_PICKER_RETURN_SECONDS", "6"))
+    deadline = time.monotonic() + max(0.1, timeout)
+    last = None
+    while time.monotonic() < deadline:
+        last = active_window_identity(env)
+        if last is not None and last.wid == wechat_window.wid:
+            return
+        time.sleep(0.1)
+    detail = "none" if last is None else f"{last.title!r}/{last.window_class!r}"
+    raise RuntimeError(
+        "WECHAT_FILE_PICKER_DID_NOT_RETURN: refusing to submit because the "
+        f"exact WeChat window did not regain focus (active={detail})"
+    )
 
 
 def paste_path_into_file_chooser(env: dict[str, str], path: Path) -> None:
@@ -1296,6 +1411,7 @@ def click_visible_chat_list_match(
         return None
     click_x = target.result_click[0] if target.result_click else int(region["left"] - window.x + 110)
     click_y = int(region["top"] - window.y + float(match["center_y"]))
+    focus(env, window)
     click(env, window.x + click_x, window.y + click_y)
     return {
         **match,
@@ -2123,7 +2239,7 @@ def dismiss_internal_file_transfer_surface(
 
 
 def focus(env: dict[str, str], window: Window) -> None:
-    run(["xdotool", "windowfocus", window.wid], env=env, check=False)
+    run(["xdotool", "windowfocus", "--sync", window.wid], env=env, check=False)
     run(["xdotool", "windowraise", window.wid], env=env, check=False)
     time.sleep(0.2)
 

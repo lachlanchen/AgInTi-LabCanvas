@@ -6,7 +6,6 @@ TOOL_ROOT="$ROOT/agentic_tools/wecom_agent"
 PRIVATE_ENV="${WECOM_ENV_FILE:-$TOOL_ROOT/.private/wecom.local.env}"
 QUEUE="${WECOM_TASK_QUEUE:-$TOOL_ROOT/.private/wecom_task_queue.jsonl}"
 LOG_DIR="$ROOT/output/wecom/$(date +%F)"
-SELFTEST_LOG="$LOG_DIR/worker-selftest.log"
 
 if [[ -f "$PRIVATE_ENV" ]]; then
   set -a
@@ -16,26 +15,8 @@ if [[ -f "$PRIVATE_ENV" ]]; then
 fi
 
 mkdir -p "$LOG_DIR"
-if [[ "${WECHAT_WORKER_SKIP_SELFTEST:-0}" != "1" ]]; then
-  echo "[$(date -Is)] running clean shared worker selftest suite=all" >> "$SELFTEST_LOG"
-  env \
-    -u WECHAT_WORKER_DISABLE_GUI_FILE_DOWNLOAD \
-    -u WECHAT_WORKER_DISABLE_MEDIA_SYNC_PREFLIGHT \
-    -u WECHAT_WORKER_DISABLE_GUI_MEDIA_CACHE_PROBE \
-    -u WECHAT_WORKER_DISABLE_LOW_QUALITY_IMAGE_CACHE_PROBE \
-    -u WECHAT_WORKER_DISABLE_GUI_MEDIA_CLICK_PROBE \
-    -u WECHAT_WORKER_DISABLE_AUTOPUBLISH_PREFLIGHT \
-    -u WECHAT_WORKER_DISABLE_DETERMINISTIC_VIDEO_PUBLISH \
-    -u WECHAT_WORKER_DISABLE_GENERATED_VIDEO_LAZYEDIT \
-    WECHAT_WORKER_EXPIRE_LEGACY_QUEUE=0 \
-    PYTHONPATH="$ROOT/src:${PYTHONPATH:-}" \
-    python3 -m agenticapp wechat selftest --suite all --json \
-    >> "$SELFTEST_LOG" 2>&1
-  echo "[$(date -Is)] clean shared worker selftest suite=all passed" >> "$SELFTEST_LOG"
-fi
 
 # The shared routine orchestrator is execution code, not a transport fallback.
-export WECHAT_WORKER_SKIP_SELFTEST=1
 export WECHAT_WORKER_ANDROID_TEXT_FALLBACK=0
 export WECHAT_WORKER_DISABLE_GUI_FILE_DOWNLOAD=1
 export WECHAT_WORKER_DISABLE_MEDIA_SYNC_PREFLIGHT=1

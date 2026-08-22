@@ -97,6 +97,62 @@ def recorded_outbound_echo(
     return False
 
 
+def recorded_android_outbound_echo(
+    state_db: Path,
+    chat_name: str,
+    text: str,
+    *,
+    source_epoch: int | float = 0,
+    window_seconds: int = 1800,
+    limit: int = 240,
+) -> bool:
+    """Match text against the native Android sender's verified component ledger.
+
+    This closes the crash window between a verified phone send and the parent
+    worker recording that delivery in the shared WeChat mirror.
+    """
+    raw = str(text or "").strip()
+    normalized = normalize_transport_text(raw)
+    if not raw or not chat_name or not state_db.exists():
+        return False
+    hashes = {
+        hashlib.sha256(value.encode("utf-8")).hexdigest()
+        for value in (raw, normalized)
+        if value
+    }
+    placeholders = ",".join("?" for _ in hashes)
+    params = [chat_name, *sorted(hashes), max(1, int(limit))]
+    try:
+        with sqlite3.connect(state_db) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT updated_at
+                FROM components
+                WHERE chat = ?
+                  AND kind = 'text'
+                  AND status = 'sent'
+                  AND value_hash IN ({placeholders})
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+    except sqlite3.Error:
+        return False
+    source_time = float(source_epoch or 0)
+    max_delta = max(1, int(window_seconds))
+    for (updated_at,) in rows:
+        if source_time <= 0:
+            return True
+        try:
+            sent_time = datetime.fromisoformat(str(updated_at)).timestamp()
+        except (TypeError, ValueError):
+            continue
+        if abs(source_time - sent_time) <= max_delta:
+            return True
+    return False
+
+
 def file_transport_identity(path: Path) -> dict[str, object]:
     """Build a private, content-based identity for one outbound file."""
     resolved = path.expanduser().resolve()

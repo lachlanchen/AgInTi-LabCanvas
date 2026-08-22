@@ -251,6 +251,55 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertEqual(stored["actions"], ["validated STEP"])
         self.assertEqual(len(stored["artifacts"]), 1)
         self.assertTrue(stored["artifacts"][0]["path"].endswith(".step"))
+        self.assertEqual(Path(stored["artifacts"][0]["path"]).name, "design.step")
+        response_name = Path(stored["response_artifact"]["path"]).name
+        self.assertTrue(response_name.endswith("-test-step-response.md"))
+        self.assertNotEqual(response_name, "response.md")
+        self.assertNotIn(task_id, response_name)
+
+    def test_task_runner_replaces_generic_artifact_name_with_declared_subject(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = root / "output" / "webapp"
+            source = root / "report.pdf"
+            source.write_bytes(b"%PDF-1.4\norganoid evidence")
+            created = create_agent_task(
+                {
+                    "message": "Create an organoid imaging evidence review.",
+                    "conversation_id": "meaningful-artifact-name",
+                },
+                storage,
+                root=root,
+                launch=False,
+            )
+            task_id = created["task"]["id"]
+
+            def fake_runner(_prompt, **kwargs):
+                (kwargs["task_dir"] / "agent-result.json").write_text(
+                    json.dumps(
+                        {
+                            "reply": "The review is ready.",
+                            "artifacts": [
+                                {
+                                    "path": str(source),
+                                    "title": "Organoid imaging evidence review",
+                                    "kind": "file",
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return {"ok": True, "backend": "aginti", "returncode": 0, "message": "done"}
+
+            result = run_agent_task(task_id, storage, root=root, backend_runner=fake_runner)
+            stored = AgentTaskStore(storage).read(task_id)
+
+        self.assertTrue(result["ok"])
+        artifact_name = Path(stored["artifacts"][0]["path"]).name
+        self.assertEqual(artifact_name, "organoid-imaging-evidence-review.pdf")
+        self.assertNotRegex(artifact_name, r"-[0-9a-f]{8}\.pdf$")
+        self.assertNotIn(task_id, stored["artifacts"][0]["preview"])
 
     def test_task_runner_accepts_artifact_from_allowlisted_sibling_routine(self):
         with tempfile.TemporaryDirectory() as tmp:

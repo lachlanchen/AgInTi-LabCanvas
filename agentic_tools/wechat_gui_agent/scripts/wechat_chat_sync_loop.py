@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,7 @@ SUPERVISOR_ENV = PRIVATE / "wechat_supervisor.local.env"
 GUI_SEND = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"
 DEFAULT_QUEUE = PRIVATE / "wechat_task_queue.jsonl"
 GUI_SEND_PRIORITY = Path(os.environ.get("WECHAT_GUI_SEND_PRIORITY_PATH", str(PRIVATE / "wechat_gui_send_priority.json")))
+GUI_SEND_LOCK = Path(os.environ.get("WECHAT_GUI_SEND_LOCK_PATH", str(PRIVATE / "wechat_gui_send.lock")))
 SEND_LANE_ACTIVE_STATUSES = {
     "pending",
     "in_progress",
@@ -96,6 +98,10 @@ def main() -> int:
 
 
 def sync_once(args: argparse.Namespace, failure_backoff_until: dict[str, float] | None = None) -> list[dict[str, Any]]:
+    if gui_send_lock_busy():
+        result = gui_send_lock_reserved_result()
+        emit_target_event(result)
+        return [result]
     if getattr(args, "yield_to_queue", True):
         send_lane = queue_send_lane_busy(Path(args.queue))
         if send_lane["busy"]:
@@ -110,6 +116,10 @@ def sync_once(args: argparse.Namespace, failure_backoff_until: dict[str, float] 
     results: list[dict[str, Any]] = []
     for config_path in configs:
         try:
+            if gui_send_lock_busy():
+                results.append(gui_send_lock_reserved_result())
+                emit_target_event(results[-1])
+                break
             if getattr(args, "yield_to_queue", True):
                 send_lane = queue_send_lane_busy(Path(args.queue))
                 if send_lane["busy"]:
@@ -223,6 +233,25 @@ def send_lane_reserved_result(args: argparse.Namespace, send_lane: dict[str, Any
         "queue": str(args.queue),
         "active": send_lane["active"],
     }
+
+
+def gui_send_lock_reserved_result() -> dict[str, Any]:
+    return {"ok": True, "skipped": "gui_send_lock_reserved"}
+
+
+def gui_send_lock_busy(path: Path | None = None) -> bool:
+    """Check the actual X11 transaction lock without waiting or navigating."""
+    lock_path = path or GUI_SEND_LOCK
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        try:
+            return False
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def queue_send_lane_busy(queue_path: Path) -> dict[str, Any]:
@@ -450,6 +479,10 @@ def chat_sync_gui_send_env(args: argparse.Namespace) -> dict[str, str]:
     env.setdefault("WECHAT_GUI_SEND_MAX_SECONDS", str(max_seconds))
     env.setdefault("WECHAT_TITLE_RETRY_SECONDS", str(title_retry))
     env.setdefault("WECHAT_INITIAL_TITLE_WAIT", os.environ.get("WECHAT_CHAT_SYNC_INITIAL_TITLE_WAIT", "0.4"))
+    # Background materialization never waits behind a foreground delivery.
+    # If the lane changes after our preflight, the child exits without moving
+    # the shared WeChat window.
+    env["WECHAT_GUI_SEND_LOCK_WAIT_SECONDS"] = "0"
     return env
 
 

@@ -176,6 +176,129 @@ class WeChatCodexSessionTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertIn("resume", calls[0])
 
+    def test_startup_failure_retries_only_before_turn_starts(self) -> None:
+        sessions = load_sessions()
+        calls = []
+
+        def fake_run(*_args: object, **_kwargs: object) -> dict[str, object]:
+            calls.append(True)
+            if len(calls) == 1:
+                return {
+                    "ok": False,
+                    "message": "",
+                    "thread_id": "",
+                    "returncode": 1,
+                    "stderr_tail": "failed to refresh available models: timeout waiting for child process to exit",
+                    "stdout_tail": "",
+                    "execution_started": False,
+                    "tool_activity": False,
+                }
+            return {
+                "ok": True,
+                "message": "handled",
+                "thread_id": "thread-recovered",
+                "returncode": 0,
+                "stderr_tail": "",
+                "stdout_tail": "",
+                "execution_started": True,
+                "tool_activity": False,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            sessions, "run_codex_once", side_effect=fake_run
+        ), mock.patch.object(sessions.time, "sleep"):
+            result = sessions.run_codex_session(
+                "hello",
+                chat_name="LabAgent",
+                role="worker",
+                model="gpt-5.6-sol",
+                reasoning_effort="medium",
+                sandbox="danger-full-access",
+                timeout_seconds=30,
+                registry_path=Path(tmp) / "sessions.local.json",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["startup_retry_count"], 1)
+        self.assertEqual(len(calls), 2)
+
+    def test_startup_failure_does_not_retry_after_tool_activity(self) -> None:
+        sessions = load_sessions()
+        result = {
+            "ok": False,
+            "message": "",
+            "thread_id": "thread-1",
+            "returncode": 1,
+            "stderr_tail": "failed to connect to websocket",
+            "stdout_tail": "",
+            "execution_started": True,
+            "tool_activity": True,
+        }
+        with mock.patch.object(sessions, "run_codex_once", return_value=result) as run:
+            actual = sessions.run_codex_with_startup_retries(
+                "hello",
+                thread_id="thread-1",
+                model="gpt-5.6-sol",
+                reasoning_effort="medium",
+                sandbox="danger-full-access",
+                timeout_seconds=30,
+                workdir=ROOT,
+                web_search=True,
+            )
+
+        self.assertFalse(actual["ok"])
+        self.assertEqual(actual["startup_retry_count"], 0)
+        run.assert_called_once()
+
+    def test_resumed_session_does_not_replay_arbitrary_failure_in_fresh_thread(self) -> None:
+        sessions = load_sessions()
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "sessions.local.json"
+            key = sessions.session_key("LabAgent", "worker")
+            registry.write_text(
+                json.dumps({key: {"thread_id": "thread-1", "chat_name": "LabAgent", "role": "worker"}}),
+                encoding="utf-8",
+            )
+            failure = {
+                "ok": False,
+                "message": "task failed after a tool call",
+                "thread_id": "thread-1",
+                "returncode": 1,
+                "stderr_tail": "tool failed",
+                "stdout_tail": "",
+                "execution_started": True,
+                "tool_activity": True,
+            }
+            with mock.patch.object(sessions, "run_codex_once", return_value=failure) as run:
+                result = sessions.run_codex_session(
+                    "hello",
+                    chat_name="LabAgent",
+                    role="worker",
+                    model="gpt-5.6-sol",
+                    reasoning_effort="medium",
+                    sandbox="danger-full-access",
+                    timeout_seconds=30,
+                    registry_path=registry,
+                )
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["fallback_started"])
+        run.assert_called_once()
+
+    def test_codex_event_evidence_distinguishes_message_from_tool(self) -> None:
+        sessions = load_sessions()
+        message_only = sessions.codex_event_evidence(
+            '{"type":"turn.started"}\n'
+            '{"type":"item.completed","item":{"type":"agent_message"}}\n'
+        )
+        with_tool = sessions.codex_event_evidence(
+            '{"type":"turn.started"}\n'
+            '{"type":"item.completed","item":{"type":"command_execution"}}\n'
+        )
+
+        self.assertEqual(message_only, {"execution_started": True, "tool_activity": False})
+        self.assertEqual(with_tool, {"execution_started": True, "tool_activity": True})
+
     def test_unrelated_chat_sessions_do_not_share_a_long_running_lock(self) -> None:
         sessions = load_sessions()
         first_entered = threading.Event()

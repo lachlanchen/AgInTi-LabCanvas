@@ -406,3 +406,7 @@ Validate:
   old plan.
 - Return a concise reply plus direct artifacts. The task record stores detailed
   evidence and command state for later inspection.
+- Give every deliverable artifact a concise human-readable basename with its
+  subject, date or version when useful, and artifact type. Keep task IDs,
+  checksums, UUIDs, temporary-directory names, and absolute local paths in
+  private provenance only; do not make them the recipient-visible filename.

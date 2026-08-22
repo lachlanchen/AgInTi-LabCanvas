@@ -619,7 +619,10 @@ The stable interface and recovery commands are documented in
   and a new history card form the identity proof. Do not use a Wine Explorer
   drag fallback or treat a closed picker as proof of delivery.
 - Android WeCom artifacts use the native DocumentsUI `Download` root. Use a
-  deterministic short display name with a content digest, verify the exact row
+  deterministic short, human-readable display name that preserves the subject,
+  date/version, and artifact type. Add a short content digest only when a long
+  name must be shortened or a collision must be disambiguated. Keep task IDs,
+  full hashes, UUIDs, temporary names, and local paths private. Verify the exact row
   and pre-send confirmation, and write a `committing` ledger component before
   tapping Send. A stable full or middle-ellipsized same-chat history card
   completes the component. On timeout, reconcile that component before any
@@ -691,6 +694,13 @@ The stable interface and recovery commands are documented in
   required artifact deliveries come next, and ordinary text follows. Preserve
   concrete relay errors before applying the generic missing-artifact gate so
   operators can repair the actual transport failure.
+- Name deliverable artifacts before they enter the sender. Use a concise
+  subject plus date/version and type, for example
+  `2026-08-22-organoid-imaging-review.pdf`, `cmount-sensor-holder-v2.step`, or
+  `paris-baguette-final-video.mp4`. Bare names such as `output`, `result`, and
+  `report-final` are not sufficient when the task supplies a real subject.
+  Transport ledgers may key idempotency by task ID and checksum, but those
+  identifiers must not replace the recipient-visible filename.
 - The WeCom worker's `--chat wecom` value is a transport namespace, not a chat
   filter. Its idle loop must scan the WeCom queue's deferred outbox and retry
   the highest-priority required artifact automatically.

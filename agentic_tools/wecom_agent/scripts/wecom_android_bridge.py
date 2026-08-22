@@ -41,11 +41,24 @@ import zlib
 ROOT = Path(__file__).resolve().parents[3]
 TOOL_ROOT = ROOT / "agentic_tools" / "wecom_agent"
 PRIVATE = TOOL_ROOT / ".private"
+ANDROID_CONTROL_SCRIPTS = ROOT / "agentic_tools" / "android_device_agent" / "scripts"
+if str(ANDROID_CONTROL_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(ANDROID_CONTROL_SCRIPTS))
+
+from android_control_lease import read_active_priority
+
 DEFAULT_CONFIG = PRIVATE / "wecom_android_bridge.local.json"
 DEFAULT_STATE_DB = PRIVATE / "wecom_android_bridge.local.sqlite"
 DEFAULT_QUEUE = PRIVATE / "wecom_task_queue.jsonl"
 DEFAULT_HISTORY_DB = PRIVATE / "wecom_messages.local.sqlite"
 DEFAULT_STAGING = PRIVATE / "android-staging"
+DEFAULT_CONTROL_PRIORITY = (
+    ROOT
+    / "agentic_tools"
+    / "android_device_agent"
+    / ".private"
+    / "android_control_priority.json"
+)
 INGEST = TOOL_ROOT / "scripts" / "wecom_ingest.py"
 PACKAGE = "com.tencent.wework"
 DOCUMENTS_PACKAGE = "com.google.android.documentsui"
@@ -103,8 +116,28 @@ DOCUMENT_FILENAME_RESOURCE_SUFFIX = ":id/j2k"
 DOCUMENT_SIZE_RESOURCE_SUFFIX = ":id/j2g"
 DOCUMENT_KIND = "document"
 INBOUND_FILECACHE_ROOT = "/sdcard/Android/data/com.tencent.wework/files/filecache"
+SAFE_EXTERNAL_LOG_DIRS = tuple(
+    f"/sdcard/Android/data/com.tencent.wework/files/{name}"
+    for name in (
+        "src_log",
+        "src_clog",
+        "TmLogs",
+        "onelog",
+        "commonlog",
+        "perf",
+        "perfUploading",
+        "zip_log",
+    )
+)
 ANR_MESSAGE_MARKERS = ("没有响应", "isn't responding", "is not responding")
 ANR_WAIT_LABELS = {"等待", "Wait", "WAIT"}
+LOW_STORAGE_DIALOG_TITLES = {
+    "存储空间严重不足",
+    "Storage space is critically low",
+    "Storage space is running out",
+}
+LOW_STORAGE_DISMISS_LABELS = {"取消", "Cancel", "CANCEL"}
+LOW_STORAGE_CLEANUP_LABELS = {"前往清理", "Clean up", "CLEAN UP"}
 SECURITY_GATE_LABELS = {
     "登录企业微信",
     "扫码登录",
@@ -423,6 +456,13 @@ def is_anr_dialog(root: ET.Element) -> bool:
         for marker in ANR_MESSAGE_MARKERS
         for text in texts
     ) and bool(texts.intersection(ANR_WAIT_LABELS))
+
+
+def is_low_storage_dialog(root: ET.Element) -> bool:
+    texts = hierarchy_visible_texts(root)
+    return bool(texts.intersection(LOW_STORAGE_DIALOG_TITLES)) and bool(
+        texts.intersection(LOW_STORAGE_DISMISS_LABELS)
+    ) and bool(texts.intersection(LOW_STORAGE_CLEANUP_LABELS))
 
 
 def is_security_gate(root: ET.Element) -> bool:
@@ -795,6 +835,13 @@ def initialize_config(
             128 * 1024 * 1024,
             16 * 1024 * 1024 * 1024,
         ),
+        "auto_prune_safe_logs": bool(existing.get("auto_prune_safe_logs", True)),
+        "storage_prune_headroom_bytes": bounded_int(
+            existing.get("storage_prune_headroom_bytes"),
+            256 * 1024 * 1024,
+            0,
+            2 * 1024 * 1024 * 1024,
+        ),
         "dismiss_foreground_conflicts": bool(
             existing.get("dismiss_foreground_conflicts", False)
         ),
@@ -1036,6 +1083,9 @@ class AndroidBridge:
         self.history_db = Path(str(config.get("history_db") or DEFAULT_HISTORY_DB)).expanduser().resolve()
         self.staging_dir = Path(str(config.get("staging_dir") or DEFAULT_STAGING)).expanduser().resolve()
         self.lock_path = PRIVATE / "wecom_android_bridge.lock"
+        self.control_priority_path = Path(
+            str(config.get("control_priority_path") or DEFAULT_CONTROL_PRIORITY)
+        ).expanduser().resolve()
         self.reconcile_seconds = bounded_float(
             config.get("reconcile_seconds"), 20.0, 5.0, 600.0
         )
@@ -1054,6 +1104,7 @@ class AndroidBridge:
         self._health_lock = threading.Lock()
         self._outbound_waiter_lock = threading.Lock()
         self._outbound_waiters = 0
+        self._passive_control = threading.local()
         self.surface_recovery_cooldown_seconds = bounded_float(
             config.get("surface_recovery_cooldown_seconds"), 300.0, 30.0, 3600.0
         )
@@ -1064,6 +1115,14 @@ class AndroidBridge:
             128 * 1024 * 1024,
             16 * 1024 * 1024 * 1024,
         )
+        self.auto_prune_safe_logs = bool(config.get("auto_prune_safe_logs", True))
+        self.storage_prune_headroom_bytes = bounded_int(
+            config.get("storage_prune_headroom_bytes"),
+            256 * 1024 * 1024,
+            0,
+            2 * 1024 * 1024 * 1024,
+        )
+        self._safe_log_prune_attempted = False
         self._last_storage_probe_at = 0.0
         self._storage_status: dict[str, Any] = {
             "available_bytes": None,
@@ -1164,6 +1223,21 @@ class AndroidBridge:
         with self._outbound_waiter_lock:
             return self._outbound_waiters > 0
 
+    def external_control_priority(self) -> dict[str, Any] | None:
+        """Let explicit cross-process device actions preempt passive polling."""
+        return read_active_priority(
+            self.control_priority_path,
+            exclude_pid=os.getpid(),
+        )
+
+    def passive_control_deferred(self) -> tuple[bool, str]:
+        if self.outbound_waiting():
+            return True, "wecom_outbound"
+        priority = self.external_control_priority()
+        if priority is not None:
+            return True, str(priority.get("purpose") or "external_android_control")
+        return False, ""
+
     @contextmanager
     def outbound_serialized(
         self,
@@ -1180,6 +1254,30 @@ class AndroidBridge:
             with self._outbound_waiter_lock:
                 self._outbound_waiters = max(0, self._outbound_waiters - 1)
 
+    @contextmanager
+    def passive_serialized(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> Iterator[None]:
+        """Yield passive GUI ownership while allowing explicit work to preempt it."""
+        self.assert_passive_control_available()
+        with self.serialized(timeout_seconds=timeout_seconds):
+            self.assert_passive_control_available()
+            previous = bool(getattr(self._passive_control, "active", False))
+            self._passive_control.active = True
+            try:
+                yield
+            finally:
+                self._passive_control.active = previous
+
+    def assert_passive_control_available(self) -> None:
+        priority = self.external_control_priority()
+        if priority is None:
+            return
+        purpose = str(priority.get("purpose") or "external_android_control")
+        raise BridgeError(f"WECOM_ANDROID_PREEMPTED: {purpose}")
+
     def run(
         self,
         command: list[str],
@@ -1190,6 +1288,8 @@ class AndroidBridge:
         input_data: str | bytes | None = None,
         env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[Any]:
+        if bool(getattr(self._passive_control, "active", False)):
+            self.assert_passive_control_available()
         process = subprocess.run(
             command,
             input=input_data,
@@ -1260,6 +1360,19 @@ class AndroidBridge:
     def ensure_device_storage(self) -> dict[str, Any]:
         status = self.device_data_storage_status()
         available = status.get("available_bytes")
+        prune_threshold = (
+            self.minimum_free_data_bytes + self.storage_prune_headroom_bytes
+        )
+        if (
+            isinstance(available, int)
+            and available < prune_threshold
+            and self.auto_prune_safe_logs
+            and not self._safe_log_prune_attempted
+        ):
+            self._safe_log_prune_attempted = True
+            self.prune_safe_external_logs()
+            status = self.device_data_storage_status(force=True)
+            available = status.get("available_bytes")
         if isinstance(available, int) and available < self.minimum_free_data_bytes:
             available_mib = available // (1024 * 1024)
             required_mib = self.minimum_free_data_bytes // (1024 * 1024)
@@ -1269,6 +1382,12 @@ class AndroidBridge:
                 "automated relaunch and navigation are paused"
             )
         return status
+
+    def prune_safe_external_logs(self) -> None:
+        """Remove only disposable WeCom external logs under a fixed allowlist."""
+        self.adb_shell("rm", "-rf", *SAFE_EXTERNAL_LOG_DIRS, timeout=120, check=False)
+        self.adb_shell("mkdir", "-p", *SAFE_EXTERNAL_LOG_DIRS, timeout=30, check=False)
+        self.record_recovery("safe_wecom_external_logs_pruned")
 
     def prepare_device(self) -> None:
         self.disable_host_automount()
@@ -1390,6 +1509,8 @@ class AndroidBridge:
             if is_anr_dialog(root):
                 self.dismiss_anr_dialog(root)
                 continue
+            if self.dismiss_recovered_low_storage_dialog(root):
+                continue
             self.ensure_navigation_allowed(root)
             if self.wecom_is_foreground(root):
                 return
@@ -1445,6 +1566,26 @@ class AndroidBridge:
         time.sleep(2.0)
         return True
 
+    def dismiss_recovered_low_storage_dialog(self, root: ET.Element) -> bool:
+        """Dismiss only MIUI's non-destructive warning after storage recovers."""
+        if not is_low_storage_dialog(root):
+            return False
+        self.ensure_device_storage()
+        dismiss_nodes = [
+            node
+            for node in root.iter("node")
+            if normalize_visible_text(node_text(node)) in LOW_STORAGE_DISMISS_LABELS
+            and node.attrib.get("clickable") == "true"
+        ]
+        if len(dismiss_nodes) != 1:
+            raise BridgeError(
+                "Android low-storage dialog does not expose one exact Cancel action"
+            )
+        self.tap_node(root, dismiss_nodes[0])
+        self.record_recovery("low_storage_warning_dismissed_after_recovery")
+        time.sleep(1.0)
+        return True
+
     def restart_wecom_preserving_session(self, *, reason: str) -> ET.Element:
         """Restart only the app process; never clear data or alter the account."""
         try:
@@ -1469,6 +1610,8 @@ class AndroidBridge:
                 continue
             if is_anr_dialog(root):
                 self.dismiss_anr_dialog(root)
+                continue
+            if self.dismiss_recovered_low_storage_dialog(root):
                 continue
             self.ensure_navigation_allowed(root)
             if self.package in hierarchy_packages(root):
@@ -1620,7 +1763,7 @@ class AndroidBridge:
                 "retry_after_seconds": retry_after_seconds,
             }
         try:
-            with self.serialized(timeout_seconds=30.0):
+            with self.passive_serialized(timeout_seconds=30.0):
                 return self.recover_transport_surface(reason=reason)
         except Exception as exc:
             error_text = f"{type(exc).__name__}: {str(exc)[:500]}"
@@ -4333,7 +4476,7 @@ class AndroidBridge:
         # Routing/ingest may invoke an agent and must never block unrelated
         # artifact delivery for the duration of that backend turn.
         media_materialization_errors: list[dict[str, str]] = []
-        with self.serialized(timeout_seconds=30.0):
+        with self.passive_serialized(timeout_seconds=30.0):
             root = self.open_chat(chat)
             root = self.move_chat_to_live_tail(chat, root)
             current_records = self.parse_messages(root)
@@ -4547,7 +4690,8 @@ class AndroidBridge:
         }
 
     def poll_cycle(self) -> dict[str, Any]:
-        if self.outbound_waiting():
+        deferred, deferred_reason = self.passive_control_deferred()
+        if deferred:
             return {
                 "ok": True,
                 "due_chats": [],
@@ -4558,13 +4702,14 @@ class AndroidBridge:
                 "results": [],
                 "restore_error": "",
                 "deferred_for_outbound": True,
+                "deferred_reason": deferred_reason,
                 "deferred_chats": list(self.target_groups),
             }
         now = time.monotonic()
         due = [chat for chat in self.target_groups if self.load_snapshot(chat) is None]
         unread: list[str] = []
         if not due:
-            with self.serialized(timeout_seconds=5.0):
+            with self.passive_serialized(timeout_seconds=5.0):
                 chat_list = self.open_chat_list()
                 unread = self.unread_target_chats(chat_list)
             due = list(unread)
@@ -4589,9 +4734,12 @@ class AndroidBridge:
             due = unique_nonempty([*due, history_scan_chat])
         results: list[dict[str, Any]] = []
         deferred_chats: list[str] = []
+        deferred_reason = ""
         for index, chat in enumerate(due):
-            if self.outbound_waiting():
+            deferred, current_deferred_reason = self.passive_control_deferred()
+            if deferred:
                 deferred_chats = due[index:]
+                deferred_reason = current_deferred_reason
                 self._next_reconcile_at = 0.0
                 if history_scan_chat in deferred_chats:
                     self._next_history_scan_at = 0.0
@@ -4616,9 +4764,12 @@ class AndroidBridge:
                     }
                 )
         restore_error = ""
-        if due and not self.outbound_waiting():
+        deferred, current_deferred_reason = self.passive_control_deferred()
+        if deferred and not deferred_reason:
+            deferred_reason = current_deferred_reason
+        if due and not deferred:
             try:
-                with self.serialized(timeout_seconds=5.0):
+                with self.passive_serialized(timeout_seconds=5.0):
                     self.open_chat_list()
             except Exception as exc:
                 restore_error = f"{type(exc).__name__}: {str(exc)[:500]}"
@@ -4632,6 +4783,7 @@ class AndroidBridge:
             "results": results,
             "restore_error": restore_error,
             "deferred_for_outbound": bool(deferred_chats),
+            "deferred_reason": deferred_reason,
             "deferred_chats": deferred_chats,
         }
 

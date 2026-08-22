@@ -951,7 +951,10 @@ def run_agent_task(
             storage_dir=Path(storage_dir).resolve(),
             root=project_root,
         )
-        response_path = task_dir / "response.md"
+        response_path = task_dir / workspace_response_filename(
+            str(task.get("message") or ""),
+            created_at=str(task.get("created_at") or ""),
+        )
         response_path.write_text(reply.rstrip() + "\n", encoding="utf-8")
         artifact_store = ArtifactStore(Path(storage_dir))
         registered = register_agent_artifacts(artifact_store, copied, task_id=task_id)
@@ -1707,18 +1710,24 @@ def collect_task_artifacts(
         if source.stat().st_size > 512 * 1024 * 1024:
             continue
         seen.add(source)
-        if _inside(source, storage_dir):
+        needs_alias = workspace_artifact_name_is_generic(source.name)
+        if _inside(source, storage_dir) and not needs_alias:
             destination = source
         else:
-            digest = hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:8]
-            destination = output_dir / f"{source.stem}-{digest}{source.suffix}"
-            shutil.copy2(source, destination)
+            preferred_name = workspace_artifact_filename(
+                source,
+                title=str(item.get("title") or ""),
+                fallback_text=reply,
+            )
+            destination = unique_workspace_artifact_path(output_dir, preferred_name)
+            if destination.resolve() != source:
+                shutil.copy2(source, destination)
         copied.append(
             {
                 "path": destination,
                 "title": str(item.get("title") or source.name),
                 "kind": str(item.get("kind") or artifact_kind_for_path(source)),
-                "preview": str(item.get("preview") or f"Produced by workspace agent task {task_dir.name}."),
+                "preview": str(item.get("preview") or "Produced and verified by the LabCanvas workspace agent."),
             }
         )
     return copied
@@ -1758,12 +1767,97 @@ def register_agent_artifacts(store: ArtifactStore, items: list[dict[str, Any]], 
             title=str(item.get("title") or Path(item["path"]).name),
             kind=kind,
             source="workspace-agent",
-            preview=str(item.get("preview") or f"Agent task {task_id}"),
+            preview=str(item.get("preview") or "Produced and verified by the LabCanvas workspace agent."),
             selected=selected,
         )
         image_selected = image_selected or selected
         registered.append(registered_item)
     return registered
+
+
+WORKSPACE_GENERIC_ARTIFACT_STEMS = {
+    "analysis",
+    "artifact",
+    "complete-response",
+    "document",
+    "final",
+    "generated",
+    "image",
+    "output",
+    "paper",
+    "presentation",
+    "report",
+    "response",
+    "result",
+    "slides",
+    "summary",
+    "video",
+}
+
+
+def workspace_response_filename(message: str, *, created_at: str = "") -> str:
+    date_match = re.search(r"\b(20\d{2})-(\d{2})-(\d{2})\b", created_at)
+    date = date_match.group(0) if date_match else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    subject = workspace_filename_subject(message) or "labcanvas-agent"
+    if "response" not in subject.casefold():
+        subject = f"{subject}-response"
+    return f"{date}-{subject}.md"
+
+
+def workspace_artifact_name_is_generic(filename: str) -> bool:
+    stem = Path(str(filename or "")).stem.casefold()
+    normalized = re.sub(r"[^0-9a-z]+", "-", stem).strip("-")
+    return (
+        normalized in WORKSPACE_GENERIC_ARTIFACT_STEMS
+        or bool(re.fullmatch(r"(?:task|job|run)?-?[0-9a-f]{12,}", normalized))
+        or bool(
+            re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                normalized,
+            )
+        )
+    )
+
+
+def workspace_artifact_filename(
+    source: Path, *, title: str = "", fallback_text: str = ""
+) -> str:
+    if not workspace_artifact_name_is_generic(source.name):
+        return source.name
+    subject = workspace_filename_subject(title) or workspace_filename_subject(fallback_text)
+    return f"{subject or 'labcanvas-artifact'}{source.suffix.lower()}"
+
+
+def workspace_filename_subject(value: str) -> str:
+    text = re.sub(r"https?://\S+", " ", str(value or ""))
+    text = re.sub(r"/[A-Za-z0-9_.@%+=,:/-]+", " ", text)
+    text = re.sub(
+        r"^(?:please|could you|can you|would you|kindly|help me|i want you to)\s+",
+        "",
+        text.strip(),
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\b(?:create|generate|make|write|send|return|give|prepare|provide|the|a|an|"
+        r"please|concise|detailed|final|file|pdf|report|result|output)\b",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"(?:生成|创建|創建|制作|製作|发送|發送|报告|報告|文件|结果|結果)", " ", text)
+    text = re.sub(r"\b[0-9a-f]{12,}\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^\w\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af.-]+", "-", text, flags=re.UNICODE)
+    text = re.sub(r"[-_.]{2,}", "-", text).strip("-._")
+    return text[:64].rstrip("-._").casefold()
+
+
+def unique_workspace_artifact_path(output_dir: Path, filename: str) -> Path:
+    candidate = output_dir / filename
+    version = 2
+    while candidate.exists():
+        candidate = output_dir / f"{Path(filename).stem}-v{version}{Path(filename).suffix}"
+        version += 1
+    return candidate
 
 
 def task_response(task_id: str, storage_dir: str | Path) -> dict[str, Any]:

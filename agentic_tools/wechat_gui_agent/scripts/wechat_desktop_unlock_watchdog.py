@@ -25,7 +25,11 @@ ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+ANDROID_SCRIPTS_DIR = ROOT / "agentic_tools" / "android_device_agent" / "scripts"
+if str(ANDROID_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(ANDROID_SCRIPTS_DIR))
 
+from android_control_lease import read_active_priority
 from wechat_gui_send import detect_wechat_locked, find_wechat_window, screenshot
 
 
@@ -33,6 +37,13 @@ DEFAULT_OUTPUT = ROOT / "output" / "wechat_gui_agent" / datetime.now().strftime(
 DEFAULT_ANDROID_OUTPUT = ROOT / "output" / "android_device_agent" / datetime.now().strftime("%F")
 DEFAULT_ANDROID_LOCK = (
     ROOT / "agentic_tools" / "wecom_agent" / ".private" / "wecom_android_bridge.lock"
+)
+DEFAULT_ANDROID_PRIORITY = (
+    ROOT
+    / "agentic_tools"
+    / "android_device_agent"
+    / ".private"
+    / "android_control_priority.json"
 )
 DEFAULT_STATE_FILE = (
     ROOT
@@ -516,8 +527,17 @@ def acquire_android_lease(path: Path, *, timeout_seconds: float = 5.0):
     handle = path.open("a+", encoding="utf-8")
     deadline = time.monotonic() + max(0.0, timeout_seconds)
     while True:
+        if read_active_priority(DEFAULT_ANDROID_PRIORITY) is not None:
+            handle.close()
+            return None
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Close the race where an explicit sender publishes priority after
+            # this watchdog checked but before it acquired the shared lock.
+            if read_active_priority(DEFAULT_ANDROID_PRIORITY) is not None:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+                handle.close()
+                return None
             return handle
         except BlockingIOError:
             if time.monotonic() >= deadline:

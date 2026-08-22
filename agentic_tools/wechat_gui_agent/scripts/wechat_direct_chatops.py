@@ -34,6 +34,7 @@ from wechat_agent_backend import (
 from wechat_memory import organize_messages
 from wechat_message_policy import (
     is_no_reply_control,
+    recorded_android_outbound_echo,
     recorded_outbound_echo,
     recorded_outbound_file_echo,
 )
@@ -181,6 +182,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "state_path": str(DEFAULT_STATE),
         "trigger_prefixes": ["@lachchen", "＠lachchen", "@codex", "codex:"],
         "mirror_db": str(DEFAULT_DB),
+        "android_send_state_db": str(PRIVATE / "wechat_android_send.sqlite"),
         "agent_backend": select_agent_backend({}),
         "claude": {"model": "", "timeout_seconds": 60},
         "aginti": {
@@ -198,8 +200,8 @@ def load_config(path: Path) -> dict[str, Any]:
             "enabled": True,
             "quota_fallback_model": "gpt-5.6-sol",
             "quota_fallback_reasoning_effort": "low",
-            "fallback_to_aginti": True,
-            "fallback_on_timeout": True,
+            "fallback_to_aginti": False,
+            "fallback_on_timeout": False,
         },
         "codex": {"model": "gpt-5.6-sol", "reasoning_effort": "low", "sandbox": "read-only", "timeout_seconds": 25},
         "codex_session_reuse": True,
@@ -1871,13 +1873,27 @@ def allow_human_self_messages(config: dict[str, Any]) -> bool:
 
 
 def is_recorded_outbound_echo(config: dict[str, Any], row: dict[str, Any]) -> bool:
-    return recorded_outbound_echo(
+    window_seconds = int(config.get("self_outbound_echo_window_seconds") or 1800)
+    lookup_limit = int(config.get("self_outbound_echo_lookup_limit") or 240)
+    if recorded_outbound_echo(
         Path(config.get("mirror_db", DEFAULT_DB)),
         str(config.get("chat_name") or ""),
         str(row.get("content") or ""),
         source_epoch=float(row.get("create_time") or 0),
-        window_seconds=int(config.get("self_outbound_echo_window_seconds", 1800)),
-        limit=int(config.get("self_outbound_echo_lookup_limit", 240)),
+        window_seconds=window_seconds,
+        limit=lookup_limit,
+    ):
+        return True
+    return recorded_android_outbound_echo(
+        Path(
+            config.get("android_send_state_db")
+            or PRIVATE / "wechat_android_send.sqlite"
+        ),
+        str(config.get("chat_name") or ""),
+        str(row.get("content") or ""),
+        source_epoch=float(row.get("create_time") or 0),
+        window_seconds=window_seconds,
+        limit=lookup_limit,
     )
 
 

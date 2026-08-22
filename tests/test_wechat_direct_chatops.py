@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -1666,6 +1667,40 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         row = self.row(content, sender="self", local_id=151, create_time=now)
 
         self.assertEqual(direct_chatops.response_skip_reason(config, {}, row), "self_outbound_echo")
+
+    def test_verified_android_send_ledger_closes_mirror_crash_window(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        android_db = Path(self._tmpdir.name) / "wechat_android_send.sqlite"
+        config["android_send_state_db"] = str(android_db)
+        content = "Android 已发送，但父进程尚未来得及写入镜像。"
+        now = int(time.time())
+        with sqlite3.connect(android_db) as conn:
+            conn.execute(
+                "CREATE TABLE components (component_key TEXT PRIMARY KEY, task_id TEXT, "
+                "chat TEXT, kind TEXT, value_hash TEXT, status TEXT, details_json TEXT, "
+                "updated_at TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO components VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    "component",
+                    "task-1",
+                    "EchoMind",
+                    "text",
+                    hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    "sent",
+                    "{}",
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+        row = self.row(content, sender="self", local_id=153, create_time=now)
+
+        self.assertEqual(
+            direct_chatops.response_skip_reason(config, {}, row),
+            "self_outbound_echo",
+        )
 
     def test_recorded_outbound_file_is_not_reprocessed_as_a_self_attachment(self) -> None:
         config = self.base_config()
@@ -4106,8 +4141,8 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertEqual(config["codex"]["timeout_seconds"], 25)
         self.assertTrue(config["agent_fallbacks"]["enabled"])
         self.assertEqual(config["agent_fallbacks"]["quota_fallback_model"], "gpt-5.6-sol")
-        self.assertTrue(config["agent_fallbacks"]["fallback_to_aginti"])
-        self.assertTrue(config["agent_fallbacks"]["fallback_on_timeout"])
+        self.assertFalse(config["agent_fallbacks"]["fallback_to_aginti"])
+        self.assertFalse(config["agent_fallbacks"]["fallback_on_timeout"])
         self.assertEqual(config["aginti"]["command"], "aginti")
         self.assertEqual(config["aginti"]["args"], "")
         self.assertEqual(config["aginti"]["prompt_mode"], "")

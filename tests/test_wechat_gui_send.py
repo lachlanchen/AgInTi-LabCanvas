@@ -25,6 +25,60 @@ def load_wechat_gui_send():
 
 
 class WeChatGuiSendTests(unittest.TestCase):
+    def test_focus_synchronizes_x_focus_before_raise(self):
+        module = load_wechat_gui_send()
+        commands: list[list[str]] = []
+
+        with (
+            mock.patch.object(
+                module,
+                "run",
+                side_effect=lambda command, **_kwargs: commands.append(command)
+                or subprocess.CompletedProcess(command, 0, "", ""),
+            ),
+            mock.patch.object(module.time, "sleep"),
+        ):
+            module.focus({}, module.Window("123", 0, 0, 1000, 700))
+
+        self.assertEqual(
+            commands,
+            [
+                ["xdotool", "windowfocus", "--sync", "123"],
+                ["xdotool", "windowraise", "123"],
+            ],
+        )
+
+    def test_gui_send_lock_waits_for_current_sender_then_acquires(self):
+        module = load_wechat_gui_send()
+        lock = object()
+        attempts = [BlockingIOError(), None]
+        ticks = iter([0.0, 0.0, 0.1, 0.1])
+
+        def fake_flock(_lock, _mode):
+            outcome = attempts.pop(0)
+            if outcome is not None:
+                raise outcome
+
+        with (
+            mock.patch.object(module.fcntl, "flock", side_effect=fake_flock),
+            mock.patch.object(module.time, "monotonic", side_effect=lambda: next(ticks)),
+            mock.patch.object(module.time, "sleep") as sleep_mock,
+        ):
+            module.acquire_gui_send_lock(lock, timeout_seconds=1.0)
+
+        sleep_mock.assert_called_once()
+
+    def test_gui_send_lock_times_out_without_blocking_forever(self):
+        module = load_wechat_gui_send()
+        lock = object()
+        ticks = iter([0.0, 1.0])
+        with (
+            mock.patch.object(module.fcntl, "flock", side_effect=BlockingIOError),
+            mock.patch.object(module.time, "monotonic", side_effect=lambda: next(ticks)),
+        ):
+            with self.assertRaisesRegex(SystemExit, "WECHAT_SEND_BUSY"):
+                module.acquire_gui_send_lock(lock, timeout_seconds=0.5)
+
     def test_main_window_wait_ignores_startup_splash(self):
         module = load_wechat_gui_send()
         windows = [
@@ -95,7 +149,13 @@ class WeChatGuiSendTests(unittest.TestCase):
                 mock.patch.object(module, "detect_wechat_locked", side_effect=fake_lock),
                 mock.patch.object(module, "clear_composer"),
                 mock.patch.object(module, "click"),
+                mock.patch.object(
+                    module,
+                    "wait_for_verified_file_chooser",
+                    return_value=module.WindowIdentity("chooser", "Open File", "GtkFileChooserDialog"),
+                ),
                 mock.patch.object(module, "paste_path_into_file_chooser"),
+                mock.patch.object(module, "wait_for_wechat_focus_after_picker"),
                 mock.patch.object(
                     module,
                     "verify_opened_title",
@@ -136,7 +196,8 @@ class WeChatGuiSendTests(unittest.TestCase):
             file_path.write_bytes(b"%PDF-1.4\n")
 
             def fake_screenshot(_env, path):
-                Path(path).write_bytes(b"frame")
+                path = Path(path)
+                path.write_bytes(path.name.encode("utf-8"))
 
             with (
                 mock.patch.object(module, "focus"),
@@ -148,7 +209,13 @@ class WeChatGuiSendTests(unittest.TestCase):
                 ),
                 mock.patch.object(module, "clear_composer"),
                 mock.patch.object(module, "click") as click,
+                mock.patch.object(
+                    module,
+                    "wait_for_verified_file_chooser",
+                    return_value=module.WindowIdentity("chooser", "Open File", "GtkFileChooserDialog"),
+                ),
                 mock.patch.object(module, "paste_path_into_file_chooser"),
+                mock.patch.object(module, "wait_for_wechat_focus_after_picker"),
                 mock.patch.object(
                     module,
                     "verify_opened_title",
@@ -175,6 +242,74 @@ class WeChatGuiSendTests(unittest.TestCase):
                     )
 
         self.assertEqual(click.call_count, 1)
+
+    def test_file_send_never_pastes_path_without_verified_chooser(self):
+        module = load_wechat_gui_send()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            file_path = root / "private-report.pdf"
+            file_path.write_bytes(b"%PDF-1.4\n")
+
+            def fake_screenshot(_env, path):
+                Path(path).write_bytes(Path(path).name.encode("utf-8"))
+
+            with (
+                mock.patch.object(module, "focus"),
+                mock.patch.object(module, "screenshot", side_effect=fake_screenshot),
+                mock.patch.object(
+                    module,
+                    "detect_wechat_locked",
+                    return_value={"locked": False, "ocr_text": ""},
+                ),
+                mock.patch.object(module, "clear_composer"),
+                mock.patch.object(module, "click"),
+                mock.patch.object(
+                    module,
+                    "wait_for_verified_file_chooser",
+                    side_effect=RuntimeError("WECHAT_FILE_CHOOSER_NOT_OPEN"),
+                ),
+                mock.patch.object(module, "paste_path_into_file_chooser") as paste_path,
+                mock.patch.object(module.time, "sleep"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "WECHAT_FILE_CHOOSER_NOT_OPEN"):
+                    module.send_file_to_open_chat(
+                        {},
+                        module.Window("main", 0, 0, 1000, 700),
+                        module.TargetSpec(
+                            name="EchoMind",
+                            query="EchoMind",
+                            expected_title="EchoMind",
+                        ),
+                        file_path,
+                        root,
+                        "fail-closed",
+                        pause=0.1,
+                    )
+
+        paste_path.assert_not_called()
+
+    def test_file_chooser_identity_must_be_distinct_and_native(self):
+        module = load_wechat_gui_send()
+        main = module.Window("main", 0, 0, 1000, 700)
+
+        self.assertFalse(
+            module.is_verified_file_chooser(
+                module.WindowIdentity("main", "WeChat", "wechat"),
+                main,
+            )
+        )
+        self.assertFalse(
+            module.is_verified_file_chooser(
+                module.WindowIdentity("other", "WeChat", "wechat"),
+                main,
+            )
+        )
+        self.assertTrue(
+            module.is_verified_file_chooser(
+                module.WindowIdentity("chooser", "选择文件", "GtkFileChooserDialog"),
+                main,
+            )
+        )
 
     def test_download_file_card_reuses_exact_complete_native_cache_file(self):
         module = load_wechat_gui_send()

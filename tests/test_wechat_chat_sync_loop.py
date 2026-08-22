@@ -1,4 +1,5 @@
 import argparse
+import fcntl
 import importlib.util
 import json
 from pathlib import Path
@@ -9,6 +10,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MODULE_TEMP_DIRS: list[tempfile.TemporaryDirectory] = []
 
 
 def load_wechat_chat_sync_loop():
@@ -21,7 +23,16 @@ def load_wechat_chat_sync_loop():
         sys.path.insert(0, scripts_dir)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    test_lock_dir = tempfile.TemporaryDirectory()
+    MODULE_TEMP_DIRS.append(test_lock_dir)
+    module._test_gui_lock_dir = test_lock_dir
+    module.GUI_SEND_LOCK = Path(test_lock_dir.name) / "wechat_gui_send.lock"
     return module
+
+
+def tearDownModule():
+    while MODULE_TEMP_DIRS:
+        MODULE_TEMP_DIRS.pop().cleanup()
 
 
 class WeChatChatSyncLoopTests(unittest.TestCase):
@@ -54,6 +65,54 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
         self.assertTrue(result["busy"])
         self.assertEqual(result["active"][0]["id"], "reply-1")
         self.assertEqual(result["active"][0]["reason"], "gui_send_busy")
+
+    def test_gui_send_lock_busy_observes_actual_nonblocking_lock(self):
+        module = load_wechat_chat_sync_loop()
+        lock_path = module.GUI_SEND_LOCK
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with lock_path.open("a", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertTrue(module.gui_send_lock_busy())
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+        self.assertFalse(module.gui_send_lock_busy())
+
+    def test_sync_once_yields_to_actual_gui_lock_before_opening_chats(self):
+        module = load_wechat_chat_sync_loop()
+        original_open = module.open_chat_dry_run
+        original_emit = module.emit_target_event
+        lock_path = module.GUI_SEND_LOCK
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            module.open_chat_dry_run = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("should not open chat")
+            )
+            module.emit_target_event = lambda _result: None
+            args = argparse.Namespace(
+                configs="missing-config.json",
+                display=":97",
+                interval=45,
+                pause=0.8,
+                timeout=60,
+                priority="",
+                loop=False,
+                once=True,
+                only=[],
+                output_dir=Path("/tmp"),
+                queue=Path("/tmp/missing-wechat-queue.jsonl"),
+                yield_to_queue=False,
+                max_targets_per_cycle=0,
+            )
+            with lock_path.open("a", encoding="utf-8") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                results = module.sync_once(args)
+                fcntl.flock(lock, fcntl.LOCK_UN)
+        finally:
+            module.open_chat_dry_run = original_open
+            module.emit_target_event = original_emit
+
+        self.assertEqual(results, [{"ok": True, "skipped": "gui_send_lock_reserved"}])
 
     def test_queue_send_lane_busy_ignores_non_retryable_deferred_send(self):
         module = load_wechat_chat_sync_loop()
@@ -433,6 +492,7 @@ class WeChatChatSyncLoopTests(unittest.TestCase):
 
         self.assertEqual(env["WECHAT_GUI_SEND_MAX_SECONDS"], "55")
         self.assertEqual(env["WECHAT_INITIAL_TITLE_WAIT"], "0.4")
+        self.assertEqual(env["WECHAT_GUI_SEND_LOCK_WAIT_SECONDS"], "0")
         self.assertLessEqual(float(env["WECHAT_TITLE_RETRY_SECONDS"]), 2.0)
         self.assertEqual(module.chat_sync_subprocess_timeout(args), 60)
 

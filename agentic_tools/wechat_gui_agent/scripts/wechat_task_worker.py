@@ -80,6 +80,7 @@ SHIPINHAO_GUI_AUDIO_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent"
 SHIPINHAO_NATIVE_CAPTURE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "shipinhao_native_capture.py"
 WECHAT_AUDIO_INTAKE_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_audio_intake.py"
 WECHAT_SOURCE_RECOVERY_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_source_recovery.py"
+WECHAT_ANDROID_SEND_SCRIPT = ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_android_send.py"
 WECOM_NATIVE_ARTICLE_RECOVERY_SCRIPT = (
     ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_native_article_recovery.py"
 )
@@ -100,7 +101,7 @@ DEFAULT_DEAD_WORKER_RECOVERY_MAX_AGE_SECONDS = 2 * 60 * 60
 DEFAULT_DEAD_WORKER_RECOVERY_LIMIT = 1
 DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS = 5 * 60
 DEFAULT_PENDING_TASK_TTL_SECONDS = 15 * 60
-DEFAULT_DEFERRED_SEND_TTL_SECONDS = 10 * 60
+DEFAULT_DEFERRED_SEND_TTL_SECONDS = 30 * 60
 DEFAULT_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS = 30
 DEFAULT_IDLE_QUEUE_MAINTENANCE_SECONDS = 60.0
 DEFAULT_TRANSPORT_RECOVERY_MAX_AGE_SECONDS = 12 * 60 * 60
@@ -346,6 +347,12 @@ def main() -> int:
         type=int,
         default=DEFAULT_TRANSPORT_RECOVERY_LIMIT,
     )
+    parser.add_argument(
+        "--recovery-task-id",
+        action="append",
+        default=[],
+        help="Limit expired-transport recovery to an exact task id. Repeatable.",
+    )
     args = parser.parse_args()
 
     if args.enqueue:
@@ -404,6 +411,7 @@ def main() -> int:
             transport=args.recover_expired_transport,
             max_age_seconds=max(0, args.recovery_max_age_seconds),
             limit=max(0, args.recovery_limit),
+            task_ids=args.recovery_task_id,
         )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
@@ -689,6 +697,12 @@ def reprocess_task(
             if str(task.get("id") or "") != str(task_id):
                 continue
             stored_result = task.get("result") if isinstance(task.get("result"), dict) else {}
+            if artifact_recovery_only:
+                # The recovery reason is the current operator authorization.
+                # Apply it before deciding whether a stored artifact satisfies
+                # the delivery contract, otherwise an explicit PDF recovery can
+                # be misclassified and fall through to worker execution.
+                apply_reprocess_reason_contract(task, reason)
             delivery_recovery_result = (
                 prepare_stored_delivery_recovery_result(task, stored_result)
                 if artifact_recovery_only and stored_result
@@ -722,7 +736,8 @@ def reprocess_task(
                 task["expires_at"] = queue_deadline_iso(DEFAULT_PENDING_TASK_TTL_SECONDS)
             task["reprocess_requested_at"] = now_text
             task["reprocess_reason"] = reason or "manual_reprocess"
-            apply_reprocess_reason_contract(task, reason)
+            if not artifact_recovery_only:
+                apply_reprocess_reason_contract(task, reason)
             if invalid_generated_video_reprocess_requested(task, reason):
                 reset_invalid_generated_video_reprocess(task, now_text)
             task["queue_path"] = str(queue)
@@ -793,18 +808,21 @@ def stored_result_can_be_reused_for_delivery(
     """Accept only a completed result that can be resent without model work."""
     if verified_publish_result_completion(result):
         return True
-    text = "\n".join(
-        str(result.get(field) or "") for field in ("message", "confirmation")
-    ).strip()
-    if text and worker_result_needs_escalation(text):
-        return False
     files = [
         Path(str(value)).expanduser()
         for value in result.get("files") or []
         if str(value or "").strip()
     ]
     if files:
+        # A short completion sentence is normal beside an artifact. Validate
+        # the files themselves here; the caller separately enforces required
+        # artifact types before allowing a delivery-only recovery.
         return all(is_safe_outbound_file(path)[0] for path in files)
+    text = "\n".join(
+        str(result.get(field) or "") for field in ("message", "confirmation")
+    ).strip()
+    if text and worker_result_needs_escalation(text):
+        return False
     return bool(text) and worker_result_has_delivery_content(result)
 
 
@@ -1430,6 +1448,8 @@ def task_contract_requires_file_delivery(task: dict[str, Any]) -> bool:
     if isinstance(task.get("daily_research"), dict):
         return True
     route = task_route_decision(task)
+    if bool(route.get("require_file_delivery")):
+        return True
     if bool(route.get("scheduled_daily_research")):
         return True
     contract = task.get("execution_contract") if isinstance(task.get("execution_contract"), dict) else {}
@@ -1976,6 +1996,15 @@ def send_errors_indicate_blank_title_guard(errors: list[str]) -> bool:
     return False
 
 
+def send_errors_indicate_title_guard_failure(errors: list[str]) -> bool:
+    text = "\n".join(str(error) for error in errors).lower()
+    return (
+        "opened chat title guard failed" in text
+        or "wechat_file_target_changed" in text
+        or "exact chat title guard failed" in text
+    )
+
+
 def send_errors_indicate_gui_compose_verification(errors: list[str]) -> bool:
     text = "\n".join(str(error) for error in errors).lower()
     return (
@@ -1996,7 +2025,7 @@ def send_errors_indicate_deferable(errors: list[str]) -> bool:
         or send_errors_indicate_gui_busy(errors)
         or send_errors_indicate_gui_timeout(errors)
         or send_errors_indicate_wechat_entry_required(errors)
-        or send_errors_indicate_blank_title_guard(errors)
+        or send_errors_indicate_title_guard_failure(errors)
         or send_errors_indicate_gui_compose_verification(errors)
         or send_errors_indicate_transient_transport(errors)
     )
@@ -2030,6 +2059,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
         return "wechat_entry_required"
     if send_errors_indicate_blank_title_guard(errors):
         return "title_guard_blank"
+    if send_errors_indicate_title_guard_failure(errors):
+        return "title_guard_failed"
     if send_errors_indicate_gui_compose_verification(errors):
         return "gui_compose_verification"
     if send_errors_indicate_transient_transport(errors):
@@ -2099,7 +2130,12 @@ def send_result_with_retries(
                 time.sleep(delay)
     if task is not None and android_text_fallback_allowed(task, result, errors):
         try:
-            send_result_text_via_android_fallback(result, target_chat, task)
+            send_result_text_via_android_fallback(
+                result,
+                target_chat,
+                task,
+                send_targets=send_targets,
+            )
             return []
         except Exception as exc:
             errors.append(f"android fallback: {type(exc).__name__}: {str(exc)[:500]}")
@@ -2238,8 +2274,13 @@ def send_result_once(
     note_files = [] if task_is_research_summary(task or {}) else files_to_note
     raw_message = str(result.get("message") or "")
     raw_confirmation = str(result.get("confirmation") or "")
+    visible_files = [*files_to_send, *note_files]
     message = "" if is_no_reply_control(raw_message) else message_with_saved_file_note(raw_message, note_files)
-    confirmation = "" if is_no_reply_control(raw_confirmation) else raw_confirmation
+    confirmation = "" if is_no_reply_control(raw_confirmation) else sanitize_chat_visible_text(
+        raw_confirmation,
+        visible_files,
+    )
+    message = sanitize_chat_visible_text(message, visible_files)
     require_file_delivery = result_requires_file_delivery(task, result)
     file_errors = []
     sent_files = {str(path) for path in (task or {}).get("sent_file_paths", [])}
@@ -2251,12 +2292,15 @@ def send_result_once(
             if resolved in sent_files:
                 continue
             try:
-                send_file(file_path, target_chat, send_targets, target=target)
+                send_file(file_path, target_chat, send_targets, target=target, task=task)
                 sent_files.add(resolved)
                 if task is not None:
                     task["sent_file_paths"] = sorted(sent_files)
             except Exception as exc:
-                error = {"path": str(file_path), "error": f"{type(exc).__name__}: {str(exc)[:500]}"}
+                error = {
+                    "path": str(file_path),
+                    "error": f"{type(exc).__name__}: {compact_exception_text(exc)}",
+                }
                 file_errors.append(error)
                 if require_file_delivery:
                     break
@@ -2434,8 +2478,10 @@ def prepare_long_response_delivery(
         str(task.get("artifact_dir") or worker_artifact_dir(task))
     ).expanduser().resolve()
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    markdown_path = artifact_dir / "complete-response.md"
-    pdf_path = artifact_dir / "complete-response.pdf"
+    task.setdefault("artifact_dir", str(artifact_dir))
+    pdf_name = meaningful_delivery_basename(Path("complete-response.pdf"), task)
+    pdf_path = artifact_dir / pdf_name
+    markdown_path = pdf_path.with_suffix(".md")
     cjk = bool(re.search(r"[\u3400-\u9fff]", "\n".join(fields)))
     title = "完整回复" if cjk else "Complete Response"
     sections = [f"# {title}", "", message]
@@ -2831,7 +2877,12 @@ def send_result_once_wecom(result: dict[str, Any], target_chat: str, task: dict[
     raw_message = str(result.get("message") or "")
     raw_confirmation = str(result.get("confirmation") or "")
     message = "" if is_no_reply_control(raw_message) else message_with_saved_file_note(raw_message, note_files)
-    confirmation = "" if is_no_reply_control(raw_confirmation) else raw_confirmation
+    visible_files = [*files_to_send, *note_files]
+    message = sanitize_chat_visible_text(message, visible_files)
+    confirmation = "" if is_no_reply_control(raw_confirmation) else sanitize_chat_visible_text(
+        raw_confirmation,
+        visible_files,
+    )
     text_parts = [part.strip() for part in (message, confirmation) if part.strip()]
     combined_message = "\n\n".join(text_parts)
     endpoint, token = wecom_transport_settings(task)
@@ -3040,13 +3091,33 @@ def ready_wecom_android_transport(*, require_preferred: bool = True) -> tuple[st
 def android_text_fallback_allowed(task: dict[str, Any], result: dict[str, Any], errors: list[str]) -> bool:
     if os.environ.get("WECHAT_WORKER_ANDROID_TEXT_FALLBACK", "1") != "1":
         return False
-    if not errors or not send_errors_indicate_deferable(errors):
+    # Native sends must always be tied to a durable queue identity. Without
+    # one, the Android sender cannot provide reliable idempotency or an audit
+    # trail and a retry could become an untracked duplicate.
+    if not str(task.get("id") or "").strip():
         return False
-    if not (verified_publish_send_completion(task) or verified_publish_result_completion(result)):
+    if task_transport_kind(task) == "wecom":
         return False
-    if result.get("files"):
+    if not errors or not (
+        send_errors_indicate_wechat_locked(errors)
+        or send_errors_indicate_gui_busy(errors)
+        or send_errors_indicate_wechat_entry_required(errors)
+        or send_errors_indicate_title_guard_failure(errors)
+    ):
         return False
-    return bool(android_publish_completion_message(result))
+    if result_is_no_reply(result):
+        return False
+    required = {
+        str(path.expanduser().resolve())
+        for path in required_delivery_file_paths(result, task)
+    }
+    sent = {
+        str(Path(str(path)).expanduser().resolve())
+        for path in task.get("sent_file_paths") or []
+    }
+    if not required.issubset(sent):
+        return False
+    return bool(android_fallback_messages(result))
 
 
 def publish_stage_from_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -3087,41 +3158,59 @@ def android_publish_completion_message(result: dict[str, Any]) -> str:
     return sanitize_android_input_text(". ".join(parts) + ".")
 
 
-def send_result_text_via_android_fallback(result: dict[str, Any], target_chat: str, task: dict[str, Any]) -> None:
-    message = android_publish_completion_message(result)
-    if not message:
+def android_fallback_messages(result: dict[str, Any]) -> list[str]:
+    files = [Path(str(path)) for path in result.get("files") or []]
+    values = []
+    for field in ("message", "confirmation"):
+        raw = str(result.get(field) or "").strip()
+        if not raw or is_no_reply_control(raw):
+            continue
+        visible = sanitize_chat_visible_text(raw, files).strip()
+        if visible and visible not in values:
+            values.append(visible)
+    if values:
+        return values
+    publish = android_publish_completion_message(result)
+    return [publish] if publish else []
+
+
+def send_result_text_via_android_fallback(
+    result: dict[str, Any],
+    target_chat: str,
+    task: dict[str, Any],
+    *,
+    send_targets: Path = DEFAULT_SEND_TARGETS,
+) -> None:
+    messages = android_fallback_messages(result)
+    if not messages:
         raise RuntimeError("no android fallback message")
-    adb = os.environ.get("ADB", "adb")
-    serial = resolve_android_serial(adb, configured_wechat_unlock_serial())
-    require_android_tools(adb)
-    android_shell(adb, serial, ["input", "keyevent", "224"], check=False)
-    android_shell(adb, serial, ["wm", "dismiss-keyguard"], check=False)
-    android_shell(adb, serial, ["svc", "power", "stayon", "true"], check=False)
-    before = android_screenshot(adb, serial, task, "before-send")
-    ocr_text = android_header_ocr(before)
-    if not android_title_matches(target_chat, ocr_text):
-        raise RuntimeError(f"android target title guard failed for {target_chat}: OCR={ocr_text!r}")
-    tap = parse_xy_env("WECHAT_WORKER_ANDROID_COMPOSER_TAP", (430, 2035))
-    android_shell(adb, serial, ["input", "tap", str(tap[0]), str(tap[1])])
-    time.sleep(float(os.environ.get("WECHAT_WORKER_ANDROID_AFTER_TAP_DELAY", "0.6")))
-    android_shell(adb, serial, ["input", "text", android_input_token(message)])
-    time.sleep(float(os.environ.get("WECHAT_WORKER_ANDROID_AFTER_TEXT_DELAY", "0.6")))
-    typed = android_screenshot(adb, serial, task, "typed")
-    send_tap = parse_xy_env("WECHAT_WORKER_ANDROID_SEND_TAP", (980, 1275))
-    android_shell(adb, serial, ["input", "tap", str(send_tap[0]), str(send_tap[1])])
-    time.sleep(float(os.environ.get("WECHAT_WORKER_ANDROID_AFTER_SEND_DELAY", "1.0")))
-    after = android_screenshot(adb, serial, task, "sent")
+    target = guarded_send_target(target_chat, send_targets, task=task)
+    if not target:
+        raise RuntimeError(f"no guarded Android target for {target_chat}")
+    payload = run_android_wechat_sender(
+        chat=target_chat,
+        target=target,
+        task_id=str(task.get("id") or f"adhoc-{time.time_ns()}"),
+        messages=messages,
+    )
+    for message in messages:
+        record_event(
+            chat_name=target_chat,
+            action="android_text_send",
+            direction="outbound",
+            message=message,
+            status="sent",
+            db_path=DEFAULT_DB,
+            metadata={
+                "task_id": str(task.get("id") or ""),
+                "transport": "wechat_android",
+            },
+        )
     task["android_text_fallback_send"] = {
         "sent_at": datetime.now().isoformat(timespec="seconds"),
-        "serial": serial,
         "chat": target_chat,
-        "ocr_title": ocr_text,
-        "message": message,
-        "screenshots": {
-            "before": str(before),
-            "typed": str(typed),
-            "after": str(after),
-        },
+        "component_count": len(payload.get("components") or []),
+        "transport": "wechat_android",
     }
 
 
@@ -3516,7 +3605,12 @@ def recover_completed_research_artifacts(
         return None
     report = select_substantive_research_report(artifact_dir)
     if report is None:
-        return None
+        return recover_exact_task_pdf_without_markdown(
+            task,
+            artifact_dir,
+            failure_text=failure_text,
+            force=force,
+        )
     language = detect_markdown_primary_language(read_text_prefix(report, limit=24000))
     report_pdf = preferred_research_report_pdf(report, language)
     if report_pdf is None or not report_pdf.is_file() or report_pdf.stat().st_size <= 0:
@@ -3573,6 +3667,67 @@ def recover_completed_research_artifacts(
             "latex_style": "nature_research_report",
             "report_path": str(report),
             "report_pdf": str(report_pdf),
+        },
+    }
+
+
+def recover_exact_task_pdf_without_markdown(
+    task: dict[str, Any],
+    artifact_dir: Path,
+    *,
+    failure_text: str = "",
+    force: bool = False,
+) -> dict[str, Any] | None:
+    """Recover one unambiguous compiled PDF from the exact task directory."""
+    if not force or not task.get("artifact_recovery_only"):
+        return None
+    if not task_contract_requires_file_delivery(task):
+        return None
+    required_suffixes = task_required_artifact_suffixes(task)
+    if required_suffixes and ".pdf" not in required_suffixes:
+        return None
+    candidates: list[Path] = []
+    for path in artifact_dir.rglob("*.pdf"):
+        try:
+            relative = path.relative_to(artifact_dir)
+        except ValueError:
+            continue
+        if len(relative.parts) > 3:
+            continue
+        ok, _reason = is_safe_outbound_file(path)
+        if not ok:
+            continue
+        try:
+            if path.read_bytes()[:5] != b"%PDF-":
+                continue
+        except OSError:
+            continue
+        candidates.append(path.resolve())
+    candidates = unique_paths(candidates)
+    if len(candidates) != 1:
+        return None
+    report_pdf = candidates[0]
+    recovered_at = datetime.now().isoformat(timespec="seconds")
+    task["worker_artifact_recovery"] = {
+        "status": "recovered",
+        "reason": collapse_context_text(failure_text, max_len=300),
+        "compiled_pdf": str(report_pdf),
+        "file_count": 1,
+        "source": "exact_task_single_pdf",
+        "recovered_at": recovered_at,
+    }
+    task["worker_result_exhausted"] = False
+    task.pop("worker_error", None)
+    return {
+        "message": "",
+        "confirmation": "",
+        "files": [str(report_pdf)],
+        "data": {
+            "require_file_delivery": True,
+            "send_report_to_wechat": True,
+            "artifact_recovery": True,
+            "stored_result_reused": True,
+            "recovery_source": "exact_task_single_pdf",
         },
     }
 
@@ -3690,14 +3845,55 @@ def research_report_chat_message(report: Path) -> str:
 
 def message_with_saved_file_note(message: str, files: list[Path]) -> str:
     if not files:
-        return message
+        return sanitize_chat_visible_text(message)
     lines = [message.strip()] if message.strip() else []
-    lines.append("Saved files:")
+    lines.append("Additional files retained locally:")
     for path in files[:8]:
-        lines.append(f"- {path}")
+        lines.append(f"- {path.name}")
     if len(files) > 8:
         lines.append(f"- ... {len(files) - 8} more")
-    return "\n".join(lines)
+    return sanitize_chat_visible_text("\n".join(lines), files)
+
+
+LOCAL_FILE_PATH_WITH_SPACES_RE = re.compile(
+    r"(?<![A-Za-z0-9:])(?:file://)?(?:/(?:home|tmp|var/tmp|mnt|media|run/user|root|Users|workspace)/|(?:\./)?output/)[^\r\n<>\"']*?\.(?:pdf|md|tex|txt|docx?|xlsx?|pptx?|csv|json|ya?ml|zip|rar|7z|png|jpe?g|gif|webp|svg|mp4|mov|mkv|avi|mp3|wav|flac|step|stp|stl|3mf|blend|kicad_pcb)(?=$|[\s，。；、)）\]}])",
+    flags=re.I,
+)
+POSIX_CHAT_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9:])(?:file://)?(?:/(?:home|tmp|var/tmp|mnt|media|run/user|root|Users|workspace)/|(?:\./)?output/)[^\s<>\[\]{}\"'，。；、]+"
+)
+WINDOWS_CHAT_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:[A-Za-z]:\\(?:Users|Temp|tmp)\\)[^\r\n<>\"']+"
+)
+
+
+def local_path_filename(value: str) -> str:
+    cleaned = str(value or "").removeprefix("file://").rstrip(".,;:!?)]}，。；、）")
+    normalized = cleaned.replace("\\", "/")
+    name = normalized.rsplit("/", 1)[-1].strip()
+    return name or "local artifact"
+
+
+def sanitize_chat_visible_text(value: str, file_paths: list[Path] | tuple[Path, ...] = ()) -> str:
+    """Keep private workstation paths out of outbound chat text."""
+    text = str(value or "")
+    exact_paths: set[str] = set()
+    for path in file_paths:
+        candidate = Path(path).expanduser()
+        exact_paths.add(str(candidate))
+        try:
+            exact_paths.add(str(candidate.resolve()))
+        except OSError:
+            pass
+    for raw in sorted((item for item in exact_paths if item), key=len, reverse=True):
+        text = text.replace(raw, Path(raw).name or "local artifact")
+    text = LOCAL_FILE_PATH_WITH_SPACES_RE.sub(
+        lambda match: local_path_filename(match.group(0)),
+        text,
+    )
+    text = POSIX_CHAT_PATH_RE.sub(lambda match: local_path_filename(match.group(0)), text)
+    text = WINDOWS_CHAT_PATH_RE.sub(lambda match: local_path_filename(match.group(0)), text)
+    return text
 
 
 def queue_activity_signature(path: Path) -> tuple[int, int, int, int]:
@@ -5406,7 +5602,7 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
                 repair_failed_send = False
             if status == SEND_RETRYING_STATUS and not stale_send_retrying(task, now):
                 continue
-            if status == SEND_DEFERRED_LOCKED_STATUS and not deferred_send_backoff_elapsed(task, now):
+            if status in {SEND_DEFERRED_LOCKED_STATUS, SEND_DEFERRED_ARTIFACT_STATUS} and not deferred_send_backoff_elapsed(task, now):
                 continue
             if transient_send_retry_limit_reached(task):
                 task["status"] = "send_failed"
@@ -5447,6 +5643,9 @@ def claim_next_deferred_send(path: Path, chat_filter: str | None = None) -> dict
             task["worker_id"] = worker_id
             task["send_retry_claimed_at"] = now_text
             task["send_retry_count"] = int(task.get("send_retry_count") or 0) + 1
+            task["send_expires_at"] = queue_deadline_iso(
+                DEFAULT_DEFERRED_SEND_TTL_SECONDS
+            )
             tasks[index] = task
             write_tasks(path, tasks)
             return task
@@ -5636,6 +5835,11 @@ def repair_missing_artifact_deliveries(path: Path) -> dict[str, Any]:
         SEND_RETRYING_STATUS,
         GENERATED_VIDEO_WAITING_STATUS,
         GENERATED_VIDEO_POSTSTAGE_PENDING_STATUS,
+        "send_failed",
+        "send_expired",
+        "expired_stale",
+        "canceled",
+        "canceled_superseded",
     }
     with lock_path.open("w", encoding="utf-8") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -5683,6 +5887,7 @@ def recover_recent_expired_transport_deliveries(
     transport: str,
     max_age_seconds: int = DEFAULT_TRANSPORT_RECOVERY_MAX_AGE_SECONDS,
     limit: int = DEFAULT_TRANSPORT_RECOVERY_LIMIT,
+    task_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Restore a small recent outbox only after its transport reconnects.
 
@@ -5693,6 +5898,7 @@ def recover_recent_expired_transport_deliveries(
     exactly-once gate when a partially delivered task is retried.
     """
     normalized_transport = str(transport or "").strip().lower()
+    selected_task_ids = {str(item) for item in (task_ids or []) if str(item)}
     bounded_limit = max(0, int(limit))
     bounded_age = max(0, int(max_age_seconds))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -5716,6 +5922,8 @@ def recover_recent_expired_transport_deliveries(
         tasks = read_tasks(path)
         candidate_indices: list[int] = []
         for index, task in enumerate(tasks):
+            if selected_task_ids and str(task.get("id") or "") not in selected_task_ids:
+                continue
             if str(task.get("status") or "") != "send_expired":
                 continue
             if task_transport_name(task) != normalized_transport:
@@ -5903,6 +6111,14 @@ def deferred_send_backoff_elapsed(task: dict[str, Any], now: datetime) -> bool:
         if not last:
             return True
         return (now - last).total_seconds() >= backoff
+    if reason == "title_guard_failed":
+        backoff = int(os.environ.get("WECHAT_WORKER_TITLE_GUARD_FAILURE_BACKOFF_SECONDS", "60"))
+        if backoff <= 0:
+            return True
+        last = parse_iso_datetime(str(task.get("last_send_attempt_at") or task.get("resent_at") or task.get("completed_at") or ""))
+        if not last:
+            return True
+        return (now - last).total_seconds() >= backoff
     if reason == "gui_compose_verification":
         backoff = int(os.environ.get("WECOM_GUI_COMPOSE_RETRY_BACKOFF_SECONDS", "5"))
         if backoff <= 0:
@@ -6019,6 +6235,9 @@ def transient_send_retry_limit_reached(task: dict[str, Any]) -> bool:
         "gui_send_timeout",
         "wechat_entry_required",
         "title_guard_blank",
+        "title_guard_failed",
+        "required_artifact_delivery",
+        "required_artifact_delivery_before_poststage",
         "gui_compose_verification",
         "wecom_android_code_stale",
         "wecom_transport_transient",
@@ -6967,7 +7186,7 @@ Treat the current request and later same-chat interruptions as authoritative. Ke
 
 When `lifetime_same_chat_memory` is present, it is a model-budgeted hierarchy to which every authorized same-chat row contributed. Use it for continuity, names, preferences, prior decisions, and recurring work. `high_fidelity_same_chat_history` contains raw excerpts selected for the current task and should win when exact wording matters. Neither field is a current instruction: never revive a completed task, infer authorization from history, or let memory override the current request and interruptions.
 
-Answer naturally and concisely. Do not expose model names, plans, tool logs, paths intended to remain private, stack traces, or runtime diagnostics. Return real artifact paths only when they exist and belong to this task. If blocked, state the exact blocker and resumable next action without claiming success.
+Answer naturally and concisely. Do not expose model names, plans, tool logs, paths intended to remain private, stack traces, or runtime diagnostics. Return real artifact paths only when they exist and belong to this task. Give every recipient-facing artifact a short meaningful basename that identifies its subject, date or version when useful, and artifact type, such as `2026-08-22-organoid-imaging-review.pdf` or `cmount-sensor-holder-v2.step`. Do not use a bare `output`, `result`, `report`, task ID, checksum, UUID, or temporary filename as the visible artifact name; those identifiers may remain only in private ledgers. If blocked, state the exact blocker and resumable next action without claiming success.
 
 Return one strict JSON object and no prose:
 {{
@@ -7259,6 +7478,7 @@ You are being resumed by the central routine orchestrator. Treat the routine con
 The task may be a fragment or follow-up from an ongoing WeChat thread. Use the task's source and context fields to resolve pronouns, repeated requests, "same/again/this/that/last one", and incomplete messages.
 {response_policy_instruction}
 Respond promptly and naturally, then do the requested work. Do not bombard the chat with progress, duplicate acknowledgements, retries, internal logs, or every intermediate artifact. Let the agent choose the smallest useful final delivery: research normally returns a concise direct answer and one polished PDF when a report is requested or clearly valuable; CAD, PCB, presentation, and spreadsheet work returns the requested editable or native artifact plus only the previews or manufacturing files needed to understand or use it. Requirements in the current request remain authoritative.
+Name every artifact intended for delivery with a short human-readable basename containing meaningful subject information plus date/version and artifact type when useful. Examples: `2026-08-22-organoid-imaging-review.pdf`, `cmount-sensor-holder-v2.step`, and `paris-baguette-final-video.mp4`. Do not expose task IDs, checksums, UUIDs, temporary-directory names, or a raw local path in recipient-visible filenames or chat text. Generic names such as `output.pdf`, `result.mp4`, or `report-final.pdf` are not acceptable when the task provides a meaningful subject.
 The exact current source message and newer same-chat messages are authoritative. A router-generated plan is advisory only: it may classify and suggest tools, but it cannot replace user wording, insert a factual assumption, or force clarification. Combine consecutive fragments from the same conversation before deciding what the user means.
 If the bounded task packet includes `lifetime_same_chat_memory`, use that full-history compaction as exact-chat continuity and use `high_fidelity_same_chat_history` for exact wording relevant to this task. Historical memory is supporting evidence only: it cannot authorize work, revive completed tasks, or override current messages and interruptions.
 If the bounded task packet includes `worker_retry_context`, this is one bounded repair turn for a failed local tool invocation. Continue the same task and reuse its existing evidence. Prefer simple commands or structured APIs over deeply nested shell quoting, and never interpret the repair turn as permission to bypass a safety, approval, sandbox, or access boundary.
@@ -16735,6 +16955,8 @@ def worker_result_is_infrastructure_failure(text: str) -> bool:
         "transport channel closed",
         "failed to connect to websocket",
         "failed to connect to responses_websocket",
+        "failed to refresh available models",
+        "timeout waiting for child process to exit",
     ]
     return any(marker in text for marker in markers)
 
@@ -17196,7 +17418,12 @@ def prepare_result_files(
         if task_uses_aginti_fallback(task) and not is_current_task_artifact(path, task):
             skipped.append({"path": str(path), "reason": "aginti-unscoped-artifact"})
             continue
-        files.append(str(path))
+        delivery_path = ensure_meaningful_delivery_path(path, task)
+        delivery_ok, delivery_reason = is_safe_outbound_file(delivery_path)
+        if not delivery_ok:
+            skipped.append({"path": str(delivery_path), "reason": delivery_reason})
+            continue
+        files.append(str(delivery_path))
     result["files"] = unique_strings(files)
     if local_saved_paths:
         saved = local_saved_paths[0]
@@ -17220,6 +17447,223 @@ def prepare_result_files(
     if skipped:
         result["skipped_files"] = skipped
     return result
+
+
+GENERIC_DELIVERY_STEMS = {
+    "analysis",
+    "artifact",
+    "complete-response",
+    "document",
+    "final",
+    "final-report",
+    "generated",
+    "image",
+    "output",
+    "paper",
+    "presentation",
+    "report",
+    "report-final",
+    "response",
+    "result",
+    "slides",
+    "summary",
+    "task-video",
+    "video",
+}
+
+DELIVERY_ROLE_BY_SUFFIX = {
+    ".3mf": "print-model",
+    ".blend": "blender-scene",
+    ".csv": "data-table",
+    ".docx": "document",
+    ".dxf": "drawing",
+    ".epub": "book",
+    ".gif": "animation",
+    ".jpeg": "image",
+    ".jpg": "image",
+    ".json": "data",
+    ".kicad_pcb": "pcb",
+    ".md": "notes",
+    ".mov": "video",
+    ".mp3": "audio",
+    ".mp4": "video",
+    ".pdf": "report",
+    ".png": "preview",
+    ".pptx": "presentation",
+    ".step": "3d-model",
+    ".stl": "print-model",
+    ".svg": "figure",
+    ".tex": "latex-source",
+    ".wav": "audio",
+    ".xlsx": "workbook",
+    ".zip": "archive",
+}
+
+
+def ensure_meaningful_delivery_path(
+    path: Path, task: dict[str, Any] | None
+) -> Path:
+    """Give generic generated artifacts a stable recipient-facing basename.
+
+    Exact inbound files keep their original identity. Generated content is
+    hard-linked into the task's ignored artifact directory when possible, with
+    a copy fallback for cross-filesystem outputs. The source file is untouched.
+    """
+    resolved = path.expanduser().resolve()
+    if not isinstance(task, dict) or not str(task.get("artifact_dir") or "").strip():
+        return resolved
+    if resolved in file_intake_source_artifact_paths(task):
+        return resolved
+    if not artifact_name_needs_delivery_alias(resolved.name, task):
+        return resolved
+
+    delivery_dir = Path(str(task["artifact_dir"])).expanduser().resolve() / "delivery"
+    delivery_dir.mkdir(parents=True, exist_ok=True)
+    basename = meaningful_delivery_basename(resolved, task)
+    destination = delivery_dir / basename
+    version = 2
+    while destination.exists():
+        try:
+            if destination.samefile(resolved):
+                return destination.resolve()
+        except OSError:
+            pass
+        destination = delivery_dir / f"{Path(basename).stem}-v{version}{resolved.suffix.lower()}"
+        version += 1
+
+    try:
+        os.link(resolved, destination)
+    except OSError:
+        try:
+            shutil.copy2(resolved, destination)
+        except OSError as exc:
+            task.setdefault("artifact_filename_warnings", []).append(
+                {
+                    "source": str(resolved),
+                    "reason": f"delivery-alias-failed:{type(exc).__name__}",
+                }
+            )
+            return resolved
+
+    task.setdefault("delivery_artifact_aliases", []).append(
+        {
+            "source": str(resolved),
+            "delivery": str(destination.resolve()),
+            "display_name": destination.name,
+        }
+    )
+    return destination.resolve()
+
+
+def artifact_name_needs_delivery_alias(
+    filename: str, task: dict[str, Any] | None = None
+) -> bool:
+    stem = Path(str(filename or "")).stem.casefold()
+    normalized = re.sub(r"[^0-9a-z]+", "-", stem).strip("-")
+    if normalized in GENERIC_DELIVERY_STEMS:
+        return True
+    if re.fullmatch(r"(?:task|job|run)?-?[0-9a-f]{12,}", normalized):
+        return True
+    if re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        normalized,
+    ):
+        return True
+    if isinstance(task, dict):
+        task_id = safe_slug(str(task.get("id") or ""))
+        if task_id != "task" and (
+            normalized == task_id or normalized.startswith(f"{task_id}-")
+        ):
+            return True
+    return False
+
+
+def meaningful_delivery_basename(path: Path, task: dict[str, Any]) -> str:
+    suffix = path.suffix.lower()
+    subject = task_artifact_subject(task)
+    role = DELIVERY_ROLE_BY_SUFFIX.get(suffix, "artifact")
+    parts = [task_artifact_date(task), subject]
+    if role not in subject.casefold():
+        parts.append(role)
+    stem = "-".join(part for part in parts if part).strip("-.")
+    return f"{stem[:120].rstrip('-._') or 'labcanvas-artifact'}{suffix}"
+
+
+def task_artifact_date(task: dict[str, Any]) -> str:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    candidates = [
+        task.get("created_at"),
+        task.get("enqueued_at"),
+        source.get("created_at"),
+        source.get("timestamp"),
+    ]
+    for candidate in candidates:
+        match = re.search(r"\b(20\d{2})[-/]?(\d{2})[-/]?(\d{2})\b", str(candidate or ""))
+        if match:
+            return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def task_artifact_subject(task: dict[str, Any]) -> str:
+    route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    daily = task.get("daily_research") if isinstance(task.get("daily_research"), dict) else {}
+    candidates = [
+        task.get("artifact_subject"),
+        route.get("artifact_subject"),
+        daily.get("topic"),
+        task.get("request"),
+        route.get("topic"),
+        route.get("title"),
+        task.get("chat"),
+    ]
+    for candidate in candidates:
+        subject = human_filename_subject(str(candidate or ""))
+        if subject:
+            return subject
+    return "labcanvas"
+
+
+def human_filename_subject(value: str) -> str:
+    text = re.sub(r"https?://\S+", " ", str(value or ""))
+    text = re.sub(r"/[A-Za-z0-9_.@%+=,:/-]+", " ", text)
+    lines = []
+    ignored_labels = {
+        "current coalesced request",
+        "current request",
+        "request",
+        "context",
+        "task",
+    }
+    for raw in text.splitlines():
+        line = raw.strip().strip("`#>*- ")
+        if not line or line.rstrip(":").casefold() in ignored_labels:
+            continue
+        lines.append(line)
+    text = " ".join(lines) if lines else text
+    text = re.sub(
+        r"^(?:please|could you|can you|would you|kindly|help me|i want you to)\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    for phrase in ("请帮我", "請幫我", "请", "請", "帮我", "幫我", "可以帮我", "可以幫我"):
+        if text.startswith(phrase):
+            text = text[len(phrase) :].lstrip()
+            break
+    text = re.sub(
+        r"\b(?:create|generate|make|write|send|return|give|prepare|provide|the|a|an|"
+        r"please|concise|detailed|final|file|pdf|report|result|output)\b",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"(?:生成|创建|創建|制作|製作|发送|發送|报告|報告|文件|结果|結果)", " ", text)
+    text = re.sub(r"\b[0-9a-f]{12,}\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^\w\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af.-]+", "-", text, flags=re.UNICODE)
+    text = re.sub(r"[-_.]{2,}", "-", text).strip("-._")
+    if not text:
+        return ""
+    return text[:48].rstrip("-._").casefold()
 
 
 def file_intake_source_artifact_paths(task: dict[str, Any]) -> set[Path]:
@@ -17370,6 +17814,7 @@ def gui_search_allowed_for_target(target: dict[str, Any]) -> bool:
 
 
 def send_message(message: str, chat: str, send_targets: Path, *, target: dict[str, Any] | None = None) -> None:
+    message = sanitize_chat_visible_text(message)
     target = target if target is not None else guarded_send_target(chat, send_targets)
     if target:
         command = [
@@ -17415,38 +17860,60 @@ def send_message(message: str, chat: str, send_targets: Path, *, target: dict[st
     )
 
 
-def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[str, Any] | None = None) -> None:
+def send_file(
+    file_path: Path,
+    chat: str,
+    send_targets: Path,
+    *,
+    target: dict[str, Any] | None = None,
+    task: dict[str, Any] | None = None,
+) -> None:
     ok, reason = is_safe_outbound_file(file_path)
     if not ok:
         raise ValueError(f"Refusing outbound file {file_path}: {reason}")
     target = target if target is not None else guarded_send_target(chat, send_targets)
     if target:
-        command = [
-            sys.executable,
-            str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
-            "--targets-file",
-            "",
-            "--prefer-current",
-            "--send",
-            "--file",
-            str(file_path.expanduser().resolve()),
-            "--pause",
-            os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
-            "--mirror-db",
-            str(DEFAULT_DB),
-        ]
-        with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
-            target_file = Path(handle.name)
-            json.dump({"message": "", "targets": [target]}, handle, ensure_ascii=False)
-        command[command.index("--targets-file") + 1] = str(target_file)
-        if gui_search_allowed_for_target(target):
-            command.append("--allow-search")
+        transport = os.environ.get("WECHAT_WORKER_FILE_TRANSPORT", "android").strip().casefold()
+        if transport == "android":
+            run_android_wechat_sender(
+                chat=chat,
+                target=target,
+                task_id=str((task or {}).get("id") or f"adhoc-{time.time_ns()}"),
+                files=[file_path],
+            )
+            transport_name = "wechat_android"
+        elif transport == "desktop":
+            command = [
+                sys.executable,
+                str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
+                "--targets-file",
+                "",
+                "--prefer-current",
+                "--send",
+                "--file",
+                str(file_path.expanduser().resolve()),
+                "--pause",
+                os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
+                "--mirror-db",
+                str(DEFAULT_DB),
+            ]
+            with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
+                target_file = Path(handle.name)
+                json.dump({"message": "", "targets": [target]}, handle, ensure_ascii=False)
+            command[command.index("--targets-file") + 1] = str(target_file)
+            if gui_search_allowed_for_target(target):
+                command.append("--allow-search")
+            else:
+                command.append("--no-search")
+            try:
+                run_exact_chat_file_sender(command)
+            finally:
+                target_file.unlink(missing_ok=True)
+            transport_name = "wechat_gui"
         else:
-            command.append("--no-search")
-        try:
-            run_exact_chat_file_sender(command)
-        finally:
-            target_file.unlink(missing_ok=True)
+            raise RuntimeError(
+                "Unsupported WECHAT_WORKER_FILE_TRANSPORT; expected android or desktop"
+            )
     else:
         if os.environ.get("WECHAT_ALLOW_UNGUARDED_SEND", "0") != "1":
             raise RuntimeError(f"Refusing unguarded WeChat file send for {chat}: missing send_target")
@@ -17465,6 +17932,7 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
                 str(file_path.expanduser().resolve()),
             ]
         )
+        transport_name = "wechat_gui_unguarded"
     record_event(
         chat_name=chat,
         action="file_send",
@@ -17473,9 +17941,66 @@ def send_file(file_path: Path, chat: str, send_targets: Path, *, target: dict[st
         db_path=DEFAULT_DB,
         metadata={
             "file_identity": file_transport_identity(file_path),
-            "transport": "wechat_gui",
+            "transport": transport_name,
         },
     )
+
+
+def run_android_wechat_sender(
+    *,
+    chat: str,
+    target: dict[str, Any],
+    task_id: str,
+    messages: list[str] | None = None,
+    files: list[Path] | None = None,
+) -> dict[str, Any]:
+    """Deliver exact-task components through native Android WeChat sharing."""
+    target_name = str(target.get("name") or chat).strip() or chat
+    command = [
+        sys.executable,
+        str(WECHAT_ANDROID_SEND_SCRIPT),
+        "--targets-file",
+        "",
+        "--target",
+        target_name,
+        "--task-id",
+        task_id,
+        "--send",
+    ]
+    serial = configured_wechat_unlock_serial()
+    if serial:
+        command.extend(["--serial", serial])
+    for message in messages or []:
+        visible = sanitize_chat_visible_text(message, files or [])
+        if visible.strip():
+            command.extend(["--message", visible])
+    for path in files or []:
+        command.extend(["--file", str(path.expanduser().resolve())])
+    with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
+        target_file = Path(handle.name)
+        json.dump({target_name: target}, handle, ensure_ascii=False)
+    command[command.index("--targets-file") + 1] = str(target_file)
+    timeout = int(os.environ.get("WECHAT_WORKER_ANDROID_SEND_TIMEOUT_SECONDS", "300"))
+    try:
+        proc = run_subprocess_group(command, timeout=timeout, env=wechat_send_env())
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"WECHAT_ANDROID_SEND_TIMEOUT: native sender timed out after {exc.timeout} seconds"
+        ) from exc
+    finally:
+        target_file.unlink(missing_ok=True)
+    if proc.returncode != 0:
+        detail = compact_exception_text((proc.stderr or proc.stdout or "").strip(), 1200)
+        raise RuntimeError(
+            f"WECHAT_ANDROID_SEND_FAILED: native sender exited {proc.returncode}: {detail}"
+        )
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("WECHAT_ANDROID_SEND_FAILED: sender returned invalid JSON") from exc
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        raise RuntimeError("WECHAT_ANDROID_SEND_FAILED: sender did not verify delivery")
+    return payload
 
 
 def run_subprocess_group(command: list[str], *, timeout: int, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -17501,8 +18026,6 @@ def run_subprocess_group(command: list[str], *, timeout: int, env: dict[str, str
 
 
 def run_send_subprocess(command: list[str], timeout: int | None = None) -> None:
-    if gui_send_lock_busy():
-        raise RuntimeError("WECHAT_SEND_BUSY: serialized GUI sender is already sending; defer this worker reply.")
     if timeout is None:
         timeout = int(os.environ.get("WECHAT_WORKER_SEND_TIMEOUT_SECONDS", "120"))
     try:
@@ -17521,6 +18044,16 @@ def run_send_subprocess(command: list[str], timeout: int | None = None) -> None:
     if stderr:
         parts.append(f"stderr={stderr[-1200:]}")
     raise RuntimeError("; ".join(parts))
+
+
+def compact_exception_text(exc: BaseException, limit: int = 1200) -> str:
+    """Keep both the failure category and the final actionable traceback line."""
+    text = str(exc).strip()
+    if len(text) <= limit:
+        return text
+    head = max(160, limit // 4)
+    tail = limit - head - 5
+    return f"{text[:head]} ... {text[-tail:]}"
 
 
 def run_file_bridge_subprocess(command: list[str], timeout: int | None = None) -> None:

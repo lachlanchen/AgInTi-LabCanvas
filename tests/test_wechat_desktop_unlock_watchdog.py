@@ -42,6 +42,19 @@ def args(tmp: str) -> argparse.Namespace:
 
 
 class WeChatDesktopUnlockWatchdogTests(unittest.TestCase):
+    def test_explicit_android_priority_preempts_unlock_watchdog_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            watchdog,
+            "read_active_priority",
+            return_value={"purpose": "personal_wechat_send:task-1"},
+        ):
+            lease = watchdog.acquire_android_lease(
+                Path(tmp) / "phone.lock",
+                timeout_seconds=1,
+            )
+
+        self.assertIsNone(lease)
+
     def test_state_file_is_private_and_complete(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "watchdog.json"

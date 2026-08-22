@@ -55,27 +55,47 @@ def run_codex_session(
     with execution_lock_path.open("w", encoding="utf-8") as execution_lock:
         fcntl.flock(execution_lock, fcntl.LOCK_EX)
         previous_id = read_registered_thread_id(registry_path, key) if reuse else ""
-        result = run_codex_once(
-            prompt,
-            thread_id=previous_id,
-            model=model,
-            reasoning_effort=reasoning_effort,
-            sandbox=sandbox,
+        slot = acquire_codex_concurrency_slot(
+            registry_path,
             timeout_seconds=timeout_seconds,
-            workdir=workdir,
-            web_search=codex_web_search_enabled(role),
         )
-        if previous_id and not result["ok"] and result.get("returncode") != 124:
-            fallback = run_codex_once(
-                prompt,
-                thread_id="",
-                model=model,
-                reasoning_effort=reasoning_effort,
-                sandbox=sandbox,
+        if slot is None:
+            result = codex_slot_timeout_result(previous_id)
+        else:
+            try:
+                result = run_codex_with_startup_retries(
+                    prompt,
+                    thread_id=previous_id,
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                    sandbox=sandbox,
+                    timeout_seconds=timeout_seconds,
+                    workdir=workdir,
+                    web_search=codex_web_search_enabled(role),
+                )
+            finally:
+                release_codex_concurrency_slot(slot)
+        if previous_id and not result["ok"] and codex_saved_thread_unavailable(result):
+            slot = acquire_codex_concurrency_slot(
+                registry_path,
                 timeout_seconds=timeout_seconds,
-                workdir=workdir,
-                web_search=codex_web_search_enabled(role),
             )
+            if slot is None:
+                fallback = codex_slot_timeout_result(previous_id)
+            else:
+                try:
+                    fallback = run_codex_with_startup_retries(
+                        prompt,
+                        thread_id="",
+                        model=model,
+                        reasoning_effort=reasoning_effort,
+                        sandbox=sandbox,
+                        timeout_seconds=timeout_seconds,
+                        workdir=workdir,
+                        web_search=codex_web_search_enabled(role),
+                    )
+                finally:
+                    release_codex_concurrency_slot(slot)
             fallback["resumed"] = False
             fallback["fallback_started"] = True
             result = fallback
@@ -96,6 +116,150 @@ def run_codex_session(
             )
         fcntl.flock(execution_lock, fcntl.LOCK_UN)
     return result
+
+
+def run_codex_with_startup_retries(
+    prompt: str,
+    *,
+    thread_id: str,
+    model: str,
+    reasoning_effort: str,
+    sandbox: str,
+    timeout_seconds: int,
+    workdir: Path,
+    web_search: bool,
+) -> dict[str, Any]:
+    """Retry only failures proven to occur before a Codex turn starts."""
+    max_retries = max(0, int(os.environ.get("WECHAT_CODEX_STARTUP_RETRIES", "2")))
+    base_delay = max(
+        0.0,
+        float(os.environ.get("WECHAT_CODEX_STARTUP_RETRY_DELAY_SECONDS", "1.5")),
+    )
+    retry_reasons: list[str] = []
+    result: dict[str, Any] = {}
+    for retry_index in range(max_retries + 1):
+        result = run_codex_once(
+            prompt,
+            thread_id=thread_id,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            sandbox=sandbox,
+            timeout_seconds=timeout_seconds,
+            workdir=workdir,
+            web_search=web_search,
+        )
+        if not codex_startup_retryable(result) or retry_index >= max_retries:
+            break
+        retry_reasons.append(codex_startup_failure_reason(result))
+        if base_delay:
+            time.sleep(base_delay * (retry_index + 1))
+    result["startup_retry_count"] = len(retry_reasons)
+    if retry_reasons:
+        result["startup_retry_reasons"] = retry_reasons
+    return result
+
+
+def codex_slot_timeout_result(thread_id: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "message": "Codex failed: timed out waiting for an execution slot.",
+        "thread_id": thread_id,
+        "returncode": 124,
+        "stderr_tail": "codex concurrency slot timeout",
+        "stdout_tail": "",
+        "execution_started": False,
+        "tool_activity": False,
+    }
+
+
+def acquire_codex_concurrency_slot(
+    registry_path: Path,
+    *,
+    timeout_seconds: int,
+) -> Any | None:
+    """Bound concurrent Codex CLIs across worker processes without global serialization."""
+    try:
+        slot_count = max(1, int(os.environ.get("WECHAT_CODEX_MAX_CONCURRENCY", "2")))
+    except ValueError:
+        slot_count = 2
+    try:
+        wait_seconds = max(
+            1.0,
+            float(
+                os.environ.get(
+                    "WECHAT_CODEX_CONCURRENCY_WAIT_SECONDS",
+                    str(timeout_seconds),
+                )
+            ),
+        )
+    except ValueError:
+        wait_seconds = float(max(1, timeout_seconds))
+    slot_dir = registry_path.parent / "concurrency-slots"
+    slot_dir.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        for index in range(slot_count):
+            handle = (slot_dir / f"slot-{index}.lock").open("w", encoding="utf-8")
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (BlockingIOError, OSError) as exc:
+                handle.close()
+                if isinstance(exc, OSError) and exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                    raise
+                continue
+            return handle
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.05)
+
+
+def release_codex_concurrency_slot(handle: Any) -> None:
+    try:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+def codex_saved_thread_unavailable(result: dict[str, Any]) -> bool:
+    if result.get("ok") or result.get("execution_started") or result.get("tool_activity"):
+        return False
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("message", "stderr_tail", "stdout_tail")
+    ).casefold()
+    return any(
+        marker in text
+        for marker in (
+            "no saved session found",
+            "thread not found",
+            "conversation not found",
+            "unknown thread",
+        )
+    )
+
+
+def codex_startup_retryable(result: dict[str, Any]) -> bool:
+    if result.get("ok") or result.get("execution_started") or result.get("tool_activity"):
+        return False
+    if str(result.get("message") or "").strip():
+        return False
+    return bool(codex_startup_failure_reason(result))
+
+
+def codex_startup_failure_reason(result: dict[str, Any]) -> str:
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("stderr_tail", "stdout_tail")
+    ).casefold()
+    markers = (
+        "failed to refresh available models",
+        "timeout waiting for child process to exit",
+        "failed to connect to websocket",
+        "failed to connect to responses_websocket",
+        "connection reset before headers",
+        "transport channel closed",
+    )
+    return next((marker for marker in markers if marker in text), "")
 
 
 def registry_lock_path(registry_path: Path) -> Path:
@@ -192,6 +356,8 @@ def run_codex_once(
             "returncode": 127,
             "stderr_tail": "codex executable not found",
             "stdout_tail": "",
+            "execution_started": False,
+            "tool_activity": False,
         }
     command = [codex_bin]
     if web_search:
@@ -232,15 +398,19 @@ def run_codex_once(
             "returncode": proc.returncode,
             "stderr_tail": (proc.stderr or "")[-2000:],
             "stdout_tail": (proc.stdout or "")[-2000:],
+            **codex_event_evidence(proc.stdout),
         }
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        stdout = str(exc.output or "")
+        stderr = str(exc.stderr or "")
         return {
             "ok": False,
             "message": "Codex failed: timed out before completing the turn.",
             "thread_id": thread_id,
             "returncode": 124,
-            "stderr_tail": "timeout",
-            "stdout_tail": "",
+            "stderr_tail": (stderr or "timeout")[-2000:],
+            "stdout_tail": stdout[-2000:],
+            **codex_event_evidence(stdout),
         }
     except FileNotFoundError as exc:
         return {
@@ -250,6 +420,8 @@ def run_codex_once(
             "returncode": 127,
             "stderr_tail": str(exc),
             "stdout_tail": "",
+            "execution_started": False,
+            "tool_activity": False,
         }
     finally:
         output_path.unlink(missing_ok=True)
@@ -382,6 +554,29 @@ def parse_thread_id(events: str) -> str:
         if isinstance(item, dict) and item.get("type") == "thread.started":
             return str(item.get("thread_id") or "")
     return ""
+
+
+def codex_event_evidence(events: str) -> dict[str, bool]:
+    execution_started = False
+    tool_activity = False
+    for line in str(events or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        event_type = str(event.get("type") or "")
+        if event_type.startswith("turn.") or event_type.startswith("item."):
+            execution_started = True
+        item = event.get("item") if isinstance(event.get("item"), dict) else {}
+        item_type = str(item.get("type") or "").casefold()
+        if item_type and item_type not in {"agent_message", "reasoning", "plan"}:
+            tool_activity = True
+    return {
+        "execution_started": execution_started,
+        "tool_activity": tool_activity,
+    }
 
 
 def session_key(chat_name: str, role: str) -> str:

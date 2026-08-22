@@ -827,6 +827,8 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         prompt = str(calls[0]["prompt"])
         self.assertIn("Never transfer one person's statement", prompt)
         self.assertIn("Do not append English/Japanese translations", prompt)
+        self.assertIn("Name every artifact intended for delivery", prompt)
+        self.assertIn("Do not expose task IDs, checksums, UUIDs", prompt)
         self.assertIn("verify that premise before extending it", prompt)
         self.assertIn("Do not replace factual identification", prompt)
         self.assertIn('"sender_display": "megamonster"', prompt)
@@ -1075,6 +1077,30 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(result["data"]["report_pdf"], str(polished_pdf))
         self.assertEqual(result["files"], [str(polished_pdf)])
 
+    def test_artifact_only_recovery_accepts_one_exact_task_pdf_without_markdown(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pdf = root / "compiled-report.pdf"
+            pdf.write_bytes(b"%PDF-1.4\ncompiled")
+            task = {
+                "id": "compiled-only",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "artifact_recovery_only": True,
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+            }
+
+            result = worker.recover_completed_research_artifacts(task, force=True)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["files"], [str(pdf.resolve())])
+        self.assertEqual(result["data"]["recovery_source"], "exact_task_single_pdf")
+
     def test_research_recovery_rejects_report_without_traceable_sources(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1212,6 +1238,19 @@ stderr: noisy internal trace
         self.assertIn("wechat_supervisor.local.env", wrapper_text)
         self.assertIn("WECHAT_WORKER_ENV_FILE", wrapper_text)
         self.assertIn('source "$PRIVATE_ENV"', wrapper_text)
+        self.assertIn("SELFTEST_SIGNATURE", wrapper_text)
+        self.assertIn("worker-selftest.lock", wrapper_text)
+        self.assertIn("flock 9", wrapper_text)
+        self.assertIn("-u WECHAT_AGENT_FORCE_BACKEND", wrapper_text)
+        self.assertIn("-u WECHAT_AGENT_FORCE_DISABLE_AGINTI", wrapper_text)
+        self.assertIn("-u WECHAT_WORKER_DISABLE_GUI_FILE_DOWNLOAD", wrapper_text)
+
+        wecom_wrapper = (
+            ROOT / "agentic_tools" / "wecom_agent" / "scripts" / "wecom_worker_loop.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("wechat_worker_guarded_loop.sh", wecom_wrapper)
+        self.assertNotIn("agenticapp wechat selftest", wecom_wrapper)
+        self.assertNotIn("export WECHAT_WORKER_SKIP_SELFTEST=1", wecom_wrapper)
 
     def test_deterministic_lazyedit_fallback_submits_without_holding_worker(self) -> None:
         worker = load_worker()
@@ -2236,14 +2275,16 @@ stderr: noisy internal trace
         self.assertTrue(worker.send_errors_indicate_deferable(errors))
         self.assertEqual(worker.send_deferred_reason_from_errors(errors), "title_guard_blank")
 
-    def test_blank_title_guard_does_not_hide_real_wrong_chat_title(self) -> None:
+    def test_wrong_chat_title_remains_distinct_and_bounded_retryable(self) -> None:
         worker = load_worker()
         errors = [
             "RuntimeError: Opened chat title guard failed for EchoMind: OCR='鏈接'.",
         ]
 
         self.assertFalse(worker.send_errors_indicate_blank_title_guard(errors))
-        self.assertFalse(worker.send_errors_indicate_deferable(errors))
+        self.assertTrue(worker.send_errors_indicate_title_guard_failure(errors))
+        self.assertTrue(worker.send_errors_indicate_deferable(errors))
+        self.assertEqual(worker.send_deferred_reason_from_errors(errors), "title_guard_failed")
 
     def test_worker_policy_does_not_escalate_missing_source_or_manual_blocker(self) -> None:
         worker = load_worker()
@@ -2676,6 +2717,8 @@ stderr: noisy internal trace
         self.assertIn("new-request-19", prompt)
         self.assertIn("Create the requested PDF", prompt)
         self.assertIn("Do not redesign those systems", prompt)
+        self.assertIn("short meaningful basename", prompt)
+        self.assertIn("2026-08-22-organoid-imaging-review.pdf", prompt)
         self.assertNotIn("For `task.routine.id=video_publish_existing`", prompt)
 
     def test_worker_session_passes_compact_prompt_only_to_aginti(self) -> None:
@@ -3861,6 +3904,40 @@ stderr: noisy internal trace
         self.assertEqual(updated["result"]["confirmation"], "")
         self.assertEqual(updated["result"]["files"], [str(pdf.resolve())])
         self.assertNotIn(str(report.resolve()), updated["result"]["files"])
+
+    def test_reprocess_applies_explicit_pdf_recovery_reason_before_reuse_check(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            pdf = Path(tmp) / "ready.pdf"
+            pdf.write_bytes(b"%PDF-1.4\nready")
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "failed-with-ready-pdf",
+                        "chat": "MEMO写作—外语—挣钱",
+                        "status": "worker_failed",
+                        "route_decision": {"route_kind": "research_or_summary"},
+                        "result": {
+                            "message": "PDF 已附上。",
+                            "confirmation": "",
+                            "files": [str(pdf)],
+                        },
+                    }
+                ],
+            )
+
+            updated = worker.reprocess_task(
+                queue,
+                "failed-with-ready-pdf",
+                reason="deliver the exact stored PDF without rerunning the agent",
+                artifact_recovery_only=True,
+            )
+
+        self.assertEqual(updated["status"], worker.SEND_DEFERRED_LOCKED_STATUS)
+        self.assertTrue(updated["delivery_recovery_only"])
+        self.assertEqual(updated["result"]["files"], [str(pdf.resolve())])
 
     def test_publish_artifact_recovery_rebuilds_result_from_lazyedit_queue(self) -> None:
         worker = load_worker()
@@ -7766,7 +7843,7 @@ stderr: noisy internal trace
 
     def test_real_mp4_exact_chat_sender_failure_blocks_required_delivery(self) -> None:
         worker = load_worker()
-        original_sender = worker.run_exact_chat_file_sender
+        original_sender = worker.run_android_wechat_sender
         original_delay = worker.os.environ.get("WECHAT_WORKER_SEND_RETRY_DELAY")
         try:
             worker.os.environ["WECHAT_WORKER_SEND_RETRY_DELAY"] = "0"
@@ -7774,7 +7851,7 @@ stderr: noisy internal trace
             def fail_sender(*_args, **_kwargs):
                 raise RuntimeError("exact-chat file sender failed with exit 1")
 
-            worker.run_exact_chat_file_sender = fail_sender
+            worker.run_android_wechat_sender = fail_sender
             with tempfile.TemporaryDirectory() as tmp:
                 tmp_path = Path(tmp)
                 mp4 = tmp_path / "sender-failed.mp4"
@@ -7793,7 +7870,7 @@ stderr: noisy internal trace
                 errors = worker.send_result_with_retries(result, "🍓我的设备", targets, task=task)
                 worker.apply_send_outcome(task, result, errors)
         finally:
-            worker.run_exact_chat_file_sender = original_sender
+            worker.run_android_wechat_sender = original_sender
             if original_delay is None:
                 worker.os.environ.pop("WECHAT_WORKER_SEND_RETRY_DELAY", None)
             else:
@@ -7807,13 +7884,13 @@ stderr: noisy internal trace
 
     def test_guarded_file_send_is_one_exact_chat_transaction(self) -> None:
         worker = load_worker()
-        commands: list[list[str]] = []
+        calls: list[dict[str, object]] = []
         bridge_calls: list[list[str]] = []
-        original_sender = worker.run_exact_chat_file_sender
+        original_sender = worker.run_android_wechat_sender
         original_bridge = worker.run_file_bridge_subprocess
         original_record = worker.record_event
         try:
-            worker.run_exact_chat_file_sender = lambda command, **_kwargs: commands.append(command)
+            worker.run_android_wechat_sender = lambda **kwargs: calls.append(kwargs) or {"ok": True}
             worker.run_file_bridge_subprocess = lambda command, **_kwargs: bridge_calls.append(command)
             worker.record_event = lambda **_kwargs: None
             with tempfile.TemporaryDirectory() as tmp:
@@ -7832,24 +7909,36 @@ stderr: noisy internal trace
                     tmp_path / "unused.json",
                     target=target,
                 )
-                target_files = [
-                    Path(command[command.index("--targets-file") + 1])
-                    for command in commands
-                ]
         finally:
-            worker.run_exact_chat_file_sender = original_sender
+            worker.run_android_wechat_sender = original_sender
             worker.run_file_bridge_subprocess = original_bridge
             worker.record_event = original_record
 
-        self.assertEqual(len(commands), 1)
-        command = commands[0]
-        self.assertTrue(str(command[1]).endswith("wechat_gui_send.py"))
-        self.assertIn("--send", command)
-        self.assertIn("--file", command)
-        self.assertIn(str(report.resolve()), command)
-        self.assertIn("--no-search", command)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["chat"], "写作 外语 挣钱")
+        self.assertEqual(calls[0]["files"], [report])
+        self.assertTrue(str(calls[0]["task_id"]).startswith("adhoc-"))
         self.assertEqual(bridge_calls, [])
-        self.assertTrue(all(not path.exists() for path in target_files))
+
+    def test_chat_visible_text_never_exposes_local_artifact_paths(self) -> None:
+        worker = load_worker()
+        report = Path("/home/lachlan/ProjectsLFS/AgenticApp/output/report.pdf")
+        source = Path("/home/lachlan/Nutstore Files/private notes/source.md")
+
+        message = worker.message_with_saved_file_note(
+            f"Report: {report}\nSource: {source}",
+            [source],
+        )
+
+        self.assertNotIn("/home/", message)
+        self.assertNotIn("ProjectsLFS", message)
+        self.assertNotIn("Nutstore Files", message)
+        self.assertIn("report.pdf", message)
+        self.assertIn("source.md", message)
+        unknown = worker.sanitize_chat_visible_text(
+            "Report: /home/lachlan/Nutstore Files/private notes/unknown report.pdf 已完成"
+        )
+        self.assertEqual(unknown, "Report: unknown report.pdf 已完成")
 
     def test_file_bridge_unlocks_and_retries_when_wechat_locks(self) -> None:
         worker = load_worker()
@@ -9280,8 +9369,15 @@ stderr: noisy internal trace
                 "",
                 task=task,
             )
+            delivered = Path(prepared["files"][0])
+            delivered_parent = delivered.parent
+            delivered_name = delivered.name
+            delivered_bytes = delivered.read_bytes()
+            current_bytes = current.read_bytes()
 
-        self.assertEqual(prepared["files"], [str(current.resolve())])
+        self.assertEqual(delivered_parent.name, "delivery")
+        self.assertTrue(delivered_name.endswith("-labcanvas-report.pdf"))
+        self.assertEqual(delivered_bytes, current_bytes)
         self.assertEqual(
             prepared["skipped_files"][0]["reason"],
             "aginti-unscoped-artifact",
@@ -9405,8 +9501,8 @@ stderr: noisy internal trace
             with mock.patch.object(worker, "render_markdown_pdf", side_effect=fake_render):
                 worker.prepare_long_response_delivery(task, result)
 
-            pdf = artifact_dir / "complete-response.pdf"
-            markdown = artifact_dir / "complete-response.md"
+            pdf = next(artifact_dir.glob("*-labagent-report.pdf"))
+            markdown = pdf.with_suffix(".md")
             self.assertTrue(pdf.is_file())
             self.assertIn(answer, markdown.read_text(encoding="utf-8"))
             self.assertEqual(result["files"], [str(pdf)])
@@ -9416,6 +9512,66 @@ stderr: noisy internal trace
                 "compiled",
             )
             self.assertNotIn("已截断", str(result["message"]))
+
+    def test_generic_generated_artifact_gets_meaningful_delivery_name(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            source = artifact_dir / "report.pdf"
+            source.write_bytes(b"%PDF-1.4\norganoid evidence")
+            task: dict[str, object] = {
+                "id": "20260822124500-123",
+                "chat": "LabAgent",
+                "created_at": "2026-08-22T12:45:00+08:00",
+                "request": (
+                    "Current coalesced request:\n"
+                    "Please create a detailed PDF report about organoid imaging biomarkers."
+                ),
+                "artifact_dir": str(artifact_dir),
+            }
+
+            prepared = worker.prepare_result_files(
+                {"message": "Done.", "confirmation": "", "files": [str(source)]},
+                "",
+                task=task,
+            )
+
+            delivered = Path(prepared["files"][0])
+            self.assertEqual(
+                delivered.name,
+                "2026-08-22-about-organoid-imaging-biomarkers-report.pdf",
+            )
+            self.assertEqual(delivered.read_bytes(), source.read_bytes())
+            self.assertEqual(task["delivery_artifact_aliases"][0]["display_name"], delivered.name)
+            self.assertTrue(source.is_file())
+
+    def test_exact_inbound_file_keeps_its_original_filename(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            source = artifact_dir / "report.pdf"
+            source.write_bytes(b"%PDF-1.4\nexact inbound")
+            task: dict[str, object] = {
+                "id": "source-file",
+                "chat": "LabAgent",
+                "request": "Please send this file back.",
+                "artifact_dir": str(artifact_dir),
+                "route_decision": {"route_kind": "file_intake"},
+                "preflight": {
+                    "file_intake": {
+                        "copied": [{"task_copy_path": str(source)}],
+                    }
+                },
+            }
+
+            prepared = worker.prepare_result_files(
+                {"message": "Here it is.", "confirmation": "", "files": [str(source)]},
+                "",
+                task=task,
+            )
+
+            self.assertEqual(prepared["files"], [str(source.resolve())])
+            self.assertNotIn("delivery_artifact_aliases", task)
 
     def test_pdf_compile_failure_keeps_all_numbered_text(self) -> None:
         worker = load_worker()
@@ -9591,22 +9747,26 @@ stderr: noisy internal trace
 
         kill_mock.assert_called_once_with(1234, worker.signal.SIGTERM)
 
-    def test_run_send_subprocess_defers_when_gui_lock_is_busy(self) -> None:
+    def test_run_send_subprocess_delegates_gui_lock_wait_to_sender(self) -> None:
         worker = load_worker()
         original_lock_busy = worker.gui_send_lock_busy
         original_run = worker.run_subprocess_group
         try:
             worker.gui_send_lock_busy = lambda: True
+            calls: list[list[str]] = []
 
-            def fail_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-                raise AssertionError("busy send lane should not spawn a GUI sender")
+            def successful_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0, "", "")
 
-            worker.run_subprocess_group = fail_run
-            with self.assertRaisesRegex(RuntimeError, "WECHAT_SEND_BUSY"):
-                worker.run_send_subprocess(["python3", "-c", "print('unused')"], timeout=1)
+            worker.run_subprocess_group = successful_run
+            command = ["python3", "-c", "print('unused')"]
+            worker.run_send_subprocess(command, timeout=1)
         finally:
             worker.gui_send_lock_busy = original_lock_busy
             worker.run_subprocess_group = original_run
+
+        self.assertEqual(calls, [command])
 
     def test_run_send_subprocess_timeout_is_deferable(self) -> None:
         worker = load_worker()
@@ -9627,14 +9787,26 @@ stderr: noisy internal trace
 
         self.assertTrue(worker.send_errors_indicate_deferable([str(context.exception)]))
 
-    def test_blank_title_guard_error_is_retryable_but_wrong_title_is_not(self) -> None:
+    def test_title_guard_failures_retry_safely_with_distinct_reasons(self) -> None:
         worker = load_worker()
         blank = ["attempt 1: Opened chat title guard failed for EchoMind: OCR=''."]
         wrong = ["attempt 1: Opened chat title guard failed for EchoMind: OCR='OtherChat'."]
 
         self.assertTrue(worker.send_errors_indicate_deferable(blank))
         self.assertEqual(worker.send_deferred_reason_from_errors(blank), "title_guard_blank")
-        self.assertFalse(worker.send_errors_indicate_deferable(wrong))
+        self.assertTrue(worker.send_errors_indicate_title_guard_failure(wrong))
+        self.assertTrue(worker.send_errors_indicate_deferable(wrong))
+        self.assertEqual(worker.send_deferred_reason_from_errors(wrong), "title_guard_failed")
+
+    def test_compact_exception_text_preserves_final_actionable_line(self) -> None:
+        worker = load_worker()
+        exc = RuntimeError("beginning\n" + ("trace detail\n" * 200) + "FINAL TITLE GUARD FAILURE")
+
+        compact = worker.compact_exception_text(exc, limit=240)
+
+        self.assertLessEqual(len(compact), 240)
+        self.assertTrue(compact.startswith("beginning"))
+        self.assertTrue(compact.endswith("FINAL TITLE GUARD FAILURE"))
 
     def test_wechat_entry_required_error_is_retryable(self) -> None:
         worker = load_worker()
@@ -10417,7 +10589,7 @@ stderr: noisy internal trace
         def fail_gui(*_args, **_kwargs):
             raise RuntimeError("Opened chat title guard failed for 懒人科研: OCR=''.")
 
-        def fake_android(_result, target_chat, _task):
+        def fake_android(_result, target_chat, _task, **_kwargs):
             calls.append(target_chat)
             _task["android_text_fallback_send"] = {"sent_at": "now"}
 
@@ -10436,7 +10608,7 @@ stderr: noisy internal trace
         self.assertEqual(calls, ["懒人科研"])
         self.assertIn("android_text_fallback_send", task)
 
-    def test_android_publish_fallback_uses_configured_physical_device(self) -> None:
+    def test_android_text_fallback_uses_guarded_native_sender(self) -> None:
         worker = load_worker()
         result = {
             "message": "已确认发布完成。",
@@ -10451,24 +10623,50 @@ stderr: noisy internal trace
             },
         }
 
-        with mock.patch.object(
+        task = {"id": "publish-task", "chat": "懒人科研"}
+        target = {"name": "懒人科研", "expected_title": "懒人科研"}
+        with mock.patch.object(worker, "guarded_send_target", return_value=target), mock.patch.object(
             worker,
-            "configured_wechat_unlock_serial",
-            return_value="physical-device",
-        ):
-            with mock.patch.object(
-                worker,
-                "resolve_android_serial",
-                side_effect=RuntimeError("stop after device selection"),
-            ) as resolver:
-                with self.assertRaisesRegex(RuntimeError, "stop after device selection"):
-                    worker.send_result_text_via_android_fallback(
-                        result,
-                        "懒人科研",
-                        {"id": "publish-task"},
-                    )
+            "run_android_wechat_sender",
+            return_value={"ok": True, "components": [{"status": "sent"}]},
+        ) as sender, mock.patch.object(worker, "record_event") as record_event:
+            worker.send_result_text_via_android_fallback(
+                result,
+                "懒人科研",
+                task,
+            )
 
-        resolver.assert_called_once_with("adb", "physical-device")
+        self.assertEqual(sender.call_args.kwargs["task_id"], "publish-task")
+        self.assertEqual(sender.call_args.kwargs["target"], target)
+        self.assertEqual(sender.call_args.kwargs["messages"], ["已确认发布完成。"])
+        record_event.assert_called_once_with(
+            chat_name="懒人科研",
+            action="android_text_send",
+            direction="outbound",
+            message="已确认发布完成。",
+            status="sent",
+            db_path=worker.DEFAULT_DB,
+            metadata={"task_id": "publish-task", "transport": "wechat_android"},
+        )
+        self.assertEqual(task["android_text_fallback_send"]["transport"], "wechat_android")
+
+    def test_android_text_fallback_waits_until_required_file_was_sent(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            result = {"message": "PDF 已附上。", "files": [str(report)]}
+            task = {
+                "id": "report-task",
+                "chat": "Shares鏈接",
+                "request": "Send the PDF report.",
+                "route_decision": {"route_kind": "research_summary"},
+            }
+            errors = ["WECHAT_LOCKED: desktop pre-send guard"]
+
+            self.assertFalse(worker.android_text_fallback_allowed(task, result, errors))
+            task["sent_file_paths"] = [str(report.resolve())]
+            self.assertTrue(worker.android_text_fallback_allowed(task, result, errors))
 
     def test_claim_next_deferred_send_respects_backoff(self) -> None:
         worker = load_worker()
@@ -10743,6 +10941,78 @@ stderr: noisy internal trace
         self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
         self.assertEqual(claimed["send_retry_count"], 1)
 
+    def test_required_artifact_delivery_respects_deferred_backoff(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            worker.os.environ,
+            {"WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS": "300"},
+            clear=False,
+        ):
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-artifact-backoff",
+                        "chat": "Shares",
+                        "status": worker.SEND_DEFERRED_ARTIFACT_STATUS,
+                        "send_deferred_reason": "required_artifact_delivery",
+                        "last_send_attempt_at": datetime.now().isoformat(timespec="seconds"),
+                        "result": {
+                            "message": "done",
+                            "confirmation": "",
+                            "files": ["/tmp/report.pdf"],
+                        },
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_deferred_send(queue)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertIsNone(claimed)
+        self.assertEqual(stored["status"], worker.SEND_DEFERRED_ARTIFACT_STATUS)
+        self.assertEqual(int(stored.get("send_retry_count") or 0), 0)
+
+    def test_required_artifact_delivery_stops_at_transient_retry_cap(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            worker.os.environ,
+            {
+                "WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS": "0",
+                "WECHAT_WORKER_TRANSIENT_SEND_MAX_RETRIES": "2",
+            },
+            clear=False,
+        ):
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-artifact-retry-cap",
+                        "chat": "Shares",
+                        "status": worker.SEND_DEFERRED_ARTIFACT_STATUS,
+                        "send_deferred_reason": "required_artifact_delivery",
+                        "send_retry_count": 2,
+                        "last_send_attempt_at": "2026-01-01T00:00:00",
+                        "result": {
+                            "message": "done",
+                            "confirmation": "",
+                            "files": ["/tmp/report.pdf"],
+                        },
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_deferred_send(queue)
+
+            self.assertIsNone(claimed)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertEqual(stored["status"], "send_failed")
+        self.assertEqual(stored["send_retry_count"], 2)
+        self.assertIn("retry limit reached", stored["send_errors"][-1])
+
     def test_repair_missing_artifact_delivery_requeues_done_mp4(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -10824,6 +11094,77 @@ stderr: noisy internal trace
 
         self.assertEqual(payload["repaired_count"], 0)
         self.assertEqual(tasks[0]["status"], "done")
+
+    def test_repair_missing_artifact_delivery_does_not_loop_terminal_send_failure(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            report = tmp_path / "unsent.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            queue = tmp_path / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "task-terminal-send-failure",
+                        "chat": "Shares",
+                        "status": "send_failed",
+                        "send_retry_count": 2,
+                        "result": {
+                            "message": "done",
+                            "confirmation": "",
+                            "files": [str(report)],
+                        },
+                    }
+                ],
+            )
+
+            first = worker.repair_missing_artifact_deliveries(queue)
+            second = worker.repair_missing_artifact_deliveries(queue)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertEqual(first["repaired_count"], 0)
+        self.assertEqual(second["repaired_count"], 0)
+        self.assertEqual(stored["status"], "send_failed")
+        self.assertEqual(stored["send_retry_count"], 2)
+
+    def test_claim_deferred_send_renews_bounded_delivery_lease(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            worker.os.environ,
+            {
+                "WECHAT_WORKER_DEFERRED_SEND_GLOBAL_COOLDOWN_SECONDS": "0",
+                "WECHAT_WORKER_DEFERRED_SEND_BACKOFF_SECONDS": "0",
+            },
+            clear=False,
+        ):
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "renew-lease",
+                        "chat": "Shares",
+                        "status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                        "send_expires_at": "2999-01-01T00:00:00",
+                        "last_send_attempt_at": "2000-01-01T00:00:00",
+                        "result": {"message": "reply", "files": []},
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_deferred_send(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["status"], worker.SEND_RETRYING_STATUS)
+        self.assertNotEqual(claimed["send_expires_at"], "2999-01-01T00:00:00")
+        renewed = worker.parse_iso_datetime(claimed["send_expires_at"])
+        self.assertIsNotNone(renewed)
+        assert renewed is not None
+        remaining = (renewed - worker.datetime.now()).total_seconds()
+        self.assertGreater(remaining, 25 * 60)
+        self.assertLessEqual(remaining, 30 * 60)
 
     def test_recover_recent_expired_transport_delivery_is_bounded_and_scoped(self) -> None:
         worker = load_worker()
@@ -10908,6 +11249,38 @@ stderr: noisy internal trace
 
         self.assertEqual(first["recovered_count"], 1)
         self.assertEqual(second["recovered_count"], 0)
+
+    def test_recover_expired_transport_can_target_one_exact_task(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            now = worker.datetime.now().isoformat(timespec="seconds")
+            common = {
+                "chat": "Shares",
+                "status": "send_expired",
+                "source": {"transport": "wechat"},
+                "expired_from_status": worker.SEND_DEFERRED_LOCKED_STATUS,
+                "expired_at": now,
+                "result": {"message": "stored reply", "files": []},
+            }
+            worker.write_tasks(
+                queue,
+                [
+                    {"id": "recover-me", **common},
+                    {"id": "leave-expired", **common},
+                ],
+            )
+
+            payload = worker.recover_recent_expired_transport_deliveries(
+                queue,
+                transport="wechat",
+                task_ids=["recover-me"],
+            )
+            tasks = {task["id"]: task for task in worker.read_tasks(queue)}
+
+        self.assertEqual(payload["recovered_count"], 1)
+        self.assertEqual(tasks["recover-me"]["send_deferred_reason"], "transport_reconnected")
+        self.assertEqual(tasks["leave-expired"]["status"], "send_expired")
 
     def test_recover_recent_expired_transport_infers_legacy_personal_wechat_route(self) -> None:
         worker = load_worker()

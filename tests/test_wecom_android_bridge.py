@@ -703,6 +703,47 @@ class WeComAndroidBridgeTests(unittest.TestCase):
         self.assertEqual(tapped.attrib["text"], "等待")
         self.assertEqual(runtime.poll_health_snapshot()["last_recovery_action"], "anr_wait")
 
+    def test_recovered_low_storage_dialog_chooses_cancel_not_cleanup(self) -> None:
+        bridge = load_bridge()
+        warning = ET.fromstring(
+            """
+            <hierarchy><node package="com.miui.securitycenter">
+              <node text="存储空间严重不足" package="com.miui.securitycenter" />
+              <node text="取消" resource-id="android:id/button2"
+                    package="com.miui.securitycenter" clickable="true"
+                    bounds="[80,1896][520,2036]" />
+              <node text="前往清理" resource-id="android:id/button1"
+                    package="com.miui.securitycenter" clickable="true"
+                    bounds="[559,1896][1000,2036]" />
+            </node></hierarchy>
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                }
+            )
+            runtime.ensure_device_storage = mock.Mock(
+                return_value={"available_bytes": 900 * 1024 * 1024}
+            )
+            runtime.tap_node = mock.Mock()
+            with mock.patch.object(bridge.time, "sleep"):
+                recovered = runtime.dismiss_recovered_low_storage_dialog(warning)
+
+        self.assertTrue(recovered)
+        runtime.ensure_device_storage.assert_called_once_with()
+        runtime.tap_node.assert_called_once()
+        tapped = runtime.tap_node.call_args.args[1]
+        self.assertEqual(tapped.attrib["text"], "取消")
+        self.assertEqual(
+            runtime.poll_health_snapshot()["last_recovery_action"],
+            "low_storage_warning_dismissed_after_recovery",
+        )
+
     def test_open_chat_list_backs_out_of_internal_article(self) -> None:
         bridge = load_bridge()
         article = ET.fromstring(
@@ -807,6 +848,7 @@ class WeComAndroidBridgeTests(unittest.TestCase):
                     "state_db": str(Path(tmp) / "state.sqlite"),
                     "staging_dir": str(Path(tmp) / "staging"),
                     "minimum_free_data_bytes": 768 * 1024 * 1024,
+                    "auto_prune_safe_logs": False,
                 }
             )
             runtime.disable_host_automount = mock.Mock()
@@ -831,6 +873,52 @@ class WeComAndroidBridgeTests(unittest.TestCase):
                 runtime.prepare_device()
 
         self.assertEqual(runtime.adb_shell.call_count, 2)
+
+    def test_prepare_device_prunes_only_allowlisted_logs_before_retry(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                    "minimum_free_data_bytes": 768 * 1024 * 1024,
+                    "auto_prune_safe_logs": True,
+                    "storage_prune_headroom_bytes": 256 * 1024 * 1024,
+                }
+            )
+            runtime.device_data_storage_status = mock.Mock(
+                side_effect=[
+                    {"available_bytes": 800 * 1024 * 1024},
+                    {"available_bytes": 2 * 1024 * 1024 * 1024},
+                ]
+            )
+            runtime.adb_shell = mock.Mock(return_value="")
+
+            status = runtime.ensure_device_storage()
+
+        self.assertEqual(status["available_bytes"], 2 * 1024 * 1024 * 1024)
+        self.assertEqual(
+            runtime.adb_shell.call_args_list,
+            [
+                mock.call(
+                    "rm",
+                    "-rf",
+                    *bridge.SAFE_EXTERNAL_LOG_DIRS,
+                    timeout=120,
+                    check=False,
+                ),
+                mock.call(
+                    "mkdir",
+                    "-p",
+                    *bridge.SAFE_EXTERNAL_LOG_DIRS,
+                    timeout=30,
+                    check=False,
+                ),
+            ],
+        )
+        self.assertNotIn(bridge.INBOUND_FILECACHE_ROOT, bridge.SAFE_EXTERNAL_LOG_DIRS)
 
     def test_open_chat_list_restarts_app_once_after_bounded_navigation(self) -> None:
         bridge = load_bridge()
@@ -3121,6 +3209,61 @@ class WeComAndroidBridgeTests(unittest.TestCase):
                 endpoint = worker.ready_wecom_android_transport()
 
         self.assertEqual(endpoint, ("http://127.0.0.1:19581", "private-token"))
+
+    def test_passive_poll_yields_to_foreign_android_control_priority(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent", "AgentTest"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                    "control_priority_path": str(root / "priority.json"),
+                }
+            )
+            with mock.patch.object(
+                runtime,
+                "external_control_priority",
+                return_value={"purpose": "personal_wechat_send", "pid": 1234},
+            ), mock.patch.object(runtime, "open_chat_list") as open_chat_list, mock.patch.object(
+                runtime, "snapshot"
+            ) as snapshot:
+                result = runtime.poll_cycle()
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["deferred_for_outbound"])
+        self.assertEqual(result["deferred_reason"], "personal_wechat_send")
+        self.assertEqual(result["deferred_chats"], ["LabAgent", "AgentTest"])
+        open_chat_list.assert_not_called()
+        snapshot.assert_not_called()
+
+    def test_passive_gui_operation_is_preempted_at_next_adb_boundary(self) -> None:
+        bridge = load_bridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(root / "state.sqlite"),
+                    "staging_dir": str(root / "staging"),
+                    "control_priority_path": str(root / "priority.json"),
+                }
+            )
+            runtime.lock_path = root / "bridge.lock"
+            with mock.patch.object(
+                runtime,
+                "external_control_priority",
+                side_effect=[None, None, {"purpose": "personal_wechat_send", "pid": 1234}],
+            ):
+                with runtime.passive_serialized(timeout_seconds=1.0):
+                    with self.assertRaisesRegex(
+                        bridge.BridgeError,
+                        "WECOM_ANDROID_PREEMPTED: personal_wechat_send",
+                    ):
+                        runtime.run(["must-not-run"])
 
     def test_worker_mentions_exact_group_sender_only_on_android(self) -> None:
         worker = load_worker()
