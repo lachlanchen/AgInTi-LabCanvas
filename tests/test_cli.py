@@ -5,11 +5,52 @@ from datetime import datetime, timedelta
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from agenticapp.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_agent_status_json_omits_unrelated_artifact_history(self):
+        task_artifact = {
+            "id": "task-pdf",
+            "filename": "organoid-imaging-review.pdf",
+            "path": "agent/tasks/task-1/organoid-imaging-review.pdf",
+            "title": "Organoid imaging review",
+        }
+        response = {
+            "ok": True,
+            "task": {
+                "id": "task-1",
+                "status": "completed",
+                "reply": "The review is ready.",
+                "artifacts": [task_artifact],
+            },
+            "artifacts": {
+                "ok": True,
+                "items": [
+                    task_artifact,
+                    {
+                        "id": "old-file",
+                        "filename": "unrelated-history.step",
+                        "path": "agent/tasks/old/unrelated-history.step",
+                    },
+                ],
+                "selected_id": "old-file",
+            },
+        }
+        stdout = io.StringIO()
+
+        with patch("agenticapp.workspace_agent.task_response", return_value=response):
+            with redirect_stdout(stdout):
+                code = main(["agent", "status", "task-1", "--json"])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["artifacts"]["scope"], "task")
+        self.assertEqual(payload["artifacts"]["items"], [task_artifact])
+        self.assertNotIn("unrelated-history.step", stdout.getvalue())
+
     def test_agent_chat_dry_run_selects_dynamic_tool_policy(self):
         with tempfile.TemporaryDirectory() as tmp:
             stdout = io.StringIO()

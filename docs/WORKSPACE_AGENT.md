@@ -79,7 +79,10 @@ labcanvas agent cancel TASK_ID
 
 Use `--conversation NAME` to preserve a separate CLI thread. `--dry-run` prints
 the selected model policy and full operating contract without launching an
-agent.
+agent. JSON from `agent chat` and `agent status` includes only artifacts owned
+by that task, which keeps automation output bounded even when the canvas has a
+long history. Use `labcanvas studio artifacts --json` when the complete canvas
+artifact registry is explicitly needed.
 
 ## Model Policy
 

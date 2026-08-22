@@ -597,7 +597,8 @@ def cmd_agent_chat(args: argparse.Namespace) -> int:
             timeout = policy_timeout * attempts + 60
             result = wait_for_task(result["task"]["id"], storage_dir, timeout=timeout)
     if args.json:
-        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        output = result if args.dry_run else _task_scoped_agent_payload(result)
+        print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
     elif args.dry_run:
         policy = result["policy"]
         print(f"agent: {policy['backend']} {policy['model']} {policy['effort_label']} ({policy['mode']})")
@@ -642,7 +643,8 @@ def cmd_agent_status(args: argparse.Namespace) -> int:
     from .workspace_agent import task_response
 
     result = task_response(args.task_id, args.storage_dir)
-    _print_payload(result, args.json, f"agent task: {result['task']['status']} {result['task'].get('reply') or result['task'].get('error') or ''}")
+    output = _task_scoped_agent_payload(result) if args.json else result
+    _print_payload(output, args.json, f"agent task: {result['task']['status']} {result['task'].get('reply') or result['task'].get('error') or ''}")
     return 0 if result.get("ok") else 1
 
 
@@ -812,6 +814,29 @@ def _print_payload(payload: dict[str, Any], as_json: bool, summary: str) -> None
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(summary)
+
+
+def _task_scoped_agent_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep task CLI output bounded while the web API retains its full canvas bundle."""
+
+    result = dict(payload)
+    task = result.get("task")
+    if not isinstance(task, dict):
+        return result
+    items = task.get("artifacts")
+    if not isinstance(items, list):
+        items = []
+    selected_id = next(
+        (str(item.get("id") or "") for item in items if isinstance(item, dict) and item.get("selected")),
+        "",
+    )
+    result["artifacts"] = {
+        "ok": True,
+        "scope": "task",
+        "items": items,
+        "selected_id": selected_id,
+    }
+    return result
 
 
 def _tmux_status(session: str) -> dict[str, Any]:
