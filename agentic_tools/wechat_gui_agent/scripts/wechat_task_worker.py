@@ -5855,6 +5855,11 @@ def expire_stale_queue_entries(tasks: list[dict[str, Any]], now: datetime) -> bo
             expired_status = "expired_stale"
             reason = "pending_task_ttl_exceeded"
             deadline = parse_iso_datetime(str(task.get("expires_at") or ""))
+        elif status == "waiting_confirmation":
+            ttl = pending_ttl
+            expired_status = "expired_stale"
+            reason = "confirmation_ttl_exceeded"
+            deadline = parse_iso_datetime(str(task.get("expires_at") or ""))
         elif status in deferred_statuses:
             ttl = deferred_ttl
             expired_status = "send_expired"

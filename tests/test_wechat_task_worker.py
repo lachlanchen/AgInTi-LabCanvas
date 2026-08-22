@@ -12282,6 +12282,42 @@ stderr: noisy internal trace
         self.assertEqual(stored["status"], "expired_stale")
         self.assertEqual(stored["expire_reason"], "pending_task_ttl_exceeded")
 
+    def test_claim_next_pending_expires_old_confirmation_without_running_it(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            worker.os.environ,
+            {"WECHAT_WORKER_PENDING_TASK_TTL_SECONDS": "60"},
+            clear=False,
+        ):
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "old-confirmation",
+                        "chat": "LazyResearch",
+                        "request": "download a paper",
+                        "status": "waiting_confirmation",
+                        "created_at": "2000-01-01T00:00:00",
+                        "expires_at": "2000-01-01T00:01:00",
+                        "result": {
+                            "message": "The source requires an authenticated account.",
+                            "confirmation": "Sign in and reply done.",
+                            "files": [],
+                        },
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            stored = worker.read_tasks(queue)[0]
+
+        self.assertIsNone(claimed)
+        self.assertEqual(stored["status"], "expired_stale")
+        self.assertEqual(stored["expired_from_status"], "waiting_confirmation")
+        self.assertEqual(stored["expire_reason"], "confirmation_ttl_exceeded")
+        self.assertIn("result", stored)
+
     def test_claim_next_pending_preserves_old_daily_research_without_deadline(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(

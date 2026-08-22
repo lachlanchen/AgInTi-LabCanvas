@@ -1069,6 +1069,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": worker_prefix + "test_claim_next_pending_recovers_recent_safe_dead_worker_once",
         },
         {
+            "id": "expired_confirmation_leaves_live_queue",
+            "test": worker_prefix + "test_claim_next_pending_expires_old_confirmation_without_running_it",
+        },
+        {
             "id": "concurrent_interruption_survives_worker_progress",
             "test": worker_prefix + "test_rewrite_task_preserves_interruptions_added_after_worker_claim",
         },
