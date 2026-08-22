@@ -3782,8 +3782,11 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
             "## references",
             "## literature",
             "## 证据",
+            "## 已核实事实",
+            "## 核实事实",
             "## 参考文献",
             "直接证据",
+            "verified facts",
             "evidence boundary",
             "证据边界",
         )
@@ -7956,6 +7959,32 @@ def audit_and_repair_worker_completion(
             task.pop("completion_audit_repair", None)
     else:
         final = first
+    if completion_audit_missing_pdf_artifact(final):
+        try:
+            recovered = recover_completed_research_artifacts(
+                task,
+                "completion audit requires an exact-task PDF artifact",
+                force=True,
+            )
+            if recovered is not None:
+                combined = merge_completion_results(combined, recovered)
+                recovered_audit = run_completion_audit(task, combined)
+                attempts.append(
+                    completion_audit_record(
+                        recovered_audit,
+                        stage="deterministic_artifact_recovery",
+                    )
+                )
+                final = recovered_audit
+                repaired = repaired or not bool(recovered_audit.get("missing"))
+        except Exception as exc:
+            attempts.append(
+                {
+                    "stage": "deterministic_artifact_recovery",
+                    "status": "recovery_failed",
+                    "error": f"{type(exc).__name__}: {str(exc)[:500]}",
+                }
+            )
     coverage = completion_message_coverage(task, final, attempts, repaired=repaired)
     task["completion_audit"] = {
         "status": str(final.get("status") or ""),
@@ -7967,6 +7996,17 @@ def audit_and_repair_worker_completion(
     if coverage["unresolved_item_ids"]:
         combined = disclose_unresolved_completion(combined, coverage)
     return combined
+
+
+def completion_audit_missing_pdf_artifact(audit: dict[str, Any]) -> bool:
+    """Return true only for a still-missing explicit PDF deliverable."""
+
+    return any(
+        isinstance(item, dict)
+        and str(item.get("kind") or "") == "artifact"
+        and "pdf" in str(item.get("requirement") or "").casefold()
+        for item in audit.get("missing") or []
+    )
 
 
 def completion_missing_source_items(

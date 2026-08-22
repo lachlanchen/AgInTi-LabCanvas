@@ -218,6 +218,113 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             ["task:parent-1", "task:child-2"],
         )
 
+    def test_completion_audit_recovers_exact_task_pdf_after_agent_repair_fails(self) -> None:
+        worker = load_worker()
+        first = {
+            "status": "unavailable",
+            "coverage_complete": False,
+            "expected_item_ids": ["task:daily-1"],
+            "covered_item_ids": [],
+            "missing": [
+                {
+                    "item_id": "task:daily-1",
+                    "requirement": "Create and return the explicitly requested PDF artifact.",
+                    "kind": "artifact",
+                }
+            ],
+            "repair_recommended": True,
+            "complexity": "medium",
+        }
+        recovered_audit = {
+            "status": "unavailable",
+            "coverage_complete": True,
+            "expected_item_ids": ["task:daily-1"],
+            "covered_item_ids": ["task:daily-1"],
+            "missing": [],
+            "repair_recommended": False,
+            "complexity": "low",
+        }
+        task = {
+            "id": "daily-1",
+            "chat": "LabAgent",
+            "original_request": "请提供今日研究 PDF。",
+            "source": {"local_id": 1, "sender_display": "Researcher"},
+            "routine": {"id": "research_summary"},
+            "daily_research": {"date": "2026-08-23"},
+            "worker_policy": {
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "medium",
+                "sandbox": "danger-full-access",
+                "timeout_seconds": 300,
+            },
+        }
+        recovered = {
+            "message": "今日研究简报已完成，PDF 已附上。",
+            "confirmation": "",
+            "files": ["/tmp/daily-report.pdf"],
+            "data": {"artifact_recovery": True},
+        }
+
+        with (
+            mock.patch.object(
+                worker,
+                "run_completion_audit",
+                side_effect=[first, recovered_audit],
+            ),
+            mock.patch.object(
+                worker,
+                "run_worker_agent_session",
+                return_value='{"message":"unable","files":[],"no_reply":true}',
+            ),
+            mock.patch.object(
+                worker,
+                "completion_repair_result_usable",
+                return_value=False,
+            ),
+            mock.patch.object(
+                worker,
+                "recover_completed_research_artifacts",
+                return_value=recovered,
+            ) as recover,
+        ):
+            result = worker.audit_and_repair_worker_completion(
+                task,
+                {"message": "正文已完成，但没有 PDF。", "confirmation": "", "files": []},
+            )
+
+        self.assertEqual(result["files"], ["/tmp/daily-report.pdf"])
+        self.assertEqual(task["message_coverage"]["status"], "covered")
+        self.assertTrue(task["completion_audit"]["repair_succeeded"])
+        self.assertEqual(
+            task["completion_audit"]["attempts"][-1]["stage"],
+            "deterministic_artifact_recovery",
+        )
+        recover.assert_called_once_with(
+            task,
+            "completion audit requires an exact-task PDF artifact",
+            force=True,
+        )
+
+    def test_research_report_evidence_accepts_verified_facts_heading(self) -> None:
+        worker = load_worker()
+        evidence = worker.research_report_evidence_summary(
+            """# Briefing
+
+## 已核实事实
+
+- https://example.org/source-one
+- https://example.net/source-two
+
+## 局限
+
+This hypothesis still needs validation.
+"""
+        )
+
+        self.assertTrue(evidence["has_evidence_section"])
+        self.assertTrue(evidence["has_uncertainty"])
+        self.assertEqual(evidence["traceable_source_count"], 2)
+
     def test_completion_repair_replaces_rejected_candidate_artifacts(self) -> None:
         worker = load_worker()
         original = {

@@ -1369,6 +1369,10 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
             "test": worker_prefix + "test_completion_audit_repairs_missing_pdf_in_same_worker_session",
         },
         {
+            "id": "numbered_completion_recovers_exact_task_pdf",
+            "test": worker_prefix + "test_completion_audit_recovers_exact_task_pdf_after_agent_repair_fails",
+        },
+        {
             "id": "legacy_numbered_row_recovered",
             "test": worker_prefix + "test_legacy_child_absent_from_parent_ledger_is_requeued",
         },

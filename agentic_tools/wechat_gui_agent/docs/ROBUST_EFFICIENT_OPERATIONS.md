@@ -295,6 +295,11 @@ For the restricted LabAgent research group:
   source PDFs but loses its final response, recover from that task directory,
   compile the report PDF, and require one source-chat delivery. Exclude routine
   contracts, manifests, and notes; never salvage another task's artifacts.
+- Apply the same exact-task recovery when completion audit still finds a
+  requested PDF after its one agent correction turn. Accept evidence-oriented
+  report headings such as `Evidence`, `已核实事实`, and `参考文献`; require at least
+  two traceable sources, compile deterministically, audit coverage again, and
+  deliver without rerunning the research.
 - If the report already has an exact-name sibling PDF rendered from its TeX
   source, recovery sends that designed PDF. Generic Markdown-to-PDF compilation
   is fallback only and must not replace a polished report or drop its figures.
