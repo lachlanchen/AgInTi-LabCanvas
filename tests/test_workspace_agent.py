@@ -380,7 +380,7 @@ class WorkspaceAgentTests(unittest.TestCase):
                             "artifacts": [
                                 {
                                     "path": str(source),
-                                    "title": "result.txt",
+                                    "title": "Delivery confirmation",
                                     "kind": "text",
                                 }
                             ],
@@ -416,12 +416,17 @@ class WorkspaceAgentTests(unittest.TestCase):
         for filename in (
             "file-v2.txt",
             "data-final.csv",
+            "delivery-confirmation.txt",
+            "final-report-v3.pdf",
             "报告.pdf",
             "結果.docx",
             "レポート.pdf",
         ):
             with self.subTest(filename=filename):
                 self.assertTrue(workspace_artifact_name_is_generic(filename))
+        self.assertFalse(
+            workspace_artifact_name_is_generic("organoid-review-delivery.pdf")
+        )
 
     def test_task_runner_accepts_artifact_from_allowlisted_sibling_routine(self):
         with tempfile.TemporaryDirectory() as tmp:

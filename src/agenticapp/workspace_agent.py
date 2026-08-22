@@ -1796,8 +1796,11 @@ def register_agent_artifacts(store: ArtifactStore, items: list[dict[str, Any]], 
 WORKSPACE_GENERIC_ARTIFACT_STEMS = {
     "analysis",
     "artifact",
+    "attachment",
     "complete-response",
+    "confirmation",
     "data",
+    "delivery",
     "document",
     "file",
     "final",
@@ -1807,6 +1810,7 @@ WORKSPACE_GENERIC_ARTIFACT_STEMS = {
     "paper",
     "presentation",
     "report",
+    "receipt",
     "response",
     "result",
     "slides",
@@ -1858,9 +1862,17 @@ def workspace_artifact_name_is_generic(filename: str) -> bool:
     stem = Path(str(filename or "")).stem.casefold()
     normalized = re.sub(r"[^0-9a-z]+", "-", stem).strip("-")
     compact_label = re.sub(r"[\W_]+", "", stem, flags=re.UNICODE)
+    normalized_tokens = [token for token in normalized.split("-") if token]
+    operational_only = bool(normalized_tokens) and all(
+        token in WORKSPACE_GENERIC_ARTIFACT_STEMS
+        or token in {"complete", "completed", "final", "latest", "new"}
+        or bool(re.fullmatch(r"v?\d+", token))
+        for token in normalized_tokens
+    )
     return (
         normalized in WORKSPACE_GENERIC_ARTIFACT_STEMS
         or compact_label in WORKSPACE_GENERIC_ARTIFACT_LABELS
+        or operational_only
         or bool(
             re.fullmatch(
                 r"(?:final-)?(?:analysis|artifact|data|document|file|image|output|paper|presentation|report|response|result|slides|summary|text|txt|video)"
