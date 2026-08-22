@@ -2006,6 +2006,10 @@ Stuck GUI sender:
   after a busy or failed GUI send, both the scheduler and transport guard honor
   the same 30-minute retry window. This prevents the five-minute scheduler poll
   from repeatedly contending for the GUI lane while preserving the exact PDF.
+  File delivery may move from Android to the serialized desktop sender only
+  when Android's exact-title guard proves that sharing never started. Both
+  transports retain the same target contract. Timeouts and other uncertain
+  failures remain deferred so a possible prior send cannot be duplicated.
   A fresh `lesson_delivery_attempt` heartbeat also keeps an older pending
   lesson non-actionable while its bounded sender transaction is running; the
   normal scheduler heartbeat deadline makes a wedged attempt actionable again.
@@ -2163,8 +2167,10 @@ Exact existing-video publication recovery:
   job/video identity is already known;
 - keep synchronous media probing out of LazyEdit request handlers. Preview
   `ffprobe`, proxy, and poster work belongs on its bounded executor;
-- treat WeCom `waiting_confirmation` as idle for periodic inspiration. It is a
-  durable human gate, not active worker occupancy.
+- treat WeCom `waiting_confirmation` as idle for periodic inspiration,
+  including an older scheduled-inspiration task itself. It is a durable human
+  gate, not active worker occupancy, and must not suppress every later idle
+  turn.
 
 The full incident analysis, tests, ownership boundary, and validation commands
 are in

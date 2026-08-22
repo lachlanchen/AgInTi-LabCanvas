@@ -17808,7 +17808,10 @@ def task_artifact_date(task: dict[str, Any]) -> str:
         source.get("timestamp"),
     ]
     for candidate in candidates:
-        match = re.search(r"\b(20\d{2})[-/]?(\d{2})[-/]?(\d{2})\b", str(candidate or ""))
+        match = re.search(
+            r"(?<!\d)(20\d{2})[-/]?(\d{2})[-/]?(\d{2})(?!\d)",
+            str(candidate or ""),
+        )
         if match:
             return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
     return datetime.now().strftime("%Y-%m-%d")
@@ -18085,40 +18088,21 @@ def send_file(
     if target:
         transport = os.environ.get("WECHAT_WORKER_FILE_TRANSPORT", "android").strip().casefold()
         if transport == "android":
-            run_android_wechat_sender(
-                chat=chat,
-                target=target,
-                task_id=str((task or {}).get("id") or f"adhoc-{time.time_ns()}"),
-                files=[file_path],
-            )
-            transport_name = "wechat_android"
-        elif transport == "desktop":
-            command = [
-                sys.executable,
-                str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
-                "--targets-file",
-                "",
-                "--prefer-current",
-                "--send",
-                "--file",
-                str(file_path.expanduser().resolve()),
-                "--pause",
-                os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
-                "--mirror-db",
-                str(DEFAULT_DB),
-            ]
-            with tempfile.NamedTemporaryFile("w+", suffix=".json", encoding="utf-8", delete=False) as handle:
-                target_file = Path(handle.name)
-                json.dump({"message": "", "targets": [target]}, handle, ensure_ascii=False)
-            command[command.index("--targets-file") + 1] = str(target_file)
-            if gui_search_allowed_for_target(target):
-                command.append("--allow-search")
-            else:
-                command.append("--no-search")
             try:
-                run_exact_chat_file_sender(command)
-            finally:
-                target_file.unlink(missing_ok=True)
+                run_android_wechat_sender(
+                    chat=chat,
+                    target=target,
+                    task_id=str((task or {}).get("id") or f"adhoc-{time.time_ns()}"),
+                    files=[file_path],
+                )
+                transport_name = "wechat_android"
+            except RuntimeError as exc:
+                if not android_file_send_can_fallback_to_desktop(exc):
+                    raise
+                run_desktop_wechat_file_sender(file_path, target)
+                transport_name = "wechat_gui_after_android_preflight_failure"
+        elif transport == "desktop":
+            run_desktop_wechat_file_sender(file_path, target)
             transport_name = "wechat_gui"
         else:
             raise RuntimeError(
@@ -18154,6 +18138,46 @@ def send_file(
             "transport": transport_name,
         },
     )
+
+
+def android_file_send_can_fallback_to_desktop(exc: BaseException) -> bool:
+    """Allow failover only when Android proved no share action started."""
+    if os.environ.get("WECHAT_WORKER_FILE_DESKTOP_PREFLIGHT_FALLBACK", "1") == "0":
+        return False
+    message = str(exc).upper()
+    return "ANDROID_WECHAT_TITLE_GUARD" in message
+
+
+def run_desktop_wechat_file_sender(file_path: Path, target: dict[str, Any]) -> None:
+    """Send one file through the serialized, exact-title desktop transaction."""
+    command = [
+        sys.executable,
+        str(ROOT / "agentic_tools" / "wechat_gui_agent" / "scripts" / "wechat_gui_send.py"),
+        "--targets-file",
+        "",
+        "--prefer-current",
+        "--send",
+        "--file",
+        str(file_path.expanduser().resolve()),
+        "--pause",
+        os.environ.get("WECHAT_WORKER_SEND_PAUSE", "0.35"),
+        "--mirror-db",
+        str(DEFAULT_DB),
+    ]
+    with tempfile.NamedTemporaryFile(
+        "w+", suffix=".json", encoding="utf-8", delete=False
+    ) as handle:
+        target_file = Path(handle.name)
+        json.dump({"message": "", "targets": [target]}, handle, ensure_ascii=False)
+    command[command.index("--targets-file") + 1] = str(target_file)
+    if gui_search_allowed_for_target(target):
+        command.append("--allow-search")
+    else:
+        command.append("--no-search")
+    try:
+        run_exact_chat_file_sender(command)
+    finally:
+        target_file.unlink(missing_ok=True)
 
 
 def run_android_wechat_sender(

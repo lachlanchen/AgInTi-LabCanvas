@@ -58,6 +58,9 @@ INSPIRATION_FINAL_STATUSES = {
     "expired",
     "expired_stale",
     "rejected",
+    # This task is no longer consuming a worker. It may remain available for
+    # an explicit human decision without suppressing every later idle turn.
+    "waiting_confirmation",
 }
 CHAT_BUSY_STATUSES = {
     "pending",

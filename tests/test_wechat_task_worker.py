@@ -7933,6 +7933,77 @@ stderr: noisy internal trace
         self.assertTrue(str(calls[0]["task_id"]).startswith("adhoc-"))
         self.assertEqual(bridge_calls, [])
 
+    def test_android_title_guard_file_send_falls_back_to_exact_desktop_transaction(self) -> None:
+        worker = load_worker()
+        desktop_calls: list[tuple[Path, dict[str, object]]] = []
+        events: list[dict[str, object]] = []
+        original_android = worker.run_android_wechat_sender
+        original_desktop = worker.run_desktop_wechat_file_sender
+        original_record = worker.record_event
+        try:
+            worker.run_android_wechat_sender = mock.Mock(
+                side_effect=RuntimeError(
+                    "WECHAT_ANDROID_SEND_FAILED: ANDROID_WECHAT_TITLE_GUARD: "
+                    "exact target 'EchoMind' was not found"
+                )
+            )
+            worker.run_desktop_wechat_file_sender = (
+                lambda path, target: desktop_calls.append((path, target))
+            )
+            worker.record_event = lambda **kwargs: events.append(kwargs)
+            with tempfile.TemporaryDirectory() as tmp:
+                report = Path(tmp) / "echomind-daily-review.pdf"
+                report.write_bytes(b"%PDF-1.4\n")
+                target = {
+                    "name": "EchoMind",
+                    "query": "EchoMind",
+                    "expected_title": "EchoMind",
+                    "allow_search": True,
+                }
+                worker.send_file(
+                    report,
+                    "EchoMind",
+                    Path(tmp) / "unused.json",
+                    target=target,
+                )
+        finally:
+            worker.run_android_wechat_sender = original_android
+            worker.run_desktop_wechat_file_sender = original_desktop
+            worker.record_event = original_record
+
+        self.assertEqual(desktop_calls, [(report, target)])
+        self.assertEqual(len(events), 1)
+        self.assertEqual(
+            events[0]["metadata"]["transport"],
+            "wechat_gui_after_android_preflight_failure",
+        )
+
+    def test_android_uncertain_file_send_failure_does_not_fallback(self) -> None:
+        worker = load_worker()
+        original_android = worker.run_android_wechat_sender
+        original_desktop = worker.run_desktop_wechat_file_sender
+        try:
+            worker.run_android_wechat_sender = mock.Mock(
+                side_effect=RuntimeError("WECHAT_ANDROID_SEND_TIMEOUT")
+            )
+            worker.run_desktop_wechat_file_sender = mock.Mock()
+            with tempfile.TemporaryDirectory() as tmp:
+                report = Path(tmp) / "report.pdf"
+                report.write_bytes(b"%PDF-1.4\n")
+                with self.assertRaisesRegex(RuntimeError, "ANDROID_SEND_TIMEOUT"):
+                    worker.send_file(
+                        report,
+                        "EchoMind",
+                        Path(tmp) / "unused.json",
+                        target={"name": "EchoMind", "expected_title": "EchoMind"},
+                    )
+        finally:
+            desktop = worker.run_desktop_wechat_file_sender
+            worker.run_android_wechat_sender = original_android
+            worker.run_desktop_wechat_file_sender = original_desktop
+
+        desktop.assert_not_called()
+
     def test_chat_visible_text_never_exposes_local_artifact_paths(self) -> None:
         worker = load_worker()
         report = Path("/home/lachlan/ProjectsLFS/AgenticApp/output/report.pdf")
