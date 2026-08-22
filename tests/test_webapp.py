@@ -88,6 +88,32 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("image/svg+xml", content_type)
         self.assertIn("<svg", body)
 
+    def test_artifact_response_preserves_meaningful_download_filename(self):
+        previous_storage = LabCanvasHandler.storage_dir
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Path(tmp)
+            artifact = storage / "organoid-imaging-evidence-review.pdf"
+            artifact.write_bytes(b"%PDF-1.4\nmeaningful artifact")
+            LabCanvasHandler.storage_dir = storage
+            server = create_server("127.0.0.1", 0)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                host, port = server.server_address
+                with request.urlopen(
+                    f"http://{host}:{port}/artifacts/{artifact.name}", timeout=3
+                ) as response:
+                    disposition = response.headers["Content-Disposition"]
+                    body = response.read()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=3)
+                LabCanvasHandler.storage_dir = previous_storage
+
+        self.assertIn("organoid-imaging-evidence-review.pdf", disposition)
+        self.assertTrue(body.startswith(b"%PDF"))
+
     def test_server_serves_room_surface_and_room_api(self):
         previous_storage = LabCanvasHandler.storage_dir
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,6 +161,8 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="writingFullText"', html)
         self.assertIn('id="writeNextBtn"', html)
         self.assertIn("GPT-5.6 SOL", html)
+        self.assertNotIn("artifactMeta.textContent = item.path", script)
+        self.assertNotIn("preview.textContent = item.preview || item.path", script)
         for locale in expected:
             self.assertIn(f'value="{locale}"', html)
         for key in set(re.findall(r'data-i18n(?:-[a-z]+)?="([^"]+)"', html)):

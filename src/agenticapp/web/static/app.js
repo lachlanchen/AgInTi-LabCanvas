@@ -1526,9 +1526,9 @@ function renderArtifactList() {
     top.append(title, kind);
 
     const meta = document.createElement("small");
-    meta.textContent = item.source || item.path;
+    meta.textContent = [item.kind, item.filename, item.source].filter(Boolean).join(" · ");
     const preview = document.createElement("em");
-    preview.textContent = item.preview || item.path;
+    preview.textContent = item.preview || item.filename || item.title;
     button.append(top, meta, preview);
     artifactList.appendChild(button);
   });
@@ -1540,7 +1540,7 @@ async function selectArtifact(id) {
   const item = artifacts.find((candidate) => candidate.id === id);
   if (!item) return;
   artifactTitle.textContent = item.title;
-  artifactMeta.textContent = item.path;
+  artifactMeta.textContent = [item.filename, item.mime].filter(Boolean).join(" · ");
   artifactKind.textContent = item.kind;
   resetViewer();
   setLink(artifactOpenLink, item.url);
@@ -1557,7 +1557,7 @@ async function selectArtifact(id) {
     const response = await fetch(item.url);
     body.textContent = await response.text();
   } else {
-    body.textContent = `${t("artifact.path")}: ${item.path}`;
+    body.textContent = `${item.filename || item.title} · ${item.mime || item.kind || "file"}`;
   }
   artifactViewer.appendChild(body);
 }

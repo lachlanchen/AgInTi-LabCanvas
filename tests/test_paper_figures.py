@@ -30,6 +30,7 @@ class PaperFigureTests(unittest.TestCase):
 
         self.assertEqual(item["kind"], "image")
         self.assertTrue(item["url"].endswith(".svg"))
+        self.assertEqual(item["filename"], result.path.name)
 
     def test_openscad_export_writes_scene_proxy(self):
         with tempfile.TemporaryDirectory() as tmp:

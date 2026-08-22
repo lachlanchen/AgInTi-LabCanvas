@@ -321,6 +321,10 @@ class LabCanvasHandler(BaseHTTPRequestHandler):
         body = path.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
+        self.send_header(
+            "Content-Disposition",
+            f"inline; filename*=UTF-8''{urlparse.quote(path.name)}",
+        )
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -425,6 +429,7 @@ def room_message_shape(message: dict[str, Any]) -> dict[str, Any]:
             if key in artifact
         }
         public.setdefault("title", Path(str(artifact.get("path") or "artifact")).name)
+        public["filename"] = Path(str(artifact.get("path") or "artifact")).name
         public["url"] = f"/api/rooms/{room_id}/artifacts/{message_id}/{index}"
         artifacts.append(public)
     shaped["artifacts"] = artifacts

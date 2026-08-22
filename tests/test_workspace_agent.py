@@ -301,6 +301,48 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertNotRegex(artifact_name, r"-[0-9a-f]{8}\.pdf$")
         self.assertNotIn(task_id, stored["artifacts"][0]["preview"])
 
+    def test_task_runner_uses_request_for_generic_name_and_hides_local_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = root / "output" / "webapp"
+            source = root / "report-final.pdf"
+            source.write_bytes(b"%PDF-1.4\norganoid evidence")
+            created = create_agent_task(
+                {
+                    "message": "Create an organoid imaging evidence review.",
+                    "conversation_id": "meaningful-artifact-request",
+                },
+                storage,
+                root=root,
+                launch=False,
+            )
+            task_id = created["task"]["id"]
+
+            def fake_runner(_prompt, **kwargs):
+                (kwargs["task_dir"] / "agent-result.json").write_text(
+                    json.dumps(
+                        {
+                            "reply": f"Completed the report at {source}.",
+                            "artifacts": [{"path": str(source), "kind": "file"}],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return {"ok": True, "backend": "aginti", "returncode": 0, "message": "done"}
+
+            result = run_agent_task(task_id, storage, root=root, backend_runner=fake_runner)
+            stored = AgentTaskStore(storage).read(task_id)
+
+        self.assertTrue(result["ok"])
+        artifact = stored["artifacts"][0]
+        self.assertEqual(Path(artifact["path"]).name, "organoid-imaging-evidence-review.pdf")
+        self.assertEqual(artifact["title"], "organoid-imaging-evidence-review.pdf")
+        self.assertNotIn(str(root), stored["reply"])
+        self.assertEqual(
+            stored["reply"],
+            "Completed the report at organoid-imaging-evidence-review.pdf.",
+        )
+
     def test_task_runner_accepts_artifact_from_allowlisted_sibling_routine(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "AgenticApp"

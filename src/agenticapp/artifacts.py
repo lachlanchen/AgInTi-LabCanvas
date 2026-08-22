@@ -125,9 +125,13 @@ class ArtifactStore:
     def _public_item(self, item: dict[str, Any], selected_id: str) -> dict[str, Any]:
         artifact_id = str(item.get("id") or "")
         relative = str(item.get("path") or "")
+        filename = Path(relative).name or "artifact"
+        title = str(item.get("title") or filename)
         return {
             "id": artifact_id,
-            "title": str(item.get("title") or Path(relative).name),
+            "title": title,
+            "filename": filename,
+            "display_name": title if title != filename else filename,
             "kind": artifact_kind_for_path(relative, str(item.get("kind") or "")),
             "path": relative,
             "url": str(item.get("url") or f"/artifacts/{relative}"),

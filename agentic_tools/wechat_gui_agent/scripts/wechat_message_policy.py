@@ -179,6 +179,7 @@ def attachment_transport_identity(text: str) -> dict[str, object]:
         "name": (
             r"(?im)^\s*(?:title|filename|file_name|name)\s*[:：]\s*(.+?)\s*$",
             r"(?i)\b(?:title|filename|file_name)\s*=\s*[\"']([^\"']+)[\"']",
+            r"(?is)<title>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</title>",
         ),
         "size_bytes": (
             r"(?im)^\s*(?:size_bytes|filesize|size)\s*[:：]\s*(\d+)\s*$",

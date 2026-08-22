@@ -160,9 +160,11 @@ def loop_daily(args: argparse.Namespace) -> int:
         if career_complete:
             last_run_key = run_key
             career_status = "delivered" if args.send else "generated"
+            career_retry_at = None
         if organizer_complete:
             organizer_done_key = run_key
             organizer_status = "delivered" if args.send else "generated"
+            organizer_retry_at = None
         write_scheduler_heartbeat(
             args,
             now=now,
@@ -696,10 +698,17 @@ def run_organizer(
         state.get("date") == stamp
         and state.get("chat") == chat
         and pdf.is_file()
-        and observed_outbound_file(
-            chat,
-            pdf,
-            not_before=str(state.get("generated_at") or ""),
+        and (
+            observed_outbound_file(
+                chat,
+                pdf,
+                not_before=str(state.get("generated_at") or ""),
+            )
+            or observed_outbound_filename(
+                chat,
+                pdf.name,
+                not_before=str(state.get("generated_at") or ""),
+            )
         )
     ):
         resolved_pdf = str(pdf.expanduser().resolve())
@@ -1180,6 +1189,41 @@ def observed_outbound_file(chat: str, file_path: Path, *, not_before: str = "") 
         return False
     return any(
         file_identities_match(identity, attachment_transport_identity(str(message or "")))
+        for (message,) in rows
+    )
+
+
+def observed_outbound_filename(chat: str, filename: str, *, not_before: str) -> bool:
+    """Match one dated scheduler artifact by exact chat and attachment title."""
+
+    expected = Path(str(filename or "")).name
+    if not expected or not not_before:
+        return False
+    mirror_db = PRIVATE / "wechat_mirror.sqlite"
+    if not mirror_db.is_file():
+        return False
+    query = """
+        SELECT events.message
+        FROM events
+        JOIN chats ON chats.id = events.chat_id
+        WHERE chats.name = ?
+          AND events.action = 'direct_message'
+          AND events.direction = 'outbound'
+          AND events.status = 'synced'
+          AND events.created_at >= ?
+        ORDER BY events.id DESC
+        LIMIT 80
+    """
+    try:
+        with sqlite3.connect(mirror_db) as conn:
+            rows = conn.execute(query, [chat, not_before]).fetchall()
+    except sqlite3.Error:
+        return False
+    return any(
+        Path(
+            str(attachment_transport_identity(str(message or "")).get("name") or "")
+        ).name
+        == expected
         for (message,) in rows
     )
 

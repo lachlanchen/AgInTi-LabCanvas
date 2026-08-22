@@ -674,7 +674,7 @@ Operating contract:
 6. Use KiCad ERC/DRC and manufacturing preflight; use Blender or a suitable CAD renderer for visual validation; use TeX for maintainable paper/report assembly. For presentations, preserve editable slide text and geometry, use image generation only for bounded material assets, and never generate an entire slide as one image.
 7. WeChat is a transport and control surface. Use the existing isolated stack and APIs; never mix chats or expose private logs.
 8. Require explicit current-user authorization before payment, manufacturing order submission, public publication, credential changes, destructive deletion, or irreversible external actions. You may prepare everything and stop at the confirmation boundary.
-9. Do not claim completion without checking the real artifact, command result, render, or external status. Keep the final reply concise and factual.
+9. Do not claim completion without checking the real artifact, command result, render, or external status. Keep the final reply concise and factual. Never expose an absolute path, temporary path, task directory, checksum, or opaque task ID in the user-facing `reply`; put exact artifact paths only in the structured `artifacts` array and refer to them in the reply by a meaningful basename.
 10. If a local tool fails, diagnose and repair the reusable routine where practical; do not hide the failure behind a fabricated success message.
 
 Repository evidence to consult as relevant:
@@ -947,10 +947,12 @@ def run_agent_task(
         copied = collect_task_artifacts(
             manifest.get("artifacts") if isinstance(manifest.get("artifacts"), list) else [],
             reply,
+            request=str(task.get("message") or ""),
             task_dir=task_dir,
             storage_dir=Path(storage_dir).resolve(),
             root=project_root,
         )
+        reply = sanitize_workspace_reply(reply, copied)
         response_path = task_dir / workspace_response_filename(
             str(task.get("message") or ""),
             created_at=str(task.get("created_at") or ""),
@@ -1673,6 +1675,7 @@ def collect_task_artifacts(
     declared: list[Any],
     reply: str,
     *,
+    request: str = "",
     task_dir: Path,
     storage_dir: Path,
     root: Path,
@@ -1717,15 +1720,25 @@ def collect_task_artifacts(
             preferred_name = workspace_artifact_filename(
                 source,
                 title=str(item.get("title") or ""),
-                fallback_text=reply,
+                fallback_text=request or reply,
             )
             destination = unique_workspace_artifact_path(output_dir, preferred_name)
             if destination.resolve() != source:
                 shutil.copy2(source, destination)
+        declared_title = str(item.get("title") or "").strip()
+        visible_title = declared_title
+        if (
+            not visible_title
+            or "/" in visible_title
+            or "\\" in visible_title
+            or workspace_artifact_name_is_generic(visible_title)
+        ):
+            visible_title = destination.name
         copied.append(
             {
                 "path": destination,
-                "title": str(item.get("title") or source.name),
+                "source_path": source,
+                "title": visible_title,
                 "kind": str(item.get("kind") or artifact_kind_for_path(source)),
                 "preview": str(item.get("preview") or "Produced and verified by the LabCanvas workspace agent."),
             }
@@ -1809,6 +1822,14 @@ def workspace_artifact_name_is_generic(filename: str) -> bool:
     normalized = re.sub(r"[^0-9a-z]+", "-", stem).strip("-")
     return (
         normalized in WORKSPACE_GENERIC_ARTIFACT_STEMS
+        or bool(
+            re.fullmatch(
+                r"(?:final-)?(?:analysis|artifact|document|image|output|paper|presentation|report|response|result|slides|summary|video)"
+                r"(?:-(?:completed|complete|final|latest|new|v?\d+))*",
+                normalized,
+            )
+        )
+        or bool(re.fullmatch(r"[0-9a-f]{12,}(?:-(?:completed|complete|final|latest|v?\d+))*", normalized))
         or bool(re.fullmatch(r"(?:task|job|run)?-?[0-9a-f]{12,}", normalized))
         or bool(
             re.fullmatch(
@@ -1858,6 +1879,56 @@ def unique_workspace_artifact_path(output_dir: Path, filename: str) -> Path:
         candidate = output_dir / f"{Path(filename).stem}-v{version}{Path(filename).suffix}"
         version += 1
     return candidate
+
+
+WORKSPACE_LOCAL_ARTIFACT_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9:])(?:file://)?(?:/(?:home|tmp|var/tmp|mnt|media|run/user|root|Users|workspace)/|(?:\./)?output/)"
+    r"[^\r\n<>\"']*?\.(?:3mf|blend|csv|docx?|dxf|gbr|gif|jpe?g|json|kicad_pcb|kicad_pro|kicad_sch|m4a|md|mov|mp3|mp4|obj|pdf|png|pptx|scad|step|stl|svg|tex|txt|wav|webm|webp|xlsx?|zip)"
+    r"(?=$|[\s，。；、)）\]}])",
+    flags=re.IGNORECASE,
+)
+WORKSPACE_LOCAL_DIRECTORY_RE = re.compile(
+    r"(?<![A-Za-z0-9:])(?:file://)?(?:/(?:home|tmp|var/tmp|mnt|media|run/user|root|Users|workspace)/|(?:\./)?output/)"
+    r"[^\s<>\[\]{}\"'，。；、]+"
+)
+
+
+def workspace_local_path_name(value: str) -> str:
+    cleaned = str(value or "").removeprefix("file://").rstrip(".,;:!?)]}，。；、）")
+    name = cleaned.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    return name or "local artifact"
+
+
+def sanitize_workspace_reply(reply: str, artifacts: list[dict[str, Any]]) -> str:
+    """Keep recovery paths private while retaining meaningful artifact names."""
+
+    text = str(reply or "")
+    for item in artifacts:
+        destination = Path(item.get("path") or "")
+        replacement = destination.name or str(item.get("title") or "artifact")
+        exact_paths: set[str] = set()
+        for key in ("source_path", "path"):
+            raw_value = str(item.get(key) or "").strip()
+            if not raw_value:
+                continue
+            candidate = Path(raw_value).expanduser()
+            exact_paths.add(str(candidate))
+            try:
+                exact_paths.add(str(candidate.resolve()))
+            except OSError:
+                pass
+        for raw in sorted(exact_paths, key=len, reverse=True):
+            text = text.replace(f"file://{raw}", replacement)
+            text = text.replace(raw, replacement)
+    text = WORKSPACE_LOCAL_ARTIFACT_PATH_RE.sub(
+        lambda match: workspace_local_path_name(match.group(0)),
+        text,
+    )
+    text = WORKSPACE_LOCAL_DIRECTORY_RE.sub(
+        lambda match: workspace_local_path_name(match.group(0)),
+        text,
+    )
+    return text.strip()
 
 
 def task_response(task_id: str, storage_dir: str | Path) -> dict[str, Any]:

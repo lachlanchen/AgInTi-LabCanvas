@@ -131,6 +131,68 @@ class WeChatCareerDailyAgentTests(unittest.TestCase):
 
         self.assertTrue(observed)
 
+    def test_daily_artifact_reconciles_exact_title_after_regeneration(self):
+        module = load_wechat_career_daily_agent()
+        original_private = module.PRIVATE
+        with tempfile.TemporaryDirectory() as tmp:
+            private = Path(tmp) / "private"
+            private.mkdir()
+            module.PRIVATE = private
+            db = private / "wechat_mirror.sqlite"
+            with sqlite3.connect(db) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE chats (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL UNIQUE
+                    );
+                    CREATE TABLE events (
+                        id INTEGER PRIMARY KEY,
+                        chat_id INTEGER NOT NULL,
+                        action TEXT NOT NULL,
+                        direction TEXT,
+                        message TEXT,
+                        status TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+                    """
+                )
+                conn.execute("INSERT INTO chats(id, name) VALUES (1, ?)", ("Memo",))
+                conn.execute(
+                    """
+                    INSERT INTO events(
+                        chat_id, action, direction, message, status, created_at
+                    ) VALUES (1, 'direct_message', 'outbound', ?, 'synced', ?)
+                    """,
+                    (
+                        (
+                            "<msg><appmsg>"
+                            "<title>2026-08-22-recent-items.zh.pdf</title>"
+                            "<appattach><totallen>96214</totallen></appattach>"
+                            "<md5>2d41a4b391f1f901aac1f218f1927ec3</md5>"
+                            "</appmsg></msg>"
+                        ),
+                        "2026-08-22T11:23:52",
+                    ),
+                )
+
+            try:
+                observed = module.observed_outbound_filename(
+                    "Memo",
+                    "2026-08-22-recent-items.zh.pdf",
+                    not_before="2026-08-22T08:42:06",
+                )
+                wrong_title = module.observed_outbound_filename(
+                    "Memo",
+                    "2026-08-22-career-strategy.zh.pdf",
+                    not_before="2026-08-22T08:42:06",
+                )
+            finally:
+                module.PRIVATE = original_private
+
+        self.assertTrue(observed)
+        self.assertFalse(wrong_title)
+
     def test_prompt_requires_three_self_discovery_questions(self):
         module = load_wechat_career_daily_agent()
         prompt = module.build_prompt(
