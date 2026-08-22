@@ -376,7 +376,7 @@ class WorkspaceAgentTests(unittest.TestCase):
                 (kwargs["task_dir"] / "agent-result.json").write_text(
                     json.dumps(
                         {
-                            "reply": "The artifact is ready.",
+                            "reply": "Created result.txt with the confirmed content.",
                             "artifacts": [
                                 {
                                     "path": str(source),
@@ -407,6 +407,10 @@ class WorkspaceAgentTests(unittest.TestCase):
         )
         self.assertEqual(stored["artifacts"][0]["title"], artifact_name)
         self.assertNotEqual(artifact_name, "txt.txt")
+        self.assertEqual(
+            stored["reply"],
+            "Created aginti-scoped-artifact-routing-is-working.txt with the confirmed content.",
+        )
 
     def test_generic_artifact_detection_covers_versions_and_non_english_placeholders(self):
         for filename in (

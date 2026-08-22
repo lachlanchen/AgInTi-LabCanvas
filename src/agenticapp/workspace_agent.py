@@ -1970,12 +1970,15 @@ def sanitize_workspace_reply(reply: str, artifacts: list[dict[str, Any]]) -> str
         destination = Path(item.get("path") or "")
         replacement = destination.name or str(item.get("title") or "artifact")
         exact_paths: set[str] = set()
+        source_names: set[str] = set()
         for key in ("source_path", "path"):
             raw_value = str(item.get(key) or "").strip()
             if not raw_value:
                 continue
             candidate = Path(raw_value).expanduser()
             exact_paths.add(str(candidate))
+            if candidate.name and candidate.name != replacement:
+                source_names.add(candidate.name)
             try:
                 exact_paths.add(str(candidate.resolve()))
             except OSError:
@@ -1983,6 +1986,12 @@ def sanitize_workspace_reply(reply: str, artifacts: list[dict[str, Any]]) -> str
         for raw in sorted(exact_paths, key=len, reverse=True):
             text = text.replace(f"file://{raw}", replacement)
             text = text.replace(raw, replacement)
+        for source_name in sorted(source_names, key=len, reverse=True):
+            text = re.sub(
+                rf"(?<![A-Za-z0-9_.-]){re.escape(source_name)}(?![A-Za-z0-9_.-])",
+                replacement,
+                text,
+            )
     text = WORKSPACE_LOCAL_ARTIFACT_PATH_RE.sub(
         lambda match: workspace_local_path_name(match.group(0)),
         text,
