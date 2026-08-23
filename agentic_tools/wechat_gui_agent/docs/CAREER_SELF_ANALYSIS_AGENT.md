@@ -47,6 +47,23 @@ chat. It keeps Markdown and evidence local, compiles one Chinese XeLaTeX PDF,
 and sends only the PDF. Its delivery ledger makes restart and transport retries
 idempotent: a failed send reuses the existing PDF without another agent turn.
 
+The organizer is a synthesis workflow, not a transcript formatter. It reads a
+bounded recent ledger together with compacted same-profile lifetime context,
+first explains the day's larger threads in substantial prose, then provides a
+complete organized reference. Its quality gate scales depth with evidence and
+rejects raw chat rows, source-by-source evidence appendices, list-dominant
+exports, timestamps, media sizes, model diagnostics, and thin generic advice.
+Only an accepted draft is rendered. The PDF uses a mobile-readable XeLaTeX
+layout and AcroForm checkboxes only for genuine actions.
+
+Each dated PDF is delivered with the stable component scope
+`daily-organizer-YYYY-MM-DD-v3`. The native Android sender verifies the exact
+allowlisted chat, recipient confirmation, and completed Send. Its component key
+also includes the file hash, making retries of the same report no-ops without
+blocking a revised same-day report. If the process restarts after a committed
+send, the exact outbound file echo reconciles the organizer state instead of
+sending a duplicate.
+
 Full WeChat stack after reboot:
 
 ```bash

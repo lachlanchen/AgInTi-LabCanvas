@@ -559,6 +559,11 @@ Why it matters: It turns reflection into evidence.
         self.assertIn("lowest valid category", prompt)
         self.assertIn("Do not turn them", prompt)
         self.assertIn("GitHub, website, local repos", prompt)
+        self.assertIn("not a raw chat\ndump", prompt)
+        self.assertIn("several substantial prose\n   paragraphs", prompt)
+        self.assertIn("complete organized reference section", prompt)
+        self.assertIn("not an audit trail", prompt)
+        self.assertIn("A voice note contributes only its cleaned meaning", prompt)
 
     def test_organizer_unwraps_agent_json_without_rendering_raw_envelope(self):
         module = load_wechat_career_daily_agent()
@@ -589,6 +594,147 @@ Why it matters: It turns reflection into evidence.
         self.assertFalse(quality["accepted"])
         self.assertIn("too_short_for_evidence", quality["reasons"])
         self.assertIn("insufficient_evidence_grounding", quality["reasons"])
+
+    def test_organizer_quality_rejects_grounded_but_raw_bullet_dump(self):
+        module = load_wechat_career_daily_agent()
+        snapshot = """- memo: Pi 5 墨水屏 录音 RAG 词库
+- web_clip: Nature 光计算维度
+- inbox: 竹书纪年 西京杂记 孔子家语
+- request: 千与千寻 桃源世界
+- memo: 讯飞声卡 焊台 LED灯珠 锡丝 磁铁
+- idea: 树莓派本地语言学习卡
+- writing: 建立简单写作习惯
+- project: 历史博弈游戏
+- project: 视觉大模型预测实验
+- memo: 香港取回物品清单
+- idea: 懒人聊天网站
+- writing: 个人叙事与历史叙事
+"""
+        body = """# 每日整理
+
+## 物品
+- Pi 5 墨水屏 录音 RAG 词库
+- 讯飞声卡 焊台 LED灯珠 锡丝 磁铁
+- 香港取回物品清单
+
+## 阅读
+- Nature 光计算维度
+- 竹书纪年 西京杂记 孔子家语
+- 建立简单写作习惯
+
+## 项目
+- 树莓派本地语言学习卡
+- 历史博弈游戏
+- 视觉大模型预测实验
+- 懒人聊天网站
+- 千与千寻 桃源世界
+- 个人叙事与历史叙事
+"""
+
+        quality = module.organizer_output_quality(body, snapshot)
+
+        self.assertFalse(quality["accepted"])
+        self.assertIn("insufficient_contextual_synthesis", quality["reasons"])
+        self.assertIn("raw_list_dominance", quality["reasons"])
+
+    def test_organizer_quality_accepts_contextual_full_memo(self):
+        module = load_wechat_career_daily_agent()
+        snapshot = """- memo: Pi 5 墨水屏 录音 RAG 词库
+- web_clip: Nature 光计算维度
+- inbox: 竹书纪年 西京杂记 孔子家语
+- request: 千与千寻 桃源世界
+- memo: 讯飞声卡 焊台 LED灯珠 锡丝 磁铁
+- idea: 树莓派本地语言学习卡
+- writing: 建立简单写作习惯
+- project: 历史博弈游戏
+"""
+        body = """# 每日整理
+
+## 今天的脉络
+
+今天的信息并不是八件互不相关的碎片。Pi 5、墨水屏、录音与 RAG 词库共同指向一个可以落地的本地语言学习卡，而不是单纯的采购清单。当前最值得保留的是它们之间已经形成了输入、检索和显示的完整链条。
+
+Nature 光计算维度和视觉大模型预测实验属于另一条技术探索线。它们暂时不应被硬接成一个结论，但可以作为同一个问题的两种观察方式：前者关注光学计算表示，后者关注视觉表示怎样进入预测模型。
+
+阅读与写作材料也在汇聚。竹书纪年、西京杂记、孔子家语提供历史材料，建立简单写作习惯则提供把阅读变成持续输出的方法。千与千寻式桃源世界可以成为一次具体的故事实验，而不是继续停留在主题词。
+
+香港取回物品中的讯飞声卡、焊台、LED 灯珠、锡丝和磁铁仍然只是物流事项。它们支持后续制作，但目前没有证据表明它们本身改变长期方向，因此应和项目判断分开。
+
+## 完整整理
+
+### 当前项目
+- **树莓派本地语言学习卡**：Pi 5、墨水屏、录音和 RAG 词库组成第一版边界。
+- **视觉大模型预测实验**：保留为研究问题，先明确输入、预测目标和评价方法。
+- **历史博弈游戏**：仍是独立创作方向，需要一个最小可玩的历史场景。
+
+### 阅读与写作
+- **光学**：继续读 Nature 光计算维度，并记录可验证的技术含义。
+- **古籍**：竹书纪年、西京杂记、孔子家语归为史料阅读线。
+- **故事**：把千与千寻桃源世界写成一个有人物行动和冲突的短场景。
+- **习惯**：建立简单写作习惯只承担持续记录，不夸大为商业路线。
+
+### 物品
+- 香港取回：讯飞声卡、焊台、LED 灯珠、锡丝、磁铁。
+
+## 未决问题
+
+语言学习卡最需要先确认的是离线模型能否在 Pi 5 上达到可接受响应速度，以及录音是否是首版必要输入。光计算文章与当前硬件项目是否真的有关，也需要通过阅读原文而不是标题联想来判断。
+
+## 下一步
+- [ ] 写出语言学习卡的一页规格，区分首版必需与以后扩展。
+- [ ] 阅读 Nature 原文并记录三个可验证主张。
+- [ ] 把桃源世界写成一个 300 字场景。
+"""
+
+        quality = module.organizer_output_quality(body, snapshot)
+
+        self.assertTrue(quality["accepted"], quality)
+        self.assertGreaterEqual(quality["prose_paragraphs"], 4)
+        self.assertLess(quality["bullet_character_ratio"], 0.82)
+
+    def test_organizer_quality_rejects_raw_evidence_appendix_and_media_metadata(self):
+        module = load_wechat_career_daily_agent()
+        snapshot = "\n".join(f"- memo: evidence item {index} Pi 5" for index in range(12))
+        body = """# 每日整理
+
+## 今日脉络
+
+这些记录共同指向一个本地学习工具，而不是十二条互不相关的采购事项。Pi 5 是算力底座，显示、输入与词库仍要按首版需求取舍。
+
+当前变化是想法已经从设备名称进入系统边界。下一步需要先明确首版任务，再决定硬件，而不是继续堆叠部件。
+
+长期记录说明这个项目同时连接语言学习和本地计算，但还没有证据证明它已经形成产品，因此这里保留不确定性。
+
+物料记录仍然只是物流依据。它们不应被解释为人生方向，也不自动成为当天待办。
+
+## 完整整理
+- Pi 5：候选算力底座。
+- 本地词库：候选内容层。
+- 显示与录音：待确认首版是否必需。
+- 产品边界：尚未确定。
+- 成本：需要验证。
+- 离线响应：需要验证。
+
+## 未决问题
+首版到底解决查词、跟读还是长期复习，目前还没有决定。
+
+## 下一步
+- [ ] 写一页首版规格。
+
+## 证据逐条转述（按来源顺序）
+1. 微信语音证据：时长 32.5 秒、58,058 字节。
+2. evidence item 1 Pi 5。
+3. evidence item 2 Pi 5。
+4. evidence item 3 Pi 5。
+5. evidence item 4 Pi 5。
+6. evidence item 5 Pi 5。
+"""
+
+        quality = module.organizer_output_quality(body, snapshot)
+
+        self.assertFalse(quality["accepted"])
+        self.assertIn("source_by_source_evidence_dump", quality["reasons"])
+        self.assertIn("private_media_metadata_exposed", quality["reasons"])
 
     def test_catch_up_skips_delivered_career_and_runs_organizer_once(self):
         module = load_wechat_career_daily_agent()
@@ -713,7 +859,9 @@ Why it matters: It turns reflection into evidence.
 
             module.run_agent_session = fake_agent
             module.render_interactive_organizer_pdf = fake_render
-            module.send_file = lambda path, chat, targets: sent_files.append((path, chat, targets))
+            module.send_file = lambda path, chat, targets, **_kwargs: sent_files.append(
+                (path, chat, targets)
+            )
             args = argparse.Namespace(
                 organize_chat="写作 外语 挣钱",
                 memory_db=root / "memory.sqlite",
@@ -768,7 +916,7 @@ Why it matters: It turns reflection into evidence.
                 }
 
             module.run_agent_session = fake_agent
-            module.organizer_output_quality = lambda body, _snapshot: {
+            module.organizer_output_quality = lambda body, _snapshot, **_kwargs: {
                 "accepted": "复核 Pi 5" in body,
                 "reasons": [] if "复核 Pi 5" in body else ["too_short_for_evidence"],
                 "characters": len(body),
@@ -834,7 +982,9 @@ Why it matters: It turns reflection into evidence.
             )
             module.run_agent_session = lambda *_args, **_kwargs: self.fail("agent must not rerun")
             sent = []
-            module.send_file = lambda path, chat, targets: sent.append((path, chat))
+            module.send_file = lambda path, chat, targets, **_kwargs: sent.append(
+                (path, chat)
+            )
             args = argparse.Namespace(
                 organize_chat="写作 外语 挣钱",
                 memory_db=root / "memory.sqlite",
@@ -850,6 +1000,101 @@ Why it matters: It turns reflection into evidence.
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["generated"])
         self.assertEqual(sent, [(pdf, "写作 外语 挣钱")])
+
+    def test_generated_only_organizer_can_be_reviewed_then_sent_without_rerun(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            module.life_memo_snapshot = lambda *_args, **_kwargs: "- memo: one exact item"
+            module.build_history_context = lambda *_args, **_kwargs: {
+                "snapshot": "historical context",
+                "manifest": {"represented_messages": 10},
+            }
+            module.select_agent_backend = lambda _config: "aginti"
+            module.agent_context_model = lambda *_args, **_kwargs: "localllm-fast"
+            module.organizer_output_quality = lambda *_args, **_kwargs: {
+                "accepted": True,
+                "reasons": [],
+            }
+            agent_calls = []
+            module.run_agent_session = lambda *_args, **_kwargs: (
+                agent_calls.append(True)
+                or {
+                    "ok": True,
+                    "message": "# 今日整理\n\n## 脉络\n\n这是一段完整解释。\n\n## 行动\n- [ ] 处理事项",
+                    "backend": "aginti",
+                    "thread_id": "organizer-thread",
+                }
+            )
+            module.render_interactive_organizer_pdf = lambda _source, output: (
+                output.parent.mkdir(parents=True, exist_ok=True)
+                or output.write_bytes(b"%PDF reviewable")
+                or output
+            )
+            sent = []
+            module.send_file = lambda path, chat, _targets, **_kwargs: sent.append(
+                (path, chat)
+            )
+            common = {
+                "organize_chat": "MEMO写作—外语—挣钱",
+                "memory_db": root / "memory.sqlite",
+                "model": "gpt-test",
+                "reasoning_effort": "medium",
+                "timeout_seconds": 30,
+                "send_targets": root / "targets.json",
+            }
+
+            generated = module.run_organizer(
+                argparse.Namespace(**common, send=False),
+                force=True,
+            )
+            delivered = module.run_organizer(
+                argparse.Namespace(**common, send=True),
+            )
+
+        self.assertEqual(generated["status"], "generated")
+        self.assertEqual(delivered["status"], "delivered")
+        self.assertEqual(len(agent_calls), 1)
+        self.assertEqual(len(sent), 1)
+
+    def test_organizer_delivery_uses_stable_android_component_scope(self):
+        module = load_wechat_career_daily_agent()
+        captured = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pdf = root / "2026-08-23-recent-items.zh.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n")
+            module.send_file = lambda path, chat, targets, **kwargs: captured.update(
+                {
+                    "path": path,
+                    "chat": chat,
+                    "targets": targets,
+                    "task": kwargs.get("task"),
+                }
+            )
+            args = argparse.Namespace(send_targets=root / "targets.json")
+
+            status = module.send_organizer_pdf(
+                args,
+                pdf,
+                "MEMO写作—外语—挣钱",
+            )
+
+        expected_id = "daily-organizer-2026-08-23-v3"
+        self.assertTrue(status["complete"])
+        self.assertEqual(status["delivery_task_id"], expected_id)
+        self.assertEqual(captured["task"], {"id": expected_id})
+        self.assertEqual(captured["path"], pdf)
+        self.assertEqual(captured["chat"], "MEMO写作—外语—挣钱")
+
+    def test_organizer_delivery_task_id_rejects_ambiguous_filename(self):
+        module = load_wechat_career_daily_agent()
+
+        with self.assertRaisesRegex(ValueError, "Unexpected organizer PDF name"):
+            module.organizer_delivery_task_id(Path("recent-items.pdf"))
 
     def test_organizer_markdown_builds_interactive_tasks_only_for_actions(self):
         module = load_wechat_career_daily_agent()
@@ -873,6 +1118,24 @@ Why it matters: It turns reflection into evidence.
         self.assertEqual(body.count(r"\CheckBox["), 3)
         self.assertIn(r"\item 一个普通事实", body)
         self.assertIn("完成一个小实验", body)
+
+    def test_organizer_markdown_compacts_bullets_and_omits_duplicate_h1(self):
+        module = load_wechat_career_daily_agent()
+
+        body, _count = module.organizer_markdown_to_latex(
+            """# 每日整理
+
+## 完整整理
+- **设备**：Pi 5
+- **文章**：Nature
+"""
+        )
+
+        self.assertNotIn("每日整理", body)
+        self.assertEqual(body.count(r"\begin{itemize}"), 1)
+        self.assertEqual(body.count(r"\end{itemize}"), 1)
+        self.assertIn(r"\textbf{设备}", body)
+        self.assertIn(r"$\rightarrow$", module.markdown_inline_to_latex("A → B"))
 
     @unittest.skipUnless(shutil.which("xelatex"), "xelatex is required")
     def test_interactive_organizer_pdf_contains_acroform_fields(self):

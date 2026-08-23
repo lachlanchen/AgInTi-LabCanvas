@@ -58,6 +58,7 @@ DEFAULT_CHATS = [
 DEFAULT_ORGANIZER_CHAT = preferred_chat_title("writing_money")
 ORGANIZER_STATE = PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
 SCHEDULER_STATE = PRIVATE / "output" / "career_daily" / "scheduler-state.json"
+ORGANIZER_DELIVERY_VERSION = "v3"
 DELIVERY_RETRY_BASE_SECONDS = int(os.environ.get("WECHAT_DAILY_DELIVERY_RETRY_SECONDS", "1800"))
 DELIVERY_RETRY_MAX_SECONDS = int(os.environ.get("WECHAT_DAILY_DELIVERY_RETRY_MAX_SECONDS", "14400"))
 SCHEDULER_OVERDUE_GRACE_SECONDS = int(
@@ -756,7 +757,7 @@ def run_organizer(
         and state.get("date") == stamp
         and state.get("chat") == chat
         and organizer_quality_accepted(state)
-        and state.get("status") in {"ready", "delivery_failed"}
+        and state.get("status") in {"ready", "generated", "delivery_failed"}
         and report.is_file()
         and pdf.is_file()
         and pdf.stat().st_size > 0
@@ -842,7 +843,11 @@ def run_organizer(
         raw_body = str(result.get("message") or "").strip()
         (trace_dir / "agent-output-1.txt").write_text(raw_body.rstrip() + "\n", encoding="utf-8")
         body = normalize_organizer_output(raw_body)
-        quality = organizer_output_quality(body, snapshot)
+        quality = organizer_output_quality(
+            body,
+            snapshot,
+            history_context=str(history.get("snapshot") or ""),
+        )
         quality_attempts = 1
         if result.get("ok") and body and not quality.get("accepted"):
             repair_prompt = build_organizer_repair_prompt(body, quality)
@@ -869,7 +874,11 @@ def run_organizer(
                 encoding="utf-8",
             )
             repaired_body = normalize_organizer_output(repaired_raw)
-            repaired_quality = organizer_output_quality(repaired_body, snapshot)
+            repaired_quality = organizer_output_quality(
+                repaired_body,
+                snapshot,
+                history_context=str(history.get("snapshot") or ""),
+            )
             if repaired.get("ok"):
                 result = repaired
                 body = repaired_body
@@ -886,7 +895,7 @@ def run_organizer(
         write_json_file(trace_dir / "quality.json", quality)
         if not quality.get("accepted"):
             state = {
-                "schema": "labcanvas.wechat.daily_organizer.v2",
+                "schema": "labcanvas.wechat.daily_organizer.v3",
                 "date": stamp,
                 "chat": chat,
                 "status": "quality_failed",
@@ -921,7 +930,7 @@ def run_organizer(
                 "report": str(report),
             }
         state = {
-            "schema": "labcanvas.wechat.daily_organizer.v2",
+            "schema": "labcanvas.wechat.daily_organizer.v3",
             "date": stamp,
             "chat": chat,
             "status": "ready",
@@ -946,18 +955,24 @@ def run_organizer(
     send_status: dict[str, Any] = {"attempted": False, "complete": not bool(args.send)}
     if args.send:
         send_status = send_organizer_pdf(args, pdf, chat)
+    final_status = (
+        "delivered"
+        if bool(args.send) and send_status.get("complete")
+        else ("delivery_failed" if bool(args.send) else "generated")
+    )
     state.update(
         {
             "date": stamp,
             "chat": chat,
             "report": str(report),
             "pdf": str(pdf),
-            "status": "delivered" if send_status.get("complete") else "delivery_failed",
+            "status": final_status,
             "send": send_status,
             "updated_at": datetime.now().isoformat(timespec="seconds"),
         }
     )
-    update_delivery_retry_state(state, send_status)
+    if args.send:
+        update_delivery_retry_state(state, send_status)
     write_json_file(state_path, state)
     return {
         "ok": bool(send_status.get("complete")),
@@ -1012,16 +1027,24 @@ def organizer_memory_chats(chat: str) -> list[str]:
 
 
 def send_organizer_pdf(args: argparse.Namespace, pdf: Path, chat: str) -> dict[str, Any]:
+    delivery_task_id = organizer_delivery_task_id(pdf)
     status: dict[str, Any] = {
         "attempted": True,
         "complete": False,
         "file_sent": False,
         "files_sent": [],
         "errors": [],
+        "delivery_task_id": delivery_task_id,
     }
     with reserve_gui_send_priority("daily_organizer", chat):
         try:
-            send_daily_with_busy_retry(send_file, pdf, chat, args.send_targets)
+            send_daily_with_busy_retry(
+                send_file,
+                pdf,
+                chat,
+                args.send_targets,
+                task={"id": delivery_task_id},
+            )
         except Exception as exc:  # noqa: BLE001
             status["errors"].append(f"file {pdf}: {exc}")
             return status
@@ -1029,6 +1052,15 @@ def send_organizer_pdf(args: argparse.Namespace, pdf: Path, chat: str) -> dict[s
     status["files_sent"] = [str(pdf)]
     status["complete"] = True
     return status
+
+
+def organizer_delivery_task_id(pdf: Path) -> str:
+    """Return the stable idempotency scope for one dated organizer report."""
+
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})-recent-items\.zh\.pdf", pdf.name)
+    if match is None:
+        raise ValueError(f"Unexpected organizer PDF name: {pdf.name}")
+    return f"daily-organizer-{match.group(1)}-{ORGANIZER_DELIVERY_VERSION}"
 
 
 def build_organizer_prompt(
@@ -1050,11 +1082,39 @@ Use only the evidence below. Deduplicate repeated classifications of the same
 message. Do not invent dates, deadlines, completion states, groceries, calendar
 events, or commitments. A question or request is not automatically a real todo.
 
-This is the full daily organization, not a narrow highlight. Cover every
-distinct concrete action, reminder, idea, writing/language/career/money signal,
-and unresolved question in the bounded evidence. Merge duplicate classifier
-rows and closely related fragments, but do not silently drop a concrete item
-just because it does not fit one preferred narrative.
+This is the full daily organization, not a narrow highlight and not a raw chat
+dump. Cover every distinct concrete action, reminder, idea,
+writing/language/career/money signal, and unresolved question in the bounded
+evidence. Merge duplicate classifier rows and closely related fragments, but do
+not silently drop a concrete item just because it does not fit one preferred
+narrative. Full coverage means preserving meaning and continuity, not copying
+source lines one by one.
+
+Write two complementary layers:
+
+1. Start with a contextual reading of the day. In several substantial prose
+   paragraphs, explain what is newly active, what changed, which fragments form
+   one larger thread, what remains uncertain, and what earlier context clarifies.
+   This should feel like a thoughtful person who has followed the whole
+   conversation, not a database export.
+2. Follow with a complete organized reference section. Group all concrete items
+   under natural headings, preserve important names and exact lists where they
+   matter, and annotate status or relationship briefly. This layer may use
+   bullets, but it must not replace the contextual reading.
+
+The organized reference is thematic, not an audit trail. Never append a
+source-by-source or message-by-message evidence ledger, a numbered restatement
+of the input, a coverage count, or a section arranged "by source order". Do not
+narrate how the report was generated or claim that source rows were audited.
+Do not expose media duration, byte counts, file metadata, source IDs, or ASR
+diagnostics. A voice note contributes only its cleaned meaning.
+
+Include a clear unresolved-questions/decisions section when the evidence has
+them. End with at most three high-leverage actions. Use at least four
+substantial non-list paragraphs across the report. Do not expose timestamps,
+classifier labels, transport metadata, quoted-message wrappers, ASR wrappers,
+or raw transcript fragments. Rewrite spoken fragments into clear notes while
+preserving their meaning.
 
 Organize naturally rather than forcing empty sections. Before synthesis, sort
 items into the lowest valid category and do not inflate ordinary notes into
@@ -1073,9 +1133,11 @@ into symbolism, personality analysis, hidden motivation, a "main bet", or
 life-planning signal unless the evidence explicitly justifies that move. Keep
 the full organization separate from any short direction synthesis.
 
-Be comprehensive, condensed, and substantive. Preserve important technical
-names and quoted intent. Explain useful connections briefly, and end with at
-most three high-leverage next actions. Do not add generic productivity advice.
+Be comprehensive, condensed, and substantive. For a large evidence packet,
+write a genuinely full multi-page report rather than stopping after two pages.
+Preserve important technical names and quoted intent. Explain useful
+connections and changes, and end with at most three high-leverage next actions.
+Do not add generic productivity advice.
 Write every concrete open action and every final next action as a Markdown task
 line beginning exactly with `- [ ]`. Use ordinary bullets for evidence, ideas,
 and non-action observations. These task lines become clickable checkboxes in the
@@ -1216,14 +1278,51 @@ def organizer_grounding_metrics(body: str, snapshot: str) -> dict[str, Any]:
     }
 
 
-def organizer_output_quality(body: str, snapshot: str) -> dict[str, Any]:
+def organizer_prose_metrics(body: str) -> dict[str, Any]:
+    """Measure whether a memo interprets evidence instead of only listing it."""
+
+    prose: list[str] = []
+    bullet_chars = 0
+    for raw in str(body or "").splitlines():
+        line = raw.strip()
+        if not line or re.match(r"^#{1,4}\s+", line):
+            continue
+        if re.match(r"^(?:[-*+] |\d+[.)、]\s+)", line):
+            bullet_chars += len(line)
+            continue
+        if line.startswith((">", "|")):
+            continue
+        cleaned = clean_markdown_inline(line)
+        if len(cleaned) >= 32:
+            prose.append(cleaned)
+    prose_chars = sum(len(item) for item in prose)
+    content_chars = prose_chars + bullet_chars
+    return {
+        "prose_paragraphs": len(prose),
+        "prose_characters": prose_chars,
+        "bullet_characters": bullet_chars,
+        "bullet_character_ratio": (
+            round(bullet_chars / content_chars, 4) if content_chars else 0.0
+        ),
+    }
+
+
+def organizer_output_quality(
+    body: str,
+    snapshot: str,
+    *,
+    history_context: str = "",
+) -> dict[str, Any]:
     text = str(body or "").strip()
     grounding = organizer_grounding_metrics(text, snapshot)
+    prose = organizer_prose_metrics(text)
     evidence_items = int(grounding["evidence_items"])
-    min_chars = min(2600, max(900, evidence_items * 24))
-    min_headings = 3 if evidence_items >= 8 else 2
-    min_bullets = min(12, max(5, evidence_items // 5))
-    min_grounded = min(10, max(4, evidence_items // 7))
+    min_chars = min(7600, max(900, evidence_items * 76))
+    min_headings = 5 if evidence_items >= 20 else (4 if evidence_items >= 8 else 2)
+    min_bullets = min(20, max(6, evidence_items // 4))
+    min_grounded = min(18, max(5, evidence_items // 4))
+    min_prose_paragraphs = 4 if evidence_items >= 12 else 2
+    min_prose_chars = min(1800, max(420, evidence_items * 20))
     heading_count = len(re.findall(r"(?m)^#{1,4}\s+\S", text))
     bullet_count = len(re.findall(r"(?m)^\s*(?:[-*+] |\d+[.)、]\s+)", text))
     task_count = len(re.findall(r"(?m)^\s*[-*+]\s+\[\s*\]\s+", text))
@@ -1242,6 +1341,32 @@ def organizer_output_quality(body: str, snapshot: str) -> dict[str, Any]:
         reasons.append("insufficient_item_coverage")
     if int(grounding["grounded_items"]) < min_grounded:
         reasons.append("insufficient_evidence_grounding")
+    if int(prose["prose_paragraphs"]) < min_prose_paragraphs:
+        reasons.append("insufficient_contextual_synthesis")
+    if int(prose["prose_characters"]) < min_prose_chars:
+        reasons.append("insufficient_contextual_explanation")
+    if evidence_items >= 12 and float(prose["bullet_character_ratio"]) > 0.82:
+        reasons.append("raw_list_dominance")
+    if re.search(
+        r"(?m)^\s*(?:[-*+]\s+)?(?:inbox|memo|request|web_clip|money|writing)\s*\|\s*20\d{2}-",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        reasons.append("raw_evidence_metadata")
+    if re.search(
+        r"(?:证据.{0,8}(?:逐条|清单|按来源)|逐条.{0,8}(?:转述|复述)|"
+        r"按来源顺序|便于回查与审计|以上.{0,20}条.{0,20}(?:底稿|证据))",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        reasons.append("source_by_source_evidence_dump")
+    if re.search(
+        r"(?:微信语音|voice|audio).{0,80}(?:时长|duration).{0,80}(?:字节|bytes)|"
+        r"(?:时长|duration).{0,40}\d+(?:\.\d+)?\s*(?:秒|s).{0,80}(?:字节|bytes)",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        reasons.append("private_media_metadata_exposed")
     return {
         "accepted": not reasons,
         "reasons": reasons,
@@ -1253,6 +1378,10 @@ def organizer_output_quality(body: str, snapshot: str) -> dict[str, Any]:
         "minimum_headings": min_headings,
         "minimum_bullets": min_bullets,
         "minimum_grounded_items": min_grounded,
+        "minimum_prose_paragraphs": min_prose_paragraphs,
+        "minimum_prose_characters": min_prose_chars,
+        "history_context_available": bool(str(history_context or "").strip()),
+        **prose,
         **grounding,
     }
 
@@ -1265,17 +1394,25 @@ def build_organizer_repair_prompt(body: str, quality: dict[str, Any]) -> str:
 
 Failure reasons: {', '.join(str(item) for item in quality.get('reasons') or [])}
 Observed: {quality.get('characters', 0)} characters, {quality.get('headings', 0)} headings,
-{quality.get('bullets', 0)} bullets, and {quality.get('grounded_items', 0)} grounded evidence items.
+{quality.get('bullets', 0)} bullets, {quality.get('prose_paragraphs', 0)} substantial prose paragraphs,
+and {quality.get('grounded_items', 0)} grounded evidence items.
 
 Rewrite it now from the complete recent-evidence and lifetime-context packet in
 the immediately preceding request. Preserve actual names, books, devices,
 articles, projects, decisions, and open questions. Group related fragments, but
 do not replace them with generic business, translation, productivity, or
 language-service advice. Distinguish current logistics from projects and from
-long-term direction. Use at least {quality.get('minimum_headings', 3)} Markdown
-headings, {quality.get('minimum_bullets', 8)} concrete bullets, and about
+long-term direction. Open with an interpreted contextual overview and explain
+changes, connections, decisions, and unresolved questions in at least
+{quality.get('minimum_prose_paragraphs', 4)} substantial non-list paragraphs.
+Then provide the complete grouped reference ledger. Use at least
+{quality.get('minimum_headings', 3)} Markdown headings,
+{quality.get('minimum_bullets', 8)} concrete bullets, and about
 {quality.get('minimum_characters', 1200)} or more Chinese characters when the
-evidence supports it. Keep actionable items as `- [ ]` task lines.
+evidence supports it. Do not merely expand, reorder, or paraphrase the source
+rows one by one. Do not add a source-by-source evidence appendix, input coverage
+count, generation-process narration, voice duration, byte count, source ID, or
+ASR diagnostics. Keep actionable items as `- [ ]` task lines.
 
 Representative evidence missed by the previous draft:
 {examples}
@@ -1300,27 +1437,58 @@ def render_interactive_organizer_pdf(source: Path, output: Path) -> Path | None:
         body += "\n" + organizer_checkbox_latex("确认今天最重要的一项行动", checkbox_count + 1)
         checkbox_count += 1
     stamp = datetime.now().strftime("%Y-%m-%d")
-    document = rf"""\documentclass[11pt]{{article}}
-\usepackage[a4paper,margin=18mm]{{geometry}}
+    document = rf"""\documentclass[10.5pt]{{article}}
+\usepackage[a4paper,top=17mm,bottom=18mm,left=18mm,right=18mm]{{geometry}}
 \usepackage{{fontspec}}
 \usepackage{{xeCJK}}
 \usepackage{{xcolor}}
 \usepackage{{enumitem}}
+\usepackage{{microtype}}
+\usepackage{{titlesec}}
+\usepackage{{fancyhdr}}
+\usepackage[most]{{tcolorbox}}
 \usepackage[unicode,colorlinks=true,linkcolor=black,urlcolor=blue]{{hyperref}}
 \setmainfont{{Noto Sans}}
 \setCJKmainfont{{Noto Sans CJK SC}}
 \definecolor{{LabInk}}{{HTML}}{{1E293B}}
 \definecolor{{LabBlue}}{{HTML}}{{0B7285}}
+\definecolor{{LabGold}}{{HTML}}{{C58A24}}
 \definecolor{{LabLine}}{{HTML}}{{CBD5E1}}
+\definecolor{{LabPale}}{{HTML}}{{F2F8F8}}
+\definecolor{{LabSoft}}{{HTML}}{{F8FAFC}}
 \hypersetup{{pdftitle={{写作・外语・挣钱 每日整理 {stamp}}},pdfauthor={{AgInTi LabCanvas}}}}
 \setlength{{\parindent}}{{0pt}}
-\setlength{{\parskip}}{{5pt}}
-\setlist[itemize]{{leftmargin=1.5em,itemsep=2pt,topsep=2pt}}
+\setlength{{\parskip}}{{6pt}}
+\linespread{{1.08}}
+\setlist[itemize]{{leftmargin=1.45em,itemsep=3pt,topsep=3pt,parsep=0pt}}
+\titleformat{{\section}}{{\Large\bfseries\color{{LabInk}}}}{{}}{{0pt}}{{}}[\vspace{{1pt}}\color{{LabLine}}\titlerule]
+\titleformat{{\subsection}}{{\large\bfseries\color{{LabBlue}}}}{{}}{{0pt}}{{}}
+\titlespacing*{{\section}}{{0pt}}{{15pt}}{{7pt}}
+\titlespacing*{{\subsection}}{{0pt}}{{10pt}}{{4pt}}
+\pagestyle{{fancy}}
+\fancyhf{{}}
+\fancyhead[L]{{\small\color{{LabBlue}} 写作・外语・挣钱}}
+\fancyhead[R]{{\small\color{{LabInk}} {stamp}}}
+\fancyfoot[C]{{\small\color{{LabInk}} \thepage}}
+\renewcommand{{\headrulewidth}}{{0.3pt}}
+\renewcommand{{\headrule}}{{\hbox to\headwidth{{\color{{LabLine}}\leaders\hrule height \headrulewidth\hfill}}}}
+\raggedbottom
 \begin{{document}}
 \begin{{Form}}
-{{\LARGE\bfseries\color{{LabInk}} 写作・外语・挣钱｜每日整理}}\par
-{{\small\color{{LabBlue}} {stamp} \quad 点击方框即可在 PDF 阅读器中勾选}}\par
-\vspace{{3pt}}\color{{LabLine}}\hrule\color{{black}}\vspace{{8pt}}
+\begin{{tcolorbox}}[
+  enhanced,
+  colback=LabPale,
+  colframe=LabPale,
+  boxrule=0pt,
+  arc=1.5mm,
+  left=7mm,right=7mm,top=5mm,bottom=5mm,
+  borderline west={{2.2pt}}{{0pt}}{{LabBlue}}
+]
+{{\LARGE\bfseries\color{{LabInk}} 写作・外语・挣钱}}\par
+\vspace{{2pt}}{{\large\color{{LabBlue}} 每日脉络与行动整理}}\par
+\vspace{{5pt}}{{\small\color{{LabInk}} {stamp} \quad 完整上下文整理 \quad 可勾选行动项}}
+\end{{tcolorbox}}
+\vspace{{3pt}}
 {body}
 \end{{Form}}
 \end{{document}}
@@ -1357,32 +1525,54 @@ def organizer_markdown_to_latex(markdown: str) -> tuple[str, int]:
     lines: list[str] = []
     checkbox_count = 0
     action_section = False
+    itemize_open = False
+    first_heading_seen = False
+
+    def close_itemize() -> None:
+        nonlocal itemize_open
+        if itemize_open:
+            lines.append(r"\end{itemize}")
+            itemize_open = False
+
     for raw in str(markdown or "").splitlines():
         value = raw.strip()
         if not value:
+            close_itemize()
             lines.append(r"\par")
             continue
         heading = re.match(r"^(#{1,4})\s+(.+)$", value)
         if heading:
+            close_itemize()
+            level = len(heading.group(1))
+            if level == 1 and not first_heading_seen:
+                first_heading_seen = True
+                continue
+            first_heading_seen = True
             title = clean_markdown_inline(heading.group(2))
             action_section = any(
                 marker in title
                 for marker in ("可推进", "行动", "下一步", "待办", "需要澄清")
             )
-            command = "section*" if len(heading.group(1)) <= 2 else "subsection*"
+            command = "section*" if level <= 2 else "subsection*"
             lines.append(rf"\{command}{{{latex_escape(title)}}}")
             continue
         task = re.match(r"^(?:[-*+]|\d+[.)、])\s+(?:\[\s*\]\s*)?(.+)$", value)
         if task:
             explicit_task = bool(re.match(r"^(?:[-*+]|\d+[.)、])\s+\[\s*\]", value))
-            text = clean_markdown_inline(task.group(1))
+            text = re.sub(r"\s{2,}", " ", task.group(1).strip())
             if explicit_task or action_section:
+                close_itemize()
                 checkbox_count += 1
                 lines.append(organizer_checkbox_latex(text, checkbox_count))
             else:
-                lines.append(rf"\begin{{itemize}}\item {latex_escape(text)}\end{{itemize}}")
+                if not itemize_open:
+                    lines.append(r"\begin{itemize}")
+                    itemize_open = True
+                lines.append(rf"\item {markdown_inline_to_latex(text)}")
             continue
-        lines.append(latex_escape(clean_markdown_inline(value)) + r"\par")
+        close_itemize()
+        lines.append(markdown_inline_to_latex(value) + r"\par")
+    close_itemize()
     return "\n".join(lines), checkbox_count
 
 
@@ -1390,7 +1580,7 @@ def organizer_checkbox_latex(text: str, index: int) -> str:
     return (
         rf"\noindent\CheckBox[name=task-{index},width=1.7ex,height=1.7ex,"
         rf"bordercolor={{0.05 0.45 0.52}}]{{}}\hspace{{0.6em}}"
-        rf"\parbox[t]{{0.91\linewidth}}{{{latex_escape(text)}}}\par\vspace{{3pt}}"
+        rf"\parbox[t]{{0.91\linewidth}}{{{markdown_inline_to_latex(text)}}}\par\vspace{{4pt}}"
     )
 
 
@@ -1398,6 +1588,26 @@ def clean_markdown_inline(value: str) -> str:
     text = re.sub(r"^\[\s*\]\s*", "", str(value or "").strip())
     text = text.replace("**", "").replace("__", "").replace("`", "")
     return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def markdown_inline_to_latex(value: str) -> str:
+    """Keep simple emphasis while escaping arbitrary memo text for XeLaTeX."""
+
+    text = re.sub(r"^\[\s*\]\s*", "", str(value or "").strip())
+    parts = re.split(r"(\*\*.*?\*\*|__.*?__|`.*?`)", text)
+    rendered: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        if (part.startswith("**") and part.endswith("**")) or (
+            part.startswith("__") and part.endswith("__")
+        ):
+            rendered.append(rf"\textbf{{{latex_escape(part[2:-2])}}}")
+        elif part.startswith("`") and part.endswith("`"):
+            rendered.append(rf"\texttt{{{latex_escape(part[1:-1])}}}")
+        else:
+            rendered.append(latex_escape(part))
+    return "".join(rendered)
 
 
 def latex_escape(value: str) -> str:
@@ -1412,6 +1622,10 @@ def latex_escape(value: str) -> str:
         "}": r"\}",
         "~": r"\textasciitilde{}",
         "^": r"\textasciicircum{}",
+        "→": r"$\rightarrow$",
+        "←": r"$\leftarrow$",
+        "↔": r"$\leftrightarrow$",
+        "⇒": r"$\Rightarrow$",
     }
     return "".join(replacements.get(char, char) for char in str(value or ""))
 
@@ -2154,12 +2368,12 @@ def reserve_gui_send_priority(owner: str, chat: str):
             GUI_SEND_PRIORITY.unlink(missing_ok=True)
 
 
-def send_daily_with_busy_retry(sender: Any, *args: Any) -> None:
+def send_daily_with_busy_retry(sender: Any, *args: Any, **kwargs: Any) -> None:
     attempts = max(1, int(os.environ.get("WECHAT_DAILY_SEND_ATTEMPTS", "6")))
     delay = max(0.0, float(os.environ.get("WECHAT_DAILY_SEND_RETRY_DELAY", "5")))
     for attempt in range(1, attempts + 1):
         try:
-            sender(*args)
+            sender(*args, **kwargs)
             return
         except Exception as exc:
             text = str(exc).lower()

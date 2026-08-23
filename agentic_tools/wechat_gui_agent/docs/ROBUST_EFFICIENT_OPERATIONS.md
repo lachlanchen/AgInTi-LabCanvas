@@ -2059,7 +2059,24 @@ Stuck GUI sender:
   excuses, thin generic advice, weak Markdown structure, and drafts with too
   little exact-evidence grounding; one same-session editing pass may repair the
   draft. Rejected drafts remain private and are never counted or delivered as
-  a completed daily PDF.
+  a completed daily PDF. The gate also requires several substantial synthesis
+  paragraphs before the organized reference, scales expected depth with the
+  amount of available evidence, and rejects source-by-source transcript dumps,
+  list-dominant exports, timestamps, byte counts, media diagnostics, and other
+  private evidence metadata. The resulting XeLaTeX report uses a restrained
+  mobile-readable hierarchy, compact grouped lists, page headers, and real
+  interactive checkboxes; it is inspected and delivered as one PDF rather than
+  Markdown or TeX source.
+- Organizer delivery uses a stable task ID of
+  `daily-organizer-YYYY-MM-DD-v3`. The file content hash remains part of the
+  native Android component key, so retrying the same artifact is a verified
+  no-op while a genuinely revised same-day PDF remains deliverable. Android
+  launch first collapses notification and quick-settings overlays. Exact-chat
+  OCR may merge title fragments on one row and tolerate one missing character
+  only for long allowlisted aliases; it never accepts a substitution such as
+  `挣钱` becoming `赚钱`. A verified native recipient confirmation and Send
+  commits the component. The organizer then records the transport success or
+  reconciles it from the exact same-chat outbound file echo after a restart.
 - The native file sender records an exact content identity before opening the
   picker and again after verified submission. If submission succeeds but
   screenshot verification becomes uncertain, the exact outbound WeChat

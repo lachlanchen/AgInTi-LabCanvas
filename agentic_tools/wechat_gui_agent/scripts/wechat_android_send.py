@@ -266,9 +266,11 @@ class AndroidWechatSender:
         self.shell(["input", "keyevent", "224"], check=False)
         self.shell(["wm", "dismiss-keyguard"], check=False)
         self.shell(["svc", "power", "stayon", "true"], check=False)
+        self.collapse_system_overlays()
         self.launch_wechat_main()
         for attempt in range(4):
             time.sleep(1.0)
+            self.collapse_system_overlays()
             package, activity = self.current_component()
             if package == PACKAGE and not activity.endswith(WEBWX_DEVICE_ACTIVITY_SUFFIX):
                 return
@@ -285,6 +287,11 @@ class AndroidWechatSender:
             "personal WeChat did not reach its main surface "
             f"(foreground={package}/{activity})"
         )
+
+    def collapse_system_overlays(self) -> None:
+        """Keep notification/quick-settings overlays out of visual title guards."""
+        self.shell(["cmd", "statusbar", "collapse"], check=False)
+        time.sleep(0.2)
 
     def launch_wechat_main(self) -> None:
         self.shell(
@@ -351,9 +358,19 @@ class AndroidWechatSender:
         )
 
     def find_target_line(self, screenshot: Path) -> OcrLine | None:
-        candidates = matching_target_lines(ocr_lines(screenshot), self.aliases)
+        raw_lines = ocr_lines(screenshot)
+        candidates = matching_target_lines(raw_lines, self.aliases)
         if not candidates:
-            candidates = matching_target_lines(enhanced_ocr_lines(screenshot), self.aliases)
+            candidates = matching_target_lines(
+                merge_chat_title_fragments(raw_lines), self.aliases
+            )
+        if not candidates:
+            enhanced_lines = enhanced_ocr_lines(screenshot)
+            candidates = matching_target_lines(enhanced_lines, self.aliases)
+            if not candidates:
+                candidates = matching_target_lines(
+                    merge_chat_title_fragments(enhanced_lines), self.aliases
+                )
         if not candidates:
             return None
         candidates.sort(
@@ -664,7 +681,26 @@ def alias_match_length(text: str, alias: str) -> int:
     # not contain 一, preserving exact matching for genuine names that do.
     if "一" not in expected and expected in candidate.replace("一", ""):
         return len(expected)
+    compact_candidate = candidate.replace("一", "") if "一" not in expected else candidate
+    if (
+        len(expected) >= 6
+        and abs(len(compact_candidate) - len(expected)) == 1
+        and one_deletion_apart(compact_candidate, expected)
+    ):
+        return len(expected) - 1
     return 0
+
+
+def one_deletion_apart(first: str, second: str) -> bool:
+    """Accept one missing/extra OCR glyph, never a substituted title glyph."""
+    shorter, longer = sorted((first, second), key=len)
+    if len(longer) - len(shorter) != 1:
+        return False
+    cursor = 0
+    for character in longer:
+        if cursor < len(shorter) and shorter[cursor] == character:
+            cursor += 1
+    return cursor == len(shorter)
 
 
 def text_matches_alias(text: str, aliases: tuple[str, ...]) -> bool:
@@ -798,6 +834,50 @@ def matching_target_lines(
         for line in lines
         if 180 <= line.center_y <= 1900 and text_matches_alias(line.text, aliases)
     ]
+
+
+def merge_chat_title_fragments(lines: list[OcrLine]) -> list[OcrLine]:
+    """Rebuild title rows split into separate OCR blocks on the chat list."""
+    eligible = [
+        line
+        for line in lines
+        if 180 <= line.center_y <= 1900
+        and 170 <= line.left <= 880
+        and line.right <= 900
+    ]
+    rows: list[list[OcrLine]] = []
+    for line in sorted(eligible, key=lambda item: (item.center_y, item.left)):
+        matching_row = next(
+            (
+                row
+                for row in rows
+                if abs(
+                    line.center_y
+                    - int(sum(item.center_y for item in row) / len(row))
+                )
+                <= 24
+            ),
+            None,
+        )
+        if matching_row is None:
+            rows.append([line])
+        else:
+            matching_row.append(line)
+    merged: list[OcrLine] = []
+    for row in rows:
+        if len(row) < 2:
+            continue
+        ordered = sorted(row, key=lambda item: item.left)
+        merged.append(
+            OcrLine(
+                text=" ".join(item.text for item in ordered),
+                left=min(item.left for item in ordered),
+                top=min(item.top for item in ordered),
+                right=max(item.right for item in ordered),
+                bottom=max(item.bottom for item in ordered),
+            )
+        )
+    return merged
 
 
 def ocr_plain(path: Path, *, psm: str) -> str:

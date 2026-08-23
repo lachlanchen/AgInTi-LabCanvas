@@ -55,6 +55,7 @@ class WechatAndroidSendTests(unittest.TestCase):
             module.text_matches_alias("S88) MEMO 寫 作 一 外 語 一 掙 錢", aliases)
         )
         self.assertFalse(module.text_matches_alias("MEMO 写作一外语一赚钱", aliases))
+        self.assertTrue(module.text_matches_alias("MEMO 写作一外一挣钱", aliases))
 
     def test_readable_android_filename_preserves_meaningful_basename(self):
         module = load_sender()
@@ -149,6 +150,39 @@ class WechatAndroidSendTests(unittest.TestCase):
 
             self.assertEqual(result, expected)
             enhanced.assert_called_once_with(screen)
+
+    def test_find_target_line_reconstructs_split_same_row_title(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={
+                    "name": "MEMO写作—外语—挣钱",
+                    "expected_title": "MEMO写作—外语—挣钱",
+                },
+                task_id="task-split-title",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            screen = root / "screen.png"
+            screen.write_bytes(b"png")
+            fragments = [
+                module.OcrLine("MEMO 写 作 一 外", 208, 385, 531, 427),
+                module.OcrLine("一 挣 钱", 580, 385, 715, 426),
+                module.OcrLine("上午 9:18", 912, 382, 1034, 410),
+                module.OcrLine("[文件] recent-items.pdf", 209, 446, 881, 489),
+            ]
+            with mock.patch.object(
+                module, "ocr_lines", return_value=fragments
+            ), mock.patch.object(module, "enhanced_ocr_lines") as enhanced:
+                result = sender.find_target_line(screen)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result.text, "MEMO 写 作 一 外 一 挣 钱")
+            self.assertEqual(result.center_y, 406)
+            enhanced.assert_not_called()
 
     def test_parse_ocr_tsv_scales_enhanced_coordinates_back_to_device(self):
         module = load_sender()
@@ -282,7 +316,34 @@ class WechatAndroidSendTests(unittest.TestCase):
                 sender.wake_and_launch()
 
             self.assertEqual(launch.call_count, 2)
+            self.assertGreaterEqual(
+                shell.call_args_list.count(
+                    mock.call(["cmd", "statusbar", "collapse"], check=False)
+                ),
+                2,
+            )
             shell.assert_any_call(["input", "tap", "55", "132"], check=False)
+
+    def test_collapse_system_overlays_is_fail_closed_visual_normalization(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "EchoMind", "expected_title": "EchoMind"},
+                task_id="task-overlay-collapse",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            with mock.patch.object(sender, "shell") as shell, mock.patch.object(
+                sender_module_time(module), "sleep"
+            ):
+                sender.collapse_system_overlays()
+
+            shell.assert_called_once_with(
+                ["cmd", "statusbar", "collapse"], check=False
+            )
 
     def test_current_component_reads_exact_foreground_activity(self):
         module = load_sender()
