@@ -559,11 +559,31 @@ Why it matters: It turns reflection into evidence.
         self.assertIn("lowest valid category", prompt)
         self.assertIn("Do not turn them", prompt)
         self.assertIn("GitHub, website, local repos", prompt)
-        self.assertIn("not a raw chat\ndump", prompt)
-        self.assertIn("several substantial prose\n   paragraphs", prompt)
-        self.assertIn("complete organized reference section", prompt)
+        self.assertIn("not a transcript, database export, inventory dump", prompt)
+        self.assertIn("user-authored inbound history only", prompt)
+        self.assertIn("deep current map", prompt)
+        self.assertIn("compact operational reference", prompt)
+        self.assertIn("Do not repeat the narrative", prompt)
         self.assertIn("not an audit trail", prompt)
         self.assertIn("A voice note contributes only its cleaned meaning", prompt)
+
+    def test_organizer_editor_preserves_evidence_scaled_substance(self):
+        module = load_wechat_career_daily_agent()
+        snapshot = "\n".join(
+            f"- memo: distinct user subject {index}" for index in range(12)
+        )
+
+        prompt = module.build_organizer_editor_prompt(
+            "# Draft\n\n## Context\n\nA substantial grounded draft.",
+            snapshot,
+            history_context="inbound user context",
+        )
+
+        self.assertIn("Editing is not automatic compression", prompt)
+        self.assertIn("at least\n1320 Chinese/Markdown characters", prompt)
+        self.assertIn("at least\n5 distinct evidence-grounded ideas", prompt)
+        self.assertIn("Keep strong passages unchanged", prompt)
+        self.assertIn("cap applies only to the final priority shortlist", prompt)
 
     def test_organizer_unwraps_agent_json_without_rendering_raw_envelope(self):
         module = load_wechat_career_daily_agent()
@@ -835,7 +855,16 @@ Nature 光计算维度和视觉大模型预测实验属于另一条技术探索�
             module.OUTPUT = root / "output"
             sent_files = []
             agent_calls = []
+            history_calls = []
             module.life_memo_snapshot = lambda *_args, **_kwargs: "- memo: one exact item"
+            module.build_history_context = lambda *_args, **kwargs: (
+                history_calls.append(kwargs)
+                or {
+                    "snapshot": "user-authored context",
+                    "full_memory": "compacted user history",
+                    "manifest": {"represented_messages": 1},
+                }
+            )
             module.select_agent_backend = lambda _config: "codex"
             module.organizer_output_quality = lambda *_args, **_kwargs: {
                 "accepted": True,
@@ -878,7 +907,11 @@ Nature 光计算维度和视觉大模型预测实验属于另一条技术探索�
         self.assertTrue(first["ok"])
         self.assertEqual(first["status"], "delivered")
         self.assertEqual(second["status"], "already_delivered")
-        self.assertEqual(len(agent_calls), 1)
+        self.assertEqual(len(agent_calls), 2)
+        self.assertEqual(agent_calls[0][1]["role"], "daily_organizer")
+        self.assertEqual(agent_calls[1][1]["role"], "daily_organizer_editor")
+        self.assertEqual(history_calls[0]["directions"], ("inbound",))
+        self.assertIn("compacted user history", agent_calls[1][0][0])
         self.assertEqual(len(sent_files), 1)
         self.assertEqual(sent_files[0][0].suffix, ".pdf")
         self.assertEqual(sent_files[0][1], "写作 外语 挣钱")
@@ -950,10 +983,222 @@ Nature 光计算维度和视觉大模型预测实验属于另一条技术探索�
             payload = module.run_organizer(args, force=True)
 
         self.assertTrue(payload["ok"])
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
         self.assertEqual(calls[0][1]["role"], "daily_organizer")
-        self.assertEqual(calls[1][1]["role"], "daily_organizer")
-        self.assertEqual(calls[0][1]["chat_name"], calls[1][1]["chat_name"])
+        self.assertEqual(calls[1][1]["role"], "daily_organizer_repair")
+        self.assertEqual(calls[2][1]["role"], "daily_organizer_editor")
+        self.assertEqual(calls[0][1]["chat_name"], calls[2][1]["chat_name"])
+
+    def test_substantive_organizer_fails_closed_when_editor_does_not_finish(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            module.life_memo_snapshot = lambda *_args, **_kwargs: "\n".join(
+                f"- memo: distinct user item {index}" for index in range(8)
+            )
+            module.build_history_context = lambda *_args, **_kwargs: {
+                "snapshot": "inbound history",
+                "full_memory": "inbound history",
+                "manifest": {"represented_messages": 8},
+            }
+            module.select_agent_backend = lambda _config: "aginti"
+            module.agent_context_model = lambda *_args, **_kwargs: "localllm-fast"
+            calls = []
+
+            def fake_agent(_prompt, **kwargs):
+                calls.append(kwargs["role"])
+                if kwargs["role"] == "daily_organizer_editor":
+                    return {"ok": False, "message": "", "backend": "aginti"}
+                return {
+                    "ok": True,
+                    "message": "# Draft\n\n## Context\n\nA grounded draft.",
+                    "backend": "aginti",
+                }
+
+            module.run_agent_session = fake_agent
+            module.organizer_output_quality = lambda body, *_args, **_kwargs: {
+                "accepted": bool(body),
+                "reasons": [] if body else ["empty_output"],
+                "evidence_items": 8,
+            }
+            module.render_interactive_organizer_pdf = lambda *_args, **_kwargs: self.fail(
+                "an unedited substantive memo must not render"
+            )
+            args = argparse.Namespace(
+                organize_chat="MEMO写作—外语—挣钱",
+                memory_db=root / "memory.sqlite",
+                model="gpt-test",
+                reasoning_effort="medium",
+                timeout_seconds=30,
+                send=False,
+                send_targets=root / "targets.json",
+            )
+
+            payload = module.run_organizer(args, force=True)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "quality_failed")
+        self.assertEqual(
+            calls,
+            [
+                "daily_organizer",
+                "daily_organizer_editor",
+                "daily_organizer_editor",
+            ],
+        )
+        self.assertIn("editorial_pass_failed", payload["quality"]["reasons"])
+
+    def test_organizer_uses_codex_editor_after_primary_editor_failure(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            module.life_memo_snapshot = lambda *_args, **_kwargs: "\n".join(
+                f"- memo: distinct user item {index}" for index in range(8)
+            )
+            module.build_history_context = lambda *_args, **_kwargs: {
+                "snapshot": "inbound history",
+                "full_memory": "inbound history",
+                "manifest": {"represented_messages": 8},
+            }
+            module.select_agent_backend = lambda _config: "aginti"
+            module.agent_context_model = lambda *_args, **_kwargs: "localllm-fast"
+            calls = []
+
+            def fake_agent(_prompt, **kwargs):
+                calls.append((kwargs["backend"], kwargs["role"]))
+                if kwargs["role"] == "daily_organizer":
+                    return {"ok": True, "message": "# Draft\n\nGrounded draft.", "backend": "aginti"}
+                if kwargs["backend"] == "aginti":
+                    return {"ok": False, "message": "", "backend": "aginti"}
+                return {
+                    "ok": True,
+                    "message": "# Final\n\n## Context\n\n最终编辑后的完整备忘。",
+                    "backend": "codex",
+                    "thread_id": "codex-editor-thread",
+                }
+
+            module.run_agent_session = fake_agent
+            module.organizer_output_quality = lambda body, *_args, **_kwargs: {
+                "accepted": bool(body),
+                "reasons": [] if body else ["empty_output"],
+                "evidence_items": 8,
+            }
+            rendered = []
+
+            def fake_render(source, output):
+                rendered.append(source.read_text(encoding="utf-8"))
+                output.write_bytes(b"%PDF edited")
+                return output
+
+            module.render_interactive_organizer_pdf = fake_render
+            args = argparse.Namespace(
+                organize_chat="MEMO写作—外语—挣钱",
+                memory_db=root / "memory.sqlite",
+                model="gpt-test",
+                reasoning_effort="medium",
+                timeout_seconds=30,
+                send=False,
+                send_targets=root / "targets.json",
+            )
+
+            payload = module.run_organizer(args, force=True)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(
+            calls,
+            [
+                ("aginti", "daily_organizer"),
+                ("aginti", "daily_organizer_editor"),
+                ("codex", "daily_organizer_editor"),
+            ],
+        )
+        self.assertIn("最终编辑后的完整备忘", rendered[0])
+
+    def test_organizer_rebuilds_with_codex_when_primary_writer_and_repair_fail(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            module.life_memo_snapshot = lambda *_args, **_kwargs: "\n".join(
+                f"- memo: distinct user item {index}" for index in range(8)
+            )
+            module.build_history_context = lambda *_args, **_kwargs: {
+                "snapshot": "inbound history",
+                "full_memory": "inbound history",
+                "manifest": {"represented_messages": 8},
+            }
+            module.select_agent_backend = lambda _config: "aginti"
+            module.agent_context_model = lambda *_args, **_kwargs: "localllm-fast"
+            calls = []
+
+            def fake_agent(_prompt, **kwargs):
+                calls.append((kwargs["backend"], kwargs["role"]))
+                if kwargs["backend"] == "aginti" and kwargs["role"] == "daily_organizer":
+                    return {"ok": True, "message": "generic", "backend": "aginti"}
+                if kwargs["backend"] == "aginti":
+                    return {"ok": False, "message": "", "backend": "aginti"}
+                if kwargs["role"] == "daily_organizer_repair":
+                    return {
+                        "ok": True,
+                        "message": "# Grounded\n\n## Context\n\nCodex grounded final draft.",
+                        "backend": "codex",
+                    }
+                return {
+                    "ok": True,
+                    "message": "# Edited\n\n## Context\n\nCodex edited final memo.",
+                    "backend": "codex",
+                }
+
+            module.run_agent_session = fake_agent
+
+            def fake_quality(body, *_args, **_kwargs):
+                accepted = "Codex" in body
+                return {
+                    "accepted": accepted,
+                    "reasons": [] if accepted else ["too_short_for_evidence"],
+                    "evidence_items": 8,
+                }
+
+            module.organizer_output_quality = fake_quality
+            rendered = []
+
+            def fake_render(source, output):
+                rendered.append(source.read_text(encoding="utf-8"))
+                output.write_bytes(b"%PDF rebuilt")
+                return output
+
+            module.render_interactive_organizer_pdf = fake_render
+            args = argparse.Namespace(
+                organize_chat="MEMO写作—外语—挣钱",
+                memory_db=root / "memory.sqlite",
+                model="gpt-test",
+                reasoning_effort="medium",
+                timeout_seconds=30,
+                send=False,
+                send_targets=root / "targets.json",
+            )
+
+            payload = module.run_organizer(args, force=True)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(
+            calls,
+            [
+                ("aginti", "daily_organizer"),
+                ("aginti", "daily_organizer_repair"),
+                ("codex", "daily_organizer_repair"),
+                ("codex", "daily_organizer_editor"),
+            ],
+        )
+        self.assertIn("Codex edited final memo", rendered[0])
 
     def test_organizer_retries_existing_pdf_without_rerunning_agent(self):
         module = load_wechat_career_daily_agent()
@@ -1057,7 +1302,7 @@ Nature 光计算维度和视觉大模型预测实验属于另一条技术探索�
 
         self.assertEqual(generated["status"], "generated")
         self.assertEqual(delivered["status"], "delivered")
-        self.assertEqual(len(agent_calls), 1)
+        self.assertEqual(len(agent_calls), 2)
         self.assertEqual(len(sent), 1)
 
     def test_organizer_delivery_uses_stable_android_component_scope(self):
@@ -1083,7 +1328,7 @@ Nature 光计算维度和视觉大模型预测实验属于另一条技术探索�
                 "MEMO写作—外语—挣钱",
             )
 
-        expected_id = "daily-organizer-2026-08-23-v3"
+        expected_id = "daily-organizer-2026-08-23-v4"
         self.assertTrue(status["complete"])
         self.assertEqual(status["delivery_task_id"], expected_id)
         self.assertEqual(captured["task"], {"id": expected_id})

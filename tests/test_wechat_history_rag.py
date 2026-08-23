@@ -105,6 +105,34 @@ class WeChatHistoryRagTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_OTHER_GROUP_SENTINEL", payload["snapshot"])
         self.assertEqual(payload["manifest"]["authorized_chats"], ["MEMO"])
 
+    def test_retrieval_can_keep_user_authored_history_only(self) -> None:
+        when = datetime(2026, 8, 1, tzinfo=timezone.utc)
+        self.insert(
+            "MEMO",
+            "我想把光学仪器和写作结合成长期项目。",
+            when,
+            direction="inbound",
+        )
+        self.insert(
+            "MEMO",
+            "助手建议把它改成通用翻译接单服务。",
+            when + timedelta(minutes=1),
+            direction="outbound",
+        )
+
+        payload = self.module.build_history_context(
+            self.db,
+            ["MEMO"],
+            "光学 写作 长期项目",
+            char_budget=5000,
+            directions=("inbound",),
+        )
+
+        self.assertIn("光学仪器和写作", payload["snapshot"])
+        self.assertNotIn("通用翻译接单服务", payload["snapshot"])
+        self.assertEqual(payload["manifest"]["scanned_messages"], 1)
+        self.assertEqual(payload["manifest"]["authorized_directions"], ["inbound"])
+
     def test_retrieval_deduplicates_repeated_messages_with_provenance(self) -> None:
         when = datetime(2026, 8, 1, tzinfo=timezone.utc)
         for offset in range(3):

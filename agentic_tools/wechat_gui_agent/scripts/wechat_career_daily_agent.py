@@ -58,7 +58,8 @@ DEFAULT_CHATS = [
 DEFAULT_ORGANIZER_CHAT = preferred_chat_title("writing_money")
 ORGANIZER_STATE = PRIVATE / "output" / "career_daily" / "organizer-delivery.json"
 SCHEDULER_STATE = PRIVATE / "output" / "career_daily" / "scheduler-state.json"
-ORGANIZER_DELIVERY_VERSION = "v3"
+ORGANIZER_DELIVERY_VERSION = "v4"
+ORGANIZER_SCHEMA = "labcanvas.wechat.daily_organizer.v4"
 DELIVERY_RETRY_BASE_SECONDS = int(os.environ.get("WECHAT_DAILY_DELIVERY_RETRY_SECONDS", "1800"))
 DELIVERY_RETRY_MAX_SECONDS = int(os.environ.get("WECHAT_DAILY_DELIVERY_RETRY_MAX_SECONDS", "14400"))
 SCHEDULER_OVERDUE_GRACE_SECONDS = int(
@@ -132,7 +133,10 @@ def main() -> int:
             print(payload.get("status") or "done")
         return 0 if payload.get("ok") else 1
     payload = (
-        run_organizer(args, force=bool(args.force_organize))
+        run_with_daily_operation_lock(
+            "organizer",
+            lambda: run_organizer(args, force=bool(args.force_organize)),
+        )
         if args.action == "organize"
         else run_daily(args)
     )
@@ -804,6 +808,7 @@ def run_organizer(
             token_budget=history_token_budget,
             model=context_model,
             role="daily",
+            directions=("inbound",),
         )
         prompt = build_organizer_prompt(
             chat,
@@ -822,6 +827,7 @@ def run_organizer(
             "backend": backend,
             "requested_model": args.model,
             "context_model": context_model,
+            "history_authority": "user_inbound_only",
             "recent_token_budget": recent_token_budget,
             "recent_estimated_tokens": estimate_tokens(snapshot),
             "history_token_budget": history_token_budget,
@@ -849,8 +855,16 @@ def run_organizer(
             history_context=str(history.get("snapshot") or ""),
         )
         quality_attempts = 1
+        quality_fallback_status: dict[str, Any] = {
+            "attempted": False,
+            "applied": False,
+        }
         if result.get("ok") and body and not quality.get("accepted"):
-            repair_prompt = build_organizer_repair_prompt(body, quality)
+            repair_prompt = build_organizer_repair_prompt(
+                quality,
+                snapshot,
+                history_context=str(history.get("full_memory") or ""),
+            )
             (trace_dir / "repair-prompt.md").write_text(
                 repair_prompt.rstrip() + "\n",
                 encoding="utf-8",
@@ -859,7 +873,7 @@ def run_organizer(
                 repair_prompt,
                 backend=backend,
                 chat_name=chat,
-                role="daily_organizer",
+                role="daily_organizer_repair",
                 model=args.model,
                 reasoning_effort=args.reasoning_effort,
                 sandbox="read-only",
@@ -883,6 +897,144 @@ def run_organizer(
                 result = repaired
                 body = repaired_body
                 quality = repaired_quality
+        if (
+            (not result.get("ok") or not body or not quality.get("accepted"))
+            and backend != "codex"
+        ):
+            fallback_prompt = build_organizer_repair_prompt(
+                quality,
+                snapshot,
+                history_context=str(history.get("full_memory") or ""),
+            )
+            (trace_dir / "quality-fallback-prompt.md").write_text(
+                fallback_prompt.rstrip() + "\n",
+                encoding="utf-8",
+            )
+            fallback_result = run_agent_session(
+                fallback_prompt,
+                backend="codex",
+                chat_name=chat,
+                role="daily_organizer_repair",
+                model=args.model,
+                reasoning_effort=args.reasoning_effort,
+                sandbox="read-only",
+                timeout_seconds=args.timeout_seconds,
+                workdir=ROOT,
+                reuse=True,
+            )
+            quality_attempts += 1
+            fallback_raw = str(fallback_result.get("message") or "").strip()
+            (trace_dir / "agent-output-quality-fallback-codex.txt").write_text(
+                fallback_raw.rstrip() + "\n",
+                encoding="utf-8",
+            )
+            fallback_body = normalize_organizer_output(fallback_raw)
+            fallback_quality = organizer_output_quality(
+                fallback_body,
+                snapshot,
+                history_context=str(history.get("snapshot") or ""),
+            )
+            write_json_file(
+                trace_dir / "quality-fallback-codex.json",
+                fallback_quality,
+            )
+            quality_fallback_status = {
+                "attempted": True,
+                "applied": False,
+                "backend": fallback_result.get("backend") or "codex",
+                "thread_id": fallback_result.get("thread_id"),
+                "ok": bool(fallback_result.get("ok")),
+                "accepted": bool(fallback_quality.get("accepted")),
+                "reasons": list(fallback_quality.get("reasons") or []),
+            }
+            if (
+                fallback_result.get("ok")
+                and fallback_body
+                and fallback_quality.get("accepted")
+            ):
+                result = fallback_result
+                body = fallback_body
+                quality = fallback_quality
+                quality_fallback_status["applied"] = True
+        editor_status: dict[str, Any] = {
+            "attempted": False,
+            "applied": False,
+        }
+        editor_required = int(quality.get("evidence_items") or 0) >= 8
+        if result.get("ok") and body and quality.get("accepted"):
+            editor_prompt = build_organizer_editor_prompt(
+                body,
+                snapshot,
+                history_context=str(history.get("full_memory") or ""),
+            )
+            (trace_dir / "editor-prompt.md").write_text(
+                editor_prompt.rstrip() + "\n",
+                encoding="utf-8",
+            )
+            editor_primary_backend = str(result.get("backend") or backend)
+            editor_backends = [editor_primary_backend]
+            if editor_primary_backend != "codex":
+                editor_backends.append("codex")
+            editor_attempts: list[dict[str, Any]] = []
+            for attempt_index, editor_backend in enumerate(editor_backends, start=1):
+                edited = run_agent_session(
+                    editor_prompt,
+                    backend=editor_backend,
+                    chat_name=chat,
+                    role="daily_organizer_editor",
+                    model=args.model,
+                    reasoning_effort=args.reasoning_effort,
+                    sandbox="read-only",
+                    timeout_seconds=args.timeout_seconds,
+                    workdir=ROOT,
+                    reuse=True,
+                )
+                edited_raw = str(edited.get("message") or "").strip()
+                output_name = (
+                    "agent-output-editor.txt"
+                    if attempt_index == 1
+                    else f"agent-output-editor-{attempt_index}-{editor_backend}.txt"
+                )
+                (trace_dir / output_name).write_text(
+                    edited_raw.rstrip() + "\n",
+                    encoding="utf-8",
+                )
+                edited_body = normalize_organizer_output(edited_raw)
+                edited_quality = organizer_output_quality(
+                    edited_body,
+                    snapshot,
+                    history_context=str(history.get("snapshot") or ""),
+                )
+                quality_name = (
+                    "editor-quality.json"
+                    if attempt_index == 1
+                    else f"editor-quality-{attempt_index}-{editor_backend}.json"
+                )
+                write_json_file(trace_dir / quality_name, edited_quality)
+                attempt_status = {
+                    "backend": edited.get("backend") or editor_backend,
+                    "provider": edited.get("provider"),
+                    "thread_id": edited.get("thread_id"),
+                    "accepted": bool(edited_quality.get("accepted")),
+                    "reasons": list(edited_quality.get("reasons") or []),
+                    "ok": bool(edited.get("ok")),
+                }
+                editor_attempts.append(attempt_status)
+                if edited.get("ok") and edited_body and edited_quality.get("accepted"):
+                    result = edited
+                    body = edited_body
+                    quality = edited_quality
+                    editor_status.update(attempt_status)
+                    editor_status["applied"] = True
+                    break
+            editor_status["attempted"] = bool(editor_attempts)
+            editor_status["attempts"] = editor_attempts
+            if editor_attempts and not editor_status.get("applied"):
+                editor_status.update(editor_attempts[-1])
+        if editor_required and not editor_status.get("applied"):
+            quality["accepted"] = False
+            quality.setdefault("reasons", []).append("editorial_pass_failed")
+        editor_status["required"] = editor_required
         if not result.get("ok") or not body:
             return {
                 "ok": False,
@@ -892,10 +1044,12 @@ def run_organizer(
                 "trace_dir": str(trace_dir),
             }
         quality["attempts"] = quality_attempts
+        quality["quality_fallback"] = quality_fallback_status
+        quality["editor"] = editor_status
         write_json_file(trace_dir / "quality.json", quality)
         if not quality.get("accepted"):
             state = {
-                "schema": "labcanvas.wechat.daily_organizer.v3",
+                "schema": ORGANIZER_SCHEMA,
                 "date": stamp,
                 "chat": chat,
                 "status": "quality_failed",
@@ -930,7 +1084,7 @@ def run_organizer(
                 "report": str(report),
             }
         state = {
-            "schema": "labcanvas.wechat.daily_organizer.v3",
+            "schema": ORGANIZER_SCHEMA,
             "date": stamp,
             "chat": chat,
             "status": "ready",
@@ -1069,7 +1223,7 @@ def build_organizer_prompt(
     *,
     history_context: str = "",
 ) -> str:
-    return f"""You organize one private WeChat group's recent notes into a useful daily memo.
+    return f"""You are the long-term editor for one private WeChat memo group.
 
 Exact chat: {chat}
 
@@ -1081,40 +1235,44 @@ direct synthesis from supplied evidence and needs no tool call or file access.
 Use only the evidence below. Deduplicate repeated classifications of the same
 message. Do not invent dates, deadlines, completion states, groceries, calendar
 events, or commitments. A question or request is not automatically a real todo.
+The lifetime packet contains user-authored inbound history only. Treat it as
+continuity and evidence, not permission to revive completed work.
 
-This is the full daily organization, not a narrow highlight and not a raw chat
-dump. Cover every distinct concrete action, reminder, idea,
-writing/language/career/money signal, and unresolved question in the bounded
-evidence. Merge duplicate classifier rows and closely related fragments, but do
-not silently drop a concrete item just because it does not fit one preferred
-narrative. Full coverage means preserving meaning and continuity, not copying
-source lines one by one.
+This is a contextual memo, not a transcript, database export, inventory dump,
+or short highlight. "Full context" means that every distinct active theme,
+constraint, correction, decision, open question, and concrete reminder has a
+place in the resulting mental map. It does not mean copying every source line.
+Merge consecutive fragments that form one thought. Keep unrelated threads
+separate instead of forcing everything into one grand narrative.
 
-Write two complementary layers:
+Build the report in three complementary layers without repeating the same
+material in each layer:
 
-1. Start with a contextual reading of the day. In several substantial prose
-   paragraphs, explain what is newly active, what changed, which fragments form
-   one larger thread, what remains uncertain, and what earlier context clarifies.
-   This should feel like a thoughtful person who has followed the whole
-   conversation, not a database export.
-2. Follow with a complete organized reference section. Group all concrete items
-   under natural headings, preserve important names and exact lists where they
-   matter, and annotate status or relationship briefly. This layer may use
-   bullets, but it must not replace the contextual reading.
+1. Open with what is genuinely new or changed in the latest evidence. Do not
+   call old material new merely because it appears in the lifetime packet.
+2. Give a deep current map. For each substantial theme, explain what the idea
+   actually is, how the newest fragments alter or clarify it, its present state,
+   the strongest connection to other themes, and the important uncertainty.
+   Use natural prose, not a list of nouns. Major themes deserve more than one
+   sentence; weak or speculative links must be labeled as such.
+3. End with a compact operational reference: unresolved decisions, real open
+   actions, and exact inventories or reading lists only where the list itself is
+   being maintained. Record each fact once. Do not repeat the narrative as a
+   second bullet-form summary.
 
-The organized reference is thematic, not an audit trail. Never append a
+The operational reference is thematic, not an audit trail. Never append a
 source-by-source or message-by-message evidence ledger, a numbered restatement
 of the input, a coverage count, or a section arranged "by source order". Do not
 narrate how the report was generated or claim that source rows were audited.
 Do not expose media duration, byte counts, file metadata, source IDs, or ASR
 diagnostics. A voice note contributes only its cleaned meaning.
 
-Include a clear unresolved-questions/decisions section when the evidence has
-them. End with at most three high-leverage actions. Use at least four
-substantial non-list paragraphs across the report. Do not expose timestamps,
-classifier labels, transport metadata, quoted-message wrappers, ASR wrappers,
-or raw transcript fragments. Rewrite spoken fragments into clear notes while
-preserving their meaning.
+Do not turn an earlier assistant suggestion into a user decision unless the user
+later endorsed it. Do not say "the group decided" or "the plan is" when the
+evidence only contains an idea or a question. Preserve uncertainty honestly.
+Do not expose timestamps, classifier labels, transport metadata, quoted-message
+wrappers, ASR wrappers, or raw transcript fragments. Rewrite spoken fragments
+into clear notes while preserving their meaning.
 
 Organize naturally rather than forcing empty sections. Before synthesis, sort
 items into the lowest valid category and do not inflate ordinary notes into
@@ -1133,11 +1291,12 @@ into symbolism, personality analysis, hidden motivation, a "main bet", or
 life-planning signal unless the evidence explicitly justifies that move. Keep
 the full organization separate from any short direction synthesis.
 
-Be comprehensive, condensed, and substantive. For a large evidence packet,
-write a genuinely full multi-page report rather than stopping after two pages.
-Preserve important technical names and quoted intent. Explain useful
-connections and changes, and end with at most three high-leverage next actions.
-Do not add generic productivity advice.
+Be comprehensive, edited, and substantive. For a large evidence packet, write a
+genuinely full multi-page memo with enough explanation to recover the user's
+thinking later. Avoid both extremes: a shallow two-page outline and a raw long
+appendix. Preserve important technical names and quoted intent. Explain useful
+connections and changes, but do not manufacture coherence. End with at most
+three high-leverage actions. Do not add generic productivity advice.
 Write every concrete open action and every final next action as a Markdown task
 line beginning exactly with `- [ ]`. Use ordinary bullets for evidence, ideas,
 and non-action observations. These task lines become clickable checkboxes in the
@@ -1146,12 +1305,72 @@ delivered PDF.
 Recent exact-chat evidence:
 {snapshot}
 
-Relevance-ranked longitudinal context from the complete authorized history:
+Longitudinal context compacted from the complete authorized user history:
 {history_context or '(no additional longitudinal context found)'}
 
 Use longitudinal context only to resolve names, continuity, repeated projects,
-and explicit prior decisions. It is not today's inbox: never revive a completed
-task or list an old note unless the recent organized evidence makes it current.
+and explicit prior decisions. It is not today's inbox. Distinguish active,
+uncertain, dormant, completed, and purely archival material; never revive a
+completed task or present an old suggestion as a current commitment.
+"""
+
+
+def build_organizer_editor_prompt(
+    draft: str,
+    snapshot: str,
+    *,
+    history_context: str = "",
+) -> str:
+    """Ask a separate agent role to turn a grounded draft into an edited memo."""
+
+    draft_quality = organizer_output_quality(
+        draft,
+        snapshot,
+        history_context=history_context,
+    )
+    minimum_characters = int(draft_quality.get("minimum_characters") or 900)
+    minimum_grounded = int(draft_quality.get("minimum_grounded_items") or 5)
+
+    return f"""Act as the final editor of a private Chinese daily memo.
+
+The draft below may be factually grounded yet still fail in substance: it may
+look like raw notes, repeat the same facts in prose and bullets, flatten a full
+conversation into a few slogans, overstate assistant suggestions as decisions,
+or include a long inventory without explaining the surrounding thought.
+
+Rewrite it into the final mobile-readable Markdown. Preserve all distinct
+user-authored themes represented by the evidence, but synthesize them by idea
+and state rather than source row. Keep exact inventories or book lists once only
+when they are themselves useful records. Give major active themes enough prose
+to recover their meaning, development, relationship, and uncertainty. Keep
+logistics separate from projects and long-term direction. Do not manufacture a
+single grand narrative. Do not add facts or generic advice.
+
+Editing is not automatic compression. The supplied draft already passed the
+host's grounding and substance gate. Keep strong passages unchanged when they
+are clear, and make only edits that improve the memo. Do not replace a full
+memo with an outline, summary, or shortlist. The final text must remain at least
+{minimum_characters} Chinese/Markdown characters and visibly retain at least
+{minimum_grounded} distinct evidence-grounded ideas. Preserve every genuine
+open action from the draft unless the evidence shows that it is duplicate,
+completed, or not actually an action. A short priority list at the end does not
+replace the fuller operational reference.
+
+The result must not mention editing, evidence packets, databases, models,
+coverage, source rows, audits, or the rejected draft. Return only polished
+Chinese Markdown, without JSON or a code fence. Use `- [ ]` only for genuine
+open actions. You may end with no more than three high-leverage priorities, but
+that cap applies only to the final priority shortlist, not to genuine actions
+recorded elsewhere in the memo.
+
+Draft to edit:
+{draft}
+
+Recent exact user evidence:
+{snapshot}
+
+Compacted lifetime user context:
+{history_context or '(no additional longitudinal context found)'}
 """
 
 
@@ -1317,12 +1536,11 @@ def organizer_output_quality(
     grounding = organizer_grounding_metrics(text, snapshot)
     prose = organizer_prose_metrics(text)
     evidence_items = int(grounding["evidence_items"])
-    min_chars = min(7600, max(900, evidence_items * 76))
-    min_headings = 5 if evidence_items >= 20 else (4 if evidence_items >= 8 else 2)
-    min_bullets = min(20, max(6, evidence_items // 4))
+    min_chars = min(10000, max(900, evidence_items * 110))
+    min_headings = 3 if evidence_items >= 20 else (2 if evidence_items >= 8 else 1)
     min_grounded = min(18, max(5, evidence_items // 4))
-    min_prose_paragraphs = 4 if evidence_items >= 12 else 2
-    min_prose_chars = min(1800, max(420, evidence_items * 20))
+    min_prose_paragraphs = 8 if evidence_items >= 40 else (5 if evidence_items >= 12 else 2)
+    min_prose_chars = min(4200, max(420, evidence_items * 48))
     heading_count = len(re.findall(r"(?m)^#{1,4}\s+\S", text))
     bullet_count = len(re.findall(r"(?m)^\s*(?:[-*+] |\d+[.)、]\s+)", text))
     task_count = len(re.findall(r"(?m)^\s*[-*+]\s+\[\s*\]\s+", text))
@@ -1337,15 +1555,13 @@ def organizer_output_quality(
         reasons.append("too_short_for_evidence")
     if heading_count < min_headings:
         reasons.append("insufficient_structure")
-    if bullet_count < min_bullets:
-        reasons.append("insufficient_item_coverage")
     if int(grounding["grounded_items"]) < min_grounded:
         reasons.append("insufficient_evidence_grounding")
     if int(prose["prose_paragraphs"]) < min_prose_paragraphs:
         reasons.append("insufficient_contextual_synthesis")
     if int(prose["prose_characters"]) < min_prose_chars:
         reasons.append("insufficient_contextual_explanation")
-    if evidence_items >= 12 and float(prose["bullet_character_ratio"]) > 0.82:
+    if evidence_items >= 12 and float(prose["bullet_character_ratio"]) > 0.72:
         reasons.append("raw_list_dominance")
     if re.search(
         r"(?m)^\s*(?:[-*+]\s+)?(?:inbox|memo|request|web_clip|money|writing)\s*\|\s*20\d{2}-",
@@ -1376,7 +1592,6 @@ def organizer_output_quality(
         "tasks": task_count,
         "minimum_characters": min_chars,
         "minimum_headings": min_headings,
-        "minimum_bullets": min_bullets,
         "minimum_grounded_items": min_grounded,
         "minimum_prose_paragraphs": min_prose_paragraphs,
         "minimum_prose_characters": min_prose_chars,
@@ -1386,7 +1601,12 @@ def organizer_output_quality(
     }
 
 
-def build_organizer_repair_prompt(body: str, quality: dict[str, Any]) -> str:
+def build_organizer_repair_prompt(
+    quality: dict[str, Any],
+    snapshot: str,
+    *,
+    history_context: str = "",
+) -> str:
     missing = quality.get("missing_examples") if isinstance(quality, dict) else []
     missing = missing if isinstance(missing, list) else []
     examples = "\n".join(f"- {item}" for item in missing[:6]) or "- Re-read the supplied evidence ledger."
@@ -1397,22 +1617,23 @@ Observed: {quality.get('characters', 0)} characters, {quality.get('headings', 0)
 {quality.get('bullets', 0)} bullets, {quality.get('prose_paragraphs', 0)} substantial prose paragraphs,
 and {quality.get('grounded_items', 0)} grounded evidence items.
 
-Rewrite it now from the complete recent-evidence and lifetime-context packet in
-the immediately preceding request. Preserve actual names, books, devices,
+Write a fresh replacement from the complete user-authored evidence below. Do
+not continue, expand, or imitate the rejected draft. Preserve actual names, books, devices,
 articles, projects, decisions, and open questions. Group related fragments, but
 do not replace them with generic business, translation, productivity, or
 language-service advice. Distinguish current logistics from projects and from
 long-term direction. Open with an interpreted contextual overview and explain
 changes, connections, decisions, and unresolved questions in at least
 {quality.get('minimum_prose_paragraphs', 4)} substantial non-list paragraphs.
-Then provide the complete grouped reference ledger. Use at least
-{quality.get('minimum_headings', 3)} Markdown headings,
-{quality.get('minimum_bullets', 8)} concrete bullets, and about
-{quality.get('minimum_characters', 1200)} or more Chinese characters when the
-evidence supports it. Do not merely expand, reorder, or paraphrase the source
-rows one by one. Do not add a source-by-source evidence appendix, input coverage
-count, generation-process narration, voice duration, byte count, source ID, or
-ASR diagnostics. Keep actionable items as `- [ ]` task lines.
+Then retain only a compact operational section for genuine open decisions,
+actions, or inventories. Do not repeat the prose as a categorized ledger. Use
+natural headings and about {quality.get('minimum_characters', 1200)} or more
+Chinese characters when the evidence supports it. Do not merely expand,
+reorder, or paraphrase source rows one by one. Do not add a source-by-source
+evidence appendix, input coverage count, generation-process narration, voice
+duration, byte count, source ID, or ASR diagnostics. Keep genuine actionable
+items as `- [ ]` task lines; ordinary ideas must not become tasks merely to fill
+a format.
 
 Representative evidence missed by the previous draft:
 {examples}
@@ -1420,8 +1641,11 @@ Representative evidence missed by the previous draft:
 Return only the finished Chinese Markdown. Do not return JSON, a code fence,
 an apology, a tool limitation, or commentary about this audit.
 
-Rejected draft for reference:
-{body[:1800]}
+Recent exact user evidence:
+{snapshot}
+
+Compacted lifetime user context:
+{history_context or '(no additional longitudinal context found)'}
 """
 
 

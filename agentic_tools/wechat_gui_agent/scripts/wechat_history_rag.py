@@ -256,22 +256,39 @@ def _allowed_chats(chats: Iterable[str]) -> list[str]:
     return [str(chat).strip() for chat in dict.fromkeys(chats) if str(chat).strip()]
 
 
-def load_history(db: Path, chats: Iterable[str]) -> list[HistoryMessage]:
+def load_history(
+    db: Path,
+    chats: Iterable[str],
+    *,
+    directions: Iterable[str] | None = None,
+) -> list[HistoryMessage]:
     """Load every authorized personal-WeChat row; there is deliberately no LIMIT."""
 
     allowed = _allowed_chats(chats)
     if not db.is_file() or not allowed:
         return []
     placeholders = ",".join("?" for _ in allowed)
+    allowed_directions = [
+        str(direction).strip().casefold()
+        for direction in dict.fromkeys(directions or ())
+        if str(direction).strip()
+    ]
+    direction_clause = ""
+    params: list[object] = [*allowed]
+    if allowed_directions:
+        direction_placeholders = ",".join("?" for _ in allowed_directions)
+        direction_clause = f" AND lower(direction) IN ({direction_placeholders})"
+        params.extend(allowed_directions)
     query = f"""
         SELECT id, chat_name, direction, sender_display, body, create_time, observed_at
         FROM source_messages
         WHERE chat_name IN ({placeholders})
+        {direction_clause}
         ORDER BY create_time ASC, id ASC
     """
     with sqlite3.connect(db) as connection:
         connection.row_factory = sqlite3.Row
-        rows = connection.execute(query, allowed).fetchall()
+        rows = connection.execute(query, params).fetchall()
     messages = []
     for row in rows:
         body = normalize_body(row["body"])
@@ -1041,11 +1058,12 @@ def build_history_context(
     model: str = "",
     role: str = "task",
     cache_dir: Path | None = None,
+    directions: Iterable[str] | None = None,
 ) -> dict[str, object]:
     """Build lifetime memory from the complete authorized personal-WeChat corpus."""
 
-    return build_context_from_messages(
-        load_history(db, chats),
+    payload = build_context_from_messages(
+        load_history(db, chats, directions=directions),
         query,
         char_budget=char_budget,
         token_budget=token_budget,
@@ -1053,6 +1071,16 @@ def build_history_context(
         role=role,
         cache_dir=cache_dir if cache_dir is not None else _default_cache_dir(db),
     )
+    manifest = payload.get("manifest")
+    if isinstance(manifest, dict):
+        manifest["authorized_directions"] = sorted(
+            {
+                str(direction).strip().casefold()
+                for direction in (directions or ())
+                if str(direction).strip()
+            }
+        ) or ["all"]
+    return payload
 
 
 def build_wecom_history_context(

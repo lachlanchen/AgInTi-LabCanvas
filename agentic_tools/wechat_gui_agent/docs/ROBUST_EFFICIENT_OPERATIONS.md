@@ -2054,21 +2054,29 @@ Stuck GUI sender:
   The organizer sizes its recent ledger and lifetime compaction for the
   smallest active backend provider window, not merely the requested Codex
   model. This keeps the same evidence packet valid across AgInTi's
-  DeepSeek-to-LocalLLM handoff. Common structured agent envelopes are unwrapped
-  before rendering. A deterministic content gate rejects raw JSON, tool
-  excuses, thin generic advice, weak Markdown structure, and drafts with too
-  little exact-evidence grounding; one same-session editing pass may repair the
-  draft. Rejected drafts remain private and are never counted or delivered as
-  a completed daily PDF. The gate also requires several substantial synthesis
-  paragraphs before the organized reference, scales expected depth with the
-  amount of available evidence, and rejects source-by-source transcript dumps,
-  list-dominant exports, timestamps, byte counts, media diagnostics, and other
-  private evidence metadata. The resulting XeLaTeX report uses a restrained
-  mobile-readable hierarchy, compact grouped lists, page headers, and real
-  interactive checkboxes; it is inspected and delivered as one PDF rather than
-  Markdown or TeX source.
+  DeepSeek-to-LocalLLM handoff. Memo authority is restricted to user-authored
+  inbound rows; outbound assistant prose remains transport history and cannot
+  become a user decision. Common structured agent envelopes are unwrapped
+  before rendering. One agent writes the evidence-grounded memo and a separate
+  agent role performs the final editorial pass. The editor chooses themes and
+  prose dynamically, removes duplicated narrative/list material, restores
+  underexplained context, and preserves uncertainty. If the primary AgInTi
+  writer/repair or editor is empty or fails the same content gates, the
+  identical evidence packet escalates once to the Codex quality lane; neither
+  backend may bypass the gate. Editorial cleanup is not automatic compression:
+  the final memo retains the evidence-scaled substance floor, genuine actions,
+  and strong passages that do not need rewriting. Deterministic code only
+  enforces exact-chat source isolation, scaled substantive depth, grounding,
+  privacy, and obvious failure gates; it never hardcodes the day's topics,
+  section conclusions, or strategy. Rejected drafts remain private and are
+  never counted or delivered as a completed daily PDF. The gate rejects
+  source-by-source transcript dumps, list-dominant exports, timestamps, byte
+  counts, media diagnostics, and other private evidence metadata. The resulting
+  XeLaTeX report uses a restrained mobile-readable hierarchy, compact grouped
+  lists, page headers, and real interactive checkboxes; it is inspected and
+  delivered as one PDF rather than Markdown or TeX source.
 - Organizer delivery uses a stable task ID of
-  `daily-organizer-YYYY-MM-DD-v3`. The file content hash remains part of the
+  `daily-organizer-YYYY-MM-DD-v4`. The file content hash remains part of the
   native Android component key, so retrying the same artifact is a verified
   no-op while a genuinely revised same-day PDF remains deliverable. Android
   launch first collapses notification and quick-settings overlays. Exact-chat
@@ -2136,13 +2144,14 @@ Unified runtime and per-chat profiles:
 - A current explicit report/PDF request authorizes a compiled PDF; it does not
   authorize Markdown or TeX delivery unless source files were also requested.
 - `MEMO写作—外语—挣钱` defaults to memos, writing, language, career, and money,
-  and has a separate resumable `daily_organizer` session. Its daily
-  organizer deduplicates classifier rows, writes local Markdown, compiles one
-  Chinese XeLaTeX PDF, and sends only that PDF. The report combines a bounded
-  newest-first evidence ledger with a loss-aware compaction of every authorized
-  same-profile history row; full context means evidence-aware synthesis, not a
-  raw chat dump. Private run traces retain the exact prompt, context manifest,
-  model outputs, and quality decision for diagnosis.
+  and has separate resumable writer and `daily_organizer_editor` sessions. Its
+  daily organizer deduplicates classifier rows, writes local Markdown, compiles
+  one Chinese XeLaTeX PDF, and sends only that PDF. The report combines a
+  bounded newest-first evidence ledger with a loss-aware compaction of every
+  authorized user-authored inbound same-profile history row; full context means
+  evidence-aware synthesis, not a raw chat dump. Private run traces retain the
+  exact prompt, context manifest, writer/editor outputs, and quality decisions
+  for diagnosis.
 - `EchoMind` defaults to multilingual teaching, but explicit CAD, PCB,
   research, figure, media, presentation, or publication requests still route
   to the shared worker. Its only proactive outputs remain the six-hour

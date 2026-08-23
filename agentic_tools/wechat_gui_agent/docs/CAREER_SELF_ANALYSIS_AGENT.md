@@ -42,22 +42,30 @@ PYTHONPATH=src python -m agenticapp wechat career-agent organize \
   --send --organize-chat "写作 外语 挣钱" --json
 ```
 
-The organizer reuses a distinct `daily_organizer` Codex session for the exact
-chat. It keeps Markdown and evidence local, compiles one Chinese XeLaTeX PDF,
-and sends only the PDF. Its delivery ledger makes restart and transport retries
-idempotent: a failed send reuses the existing PDF without another agent turn.
+The organizer reuses distinct writer and `daily_organizer_editor` agent sessions
+for the exact chat. It keeps Markdown and evidence local, compiles one Chinese
+XeLaTeX PDF, and sends only the PDF. Its delivery ledger makes restart and
+transport retries idempotent: a failed send reuses the existing PDF without
+another agent turn.
 
 The organizer is a synthesis workflow, not a transcript formatter. It reads a
-bounded recent ledger together with compacted same-profile lifetime context,
-first explains the day's larger threads in substantial prose, then provides a
-complete organized reference. Its quality gate scales depth with evidence and
-rejects raw chat rows, source-by-source evidence appendices, list-dominant
-exports, timestamps, media sizes, model diagnostics, and thin generic advice.
-Only an accepted draft is rendered. The PDF uses a mobile-readable XeLaTeX
-layout and AcroForm checkboxes only for genuine actions.
+bounded recent ledger together with compacted same-profile lifetime context.
+Only user-authored inbound rows are authoritative for the memo; prior assistant
+answers can never silently become user decisions. The writer chooses themes
+dynamically, and a separate agent editor removes duplicated inventories,
+restores underexplained context, and preserves uncertainty. Editorial cleanup
+is not automatic compression: the final memo must retain the evidence-scaled
+substance floor, and a strong passage may remain unchanged. Deterministic code
+only enforces source isolation, substantive depth, grounding, privacy, and
+obvious failure gates. It does not encode the day's topics or conclusions. If
+the primary AgInTi writer/repair or editorial turn is empty or fails those
+gates, the same evidence packet is handed to the configured Codex quality lane
+before delivery.
+Only an accepted edited draft is rendered. The PDF uses a mobile-readable
+XeLaTeX layout and AcroForm checkboxes only for genuine actions.
 
 Each dated PDF is delivered with the stable component scope
-`daily-organizer-YYYY-MM-DD-v3`. The native Android sender verifies the exact
+`daily-organizer-YYYY-MM-DD-v4`. The native Android sender verifies the exact
 allowlisted chat, recipient confirmation, and completed Send. Its component key
 also includes the file hash, making retries of the same report no-ops without
 blocking a revised same-day report. If the process restarts after a committed
