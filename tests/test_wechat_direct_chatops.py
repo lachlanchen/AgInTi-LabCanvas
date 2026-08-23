@@ -2934,6 +2934,88 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIn("total_ms", result["metrics"])
         self.assertIn("last_loop_at", result["state"])
 
+    def test_unread_worker_burst_keeps_every_source_before_backend_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue = root / "queue.jsonl"
+            config = self.backend_chat_config(
+                "Shares鏈接",
+                "links and read-later inbox",
+            )
+            config.update(
+                {
+                    "immediate_ack_enabled": False,
+                    "message_table": "MSG_shares",
+                    "state_path": str(root / "state.json"),
+                    "worker_queue": str(queue),
+                    "send_target": {
+                        "name": "Shares鏈接",
+                        "expected_title": "Shares鏈接",
+                    },
+                    "trigger_local_types": [1, 49],
+                    "attachment_trigger_local_types": [49],
+                }
+            )
+            state: dict[str, object] = {"last_local_id": 227}
+            first = self.row(
+                "[WeChat link]\ntitle: first article",
+                server_id="srv-228",
+                local_id=228,
+                local_type=49,
+                create_time=1880000000,
+            )
+            latest = self.row(
+                "[WeChat link]\ntitle: second article",
+                server_id="srv-229",
+                local_id=229,
+                local_type=49,
+                create_time=1880000001,
+            )
+            first["_message_db"] = "message_1.db"
+            latest["_message_db"] = "message_1.db"
+            rows = [first, latest]
+            route = {
+                "task": "Read and summarize both shared articles.",
+                "route_decision": {"route_kind": "research_or_summary"},
+            }
+
+            with mock.patch.object(direct_chatops, "read_new_messages", return_value=rows):
+                with mock.patch.object(direct_chatops, "read_recent_history", return_value=rows):
+                    with mock.patch.object(
+                        direct_chatops,
+                        "immediate_task_route",
+                        return_value=route,
+                    ):
+                        result = direct_chatops.run_once(
+                            config,
+                            state,
+                            send=False,
+                            no_decrypt=True,
+                        )
+
+            tasks = [
+                json.loads(line)
+                for line in queue.read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(1, len(tasks))
+        self.assertEqual(
+            [item["item_id"] for item in tasks[0]["message_ledger"]],
+            ["message:message_1.db:228", f"task:{tasks[0]['id']}"],
+        )
+        self.assertEqual(
+            [item["text"] for item in tasks[0]["message_ledger"]],
+            [
+                "[WeChat link]\ntitle: first article",
+                "[WeChat link]\ntitle: second article",
+            ],
+        )
+        contract = tasks[0]["message_ledger_contract"]
+        self.assertTrue(contract["authoritative_before_backend_selection"])
+        self.assertTrue(contract["backend_changes_quality_not_message_scope"])
+        self.assertEqual(["srv-228", "srv-229"], result["state"]["responded_server_ids"])
+        self.assertEqual(2, result["metrics"]["coalesced_trigger_rows"])
+
     def test_recent_same_sender_instruction_burst_is_authoritative_for_worker(self) -> None:
         config = self.backend_chat_config("懒人科研", "research")
         config["agent_route_enabled"] = False
