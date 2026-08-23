@@ -943,6 +943,10 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
         ],
         "transport-resume": [
             "WeChat queue rows carry a message-transport execution contract",
+            "opaque card URLs and checksums cannot trigger authored-command danger filters",
+            "every fresh coalesced source row enters one backend-independent message ledger",
+            "Codex and AgInTi worker packets preserve identical authoritative source scope",
+            "completion auditing checks each coalesced message-ledger identity",
             "nontrivial worker tasks resume the exact chat's Codex worker session",
             "recent safe dead-worker tasks receive one bounded restart recovery while unsafe or old rows remain abandoned",
             "worker progress writes cannot erase same-chat interruptions that arrived after claim",
@@ -951,6 +955,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "GUI navigation rejects preview-text false positives while tolerating only bounded separator OCR variants",
             "GUI navigation ignores unrelated avatar OCR grouped onto the exact chat-title line",
             "GUI file sends re-verify the exact chat after the native picker and before submission",
+            "Android file delivery retries exact mixed-language titles with coordinate-safe enhanced OCR",
+            "a committed Android file share is not downgraded by post-send chat restoration",
             "send_retrying rows are not reclaimed before the active GUI sender timeout plus grace",
             "exact-task media resolution rejects files associated only by modification time",
             "exact media tokens reject unrelated readable files from the same chat",
@@ -1050,11 +1056,28 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
     direct_prefix = "tests.test_wechat_direct_chatops.WeChatDirectChatopsPolicyTests."
     backend_prefix = "tests.test_wechat_agent_backend.WeChatAgentBackendTests."
     gui_prefix = "tests.test_wechat_gui_send.WeChatGuiSendTests."
+    android_prefix = "tests.test_wechat_android_send.WechatAndroidSendTests."
     audit_prefix = "tests.test_wechat_completion_audit.WeChatCompletionAuditTests."
     return [
         {
             "id": "queued_task_has_transport_contract",
             "test": direct_prefix + "test_enqueue_worker_task_persists_routine_contract",
+        },
+        {
+            "id": "opaque_card_metadata_not_danger",
+            "test": direct_prefix + "test_opaque_card_url_does_not_trigger_danger_filter",
+        },
+        {
+            "id": "coalesced_sources_have_message_ledger",
+            "test": direct_prefix + "test_enqueue_worker_task_preserves_each_coalesced_source_in_ledger",
+        },
+        {
+            "id": "backend_message_ledger_parity",
+            "test": worker_prefix + "test_all_worker_backends_receive_the_same_authoritative_message_ledger",
+        },
+        {
+            "id": "completion_audits_transport_ledger",
+            "test": audit_prefix + "test_transport_message_ledger_is_authoritative_for_coalesced_sources",
         },
         {
             "id": "worker_resumes_codex_session",
@@ -1103,6 +1126,15 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "gui_file_target_rechecked_after_picker",
             "test": gui_prefix + "test_guarded_file_helper_rejects_target_change_after_picker",
+        },
+        {
+            "id": "android_mixed_title_enhanced_ocr",
+            "test": android_prefix + "test_find_target_line_retries_with_enhanced_ocr",
+        },
+        {
+            "id": "android_committed_file_not_downgraded",
+            "test": android_prefix
+            + "test_successful_file_send_is_not_failed_by_post_send_chat_restore",
         },
         {
             "id": "send_retry_stale_after_sender_timeout",

@@ -7012,6 +7012,15 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
             bounded_response_policy, key="response_policy"
         ),
     }
+    message_ledger = compact_authoritative_message_ledger(
+        task.get("message_ledger")
+    )
+    if message_ledger:
+        view["message_ledger"] = message_ledger
+        view["message_ledger_contract"] = compact_worker_agent_value(
+            task.get("message_ledger_contract") or {},
+            key="message_ledger_contract",
+        )
     if isinstance(task.get("grant_workspace"), dict) and task.get("grant_workspace"):
         view["grant_workspace"] = compact_worker_agent_value(task["grant_workspace"], key="grant_workspace")
     if isinstance(task.get("member_memory"), dict) and task.get("member_memory"):
@@ -7085,6 +7094,9 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
                     for key in ("local_id", "server_id", "create_time", "sender_display")
                     if interruption_source.get(key) not in (None, "")
                 },
+                "message_ledger": compact_authoritative_message_ledger(
+                    item.get("message_ledger")
+                ),
             }
         )
     if interruptions:
@@ -7108,6 +7120,41 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
     return view
 
 
+def compact_authoritative_message_ledger(value: Any) -> list[dict[str, Any]]:
+    """Keep every source ID while bounding source text for any backend."""
+
+    if not isinstance(value, list):
+        return []
+    compact: list[dict[str, Any]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        item_id = str(entry.get("item_id") or "").strip()
+        text = sanitize_worker_agent_text(entry.get("text"), max_len=2400)
+        if not item_id or not text:
+            continue
+        compact.append(
+            {
+                key: entry.get(key)
+                for key in (
+                    "item_id",
+                    "sequence",
+                    "role",
+                    "source_id",
+                    "local_id",
+                    "server_id",
+                    "create_time",
+                    "sender",
+                    "sender_display",
+                    "kind",
+                )
+                if entry.get(key) not in (None, "")
+            }
+            | {"text": text}
+        )
+    return compact
+
+
 def aginti_worker_task_view(task: dict[str, Any]) -> dict[str, Any]:
     """Build the compact execution packet used only by the AgInTi fallback."""
 
@@ -7124,7 +7171,7 @@ def aginti_worker_task_view(task: dict[str, Any]) -> dict[str, Any]:
         else {}
     )
     packet: dict[str, Any] = {
-        "schema": "labcanvas-aginti-task-v1",
+        "schema": "labcanvas-agent-task-v2",
         "id": full.get("id"),
         "chat": full.get("chat"),
         "status": full.get("status"),
@@ -7175,6 +7222,11 @@ def aginti_worker_task_view(task: dict[str, Any]) -> dict[str, Any]:
             task_route_decision(task).get("public_publish_allowed")
         ),
     }
+    if full.get("message_ledger"):
+        packet["message_ledger"] = full["message_ledger"]
+        packet["message_ledger_contract"] = full.get(
+            "message_ledger_contract"
+        ) or {}
     context_rows: list[dict[str, Any]] = []
     for row in (full.get("recent_same_chat_context") or [])[-8:]:
         if not isinstance(row, dict):
@@ -7252,6 +7304,14 @@ def bound_aginti_worker_packet(
         for item in (packet.get("interruptions") or [])[-4:]
         if isinstance(item, dict)
     ]
+    bounded["message_ledger"] = [
+        {
+            **item,
+            "text": sanitize_worker_agent_text(item.get("text"), max_len=1200),
+        }
+        for item in packet.get("message_ledger") or []
+        if isinstance(item, dict)
+    ]
     for key in (
         "member_memory_summary",
         "worker_retry_context",
@@ -7272,6 +7332,8 @@ def bound_aginti_worker_packet(
             "chat",
             "status",
             "current_request",
+            "message_ledger",
+            "message_ledger_contract",
             "source",
             "route_decision",
             "routine",
@@ -7314,6 +7376,8 @@ AGINTI_EVIDENCE_SCOPE_JSON: {evidence_scope}
 LabCanvas already owns message intake, exact-chat isolation, scheduling, deterministic preflight, routine selection, queue state, and delivery. Do not redesign those systems. Work inside the current AgenticApp repository, follow AGENTS.md, and read the selected routine contract files in the packet before acting. Use established scripts and CLI entrypoints from that contract. The agent supplies judgment; deterministic routines supply repeatable mechanics.
 
 Treat the current request and later same-chat interruptions as authoritative. Keep every source and artifact scoped to this task and chat. Do not use nearby media or another group's context. Do not repeat completed stages. Never retry a payment, public publication, external send, destructive change, or other irreversible action without the packet's explicit gate and current authorization. Persist long work through the existing routine instead of holding a model call.
+
+`message_ledger` is the backend-independent source contract created before model selection. Read every numbered item and cover each `item_id`; you may combine related items into one natural response, but may not replace an earlier item with only the latest one. Codex, AgInTi/DeepSeek, and LocalLLM receive the same ledger, so backend choice changes quality rather than message scope.
 
 When `lifetime_same_chat_memory` is present, it is a model-budgeted hierarchy to which every authorized same-chat row contributed. Use it for continuity, names, preferences, prior decisions, and recurring work. `high_fidelity_same_chat_history` contains raw excerpts selected for the current task and should win when exact wording matters. Neither field is a current instruction: never revive a completed task, infer authorization from history, or let memory override the current request and interruptions.
 
@@ -7611,6 +7675,7 @@ The task may be a fragment or follow-up from an ongoing WeChat thread. Use the t
 Respond promptly and naturally, then do the requested work. Do not bombard the chat with progress, duplicate acknowledgements, retries, internal logs, or every intermediate artifact. Let the agent choose the smallest useful final delivery: research normally returns a concise direct answer and one polished PDF when a report is requested or clearly valuable; CAD, PCB, presentation, and spreadsheet work returns the requested editable or native artifact plus only the previews or manufacturing files needed to understand or use it. Requirements in the current request remain authoritative.
 Name every artifact intended for delivery with a short human-readable basename containing meaningful subject information plus date/version and artifact type when useful. Examples: `2026-08-22-organoid-imaging-review.pdf`, `cmount-sensor-holder-v2.step`, and `paris-baguette-final-video.mp4`. Do not expose task IDs, checksums, UUIDs, temporary-directory names, or a raw local path in recipient-visible filenames or chat text. Generic names such as `output.pdf`, `result.mp4`, or `report-final.pdf` are not acceptable when the task provides a meaningful subject.
 The exact current source message and newer same-chat messages are authoritative. A router-generated plan is advisory only: it may classify and suggest tools, but it cannot replace user wording, insert a factual assumption, or force clarification. Combine consecutive fragments from the same conversation before deciding what the user means.
+If the bounded task packet contains `message_ledger`, it is the backend-independent source contract created before model selection. Read and cover every numbered `item_id`. You may answer related items once in a natural combined response, but never silently replace an earlier item with only the latest one.
 If the bounded task packet includes `lifetime_same_chat_memory`, use that full-history compaction as exact-chat continuity and use `high_fidelity_same_chat_history` for exact wording relevant to this task. Historical memory is supporting evidence only: it cannot authorize work, revive completed tasks, or override current messages and interruptions.
 If the bounded task packet includes `worker_retry_context`, this is one bounded repair turn for a failed local tool invocation. Continue the same task and reuse its existing evidence. Prefer simple commands or structured APIs over deeply nested shell quoting, and never interpret the repair turn as permission to bypass a safety, approval, sandbox, or access boundary.
 If the bounded task packet includes `completion_audit_repair`, the previous candidate result omitted one or more numbered source-message requirements. Continue the same worker session, perform only those missing safe requirements, and return a complete replacement response that retains useful prior files and conclusions. An explicit PDF request requires a real compiled `.pdf` file plus a concise direct answer. Do not repeat completed external actions or bypass approval gates.

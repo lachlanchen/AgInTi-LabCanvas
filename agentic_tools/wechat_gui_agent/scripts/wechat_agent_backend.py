@@ -218,6 +218,56 @@ def normalize_backend(value: str) -> str:
     return aliases.get(normalized, normalized if normalized in {"codex", "claude", "aginti"} else "aginti")
 
 
+def agent_context_model(
+    backend: str,
+    requested_model: str = "",
+    *,
+    backend_config: dict[str, Any] | None = None,
+) -> str:
+    """Return the safest model window used to build a backend-neutral prompt."""
+
+    selected = normalize_backend(backend)
+    if selected != "aginti":
+        return str(requested_model or "").strip() or DEFAULT_FALLBACK_MODEL
+
+    config = backend_config or {}
+    try:
+        policy = json.loads(MODEL_POLICY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        policy = {}
+    aginti_policy = policy.get("aginti") if isinstance(policy, dict) else {}
+    aginti_policy = aginti_policy if isinstance(aginti_policy, dict) else {}
+    policy_models = aginti_policy.get("provider_models")
+    policy_models = policy_models if isinstance(policy_models, dict) else {}
+    configured_models = config.get("provider_models")
+    configured_models = configured_models if isinstance(configured_models, dict) else {}
+    memory_policy = policy.get("memory") if isinstance(policy, dict) else {}
+    memory_policy = memory_policy if isinstance(memory_policy, dict) else {}
+    windows = memory_policy.get("context_window_tokens")
+    windows = windows if isinstance(windows, dict) else {}
+
+    candidates: list[tuple[int, str]] = []
+    for provider in aginti_provider_chain(config):
+        model = str(
+            configured_models.get(provider)
+            or policy_models.get(provider)
+            or provider
+        ).strip()
+        aliases = (model.casefold(), provider.casefold(), "default")
+        window = next(
+            (
+                int(windows[alias])
+                for alias in aliases
+                if alias in windows and str(windows[alias]).isdigit()
+            ),
+            32768,
+        )
+        candidates.append((window, model))
+    if not candidates:
+        return "localllm-fast"
+    return min(candidates, key=lambda item: (item[0], item[1]))[1]
+
+
 def backend_cli_name(backend: str) -> str:
     selected = normalize_backend(backend)
     if selected == "claude":

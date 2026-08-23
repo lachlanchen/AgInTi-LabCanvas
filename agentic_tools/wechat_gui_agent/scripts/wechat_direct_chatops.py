@@ -532,6 +532,7 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                             trigger_row,
                             immediate_task,
                             context_rows=context_rows,
+                            focus_rows=focus_rows,
                             route_decision=immediate.get("route_decision") if isinstance(immediate.get("route_decision"), dict) else None,
                         )
                         task_enqueued = task["id"]
@@ -544,7 +545,13 @@ def run_once(config: dict[str, Any], state: dict[str, Any], *, send: bool, no_de
                     metrics["codex_ms"] = elapsed_ms(started)
                     routed = parse_fast_response(response)
                     if routed["task"]:
-                        task = enqueue_worker_task(config, trigger_row, routed["task"], context_rows=context_rows)
+                        task = enqueue_worker_task(
+                            config,
+                            trigger_row,
+                            routed["task"],
+                            context_rows=context_rows,
+                            focus_rows=focus_rows,
+                        )
                         task_enqueued = task["id"]
                     reply_text = routed["chat"] or routed["ack"]
         if (
@@ -1105,7 +1112,7 @@ def organizer_ack_candidate(
     inbound = [row for row in rows if is_inbound_user_row(config, row)]
     if not inbound:
         return None
-    if all(is_dangerous_message(config, visible_message_text(row)) for row in inbound):
+    if all(is_dangerous_row(config, row) for row in inbound):
         return None
     last_ack_local_id = int(state.get("last_organizer_ack_local_id") or 0)
     latest_local_id = max(int(row.get("local_id") or 0) for row in inbound)
@@ -1293,7 +1300,7 @@ def latest_force_replay_rows(config: dict[str, Any], rows: list[dict[str, Any]],
     for row in rows:
         if self_wxid and row.get("sender") == self_wxid:
             continue
-        if is_dangerous_message(config, visible_message_text(row)):
+        if is_dangerous_row(config, row):
             continue
         if is_force_replay_candidate(config, row):
             candidates.append(row)
@@ -1809,7 +1816,7 @@ def response_skip_reason(config: dict[str, Any], state: dict[str, Any], row: dic
     if response_already_recorded(state, row):
         return "already_responded"
     text = visible_message_text(row)
-    if is_dangerous_message(config, text):
+    if is_dangerous_row(config, row):
         return "danger"
     if attachment_trigger:
         return ""
@@ -2204,11 +2211,73 @@ DEFAULT_DANGER_KEYWORDS = [
 ]
 
 
+def safety_scan_text(text: str) -> str:
+    """Remove opaque transport data before matching explicit unsafe requests."""
+
+    value = html.unescape(str(text or ""))
+    value = re.sub(r"(?:https?://|www\.)[^\s<>\"']+", " ", value, flags=re.I)
+    value = re.sub(r"\b[0-9a-f]{24,}\b", " ", value, flags=re.I)
+    value = re.sub(r"\b[A-Za-z0-9+/=_-]{48,}\b", " ", value)
+    safe_lines = []
+    opaque_labels = {
+        "url",
+        "md5",
+        "sha1",
+        "sha256",
+        "checksum",
+        "token",
+        "object_id",
+        "server_id",
+        "local_id",
+        "cdnthumburl",
+        "cdnmidimgurl",
+        "cdnbigimgurl",
+    }
+    for line in value.splitlines():
+        label, separator, _rest = line.partition(":")
+        if separator and label.strip().casefold() in opaque_labels:
+            continue
+        safe_lines.append(line)
+    return collapse_text("\n".join(safe_lines))
+
+
+def danger_keyword_present(text: str, keyword: Any) -> bool:
+    candidate = str(keyword or "").strip()
+    if not candidate:
+        return False
+    if re.search(r"[A-Za-z0-9]", candidate):
+        return bool(
+            re.search(
+                rf"(?<![A-Za-z0-9_]){re.escape(candidate)}(?![A-Za-z0-9_])",
+                text,
+                flags=re.I,
+            )
+        )
+    return candidate in text
+
+
 def is_dangerous_message(config: dict[str, Any], text: str) -> bool:
     if not bool(config.get("silent_danger_enabled", True)):
         return False
-    lowered = str(text or "").lower()
-    return any(str(keyword).lower() in lowered for keyword in config.get("danger_keywords", DEFAULT_DANGER_KEYWORDS))
+    scanned = safety_scan_text(text)
+    return any(
+        danger_keyword_present(scanned, keyword)
+        for keyword in config.get("danger_keywords", DEFAULT_DANGER_KEYWORDS)
+    )
+
+
+def is_dangerous_row(config: dict[str, Any], row: dict[str, Any]) -> bool:
+    """Scan human-authored commands, never opaque attachment/card metadata."""
+
+    local_type, _ = split_message_type(row.get("local_type"))
+    if is_quote_reply_message(row):
+        authored = visible_message_text(row).split("\n[quoted ", 1)[0]
+        return is_dangerous_message(config, authored)
+    if local_type == 34:
+        return is_dangerous_message(config, voice_row_transcript(row))
+    if local_type != 1:
+        return False
+    return is_dangerous_message(config, visible_message_text(row))
 
 
 def is_language_analysis_mode(config: dict[str, Any]) -> bool:
@@ -5910,7 +5979,7 @@ def expanded_focus_rows(
         text = strip_trigger_prefixes(visible_message_text(item), prefixes)
         if not meaningful_request_text(text, prefixes):
             continue
-        if is_dangerous_message(config, text):
+        if is_dangerous_row(config, item):
             continue
         additions.append(item)
     return context_ordered_unique_rows(context_rows, list(reversed(additions)) + rows)
@@ -6606,13 +6675,15 @@ def enqueue_worker_task(
     task_text: str,
     *,
     context_rows: list[dict[str, Any]],
+    focus_rows: list[dict[str, Any]] | None = None,
     route_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     queue = Path(config.get("worker_queue") or DEFAULT_QUEUE)
     queue.parent.mkdir(parents=True, exist_ok=True)
     backend = select_agent_backend(config)
+    task_id = datetime.now().strftime("%Y%m%d%H%M%S") + f"-{row['local_id']}"
     task = {
-        "id": datetime.now().strftime("%Y%m%d%H%M%S") + f"-{row['local_id']}",
+        "id": task_id,
         "chat": config["chat_name"],
         "request": task_text,
         "status": "pending",
@@ -6630,6 +6701,20 @@ def enqueue_worker_task(
         "response_policy": build_chat_response_policy(config),
         "instruction_contract": build_instruction_contract(config, route_decision or {}),
         "execution_contract": build_execution_contract(config, route_decision or {}),
+        "message_ledger": build_task_message_ledger(
+            config,
+            row,
+            context_rows,
+            focus_rows=focus_rows,
+            task_id=task_id,
+        ),
+        "message_ledger_contract": {
+            "schema": "labcanvas-message-ledger-v1",
+            "authoritative_before_backend_selection": True,
+            "coverage_required_per_item": True,
+            "combined_reply_allowed": True,
+            "backend_changes_quality_not_message_scope": True,
+        },
         "source": {
             "chat": config["chat_name"],
             "config_id": config.get("config_id") or "",
@@ -6674,6 +6759,58 @@ def enqueue_worker_task(
         metadata=task,
     )
     return task
+
+
+def build_task_message_ledger(
+    config: dict[str, Any],
+    source_row: dict[str, Any],
+    context_rows: list[dict[str, Any]],
+    *,
+    focus_rows: list[dict[str, Any]] | None,
+    task_id: str,
+) -> list[dict[str, Any]]:
+    """Bind every fresh coalesced row before a backend is selected."""
+
+    rows = context_ordered_unique_rows(
+        context_rows,
+        list(focus_rows or [source_row]),
+    )
+    source_key = row_identity(source_row)
+    ledger: list[dict[str, Any]] = []
+    for sequence, item in enumerate(rows, start=1):
+        local_id = int_or_none(item.get("local_id"))
+        server_id = str(item.get("server_id") or "").strip()
+        message_db = normalized_message_db_name(item.get("_message_db"))
+        if row_identity(item) == source_key:
+            item_id = f"task:{task_id}"
+            role = "latest_source"
+        else:
+            identity = (
+                f"{message_db}:{local_id}"
+                if message_db and local_id is not None
+                else server_id or str(local_id or sequence)
+            )
+            item_id = f"message:{identity}"
+            role = "coalesced_source"
+        text = visible_message_text(item).strip()
+        ledger.append(
+            {
+                "item_id": item_id,
+                "sequence": sequence,
+                "role": role,
+                "source_id": server_id or str(local_id or ""),
+                "message_db": message_db,
+                "local_id": local_id,
+                "server_id": server_id,
+                "create_time": item.get("create_time"),
+                "sender": str(item.get("sender") or ""),
+                "sender_display": str(item.get("sender_display") or item.get("sender") or ""),
+                "kind": message_kind(item),
+                "text": text,
+                "coverage_status": "pending",
+            }
+        )
+    return ledger
 
 
 def append_worker_task_once(queue: Path, task: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -7343,6 +7480,11 @@ def build_task_interruption(candidate: dict[str, Any], incoming: dict[str, Any])
         "request": str(incoming.get("request") or ""),
         "request_excerpt": collapse_context_text(incoming.get("request"), max_len=1200),
         "context": incoming.get("context")[-8:] if isinstance(incoming.get("context"), list) else [],
+        "message_ledger": (
+            incoming.get("message_ledger")
+            if isinstance(incoming.get("message_ledger"), list)
+            else []
+        ),
         "instruction": (
             "Treat this newer same-chat message as authoritative for adjusting the active routine. "
             "Use the resumed agent to decide whether to revise the story, ask confirmation, continue generation, "
@@ -7425,6 +7567,8 @@ def build_execution_contract(config: dict[str, Any], route_decision: dict[str, A
         "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
         "agent_backend": select_agent_backend(config),
         "agent_entrypoint": "wechat_agent_backend.run_agent_session",
+        "task_packet_contract": "labcanvas-message-ledger-v1",
+        "backend_independent_message_scope": True,
         "codex_entrypoint": "wechat_codex_sessions.run_codex_session",
         "codex_exec_mode": "resume_per_chat_worker_session",
         "claude_exec_mode": "stable_per_chat_role_session_id",
@@ -7443,6 +7587,8 @@ def build_execution_contract(config: dict[str, Any], route_decision: dict[str, A
             "The worker supervises routine stages, then resumes the exact chat's Codex worker session.",
             "Artifacts and replies must go back through the guarded sender for the same source chat.",
             "The current coalesced request is authoritative for all safe explicit instructions.",
+            "Every item in task.message_ledger must reach the selected backend and completion audit; one natural combined reply may cover several items.",
+            "Changing Codex, Claude, AgInTi/DeepSeek, or LocalLLM may change answer quality but must not change source-message scope.",
             "New same-chat messages may be appended to an active story/video task as interruptions; the worker agent must read them before the next action.",
             "Do not shrink a broad request to a smaller hardcoded action because one keyword matched first.",
         ],

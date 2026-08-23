@@ -153,6 +153,14 @@ PDF companions, for example `YYYY-MM-DD-career-strategy.zh.pdf` and
 `YYYY-MM-DD-career-strategy.en.pdf`. General worker Markdown-to-PDF companions
 are opt-in with `WECHAT_MARKDOWN_PDF_COMPANIONS=1`.
 
+The Memo organizer is another explicit scheduled-PDF path. It sends one
+interactive Chinese PDF, but only after its agent response has been unwrapped,
+grounded against the recent exact-chat evidence ledger, checked for substantive
+coverage, and compiled successfully. Its lifetime context is compacted to fit
+the smallest active AgInTi provider so a DeepSeek-to-LocalLLM handoff does not
+drop the evidence. Raw JSON envelopes, generic tool refusals, and shallow
+ungrounded drafts stay private and are retried rather than delivered.
+
 Long-response preservation is separate from those content defaults. The worker
 never clips an answer: it sends a moderate answer as at most three coherent,
 numbered, retry-safe chat parts. If more parts would be required, it keeps the
@@ -175,13 +183,21 @@ previous-day XeLaTeX review remains scheduled at 06:00 HKT. Oversized or
 incomplete periodic drafts go through a bounded agent editing pass; never clip
 a lesson mid-example merely to satisfy the chat length limit.
 
-File attachments use the official Linux file chooser with clipboard path paste
-(`Ctrl+L`, paste absolute path, `Enter`) so the chosen file remains reviewable.
-If WeChat locks during file selection, the worker releases the GUI send lock,
-runs `labcanvas wechat unlock-watchdog once --flush-deferred --json` through the
-connected Android phone, then retries the same file send. Tune this with
-`WECHAT_WORKER_FILE_SEND_UNLOCK_RETRIES`; disable only for debugging with
-`WECHAT_WORKER_FILE_SEND_AUTO_UNLOCK=0`.
+Personal-WeChat file attachments default to the allowlisted Android native share
+transport. It stages a meaningful filename, resolves the exact MediaStore row,
+selects the exact chat, verifies the native recipient confirmation, and records
+the component by task/checksum. Long mixed Chinese/English titles get a second,
+contrast-enhanced OCR pass only when normal OCR has no exact alias match; tap
+coordinates are mapped back to device pixels and remain title-guarded. A file
+that passed recipient confirmation and native Send remains delivered even when
+restoring the chat surface afterward would fail. Any following text component
+performs its own exact-chat guard.
+
+The serialized desktop Linux file chooser remains a preflight fallback only
+when Android proves its exact-title guard failed before sharing began. It uses
+clipboard path paste (`Ctrl+L`, paste absolute path, `Enter`). Uncertain Android
+submission states never fall through to desktop because that could duplicate an
+already committed file.
 
 ## Private State Files
 
@@ -614,6 +630,7 @@ Then inspect fresh logs under `output/wechat_gui_agent/YYYY-MM-DD/`.
 | WeChat is locked, at entry, or sender is busy | Do not bypass the lock or run parallel clickers. `WECHAT_LOCKED`, `WECHAT_ENTRY_REQUIRED`, `WECHAT_SEND_BUSY`, `WECHAT_SEND_TIMEOUT`, and blank title-guard OCR become `send_deferred_locked` with `send_deferred_reason`, then the watchdog/worker flusher retries after unlock, Enter Weixin, or the active send finishes. GUI subprocess timeouts kill the whole process group so clipboard/helper children cannot hold the lane. |
 | Composer stays empty | Check for stale clipboard owners and sender screenshots. The GUI sender uses a bounded `xclip -selection clipboard -loops 1` owner plus `xdotool --clearmodifiers ctrl+v`; if paste fails, inspect `*-composed.png` before increasing retries. |
 | Multi-file artifact send times out | Keep the worker and GUI sender alarms aligned. The worker sets `WECHAT_GUI_SEND_MAX_SECONDS` from `WECHAT_WORKER_SEND_TIMEOUT_SECONDS`; raise `WECHAT_WORKER_GUI_SEND_MAX_SECONDS` only for slow remote desktops or large attachments. |
+| Android cannot find a long mixed-language chat title | Inspect normal and `*-ocr-enhanced` evidence. The native sender retries with grayscale contrast-enhanced OCR and rescales its row coordinates; add an authoritative `expected_title_aliases` entry only when the enhanced exact title is still genuinely ambiguous. Never use a substring-only live match. |
 | Text/source artifact send fails | Required CAD/PCB/media/download artifacts still use the deferred sender. Ordinary `.md`/report notes from link summaries should stay local unless explicitly requested or marked high-value by the worker. Use `WECHAT_WORKER_SEND_FILES=0` only for a diagnostic path-only run. |
 | Task replies to wrong chat | Treat as a bug; check route contract, send target, state path, and title guard logs. |
 | File missing | Run same-chat media sync and verify exact local/server ids before retrying. |

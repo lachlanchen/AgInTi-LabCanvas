@@ -14,10 +14,11 @@ chat. The durable system is:
 official WeChat client
   -> local decrypted mirror
   -> per-chat fast monitor
-  -> reused per-chat route Codex session
+  -> reused per-chat route agent session
+  -> backend-independent source-message ledger
   -> source context and routine contract
   -> JSONL worker queue
-  -> reused per-chat Codex worker session
+  -> reused per-chat worker agent session
   -> deterministic routine probes and gates
   -> artifact delivery gate
   -> guarded GUI sender
@@ -111,6 +112,21 @@ same-chat rows, interruptions, route/routine state, readable context paths, and
 the lifetime-memory layers below. Strip raw Finder XML, signed media URLs,
 cookies, keys, hashes, and unused media paths. This keeps the resumed agent
 focused while deterministic routines retain the full private evidence on disk.
+
+Build `task.message_ledger` before selecting Codex, Claude, AgInTi/DeepSeek, or
+LocalLLM. It contains every fresh coalesced source row in context order, with a
+stable `item_id`, sender, exact transport identity, kind, and bounded visible
+text. Every backend receives the same ledger and the completion audit checks
+every ledger ID. The agent may cover related fragments in one natural answer;
+it may not silently replace earlier rows with only the last row. Backend choice
+may affect reasoning quality and latency, never which source messages exist.
+
+Run danger matching only against human-authored command text. Remove URLs,
+checksums, signed tokens, long opaque IDs, and transport metadata first, and use
+token boundaries for ASCII keywords such as `2fa`. Shared cards, files, and
+media are evidence to inspect, not commands merely because an opaque URL or
+hash happens to contain a protected substring. Explicit dangerous instructions
+in authored text remain blocked.
 
 ## Lifetime Chat Memory
 
@@ -992,11 +1008,14 @@ recorded send without sending it again. It does not spend another agent turn
 every five minutes. The transport guard checks the EchoMind scheduler heartbeat,
 not merely the existence of its tmux process.
 
-Every queued source message has a hard completion identity: `task:<queue-id>`.
-Consecutive same-chat rows may be coalesced for context, but the original row
-and every merged interruption remain separate completion-audit items. Do not
-truncate the interruption ledger. Long bursts are checked in bounded numbered
-batches, while the union of those batches must equal every source queue ID.
+Every queued source message has a hard completion identity. The latest source
+uses `task:<queue-id>`; earlier rows coalesced into that task use stable
+`message:<database>:<local-id>` identities in `task.message_ledger`. Later
+merged interruptions carry their own ledger. Consecutive same-chat rows may be
+coalesced for context or answered together, but every source row remains a
+separate completion-audit item. Do not truncate the ledger. Long bursts are
+checked in bounded numbered batches, while the union of those batches must
+equal every source ledger ID.
 Before a terminal worker result is delivered, a bounded low-effort
 `gpt-5.3-codex-spark` checker must classify every numbered item as covered,
 missing, or legitimately blocked. An omitted item resumes the exact worker
@@ -1103,11 +1122,11 @@ evidence for local artifacts, not chat-facing content.
   the default, so repeated requests in one chat resume the same route thread.
   Keyword and attachment checks remain auxiliary fallback and safety gates, not
   the primary capability map.
-- Codex is the default backend. `agent_backend=claude` or
-  `WECHAT_AGENT_BACKEND=claude` may switch a WSL/Windows deployment to Claude
-  Code, but it must still use the same route, worker, queue, media, and
-  artifact-delivery contracts. Do not bypass source isolation or delivery gates
-  because the backend changed.
+- The repository model policy selects AgInTi as the primary backend, with a
+  same-session DeepSeek-to-LocalLLM provider handoff. Explicit Codex or Claude
+  selection remains supported. Every backend must use the same route, message
+  ledger, worker queue, media, completion-audit, and artifact-delivery
+  contracts. Do not bypass or shrink source scope because the backend changed.
 - Backend fallback is centralized in
   `agentic_tools/wechat_gui_agent/scripts/wechat_agent_backend.py`. If the
   selected Codex model is Spark and the live attempt fails with quota/rate-limit
@@ -2032,12 +2051,29 @@ Stuck GUI sender:
   after the exact PDF send is verified. Its evidence query includes all title
   aliases belonging to the same `writing_money` profile, so a group rename
   retains prior memo history without admitting another chat's data.
+  The organizer sizes its recent ledger and lifetime compaction for the
+  smallest active backend provider window, not merely the requested Codex
+  model. This keeps the same evidence packet valid across AgInTi's
+  DeepSeek-to-LocalLLM handoff. Common structured agent envelopes are unwrapped
+  before rendering. A deterministic content gate rejects raw JSON, tool
+  excuses, thin generic advice, weak Markdown structure, and drafts with too
+  little exact-evidence grounding; one same-session editing pass may repair the
+  draft. Rejected drafts remain private and are never counted or delivered as
+  a completed daily PDF.
 - The native file sender records an exact content identity before opening the
   picker and again after verified submission. If submission succeeds but
   screenshot verification becomes uncertain, the exact outbound WeChat
   database echo reconciles the persisted delivery state without sending a
   duplicate. The same recent in-flight identity prevents that outbound file
   from being routed back as a new user upload.
+  Personal-WeChat Android title discovery first uses ordinary OCR. Only when it
+  finds no exact configured alias does it retry on a 150% grayscale,
+  contrast-stretched image; OCR geometry is divided by the same scale before a
+  tap. This improves long mixed simplified/traditional titles without relaxing
+  the exact-chat guard. Native recipient confirmation plus a completed Send is
+  the file component's terminal success. Failure to navigate back afterward
+  cannot downgrade that committed component or trigger desktop duplication;
+  later text performs a fresh exact-chat guard independently.
 - Use `wechat_career_daily_agent.py retry --date YYYY-MM-DD --send
   --attach-report` for artifact-only career recovery. It reuses the generated
   bilingual PDFs and message and never invokes the career model.
@@ -2085,7 +2121,11 @@ Unified runtime and per-chat profiles:
 - `MEMO写作—外语—挣钱` defaults to memos, writing, language, career, and money,
   and has a separate resumable `daily_organizer` session. Its daily
   organizer deduplicates classifier rows, writes local Markdown, compiles one
-  Chinese XeLaTeX PDF, and sends only that PDF.
+  Chinese XeLaTeX PDF, and sends only that PDF. The report combines a bounded
+  newest-first evidence ledger with a loss-aware compaction of every authorized
+  same-profile history row; full context means evidence-aware synthesis, not a
+  raw chat dump. Private run traces retain the exact prompt, context manifest,
+  model outputs, and quality decision for diagnosis.
 - `EchoMind` defaults to multilingual teaching, but explicit CAD, PCB,
   research, figure, media, presentation, or publication requests still route
   to the shared worker. Its only proactive outputs remain the six-hour

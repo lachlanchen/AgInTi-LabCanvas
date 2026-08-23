@@ -560,6 +560,36 @@ Why it matters: It turns reflection into evidence.
         self.assertIn("Do not turn them", prompt)
         self.assertIn("GitHub, website, local repos", prompt)
 
+    def test_organizer_unwraps_agent_json_without_rendering_raw_envelope(self):
+        module = load_wechat_career_daily_agent()
+
+        body = module.normalize_organizer_output(
+            '{"response":"# 今日整理\\n\\n## 物品\\n- Pi 5 墨水屏"}'
+        )
+
+        self.assertEqual(body, "# 今日整理\n\n## 物品\n- Pi 5 墨水屏")
+        self.assertNotIn('"response"', body)
+
+    def test_organizer_quality_rejects_generic_unrounded_advice(self):
+        module = load_wechat_career_daily_agent()
+        snapshot = """- inbox: Pi 5 墨水屏 录音 RAG 词库
+- web_clip: Nature 光计算维度
+- inbox: 竹书纪年 西京杂记 孔子家语
+- request: 千与千寻 桃源世界
+- memo: 讯飞声卡 焊台 LED灯珠 锡丝 磁铁
+- idea: 树莓派本地语言学习卡
+- writing: 建立简单写作习惯
+- project: 历史博弈游戏《势》
+"""
+        quality = module.organizer_output_quality(
+            "目标：提供翻译服务、语言教学和内容订阅。",
+            snapshot,
+        )
+
+        self.assertFalse(quality["accepted"])
+        self.assertIn("too_short_for_evidence", quality["reasons"])
+        self.assertIn("insufficient_evidence_grounding", quality["reasons"])
+
     def test_catch_up_skips_delivered_career_and_runs_organizer_once(self):
         module = load_wechat_career_daily_agent()
         calls = []
@@ -661,6 +691,10 @@ Why it matters: It turns reflection into evidence.
             agent_calls = []
             module.life_memo_snapshot = lambda *_args, **_kwargs: "- memo: one exact item"
             module.select_agent_backend = lambda _config: "codex"
+            module.organizer_output_quality = lambda *_args, **_kwargs: {
+                "accepted": True,
+                "reasons": [],
+            }
 
             def fake_agent(*args, **kwargs):
                 agent_calls.append((args, kwargs))
@@ -701,6 +735,78 @@ Why it matters: It turns reflection into evidence.
         self.assertEqual(sent_files[0][0].suffix, ".pdf")
         self.assertEqual(sent_files[0][1], "写作 外语 挣钱")
 
+    def test_organizer_repairs_low_quality_output_in_same_session_before_render(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            module.life_memo_snapshot = lambda *_args, **_kwargs: "- memo: Pi 5 墨水屏"
+            module.build_history_context = lambda *_args, **_kwargs: {
+                "snapshot": "historical context",
+                "manifest": {"represented_messages": 10},
+            }
+            module.select_agent_backend = lambda _config: "aginti"
+            module.agent_context_model = lambda *_args, **_kwargs: "localllm-fast"
+            calls = []
+
+            def fake_agent(prompt, **kwargs):
+                calls.append((prompt, kwargs))
+                message = (
+                    '{"response":"generic advice"}'
+                    if len(calls) == 1
+                    else "# 今日整理\n\n## 修订\n- [ ] 复核 Pi 5 墨水屏方案"
+                )
+                return {
+                    "ok": True,
+                    "message": message,
+                    "backend": "aginti",
+                    "provider": "deepseek",
+                    "thread_id": "same-organizer-thread",
+                    "resumed": len(calls) > 1,
+                }
+
+            module.run_agent_session = fake_agent
+            module.organizer_output_quality = lambda body, _snapshot: {
+                "accepted": "复核 Pi 5" in body,
+                "reasons": [] if "复核 Pi 5" in body else ["too_short_for_evidence"],
+                "characters": len(body),
+                "headings": body.count("#"),
+                "bullets": body.count("- "),
+                "grounded_items": int("Pi 5" in body),
+                "minimum_characters": 50,
+                "minimum_headings": 2,
+                "minimum_bullets": 1,
+                "missing_examples": ["Pi 5 墨水屏"],
+            }
+
+            def fake_render(source, output):
+                markdown = source.read_text(encoding="utf-8")
+                self.assertIn("复核 Pi 5", markdown)
+                self.assertNotIn('"response"', markdown)
+                output.write_bytes(b"%PDF repaired")
+                return output
+
+            module.render_interactive_organizer_pdf = fake_render
+            args = argparse.Namespace(
+                organize_chat="MEMO写作—外语—挣钱",
+                memory_db=root / "memory.sqlite",
+                model="gpt-test",
+                reasoning_effort="medium",
+                timeout_seconds=30,
+                send=False,
+                send_targets=root / "targets.json",
+            )
+
+            payload = module.run_organizer(args, force=True)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][1]["role"], "daily_organizer")
+        self.assertEqual(calls[1][1]["role"], "daily_organizer")
+        self.assertEqual(calls[0][1]["chat_name"], calls[1][1]["chat_name"])
+
     def test_organizer_retries_existing_pdf_without_rerunning_agent(self):
         module = load_wechat_career_daily_agent()
         with tempfile.TemporaryDirectory() as tmp:
@@ -723,6 +829,7 @@ Why it matters: It turns reflection into evidence.
                     "status": "delivery_failed",
                     "report": str(report),
                     "pdf": str(pdf),
+                    "quality": {"accepted": True},
                 },
             )
             module.run_agent_session = lambda *_args, **_kwargs: self.fail("agent must not rerun")

@@ -171,7 +171,6 @@ class AndroidWechatSender:
                     )
                 if component["kind"] == "file":
                     results.append(self.send_file_component(component))
-                    self.ensure_exact_chat()
                 else:
                     results.append(self.send_text_component(component))
         return {
@@ -323,7 +322,9 @@ class AndroidWechatSender:
 
     def current_chat_matches(self, screenshot: Path | None = None) -> bool:
         shot = screenshot or self.screenshot("title-guard")
-        return text_matches_alias(self.header_text(shot), self.aliases)
+        if text_matches_alias(self.header_text(shot), self.aliases):
+            return True
+        return text_matches_alias(enhanced_header_text(shot), self.aliases)
 
     def ensure_exact_chat(self) -> Path:
         current = self.screenshot("current")
@@ -350,11 +351,9 @@ class AndroidWechatSender:
         )
 
     def find_target_line(self, screenshot: Path) -> OcrLine | None:
-        candidates = [
-            line
-            for line in ocr_lines(screenshot)
-            if 180 <= line.center_y <= 1900 and text_matches_alias(line.text, self.aliases)
-        ]
+        candidates = matching_target_lines(ocr_lines(screenshot), self.aliases)
+        if not candidates:
+            candidates = matching_target_lines(enhanced_ocr_lines(screenshot), self.aliases)
         if not candidates:
             return None
         candidates.sort(
@@ -687,22 +686,11 @@ def readable_android_filename(value: str) -> str:
     return name
 
 
-def ocr_lines(path: Path) -> list[OcrLine]:
-    proc = run_checked(
-        [
-            "tesseract",
-            str(path),
-            "stdout",
-            "-l",
-            os.environ.get("WECHAT_ANDROID_OCR_LANGS", "chi_sim+chi_tra+eng"),
-            "--psm",
-            "11",
-            "tsv",
-        ],
-        timeout=45,
-    )
+def parse_ocr_tsv(value: str, *, coordinate_scale: float = 1.0) -> list[OcrLine]:
+    if coordinate_scale <= 0:
+        raise ValueError("coordinate_scale must be positive")
     groups: dict[tuple[int, int, int], list[tuple[str, int, int, int, int]]] = {}
-    for index, raw in enumerate(proc.stdout.splitlines()):
+    for index, raw in enumerate(str(value or "").splitlines()):
         if index == 0:
             continue
         columns = raw.split("\t")
@@ -713,9 +701,11 @@ def ocr_lines(path: Path) -> list[OcrLine]:
             left, top, width, height = map(int, columns[6:10])
         except ValueError:
             continue
-        groups.setdefault(key, []).append(
-            (columns[11].strip(), left, top, left + width, top + height)
+        scaled = tuple(
+            int(round(item / coordinate_scale))
+            for item in (left, top, left + width, top + height)
         )
+        groups.setdefault(key, []).append((columns[11].strip(), *scaled))
     result = []
     for words in groups.values():
         words.sort(key=lambda word: word[1])
@@ -729,6 +719,85 @@ def ocr_lines(path: Path) -> list[OcrLine]:
             )
         )
     return sorted(result, key=lambda line: (line.top, line.left))
+
+
+def ocr_lines(path: Path, *, coordinate_scale: float = 1.0) -> list[OcrLine]:
+    proc = run_checked(
+        [
+            "tesseract",
+            str(path),
+            "stdout",
+            "-l",
+            os.environ.get("WECHAT_ANDROID_OCR_LANGS", "chi_sim+chi_tra+eng"),
+            "--psm",
+            "11",
+            "tsv",
+        ],
+        timeout=45,
+    )
+    return parse_ocr_tsv(proc.stdout, coordinate_scale=coordinate_scale)
+
+
+def enhanced_ocr_lines(path: Path) -> list[OcrLine]:
+    """Retry OCR with conservative preprocessing while preserving tap coordinates."""
+    prepared = path.with_name(f"{path.stem}-ocr-enhanced.png")
+    try:
+        run_checked(
+            [
+                "convert",
+                str(path),
+                "-resize",
+                "150%",
+                "-colorspace",
+                "Gray",
+                "-contrast-stretch",
+                "1%x1%",
+                str(prepared),
+            ],
+            timeout=30,
+        )
+        return ocr_lines(prepared, coordinate_scale=1.5)
+    finally:
+        prepared.unlink(missing_ok=True)
+
+
+def enhanced_header_text(path: Path) -> str:
+    width, height = image_size(path)
+    crop = path.with_name(f"{path.stem}-header-enhanced.png")
+    try:
+        run_checked(
+            [
+                "convert",
+                str(path),
+                "-crop",
+                (
+                    f"{int(width * 0.68)}x{int(height * 0.09)}"
+                    f"+{int(width * 0.16)}+{int(height * 0.02)}"
+                ),
+                "+repage",
+                "-resize",
+                "300%",
+                "-colorspace",
+                "Gray",
+                "-contrast-stretch",
+                "1%x1%",
+                str(crop),
+            ],
+            timeout=30,
+        )
+        return "\n".join(ocr_plain(crop, psm=psm) for psm in ("7", "6"))
+    finally:
+        crop.unlink(missing_ok=True)
+
+
+def matching_target_lines(
+    lines: list[OcrLine], aliases: tuple[str, ...]
+) -> list[OcrLine]:
+    return [
+        line
+        for line in lines
+        if 180 <= line.center_y <= 1900 and text_matches_alias(line.text, aliases)
+    ]
 
 
 def ocr_plain(path: Path, *, psm: str) -> str:

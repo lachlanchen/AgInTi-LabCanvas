@@ -131,6 +131,42 @@ class WeChatCompletionAuditTests(unittest.TestCase):
         self.assertEqual([item["sequence"] for item in items], [1, 2, 3])
         self.assertEqual([item["source_id"] for item in items], ["101", "102", "103"])
 
+    def test_transport_message_ledger_is_authoritative_for_coalesced_sources(self) -> None:
+        task = {
+            "id": "shares-229",
+            "chat": "Shares鏈接",
+            "original_request": "Summarize the latest article.",
+            "source": {"local_id": 229, "sender_display": "owner"},
+            "message_ledger": [
+                {
+                    "item_id": "message:message_1.db:228",
+                    "sequence": 1,
+                    "source_id": "srv-228",
+                    "sender_display": "owner",
+                    "text": "随感录：被权力污染的语言",
+                },
+                {
+                    "item_id": "task:shares-229",
+                    "sequence": 2,
+                    "source_id": "srv-229",
+                    "sender_display": "owner",
+                    "text": "Tony Robbins on personal change",
+                },
+            ],
+        }
+
+        items = audit.coverage_items(task)
+
+        self.assertEqual(
+            [item["item_id"] for item in items],
+            ["message:message_1.db:228", "task:shares-229"],
+        )
+        self.assertEqual(
+            [item["text"] for item in items],
+            ["随感录：被权力污染的语言", "Tony Robbins on personal change"],
+        )
+        self.assertEqual([item["sequence"] for item in items], [1, 2])
+
     def test_hard_ids_do_not_drop_long_consecutive_burst(self) -> None:
         task = {
             "id": "parent",

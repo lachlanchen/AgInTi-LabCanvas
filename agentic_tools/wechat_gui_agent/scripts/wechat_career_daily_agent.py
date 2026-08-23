@@ -19,7 +19,11 @@ from typing import Any
 import uuid
 
 from file_lock import fcntl_compat as fcntl
-from wechat_agent_backend import run_agent_session, select_agent_backend
+from wechat_agent_backend import (
+    agent_context_model,
+    run_agent_session,
+    select_agent_backend,
+)
 from wechat_chat_profiles import preferred_chat_title, profile_aliases, profile_for_chat
 from wechat_message_policy import (
     attachment_transport_identity,
@@ -31,7 +35,12 @@ from wechat_task_worker import (
     send_file,
     send_message,
 )
-from wechat_history_rag import build_history_context
+from wechat_history_rag import (
+    build_history_context,
+    estimate_tokens,
+    lexical_terms,
+    resolve_memory_budget,
+)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -382,6 +391,7 @@ def organizer_delivery_complete_for_date(
         return bool(
             state.get("date") == stamp
             and state.get("chat") == chat
+            and organizer_quality_accepted(state)
             and pdf.is_file()
             and pdf.stat().st_size > 0
         )
@@ -697,6 +707,7 @@ def run_organizer(
     if (
         state.get("date") == stamp
         and state.get("chat") == chat
+        and organizer_quality_accepted(state)
         and pdf.is_file()
         and (
             observed_outbound_file(
@@ -744,6 +755,8 @@ def run_organizer(
         not force
         and state.get("date") == stamp
         and state.get("chat") == chat
+        and organizer_quality_accepted(state)
+        and state.get("status") in {"ready", "delivery_failed"}
         and report.is_file()
         and pdf.is_file()
         and pdf.stat().st_size > 0
@@ -768,16 +781,27 @@ def run_organizer(
     if not generated:
         memory_db = getattr(args, "memory_db", DEFAULT_MEMORY_DB)
         memory_chats = organizer_memory_chats(chat)
+        backend = select_agent_backend({})
+        context_model = agent_context_model(backend, args.model)
+        context_budget = resolve_memory_budget(model=context_model, role="daily")
+        available_tokens = int(context_budget["available_input_tokens"])
+        recent_token_budget = min(7000, max(2800, int(available_tokens * 0.27)))
+        history_token_budget = min(
+            int(context_budget["memory_token_budget"]),
+            max(2400, int(available_tokens * 0.43)),
+        )
         snapshot = life_memo_snapshot(
             memory_db,
             memory_chats,
             limit=200,
+            token_budget=recent_token_budget,
         )
         history = build_history_context(
             memory_db,
             memory_chats,
             ORGANIZER_HISTORY_QUERY,
-            model=args.model,
+            token_budget=history_token_budget,
+            model=context_model,
             role="daily",
         )
         prompt = build_organizer_prompt(
@@ -785,9 +809,27 @@ def run_organizer(
             snapshot,
             history_context=str(history.get("snapshot") or ""),
         )
+        trace_dir = organizer_trace_dir(stamp)
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        (trace_dir / "recent-evidence.md").write_text(snapshot.rstrip() + "\n", encoding="utf-8")
+        (trace_dir / "lifetime-context.md").write_text(
+            str(history.get("snapshot") or "").rstrip() + "\n",
+            encoding="utf-8",
+        )
+        (trace_dir / "agent-prompt.md").write_text(prompt.rstrip() + "\n", encoding="utf-8")
+        write_json_file(trace_dir / "context-manifest.json", {
+            "backend": backend,
+            "requested_model": args.model,
+            "context_model": context_model,
+            "recent_token_budget": recent_token_budget,
+            "recent_estimated_tokens": estimate_tokens(snapshot),
+            "history_token_budget": history_token_budget,
+            "prompt_estimated_tokens": estimate_tokens(prompt),
+            "history_retrieval": history.get("manifest") or {},
+        })
         result = run_agent_session(
             prompt,
-            backend=select_agent_backend({}),
+            backend=backend,
             chat_name=chat,
             role="daily_organizer",
             model=args.model,
@@ -797,13 +839,76 @@ def run_organizer(
             workdir=ROOT,
             reuse=True,
         )
-        body = strip_markdown_fence(str(result.get("message") or "").strip())
+        raw_body = str(result.get("message") or "").strip()
+        (trace_dir / "agent-output-1.txt").write_text(raw_body.rstrip() + "\n", encoding="utf-8")
+        body = normalize_organizer_output(raw_body)
+        quality = organizer_output_quality(body, snapshot)
+        quality_attempts = 1
+        if result.get("ok") and body and not quality.get("accepted"):
+            repair_prompt = build_organizer_repair_prompt(body, quality)
+            (trace_dir / "repair-prompt.md").write_text(
+                repair_prompt.rstrip() + "\n",
+                encoding="utf-8",
+            )
+            repaired = run_agent_session(
+                repair_prompt,
+                backend=backend,
+                chat_name=chat,
+                role="daily_organizer",
+                model=args.model,
+                reasoning_effort=args.reasoning_effort,
+                sandbox="read-only",
+                timeout_seconds=args.timeout_seconds,
+                workdir=ROOT,
+                reuse=True,
+            )
+            quality_attempts += 1
+            repaired_raw = str(repaired.get("message") or "").strip()
+            (trace_dir / "agent-output-2.txt").write_text(
+                repaired_raw.rstrip() + "\n",
+                encoding="utf-8",
+            )
+            repaired_body = normalize_organizer_output(repaired_raw)
+            repaired_quality = organizer_output_quality(repaired_body, snapshot)
+            if repaired.get("ok"):
+                result = repaired
+                body = repaired_body
+                quality = repaired_quality
         if not result.get("ok") or not body:
             return {
                 "ok": False,
                 "status": "agent_failed",
                 "chat": chat,
                 "agent": sanitize_agent_result(result),
+                "trace_dir": str(trace_dir),
+            }
+        quality["attempts"] = quality_attempts
+        write_json_file(trace_dir / "quality.json", quality)
+        if not quality.get("accepted"):
+            state = {
+                "schema": "labcanvas.wechat.daily_organizer.v2",
+                "date": stamp,
+                "chat": chat,
+                "status": "quality_failed",
+                "quality": quality,
+                "trace_dir": str(trace_dir),
+                "agent": {
+                    "backend": result.get("backend"),
+                    "provider": result.get("provider"),
+                    "thread_id": result.get("thread_id"),
+                    "resumed": result.get("resumed"),
+                    "model": args.model,
+                    "reasoning_effort": args.reasoning_effort,
+                },
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            write_json_file(state_path, state)
+            return {
+                "ok": False,
+                "status": "quality_failed",
+                "chat": chat,
+                "quality": quality,
+                "trace_dir": str(trace_dir),
             }
         OUTPUT.mkdir(parents=True, exist_ok=True)
         report.write_text(body.rstrip() + "\n", encoding="utf-8")
@@ -816,7 +921,7 @@ def run_organizer(
                 "report": str(report),
             }
         state = {
-            "schema": "labcanvas.wechat.daily_organizer.v1",
+            "schema": "labcanvas.wechat.daily_organizer.v2",
             "date": stamp,
             "chat": chat,
             "status": "ready",
@@ -824,6 +929,7 @@ def run_organizer(
             "pdf": str(pdf),
             "agent": {
                 "backend": result.get("backend"),
+                "provider": result.get("provider"),
                 "thread_id": result.get("thread_id"),
                 "resumed": result.get("resumed"),
                 "model": args.model,
@@ -831,6 +937,9 @@ def run_organizer(
             },
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "history_retrieval": history.get("manifest") or {},
+            "context_model": context_model,
+            "quality": quality,
+            "trace_dir": str(trace_dir),
         }
         write_json_file(state_path, state)
 
@@ -867,11 +976,22 @@ def organizer_delivery_matches(state: dict[str, Any], stamp: str, chat: str, pdf
     return bool(
         state.get("date") == stamp
         and state.get("chat") == chat
+        and organizer_quality_accepted(state)
         and state.get("status") == "delivered"
         and (state.get("send") or {}).get("complete")
         and pdf.is_file()
         and pdf.stat().st_size > 0
     )
+
+
+def organizer_quality_accepted(state: dict[str, Any]) -> bool:
+    quality = state.get("quality") if isinstance(state, dict) else None
+    return bool(isinstance(quality, dict) and quality.get("accepted") is True)
+
+
+def organizer_trace_dir(stamp: str) -> Path:
+    run_id = datetime.now().strftime(f"{stamp}-%H%M%S-%f")
+    return PRIVATE / "output" / "career_daily" / "organizer-runs" / run_id
 
 
 def organizer_state_path() -> Path:
@@ -923,6 +1043,8 @@ Exact chat: {chat}
 
 Return only polished Chinese Markdown for a mobile-readable PDF. Do not mention
 the automation, database, classifiers, local paths, model, or prompt.
+Do not wrap the Markdown in JSON, a `response` field, or a code fence. This is
+direct synthesis from supplied evidence and needs no tool call or file access.
 
 Use only the evidence below. Deduplicate repeated classifications of the same
 message. Do not invent dates, deadlines, completion states, groceries, calendar
@@ -968,6 +1090,201 @@ Relevance-ranked longitudinal context from the complete authorized history:
 Use longitudinal context only to resolve names, continuity, repeated projects,
 and explicit prior decisions. It is not today's inbox: never revive a completed
 task or list an old note unless the recent organized evidence makes it current.
+"""
+
+
+ORGANIZER_OUTPUT_KEYS = (
+    "report_markdown",
+    "markdown",
+    "response",
+    "message",
+    "content",
+    "result",
+    "output",
+)
+ORGANIZER_GENERIC_FAILURE_RE = re.compile(
+    r"(?:no\s+(?:dedicated\s+)?(?:tool|memo-writing)|"
+    r"no\s+tool\s+exists|"
+    r"无法(?:执行文件|调用外部工具|完成|生成)|"
+    r"请提供具体(?:需要|内容)|"
+    r"当前环境为只读|"
+    r"blocker\s*:|"
+    r"manually\s+format)",
+    flags=re.IGNORECASE,
+)
+ORGANIZER_TERM_STOPWORDS = {
+    "active",
+    "body",
+    "chat",
+    "http",
+    "https",
+    "inbox",
+    "memo",
+    "open",
+    "quoted",
+    "request",
+    "source",
+    "status",
+    "title",
+    "wechat",
+    "今天",
+    "任务",
+    "内容",
+    "备忘",
+    "外语",
+    "想法",
+    "挣钱",
+    "整理",
+    "项目",
+}
+
+
+def normalize_organizer_output(value: Any) -> str:
+    """Unwrap common agent envelopes while preserving ordinary Markdown."""
+
+    text = strip_markdown_fence(str(value or "").strip())
+    for _ in range(4):
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            break
+        if isinstance(payload, str):
+            candidate = payload
+        elif isinstance(payload, dict):
+            candidate = next(
+                (
+                    payload[key]
+                    for key in ORGANIZER_OUTPUT_KEYS
+                    if key in payload and isinstance(payload[key], str)
+                ),
+                None,
+            )
+            if candidate is None:
+                break
+        else:
+            break
+        text = strip_markdown_fence(str(candidate).strip())
+    return text.strip()
+
+
+def organizer_evidence_bodies(snapshot: str) -> list[str]:
+    bodies: list[str] = []
+    for raw in str(snapshot or "").splitlines():
+        line = raw.strip()
+        if not line.startswith("-"):
+            continue
+        body = line.split(": ", 1)[-1].strip()
+        body = re.sub(r"https?://\S+", " ", body)
+        body = " ".join(body.split())
+        if body:
+            bodies.append(body)
+    return bodies
+
+
+def organizer_grounding_metrics(body: str, snapshot: str) -> dict[str, Any]:
+    evidence = organizer_evidence_bodies(snapshot)
+    term_sets: list[set[str]] = []
+    frequencies: dict[str, int] = {}
+    for item in evidence:
+        terms = {
+            term.casefold()
+            for term in lexical_terms(item)
+            if len(term) >= 3
+            and term.casefold() not in ORGANIZER_TERM_STOPWORDS
+            and not term.casefold().startswith(("http", "www"))
+        }
+        term_sets.append(terms)
+        for term in terms:
+            frequencies[term] = frequencies.get(term, 0) + 1
+    folded = str(body or "").casefold()
+    matched: list[int] = []
+    missing: list[str] = []
+    frequency_ceiling = max(2, len(evidence) // 7)
+    for index, (item, terms) in enumerate(zip(evidence, term_sets)):
+        distinctive = sorted(
+            (term for term in terms if frequencies.get(term, 0) <= frequency_ceiling),
+            key=lambda term: (frequencies.get(term, 0), -len(term), term),
+        )[:16]
+        if any(term in folded for term in distinctive):
+            matched.append(index)
+        elif len(missing) < 8:
+            missing.append(item[:140])
+    return {
+        "evidence_items": len(evidence),
+        "grounded_items": len(matched),
+        "missing_examples": missing,
+    }
+
+
+def organizer_output_quality(body: str, snapshot: str) -> dict[str, Any]:
+    text = str(body or "").strip()
+    grounding = organizer_grounding_metrics(text, snapshot)
+    evidence_items = int(grounding["evidence_items"])
+    min_chars = min(2600, max(900, evidence_items * 24))
+    min_headings = 3 if evidence_items >= 8 else 2
+    min_bullets = min(12, max(5, evidence_items // 5))
+    min_grounded = min(10, max(4, evidence_items // 7))
+    heading_count = len(re.findall(r"(?m)^#{1,4}\s+\S", text))
+    bullet_count = len(re.findall(r"(?m)^\s*(?:[-*+] |\d+[.)、]\s+)", text))
+    task_count = len(re.findall(r"(?m)^\s*[-*+]\s+\[\s*\]\s+", text))
+    reasons: list[str] = []
+    if not text:
+        reasons.append("empty_output")
+    if text.startswith(("{", "[")) or "\\n" in text:
+        reasons.append("raw_structured_envelope")
+    if ORGANIZER_GENERIC_FAILURE_RE.search(text):
+        reasons.append("generic_refusal_or_tool_excuse")
+    if len(text) < min_chars:
+        reasons.append("too_short_for_evidence")
+    if heading_count < min_headings:
+        reasons.append("insufficient_structure")
+    if bullet_count < min_bullets:
+        reasons.append("insufficient_item_coverage")
+    if int(grounding["grounded_items"]) < min_grounded:
+        reasons.append("insufficient_evidence_grounding")
+    return {
+        "accepted": not reasons,
+        "reasons": reasons,
+        "characters": len(text),
+        "headings": heading_count,
+        "bullets": bullet_count,
+        "tasks": task_count,
+        "minimum_characters": min_chars,
+        "minimum_headings": min_headings,
+        "minimum_bullets": min_bullets,
+        "minimum_grounded_items": min_grounded,
+        **grounding,
+    }
+
+
+def build_organizer_repair_prompt(body: str, quality: dict[str, Any]) -> str:
+    missing = quality.get("missing_examples") if isinstance(quality, dict) else []
+    missing = missing if isinstance(missing, list) else []
+    examples = "\n".join(f"- {item}" for item in missing[:6]) or "- Re-read the supplied evidence ledger."
+    return f"""Your previous Memo draft failed the host's content-quality audit and must not be delivered.
+
+Failure reasons: {', '.join(str(item) for item in quality.get('reasons') or [])}
+Observed: {quality.get('characters', 0)} characters, {quality.get('headings', 0)} headings,
+{quality.get('bullets', 0)} bullets, and {quality.get('grounded_items', 0)} grounded evidence items.
+
+Rewrite it now from the complete recent-evidence and lifetime-context packet in
+the immediately preceding request. Preserve actual names, books, devices,
+articles, projects, decisions, and open questions. Group related fragments, but
+do not replace them with generic business, translation, productivity, or
+language-service advice. Distinguish current logistics from projects and from
+long-term direction. Use at least {quality.get('minimum_headings', 3)} Markdown
+headings, {quality.get('minimum_bullets', 8)} concrete bullets, and about
+{quality.get('minimum_characters', 1200)} or more Chinese characters when the
+evidence supports it. Keep actionable items as `- [ ]` task lines.
+
+Representative evidence missed by the previous draft:
+{examples}
+
+Return only the finished Chinese Markdown. Do not return JSON, a code fence,
+an apology, a tool limitation, or commentary about this audit.
+
+Rejected draft for reference:
+{body[:1800]}
 """
 
 
@@ -1518,7 +1835,13 @@ def memory_snapshot(db: Path, chats: list[str], *, limit: int = 80) -> str:
     )
 
 
-def life_memo_snapshot(db: Path, chat: str | list[str], *, limit: int = 100) -> str:
+def life_memo_snapshot(
+    db: Path,
+    chat: str | list[str],
+    *,
+    limit: int = 100,
+    token_budget: int | None = None,
+) -> str:
     if not db.exists():
         return "(memory database not found)"
     allowed = {
@@ -1575,15 +1898,23 @@ def life_memo_snapshot(db: Path, chat: str | list[str], *, limit: int = 100) -> 
     items = sorted(grouped.values(), key=lambda item: item["created_at"], reverse=True)[:limit]
     if not items:
         return "(no organized items found)"
-    lines = []
+    lines: list[str] = []
     for item in items:
         metadata = ["/".join(sorted(item["categories"])), item["created_at"]]
         if item["status"] and item["status"] != "open":
             metadata.append(f"status={item['status']}")
         if item["due_at"]:
             metadata.append(f"explicit_due={item['due_at']}")
-        lines.append(f"- {' | '.join(metadata)}: {compact(item['body'], 360)}")
-    return "\n".join(lines)
+        line = f"- {' | '.join(metadata)}: {compact(item['body'], 360)}"
+        candidate = "\n".join([*lines, line])
+        if token_budget is not None and lines and estimate_tokens(candidate) > token_budget:
+            break
+        lines.append(line)
+    coverage = (
+        f"[Recent evidence coverage: {len(lines)} of {len(items)} newest distinct "
+        "organized items; older continuity remains in the lifetime context.]"
+    )
+    return "\n".join([coverage, *lines])
 
 
 def project_surface(*, limit: int = 48) -> str:

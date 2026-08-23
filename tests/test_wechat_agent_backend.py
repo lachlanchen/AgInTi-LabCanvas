@@ -125,6 +125,43 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(backend.select_agent_backend({"agent_backend": "agintiflow"}), "aginti")
         self.assertEqual(backend.select_agent_backend({"agent_backend": "unknown"}), "aginti")
 
+    def test_agent_context_model_uses_smallest_active_aginti_provider_window(self) -> None:
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = Path(tmp) / "model-policy.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "aginti": {
+                            "provider_models": {
+                                "deepseek": "deepseek-large",
+                                "localllm": "local-small",
+                            }
+                        },
+                        "memory": {
+                            "context_window_tokens": {
+                                "deepseek-large": 65536,
+                                "local-small": 32768,
+                                "default": 32768,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(backend, "MODEL_POLICY_PATH", policy):
+                selected = backend.agent_context_model(
+                    "aginti",
+                    "gpt-5.6-sol",
+                    backend_config={"provider_chain": ["deepseek", "localllm"]},
+                )
+
+        self.assertEqual(selected, "local-small")
+        self.assertEqual(
+            backend.agent_context_model("codex", "gpt-5.6-sol"),
+            "gpt-5.6-sol",
+        )
+
     def test_emergency_codex_cutover_overrides_stored_backend_and_fallback(self) -> None:
         backend = load_backend()
         with mock.patch.dict(

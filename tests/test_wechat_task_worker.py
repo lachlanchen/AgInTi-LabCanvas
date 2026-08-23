@@ -2877,6 +2877,53 @@ stderr: noisy internal trace
         self.assertIn("Exact task packet", backend_prompts["aginti"])
         self.assertLess(len(backend_prompts["aginti"]), len(calls[0]["prompt"]))
 
+    def test_all_worker_backends_receive_the_same_authoritative_message_ledger(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "shares-ledger-229",
+            "chat": "Shares鏈接",
+            "request": "Read and summarize both shared articles.",
+            "source": {"local_id": 229, "sender_display": "owner"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "routine": {"id": "general_worker", "title": "General worker"},
+            "message_ledger": [
+                {
+                    "item_id": "message:message_1.db:228",
+                    "sequence": 1,
+                    "sender_display": "owner",
+                    "text": "随感录：被权力污染的语言",
+                },
+                {
+                    "item_id": "task:shares-ledger-229",
+                    "sequence": 2,
+                    "sender_display": "owner",
+                    "text": "Tony Robbins on personal change",
+                },
+            ],
+            "message_ledger_contract": {
+                "schema": "labcanvas-message-ledger-v1",
+                "coverage_required_per_item": True,
+                "combined_reply_allowed": True,
+            },
+        }
+
+        full = worker.worker_agent_task_view(task)
+        aginti = worker.aginti_worker_task_view(task)
+        prompt = worker.build_aginti_worker_prompt(task)
+
+        full_ids = [item["item_id"] for item in full["message_ledger"]]
+        aginti_ids = [item["item_id"] for item in aginti["message_ledger"]]
+        self.assertEqual(full_ids, aginti_ids)
+        self.assertEqual(
+            [item["text"] for item in full["message_ledger"]],
+            [item["text"] for item in aginti["message_ledger"]],
+        )
+        self.assertEqual(aginti["schema"], "labcanvas-agent-task-v2")
+        self.assertIn("message:message_1.db:228", prompt)
+        self.assertIn("task:shares-ledger-229", prompt)
+        self.assertIn("随感录：被权力污染的语言", prompt)
+        self.assertIn("Tony Robbins on personal change", prompt)
+
     def test_orchestrator_runs_deterministic_stage_without_codex_session(self) -> None:
         worker = load_worker()
         task = {

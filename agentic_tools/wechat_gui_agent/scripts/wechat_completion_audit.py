@@ -74,25 +74,26 @@ def extract_current_request(value: Any) -> str:
 def coverage_items(task: dict[str, Any]) -> list[dict[str, Any]]:
     """Preserve each authoritative message as an independently auditable item."""
     source = task.get("source") if isinstance(task.get("source"), dict) else {}
-    original = exact_source_message_text(task.get("context"), source)
-    if not original:
-        original = str(task.get("original_request") or "").strip()
-    if not original:
-        original = extract_current_request(task.get("request"))
-    else:
-        original = extract_current_request(original)
-    items: list[dict[str, Any]] = []
-    if original:
-        original = normalize_auditable_request(original)
-        items.append(
-            {
-                "item_id": f"task:{str(task.get('id') or source_identity(source, fallback='source'))}",
-                "kind": "source",
-                "sender": str(source.get("sender_display") or source.get("sender") or ""),
-                "source_id": source_identity(source, fallback=""),
-                "text": bounded_text(original),
-            }
-        )
+    items = ledger_coverage_items(task.get("message_ledger"), kind="source")
+    if not items:
+        original = exact_source_message_text(task.get("context"), source)
+        if not original:
+            original = str(task.get("original_request") or "").strip()
+        if not original:
+            original = extract_current_request(task.get("request"))
+        else:
+            original = extract_current_request(original)
+        if original:
+            original = normalize_auditable_request(original)
+            items.append(
+                {
+                    "item_id": f"task:{str(task.get('id') or source_identity(source, fallback='source'))}",
+                    "kind": "source",
+                    "sender": str(source.get("sender_display") or source.get("sender") or ""),
+                    "source_id": source_identity(source, fallback=""),
+                    "text": bounded_text(original),
+                }
+            )
     reprocess_reason = str(task.get("reprocess_reason") or "").strip()
     if reprocess_reason and reprocess_reason not in {
         "manual_reprocess",
@@ -111,6 +112,13 @@ def coverage_items(task: dict[str, Any]) -> list[dict[str, Any]]:
         )
     for index, interruption in enumerate(task.get("interruptions") or [], start=1):
         if not isinstance(interruption, dict):
+            continue
+        interruption_ledger = ledger_coverage_items(
+            interruption.get("message_ledger"),
+            kind="interruption",
+        )
+        if interruption_ledger:
+            items.extend(interruption_ledger)
             continue
         interruption_source = (
             interruption.get("source")
@@ -150,6 +158,36 @@ def coverage_items(task: dict[str, Any]) -> list[dict[str, Any]]:
     for sequence, item in enumerate(numbered, start=1):
         item["sequence"] = sequence
     return numbered
+
+
+def ledger_coverage_items(value: Any, *, kind: str) -> list[dict[str, Any]]:
+    """Convert the backend-independent transport ledger into audit items."""
+
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for index, entry in enumerate(value, start=1):
+        if not isinstance(entry, dict):
+            continue
+        text = normalize_auditable_request(entry.get("text"))
+        item_id = str(entry.get("item_id") or "").strip()
+        if not text or not item_id:
+            continue
+        items.append(
+            {
+                "item_id": item_id,
+                "kind": kind,
+                "sender": str(entry.get("sender_display") or entry.get("sender") or ""),
+                "source_id": str(
+                    entry.get("source_id")
+                    or entry.get("server_id")
+                    or entry.get("local_id")
+                    or index
+                ),
+                "text": bounded_text(text),
+            }
+        )
+    return items
 
 
 def exact_source_message_text(

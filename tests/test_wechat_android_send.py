@@ -1,4 +1,5 @@
 import importlib.util
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import sqlite3
@@ -122,6 +123,76 @@ class WechatAndroidSendTests(unittest.TestCase):
 
             self.assertEqual(result, screen)
             shell.assert_called_once_with(["input", "tap", "500", str(match.center_y)])
+
+    def test_find_target_line_retries_with_enhanced_ocr(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={
+                    "name": "MEMO写作—外语—挣钱",
+                    "expected_title": "MEMO写作—外语—挣钱",
+                },
+                task_id="task-enhanced-ocr",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            screen = root / "screen.png"
+            screen.write_bytes(b"png")
+            expected = module.OcrLine("MEMO 寫 作 一 外 語 一 掙 錢", 90, 400, 600, 470)
+            with mock.patch.object(module, "ocr_lines", return_value=[]), mock.patch.object(
+                module, "enhanced_ocr_lines", return_value=[expected]
+            ) as enhanced:
+                result = sender.find_target_line(screen)
+
+            self.assertEqual(result, expected)
+            enhanced.assert_called_once_with(screen)
+
+    def test_parse_ocr_tsv_scales_enhanced_coordinates_back_to_device(self):
+        module = load_sender()
+        tsv = (
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            "5\t1\t1\t1\t1\t1\t150\t600\t300\t90\t90\tMEMO\n"
+            "5\t1\t1\t1\t1\t2\t480\t600\t150\t90\t90\t写作\n"
+        )
+
+        lines = module.parse_ocr_tsv(tsv, coordinate_scale=1.5)
+
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].text, "MEMO 写作")
+        self.assertEqual((lines[0].left, lines[0].top), (100, 400))
+        self.assertEqual((lines[0].right, lines[0].bottom), (420, 460))
+
+    def test_successful_file_send_is_not_failed_by_post_send_chat_restore(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "memo.pdf"
+            artifact.write_bytes(b"pdf")
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "MEMO写作—外语—挣钱", "expected_title": "MEMO写作—外语—挣钱"},
+                task_id="task-final-file",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            with mock.patch.object(module, "require_tools"), mock.patch.object(
+                module, "priority_android_control", return_value=nullcontext()
+            ), mock.patch.object(sender, "wake_and_launch"), mock.patch.object(
+                sender, "ensure_exact_chat"
+            ) as ensure, mock.patch.object(
+                sender,
+                "send_file_component",
+                return_value={"kind": "file", "status": "sent", "key": "file"},
+            ):
+                result = sender.send(messages=[], files=[artifact])
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["components"][0]["status"], "sent")
+            self.assertEqual(ensure.call_count, 1)
 
     def test_unknown_target_is_rejected_by_allowlist(self):
         module = load_sender()
