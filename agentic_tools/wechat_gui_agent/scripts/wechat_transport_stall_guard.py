@@ -823,25 +823,55 @@ def queue_health(
     historical_coverage_unresolved_ids: list[str] = []
     historical_coverage_categories: dict[str, int] = {}
     recent_failed_ids: list[str] = []
+    superseded_failed_ids: list[str] = []
+    delivered_inspiration_at: dict[str, datetime] = {}
+    for task_id, task in latest.items():
+        if not delivered_proactive_inspiration(task_id, task):
+            continue
+        scope = proactive_inspiration_scope(task)
+        delivered_at = parse_timestamp(
+            task.get("completed_at")
+            or task.get("updated_at")
+            or task.get("created_at")
+        )
+        if not scope or delivered_at is None:
+            continue
+        previous = delivered_inspiration_at.get(scope)
+        if previous is None or delivered_at > previous:
+            delivered_inspiration_at[scope] = delivered_at
     for task_id, task in latest.items():
         status = str(task.get("status") or "")
         delivered_proactive = delivered_proactive_inspiration(task_id, task)
+        failed_at = parse_timestamp(
+            task.get("completed_at")
+            or task.get("updated_at")
+            or task.get("created_at")
+        )
+        inspiration_scope = proactive_inspiration_scope(task)
+        later_inspiration = delivered_inspiration_at.get(inspiration_scope)
+        superseded_proactive = bool(
+            status in {"worker_failed", "failed", "error"}
+            and inspiration_scope
+            and failed_at is not None
+            and later_inspiration is not None
+            and later_inspiration > failed_at
+        )
+        if superseded_proactive:
+            superseded_failed_ids.append(task_id)
         if status in {"worker_failed", "failed", "error"} and not delivered_proactive:
-            failed_at = parse_timestamp(
-                task.get("completed_at")
-                or task.get("updated_at")
-                or task.get("created_at")
-            )
             failed_age = (
                 max(0.0, (now - failed_at).total_seconds())
                 if failed_at is not None
                 else 0.0
             )
-            if failed_at is None or failed_age < failure_alert_seconds:
+            if not superseded_proactive and (
+                failed_at is None or failed_age < failure_alert_seconds
+            ):
                 recent_failed_ids.append(task_id)
         if (
             str(task.get("coverage_status") or "") == "unresolved_after_retry"
             and not delivered_proactive
+            and not superseded_proactive
         ):
             completed = parse_timestamp(
                 task.get("completed_at")
@@ -889,6 +919,7 @@ def queue_health(
         "stale_ids": stale_ids[:20],
         "coverage_unresolved_ids": coverage_unresolved_ids[:20],
         "recent_failed_ids": recent_failed_ids[:20],
+        "superseded_failed_ids": superseded_failed_ids[:20],
         "historical_coverage_unresolved_count": len(
             historical_coverage_unresolved_ids
         ),
@@ -917,6 +948,15 @@ def delivered_proactive_inspiration(task_id: str, task: dict[str, Any]) -> bool:
         and bool(sent_messages)
         and (pending_messages is None or pending_messages == [])
     )
+
+
+def proactive_inspiration_scope(task: dict[str, Any]) -> str:
+    """Return the exact-chat scope for one optional scheduled inspiration."""
+
+    if not isinstance(task.get("group_inspiration"), dict):
+        return ""
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    return str(task.get("chat") or source.get("chat") or "").strip()
 
 
 def historical_coverage_category(task: dict[str, Any]) -> str:

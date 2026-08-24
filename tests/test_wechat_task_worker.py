@@ -2562,6 +2562,130 @@ stderr: noisy internal trace
             1,
         )
 
+    def test_worker_recovers_one_aginti_permission_pause_without_more_authority(self) -> None:
+        worker = load_worker()
+        calls: list[dict[str, object]] = []
+
+        def fake_run_worker_codex_once(task: dict[str, object], policy: dict[str, object]) -> str:
+            calls.append(
+                {
+                    "permission_retry": bool(policy.get("permission_recovery_retry")),
+                    "reuse_session": bool(policy.get("reuse_session", True)),
+                    "retry_context": dict(task.get("worker_retry_context") or {}),
+                }
+            )
+            if len(calls) == 1:
+                return "Worker failed via aginti: permission_required"
+            return "Finished the exact task using the existing safe worker policy."
+
+        task = {"chat": "wecom:group:labagent", "request": "prepare report"}
+        xhigh_policy = {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "xhigh",
+            "sandbox": "danger-full-access",
+            "timeout_seconds": 43200,
+        }
+        with mock.patch.object(worker, "choose_worker_policy", return_value=xhigh_policy), mock.patch.object(
+            worker, "run_worker_codex_once", side_effect=fake_run_worker_codex_once
+        ), mock.patch.object(worker, "recover_completed_research_artifacts", return_value=None):
+            result = worker.run_worker_codex(task)
+
+        self.assertIn("Finished the exact task", result)
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(calls[0]["permission_retry"])
+        self.assertTrue(calls[1]["permission_retry"])
+        self.assertTrue(calls[1]["reuse_session"])
+        self.assertEqual(
+            calls[1]["retry_context"]["kind"],
+            "recoverable_aginti_permission_pause",
+        )
+        self.assertIn("grants no new permission", calls[1]["retry_context"]["instruction"])
+        self.assertNotIn("worker_retry_context", task)
+
+    def test_worker_bounds_repeated_aginti_permission_pause(self) -> None:
+        worker = load_worker()
+        failure = "Worker failed via aginti: permission_required"
+        task = {"chat": "wecom:group:labagent", "request": "prepare report"}
+        xhigh_policy = {
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "xhigh",
+            "sandbox": "danger-full-access",
+            "timeout_seconds": 43200,
+        }
+        with mock.patch.object(worker, "choose_worker_policy", return_value=xhigh_policy), mock.patch.object(
+            worker, "run_worker_codex_once", return_value=failure
+        ) as run, mock.patch.object(worker, "recover_completed_research_artifacts", return_value=None):
+            result = worker.run_worker_codex(task)
+
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(result, failure)
+        self.assertTrue(task["worker_result_exhausted"])
+        self.assertEqual(
+            sum(
+                bool(item["permission_recovery_retry"])
+                for item in task["worker_policy_attempts"]
+            ),
+            1,
+        )
+
+    def test_permission_recovery_classifier_is_aginti_specific(self) -> None:
+        worker = load_worker()
+
+        self.assertTrue(
+            worker.worker_result_is_recoverable_aginti_permission_pause(
+                "Worker failed via aginti: permission_required"
+            )
+        )
+        self.assertFalse(
+            worker.worker_result_is_recoverable_aginti_permission_pause(
+                "Worker failed via codex: permission_required"
+            )
+        )
+        self.assertFalse(
+            worker.worker_result_is_recoverable_aginti_permission_pause(
+                "Worker failed via aginti: unsafe command"
+            )
+        )
+
+    def test_worker_backend_config_bounds_aginti_evidence_scope(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "scope-test",
+            "request": (
+                "Current coalesced request:\n"
+                "Create permission-smoke.txt and verify it.\n\n"
+                "Recent history:\n"
+                "An unrelated browser discussion."
+            ),
+        }
+
+        config = worker.worker_backend_config(task, "aginti")
+
+        self.assertEqual(
+            config["evidence_scope_request"],
+            "Create permission-smoke.txt and verify it.",
+        )
+        self.assertEqual(
+            config["evidence_scope_artifact_root"],
+            "output/wechat_worker/scope-test",
+        )
+
+    def test_worker_backend_config_preserves_explicit_evidence_scope(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "scope-test",
+            "request": "Create another file.",
+            "agent_backend_config": {
+                "evidence_scope_request": "Explicit bounded request.",
+                "evidence_scope_artifact_root": "output/custom",
+            },
+        }
+
+        config = worker.worker_backend_config(task, "aginti")
+
+        self.assertEqual(config["evidence_scope_request"], "Explicit bounded request.")
+        self.assertEqual(config["evidence_scope_artifact_root"], "output/custom")
+
     def test_run_worker_codex_stops_after_completed_artifact_recovery(self) -> None:
         worker = load_worker()
         recovered = {

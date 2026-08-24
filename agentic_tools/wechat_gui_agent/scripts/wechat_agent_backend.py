@@ -1730,10 +1730,17 @@ Original prompt:
 """
     evidence_scope = ""
     if "AGINTI_EVIDENCE_SCOPE_JSON:" not in prompt:
+        scoped_request = str(
+            backend_config.get("evidence_scope_request") or prompt
+        ).strip()
+        evidence_scope_data = {"mode": "task", "request": scoped_request}
+        artifact_root = str(
+            backend_config.get("evidence_scope_artifact_root") or ""
+        ).strip()
+        if artifact_root:
+            evidence_scope_data["artifact_root"] = artifact_root
         evidence_scope_payload = json.dumps(
-            {"mode": "task", "request": prompt},
-            ensure_ascii=False,
-            separators=(",", ":"),
+            evidence_scope_data, ensure_ascii=False, separators=(",", ":")
         )
         evidence_scope = f"AGINTI_EVIDENCE_SCOPE_JSON: {evidence_scope_payload}\n"
     return f"""You are AgInTi, the primary reasoning and tool agent for LabCanvas chat automation.

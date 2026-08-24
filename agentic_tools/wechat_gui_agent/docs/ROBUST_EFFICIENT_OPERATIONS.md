@@ -91,13 +91,25 @@ AgInTi fallback uses `aginti run --stdin --json --task-profile chatops
 Interactive headers, plans, validator reports, malformed JSON, empty output,
 and stderr are backend failures, not user messages. Route and fast turns run
 without shell, file, MCP, or auxiliary tools. Worker turns use a Docker
-read-only or workspace sandbox, block package installation, and never receive
-unattended danger/host permissions. Files returned by AgInTi must live under
-the current task artifact directory; stale workspace artifacts are withheld.
+read-only or workspace sandbox and never receive unattended danger/host
+permissions. Response-only and explicitly read-only roles block package setup.
+Normal task workers allow package setup inside the contained Docker workspace
+so ordinary Python, TeX, LabCanvas, and project validation commands do not
+become false permission requests. This does not authorize host writes,
+publication, payment, deletion, credential changes, or any other irreversible
+stage. A generic AgInTi `permission_required` pause receives one bounded
+same-session recovery turn under the unchanged policy; repeated pauses remain a
+private terminal failure or become one task-specific confirmation when a real
+approval gate exists. Files returned by AgInTi must live under the current task
+artifact directory; stale workspace artifacts are withheld.
+The AgInTi evidence scope contains only the bounded current request plus that
+task's artifact root. The larger worker manual remains available as operating
+context but cannot accidentally become a completion requirement for browsers,
+publication, permissions, or unrelated output files.
 Safety-managed command options are stripped from local command/extra-argument
 overrides and reapplied last, so a stale config cannot enable host shell,
-destructive access, MCP, package installation, wrappers, SCS, or unrelated
-profiles behind the role policy.
+destructive access, MCP, wrappers, SCS, or unrelated profiles behind the role
+policy.
 
 Normal Codex rolling quota and purchased credits are separate signals. A low
 or empty weekly window raises a notice only when purchased credits are below
@@ -1034,7 +1046,10 @@ inspiration rows whose delivery ledger says `sent`, contains at least one sent
 part, and contains no pending parts. Such rows can retain a terminal worker or
 coverage audit status after delivery, but replaying them would duplicate an
 already delivered proactive message. An inspiration row without that complete
-delivery evidence remains actionable and visible.
+delivery evidence remains actionable and visible. A failed optional inspiration
+is also moved to `superseded_failed_ids` when a later inspiration for the same
+exact chat has a verified complete delivery. Direct user tasks and failed daily
+research jobs are never superseded by this rule.
 An explicit PDF request is a deterministic delivery contract: coverage needs
 both a useful direct answer and a real `.pdf` artifact unless a genuine
 approval, access, source, or safety blocker was explained.

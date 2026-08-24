@@ -277,6 +277,86 @@ class WeChatTransportStallGuardTests(unittest.TestCase):
             ["wecom-inspiration-202608111400-member"],
         )
 
+    def test_queue_health_supersedes_failed_inspiration_after_later_delivery(self) -> None:
+        now = datetime(2026, 8, 24, 9, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            rows = [
+                {
+                    "id": "wecom-inspiration-202608241124-member",
+                    "chat": "wecom:group:labagent",
+                    "status": "worker_failed",
+                    "coverage_status": "unresolved_after_retry",
+                    "completed_at": "2026-08-24T03:26:58+00:00",
+                    "group_inspiration": {"interval_seconds": 10800},
+                },
+                {
+                    "id": "wecom-inspiration-202608241623-member",
+                    "chat": "wecom:group:labagent",
+                    "status": "done",
+                    "completed_at": "2026-08-24T08:25:29+00:00",
+                    "group_inspiration": {"interval_seconds": 10800},
+                    "wecom_delivery": {
+                        "status": "sent",
+                        "sent_messages": [{"part": 1}],
+                        "pending_messages": [],
+                    },
+                },
+            ]
+            queue.write_text(
+                "\n".join(json.dumps(item) for item in rows) + "\n",
+                encoding="utf-8",
+            )
+
+            result = guard.queue_health(queue, now=now)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["recent_failed_ids"], [])
+        self.assertEqual(result["coverage_unresolved_ids"], [])
+        self.assertEqual(
+            result["superseded_failed_ids"],
+            ["wecom-inspiration-202608241124-member"],
+        )
+
+    def test_queue_health_requires_verified_later_inspiration_delivery(self) -> None:
+        now = datetime(2026, 8, 24, 9, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            rows = [
+                {
+                    "id": "wecom-inspiration-202608241124-member",
+                    "chat": "wecom:group:labagent",
+                    "status": "worker_failed",
+                    "completed_at": "2026-08-24T03:26:58+00:00",
+                    "group_inspiration": {"interval_seconds": 10800},
+                },
+                {
+                    "id": "wecom-inspiration-202608241623-member",
+                    "chat": "wecom:group:labagent",
+                    "status": "done",
+                    "completed_at": "2026-08-24T08:25:29+00:00",
+                    "group_inspiration": {"interval_seconds": 10800},
+                    "wecom_delivery": {
+                        "status": "deferred",
+                        "sent_messages": [],
+                        "pending_messages": [{"part": 1}],
+                    },
+                },
+            ]
+            queue.write_text(
+                "\n".join(json.dumps(item) for item in rows) + "\n",
+                encoding="utf-8",
+            )
+
+            result = guard.queue_health(queue, now=now)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["recent_failed_ids"],
+            ["wecom-inspiration-202608241124-member"],
+        )
+        self.assertEqual(result["superseded_failed_ids"], [])
+
     def test_queue_health_exposes_numbered_messages_unresolved_after_retry(self) -> None:
         now = datetime(2026, 7, 30, 8, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

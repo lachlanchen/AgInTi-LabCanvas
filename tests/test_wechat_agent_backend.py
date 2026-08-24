@@ -620,6 +620,33 @@ class WeChatAgentBackendTests(unittest.TestCase):
             prompt,
         )
 
+    def test_worker_prompt_scopes_evidence_to_request_and_artifact_root(self) -> None:
+        backend = load_backend()
+        prompt = backend.aginti_prompt(
+            "Large worker manual mentioning browsers, publication, and unrelated gates.",
+            chat_name="LabAgent",
+            role="worker",
+            model="aginti",
+            reasoning_effort="medium",
+            sandbox="danger-full-access",
+            backend_config={
+                "evidence_scope_request": "Create permission-smoke.txt and verify it.",
+                "evidence_scope_artifact_root": "output/wechat_worker/smoke",
+            },
+        )
+
+        scope_line = next(
+            line
+            for line in prompt.splitlines()
+            if line.startswith("AGINTI_EVIDENCE_SCOPE_JSON:")
+        )
+        self.assertEqual(
+            scope_line,
+            'AGINTI_EVIDENCE_SCOPE_JSON: {"mode":"task","request":"Create permission-smoke.txt and verify it.","artifact_root":"output/wechat_worker/smoke"}',
+        )
+        self.assertNotIn("browsers", scope_line)
+        self.assertNotIn("publication", scope_line)
+
     def test_worker_prompt_preserves_existing_bounded_evidence_scope(self) -> None:
         backend = load_backend()
         original = (

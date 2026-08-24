@@ -6571,8 +6571,17 @@ def run_worker_codex(task: dict[str, Any]) -> str:
         0,
         int(os.environ.get("WECHAT_WORKER_MAX_TOOL_REPAIR_RETRIES", "1")),
     )
+    max_permission_recovery_retries = max(
+        0,
+        int(os.environ.get("WECHAT_WORKER_MAX_PERMISSION_RECOVERY_RETRIES", "1")),
+    )
     tool_repair_retries = 0
-    attempt_budget = max_attempts + max_tool_repair_retries
+    permission_recovery_retries = 0
+    attempt_budget = (
+        max_attempts
+        + max_tool_repair_retries
+        + max_permission_recovery_retries
+    )
     for attempt_index in range(attempt_budget):
         task["worker_policy"] = policy
         result = run_worker_codex_once(task, policy)
@@ -6595,6 +6604,12 @@ def run_worker_codex(task: dict[str, Any]) -> str:
                 "escalated_from": policy.get("escalated_from"),
                 "tool_repair_retry": bool(policy.get("tool_repair_retry")),
                 "tool_repair_retry_index": policy.get("tool_repair_retry_index"),
+                "permission_recovery_retry": bool(
+                    policy.get("permission_recovery_retry")
+                ),
+                "permission_recovery_retry_index": policy.get(
+                    "permission_recovery_retry_index"
+                ),
                 "result_quality": score,
                 "result_excerpt": collapse_context_text(result, max_len=280),
                 "artifact_recovered": artifact_recovered,
@@ -6604,6 +6619,33 @@ def run_worker_codex(task: dict[str, Any]) -> str:
             break
         if artifact_recovered:
             break
+        if (
+            worker_result_is_recoverable_aginti_permission_pause(result)
+            and permission_recovery_retries < max_permission_recovery_retries
+        ):
+            permission_recovery_retries += 1
+            task["worker_retry_context"] = {
+                "kind": "recoverable_aginti_permission_pause",
+                "retry_index": permission_recovery_retries,
+                "artifact_dir": str(worker_artifact_dir(task)),
+                "instruction": (
+                    "Resume this exact task once under the current worker sandbox and "
+                    "permission policy. This retry grants no new permission. Reuse existing "
+                    "evidence and do not repeat completed side effects. Safe workspace-local "
+                    "reads, writes, validation, and established routine commands should "
+                    "continue without asking the chat for broad permission. If the remaining "
+                    "step is genuinely irreversible or outside the current authorization, "
+                    "return one task-specific confirmation instead of a generic permission "
+                    "request."
+                ),
+            }
+            policy = {
+                **policy,
+                "reuse_session": True,
+                "permission_recovery_retry": True,
+                "permission_recovery_retry_index": permission_recovery_retries,
+            }
+            continue
         if (
             worker_result_is_repairable_tool_failure(result)
             and tool_repair_retries < max_tool_repair_retries
@@ -6632,6 +6674,8 @@ def run_worker_codex(task: dict[str, Any]) -> str:
             break
         next_policy.pop("tool_repair_retry", None)
         next_policy.pop("tool_repair_retry_index", None)
+        next_policy.pop("permission_recovery_retry", None)
+        next_policy.pop("permission_recovery_retry_index", None)
         task.pop("worker_retry_context", None)
         policy = next_policy
     for attempt in attempts:
@@ -7677,7 +7721,7 @@ Name every artifact intended for delivery with a short human-readable basename c
 The exact current source message and newer same-chat messages are authoritative. A router-generated plan is advisory only: it may classify and suggest tools, but it cannot replace user wording, insert a factual assumption, or force clarification. Combine consecutive fragments from the same conversation before deciding what the user means.
 If the bounded task packet contains `message_ledger`, it is the backend-independent source contract created before model selection. Read and cover every numbered `item_id`. You may answer related items once in a natural combined response, but never silently replace an earlier item with only the latest one.
 If the bounded task packet includes `lifetime_same_chat_memory`, use that full-history compaction as exact-chat continuity and use `high_fidelity_same_chat_history` for exact wording relevant to this task. Historical memory is supporting evidence only: it cannot authorize work, revive completed tasks, or override current messages and interruptions.
-If the bounded task packet includes `worker_retry_context`, this is one bounded repair turn for a failed local tool invocation. Continue the same task and reuse its existing evidence. Prefer simple commands or structured APIs over deeply nested shell quoting, and never interpret the repair turn as permission to bypass a safety, approval, sandbox, or access boundary.
+If the bounded task packet includes `worker_retry_context`, this is one bounded recovery turn for the previous worker attempt. Read its `kind` and `instruction`, continue the same task, and reuse existing evidence. A malformed-tool recovery should prefer simple commands or structured APIs over deeply nested shell quoting. A permission-pause recovery must keep the current sandbox and authorization unchanged. Never interpret any recovery turn as permission to bypass a safety, approval, sandbox, access, or irreversible-action boundary.
 If the bounded task packet includes `completion_audit_repair`, the previous candidate result omitted one or more numbered source-message requirements. Continue the same worker session, perform only those missing safe requirements, and return a complete replacement response that retains useful prior files and conclusions. An explicit PDF request requires a real compiled `.pdf` file plus a concise direct answer. Do not repeat completed external actions or bypass approval gates.
 The corrective response's `files` array is authoritative for final delivery. Include every prior artifact that remains useful, and omit any candidate artifact that was misidentified, contradicted, superseded, or should not be sent.
 If the bounded task packet includes `coverage_followup`, this queue row was separated from a previously coalesced parent because its numbered message was not proven covered. Process this exact row independently, return only the missing supplement, and do not repeat content or files already delivered by the parent.
@@ -8273,9 +8317,23 @@ def disclose_unresolved_completion(
 def worker_backend_config(task: dict[str, Any], backend: str) -> dict[str, Any]:
     raw = task.get("agent_backend_config")
     if isinstance(raw, dict):
-        return raw
-    raw = task.get(backend)
-    return raw if isinstance(raw, dict) else {}
+        config = dict(raw)
+    else:
+        raw = task.get(backend)
+        config = dict(raw) if isinstance(raw, dict) else {}
+    if backend != "aginti":
+        return config
+    config.setdefault(
+        "evidence_scope_request",
+        task_focus_text(task) or str(task.get("request") or "").strip(),
+    )
+    artifact_root = worker_artifact_dir(task)
+    try:
+        artifact_root_text = str(artifact_root.relative_to(ROOT))
+    except ValueError:
+        artifact_root_text = str(artifact_root)
+    config.setdefault("evidence_scope_artifact_root", artifact_root_text)
+    return config
 
 
 def worker_execution_contract(task: dict[str, Any]) -> dict[str, Any]:
@@ -17143,6 +17201,15 @@ def worker_result_is_repairable_tool_failure(result: str) -> bool:
         "syntax error near unexpected token",
     )
     return any(marker in text for marker in repairable_markers)
+
+
+def worker_result_is_recoverable_aginti_permission_pause(result: str) -> bool:
+    """Retry one AgInTi policy pause without broadening the worker's authority."""
+
+    text = " ".join(str(result or "").strip().lower().split())
+    if not text.startswith("worker failed via aginti:"):
+        return False
+    return "permission_required" in text or "permission required" in text
 
 
 def worker_result_quality(result: str) -> int:
