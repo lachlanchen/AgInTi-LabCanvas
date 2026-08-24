@@ -78,6 +78,108 @@ class WeChatCompletionAuditTests(unittest.TestCase):
         self.assertIn("never a", prompt)
         self.assertIn("request to send or attach that file", prompt)
 
+    def test_audit_prompt_includes_bounded_exact_task_pdf_content(self) -> None:
+        task = self.task()
+        output_root = audit.ROOT / "output"
+        output_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=output_root) as tmp:
+            artifact_dir = Path(tmp)
+            report = artifact_dir / "organoid-review.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            task["artifact_dir"] = str(artifact_dir)
+            completed = audit.subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=(
+                    "Organoid imaging review\n"
+                    "The evidence supports one bounded conclusion, but this report "
+                    "also states the main limitation and next experiment."
+                ),
+                stderr="",
+            )
+            with (
+                mock.patch.object(audit.shutil, "which", return_value="/usr/bin/pdftotext"),
+                mock.patch.object(audit.subprocess, "run", return_value=completed),
+            ):
+                prompt = audit.completion_audit_prompt(
+                    task,
+                    {"message": "Direct answer.", "files": [str(report)]},
+                    audit.coverage_items(task),
+                )
+
+        packet = json.loads(prompt.split("Task packet:\n", 1)[1])
+        previews = packet["candidate_result"]["generated_pdf_content"]
+        self.assertEqual(previews[0]["name"], "organoid-review.pdf")
+        self.assertIn("main limitation", previews[0]["content_preview"])
+        self.assertIn("not covered merely because its file exists", prompt)
+
+    def test_semantically_shallow_pdf_can_be_rejected_for_same_session_repair(self) -> None:
+        task = self.task()
+        output_root = audit.ROOT / "output"
+        output_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=output_root) as tmp:
+            artifact_dir = Path(tmp)
+            report = artifact_dir / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            task["artifact_dir"] = str(artifact_dir)
+            extracted = audit.subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="Report generated successfully. Files are ready for delivery.",
+                stderr="",
+            )
+
+            def runner(prompt: str, **_kwargs: object) -> dict:
+                packet = json.loads(prompt.split("Task packet:\n", 1)[1])
+                self.assertIn(
+                    "Report generated successfully",
+                    packet["candidate_result"]["generated_pdf_content"][0][
+                        "content_preview"
+                    ],
+                )
+                return {
+                    "ok": True,
+                    "backend": "codex",
+                    "model": "gpt-5.3-codex-spark",
+                    "message": json.dumps(
+                        {
+                            "covered_item_ids": [
+                                "task:parent-101",
+                                "task:child-103",
+                            ],
+                            "missing": [
+                                {
+                                    "item_id": "task:child-102",
+                                    "requirement": (
+                                        "Rebuild the requested PDF with the actual "
+                                        "organoid analysis and evidence; the attached PDF "
+                                        "is only a delivery status receipt."
+                                    ),
+                                    "kind": "artifact",
+                                }
+                            ],
+                            "legitimate_blocker": False,
+                            "complexity": "medium",
+                            "summary": "PDF exists but is not a substantive report.",
+                        }
+                    ),
+                }
+
+            with (
+                mock.patch.object(audit.shutil, "which", return_value="/usr/bin/pdftotext"),
+                mock.patch.object(audit.subprocess, "run", return_value=extracted),
+            ):
+                result = audit.run_completion_audit(
+                    task,
+                    {"message": "Direct answer.", "files": [str(report)]},
+                    runner=runner,
+                )
+
+        self.assertFalse(result["coverage_complete"])
+        self.assertTrue(result["repair_recommended"])
+        self.assertEqual(result["missing"][0]["item_id"], "task:child-102")
+        self.assertEqual(result["missing"][0]["kind"], "artifact")
+
     def test_reprocess_reason_is_an_authoritative_coverage_item(self) -> None:
         task = self.task()
         task["reprocess_reason"] = "Create and return a validated PDF supplement."

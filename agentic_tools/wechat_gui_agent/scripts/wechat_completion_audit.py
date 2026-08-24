@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 from typing import Any, Callable
 
 from wechat_agent_backend import run_agent_session, select_agent_backend
@@ -361,6 +363,77 @@ def local_artifact_inventory(
         if len(files) >= max(1, limit):
             break
     return files
+
+
+def generated_pdf_content_previews(
+    task: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    limit: int = 2,
+    max_chars: int = 7600,
+) -> list[dict[str, Any]]:
+    """Expose bounded text from exact-task generated PDFs to the completion auditor.
+
+    File presence proves delivery, not report quality. Restrict extraction to the
+    ignored exact-task artifact directory so an inbound/source PDF is never folded
+    into this generated-report review by proximity alone.
+    """
+    raw_artifact_dir = str(task.get("artifact_dir") or "").strip()
+    executable = shutil.which("pdftotext")
+    if not raw_artifact_dir or not executable:
+        return []
+    artifact_dir = Path(raw_artifact_dir).expanduser()
+    if not artifact_dir.is_absolute():
+        artifact_dir = ROOT / artifact_dir
+    try:
+        artifact_dir = artifact_dir.resolve()
+        artifact_dir.relative_to((ROOT / "output").resolve())
+    except (OSError, ValueError):
+        return []
+    previews: list[dict[str, Any]] = []
+    for raw_path in result.get("files") or []:
+        path = Path(str(raw_path)).expanduser()
+        try:
+            path = path.resolve()
+            path.relative_to(artifact_dir)
+        except (OSError, ValueError):
+            continue
+        if path.suffix.casefold() != ".pdf" or not path.is_file():
+            continue
+        try:
+            completed = subprocess.run(
+                [executable, "-layout", "-nopgbrk", str(path), "-"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if completed.returncode != 0:
+            continue
+        text = str(completed.stdout or "").strip()
+        if not text:
+            continue
+        if len(text) <= max_chars:
+            preview = text
+        else:
+            head_chars = max(1, max_chars - 1800)
+            preview = (
+                text[:head_chars].rstrip()
+                + "\n\n[... middle omitted from bounded private review ...]\n\n"
+                + text[-1700:].lstrip()
+            )
+        previews.append(
+            {
+                "name": path.name,
+                "extracted_characters": len(text),
+                "content_preview": preview,
+            }
+        )
+        if len(previews) >= max(1, limit):
+            break
+    return previews
 
 
 def deterministic_missing_requirements(
@@ -830,6 +903,7 @@ def completion_audit_prompt(
                 for path in (result.get("files") or [])
             ],
             "publish_stage": publish_stage_for_audit(result),
+            "generated_pdf_content": generated_pdf_content_previews(task, result),
         },
         "task_local_artifacts": local_artifact_inventory(task),
     }
@@ -849,6 +923,17 @@ Rules:
 - A direct answer may summarize the work, but claiming an outbound attachment
   exists is not coverage unless that file appears in `candidate_result.files`.
 - If a member explicitly requested a PDF, coverage requires both a useful direct answer and a `.pdf` artifact, unless a real login, approval, missing-source, or safety blocker is clearly stated.
+- A generated PDF is not covered merely because its file exists. When
+  `candidate_result.generated_pdf_content` is present, compare that reader-facing
+  text with the exact human request and direct answer. The PDF must materially
+  answer the requested subject at the requested depth, preserve the important
+  evidence and reasoning, and be useful on its own. Reject a status receipt,
+  orchestration/debug record, raw prompt or context dump, generic boilerplate,
+  unexplained list of links, repetitive padding, or a report materially weaker
+  than the direct answer. Concise can still be high quality; judge substance and
+  fit rather than demanding arbitrary length. If it fails, mark the exact PDF
+  request item missing with `kind=artifact` and require a rebuilt reader-facing
+  report from the exact-task sources.
 - Treat only `request_items[*].text` as human requirements. Words such as PDF,
   Markdown, publication, or artifacts in candidate explanations, route labels,
   system policies, or task-local filenames do not create a request.
