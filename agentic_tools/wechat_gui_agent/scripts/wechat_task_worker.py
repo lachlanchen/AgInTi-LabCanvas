@@ -3643,6 +3643,13 @@ def recover_completed_research_artifacts(
     """
     if not task_is_research_summary(task):
         return None
+    if task_forbids_chat_artifact_delivery(task):
+        return None
+    if not (
+        task_contract_requires_file_delivery(task)
+        or request_explicitly_asks_for_file_delivery(task_focus_text(task))
+    ):
+        return None
     if not force and not worker_result_needs_escalation(failure_text):
         return None
     artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task))).expanduser().resolve()
@@ -3870,6 +3877,10 @@ def select_substantive_research_report(artifact_dir: Path) -> Path | None:
             continue
         text = read_text_prefix(path, limit=50000)
         if len(text.strip()) < 500 or len(re.findall(r"^#{1,4}\s+", text, flags=re.MULTILINE)) < 2:
+            continue
+        if PDF_BROKEN_TEXT_RE.search(text) or any(
+            pattern.search(text) for pattern, _label in PDF_INTERNAL_TRANSPORT_PATTERNS
+        ):
             continue
         evidence = research_report_evidence_summary(text)
         if evidence["traceable_source_count"] < 2 or not evidence["has_evidence_section"]:

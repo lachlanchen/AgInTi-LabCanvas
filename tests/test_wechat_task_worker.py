@@ -1140,6 +1140,7 @@ This hypothesis still needs validation.
                 "artifact_dir": str(root),
                 "routine": {"id": "research_summary"},
                 "route_decision": {"route_kind": "research_or_summary"},
+                "request": "Prepare and send the research briefing PDF.",
             }
             with mock.patch.object(worker, "ensure_markdown_pdf_companion_for_language", side_effect=fake_compile):
                 result = worker.recover_completed_research_artifacts(task, "Worker failed via codex: timeout")
@@ -1173,6 +1174,73 @@ This hypothesis still needs validation.
 
             self.assertIsNone(worker.recover_completed_research_artifacts(research, "timeout"))
             self.assertIsNone(worker.recover_completed_research_artifacts(nonresearch, "timeout", force=True))
+
+    def test_message_only_research_never_recovers_an_unsolicited_pdf(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "inspiration.md"
+            report.write_text(
+                "# Useful inspiration\n\n## Evidence\n\n"
+                "DOI: 10.1000/one. DOI: 10.1000/two.\n\n"
+                + ("Reader-facing evidence and analysis. " * 40),
+                encoding="utf-8",
+            )
+            task = {
+                "id": "message-only-inspiration",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "message_only": True,
+                    "artifact_delivery": "forbidden",
+                },
+                "request": "Return exactly one natural chat message. Create no files or attachments.",
+            }
+
+            result = worker.recover_completed_research_artifacts(
+                task,
+                "Worker failed via aginti: model_timeout",
+                force=True,
+            )
+
+        self.assertIsNone(result)
+
+    def test_research_recovery_rejects_internal_worker_record_as_report(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "research-report.md"
+            report.write_text(
+                "# Organoid research brief\n\n"
+                "Task: wecom-inspiration-202608241923-abcdef\n"
+                "Chat: wecom:external-gui:group:private\n\n"
+                "## Final group message\n\n"
+                + ("A useful but chat-sized evidence summary. " * 30)
+                + "\n\n## Evidence\n\n"
+                "DOI: 10.1000/one. DOI: 10.1000/two.\n\n"
+                "## Output contract\n\n"
+                '{"message": "", "files": []}\n',
+                encoding="utf-8",
+            )
+            task = {
+                "id": "internal-record",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+                "request": "Prepare and send a substantive organoid research PDF.",
+            }
+
+            result = worker.recover_completed_research_artifacts(
+                task,
+                "Worker failed via aginti: model_timeout",
+                force=True,
+            )
+
+        self.assertIsNone(result)
 
     def test_research_artifact_recovery_finds_nested_report_directory(self) -> None:
         worker = load_worker()
@@ -1252,6 +1320,10 @@ This hypothesis still needs validation.
                 "artifact_dir": str(root),
                 "routine": {"id": "research_summary"},
                 "artifact_recovery_only": True,
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
             }
             with mock.patch.object(
                 worker,
