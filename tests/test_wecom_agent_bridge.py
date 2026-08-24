@@ -1315,7 +1315,9 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertNotIn("complete PDF", task["request"])
         self.assertNotIn("Private other-group note", task["request"])
         self.assertTrue(task["route_decision"]["message_only"])
+        self.assertEqual(task["route_decision"]["artifact_delivery"], "forbidden")
         self.assertEqual(task["execution_contract"]["required_artifacts"], [])
+        self.assertEqual(task["execution_contract"]["artifact_delivery"], "forbidden")
         self.assertEqual(
             task["group_inspiration"]["historical_memory"][0]["kind"],
             "interest",

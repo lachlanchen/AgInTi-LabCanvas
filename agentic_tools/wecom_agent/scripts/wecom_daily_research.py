@@ -1100,6 +1100,7 @@ Requirements:
             "transport_channel": transport_channel,
             "scheduled_group_inspiration": True,
             "message_only": True,
+            "artifact_delivery": "forbidden",
             "no_fixed_deadline": True,
         },
         "instruction_contract": {
@@ -1120,6 +1121,7 @@ Requirements:
                 "reuse": True,
             },
             "required_artifacts": [],
+            "artifact_delivery": "forbidden",
             "queue_mode": "single_worker_sequential",
         },
         "source": {

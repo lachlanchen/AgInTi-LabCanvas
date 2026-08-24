@@ -299,6 +299,29 @@ class WeChatCompletionAuditTests(unittest.TestCase):
         self.assertEqual(grounded, [])
         self.assertEqual(rejected, {items[0]["item_id"]})
 
+    def test_rejected_pdf_quality_requires_reader_facing_repair(self) -> None:
+        task = self.task()
+        missing = audit.deterministic_missing_requirements(
+            task,
+            {
+                "message": "The report is ready.",
+                "files": [],
+                "data": {
+                    "pdf_quality_rejections": [
+                        {
+                            "filename": "report.pdf",
+                            "issues": ["transport_identity", "agent_output_contract"],
+                        }
+                    ]
+                },
+            },
+        )
+
+        self.assertEqual(len(missing), 1)
+        self.assertEqual(missing[0]["kind"], "artifact")
+        self.assertIn("reader-facing", missing[0]["requirement"])
+        self.assertIn("transport_identity", missing[0]["requirement"])
+
     def test_explicit_truncation_marker_requires_complete_repair(self) -> None:
         task = {
             "id": "plain-long-1",

@@ -203,6 +203,11 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                     "run_worker_agent_session",
                     side_effect=repair,
                 ),
+                mock.patch.object(
+                    worker,
+                    "enforce_reader_facing_pdf_quality",
+                    side_effect=lambda _task, candidate: candidate,
+                ),
             ):
                 result = worker.audit_and_repair_worker_completion(
                     task,
@@ -286,6 +291,11 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 "recover_completed_research_artifacts",
                 return_value=recovered,
             ) as recover,
+            mock.patch.object(
+                worker,
+                "enforce_reader_facing_pdf_quality",
+                return_value=recovered,
+            ) as quality_gate,
         ):
             result = worker.audit_and_repair_worker_completion(
                 task,
@@ -303,6 +313,77 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             task,
             "completion audit requires an exact-task PDF artifact",
             force=True,
+        )
+        self.assertEqual(quality_gate.call_count, 2)
+        quality_gate.assert_any_call(task, recovered)
+
+    def test_completion_audit_does_not_redeliver_recovered_low_quality_pdf(self) -> None:
+        worker = load_worker()
+        first = {
+            "status": "checked",
+            "coverage_complete": False,
+            "expected_item_ids": ["task:research-1"],
+            "covered_item_ids": [],
+            "missing": [
+                {
+                    "item_id": "task:research-1",
+                    "requirement": "Create and return the requested PDF artifact.",
+                    "kind": "artifact",
+                }
+            ],
+            "repair_recommended": False,
+            "complexity": "medium",
+        }
+        task = {
+            "id": "research-1",
+            "chat": "LabAgent",
+            "original_request": "请提供有证据的研究 PDF。",
+            "source": {"local_id": 2, "sender_display": "Researcher"},
+            "routine": {"id": "research_summary"},
+        }
+        recovered = {
+            "message": "PDF 已附上。",
+            "confirmation": "",
+            "files": ["/tmp/internal-work-record.pdf"],
+            "data": {"artifact_recovery": True},
+        }
+        rejected = {
+            **recovered,
+            "files": [],
+            "data": {
+                "artifact_recovery": True,
+                "pdf_quality_rejections": [
+                    {
+                        "filename": "internal-work-record.pdf",
+                        "issues": ["agent_output_contract"],
+                    }
+                ],
+            },
+        }
+
+        with (
+            mock.patch.object(worker, "run_completion_audit", return_value=first),
+            mock.patch.object(
+                worker,
+                "recover_completed_research_artifacts",
+                return_value=recovered,
+            ),
+            mock.patch.object(
+                worker,
+                "enforce_reader_facing_pdf_quality",
+                return_value=rejected,
+            ),
+        ):
+            result = worker.audit_and_repair_worker_completion(
+                task,
+                {"message": "正文已完成，但没有 PDF。", "confirmation": "", "files": []},
+            )
+
+        self.assertEqual(result["files"], [])
+        self.assertEqual(task["message_coverage"]["status"], "supplement_required")
+        self.assertEqual(
+            task["completion_audit"]["attempts"][-1]["status"],
+            "recovered_pdf_failed_reader_quality",
         )
 
     def test_research_report_evidence_accepts_verified_facts_heading(self) -> None:
@@ -11893,6 +11974,192 @@ stderr: noisy internal trace
         self.assertEqual(files, [])
         self.assertEqual(messages, ["I could only read the page metadata; the article body was blocked."])
         self.assertEqual(len(task["suppressed_chat_files"]), 2)
+
+    def test_message_only_contract_overrides_agent_forced_pdf_delivery(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "message_only": True,
+                "artifact_delivery": "forbidden",
+            },
+            "execution_contract": {
+                "required_artifacts": [],
+                "artifact_delivery": "forbidden",
+            },
+            "request": "Return one message. Create no files or attachments.",
+        }
+        result = {
+            "message": "One useful idea.",
+            "files": ["/tmp/unrequested-report.pdf"],
+            "data": {
+                "require_file_delivery": True,
+                "send_report_to_wechat": True,
+            },
+        }
+
+        worker.enforce_worker_result_response_policy(task, result)
+
+        self.assertFalse(worker.result_requires_file_delivery(task, result))
+        self.assertFalse(worker.result_allows_chat_artifact_delivery(task, result))
+        self.assertEqual(worker.required_delivery_file_paths(result, task), [])
+        self.assertFalse(result["data"]["require_file_delivery"])
+        self.assertFalse(result["data"]["send_report_to_wechat"])
+        self.assertEqual(result["data"]["artifact_delivery"], "local_only")
+
+    def test_message_only_contract_creates_missing_delivery_data(self) -> None:
+        worker = load_worker()
+        task = {
+            "route_decision": {
+                "message_only": True,
+                "artifact_delivery": "forbidden",
+            }
+        }
+        result = {"message": "One useful idea.", "files": []}
+
+        worker.enforce_worker_result_response_policy(task, result)
+
+        self.assertFalse(result["data"]["require_file_delivery"])
+        self.assertFalse(result["data"]["send_report_to_wechat"])
+        self.assertEqual(result["data"]["artifact_delivery"], "local_only")
+
+    def test_reader_facing_pdf_quality_rejects_internal_work_record(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Prepare and send a PDF research report.",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            internal_text = (
+                "Reader title " + ("substantive evidence " * 30)
+                + "\n任务: wecom-inspiration-20260824-abcd\n"
+                + "聊天: wecom:external-gui:group:private\n"
+                + "输出契约 {\"message\": \"\", \"files\": []}"
+            )
+            with mock.patch.object(
+                worker,
+                "extract_pdf_text_for_quality",
+                return_value=(internal_text, ""),
+            ):
+                result = worker.enforce_reader_facing_pdf_quality(
+                    task,
+                    {"message": "Report ready.", "files": [str(report)]},
+                )
+
+        self.assertEqual(result["files"], [])
+        issues = result["data"]["pdf_quality_rejections"][0]["issues"]
+        self.assertIn("internal_task_identity", issues)
+        self.assertIn("transport_identity", issues)
+        self.assertIn("agent_output_contract", issues)
+
+    def test_pdf_quality_extractor_reads_pdftotext_from_stdout(self) -> None:
+        worker = load_worker()
+        report = Path("/tmp/reader-report.pdf")
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="Reader-facing report text",
+            stderr="",
+        )
+        with (
+            mock.patch.object(worker.shutil, "which", return_value="/usr/bin/pdftotext"),
+            mock.patch.object(worker.subprocess, "run", return_value=completed) as run,
+        ):
+            text, error = worker.extract_pdf_text_for_quality(report)
+
+        self.assertEqual(text, "Reader-facing report text")
+        self.assertEqual(error, "")
+        self.assertEqual(
+            run.call_args.args[0],
+            ["/usr/bin/pdftotext", "-layout", "-nopgbrk", str(report), "-"],
+        )
+
+    def test_reader_facing_pdf_quality_accepts_substantive_clean_report(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Prepare and send a PDF research report.",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "lumenbench-handoff.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            clean_text = "LumenBench project handoff\n" + ("Verified current state and evidence. " * 30)
+            with mock.patch.object(
+                worker,
+                "extract_pdf_text_for_quality",
+                return_value=(clean_text, ""),
+            ):
+                result = worker.enforce_reader_facing_pdf_quality(
+                    task,
+                    {"message": "Report ready.", "files": [str(report)]},
+                )
+
+        self.assertEqual(result["files"], [str(report.resolve())])
+        self.assertEqual(result["data"]["pdf_quality_rejections"], [])
+
+    def test_reader_facing_research_pdf_requires_sources_limits_and_next_steps(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "execution_contract": {
+                "research_evidence": {
+                    "required": True,
+                    "minimum_traceable_sources": 2,
+                    "state_uncertainty_and_limitations": True,
+                    "include_actionable_next_steps": True,
+                }
+            },
+            "request": "Prepare and send a source-grounded PDF research report.",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "shallow-report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            shallow_text = "Research report\n" + ("General background without traceable evidence. " * 35)
+            with mock.patch.object(
+                worker,
+                "extract_pdf_text_for_quality",
+                return_value=(shallow_text, ""),
+            ):
+                issues = worker.reader_facing_pdf_quality_issues(task, report)
+
+        self.assertIn("insufficient_traceable_research_sources", issues)
+        self.assertIn("missing_reader_evidence_section", issues)
+        self.assertIn("missing_uncertainty_or_limitations", issues)
+        self.assertIn("missing_actionable_next_steps", issues)
+
+    def test_reader_facing_pdf_quality_rejects_corrupt_searchable_text(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Prepare and send a PDF research report.",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            extracted = "Reader-facing report\n" + ("Verified evidence and analysis. " * 30)
+            extracted = extracted.replace("Verified", "Ver\x1cied", 1)
+            with mock.patch.object(
+                worker,
+                "extract_pdf_text_for_quality",
+                return_value=(extracted, ""),
+            ):
+                result = worker.enforce_reader_facing_pdf_quality(
+                    task,
+                    {"message": "Report ready.", "files": [str(report)]},
+                )
+
+        self.assertEqual(result["files"], [])
+        self.assertIn(
+            "broken_text_extraction",
+            result["data"]["pdf_quality_rejections"][0]["issues"],
+        )
 
     def test_required_delivery_includes_source_and_cad_artifacts(self) -> None:
         worker = load_worker()

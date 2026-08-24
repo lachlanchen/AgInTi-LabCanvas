@@ -375,8 +375,38 @@ def deterministic_missing_requirements(
         else {}
     )
     message_only = bool(route.get("message_only"))
+    result_data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    quality_rejections = (
+        result_data.get("pdf_quality_rejections")
+        if isinstance(result_data.get("pdf_quality_rejections"), list)
+        else []
+    )
+    if not message_only and quality_rejections:
+        issue_labels = sorted(
+            {
+                str(issue)
+                for item in quality_rejections
+                if isinstance(item, dict)
+                for issue in item.get("issues") or []
+                if str(issue)
+            }
+        )
+        missing.append(
+            {
+                "item_id": first_pdf_item_id(items),
+                "requirement": (
+                    "Rebuild and return the requested PDF as a polished reader-facing document. "
+                    "Remove task/transport identifiers, private paths, output schemas, and internal "
+                    "delivery instructions; synthesize the actual subject with traceable evidence, "
+                    "then inspect the compiled pages before returning it. Quality issues: "
+                    + ", ".join(issue_labels or ["reader_facing_quality"])
+                ),
+                "kind": "artifact",
+            }
+        )
     if (
         not message_only
+        and not quality_rejections
         and explicit_pdf_requested(items)
         and ".pdf" not in result_file_suffixes(result)
     ):
@@ -422,6 +452,8 @@ def first_pdf_item_id(items: list[dict[str, Any]]) -> str:
         text = str(item.get("text") or "")
         if PDF_REQUEST_RE.search(text) and not NEGATED_PDF_RE.search(text):
             return str(item.get("item_id") or "source")
+    if items:
+        return str(items[0].get("item_id") or "source")
     return "source"
 
 

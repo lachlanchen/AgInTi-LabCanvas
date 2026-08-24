@@ -1050,6 +1050,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         result = enforce_worker_result_contract(task, result, result_text)
         result = attach_audio_transcript_reference(task, result)
         result = prepare_result_files(result, result_text, task=task)
+        result = enforce_reader_facing_pdf_quality(task, result)
         result = audit_and_repair_worker_completion(task, result)
     except Exception as exc:
         result_text = f"Worker failed before completion: {type(exc).__name__}: {str(exc)[:800]}"
@@ -1399,6 +1400,8 @@ def generated_video_has_file(result: dict[str, Any]) -> bool:
 
 
 def result_requires_file_delivery(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
+    if task_forbids_chat_artifact_delivery(task):
+        return False
     if task is not None and task_is_grant_proposal(task):
         return True
     if not result.get("files"):
@@ -1432,6 +1435,8 @@ def result_allows_chat_artifact_delivery(task: dict[str, Any] | None, result: di
     """
     if task is None:
         return True
+    if task_forbids_chat_artifact_delivery(task):
+        return False
     if not task_is_research_summary(task):
         return True
     data = result_delivery_data(result)
@@ -1441,6 +1446,25 @@ def result_allows_chat_artifact_delivery(task: dict[str, Any] | None, result: di
     if bool(route.get("require_file_delivery")) or task_contract_requires_file_delivery(task):
         return True
     return request_explicitly_asks_for_file_delivery(task_focus_text(task))
+
+
+def task_forbids_chat_artifact_delivery(task: dict[str, Any] | None) -> bool:
+    """Honor structural no-artifact contracts over model-authored result flags."""
+    if not isinstance(task, dict):
+        return False
+    route = task_route_decision(task)
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    if bool(route.get("message_only")):
+        return True
+    modes = {
+        str(route.get("artifact_delivery") or "").strip().casefold(),
+        str(execution.get("artifact_delivery") or "").strip().casefold(),
+    }
+    return bool(modes & {"forbidden", "none", "message_only", "local_only"})
 
 
 def task_contract_requires_file_delivery(task: dict[str, Any]) -> bool:
@@ -1627,6 +1651,8 @@ def task_required_artifact_suffixes(task: dict[str, Any] | None) -> set[str]:
 def required_delivery_file_paths(
     result: dict[str, Any], task: dict[str, Any] | None = None
 ) -> list[Path]:
+    if task_forbids_chat_artifact_delivery(task):
+        return []
     suffixes = required_delivery_suffixes()
     contract_suffixes = task_required_artifact_suffixes(task)
     if contract_suffixes:
@@ -2212,6 +2238,20 @@ def enforce_worker_result_response_policy(
     task: dict[str, Any], result: dict[str, Any]
 ) -> dict[str, Any]:
     """Apply narrow final guards against transport and language-mode leakage."""
+    if task_forbids_chat_artifact_delivery(task):
+        if not isinstance(result.get("data"), dict):
+            result["data"] = {}
+        delivery_data = result_delivery_data(result)
+        delivery_data["require_file_delivery"] = False
+        delivery_data["send_report_to_wechat"] = False
+        delivery_data["artifact_delivery"] = "local_only"
+        task.setdefault("response_policy_adjustments", []).append(
+            {
+                "at": datetime.now().isoformat(timespec="seconds"),
+                "kind": "enforced_message_only_artifact_contract",
+                "fields": ["require_file_delivery", "send_report_to_wechat"],
+            }
+        )
     if is_transport_internal_confirmation(str(result.get("confirmation") or "")):
         result["confirmation"] = ""
         data = result.get("data") if isinstance(result.get("data"), dict) else None
@@ -3916,6 +3956,8 @@ PRIVATE_RUNTIME_FRAGMENT_RE = re.compile(
     r"(?:queue_orchestrator|send_result_with_retries|deep_research/finish|"
     r"artifact[_ -]?recovery[_ -]?only|transport\s*=\s*(?:wecom|wechat)|"
     r"channel\s*=\s*wecom_|(?:task|session|source_local|server|remote_job)_?id\s*[:=]|"
+    r"(?:任务|任務)\s*[:：]\s*(?:wecom|wechat)-[A-Za-z0-9_-]+|"
+    r"(?:聊天|群聊|會話|会话)\s*[:：]\s*(?:wecom|wechat):|"
     r"retry_after\s*[:=])",
     flags=re.I,
 )
@@ -8044,6 +8086,7 @@ def audit_and_repair_worker_completion(
             correction = prepare_result_files(
                 correction, raw_correction, task=task
             )
+            correction = enforce_reader_facing_pdf_quality(task, correction)
             if completion_repair_result_usable(correction):
                 combined = merge_completion_results(result, correction)
                 repaired = True
@@ -8081,16 +8124,34 @@ def audit_and_repair_worker_completion(
                 force=True,
             )
             if recovered is not None:
-                combined = merge_completion_results(combined, recovered)
-                recovered_audit = run_completion_audit(task, combined)
-                attempts.append(
-                    completion_audit_record(
-                        recovered_audit,
-                        stage="deterministic_artifact_recovery",
+                recovered = enforce_reader_facing_pdf_quality(task, recovered)
+                if any(
+                    Path(str(raw)).suffix.casefold() == ".pdf"
+                    for raw in recovered.get("files") or []
+                ):
+                    combined = merge_completion_results(combined, recovered)
+                    recovered_audit = run_completion_audit(task, combined)
+                    attempts.append(
+                        completion_audit_record(
+                            recovered_audit,
+                            stage="deterministic_artifact_recovery",
+                        )
                     )
-                )
-                final = recovered_audit
-                repaired = repaired or not bool(recovered_audit.get("missing"))
+                    final = recovered_audit
+                    repaired = repaired or not bool(recovered_audit.get("missing"))
+                else:
+                    attempts.append(
+                        {
+                            "stage": "deterministic_artifact_recovery",
+                            "status": "recovered_pdf_failed_reader_quality",
+                            "quality_rejections": list(
+                                result_delivery_data(recovered).get(
+                                    "pdf_quality_rejections"
+                                )
+                                or []
+                            ),
+                        }
+                    )
         except Exception as exc:
             attempts.append(
                 {
@@ -17747,6 +17808,172 @@ def prepare_result_files(
     if skipped:
         result["skipped_files"] = skipped
     return result
+
+
+PDF_INTERNAL_TRANSPORT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"\b(?:wecom|wechat):(?:external|internal|default|gui|group|dm)[^\s]*", re.I),
+        "transport_identity",
+    ),
+    (
+        re.compile(r"\b(?:wecom|wechat)-(?:inspiration|daily|task|worker)-[0-9A-Za-z_-]+", re.I),
+        "internal_task_identity",
+    ),
+    (
+        re.compile(r"/(?:home|workspace|tmp|var/tmp)/[^\s<>]+", re.I),
+        "private_runtime_path",
+    ),
+    (
+        re.compile(
+            r"(?:最终群消息.{0,40}(?:字段|原文)|輸出契約|输出契约|"
+            r"output\s+contract|delivery\s+contract)",
+            re.I | re.S,
+        ),
+        "agent_output_contract",
+    ),
+    (
+        re.compile(
+            r"[\"“](?:message|files|confirmation|knowledge_items|upstream_feedback)[\"”]"
+            r"\s*:\s*[\[{\"]",
+            re.I,
+        ),
+        "raw_result_schema",
+    ),
+)
+
+PDF_BROKEN_TEXT_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]")
+
+
+def task_expects_reader_facing_pdf(task: dict[str, Any]) -> bool:
+    """Limit content inspection to generated reports, not relayed source PDFs."""
+    if task_forbids_chat_artifact_delivery(task) or task_is_grant_proposal(task):
+        return False
+    if is_file_intake_task(task):
+        return False
+    if task_is_research_summary(task) or isinstance(task.get("daily_research"), dict):
+        return True
+    if ".pdf" in task_required_artifact_suffixes(task):
+        return True
+    return request_explicitly_asks_for_file_delivery(task_focus_text(task)) and bool(
+        re.search(r"(?:\bpdf\b|报告|報告|research\s+brief)", task_focus_text(task), re.I)
+    )
+
+
+def extract_pdf_text_for_quality(path: Path) -> tuple[str, str]:
+    executable = shutil.which("pdftotext")
+    if not executable:
+        return "", "pdftotext_unavailable"
+    try:
+        completed = subprocess.run(
+            [executable, "-layout", "-nopgbrk", str(path), "-"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return "", f"pdftotext_failed:{type(exc).__name__}"
+    if completed.returncode != 0:
+        return "", "pdftotext_failed"
+    return completed.stdout, ""
+
+
+def reader_facing_pdf_quality_issues(task: dict[str, Any], path: Path) -> list[str]:
+    """Reject generated reports that are unreadable or expose orchestration internals."""
+    if not task_expects_reader_facing_pdf(task):
+        return []
+    if not path.is_file() or path.stat().st_size <= 0:
+        return ["missing_or_empty_pdf"]
+    text, extraction_error = extract_pdf_text_for_quality(path)
+    if extraction_error:
+        return [extraction_error]
+    compact = re.sub(r"\s+", " ", text).strip()
+    issues: list[str] = []
+    if len(compact) < 320:
+        issues.append("insufficient_reader_facing_content")
+    if PDF_BROKEN_TEXT_RE.search(text):
+        issues.append("broken_text_extraction")
+    for pattern, label in PDF_INTERNAL_TRANSPORT_PATTERNS:
+        if pattern.search(text):
+            issues.append(label)
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    evidence_contract = (
+        execution.get("research_evidence")
+        if isinstance(execution.get("research_evidence"), dict)
+        else {}
+    )
+    if bool(evidence_contract.get("required")):
+        if len(compact) < 900:
+            issues.append("insufficient_substantive_research_content")
+        evidence = research_report_evidence_summary(text)
+        minimum_sources = max(
+            1,
+            int(evidence_contract.get("minimum_traceable_sources") or 2),
+        )
+        if evidence["traceable_source_count"] < minimum_sources:
+            issues.append("insufficient_traceable_research_sources")
+        if not evidence["has_evidence_section"]:
+            issues.append("missing_reader_evidence_section")
+        if bool(evidence_contract.get("state_uncertainty_and_limitations")) and not evidence[
+            "has_uncertainty"
+        ]:
+            issues.append("missing_uncertainty_or_limitations")
+        if bool(evidence_contract.get("include_actionable_next_steps")) and not re.search(
+            r"(?:next\s+steps?|recommended\s+(?:experiment|action)|actionable|"
+            r"下一步|建议实验|建議實驗|行动建议|行動建議)",
+            text,
+            flags=re.I,
+        ):
+            issues.append("missing_actionable_next_steps")
+    return unique_strings(issues)
+
+
+def enforce_reader_facing_pdf_quality(
+    task: dict[str, Any], result: dict[str, Any]
+) -> dict[str, Any]:
+    """Withhold invalid report PDFs so completion audit can repair them once."""
+    if not task_expects_reader_facing_pdf(task):
+        return result
+    kept: list[str] = []
+    rejected: list[dict[str, Any]] = []
+    for raw in result.get("files") or []:
+        path = Path(str(raw)).expanduser().resolve()
+        if path.suffix.casefold() != ".pdf":
+            kept.append(str(path))
+            continue
+        issues = reader_facing_pdf_quality_issues(task, path)
+        if issues:
+            rejected.append(
+                {
+                    "path": str(path),
+                    "filename": path.name,
+                    "issues": issues,
+                }
+            )
+        else:
+            kept.append(str(path))
+    guarded = dict(result)
+    guarded["files"] = unique_strings(kept)
+    data = guarded.get("data") if isinstance(guarded.get("data"), dict) else {}
+    guarded["data"] = {**data, "pdf_quality_rejections": rejected}
+    if rejected:
+        task["pdf_quality_rejections"] = rejected
+        skipped = list(guarded.get("skipped_files") or [])
+        skipped.extend(
+            {
+                "path": item["path"],
+                "reason": "reader-facing-pdf-quality:" + ",".join(item["issues"]),
+            }
+            for item in rejected
+        )
+        guarded["skipped_files"] = skipped
+    else:
+        task.pop("pdf_quality_rejections", None)
+    return guarded
 
 
 GENERIC_DELIVERY_STEMS = {
