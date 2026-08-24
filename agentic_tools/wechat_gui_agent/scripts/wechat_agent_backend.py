@@ -1404,9 +1404,14 @@ def aginti_command(
                 "--task-profile",
                 aginti_task_profile(role, backend_config),
                 "--no-parallel-scouts",
-                "--package-install-policy",
-                "block",
             ]
+        )
+        command.extend(
+            aginti_package_install_args(
+                role=role,
+                sandbox=sandbox,
+                backend_config=backend_config,
+            )
         )
         selected_provider = str(provider or aginti_provider_chain(backend_config)[0]).strip()
         if selected_provider:
@@ -1494,6 +1499,35 @@ def aginti_sandbox_args(
     if permission == "danger" and allow_danger:
         sandbox_mode = "host"
     return ["--permission-mode", permission, "--sandbox-mode", sandbox_mode]
+
+
+def aginti_package_install_args(
+    *,
+    role: str,
+    sandbox: str,
+    backend_config: dict[str, Any],
+) -> list[str]:
+    """Keep response turns read-only while making normal workers executable.
+
+    AgInTi uses package-install approval as the trust gate for broad commands in
+    its Docker workspace. Forcing that policy to ``block`` on every worker also
+    blocks ordinary project-local validation such as Python, TeX, and LabCanvas
+    CLI commands. Worker setup remains contained in Docker; host and destructive
+    actions are still governed by the separate sandbox and action gates.
+    """
+    explicit = str(backend_config.get("package_install_policy") or "").strip().casefold()
+    if explicit not in {"allow", "block", "prompt"}:
+        explicit = ""
+    read_only = (
+        is_response_only_agent_role(role)
+        or str(sandbox or "").strip().casefold() == "read-only"
+        or str(backend_config.get("permission_mode") or "").strip().casefold() == "safe"
+    )
+    policy = explicit or ("block" if read_only else "allow")
+    args = ["--package-install-policy", policy]
+    if policy == "allow":
+        args.append("--approve-package-installs")
+    return args
 
 
 def extract_aginti_user_message(
@@ -1694,8 +1728,16 @@ Role: {role}
 Original prompt:
 {prompt}
 """
+    evidence_scope = ""
+    if "AGINTI_EVIDENCE_SCOPE_JSON:" not in prompt:
+        evidence_scope_payload = json.dumps(
+            {"mode": "task", "request": prompt},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        evidence_scope = f"AGINTI_EVIDENCE_SCOPE_JSON: {evidence_scope_payload}\n"
     return f"""You are AgInTi, the primary reasoning and tool agent for LabCanvas chat automation.
-Treat the exact current request as the authoritative continuation of this chat. Use relevant same-chat session memory and repository instructions, but never continue an unrelated task, reuse an unrelated artifact, or substitute a nearby workspace request.
+{evidence_scope}Treat the exact current request as the authoritative continuation of this chat. Use relevant same-chat session memory and repository instructions, but never continue an unrelated task, reuse an unrelated artifact, or substitute a nearby workspace request.
 Preserve the requested output shape exactly. If the original prompt asks for JSON, return only valid JSON. If it asks for CHAT:/ACK:/TASK:, follow that protocol.
 Use the same source-isolation, safety, artifact-return, and chat-purpose rules in the original prompt. Do not invent unavailable files or claim browser/platform work completed without evidence.
 Do not expose plans, SCS/validator contracts, runtime metadata, model/sandbox details, tool logs, stack traces, or internal diagnostics. For ordinary chat, answer directly without tools or files. For research, use traceable sources and distinguish evidence from inference. For artifact work, create only the requested current-task artifacts.

@@ -600,6 +600,56 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(command[command.index("--task-profile") + 1], "auto")
         self.assertNotIn("--no-shell", command)
         self.assertNotIn("--no-file-tools", command)
+        self.assertEqual(command[command.index("--package-install-policy") + 1], "allow")
+        self.assertIn("--approve-package-installs", command)
+
+    def test_worker_prompt_adds_exact_task_evidence_scope(self) -> None:
+        backend = load_backend()
+        prompt = backend.aginti_prompt(
+            "Create output/proof.txt and validate it with python3.",
+            chat_name="LabAgent",
+            role="worker",
+            model="aginti",
+            reasoning_effort="medium",
+            sandbox="danger-full-access",
+            backend_config={},
+        )
+
+        self.assertIn(
+            'AGINTI_EVIDENCE_SCOPE_JSON: {"mode":"task","request":"Create output/proof.txt and validate it with python3."}',
+            prompt,
+        )
+
+    def test_worker_prompt_preserves_existing_bounded_evidence_scope(self) -> None:
+        backend = load_backend()
+        original = (
+            'AGINTI_EVIDENCE_SCOPE_JSON: {"mode":"task","request":"Create the requested PDF."}\n'
+            "Bounded task packet follows."
+        )
+        prompt = backend.aginti_prompt(
+            original,
+            chat_name="LabAgent",
+            role="worker",
+            model="aginti",
+            reasoning_effort="medium",
+            sandbox="danger-full-access",
+            backend_config={},
+        )
+
+        self.assertEqual(prompt.count("AGINTI_EVIDENCE_SCOPE_JSON:"), 1)
+        self.assertIn(original, prompt)
+
+    def test_worker_can_explicitly_keep_package_setup_blocked(self) -> None:
+        backend = load_backend()
+        command = backend.aginti_command(
+            model="aginti",
+            role="worker",
+            sandbox="danger-full-access",
+            backend_config={"package_install_policy": "block"},
+        )
+
+        self.assertEqual(command[command.index("--package-install-policy") + 1], "block")
+        self.assertNotIn("--approve-package-installs", command)
 
     def test_aginti_machine_command_cannot_override_managed_sandbox_args(self) -> None:
         backend = load_backend()
