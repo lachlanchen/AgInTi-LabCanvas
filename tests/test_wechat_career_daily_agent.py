@@ -26,6 +26,35 @@ def load_wechat_career_daily_agent():
     return module
 
 
+def valid_career_report(*, extra: str = "") -> str:
+    paragraphs = [
+        "AgenticApp 和 EchoMind 已经形成一条可见的能力链：用户不只在提出概念，而是把聊天、多语言学习、文件交付和持久任务连到了真实工具上。这种证据比一般的兴趣清单更重要，因为它证明他能把重复的摩擦改造成别人可以继续使用的系统。",
+        "LazyEdit 和发布流水线提供了第二类证据：他不只会写分析，也会处理字幕、元数据、视频交付和外部平台的失败状态。这说明最有可能累积的方向不是再做一个孤立功能，而是把已经验证的方法变成可交付的产品或服务。",
+        "VoidAbyss 和持续写作则显示了不同于纯工程的长期动力。真正稀缺的组合是把成像、语言、历史和 Agent 工程写成一种别人能看懂的表达。如果一篇文章只是整理公开信息，它很容易被替代；如果它包含真实实验、失败与工具证据，它就可以成为个人壁垒。",
+        "当前最现实的收入路径是先销售一个窄而完整的结果，而不是抽象地销售“AI 能力”。可以选一个已经跑通的案例，写清输入、交付物、时间、价格和不做什么，再让一个真实使用者判断是否愿意付费。这个测试比继续增加功能更能缩小不确定性。",
+        "今天应该暂停的是无边界的项目扩张。新想法可以进入收件箱，但不应立即变成新仓库、新网页或新流程。只有当它明确加强当前的交付物，或者有外部用户证明需求，才值得分配开发时间。",
+        "因此今天的主押注是把一个已有能力变成一页可购买的说明。验证标准不是自己觉得文案完整，而是一个目标用户看完后能否复述问题、交付物和价格，并愿意给出下一步承诺。这个小证据会决定明天是继续销售，还是回到产品定义。",
+        "这条路线的风险也需要直说。跨域能力容易让人觉得什么都能做，但客户往往只愿意为一个边界清楚、责任明确的结果付费。因此所有扩展都应先回答两个问题：它是否缩短交付时间，以及它是否增加用户能够看见的价值。",
+        "写作在这里不是宣传收尾，而是产品验证方法。当一个工作流无法用清楚语言说明为谁解决什么问题时，往往意味着设计本身仍然模糊。反过来，一篇有真实截图、失败恢复和最终交付证据的文章，可以同时检查产品与市场。",
+        "为了避免自我说服，今天的实验应保留可否定结果。如果目标用户不能复述交付物，问题可能是说明不清；如果能复述却不愿给出承诺，问题更可能是需求或价格。这两种失败需要不同修复，不应都用“再加一个功能”回答。",
+        "如果这个实验成功，下一步也不是立即扩张为平台，而是再为同一类用户重复两次，检查成功是否依赖个人关系或一次性情境。只有交付时间、质量和付费意愿都能重现，才值得把经验固化为标准流程。",
+        "财务上也应把收入实验与投资判断分开。前者可以通过报价、交付和复购快速取得一手证据；后者需要可核实的公司数据、价格和风险框架，不应由一天的情绪或一篇文章推导。今天没有新的市场证据时，最负责的做法是保留观察名单，把精力用在能被当天验证的收入假设上。",
+        "幸福和自由不应被当成成功之后才能领取的奖励。如果一条路线只能靠无限维护、夜间救火和不断增加的系统复杂度维持，即使它有短期收入，也与目标相冲突。因此交付设计还要测量维护成本，优先选择能够通过文档、标准化和用户自助逐步降低个人介入的方案。",
+    ]
+    return (
+        "# 今日方向\n\n"
+        + "\n\n".join(paragraphs)
+        + f"\n\n{extra}\n\n"
+        + "以上判断都应在明天用新证据认真重新复核，而不是当成不可改变的个人标签。\n\n"
+        + "## 今日主押注\n\n把一个已经跑通的系统整理成可验证的公开交付。"
+        + "\n\n微信摘要：今天的强证据是 AgenticApp、EchoMind 和 LazyEdit 已经把跨域方法变成了可重复工作流。主押注是先把一个已验证能力写成可购买的明确交付，今天用一个真实用户的复述和承诺来验证。"
+        + "\n\n## 三个问题\n\n"
+        + "Q1: 哪一个已完成的结果最值得今天定价？\n为什么重要：它迫使想法进入真实交易。\n"
+        + "Q2: 如果只服务一类用户，今天会选谁？\n为什么重要：它决定交付边界。\n"
+        + "Q3: 什么外部证据会让明天改变计划？\n为什么重要：它防止把坚持变成惯性。\n"
+    )
+
+
 class WeChatCareerDailyAgentTests(unittest.TestCase):
     def test_main_defaults_to_medium_reasoning(self):
         module = load_wechat_career_daily_agent()
@@ -401,7 +430,9 @@ Why it matters: It turns reflection into evidence.
             agent_calls.append((args, kwargs))
             return {
                 "ok": True,
-                "message": f"# Today\nUse {module.PRIVATE} as private evidence, then write one public action.",
+                "message": valid_career_report(
+                    extra=f"Use {module.PRIVATE} as private evidence, then write one public action."
+                ),
                 "backend": "codex",
                 "thread_id": "thread-test",
                 "resumed": True,
@@ -444,6 +475,111 @@ Why it matters: It turns reflection into evidence.
         self.assertIn(str(module.PRIVATE), private_report)
         self.assertNotIn(str(module.PRIVATE), share_report)
         self.assertIn("<private-wechat-workspace>", share_report)
+
+    def test_career_quality_rejects_operational_failure_as_report(self):
+        module = load_wechat_career_daily_agent()
+
+        quality = module.career_report_quality(
+            "The task is blocked by the read-only sandbox and lack of internet access. "
+            "Request the user to switch to a writable Docker workspace mode."
+        )
+
+        self.assertFalse(quality["accepted"])
+        self.assertIn("operational_failure_as_report", quality["reasons"])
+        self.assertIn("too_short_for_daily_strategy", quality["reasons"])
+
+    def test_run_daily_repairs_low_quality_report_before_writing_or_sending(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.ROOT = root
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            module.collect_evidence = lambda *_args, **_kwargs: {
+                "memory_snapshot": "- concrete user history",
+                "project_surface": "- AgenticApp: shipped workflow\n- EchoMind: shipped app",
+                "voidabyss_snapshot": "",
+                "identity_surface": "",
+                "public_profile_surface": "",
+            }
+            module.select_agent_backend = lambda _config: "aginti"
+            calls = []
+
+            def fake_agent(_prompt, **kwargs):
+                calls.append(kwargs)
+                if len(calls) == 1:
+                    return {
+                        "ok": True,
+                        "message": "The task is blocked by the read-only sandbox.",
+                        "backend": "aginti",
+                        "thread_id": "career-thread",
+                    }
+                return {
+                    "ok": True,
+                    "message": valid_career_report(),
+                    "backend": "aginti",
+                    "thread_id": "career-thread",
+                    "resumed": True,
+                }
+
+            module.run_agent_session = fake_agent
+            args = argparse.Namespace(
+                chat=[],
+                send=False,
+                attach_report=False,
+                memory_db=root / "memory.sqlite",
+                send_targets=root / "targets.json",
+                model="gpt-test",
+                reasoning_effort="medium",
+                timeout_seconds=30,
+            )
+
+            payload = module.run_daily(args)
+            report = Path(payload["share_report"])
+            report_text = report.read_text(encoding="utf-8")
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual([call["role"] for call in calls], [
+            "career_research",
+            "career_research",
+        ])
+        self.assertTrue(payload["quality"]["accepted"])
+        self.assertIn("AgenticApp", report_text)
+        self.assertNotIn("read-only sandbox", report_text)
+
+    def test_low_quality_career_manifest_is_not_reused(self):
+        module = load_wechat_career_daily_agent()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module.PRIVATE = root / ".private"
+            module.OUTPUT = root / "output"
+            stamp = "2026-08-25"
+            run_dir = module.PRIVATE / "output" / "career_daily" / "runs" / f"{stamp}-083000"
+            run_dir.mkdir(parents=True)
+            report = module.OUTPUT / f"{stamp}-career-strategy.md"
+            private_report = module.PRIVATE / "output" / "career_daily" / f"{stamp}-career-strategy-private.md"
+            report.parent.mkdir(parents=True)
+            private_report.parent.mkdir(parents=True, exist_ok=True)
+            bad = "The task is blocked by the read-only sandbox."
+            report.write_text(bad, encoding="utf-8")
+            private_report.write_text(bad, encoding="utf-8")
+            module.write_json_file(run_dir / "manifest.json", {
+                "agent": {"complete": True},
+                "outputs": {
+                    "share_report_latest": str(report),
+                    "private_report_latest": str(private_report),
+                },
+                "send": {"complete": False},
+            })
+
+            located = module.latest_career_manifest(stamp)
+            complete = module.career_delivery_complete_for_date(
+                stamp,
+                require_send=False,
+            )
+
+        self.assertIsNone(located)
+        self.assertFalse(complete)
 
     def test_life_memo_snapshot_deduplicates_classifier_categories(self):
         module = load_wechat_career_daily_agent()
@@ -1427,8 +1563,9 @@ Nature 光计算维度和视觉大模型预测实验属于另一条技术探索�
             private_report = module.PRIVATE / "output" / "career_daily" / f"{stamp}-career-strategy-private.md"
             report.parent.mkdir(parents=True)
             private_report.parent.mkdir(parents=True, exist_ok=True)
-            report.write_text("# Existing report", encoding="utf-8")
-            private_report.write_text("微信摘要：复用今天已生成的报告。", encoding="utf-8")
+            body = valid_career_report()
+            report.write_text(body, encoding="utf-8")
+            private_report.write_text(body, encoding="utf-8")
             manifest = {
                 "outputs": {
                     "share_report_latest": str(report),

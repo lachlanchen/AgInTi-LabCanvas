@@ -78,6 +78,26 @@ career money question decision status completed open next action
 备忘 待办 提醒 日历 采购 物品 资源 项目 想法 写作 外语 职业 挣钱
 问题 决定 状态 已完成 未完成 下一步
 """
+CAREER_GENERIC_FAILURE_RE = re.compile(
+    r"(?:read[- ]only\s+sandbox|"
+    r"lack\s+of\s+internet\s+access|"
+    r"switch\s+to\s+a\s+writable|"
+    r"(?:task|request)\s+is\s+blocked|"
+    r"no\s+new\s+search\s+results|"
+    r"current\s+environment\s+is\s+read[- ]only|"
+    r"当前环境为只读|"
+    r"只读沙箱|"
+    r"无法访问互联网|"
+    r"请求用户.{0,24}(?:切换|开启|授权)|"
+    r"daily\s+career\s+strategy\s+agent\s+failed)",
+    flags=re.IGNORECASE,
+)
+CAREER_MIN_CHARACTERS = int(
+    os.environ.get("WECHAT_CAREER_MIN_REPORT_CHARACTERS", "1600")
+)
+CAREER_MIN_PROSE_PARAGRAPHS = int(
+    os.environ.get("WECHAT_CAREER_MIN_PROSE_PARAGRAPHS", "5")
+)
 
 
 def main() -> int:
@@ -470,6 +490,122 @@ def scheduled_run_time(now: datetime, hhmm: str) -> datetime:
     return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
+def career_evidence_terms(evidence: dict[str, Any] | None) -> list[str]:
+    """Return project/profile names suitable for a lightweight grounding check."""
+
+    if not isinstance(evidence, dict):
+        return []
+    terms: list[str] = []
+    for raw in str(evidence.get("project_surface") or "").splitlines():
+        match = re.match(r"^\s*-\s*([^:;]{3,80})(?::|$)", raw)
+        if match:
+            terms.append(match.group(1).strip())
+    for key in ("voidabyss_snapshot", "identity_surface", "public_profile_surface"):
+        value = str(evidence.get(key) or "")
+        for pattern in (
+            r"(?m)^Repo:\s*([^\n]{3,80})$",
+            r"(?m)^Current GitHub API profile:.*?\"name\":\s*\"([^\"]+)\"",
+        ):
+            terms.extend(match.strip() for match in re.findall(pattern, value))
+    unique: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        clean = re.sub(r"\s+", " ", term).strip(" -#`\t")
+        folded = clean.casefold()
+        if len(clean) < 3 or folded in seen:
+            continue
+        seen.add(folded)
+        unique.append(clean)
+    return unique
+
+
+def career_report_quality(
+    body: str,
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Reject operational excuses and shallow shells before PDF generation."""
+
+    text = str(body or "").strip()
+    headings = len(re.findall(r"(?m)^#{1,4}\s+\S", text))
+    paragraphs = []
+    for paragraph in re.split(r"\n\s*\n", text):
+        lines = [
+            line.strip()
+            for line in paragraph.splitlines()
+            if line.strip()
+            and not line.lstrip().startswith(("#", "- ", "* ", "+ "))
+            and not re.match(r"^\d+[.)、]\s+", line.strip())
+        ]
+        clean = re.sub(r"[*_`]", "", " ".join(lines)).strip()
+        if len(clean) >= 60:
+            paragraphs.append(clean)
+    questions = extract_self_discovery_questions(text, limit=4)
+    has_summary = bool(re.search(r"(?m)^\s*(?:[-*]\s*)?微信摘要\s*[:：]\s*\S", text))
+    evidence_terms = career_evidence_terms(evidence)
+    folded = text.casefold()
+    matched_terms = [term for term in evidence_terms if term.casefold() in folded]
+    minimum_grounded_terms = min(2, len(evidence_terms))
+    reasons: list[str] = []
+    if not text:
+        reasons.append("empty_output")
+    if text.startswith(("{", "[")) or "\\n" in text:
+        reasons.append("raw_structured_envelope")
+    if CAREER_GENERIC_FAILURE_RE.search(text) and len(text) < CAREER_MIN_CHARACTERS:
+        reasons.append("operational_failure_as_report")
+    if len(text) < CAREER_MIN_CHARACTERS:
+        reasons.append("too_short_for_daily_strategy")
+    if len(paragraphs) < CAREER_MIN_PROSE_PARAGRAPHS:
+        reasons.append("insufficient_explanatory_prose")
+    if not has_summary:
+        reasons.append("missing_wechat_summary")
+    if len(questions) != 3:
+        reasons.append("missing_three_self_discovery_questions")
+    if minimum_grounded_terms and len(matched_terms) < minimum_grounded_terms:
+        reasons.append("insufficient_project_grounding")
+    return {
+        "accepted": not reasons,
+        "reasons": reasons,
+        "characters": len(text),
+        "headings": headings,
+        "prose_paragraphs": len(paragraphs),
+        "self_discovery_questions": len(questions),
+        "has_wechat_summary": has_summary,
+        "matched_evidence_terms": matched_terms[:12],
+        "available_evidence_terms": len(evidence_terms),
+        "minimum_characters": CAREER_MIN_CHARACTERS,
+        "minimum_prose_paragraphs": CAREER_MIN_PROSE_PARAGRAPHS,
+        "minimum_grounded_terms": minimum_grounded_terms,
+    }
+
+
+def build_career_repair_prompt(quality: dict[str, Any]) -> str:
+    """Steer the persistent agent back to the already supplied evidence."""
+
+    return f"""Your previous career report failed the host's reader-quality audit and must not be delivered.
+
+Failure reasons: {', '.join(str(item) for item in quality.get('reasons') or [])}
+Observed: {quality.get('characters', 0)} characters, {quality.get('headings', 0)} headings,
+{quality.get('prose_paragraphs', 0)} substantial prose paragraphs, and
+{quality.get('self_discovery_questions', 0)} self-discovery questions.
+
+This is a read-only synthesis task. It does not require changing files, a
+writable sandbox, or fresh web access. Re-read all evidence and instructions
+from the preceding task, then write a completely new final report now. Do not
+repeat, expand, or explain the rejected answer. Ground the analysis in concrete
+projects, shipped work, repeated behavior, and explicit user goals. Distinguish
+evidence from inference, give a specific primary bet and a testable action for
+today, and avoid generic self-help or generic startup advice.
+
+Return only the complete Chinese Markdown report. It must contain natural
+argumentative sections, at least {quality.get('minimum_characters', CAREER_MIN_CHARACTERS)}
+characters when the supplied evidence supports that depth, one independently
+useful paragraph beginning exactly with `微信摘要：`, and exactly three specific
+questions labeled `Q1:`, `Q2:`, and `Q3:`, each followed by `为什么重要：`.
+Do not return JSON, a code fence, an apology, a blocker, tool diagnostics, or
+instructions for the user to change the runtime.
+"""
+
+
 def run_daily(args: argparse.Namespace) -> dict[str, Any]:
     chats = args.chat or list(DEFAULT_CHATS)
     OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -484,9 +620,10 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
     prompt = build_prompt(evidence)
     (trace_dir / "agent_prompt.md").write_text(prompt, encoding="utf-8")
     write_evidence_artifacts(trace_dir, evidence)
+    backend = select_agent_backend({})
     result = run_agent_session(
         prompt,
-        backend=select_agent_backend({}),
+        backend=backend,
         chat_name="career-daily-agent",
         role="career_research",
         model=args.model,
@@ -497,19 +634,109 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
         reuse=True,
     )
     body = str(result.get("message") or "").strip()
-    agent_ok = bool(result.get("ok")) and bool(body)
-    if not agent_ok:
-        body = (
-            "# Daily Career Strategy Agent Failed\n\n"
-            f"- ok: {result.get('ok')}\n"
-            f"- returncode: {result.get('returncode')}\n"
-            f"- stderr_tail: {result.get('stderr_tail')}\n"
+    (trace_dir / "agent-output-1.txt").write_text(body.rstrip() + "\n", encoding="utf-8")
+    write_json_file(trace_dir / "agent-result-1.json", sanitize_agent_result(result))
+    quality = career_report_quality(body, evidence)
+    quality_attempts: list[dict[str, Any]] = [
+        {
+            "stage": "initial",
+            "backend": result.get("backend") or backend,
+            "provider": result.get("provider"),
+            "thread_id": result.get("thread_id"),
+            "ok": bool(result.get("ok")),
+            **quality,
+        }
+    ]
+    if result.get("ok") and body and not quality.get("accepted"):
+        repair_prompt = build_career_repair_prompt(quality)
+        (trace_dir / "quality-repair-prompt.md").write_text(
+            repair_prompt.rstrip() + "\n",
+            encoding="utf-8",
         )
+        repaired = run_agent_session(
+            repair_prompt,
+            backend=backend,
+            chat_name="career-daily-agent",
+            role="career_research",
+            model=args.model,
+            reasoning_effort=args.reasoning_effort,
+            sandbox="read-only",
+            timeout_seconds=args.timeout_seconds,
+            workdir=ROOT,
+            reuse=True,
+        )
+        repaired_body = str(repaired.get("message") or "").strip()
+        (trace_dir / "agent-output-2-repair.txt").write_text(
+            repaired_body.rstrip() + "\n",
+            encoding="utf-8",
+        )
+        write_json_file(trace_dir / "agent-result-2-repair.json", sanitize_agent_result(repaired))
+        repaired_quality = career_report_quality(repaired_body, evidence)
+        quality_attempts.append(
+            {
+                "stage": "same_session_repair",
+                "backend": repaired.get("backend") or backend,
+                "provider": repaired.get("provider"),
+                "thread_id": repaired.get("thread_id"),
+                "ok": bool(repaired.get("ok")),
+                **repaired_quality,
+            }
+        )
+        if repaired.get("ok") and repaired_body and repaired_quality.get("accepted"):
+            result = repaired
+            body = repaired_body
+            quality = repaired_quality
+    if (
+        (not result.get("ok") or not body or not quality.get("accepted"))
+        and backend != "codex"
+    ):
+        fallback_prompt = prompt.rstrip() + "\n\n---\n\n" + build_career_repair_prompt(quality)
+        (trace_dir / "quality-fallback-codex-prompt.md").write_text(
+            fallback_prompt.rstrip() + "\n",
+            encoding="utf-8",
+        )
+        fallback = run_agent_session(
+            fallback_prompt,
+            backend="codex",
+            chat_name="career-daily-agent",
+            role="career_research",
+            model=args.model,
+            reasoning_effort=args.reasoning_effort,
+            sandbox="read-only",
+            timeout_seconds=args.timeout_seconds,
+            workdir=ROOT,
+            reuse=True,
+        )
+        fallback_body = str(fallback.get("message") or "").strip()
+        (trace_dir / "agent-output-3-codex-fallback.txt").write_text(
+            fallback_body.rstrip() + "\n",
+            encoding="utf-8",
+        )
+        write_json_file(trace_dir / "agent-result-3-codex-fallback.json", sanitize_agent_result(fallback))
+        fallback_quality = career_report_quality(fallback_body, evidence)
+        quality_attempts.append(
+            {
+                "stage": "codex_quality_fallback",
+                "backend": fallback.get("backend") or "codex",
+                "provider": fallback.get("provider"),
+                "thread_id": fallback.get("thread_id"),
+                "ok": bool(fallback.get("ok")),
+                **fallback_quality,
+            }
+        )
+        if fallback.get("ok") and fallback_body and fallback_quality.get("accepted"):
+            result = fallback
+            body = fallback_body
+            quality = fallback_quality
+    quality = {**quality, "attempts": quality_attempts}
+    write_json_file(trace_dir / "quality.json", quality)
+    agent_ok = bool(result.get("ok")) and bool(body) and bool(quality.get("accepted"))
     private_report = private_dir / f"{stamp}-career-strategy-private.md"
     share_report = OUTPUT / f"{stamp}-career-strategy.md"
     private_report.write_text(body + "\n", encoding="utf-8")
     shareable = sanitize_shareable_report(body)
-    share_report.write_text(shareable + "\n", encoding="utf-8")
+    if agent_ok:
+        share_report.write_text(shareable + "\n", encoding="utf-8")
     trace_private_report = trace_dir / "private_report.md"
     trace_share_report = trace_dir / "share_report.md"
     trace_private_report.write_text(body + "\n", encoding="utf-8")
@@ -533,6 +760,7 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
         result=result,
         send_status=send_status,
         run_id=run_id,
+        quality=quality,
     )
     update_delivery_retry_state(manifest, send_status)
     (trace_dir / "manifest.json").write_text(
@@ -540,9 +768,10 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
         encoding="utf-8",
     )
     delivery_ok = not args.send or bool(send_status.get("complete"))
+    failure_status = "quality_failed" if body and not quality.get("accepted") else "agent_failed"
     return {
         "ok": agent_ok and delivery_ok,
-        "status": "done" if agent_ok and delivery_ok else ("delivery_failed" if agent_ok else "agent_failed"),
+        "status": "done" if agent_ok and delivery_ok else ("delivery_failed" if agent_ok else failure_status),
         "run_id": run_id,
         "trace_dir": str(trace_dir),
         "manifest": str(trace_dir / "manifest.json"),
@@ -550,12 +779,13 @@ def run_daily(args: argparse.Namespace) -> dict[str, Any]:
         "share_report": str(share_report),
         "send": send_status,
         "next_delivery_attempt_at": manifest.get("next_delivery_attempt_at", ""),
-        "summary": extract_daily_chat_summary(body),
+        "summary": extract_daily_chat_summary(body) if agent_ok else "",
+        "quality": quality,
         "agent": {
             "backend": result.get("backend", "codex"),
             "thread_id": result.get("thread_id"),
             "resumed": result.get("resumed"),
-            "complete": bool(result.get("ok")) and bool(str(result.get("message") or "").strip()),
+            "complete": agent_ok,
             "model": args.model,
             "reasoning_effort": args.reasoning_effort,
         },
@@ -575,6 +805,14 @@ def career_delivery_complete_for_date(stamp: str, *, require_send: bool) -> bool
         report = Path(str(outputs.get("share_report_latest") or ""))
         if not report.is_file():
             continue
+        try:
+            report_quality = career_report_quality(
+                report.read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            continue
+        if not report_quality.get("accepted"):
+            continue
         if not require_send:
             return True
         send = manifest.get("send") if isinstance(manifest.get("send"), dict) else {}
@@ -592,6 +830,14 @@ def latest_career_manifest(stamp: str) -> tuple[Path, dict[str, Any]] | None:
         outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
         report = Path(str(outputs.get("share_report_latest") or ""))
         private_report = Path(str(outputs.get("private_report_latest") or ""))
+        try:
+            report_quality = career_report_quality(
+                report.read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            continue
+        if not report_quality.get("accepted"):
+            continue
         agent = manifest.get("agent") if isinstance(manifest.get("agent"), dict) else {}
         if agent.get("complete") is False:
             continue
@@ -2194,6 +2440,7 @@ def build_trace_manifest(
     result: dict[str, Any],
     send_status: dict[str, Any],
     run_id: str,
+    quality: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "schema": "labcanvas.wechat.career_daily.trace.v1",
@@ -2209,6 +2456,7 @@ def build_trace_manifest(
             "reasoning_effort": args.reasoning_effort,
             "timeout_seconds": args.timeout_seconds,
             "sandbox": "read-only",
+            "complete": bool(result.get("ok")) and bool(quality.get("accepted")),
         },
         "inputs": {
             "memory_db": str(args.memory_db),
@@ -2234,6 +2482,7 @@ def build_trace_manifest(
             "agent_result": str(trace_dir / "agent_result.json"),
         },
         "send": send_status,
+        "quality": quality,
         "git": {
             "agenticapp_head": run_short(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], timeout=1.5),
             "agenticapp_status_short": run_short(["git", "-C", str(ROOT), "status", "--short"], timeout=1.5),
