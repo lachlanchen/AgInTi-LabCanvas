@@ -83,6 +83,9 @@ DAILY_PDF_MAX_BODY_CHARS = int(
 DAILY_PDF_TARGET_MAX_BODY_CHARS = int(
     os.environ.get("ECHOMIND_DAILY_PDF_TARGET_MAX_BODY_CHARS", "10000")
 )
+DAILY_PDF_LONGITUDINAL_CHAR_BUDGET = int(
+    os.environ.get("ECHOMIND_DAILY_PDF_LONGITUDINAL_CHAR_BUDGET", "6000")
+)
 DAILY_PDF_AUDIT_MIN_SCORE = int(
     os.environ.get("ECHOMIND_DAILY_PDF_AUDIT_MIN_SCORE", "4")
 )
@@ -91,12 +94,15 @@ DAILY_PDF_MAX_REPAIR_PASSES = int(
 )
 DAILY_PDF_AUDIT_DIMENSIONS = (
     "source_fidelity",
+    "source_specificity",
     "chinese_naturalness",
     "english_naturalness",
     "japanese_naturalness",
     "reading_accuracy",
     "cross_language_alignment",
     "pedagogical_value",
+    "coherence",
+    "reader_value",
     "concision",
 )
 DAILY_PDF_SECTION_ROLES = (
@@ -136,6 +142,7 @@ def long_term_language_context(
     char_budget: int | None = None,
     model: str = "",
     role: str = "chat",
+    include_exact_excerpts: bool = True,
 ) -> str:
     """Compact every exact-chat row, then add topic-relevant raw excerpts."""
 
@@ -154,7 +161,8 @@ def long_term_language_context(
         model=model,
         role=role,
     )
-    return str(payload.get("snapshot") or "")
+    key = "snapshot" if include_exact_excerpts else "full_memory"
+    return str(payload.get(key) or "")
 
 
 def exact_chat_language_history(config: dict) -> list:
@@ -178,11 +186,27 @@ def previous_day_language_messages(config: dict, report_date: str) -> list:
         target = datetime.fromisoformat(report_date).date()
     except ValueError:
         return []
-    return [
+    messages = [
         message
         for message in exact_chat_language_history(config)
         if message.created_at.astimezone(LOCAL_TZ).date() == target
     ]
+    return [message for message in messages if is_daily_pdf_source_message(message)]
+
+
+def is_daily_pdf_source_message(message: Any) -> bool:
+    """Exclude transport-only output rows from the teaching evidence."""
+
+    body = " ".join(str(getattr(message, "body", "") or "").split())
+    if not body:
+        return False
+    if str(getattr(message, "direction", "") or "").casefold() != "outbound":
+        return True
+    return re.fullmatch(
+        r"[^/\\\r\n]{1,240}\.(?:pdf|tex|md|docx?|pptx?|xlsx?|zip|rar|7z)",
+        body,
+        flags=re.IGNORECASE,
+    ) is None
 
 
 def previous_day_language_context(
@@ -434,6 +458,16 @@ def daily_pdf_due(state: dict, *, now: datetime | None = None, force: bool = Fal
 def normalize_latex_body(raw: str) -> str:
     """Remove common Markdown/full-document wrappers from an agent LaTeX body."""
     body = raw.strip()
+    try:
+        wrapped = json.loads(body)
+    except json.JSONDecodeError:
+        wrapped = None
+    if isinstance(wrapped, dict):
+        for key in ("response", "result", "message"):
+            value = wrapped.get(key)
+            if isinstance(value, str) and value.strip():
+                body = value.strip()
+                break
     if body.startswith("```"):
         lines = body.splitlines()
         if lines and lines[0].strip().startswith("```"):
@@ -757,6 +791,53 @@ def daily_pdf_semantic_audit_issues(audit: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(issues))
 
 
+def daily_pdf_quality_path(pdf: Path) -> Path:
+    """Return the sidecar that authorizes one immutable reader PDF."""
+
+    return pdf.with_name(f"{pdf.stem}.quality.json")
+
+
+def accepted_daily_pdf_issues(
+    pdf: Path,
+    *,
+    report_date: str,
+    quality_path: Path | None = None,
+) -> list[str]:
+    """Fail closed unless a PDF and its semantic review still match exactly."""
+
+    issues: list[str] = []
+    candidate = pdf.expanduser()
+    sidecar = (quality_path or daily_pdf_quality_path(candidate)).expanduser()
+    if not candidate.is_file() or candidate.stat().st_size <= 0:
+        issues.append("pending_pdf_missing")
+        return issues
+    try:
+        quality = json.loads(sidecar.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ["pending_pdf_quality_missing"]
+    except (OSError, json.JSONDecodeError):
+        return ["pending_pdf_quality_unreadable"]
+    if quality.get("status") != "accepted":
+        issues.append("pending_pdf_quality_not_accepted")
+    if str(quality.get("report_date") or "") != str(report_date or ""):
+        issues.append("pending_pdf_report_date_mismatch")
+    if quality.get("contract_issues"):
+        issues.append("pending_pdf_contract_issues")
+    audit = quality.get("semantic_audit")
+    if not isinstance(audit, dict):
+        issues.append("pending_pdf_semantic_audit_missing")
+    else:
+        issues.extend(daily_pdf_semantic_audit_issues(audit))
+    expected_identity = quality.get("pdf_identity")
+    try:
+        current_identity = file_transport_identity(candidate)
+    except OSError:
+        current_identity = {}
+    if not isinstance(expected_identity, dict) or expected_identity != current_identity:
+        issues.append("pending_pdf_identity_mismatch")
+    return list(dict.fromkeys(issues))
+
+
 def cumulative_daily_pdf_audit_feedback(
     audit_history: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -817,6 +898,14 @@ def daily_pdf_contract_issues(
         issues.append("contains_full_document_wrapper")
     if re.search(r"\\(?:maketitle|title|author|date)\b", value):
         issues.append("contains_document_title_command")
+    if "\\textipa" in value:
+        issues.append("contains_textipa_command")
+    if re.search(r"\\ruby\{漢字\}\{かな\}", value):
+        issues.append("contains_ruby_placeholder")
+    for reading in re.findall(r"\\ruby\{[^{}]+\}\{([^{}]+)\}", value):
+        if re.search(r"[A-Za-z]", reading):
+            issues.append("ruby_reading_uses_latin_letters")
+            break
     issues.extend(daily_pdf_structure_issues(value))
     if re.search(
         r"(?:no recorded conversation|no source (?:messages|logs)|source logs contain no|"
@@ -874,6 +963,24 @@ def daily_pdf_contract_issues(
     return list(dict.fromkeys(issues))
 
 
+def daily_pdf_requires_full_rewrite(issues: list[str]) -> bool:
+    """Prefer one coherent reauthoring when local section edits cannot suffice."""
+
+    issue_set = set(issues)
+    if "too_shallow" in issue_set or "noncanonical_top_level_section_count" in issue_set:
+        return True
+    if sum(issue.startswith("missing_section_") for issue in issue_set) >= 2:
+        return True
+    return bool(
+        issue_set
+        & {
+            "semantic_source_specificity_below_standard",
+            "semantic_coherence_below_standard",
+            "semantic_reader_value_below_standard",
+        }
+    )
+
+
 def audit_daily_pdf_body(
     body: str,
     *,
@@ -897,7 +1004,10 @@ Reject the tutorial for any material problem in:
 - natural Japanese grammar, conjugation, particles, kanji readings, furigana, and Latin-letter romaji;
 - semantic alignment across all three languages;
 - factual and pedagogical accuracy of grammar explanations, contrasts, mistakes, exercises, and answers;
-- source fidelity, unsupported invented dialogue, repetition, padding, or shallow section-filling.
+- source fidelity and source specificity: a reader must be able to recognize the actual prior-day situations rather than receive a generic lesson that merely shares a few keywords;
+- coherence: the examples, contrasts, vocabulary, mistakes, and exercises must build one intelligible teaching arc instead of behaving like six unrelated checklist sections;
+- reader value: the PDF must deepen the concise chat teaching with reusable choices, register, pronunciation, and transfer insight rather than restating it at greater length;
+- unsupported invented dialogue, repetition, padding, textbook boilerplate, or shallow section-filling.
 
 The tutorial also has this editorial structure contract:
 {outline}
@@ -906,6 +1016,9 @@ Reject padding disguised as depth. In particular, reject a correction that is
 restated in Core Examples, Grammar and Usage, Common Mistakes, Practice, and the
 answer key without adding a distinct learning function. Reject underdetermined
 exercises unless all natural alternatives are accepted and explained.
+Reject a mechanically complete report whose headings pass but whose content lacks
+a clear learner problem, a useful contrast, or source-specific insight. The report
+must be worth reopening as a study document, not merely be longer than the chat reply.
 
 Score each dimension from 1 to 5: {dimensions}.
 Set accepted=true only when every score is at least {DAILY_PDF_AUDIT_MIN_SCORE}, critical_issues is empty, and the tutorial is publish-ready without further changes. When accepted=true, revision_instructions must also be empty. If any correction is still needed, set accepted=false and give specific revision instructions, quoting only the shortest phrase needed to identify a problem.
@@ -913,7 +1026,7 @@ Set accepted=true only when every score is at least {DAILY_PDF_AUDIT_MIN_SCORE},
 Required JSON shape:
 {{
   "accepted": true,
-  "scores": {{"source_fidelity": 5, "chinese_naturalness": 5, "english_naturalness": 5, "japanese_naturalness": 5, "reading_accuracy": 5, "cross_language_alignment": 5, "pedagogical_value": 5, "concision": 5}},
+  "scores": {{"source_fidelity": 5, "source_specificity": 5, "chinese_naturalness": 5, "english_naturalness": 5, "japanese_naturalness": 5, "reading_accuracy": 5, "cross_language_alignment": 5, "pedagogical_value": 5, "coherence": 5, "reader_value": 5, "concision": 5}},
   "critical_issues": [],
   "revision_instructions": []
 }}
@@ -958,10 +1071,12 @@ Quality contract:
 - Turn the strongest two to four source-derived expressions into a coherent lesson. Do not narrate the source-recovery process or mention missing logs in the student-facing PDF.
 - Treat source examples as teaching evidence, not immutable truth. Preserve each source-derived scenario and communicative meaning, but independently correct unnatural or inaccurate Chinese, English, Japanese, pinyin, furigana, and romaji. When a correction is pedagogically useful, show the source form briefly as a learner sentence and contrast it with the preferred form; never certify awkward wording merely to preserve it.
 - Preserve useful depth but remove filler and repetitive explanations. Make the comparisons genuinely teach how Chinese, English, and Japanese express the same meanings.
+- Give the lesson one explicit learner problem and a coherent progression from examples to controlled practice. Every section must do a distinct job and remain recognizably tied to the previous-day situations.
+- The PDF must add durable reader value beyond the concise chat response: explain choices a learner can reuse, not merely expand the same sentence into more prose.
 - Check every Chinese sentence, full tone-marked pinyin line, English phrase, Japanese spelling/conjugation, furigana, and romaji character by character. Repair accidental duplicated kana and mismatched readings.
 - Use at least four accurate \\ruby{{漢字}}{{かな}} expressions. Romaji lines must use Latin letters, never kana. Keep pinyin and romaji distinct and complete.
 - Include explicit Grammar / 语法 / 文法 and Vocabulary / 词汇 / 語彙 sections, realistic common mistakes, and exercises with answers. Examples must be natural and semantically aligned, not literal translations.
-- Aim for {DAILY_PDF_MIN_BODY_CHARS} to {DAILY_PDF_TARGET_MAX_BODY_CHARS} meaningful LaTeX-body characters; {DAILY_PDF_MAX_BODY_CHARS} is a hard ceiling, not a target. Prefer a shorter complete lesson over padding. Add depth through usage contrasts, register, collocations, pronunciation, and answer explanations, not filler. Do not add a document preamble, \maketitle, \title, \author, \date, Markdown, private paths, model names, logs, or unsupported dialogue.
+- Aim for {DAILY_PDF_MIN_BODY_CHARS} to {DAILY_PDF_TARGET_MAX_BODY_CHARS} meaningful LaTeX-body characters; {DAILY_PDF_MAX_BODY_CHARS} is a hard ceiling, not a target. Prefer a shorter complete lesson over padding. Add depth through usage contrasts, register, collocations, pronunciation, and answer explanations, not filler. Do not add a document preamble, \\maketitle, \\title, \\author, \\date, Markdown, private paths, model names, logs, or unsupported dialogue.
 
 Required editorial outline:
 {outline}
@@ -1084,6 +1199,66 @@ Current indexed sections:
     return candidate, result
 
 
+def rewrite_daily_pdf_body(
+    body: str,
+    *,
+    report_date: str,
+    history: str,
+    config: dict,
+    source_messages: list,
+    issues: list[str],
+    audit_feedback: dict[str, Any],
+) -> tuple[str, dict]:
+    """Re-author a stalled report from evidence instead of polishing its defects."""
+
+    outline = daily_pdf_outline_contract()
+    prompt = f"""You are the senior author replacing a rejected EchoMind daily tutorial for {report_date}.
+Return ONLY a new LaTeX body, without a preamble or Markdown fence.
+
+The previous attempt failed after a bounded surgical edit. Re-author the lesson
+from the exact previous-day evidence. The rejected body is supplied only so you
+can avoid its defects; do not preserve its wording, section filler, exercise
+design, or organization merely because it already exists.
+
+The new report must:
+- teach one clear learner problem through two to four source-specific aligned examples;
+- stay recognizably grounded in every useful previous-day situation while correcting source errors independently;
+- use natural Chinese with complete tone-marked pinyin, natural English, and natural Japanese with accurate \\ruby{{漢字}}{{かな}} and Latin-letter romaji;
+- explain reusable choices in grammar, register, collocation, pronunciation, and cross-language transfer;
+- make each section perform one distinct teaching function and make the exercises apply the earlier examples;
+- add durable reader value beyond a concise chat answer without padding, boilerplate, repeated corrections, invented dialogue, or process commentary;
+- remain between {DAILY_PDF_MIN_BODY_CHARS} and {DAILY_PDF_TARGET_MAX_BODY_CHARS} meaningful body characters.
+
+Required outline:
+{outline}
+
+Current deterministic and independent-review findings:
+{', '.join(issues)}
+{json.dumps(audit_feedback, ensure_ascii=False, indent=2)}
+
+Exact previous-day evidence ({len(source_messages)} messages):
+{history}
+
+Rejected body (negative reference only):
+{normalize_latex_body(body)}
+"""
+    result = run_agent_session(
+        prompt,
+        backend=daily_pdf_quality_backend(config),
+        chat_name="EchoMind",
+        role="daily_language_pdf_reauthor",
+        model=daily_pdf_quality_model(config),
+        reasoning_effort=daily_pdf_audit_effort(config),
+        sandbox="read-only",
+        timeout_seconds=900,
+        reuse=False,
+        backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})},
+    )
+    result = dict(result)
+    result["repair_strategy"] = "full_rewrite"
+    return normalize_latex_body(str(result.get("message") or "")), result
+
+
 def daily_pdf_document(report_date: str, body: str) -> str:
     return r"""\documentclass[11pt]{article}
 \usepackage{fontspec}
@@ -1125,7 +1300,18 @@ def run_daily_pdf(
     pending = state.get("pending_daily_pdf")
     if isinstance(pending, dict) and str(pending.get("date") or "") == yesterday:
         pending_pdf = Path(str(pending.get("pdf") or "")).expanduser()
-        if pending_pdf.is_file() and pending_pdf.stat().st_size > 0:
+        pending_quality_value = str(pending.get("quality") or "").strip()
+        pending_quality = (
+            Path(pending_quality_value).expanduser()
+            if pending_quality_value
+            else daily_pdf_quality_path(pending_pdf)
+        )
+        pending_issues = accepted_daily_pdf_issues(
+            pending_pdf,
+            report_date=yesterday,
+            quality_path=pending_quality,
+        )
+        if not pending_issues:
             state["last_daily_pdf_attempt_date"] = yesterday
             state["last_daily_pdf_attempt_at"] = current.isoformat(timespec="seconds")
             save_state(state)
@@ -1137,6 +1323,8 @@ def run_daily_pdf(
             state["last_daily_pdf_delivery"] = {
                 "date": yesterday,
                 "pdf": str(pending_pdf),
+                "quality": str(pending_quality),
+                "pdf_identity": file_transport_identity(pending_pdf),
                 "status": (
                     "sent_verified_recovered"
                     if already_delivered
@@ -1149,6 +1337,15 @@ def run_daily_pdf(
             state.pop("last_daily_pdf_error", None)
             save_state(state)
             return dict(state["last_daily_pdf_delivery"])
+        state["last_rejected_pending_daily_pdf"] = {
+            "date": yesterday,
+            "pdf": str(pending_pdf),
+            "quality": str(pending_quality),
+            "issues": pending_issues,
+            "rejected_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        state.pop("pending_daily_pdf", None)
+        save_state(state)
     state["last_daily_pdf_attempt_date"] = yesterday
     state["last_daily_pdf_attempt_at"] = current.isoformat(timespec="seconds")
     save_state(state)
@@ -1166,8 +1363,10 @@ def run_daily_pdf(
     longitudinal = long_term_language_context(
         config,
         "recurring learner needs and prior corrections",
+        char_budget=DAILY_PDF_LONGITUDINAL_CHAR_BUDGET,
         model=DAILY_PDF_MODEL,
         role="daily",
+        include_exact_excerpts=False,
     )
     out_dir = ROOT / "output" / "wechat_gui_agent" / "echomind_daily" / yesterday
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1177,7 +1376,7 @@ def run_daily_pdf(
     quality_path = out_dir / f"{artifact_stem}.quality.json"
     outline = daily_pdf_outline_contract()
     prompt = f"""Create a beautiful previous-day EchoMind language tutorial for {yesterday}.
-Use the source messages and previous lessons below as evidence. Center the report on the strongest two to four expressions actually present rather than substituting an unrelated generic theme. Do not invent dialogue or claim content that is absent, and do not discuss source logs or source availability in the student-facing tutorial.
+Use the previous-day source messages below as the authoritative teaching evidence. Center the report on the strongest two to four expressions actually present rather than substituting an unrelated generic theme. The longitudinal learner profile is secondary personalization only: it may guide emphasis, but it must never contribute examples, scenarios, facts, or lesson topics. Do not invent dialogue or claim content that is absent, and do not discuss source logs or source availability in the student-facing tutorial.
 Return ONLY the LaTeX body, not a preamble. Use \\ruby{{漢字}}{{かな}} for Japanese furigana where useful.
 Treat source examples as evidence and learner material, not immutable truth. Preserve each source-derived scenario and intended meaning, but independently correct unnatural Chinese, English, Japanese, pinyin, furigana, or romaji. Explain meaningful corrections as source form versus preferred form when useful; never preserve or defend an error merely because it appeared in the chat.
 Aim for {DAILY_PDF_MIN_BODY_CHARS} to {DAILY_PDF_TARGET_MAX_BODY_CHARS} meaningful LaTeX-body characters; {DAILY_PDF_MAX_BODY_CHARS} is only a hard ceiling. The report must be study-ready, with Chinese, English, and Japanese throughout. For every important example include natural wording, meaning, full tone-marked pinyin, pronunciation where it materially helps, Japanese kanji plus at least four accurate ruby expressions and Latin-letter romaji, explicit grammar and vocabulary sections, realistic common mistakes, and exercises with explained answers. Compare how the same idea is naturally expressed across the three languages. Proofread every inflection and reading character by character. Add depth through usage contrasts, register, collocations, pronunciation, and answer explanations rather than repetition. Do not write a shallow chat summary or pad the report to reach a length target.
@@ -1190,8 +1389,8 @@ Use Unicode IPA directly. Do not use \\textipa, Markdown code fences, a document
 Previous-day EchoMind source material ({len(source_messages)} readable exact-chat messages):
 {history}
 
-Longitudinal learner signals from the complete exact-chat history (use only to
-clarify recurring needs and terminology; do not replace the previous-day source):
+Bounded longitudinal learner profile from the complete exact-chat history (use
+only to personalize explanation; do not quote it or replace the previous-day source):
 {longitudinal}
 """
     result = run_agent_session(prompt, backend=select_agent_backend(config), chat_name="EchoMind", role="daily_language_pdf", model=DAILY_PDF_MODEL, reasoning_effort=DAILY_PDF_EFFORT, sandbox="read-only", timeout_seconds=900, reuse=False, backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})})
@@ -1214,6 +1413,7 @@ clarify recurring needs and terminology; do not replace the previous-day source)
     final_audit_result: dict[str, Any] = {}
     audit_history: list[dict[str, Any]] = []
     repair_results: list[dict[str, Any]] = []
+    full_rewrite_used = False
     for repair_pass in range(DAILY_PDF_MAX_REPAIR_PASSES + 1):
         issues = daily_pdf_contract_issues(body, source_messages=source_messages)
         final_audit, final_audit_result = audit_daily_pdf_body(
@@ -1228,7 +1428,27 @@ clarify recurring needs and terminology; do not replace the previous-day source)
         audit_history.append(final_audit)
         if not issues or repair_pass >= DAILY_PDF_MAX_REPAIR_PASSES:
             break
-        body, repair_result = repair_daily_pdf_body(
+        if not full_rewrite_used and daily_pdf_requires_full_rewrite(issues):
+            repaired_body, rewrite_result = rewrite_daily_pdf_body(
+                body,
+                report_date=yesterday,
+                history=history,
+                config=config,
+                source_messages=source_messages,
+                issues=issues,
+                audit_feedback=cumulative_daily_pdf_audit_feedback(audit_history),
+            )
+            repair_results.append(rewrite_result)
+            full_rewrite_used = True
+            if not repaired_body or repaired_body == body:
+                break
+            body = repaired_body
+            (out_dir / f"{artifact_stem}.reauthored.texbody").write_text(
+                body,
+                encoding="utf-8",
+            )
+            continue
+        repaired_body, repair_result = repair_daily_pdf_body(
             body,
             report_date=yesterday,
             history=history,
@@ -1238,7 +1458,29 @@ clarify recurring needs and terminology; do not replace the previous-day source)
             audit_feedback=cumulative_daily_pdf_audit_feedback(audit_history),
         )
         repair_results.append(repair_result)
-        repair_suffix = "repaired" if repair_pass == 0 else f"repaired-{repair_pass + 1}"
+        patch_issues = list(repair_result.get("repair_patch_issues") or [])
+        if patch_issues:
+            if full_rewrite_used:
+                break
+            repaired_body, rewrite_result = rewrite_daily_pdf_body(
+                body,
+                report_date=yesterday,
+                history=history,
+                config=config,
+                source_messages=source_messages,
+                issues=issues,
+                audit_feedback=cumulative_daily_pdf_audit_feedback(audit_history),
+            )
+            repair_results.append(rewrite_result)
+            full_rewrite_used = True
+            if not repaired_body or repaired_body == body:
+                break
+            repair_suffix = "reauthored"
+        else:
+            repair_suffix = (
+                "repaired" if repair_pass == 0 else f"repaired-{repair_pass + 1}"
+            )
+        body = repaired_body
         (out_dir / f"{artifact_stem}.{repair_suffix}.texbody").write_text(
             body,
             encoding="utf-8",
@@ -1264,6 +1506,7 @@ clarify recurring needs and terminology; do not replace the previous-day source)
         "semantic_audit_history": audit_history,
         "repair_patch_history": [
             {
+                "strategy": repair.get("repair_strategy", "section_patch"),
                 "patch_count": repair.get("repair_patch_count", 0),
                 "issues": repair.get("repair_patch_issues", []),
             }
@@ -1299,6 +1542,8 @@ clarify recurring needs and terminology; do not replace the previous-day source)
     state["pending_daily_pdf"] = {
         "date": yesterday,
         "pdf": str(pdf),
+        "quality": str(quality_path),
+        "pdf_identity": quality["pdf_identity"],
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     save_state(state)
@@ -1312,6 +1557,8 @@ clarify recurring needs and terminology; do not replace the previous-day source)
     return {
         "date": yesterday,
         "pdf": str(pdf),
+        "quality": str(quality_path),
+        "pdf_identity": quality["pdf_identity"],
         "status": (
             "sent_verified_recovered"
             if already_delivered

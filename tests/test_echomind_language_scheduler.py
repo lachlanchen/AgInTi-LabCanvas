@@ -11,10 +11,40 @@ from agentic_tools.wechat_gui_agent.scripts import echomind_language_scheduler a
 
 
 class EchoMindLanguageSchedulerTests(unittest.TestCase):
+    def write_accepted_daily_pdf_quality(
+        self,
+        pdf: Path,
+        *,
+        report_date: str,
+    ) -> Path:
+        quality_path = scheduler.daily_pdf_quality_path(pdf)
+        quality_path.write_text(
+            json.dumps(
+                {
+                    "status": "accepted",
+                    "report_date": report_date,
+                    "contract_issues": [],
+                    "semantic_audit": {
+                        "accepted": True,
+                        "scores": {
+                            dimension: 4
+                            for dimension in scheduler.DAILY_PDF_AUDIT_DIMENSIONS
+                        },
+                        "critical_issues": [],
+                        "revision_instructions": [],
+                    },
+                    "pdf_identity": scheduler.file_transport_identity(pdf),
+                }
+            ),
+            encoding="utf-8",
+        )
+        return quality_path
+
     def test_default_interval_is_six_hours(self) -> None:
         self.assertEqual(scheduler.INTERVAL, 21_600)
         self.assertEqual(scheduler.PERIODIC_MODEL, "gpt-5.3-codex-spark")
         self.assertEqual(scheduler.DAILY_PDF_MAX_REPAIR_PASSES, 7)
+        self.assertEqual(scheduler.DAILY_PDF_LONGITUDINAL_CHAR_BUDGET, 6000)
 
     def test_restart_waits_for_remaining_interval(self) -> None:
         state = {"last_run_at": "2026-07-22T07:02:37+00:00"}
@@ -71,6 +101,17 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         self.assertIn("\\usepackage{amsmath}", document)
         self.assertIn("IPA: /tɛst/", document)
 
+    def test_normalize_latex_body_unwraps_machine_response_json(self) -> None:
+        wrapped = json.dumps(
+            {"response": r"\section*{Lesson Focus} 内容"},
+            ensure_ascii=False,
+        )
+
+        self.assertEqual(
+            scheduler.normalize_latex_body(wrapped),
+            r"\section*{Lesson Focus} 内容",
+        )
+
     def test_exact_language_history_falls_back_to_transport_mirror(self) -> None:
         mirror_row = mock.Mock(source_id=-8, body="预约", created_at=datetime.now(timezone.utc))
         with (
@@ -86,6 +127,63 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
         self.assertEqual(rows, [mirror_row])
         mirror.assert_called_once()
         memory.assert_not_called()
+
+    def test_previous_day_source_excludes_outbound_artifact_filenames(self) -> None:
+        target = datetime(2026, 8, 25, 12, 0, tzinfo=scheduler.LOCAL_TZ)
+        lesson = mock.Mock(
+            direction="outbound",
+            body="中文：别担心。 English: Don't worry. 日本語：心配しないで。",
+            created_at=target,
+        )
+        prior_pdf = mock.Mock(
+            direction="outbound",
+            body="echomind-language-review-2026-08-24.pdf",
+            created_at=target,
+        )
+        inbound_filename = mock.Mock(
+            direction="inbound",
+            body="learner-notes.pdf",
+            created_at=target,
+        )
+        with mock.patch.object(
+            scheduler,
+            "exact_chat_language_history",
+            return_value=[lesson, prior_pdf, inbound_filename],
+        ):
+            rows = scheduler.previous_day_language_messages(
+                {"chat_name": "EchoMind"},
+                "2026-08-25",
+            )
+
+        self.assertEqual(rows, [lesson, inbound_filename])
+
+    def test_longitudinal_daily_context_can_omit_old_exact_excerpts(self) -> None:
+        with (
+            mock.patch.object(
+                scheduler,
+                "exact_chat_language_history",
+                return_value=[mock.Mock()],
+            ),
+            mock.patch.object(
+                scheduler,
+                "build_context_from_messages",
+                return_value={
+                    "full_memory": "bounded learner profile",
+                    "snapshot": "bounded learner profile\nold exact examples",
+                },
+            ) as build,
+        ):
+            context = scheduler.long_term_language_context(
+                {"chat_name": "EchoMind"},
+                "recurring learner needs",
+                char_budget=6000,
+                model="gpt-5.6-sol",
+                role="daily",
+                include_exact_excerpts=False,
+            )
+
+        self.assertEqual(context, "bounded learner profile")
+        self.assertEqual(build.call_args.kwargs["char_budget"], 6000)
 
     def test_daily_pdf_quality_rejects_source_note_and_broken_ruby_inflection(self) -> None:
         source = [
@@ -194,6 +292,9 @@ Romaji: Nodo ga itai node, ashita no gozen ni isha no yoyaku o shitai desu.
         )
 
     def test_daily_pdf_semantic_audit_requires_all_quality_dimensions(self) -> None:
+        self.assertIn("source_specificity", scheduler.DAILY_PDF_AUDIT_DIMENSIONS)
+        self.assertIn("coherence", scheduler.DAILY_PDF_AUDIT_DIMENSIONS)
+        self.assertIn("reader_value", scheduler.DAILY_PDF_AUDIT_DIMENSIONS)
         accepted = {
             "accepted": True,
             "scores": {
@@ -251,6 +352,42 @@ Romaji: Nodo ga itai node, ashita no gozen ni isha no yoyaku o shitai desu.
         self.assertIn(
             "contains_document_title_command",
             scheduler.daily_pdf_contract_issues(body),
+        )
+
+    def test_daily_pdf_contract_rejects_invalid_reading_commands(self) -> None:
+        body = (
+            r"\section*{Lesson Focus / 学习重点 / 学習ポイント} "
+            r"\section*{Core Examples / 核心例句 / 基本例} "
+            r"\ruby{準備}{junbi} \ruby{漢字}{かな} \textipa{test} "
+            r"\section*{Grammar and Usage / 语法与用法 / 文法と用法} "
+            r"\section*{Vocabulary and Pronunciation / 词汇与发音 / 語彙と発音} "
+            r"\section*{Common Mistakes / 常见错误 / よくある間違い} "
+            r"\section*{Practice and Answers / 练习与答案 / 練習と解答} "
+            "Romaji: junbi. Pinyin: zhǔnbèi. "
+            + ("useful explanation " * 300)
+        )
+
+        issues = scheduler.daily_pdf_contract_issues(body)
+
+        self.assertIn("contains_textipa_command", issues)
+        self.assertIn("contains_ruby_placeholder", issues)
+        self.assertIn("ruby_reading_uses_latin_letters", issues)
+
+    def test_global_quality_failures_choose_full_rewrite(self) -> None:
+        self.assertTrue(
+            scheduler.daily_pdf_requires_full_rewrite(
+                ["too_shallow", "semantic_reader_value_below_standard"]
+            )
+        )
+        self.assertTrue(
+            scheduler.daily_pdf_requires_full_rewrite(
+                ["missing_section_core_examples", "missing_section_grammar_usage"]
+            )
+        )
+        self.assertFalse(
+            scheduler.daily_pdf_requires_full_rewrite(
+                ["suspected_japanese_inflection_typo"]
+            )
         )
 
     def test_daily_pdf_contract_rejects_padding_beyond_maximum(self) -> None:
@@ -370,6 +507,34 @@ Corrected section.
         prompt = agent.call_args.args[0]
         self.assertIn("Return ONLY a <patches> block", prompt)
         self.assertIn("===== SECTION 2 =====", prompt)
+
+    def test_daily_pdf_reauthor_uses_source_and_reader_value_contract(self) -> None:
+        replacement = r"\section*{Lesson Focus / 学习重点 / 学習ポイント} New body."
+        with mock.patch.object(
+            scheduler,
+            "run_agent_session",
+            return_value={
+                "message": replacement,
+                "backend": "codex",
+                "model": "gpt-5.6-sol",
+            },
+        ) as agent:
+            body, result = scheduler.rewrite_daily_pdf_body(
+                "rejected body",
+                report_date="2026-08-24",
+                history="exact source situation",
+                config={"agent_fallbacks": {}},
+                source_messages=[mock.Mock(body="source")],
+                issues=["semantic_reader_value_below_standard"],
+                audit_feedback={"current": {"accepted": False}},
+            )
+
+        self.assertEqual(body, replacement)
+        self.assertEqual(result["repair_strategy"], "full_rewrite")
+        prompt = agent.call_args.args[0]
+        self.assertIn("exact previous-day evidence", prompt)
+        self.assertIn("durable reader value", prompt)
+        self.assertIn("exact source situation", prompt)
 
     def test_periodic_lesson_contract_rejects_clipping_prone_output(self) -> None:
         oversized = ("一句有用的三语课程。" * 300) + "\n\n不应到达这里。"
@@ -608,10 +773,15 @@ Corrected section.
             priority_path = tmp_path / "priority.json"
             pdf = tmp_path / "review.pdf"
             pdf.write_bytes(b"%PDF-1.4\n")
+            quality = self.write_accepted_daily_pdf_quality(
+                pdf,
+                report_date="2026-07-22",
+            )
             state = {
                 "pending_daily_pdf": {
                     "date": "2026-07-22",
                     "pdf": str(pdf),
+                    "quality": str(quality),
                 }
             }
             config = {"chat_name": "EchoMind"}
@@ -650,10 +820,15 @@ Corrected section.
             priority_path = tmp_path / "priority.json"
             pdf = tmp_path / "review.pdf"
             pdf.write_bytes(b"%PDF-1.4\n")
+            quality = self.write_accepted_daily_pdf_quality(
+                pdf,
+                report_date="2026-07-22",
+            )
             state = {
                 "pending_daily_pdf": {
                     "date": "2026-07-22",
                     "pdf": str(pdf),
+                    "quality": str(quality),
                 }
             }
             with (
@@ -685,6 +860,83 @@ Corrected section.
             stored["last_daily_pdf_attempt_at"],
             "2026-07-23T06:05:00+08:00",
         )
+
+    def test_rejected_pending_daily_pdf_is_never_delivered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_path = tmp_path / "state.json"
+            pdf = tmp_path / "review.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n")
+            quality = scheduler.daily_pdf_quality_path(pdf)
+            quality.write_text(
+                json.dumps(
+                    {
+                        "status": "content_rejected",
+                        "report_date": "2026-07-22",
+                        "contract_issues": ["semantic_reader_value_below_standard"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = {
+                "pending_daily_pdf": {
+                    "date": "2026-07-22",
+                    "pdf": str(pdf),
+                    "quality": str(quality),
+                }
+            }
+            with (
+                mock.patch.object(scheduler, "STATE", state_path),
+                mock.patch.object(scheduler, "send_file") as send,
+                mock.patch.object(
+                    scheduler,
+                    "run_agent_session",
+                    side_effect=RuntimeError("regeneration started"),
+                ),
+                mock.patch.object(
+                    scheduler,
+                    "previous_day_language_messages",
+                    return_value=[],
+                ),
+                mock.patch.object(
+                    scheduler,
+                    "long_term_language_context",
+                    return_value="",
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "regeneration started"):
+                    scheduler.run_daily_pdf(
+                        {"chat_name": "EchoMind", "agent_fallbacks": {}},
+                        state,
+                        now=datetime(2026, 7, 23, 6, 5, tzinfo=scheduler.LOCAL_TZ),
+                        force=True,
+                    )
+                stored = scheduler.load_state()
+
+        send.assert_not_called()
+        self.assertNotIn("pending_daily_pdf", stored)
+        self.assertIn(
+            "pending_pdf_quality_not_accepted",
+            stored["last_rejected_pending_daily_pdf"]["issues"],
+        )
+
+    def test_accepted_pending_daily_pdf_rejects_content_identity_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf = Path(tmp) / "review.pdf"
+            pdf.write_bytes(b"%PDF-1.4\noriginal")
+            quality = self.write_accepted_daily_pdf_quality(
+                pdf,
+                report_date="2026-07-22",
+            )
+            pdf.write_bytes(b"%PDF-1.4\nchanged")
+
+            issues = scheduler.accepted_daily_pdf_issues(
+                pdf,
+                report_date="2026-07-22",
+                quality_path=quality,
+            )
+
+        self.assertIn("pending_pdf_identity_mismatch", issues)
 
     def test_priority_marker_is_visible_during_scheduled_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
