@@ -238,6 +238,40 @@ The source logs contain no recorded conversation.
         self.assertFalse(agent.call_args.kwargs["reuse"])
         self.assertIn("预约 appointment 予約", agent.call_args.args[0])
 
+    def test_daily_pdf_author_uses_document_quality_route(self) -> None:
+        authored = r"\section*{Lesson Focus / 学习重点 / 学習ポイント} Useful body."
+        config = {
+            "daily_pdf_quality_backend": "codex",
+            "daily_pdf_quality_model": "gpt-5.6-sol",
+            "daily_pdf_quality_effort": "high",
+            "agent_fallbacks": {"fallback_to_aginti": False},
+        }
+        with mock.patch.object(
+            scheduler,
+            "run_agent_session",
+            return_value={
+                "message": authored,
+                "backend": "codex",
+                "model": "gpt-5.6-sol",
+            },
+        ) as agent:
+            body, result = scheduler.author_daily_pdf_body(
+                "Write the complete source-grounded tutorial.",
+                config=config,
+            )
+
+        self.assertEqual(body, authored)
+        self.assertEqual(result["backend"], "codex")
+        self.assertEqual(agent.call_args.kwargs["backend"], "codex")
+        self.assertEqual(agent.call_args.kwargs["model"], "gpt-5.6-sol")
+        self.assertEqual(agent.call_args.kwargs["reasoning_effort"], "high")
+        self.assertEqual(agent.call_args.kwargs["role"], "daily_language_pdf_author")
+        self.assertFalse(agent.call_args.kwargs["reuse"])
+        self.assertEqual(
+            agent.call_args.kwargs["backend_config"]["agent_fallbacks"],
+            {"fallback_to_aginti": False},
+        )
+
     def test_daily_pdf_quality_allows_corrections_but_keeps_source_coverage(self) -> None:
         source = mock.Mock(
             body=(
@@ -587,6 +621,48 @@ Reading detail with corrected pinyin and romaji. Reading detail with corrected p
         self.assertGreater(len(repaired), 500)
         self.assertIn("corrected pinyin and romaji", repaired)
         self.assertEqual(result["repair_patch_issues"], [])
+
+    def test_daily_pdf_repair_reauthors_instead_of_expanding_above_target(self) -> None:
+        body = "\n\n".join(
+            [
+                "\\section*{Section 1}\n" + ("Useful material. " * 20),
+                "\\section*{Section 2}\n" + ("Focused practice. " * 20),
+            ]
+        )
+        replacement = "Expanded local checklist material. " * 30
+        patch_response = f"""<patches>
+<replace section="2">
+\\section*{{Section 2}}
+{replacement}
+</replace>
+</patches>"""
+        with (
+            mock.patch.object(scheduler, "DAILY_PDF_MIN_BODY_CHARS", 100),
+            mock.patch.object(scheduler, "DAILY_PDF_TARGET_MAX_BODY_CHARS", 500),
+            mock.patch.object(scheduler, "DAILY_PDF_MAX_BODY_CHARS", 2000),
+            mock.patch.object(
+                scheduler,
+                "run_agent_session",
+                return_value={"message": patch_response, "backend": "codex"},
+            ),
+        ):
+            repaired, result = scheduler.repair_daily_pdf_body(
+                body,
+                report_date="2026-08-24",
+                history="source evidence",
+                config={"agent_fallbacks": {}},
+                source_messages=[mock.Mock(body="source evidence")],
+                issues=["semantic_concision_below_standard"],
+                audit_feedback={"revision_instructions": ["Remove repetition."]},
+            )
+
+        self.assertEqual(repaired, scheduler.normalize_latex_body(body))
+        self.assertIn(
+            "repair_patch_worsened_above_target",
+            result["repair_patch_issues"],
+        )
+        self.assertTrue(result["repair_candidate_above_target"])
+        self.assertFalse(result["repair_candidate_improved"])
 
     def test_daily_pdf_reauthor_uses_source_and_reader_value_contract(self) -> None:
         replacement = r"\section*{Lesson Focus / 学习重点 / 学習ポイント} New body."

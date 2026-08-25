@@ -657,7 +657,7 @@ def apply_daily_pdf_section_patches(
 
 
 def daily_pdf_quality_backend(config: dict) -> str:
-    """Use an explicitly configured specialist editor without changing the writer."""
+    """Return the configured specialist route for the complete PDF pipeline."""
 
     return str(
         config.get("daily_pdf_quality_backend")
@@ -676,6 +676,24 @@ def daily_pdf_quality_effort(config: dict) -> str:
 
 def daily_pdf_audit_effort(config: dict) -> str:
     return str(config.get("daily_pdf_audit_effort") or DAILY_PDF_AUDIT_EFFORT).strip()
+
+
+def author_daily_pdf_body(prompt: str, *, config: dict) -> tuple[str, dict]:
+    """Draft with the document-quality route instead of the lightweight chat route."""
+
+    result = run_agent_session(
+        prompt,
+        backend=daily_pdf_quality_backend(config),
+        chat_name="EchoMind",
+        role="daily_language_pdf_author",
+        model=daily_pdf_quality_model(config),
+        reasoning_effort=daily_pdf_quality_effort(config),
+        sandbox="read-only",
+        timeout_seconds=900,
+        reuse=False,
+        backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})},
+    )
+    return normalize_latex_body(str(result.get("message") or "")), result
 
 
 def _source_lesson_anchors(body: str) -> dict[str, str]:
@@ -1204,10 +1222,15 @@ Current indexed sections:
         current_chars = len(normalized_body)
         materially_shorter = candidate_chars <= int(current_chars * 0.9)
         exceeds_hard_ceiling = candidate_chars > DAILY_PDF_MAX_BODY_CHARS
+        worsened_above_target = (
+            candidate_chars > target_max_chars and candidate_chars > current_chars
+        )
         if exceeds_hard_ceiling and not (
             current_chars > DAILY_PDF_MAX_BODY_CHARS and materially_shorter
         ):
             patch_issues.append("repair_patch_exceeds_hard_ceiling")
+        if worsened_above_target:
+            patch_issues.append("repair_patch_worsened_above_target")
     else:
         candidate = normalized_body
     result["repair_patch_issues"] = list(dict.fromkeys(patch_issues))
@@ -1415,8 +1438,7 @@ Bounded longitudinal learner profile from the complete exact-chat history (use
 only to personalize explanation; do not quote it or replace the previous-day source):
 {longitudinal}
 """
-    result = run_agent_session(prompt, backend=select_agent_backend(config), chat_name="EchoMind", role="daily_language_pdf", model=DAILY_PDF_MODEL, reasoning_effort=DAILY_PDF_EFFORT, sandbox="read-only", timeout_seconds=900, reuse=False, backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})})
-    draft = normalize_latex_body(str(result.get("message") or ""))
+    draft, result = author_daily_pdf_body(prompt, config=config)
     if not draft:
         raise RuntimeError("daily EchoMind PDF agent returned no LaTeX body")
     (out_dir / f"{artifact_stem}.draft.texbody").write_text(draft, encoding="utf-8")
