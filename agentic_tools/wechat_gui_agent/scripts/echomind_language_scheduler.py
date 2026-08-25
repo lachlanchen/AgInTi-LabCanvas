@@ -75,13 +75,13 @@ DAILY_PDF_AUDIT_EFFORT = os.environ.get(
     "ECHOMIND_DAILY_PDF_AUDIT_EFFORT", "xhigh"
 )
 DAILY_PDF_MIN_BODY_CHARS = int(
-    os.environ.get("ECHOMIND_DAILY_PDF_MIN_BODY_CHARS", "5000")
+    os.environ.get("ECHOMIND_DAILY_PDF_MIN_BODY_CHARS", "3500")
 )
 DAILY_PDF_MAX_BODY_CHARS = int(
-    os.environ.get("ECHOMIND_DAILY_PDF_MAX_BODY_CHARS", "13000")
+    os.environ.get("ECHOMIND_DAILY_PDF_MAX_BODY_CHARS", "10000")
 )
 DAILY_PDF_TARGET_MAX_BODY_CHARS = int(
-    os.environ.get("ECHOMIND_DAILY_PDF_TARGET_MAX_BODY_CHARS", "10000")
+    os.environ.get("ECHOMIND_DAILY_PDF_TARGET_MAX_BODY_CHARS", "8000")
 )
 DAILY_PDF_LONGITUDINAL_CHAR_BUDGET = int(
     os.environ.get("ECHOMIND_DAILY_PDF_LONGITUDINAL_CHAR_BUDGET", "6000")
@@ -1009,6 +1009,13 @@ Reject the tutorial for any material problem in:
 - reader value: the PDF must deepen the concise chat teaching with reusable choices, register, pronunciation, and transfer insight rather than restating it at greater length;
 - unsupported invented dialogue, repetition, padding, textbook boilerplate, or shallow section-filling.
 
+Reading completeness is per distinct taught expression, not per repeated
+occurrence. A full Chinese or Japanese example must have one complete pinyin or
+furigana-plus-romaji rendering, and a newly introduced standalone form must be
+readable once. Do not require the same reading annotation again when an exercise
+or answer deliberately reuses an already annotated expression; reject that
+duplication as padding when it adds no new pronunciation insight.
+
 The tutorial also has this editorial structure contract:
 {outline}
 
@@ -1075,6 +1082,7 @@ Quality contract:
 - The PDF must add durable reader value beyond the concise chat response: explain choices a learner can reuse, not merely expand the same sentence into more prose.
 - Check every Chinese sentence, full tone-marked pinyin line, English phrase, Japanese spelling/conjugation, furigana, and romaji character by character. Repair accidental duplicated kana and mismatched readings.
 - Use at least four accurate \\ruby{{漢字}}{{かな}} expressions. Romaji lines must use Latin letters, never kana. Keep pinyin and romaji distinct and complete.
+- Give each distinct full Chinese and Japanese teaching example one complete reading. Do not repeat identical pinyin, furigana, or romaji in later exercises and answers merely to make the report look complete.
 - Include explicit Grammar / 语法 / 文法 and Vocabulary / 词汇 / 語彙 sections, realistic common mistakes, and exercises with answers. Examples must be natural and semantically aligned, not literal translations.
 - Aim for {DAILY_PDF_MIN_BODY_CHARS} to {DAILY_PDF_TARGET_MAX_BODY_CHARS} meaningful LaTeX-body characters; {DAILY_PDF_MAX_BODY_CHARS} is a hard ceiling, not a target. Prefer a shorter complete lesson over padding. Add depth through usage contrasts, register, collocations, pronunciation, and answer explanations, not filler. Do not add a document preamble, \\maketitle, \\title, \\author, \\date, Markdown, private paths, model names, logs, or unsupported dialogue.
 
@@ -1157,6 +1165,11 @@ the repetition identified by the audit.
 
 Use the exact previous-day evidence below as topics and learner material, not as unquestionable language authority. Preserve each scenario and intended meaning. Correct awkward or inaccurate source language and explain meaningful corrections instead of reproducing or defending errors. Keep the report linguistically correct and complete in Chinese, English, and Japanese, with full tone-marked pinyin, accurate Japanese \\ruby{{漢字}}{{かな}} plus Latin-letter romaji, grammar and vocabulary, realistic mistakes, and nonduplicative exercises with explained answers. Do not discuss source logs or the editing process, and do not include document-level commands such as \\maketitle, \\title, \\author, or \\date.
 
+Annotate each distinct Chinese or Japanese teaching expression completely once.
+When Practice or Answers reuses an expression already annotated above, do not
+repeat the same pinyin, furigana, or romaji unless pronunciation itself is being
+tested.
+
 Required editorial outline:
 {outline}
 
@@ -1187,13 +1200,21 @@ Current indexed sections:
         candidate = apply_daily_pdf_section_patches(normalized_body, patches)
         if candidate == normalized_body:
             patch_issues.append("repair_patch_no_change")
-        if len(candidate) > target_max_chars:
-            patch_issues.append("repair_patch_exceeds_target_ceiling")
+        candidate_chars = len(candidate)
+        current_chars = len(normalized_body)
+        materially_shorter = candidate_chars <= int(current_chars * 0.9)
+        exceeds_hard_ceiling = candidate_chars > DAILY_PDF_MAX_BODY_CHARS
+        if exceeds_hard_ceiling and not (
+            current_chars > DAILY_PDF_MAX_BODY_CHARS and materially_shorter
+        ):
+            patch_issues.append("repair_patch_exceeds_hard_ceiling")
     else:
         candidate = normalized_body
     result["repair_patch_issues"] = list(dict.fromkeys(patch_issues))
     result["repair_patch_count"] = len(patches)
     result["repair_candidate_chars"] = len(candidate)
+    result["repair_candidate_above_target"] = len(candidate) > target_max_chars
+    result["repair_candidate_improved"] = len(candidate) < len(normalized_body)
     if patch_issues:
         return normalized_body, result
     return candidate, result
@@ -1224,6 +1245,7 @@ The new report must:
 - teach one clear learner problem through two to four source-specific aligned examples;
 - stay recognizably grounded in every useful previous-day situation while correcting source errors independently;
 - use natural Chinese with complete tone-marked pinyin, natural English, and natural Japanese with accurate \\ruby{{漢字}}{{かな}} and Latin-letter romaji;
+- annotate each distinct full example completely once, without duplicating the same readings in exercises or answers;
 - explain reusable choices in grammar, register, collocation, pronunciation, and cross-language transfer;
 - make each section perform one distinct teaching function and make the exercises apply the earlier examples;
 - add durable reader value beyond a concise chat answer without padding, boilerplate, repeated corrections, invented dialogue, or process commentary;
@@ -1509,6 +1531,13 @@ only to personalize explanation; do not quote it or replace the previous-day sou
                 "strategy": repair.get("repair_strategy", "section_patch"),
                 "patch_count": repair.get("repair_patch_count", 0),
                 "issues": repair.get("repair_patch_issues", []),
+                "candidate_chars": repair.get("repair_candidate_chars", 0),
+                "candidate_above_target": repair.get(
+                    "repair_candidate_above_target", False
+                ),
+                "candidate_improved": repair.get(
+                    "repair_candidate_improved", False
+                ),
             }
             for repair in repair_results
         ],

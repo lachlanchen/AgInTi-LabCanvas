@@ -20,6 +20,14 @@ DEFAULT_MODEL_POLICY: dict[str, Any] = {
             "deepseek": "deepseek-v4-flash",
             "localllm": "localllm-fast",
         },
+        "provider_models_by_effort": {
+            "localllm": {
+                "low": "localllm-fast",
+                "medium": "localllm-deep",
+                "high": "localllm-deep",
+                "xhigh": "localllm-deep",
+            }
+        },
         "session_policy": "resume one durable session per conversation and role",
     },
     "chat": {"model": "auto-code-review", "reasoning_effort": "low"},
@@ -52,6 +60,14 @@ DEFAULT_BACKEND_SETTINGS: dict[str, Any] = {
         "provider_models": {
             "deepseek": "deepseek-v4-flash",
             "localllm": "localllm-fast",
+        },
+        "provider_models_by_effort": {
+            "localllm": {
+                "low": "localllm-fast",
+                "medium": "localllm-deep",
+                "high": "localllm-deep",
+                "xhigh": "localllm-deep",
+            }
         },
         "task_profile": "auto",
         "image_provider": "grsai",

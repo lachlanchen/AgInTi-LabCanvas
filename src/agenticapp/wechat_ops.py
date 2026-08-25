@@ -1446,6 +1446,14 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "aginti": {
             "provider_chain": ["deepseek", "localllm"],
             "provider_models": {"deepseek": "deepseek-v4-flash", "localllm": "localllm-fast"},
+            "provider_models_by_effort": {
+                "localllm": {
+                    "low": "localllm-fast",
+                    "medium": "localllm-deep",
+                    "high": "localllm-deep",
+                    "xhigh": "localllm-deep",
+                }
+            },
             "machine_mode": True,
             "task_profile": "chatops",
             "timeout_seconds": 3600,
@@ -1500,6 +1508,14 @@ def cmd_init_config(args: argparse.Namespace) -> int:
         "aginti": {
             "provider_chain": ["deepseek", "localllm"],
             "provider_models": {"deepseek": "deepseek-v4-flash", "localllm": "localllm-fast"},
+            "provider_models_by_effort": {
+                "localllm": {
+                    "low": "localllm-fast",
+                    "medium": "localllm-deep",
+                    "high": "localllm-deep",
+                    "xhigh": "localllm-deep",
+                }
+            },
             "machine_mode": True,
             "task_profile": "chatops",
             "timeout_seconds": 3600,

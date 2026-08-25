@@ -1427,6 +1427,23 @@ def _aginti_provider_model(settings: dict[str, Any], provider: str, *, policy: d
     )
     if requested not in {"", "auto", "provider-default"} and compatible:
         return requested
+    effort = str((policy or {}).get("reasoning_effort") or "low").strip().casefold()
+    if effort in {"max", "ultra"}:
+        effort = "xhigh"
+    by_effort = (
+        settings.get("provider_models_by_effort")
+        if isinstance(settings.get("provider_models_by_effort"), dict)
+        else {}
+    )
+    provider_efforts = by_effort.get(provider)
+    provider_efforts = provider_efforts if isinstance(provider_efforts, dict) else {}
+    effort_model = str(
+        provider_efforts.get(effort)
+        or provider_efforts.get("default")
+        or ""
+    ).strip()
+    if effort_model:
+        return effort_model
     models = settings.get("provider_models") if isinstance(settings.get("provider_models"), dict) else {}
     return str(models.get(provider) or "").strip()
 

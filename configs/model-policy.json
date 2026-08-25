@@ -10,6 +10,14 @@
       "deepseek": "deepseek-v4-flash",
       "localllm": "localllm-fast"
     },
+    "provider_models_by_effort": {
+      "localllm": {
+        "low": "localllm-fast",
+        "medium": "localllm-deep",
+        "high": "localllm-deep",
+        "xhigh": "localllm-deep"
+      }
+    },
     "session_policy": "resume one durable session per conversation and role"
   },
   "chat": {
@@ -33,6 +41,7 @@
       "default": 32768,
       "localllm": 32768,
       "localllm-fast": 32768,
+      "localllm-deep": 32768,
       "deepseek": 65536,
       "deepseek-v4-flash": 65536,
       "codex": 114688,

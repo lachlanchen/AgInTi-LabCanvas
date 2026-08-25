@@ -56,6 +56,10 @@ class WorkspaceAgentTests(unittest.TestCase):
         policy = load_model_policy(ROOT / "configs" / "model-policy.json")
         self.assertEqual(policy["primary_backend"], "aginti")
         self.assertEqual(policy["aginti"]["provider_chain"], ["deepseek", "localllm"])
+        self.assertEqual(
+            policy["aginti"]["provider_models_by_effort"]["localllm"]["medium"],
+            "localllm-deep",
+        )
         self.assertEqual(policy["chat"], {"model": "auto-code-review", "reasoning_effort": "low"})
         self.assertEqual(policy["task"], {"model": "auto-code-review", "reasoning_effort": "medium"})
         self.assertEqual(policy["fallback"]["chat"]["model"], "gpt-5.6-sol")
@@ -611,7 +615,7 @@ class WorkspaceAgentTests(unittest.TestCase):
             ):
                 result = run_aginti_turn(
                     "Continue one exact task",
-                    policy={"timeout_seconds": 30},
+                    policy={"timeout_seconds": 30, "reasoning_effort": "medium"},
                     conversation_id="fallback-chat",
                     task_dir=storage / "agent" / "tasks" / "fallback",
                     storage_dir=storage,
@@ -625,7 +629,7 @@ class WorkspaceAgentTests(unittest.TestCase):
         self.assertEqual(commands[0][commands[0].index("--provider") + 1], "deepseek")
         self.assertEqual(commands[1][commands[1].index("--provider") + 1], "localllm")
         self.assertEqual(commands[0][commands[0].index("--model") + 1], "deepseek-v4-flash")
-        self.assertEqual(commands[1][commands[1].index("--model") + 1], "localllm-fast")
+        self.assertEqual(commands[1][commands[1].index("--model") + 1], "localllm-deep")
         self.assertEqual(inputs[0], "Continue one exact task")
         self.assertIn("Provider handoff", inputs[1])
         self.assertNotIn("Continue one exact task", inputs[1])

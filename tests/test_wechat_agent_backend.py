@@ -162,6 +162,76 @@ class WeChatAgentBackendTests(unittest.TestCase):
             "gpt-5.6-sol",
         )
 
+    def test_aginti_provider_model_uses_effort_tier_and_preserves_explicit_model(self) -> None:
+        backend = load_backend()
+        config = {
+            "provider_models": {"localllm": "localllm-fast"},
+            "provider_models_by_effort": {
+                "localllm": {
+                    "low": "localllm-fast",
+                    "medium": "localllm-deep",
+                    "high": "localllm-deep",
+                    "xhigh": "localllm-deep",
+                }
+            },
+        }
+
+        self.assertEqual(
+            backend.aginti_provider_model(
+                "localllm",
+                requested_model="provider-default",
+                reasoning_effort="low",
+                backend_config=config,
+            ),
+            "localllm-fast",
+        )
+        self.assertEqual(
+            backend.aginti_provider_model(
+                "localllm",
+                requested_model="provider-default",
+                reasoning_effort="high",
+                backend_config=config,
+            ),
+            "localllm-deep",
+        )
+        self.assertEqual(
+            backend.aginti_provider_model(
+                "localllm",
+                requested_model="localllm-special",
+                reasoning_effort="high",
+                backend_config=config,
+            ),
+            "localllm-special",
+        )
+
+    def test_backend_config_inherits_effort_aware_provider_policy(self) -> None:
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as tmp:
+            policy_path = Path(tmp) / "model-policy.json"
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "aginti": {
+                            "provider_models_by_effort": {
+                                "localllm": {"medium": "localllm-deep"}
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(backend, "MODEL_POLICY_PATH", policy_path):
+                selected = backend.backend_specific_config(
+                    {"aginti": {"provider_chain": ["localllm"]}},
+                    "aginti",
+                    primary_backend="aginti",
+                )
+
+        self.assertEqual(
+            selected["provider_models_by_effort"]["localllm"]["medium"],
+            "localllm-deep",
+        )
+
     def test_emergency_codex_cutover_overrides_stored_backend_and_fallback(self) -> None:
         backend = load_backend()
         with mock.patch.dict(

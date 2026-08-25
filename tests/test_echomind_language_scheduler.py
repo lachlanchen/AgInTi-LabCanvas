@@ -508,6 +508,86 @@ Corrected section.
         self.assertIn("Return ONLY a <patches> block", prompt)
         self.assertIn("===== SECTION 2 =====", prompt)
 
+    def test_daily_pdf_repair_keeps_monotonic_compression_above_soft_target(self) -> None:
+        body = "\n\n".join(
+            f"\\section*{{Section {index}}}\n" + ("Original material. " * 45)
+            for index in range(1, 4)
+        )
+        replacement = "Compressed useful material. " * 15
+        patch_response = f"""<patches>
+<replace section="2">
+\\section*{{Section 2}}
+{replacement}
+</replace>
+<replace section="3">
+\\section*{{Section 3}}
+{replacement}
+</replace>
+</patches>"""
+        with (
+            mock.patch.object(scheduler, "DAILY_PDF_MIN_BODY_CHARS", 100),
+            mock.patch.object(scheduler, "DAILY_PDF_TARGET_MAX_BODY_CHARS", 1200),
+            mock.patch.object(scheduler, "DAILY_PDF_MAX_BODY_CHARS", 1800),
+            mock.patch.object(
+                scheduler,
+                "run_agent_session",
+                return_value={"message": patch_response, "backend": "codex"},
+            ),
+        ):
+            repaired, result = scheduler.repair_daily_pdf_body(
+                body,
+                report_date="2026-08-24",
+                history="source evidence",
+                config={"agent_fallbacks": {}},
+                source_messages=[mock.Mock(body="source evidence")],
+                issues=["too_verbose"],
+                audit_feedback={"revision_instructions": ["Remove repetition."]},
+            )
+
+        self.assertLess(len(repaired), len(body))
+        self.assertGreater(len(repaired), 1200)
+        self.assertEqual(result["repair_patch_issues"], [])
+        self.assertTrue(result["repair_candidate_above_target"])
+        self.assertTrue(result["repair_candidate_improved"])
+
+    def test_daily_pdf_repair_allows_accuracy_fix_within_hard_ceiling(self) -> None:
+        body = "\n\n".join(
+            [
+                "\\section*{Section 1}\n" + ("Useful material. " * 38),
+                "\\section*{Section 2}\n" + ("Reading detail. " * 38),
+            ]
+        )
+        patch_response = r"""<patches>
+<replace section="2">
+\section*{Section 2}
+Reading detail with corrected pinyin and romaji. Reading detail with corrected pronunciation evidence.
+</replace>
+</patches>"""
+        with (
+            mock.patch.object(scheduler, "DAILY_PDF_MIN_BODY_CHARS", 100),
+            mock.patch.object(scheduler, "DAILY_PDF_TARGET_MAX_BODY_CHARS", 500),
+            mock.patch.object(scheduler, "DAILY_PDF_MAX_BODY_CHARS", 1000),
+            mock.patch.object(
+                scheduler,
+                "run_agent_session",
+                return_value={"message": patch_response, "backend": "codex"},
+            ),
+        ):
+            repaired, result = scheduler.repair_daily_pdf_body(
+                body,
+                report_date="2026-08-24",
+                history="source evidence",
+                config={"agent_fallbacks": {}},
+                source_messages=[mock.Mock(body="source evidence")],
+                issues=["semantic_reading_accuracy_below_standard"],
+                audit_feedback={"revision_instructions": ["Correct the reading."]},
+            )
+
+        self.assertLessEqual(len(repaired), 1000)
+        self.assertGreater(len(repaired), 500)
+        self.assertIn("corrected pinyin and romaji", repaired)
+        self.assertEqual(result["repair_patch_issues"], [])
+
     def test_daily_pdf_reauthor_uses_source_and_reader_value_contract(self) -> None:
         replacement = r"\section*{Lesson Focus / 学习重点 / 学習ポイント} New body."
         with mock.patch.object(

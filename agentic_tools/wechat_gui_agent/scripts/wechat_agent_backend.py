@@ -487,6 +487,13 @@ def run_single_backend_attempt(
 def backend_specific_config(config: dict[str, Any], backend: str, *, primary_backend: str) -> dict[str, Any]:
     selected = normalize_backend(backend)
     merged: dict[str, Any] = {}
+    try:
+        policy = json.loads(MODEL_POLICY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        policy = {}
+    policy_backend = policy.get(selected) if isinstance(policy, dict) else None
+    if isinstance(policy_backend, dict):
+        merged.update(policy_backend)
     for key in ("_backends", "backends", "backend_configs"):
         container = config.get(key)
         if isinstance(container, dict):
@@ -1056,6 +1063,7 @@ def run_aginti_provider_once(
     command = aginti_command(
         model=model,
         role=role,
+        reasoning_effort=reasoning_effort,
         sandbox=sandbox,
         backend_config=backend_config,
         provider=provider,
@@ -1381,6 +1389,7 @@ def aginti_command(
     *,
     model: str,
     role: str,
+    reasoning_effort: str = "",
     sandbox: str,
     backend_config: dict[str, Any],
     provider: str = "",
@@ -1450,8 +1459,12 @@ def aginti_command(
         selected_provider = str(provider or aginti_provider_chain(backend_config)[0]).strip()
         if selected_provider:
             command.extend(["--provider", selected_provider])
-        provider_models = backend_config.get("provider_models") if isinstance(backend_config.get("provider_models"), dict) else {}
-        provider_model = str(provider_models.get(selected_provider) or "").strip()
+        provider_model = aginti_provider_model(
+            selected_provider,
+            requested_model=configured_model,
+            reasoning_effort=reasoning_effort,
+            backend_config=backend_config,
+        )
         if provider_model:
             command.extend(["--model", provider_model])
         if not bool(backend_config.get("allow_mcp", False)):
@@ -1464,6 +1477,45 @@ def aginti_command(
             )
         )
     return command
+
+
+def aginti_provider_model(
+    provider: str,
+    *,
+    requested_model: str,
+    reasoning_effort: str,
+    backend_config: dict[str, Any],
+) -> str:
+    """Resolve an explicit provider model without forcing fast models on real work."""
+
+    selected_provider = str(provider or "").strip().casefold()
+    requested = str(requested_model or "").strip()
+    compatible = (
+        (selected_provider == "openai" and (requested.startswith("gpt-") or requested == "auto-code-review"))
+        or (selected_provider == "deepseek" and requested.startswith("deepseek"))
+        or (selected_provider == "localllm" and requested.startswith("localllm"))
+    )
+    if requested not in {"", "auto", "provider-default", "aginti"} and compatible:
+        return requested
+
+    effort = str(reasoning_effort or "low").strip().casefold()
+    if effort in {"max", "ultra"}:
+        effort = "xhigh"
+    by_effort = backend_config.get("provider_models_by_effort")
+    by_effort = by_effort if isinstance(by_effort, dict) else {}
+    provider_efforts = by_effort.get(selected_provider)
+    provider_efforts = provider_efforts if isinstance(provider_efforts, dict) else {}
+    effort_model = str(
+        provider_efforts.get(effort)
+        or provider_efforts.get("default")
+        or ""
+    ).strip()
+    if effort_model:
+        return effort_model
+
+    provider_models = backend_config.get("provider_models")
+    provider_models = provider_models if isinstance(provider_models, dict) else {}
+    return str(provider_models.get(selected_provider) or "").strip()
 
 
 def strip_aginti_managed_args(args: list[str]) -> list[str]:
