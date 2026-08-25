@@ -1772,14 +1772,23 @@ def is_response_only_agent_role(role: str) -> bool:
     normalized = str(role or "").strip().casefold().replace("_", "-")
     if is_conversational_agent_role(normalized):
         return True
-    return normalized in {
+    exact_roles = {
         "career-daily",
+        "career-research",
         "completion-audit",
         "daily-language-pdf",
         "daily-organizer",
         "scheduled-language-editor",
         "scheduled-language-teacher",
-    } or normalized.startswith(("translate-", "translation-"))
+    }
+    role_families = (
+        "career-daily-",
+        "career-research-",
+        "daily-organizer-",
+        "translate-",
+        "translation-",
+    )
+    return normalized in exact_roles or normalized.startswith(role_families)
 
 
 def aginti_task_profile(role: str, backend_config: dict[str, Any]) -> str:

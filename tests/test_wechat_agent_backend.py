@@ -565,28 +565,37 @@ class WeChatAgentBackendTests(unittest.TestCase):
 
     def test_host_managed_content_role_uses_response_only_contract(self) -> None:
         backend = load_backend()
-        command = backend.aginti_command(
-            model="aginti",
-            role="career_daily",
-            sandbox="read-only",
-            backend_config={},
-        )
-        prompt = backend.aginti_prompt(
-            "Return the report body; the caller writes and compiles it.",
-            chat_name="career-daily-agent",
-            role="career_daily",
-            model="aginti",
-            reasoning_effort="medium",
-            sandbox="read-only",
-            backend_config={},
-        )
+        for role in (
+            "career_daily",
+            "career_research",
+            "career_research_repair",
+            "daily_organizer",
+            "daily_organizer_repair",
+            "daily_organizer_editor",
+        ):
+            with self.subTest(role=role):
+                command = backend.aginti_command(
+                    model="aginti",
+                    role=role,
+                    sandbox="read-only",
+                    backend_config={},
+                )
+                prompt = backend.aginti_prompt(
+                    "Return the report body; the caller writes and compiles it.",
+                    chat_name="career-daily-agent",
+                    role=role,
+                    model="aginti",
+                    reasoning_effort="medium",
+                    sandbox="read-only",
+                    backend_config={},
+                )
 
-        self.assertEqual(command[command.index("--task-profile") + 1], "chatops")
-        self.assertIn("--no-shell", command)
-        self.assertIn("--no-file-tools", command)
-        self.assertIn('"mode":"host-managed-response"', prompt)
-        self.assertIn("only LaTeX body text when it asks for a LaTeX body", prompt)
-        self.assertNotIn("For artifact work", prompt)
+                self.assertEqual(command[command.index("--task-profile") + 1], "chatops")
+                self.assertIn("--no-shell", command)
+                self.assertIn("--no-file-tools", command)
+                self.assertIn('"mode":"host-managed-response"', prompt)
+                self.assertIn("only LaTeX body text when it asks for a LaTeX body", prompt)
+                self.assertNotIn("For artifact work", prompt)
 
     def test_worker_role_defaults_to_general_aginti_profile(self) -> None:
         backend = load_backend()
