@@ -74,6 +74,50 @@ class WeChatHistoryRagTests(unittest.TestCase):
         self.assertEqual(payload["manifest"]["scanned_messages"], 301)
         self.assertIn("长期目标是把写作和开源软件结合", payload["snapshot"])
 
+    def test_wechat_mirror_history_recovers_text_without_transport_receipts(self) -> None:
+        mirror = Path(self.temp.name) / "mirror.sqlite"
+        with sqlite3.connect(mirror) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE chats (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE
+                );
+                CREATE TABLE messages (
+                    id INTEGER PRIMARY KEY,
+                    chat_id INTEGER NOT NULL,
+                    direction TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                INSERT INTO chats(id, name) VALUES (1, 'EchoMind');
+                """
+            )
+            rows = (
+                (1, "outbound", "中文：我想预约。 English: I would like to book. 日本語：予約したいです。", "2026-08-24T08:00:00"),
+                (2, "outbound", "中文：我想预约。 English: I would like to book. 日本語：予約したいです。", "2026-08-24T08:00:10"),
+                (3, "inbound", '<?xml version="1.0"?><msg><appmsg><title>lesson.pdf</title></appmsg></msg>', "2026-08-24T08:01:00"),
+                (4, "inbound", '[{"source":"a.jpg","target":"b.jpg","status":"copied"}]', "2026-08-24T08:02:00"),
+                (5, "outbound", "English: I reserved a table. 日本語：席を予約しました。", "2026-08-24T14:00:00"),
+            )
+            connection.executemany(
+                "INSERT INTO messages(id, chat_id, direction, body, created_at) VALUES (?, 1, ?, ?, ?)",
+                rows,
+            )
+
+        local_tz = timezone(timedelta(hours=8))
+        messages = self.module.load_wechat_mirror_history(
+            mirror,
+            ["EchoMind"],
+            naive_timezone=local_tz,
+        )
+
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0].recurrence, 2)
+        self.assertEqual(messages[0].created_at.utcoffset(), timedelta(hours=8))
+        self.assertTrue(all(message.source_id < 0 for message in messages))
+        self.assertNotIn("source", " ".join(message.body for message in messages))
+
     def test_retrieval_preserves_consecutive_message_context(self) -> None:
         when = datetime(2026, 8, 1, 10, 0, tzinfo=timezone.utc)
         self.insert("MEMO", "我想写一本关于实验工具与人的故事。", when)

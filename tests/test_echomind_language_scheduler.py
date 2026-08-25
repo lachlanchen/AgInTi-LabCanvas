@@ -67,7 +67,108 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
 
         self.assertNotIn("```", document)
         self.assertIn("\\usepackage{tipa}", document)
+        self.assertIn("\\usepackage{amsmath}", document)
         self.assertIn("IPA: /tɛst/", document)
+
+    def test_exact_language_history_falls_back_to_transport_mirror(self) -> None:
+        mirror_row = mock.Mock(source_id=-8, body="预约", created_at=datetime.now(timezone.utc))
+        with (
+            mock.patch.object(
+                scheduler,
+                "load_wechat_mirror_history",
+                return_value=[mirror_row],
+            ) as mirror,
+            mock.patch.object(scheduler, "load_history") as memory,
+        ):
+            rows = scheduler.exact_chat_language_history({"chat_name": "EchoMind"})
+
+        self.assertEqual(rows, [mirror_row])
+        mirror.assert_called_once()
+        memory.assert_not_called()
+
+    def test_daily_pdf_quality_rejects_source_note_and_broken_ruby_inflection(self) -> None:
+        source = [
+            mock.Mock(
+                body=(
+                    "中文：我想预约明天上午的医生。 English: I would like to book an appointment. "
+                    "日本語：明日の午前に医者の予約をしたいです。"
+                )
+            )
+        ]
+        body = r"""
+\section{Chinese 中文}
+Pinyin: Wǒ xiǎng yùyuē. Grammar 语法 Vocabulary 词汇 Common mistakes 易错 Practice 练习.
+\section{English}
+I would like to book an appointment.
+\section{Japanese 日本語}
+\ruby{起き}{お}きます。 Romaji: okimasu.
+The source logs contain no recorded conversation.
+""" + ("Useful explanation about the appointment and 预约. " * 120)
+
+        issues = scheduler.daily_pdf_contract_issues(body, source_messages=source)
+
+        self.assertIn("student_facing_source_process_note", issues)
+        self.assertIn("suspected_japanese_inflection_typo", issues)
+
+    def test_daily_pdf_editor_uses_high_effort_and_exact_source(self) -> None:
+        reviewed = r"\section{中文} Wǒ yào yùyuē. \section{English} booking. \section{日本語} \ruby{予約}{よやく}. Romaji."
+        with mock.patch.object(
+            scheduler,
+            "run_agent_session",
+            return_value={"message": reviewed, "backend": "aginti", "model": "deepseek"},
+        ) as agent:
+            body, result = scheduler.review_daily_pdf_body(
+                "draft",
+                report_date="2026-08-24",
+                history="预约 appointment 予約",
+                config={
+                    "agent_fallbacks": {},
+                    "daily_pdf_quality_backend": "codex",
+                    "daily_pdf_quality_model": "gpt-5.6-sol",
+                    "daily_pdf_quality_effort": "high",
+                },
+                source_messages=[mock.Mock(body="预约")],
+            )
+
+        self.assertEqual(body, reviewed)
+        self.assertEqual(result["backend"], "aginti")
+        self.assertEqual(agent.call_args.kwargs["role"], "daily_language_pdf_editor")
+        self.assertEqual(agent.call_args.kwargs["backend"], "codex")
+        self.assertEqual(agent.call_args.kwargs["model"], "gpt-5.6-sol")
+        self.assertEqual(agent.call_args.kwargs["reasoning_effort"], "high")
+        self.assertFalse(agent.call_args.kwargs["reuse"])
+        self.assertIn("预约 appointment 予約", agent.call_args.args[0])
+
+    def test_daily_pdf_quality_preserves_every_labeled_source_anchor(self) -> None:
+        source = mock.Mock(
+            body=(
+                "场景：预约。 中文：我喉咙痛，想预约一下明天上午的医生。 "
+                "拼音：Wǒ hóulóng tòng, xiǎng yùyuē yīxià míngtiān shàngwǔ de yīshēng. "
+                "English: I have a sore throat and I'd like to book a doctor's appointment for tomorrow morning. "
+                "(appointment /əˈpɔɪnt.mənt/) "
+                "日本語：喉（のど）が痛（いた）いので、明日（あした）の午前（ごぜん）に医者（いしゃ）の予約（よやく）をしたいです。 "
+                "Romaji: Nodo ga itai node, ashita no gozen ni isha no yoyaku o shitai desu. "
+                "对照：症状＋预约。"
+            )
+        )
+        body = r"""
+\section{Chinese 中文}
+我喉咙痛，想预约一下明天上午的医生。
+Pinyin: Wǒ hóulóng tòng, xiǎng yùyuē yīxià míngtiān shàngwǔ de yīshēng.
+\section{English}
+I have a sore throat and I'd like to book a doctor's appointment for tomorrow morning.
+Grammar. Vocabulary / 词汇 / 語彙. Common mistakes. Practice. Exercise.
+\section{Japanese 日本語}
+\ruby{喉}{のど}が\ruby{痛}{いた}いので、\ruby{明日}{あした}の\ruby{午前}{ごぜん}に\ruby{医者}{いしゃ}の\ruby{予約}{よやく}をしたいです。
+Romaji: Nodo ga itai node, ashita no gozen ni isha no yoyaku o shitai desu.
+""" + ("Substantial usage comparison and explained answer. " * 120)
+
+        issues = scheduler.daily_pdf_contract_issues(body, source_messages=[source])
+        self.assertFalse(any("missing_" in issue and "anchor" in issue for issue in issues))
+
+        altered = body.replace("I have a sore throat", "My throat hurts", 1)
+        altered_issues = scheduler.daily_pdf_contract_issues(altered, source_messages=[source])
+        self.assertIn("source_1_missing_english_anchor", altered_issues)
 
     def test_periodic_lesson_contract_rejects_clipping_prone_output(self) -> None:
         oversized = ("一句有用的三语课程。" * 300) + "\n\n不应到达这里。"

@@ -311,6 +311,41 @@ class WeChatGuiSendTests(unittest.TestCase):
             )
         )
 
+    def test_file_chooser_wait_scans_visible_windows_without_window_manager(self):
+        module = load_wechat_gui_send()
+        main = module.Window("main", 0, 0, 1000, 700)
+        chooser = module.WindowIdentity(
+            "chooser",
+            "Open File",
+            "GtkFileChooserDialog",
+        )
+
+        with (
+            mock.patch.object(module, "active_window_identity", return_value=None),
+            mock.patch.object(module, "visible_window_identities", return_value=[chooser]),
+        ):
+            result = module.wait_for_verified_file_chooser({}, main, timeout=0.2)
+
+        self.assertEqual(result, chooser)
+
+    def test_file_picker_return_refocuses_guarded_window_without_window_manager(self):
+        module = load_wechat_gui_send()
+        main = module.Window("main", 0, 0, 1000, 700)
+        visible_main = module.WindowIdentity("main", "Weixin", "wechat")
+
+        with (
+            mock.patch.object(module, "active_window_identity", return_value=None),
+            mock.patch.object(
+                module,
+                "visible_window_identities",
+                return_value=[visible_main],
+            ),
+            mock.patch.object(module, "focus") as focus,
+        ):
+            module.wait_for_wechat_focus_after_picker({}, main, timeout=0.2)
+
+        focus.assert_called_once_with({}, main)
+
     def test_download_file_card_reuses_exact_complete_native_cache_file(self):
         module = load_wechat_gui_send()
         with tempfile.TemporaryDirectory() as tmp:

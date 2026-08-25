@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 import hashlib
 import json
 import math
@@ -307,6 +307,106 @@ def load_history(
             )
         )
     return messages
+
+
+def _mirror_transport_metadata(value: str) -> bool:
+    """Identify mirror bookkeeping rows that are not human-readable chat text."""
+
+    stripped = str(value or "").lstrip()
+    if not stripped:
+        return True
+    if stripped.startswith("<?xml") and ("<appmsg>" in stripped or "<msg>" in stripped):
+        return True
+    if stripped[0] not in "[{":
+        return False
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        return False
+    records = payload if isinstance(payload, list) else [payload]
+    if not records or not all(isinstance(item, dict) for item in records):
+        return False
+    transport_keys = {
+        "source",
+        "target",
+        "bytes",
+        "mtime",
+        "suffix",
+        "matched_by",
+        "decode_status",
+        "status",
+        "message_token",
+        "server_id",
+        "local_id",
+    }
+    return all(
+        bool({"source", "target", "matched_by", "decode_status"} & set(item))
+        and set(item).issubset(transport_keys)
+        for item in records
+    )
+
+
+def load_wechat_mirror_history(
+    db: Path,
+    chats: Iterable[str],
+    *,
+    naive_timezone: tzinfo = timezone.utc,
+) -> list[HistoryMessage]:
+    """Load readable exact-chat rows from the durable WeChat transport mirror.
+
+    Some chat profiles deliberately disable semantic memo organization, so their
+    rows never enter ``wechat_memory.sqlite``.  The mirror remains the immutable
+    transport ledger and is therefore the correct fallback for scheduled reviews.
+    Native file-copy receipts and raw app-message XML are excluded because they
+    describe transport mechanics rather than language content.
+    """
+
+    allowed = _allowed_chats(chats)
+    if not db.is_file() or not allowed:
+        return []
+    placeholders = ",".join("?" for _ in allowed)
+    try:
+        with sqlite3.connect(db) as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute(
+                f"""
+                SELECT messages.id, chats.name AS chat_name, messages.direction,
+                       messages.body, messages.created_at
+                FROM messages
+                JOIN chats ON chats.id = messages.chat_id
+                WHERE chats.name IN ({placeholders})
+                ORDER BY messages.created_at ASC, messages.id ASC
+                """,
+                allowed,
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+
+    messages: list[HistoryMessage] = []
+    for row in rows:
+        body = normalize_body(row["body"])
+        if not body or _mirror_transport_metadata(body):
+            continue
+        raw_created = str(row["created_at"] or "").strip()
+        try:
+            created_at = datetime.fromisoformat(raw_created.replace("Z", "+00:00"))
+        except ValueError:
+            created_at = datetime.fromtimestamp(0, tz=timezone.utc)
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=naive_timezone)
+        source_id = -abs(int(row["id"]))
+        messages.append(
+            HistoryMessage(
+                source_id=source_id,
+                chat_name=str(row["chat_name"] or ""),
+                direction=str(row["direction"] or ""),
+                sender_display="",
+                body=body,
+                created_at=created_at,
+                source_ids=(source_id,),
+            )
+        )
+    return deduplicate_history(messages)
 
 
 def load_wecom_history(db: Path, chats: Iterable[str]) -> list[HistoryMessage]:

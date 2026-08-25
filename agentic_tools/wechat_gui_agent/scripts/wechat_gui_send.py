@@ -641,6 +641,37 @@ def active_window_identity(env: dict[str, str]) -> WindowIdentity | None:
     return WindowIdentity(wid=wid, title=title, window_class=window_class)
 
 
+def visible_window_identities(env: dict[str, str]) -> list[WindowIdentity]:
+    """List visible X11 windows when the desktop has no active-window manager."""
+
+    result = run(
+        ["xdotool", "search", "--onlyvisible", "--name", ".*"],
+        env=env,
+        check=False,
+    )
+    identities: list[WindowIdentity] = []
+    seen: set[str] = set()
+    for raw_wid in result.stdout.splitlines():
+        wid = raw_wid.strip()
+        if not wid or wid in seen:
+            continue
+        seen.add(wid)
+        title = run(
+            ["xdotool", "getwindowname", wid],
+            env=env,
+            check=False,
+        ).stdout.strip()
+        window_class = run(
+            ["xdotool", "getwindowclassname", wid],
+            env=env,
+            check=False,
+        ).stdout.strip()
+        identities.append(
+            WindowIdentity(wid=wid, title=title, window_class=window_class)
+        )
+    return identities
+
+
 def is_verified_file_chooser(identity: WindowIdentity | None, wechat_window: Window) -> bool:
     if identity is None or identity.wid == wechat_window.wid:
         return False
@@ -678,6 +709,9 @@ def wait_for_verified_file_chooser(
         last = active_window_identity(env)
         if is_verified_file_chooser(last, wechat_window):
             return last
+        for candidate in visible_window_identities(env):
+            if is_verified_file_chooser(candidate, wechat_window):
+                return candidate
         time.sleep(0.1)
     detail = "none" if last is None else f"{last.title!r}/{last.window_class!r}"
     raise RuntimeError(
@@ -700,6 +734,11 @@ def wait_for_wechat_focus_after_picker(
         last = active_window_identity(env)
         if last is not None and last.wid == wechat_window.wid:
             return
+        visible = visible_window_identities(env)
+        if not any(is_verified_file_chooser(item, wechat_window) for item in visible):
+            if any(item.wid == wechat_window.wid for item in visible):
+                focus(env, wechat_window)
+                return
         time.sleep(0.1)
     detail = "none" if last is None else f"{last.title!r}/{last.window_class!r}"
     raise RuntimeError(

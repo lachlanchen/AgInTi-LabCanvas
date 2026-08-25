@@ -119,12 +119,15 @@ AGINTI_MANAGED_FLAG_ARGS = {
     "--no-auto-update",
 }
 QUOTA_FAILURE_MARKERS = (
+    "402",
     "429",
     "billing hard limit",
     "capacity",
     "credit balance",
     "credits exhausted",
     "insufficient_quota",
+    "insufficient balance",
+    "insufficient funds",
     "model quota",
     "out of quota",
     "quota",
@@ -157,6 +160,7 @@ UNAVAILABLE_FAILURE_MARKERS = (
 )
 AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS = (
     "401",
+    "402",
     "403",
     "429",
     "api key",
@@ -169,6 +173,8 @@ AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS = (
     "envelope exceeds",
     "fetch failed",
     "insufficient_quota",
+    "insufficient balance",
+    "insufficient funds",
     "invalid api key",
     "localllm_context_budget_exceeded",
     "missing key",
@@ -968,10 +974,11 @@ def run_aginti_provider_chain(
         "backend": "aginti",
     }
     chain_session_id = previous_id or new_session_id
+    next_provider_prompt = prompt
     for index, provider in enumerate(providers):
         continue_existing = bool(previous_id or index > 0)
         result = run_aginti_provider_once(
-            prompt if index == 0 else aginti_provider_handoff_prompt(),
+            next_provider_prompt,
             chat_name=chat_name,
             role=role,
             model=model,
@@ -1001,13 +1008,15 @@ def run_aginti_provider_chain(
             )
             result["missing_fallback_session_recovered"] = True
         chain_session_id = str(result.get("thread_id") or chain_session_id)
+        retry_mode = aginti_provider_retry_mode(result)
         provider_attempts.append(
             {
                 "provider": provider,
                 "ok": bool(result.get("ok")),
                 "returncode": result.get("returncode"),
                 "failure_kind": classify_backend_failure(result),
-                "retry_safe": aginti_provider_retry_is_safe(result),
+                "retry_safe": bool(retry_mode),
+                "retry_mode": retry_mode,
                 "continued_same_session": continue_existing,
             }
         )
@@ -1017,8 +1026,13 @@ def run_aginti_provider_chain(
         result["provider_attempts"] = provider_attempts
         if result.get("ok"):
             return result
-        if index + 1 >= len(providers) or not aginti_provider_retry_is_safe(result):
+        if index + 1 >= len(providers) or not retry_mode:
             return result
+        next_provider_prompt = (
+            aginti_provider_pre_inference_prompt(prompt)
+            if retry_mode == "replay_current_request"
+            else aginti_provider_handoff_prompt()
+        )
     return result
 
 
@@ -1206,15 +1220,25 @@ def aginti_provider_chain(backend_config: dict[str, Any]) -> list[str]:
 def aginti_provider_retry_is_safe(result: dict[str, Any]) -> bool:
     """Retry another provider only for failures known to precede task execution."""
 
+    return bool(aginti_provider_retry_mode(result))
+
+
+def aginti_provider_retry_mode(result: dict[str, Any]) -> str:
+    """Choose exact-request replay only when the failed provider never inferred."""
+
     returncode = int(result.get("returncode") or 0)
     if result.get("ok") or returncode == 127:
-        return False
+        return ""
     if user_facing_backend_message(result.get("message")):
-        return False
+        return ""
     text = " ".join(
         str(result.get(key) or "")
         for key in ("stderr_tail", "stdout_tail", "reason", "message_source")
     ).casefold()
+    if returncode == 124 or "timeout" in text or "timed out" in text:
+        return "resume_durable_state" if result.get("thread_id") else ""
+    if any(marker in text for marker in AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS):
+        return "replay_current_request"
     if any(
         reason in text
         for reason in (
@@ -1226,10 +1250,20 @@ def aginti_provider_retry_is_safe(result: dict[str, Any]) -> bool:
             "tool_contract_violation",
         )
     ):
-        return bool(result.get("thread_id"))
-    if returncode == 124 or "timeout" in text or "timed out" in text:
-        return bool(result.get("thread_id"))
-    return any(marker in text for marker in AGINTI_PROVIDER_PREFLIGHT_FAILURE_MARKERS)
+        return "resume_durable_state" if result.get("thread_id") else ""
+    return ""
+
+
+def aginti_provider_pre_inference_prompt(prompt: str) -> str:
+    """Carry the exact request across a provider failure proven pre-inference."""
+
+    return (
+        "Provider handoff after a verified pre-inference failure: the previous provider "
+        "did not infer, call tools, or execute side effects. Treat the exact current request "
+        "below as authoritative even if older session history discusses a similar task. "
+        "Do not revive or answer the older request.\n\n"
+        f"Exact current request:\n{prompt}"
+    )
 
 
 def aginti_provider_handoff_prompt() -> str:
@@ -1785,6 +1819,7 @@ def is_response_only_agent_role(role: str) -> bool:
         "career-daily-",
         "career-research-",
         "daily-organizer-",
+        "daily-language-pdf-",
         "translate-",
         "translation-",
     )

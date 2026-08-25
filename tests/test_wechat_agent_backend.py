@@ -572,6 +572,9 @@ class WeChatAgentBackendTests(unittest.TestCase):
             "daily_organizer",
             "daily_organizer_repair",
             "daily_organizer_editor",
+            "daily_language_pdf",
+            "daily_language_pdf_editor",
+            "daily_language_pdf_repair",
         ):
             with self.subTest(role=role):
                 command = backend.aginti_command(
@@ -972,10 +975,69 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(commands[1][1:3], ["resume", generated_session])
         prompts = [call.kwargs["input"] for call in run.call_args_list]
         self.assertEqual(prompts[0], "exact prompt")
-        self.assertIn("Provider handoff", prompts[1])
-        self.assertNotIn("exact prompt", prompts[1])
+        self.assertIn("verified pre-inference failure", prompts[1])
+        self.assertIn("Exact current request", prompts[1])
+        self.assertIn("exact prompt", prompts[1])
+        self.assertEqual(
+            result["provider_attempts"][0]["retry_mode"],
+            "replay_current_request",
+        )
         self.assertTrue(result["fallback_continued_same_session"])
         self.assertFalse(result["resumed"])
+
+    def test_aginti_hands_off_http_402_balance_exhaustion_to_localllm(self) -> None:
+        backend = load_backend()
+        failed = subprocess.CompletedProcess(
+            ["aginti", "run"],
+            1,
+            stdout="",
+            stderr="402 Insufficient Balance",
+        )
+        succeeded = subprocess.CompletedProcess(
+            ["aginti", "resume"],
+            0,
+            stdout='{"ok":true,"sessionId":"balance-session","result":"CHAT: local response","failed":false}',
+            stderr="",
+        )
+        with (
+            mock.patch.object(backend, "resolve_command_executable", return_value="aginti"),
+            mock.patch.object(
+                backend,
+                "run_process_group",
+                side_effect=[failed, succeeded],
+            ) as run,
+        ):
+            result = backend.run_aginti_session(
+                "exact prompt",
+                chat_name="EchoMind",
+                role="daily_language_pdf",
+                model="aginti",
+                reasoning_effort="high",
+                sandbox="read-only",
+                timeout_seconds=120,
+                workdir=ROOT,
+                reuse=False,
+                backend_config={
+                    "wrap_prompt": False,
+                    "provider_chain": ["deepseek", "localllm"],
+                    "provider_models": {
+                        "deepseek": "deepseek-v4-flash",
+                        "localllm": "localllm-deep",
+                    },
+                },
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "localllm")
+        self.assertEqual(result["provider_attempts"][0]["failure_kind"], "quota")
+        self.assertTrue(result["provider_attempts"][0]["retry_safe"])
+        self.assertEqual(
+            result["provider_attempts"][0]["retry_mode"],
+            "replay_current_request",
+        )
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("Exact current request", run.call_args_list[1].kwargs["input"])
+        self.assertIn("exact prompt", run.call_args_list[1].kwargs["input"])
 
     def test_aginti_hands_off_recoverable_runtime_stop_in_same_session(self) -> None:
         backend = load_backend()
@@ -1032,6 +1094,11 @@ class WeChatAgentBackendTests(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         self.assertEqual(run.call_args_list[1].args[0][1:3], ["resume", "recoverable-session"])
         self.assertIn("Provider handoff", run.call_args_list[1].kwargs["input"])
+        self.assertNotIn("exact prompt", run.call_args_list[1].kwargs["input"])
+        self.assertEqual(
+            result["provider_attempts"][0]["retry_mode"],
+            "resume_durable_state",
+        )
 
     def test_response_only_aginti_role_retires_context_exhausted_session(self) -> None:
         backend = load_backend()

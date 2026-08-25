@@ -28,15 +28,17 @@ import wechat_direct_chatops as direct  # noqa: E402
 from wechat_agent_backend import run_agent_session, select_agent_backend  # noqa: E402
 from wechat_history_rag import (  # noqa: E402
     build_context_from_messages,
-    build_history_context,
+    deduplicate_history,
+    lexical_terms,
     load_history,
+    load_wechat_mirror_history,
 )
 from wechat_message_policy import (  # noqa: E402
     file_transport_identity,
     recorded_outbound_echo,
     recorded_outbound_file_identity,
 )
-from wechat_mirror import DEFAULT_DB  # noqa: E402
+from wechat_mirror import DEFAULT_DB as MIRROR_DB  # noqa: E402
 from wechat_task_worker import send_file  # noqa: E402
 
 CONFIG = PRIVATE / "echomind-direct-chatops.local.json"
@@ -64,6 +66,17 @@ PERIODIC_MAX_CHARS = int(os.environ.get("ECHOMIND_LANGUAGE_MAX_CHARS", "1100"))
 PERIODIC_MODEL = os.environ.get("ECHOMIND_LANGUAGE_MODEL", "gpt-5.3-codex-spark")
 PERIODIC_EFFORT = os.environ.get("ECHOMIND_LANGUAGE_EFFORT", "low")
 PERIODIC_EDITOR_MODEL = os.environ.get("ECHOMIND_LANGUAGE_EDITOR_MODEL", "gpt-5.6-sol")
+DAILY_PDF_MODEL = os.environ.get("ECHOMIND_DAILY_PDF_MODEL", "gpt-5.6-sol")
+DAILY_PDF_EFFORT = os.environ.get("ECHOMIND_DAILY_PDF_EFFORT", "high")
+DAILY_PDF_EDITOR_MODEL = os.environ.get(
+    "ECHOMIND_DAILY_PDF_EDITOR_MODEL", DAILY_PDF_MODEL
+)
+DAILY_PDF_MIN_BODY_CHARS = int(
+    os.environ.get("ECHOMIND_DAILY_PDF_MIN_BODY_CHARS", "5000")
+)
+DAILY_PDF_QUALITY_BACKEND = os.environ.get(
+    "ECHOMIND_DAILY_PDF_QUALITY_BACKEND", ""
+).strip()
 TOPICS = (
     "food, cooking, and ordering at a restaurant",
     "clothes, shopping, sizes, and prices",
@@ -101,15 +114,42 @@ def long_term_language_context(
             "Chinese English Japanese pinyin furigana romaji 中文 英文 日文 拼音 假名 语法 发音",
         )
     )
-    payload = build_history_context(
-        MEMORY_DB,
-        [chat],
+    payload = build_context_from_messages(
+        exact_chat_language_history(config),
         query,
         char_budget=char_budget,
         model=model,
         role=role,
     )
     return str(payload.get("snapshot") or "")
+
+
+def exact_chat_language_history(config: dict) -> list:
+    """Return readable full EchoMind history from the strongest local ledger."""
+
+    chat = str(config.get("chat_name") or "EchoMind")
+    mirror_messages = load_wechat_mirror_history(
+        MIRROR_DB,
+        [chat],
+        naive_timezone=LOCAL_TZ,
+    )
+    if mirror_messages:
+        return mirror_messages
+    return deduplicate_history(load_history(MEMORY_DB, [chat]))
+
+
+def previous_day_language_messages(config: dict, report_date: str) -> list:
+    """Select readable rows from the exact prior local calendar day."""
+
+    try:
+        target = datetime.fromisoformat(report_date).date()
+    except ValueError:
+        return []
+    return [
+        message
+        for message in exact_chat_language_history(config)
+        if message.created_at.astimezone(LOCAL_TZ).date() == target
+    ]
 
 
 def previous_day_language_context(
@@ -121,16 +161,7 @@ def previous_day_language_context(
 ) -> str:
     """Select the actual previous local calendar day rather than a recent-row cap."""
 
-    chat = str(config.get("chat_name") or "EchoMind")
-    try:
-        target = datetime.fromisoformat(report_date).date()
-    except ValueError:
-        return "(invalid report date)"
-    messages = [
-        message
-        for message in load_history(MEMORY_DB, [chat])
-        if message.created_at.astimezone(LOCAL_TZ).date() == target
-    ]
+    messages = previous_day_language_messages(config, report_date)
     payload = build_context_from_messages(
         messages,
         (
@@ -382,12 +413,257 @@ def normalize_latex_body(raw: str) -> str:
     return body
 
 
+def daily_pdf_quality_backend(config: dict) -> str:
+    """Use an explicitly configured specialist editor without changing the writer."""
+
+    return str(
+        config.get("daily_pdf_quality_backend")
+        or DAILY_PDF_QUALITY_BACKEND
+        or select_agent_backend(config)
+    ).strip()
+
+
+def daily_pdf_quality_model(config: dict) -> str:
+    return str(config.get("daily_pdf_quality_model") or DAILY_PDF_EDITOR_MODEL).strip()
+
+
+def daily_pdf_quality_effort(config: dict) -> str:
+    return str(config.get("daily_pdf_quality_effort") or DAILY_PDF_EFFORT).strip()
+
+
+def _source_lesson_anchors(body: str) -> dict[str, str]:
+    """Extract the authored trilingual examples that a review must preserve."""
+
+    text = " ".join(str(body or "").split())
+    patterns = {
+        "chinese": r"中文：(.*?)\s+拼音：",
+        "pinyin": r"拼音：(.*?)\s+English:",
+        "english": r"English:\s*(.*?)(?=\s+\([^()]*/[^()]*\)\s+日本語：|\s+日本語：)",
+        "japanese": r"日本語：(.*?)\s+Romaji:",
+        "romaji": r"Romaji:\s*(.*?)\s+对照：",
+    }
+    anchors: dict[str, str] = {}
+    for name, pattern in patterns.items():
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            anchors[name] = match.group(1).strip()
+    return anchors
+
+
+def _plain_anchor_text(value: str, *, japanese: bool = False) -> str:
+    """Normalize source and LaTeX ruby notation for strict semantic anchoring."""
+
+    text = re.sub(r"\\ruby\{([^{}]+)\}\{[^{}]+\}", r"\1", str(value or ""))
+    if japanese:
+        text = re.sub(
+            r"([一-龯々〆ヵヶ]+)[（(][ぁ-ゖァ-ヺー]+[）)]",
+            r"\1",
+            text,
+        )
+    text = re.sub(r"\\textcolor\{[^{}]*\}", "", text)
+    text = re.sub(r"\\(?:textbf|textit|emph)\{", "", text)
+    return re.sub(
+        r"[{}\s，。！？、,.!?;:：；'’\"“”「」『』（）()—–-]+",
+        "",
+        text,
+    ).casefold()
+
+
+def _source_anchor_issues(value: str, source_messages: list) -> list[str]:
+    normalized_body = _plain_anchor_text(value)
+    normalized_japanese_body = _plain_anchor_text(value, japanese=True)
+    issues: list[str] = []
+    for index, message in enumerate(source_messages, start=1):
+        anchors = _source_lesson_anchors(str(message.body or ""))
+        for name, anchor in anchors.items():
+            normalized_anchor = _plain_anchor_text(
+                anchor,
+                japanese=name == "japanese",
+            )
+            haystack = normalized_japanese_body if name == "japanese" else normalized_body
+            if len(normalized_anchor) >= 5 and normalized_anchor not in haystack:
+                issues.append(f"source_{index}_missing_{name}_anchor")
+    return issues
+
+
+def daily_pdf_contract_issues(
+    body: str,
+    *,
+    source_messages: list | None = None,
+) -> list[str]:
+    """Reject shallow, linguistically incomplete, or ungrounded tutorial bodies."""
+
+    value = normalize_latex_body(body)
+    issues: list[str] = []
+    if len(value) < DAILY_PDF_MIN_BODY_CHARS:
+        issues.append("too_shallow")
+    required_concepts = {
+        "chinese_section": ("Chinese", "中文"),
+        "english_section": ("English", "英语", "英文"),
+        "japanese_section": ("Japanese", "日本語", "日语", "日文"),
+        "grammar": ("Grammar", "语法", "文法"),
+        "vocabulary": ("Vocabulary", "词汇", "語彙"),
+        "mistakes": ("Common mistake", "易错", "常见错误", "よくある間違"),
+        "practice": ("Practice", "Exercise", "练习", "練習"),
+        "romaji": ("Romaji", "ローマ字"),
+    }
+    for issue, markers in required_concepts.items():
+        if not any(marker.casefold() in value.casefold() for marker in markers):
+            issues.append(f"missing_{issue}")
+    ruby_count = value.count("\\ruby{")
+    if ruby_count == 0:
+        issues.append("missing_japanese_ruby")
+    elif source_messages and ruby_count < max(4, len(source_messages) * 2):
+        issues.append("insufficient_japanese_ruby")
+    if not re.search(r"[āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ]", value, re.IGNORECASE):
+        issues.append("missing_tone_marked_pinyin")
+    if "\\begin{document}" in value or "\\documentclass" in value:
+        issues.append("contains_full_document_wrapper")
+    if re.search(
+        r"(?:no recorded conversation|no source (?:messages|logs)|source logs contain no|"
+        r"没有(?:聊天|来源|消息)记录|无(?:聊天|来源|消息)记录)",
+        value,
+        flags=re.IGNORECASE,
+    ):
+        issues.append("student_facing_source_process_note")
+    if re.search(r"(?:起きき|行きき|飲みみ|食べべ|見み)ます", value) or re.search(
+        r"\\ruby\{[^{}]*([ぁ-ん])\}\{[^{}]+\}\1",
+        value,
+    ):
+        issues.append("suspected_japanese_inflection_typo")
+    for match in re.finditer(
+        r"(?:Romaji|ローマ字)\s*[:：]\s*([^\n]+)",
+        value,
+        flags=re.IGNORECASE,
+    ):
+        if re.search(r"[一-龯々ぁ-ゖァ-ヺ]", match.group(1)):
+            issues.append("romaji_contains_japanese_script")
+            break
+
+    messages = list(source_messages or [])
+    if messages:
+        source_text = "\n".join(str(message.body or "") for message in messages)
+        ignored = {
+            "chinese",
+            "english",
+            "japanese",
+            "grammar",
+            "meaning",
+            "natural",
+            "example",
+            "lesson",
+            "拼音",
+            "中文",
+            "英文",
+            "日文",
+            "日语",
+            "日本語",
+            "语法",
+            "词汇",
+            "练习",
+        }
+        source_terms = {
+            term
+            for term in lexical_terms(source_text)
+            if term not in ignored and (len(term) >= 5 or not term.isascii())
+        }
+        body_terms = lexical_terms(value)
+        required_overlap = min(4, len(source_terms))
+        if required_overlap and len(source_terms & body_terms) < required_overlap:
+            issues.append("weak_previous_day_grounding")
+        issues.extend(_source_anchor_issues(value, messages))
+    return list(dict.fromkeys(issues))
+
+
+def review_daily_pdf_body(
+    draft: str,
+    *,
+    report_date: str,
+    history: str,
+    config: dict,
+    source_messages: list,
+) -> tuple[str, dict]:
+    """Run a source-grounded language-editor pass before compilation."""
+
+    prompt = f"""You are the final senior language editor for an EchoMind daily tutorial.
+Rewrite and proofread the LaTeX body below. Return ONLY the revised LaTeX body, with no preamble or code fence.
+
+Quality contract:
+- The date is {report_date}. Base the lesson on the supplied previous-day evidence, not on a generic unrelated theme.
+- Turn the strongest two to four source-derived expressions into a coherent lesson. Do not narrate the source-recovery process or mention missing logs in the student-facing PDF.
+- Treat every labeled Chinese, Pinyin, English, Japanese, and Romaji source example as an immutable anchor: reproduce it exactly, adding LaTeX ruby around Japanese kanji without changing the sentence. Do not silently replace its tense, wording, reading, or register.
+- Preserve useful depth but remove filler and repetitive explanations. Make the comparisons genuinely teach how Chinese, English, and Japanese express the same meanings.
+- Check every Chinese sentence, full tone-marked pinyin line, English phrase, Japanese spelling/conjugation, furigana, and romaji character by character. Repair accidental duplicated kana and mismatched readings.
+- Use at least four accurate \\ruby{{漢字}}{{かな}} expressions. Romaji lines must use Latin letters, never kana. Keep pinyin and romaji distinct and complete.
+- Include explicit Grammar / 语法 / 文法 and Vocabulary / 词汇 / 語彙 sections, realistic common mistakes, and exercises with answers. Examples must be natural and semantically aligned, not literal translations.
+- Keep the body substantial and study-ready (at least {DAILY_PDF_MIN_BODY_CHARS} meaningful LaTeX-body characters). Add depth through usage contrasts, register, collocations, pronunciation, and answer explanations, not filler. Do not add a document preamble, Markdown, private paths, model names, logs, or unsupported dialogue.
+
+Previous-day evidence ({len(source_messages)} readable exact-chat messages):
+{history}
+
+Draft LaTeX body:
+{draft}
+"""
+    result = run_agent_session(
+        prompt,
+        backend=daily_pdf_quality_backend(config),
+        chat_name="EchoMind",
+        role="daily_language_pdf_editor",
+        model=daily_pdf_quality_model(config),
+        reasoning_effort=daily_pdf_quality_effort(config),
+        sandbox="read-only",
+        timeout_seconds=900,
+        reuse=False,
+        backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})},
+    )
+    return normalize_latex_body(str(result.get("message") or "")), result
+
+
+def repair_daily_pdf_body(
+    body: str,
+    *,
+    report_date: str,
+    history: str,
+    config: dict,
+    source_messages: list,
+    issues: list[str],
+) -> tuple[str, dict]:
+    """Give a failed reviewed draft one bounded, issue-specific repair turn."""
+
+    prompt = f"""Repair this EchoMind LaTeX tutorial body for {report_date}.
+Return ONLY the complete repaired LaTeX body without a preamble or code fence.
+The validator found: {', '.join(issues)}.
+
+Use the exact previous-day evidence below. Every labeled Chinese, Pinyin, English, Japanese, and Romaji source example is immutable and must be reproduced exactly; only add accurate LaTeX ruby to Japanese kanji. Preserve good material, but make the report source-grounded, substantial (at least {DAILY_PDF_MIN_BODY_CHARS} meaningful characters), linguistically correct, and complete in Chinese, English, and Japanese. Include full tone-marked pinyin, at least four accurate Japanese \\ruby{{漢字}}{{かな}} expressions plus Latin-letter romaji, explicit grammar and vocabulary sections, realistic common mistakes, and exercises with explained answers. Do not discuss source logs or the editing process, and do not pad with repetition.
+
+Previous-day evidence ({len(source_messages)} readable messages):
+{history}
+
+Body to repair:
+{body}
+"""
+    result = run_agent_session(
+        prompt,
+        backend=daily_pdf_quality_backend(config),
+        chat_name="EchoMind",
+        role="daily_language_pdf_repair",
+        model=daily_pdf_quality_model(config),
+        reasoning_effort=daily_pdf_quality_effort(config),
+        sandbox="read-only",
+        timeout_seconds=900,
+        reuse=False,
+        backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})},
+    )
+    return normalize_latex_body(str(result.get("message") or "")), result
+
+
 def daily_pdf_document(report_date: str, body: str) -> str:
     return r"""\documentclass[11pt]{article}
 \usepackage{fontspec}
 \usepackage{xeCJK}
 \usepackage{ruby}
 \usepackage{tipa}
+\usepackage{amsmath}
 \usepackage[a4paper,margin=19mm]{geometry}
 \usepackage{xcolor}
 \usepackage{hyperref}
@@ -449,34 +725,98 @@ def run_daily_pdf(
     state["last_daily_pdf_attempt_date"] = yesterday
     state["last_daily_pdf_attempt_at"] = current.isoformat(timespec="seconds")
     save_state(state)
-    history = previous_day_language_context(config, yesterday, model="gpt-5.6-sol")
+    source_messages = previous_day_language_messages(config, yesterday)
+    history_payload = build_context_from_messages(
+        source_messages,
+        (
+            "language lesson sentence correction pronunciation grammar vocabulary "
+            "Chinese English Japanese pinyin furigana romaji 中文 英文 日文 拼音 假名 语法 发音"
+        ),
+        model=DAILY_PDF_MODEL,
+        role="daily",
+    )
+    history = str(history_payload.get("snapshot") or "")
     longitudinal = long_term_language_context(
         config,
         "recurring learner needs and prior corrections",
-        model="gpt-5.6-sol",
+        model=DAILY_PDF_MODEL,
         role="daily",
     )
+    out_dir = ROOT / "output" / "wechat_gui_agent" / "echomind_daily" / yesterday
+    out_dir.mkdir(parents=True, exist_ok=True)
+    artifact_stem = f"echomind-language-review-{yesterday}"
+    tex = out_dir / f"{artifact_stem}.tex"
+    pdf = out_dir / f"{artifact_stem}.pdf"
+    quality_path = out_dir / f"{artifact_stem}.quality.json"
     prompt = f"""Create a beautiful previous-day EchoMind language tutorial for {yesterday}.
-Use the source messages and previous lessons below as evidence, but do not invent dialogue or claim content that is absent.
+Use the source messages and previous lessons below as evidence. Center the report on the strongest two to four expressions actually present rather than substituting an unrelated generic theme. Do not invent dialogue or claim content that is absent, and do not discuss source logs or source availability in the student-facing tutorial.
 Return ONLY the LaTeX body, not a preamble. Use \\ruby{{漢字}}{{かな}} for Japanese furigana where useful.
-The report must be substantial and study-ready, with sections for Chinese, English, and Japanese. For every important example include natural wording, meaning, pinyin, pronunciation, Japanese kanji plus furigana and romaji, grammar, vocabulary, common mistakes, and exercises. Compare how the same idea is expressed across the three languages. Include a short review and practice section. Do not write a shallow chat summary.
+Treat every labeled Chinese, Pinyin, English, Japanese, and Romaji source example as an immutable anchor. Reproduce it exactly; only convert Japanese inline readings into accurate LaTeX ruby. Do not silently change tense, wording, reading, or register.
+The report must be at least {DAILY_PDF_MIN_BODY_CHARS} meaningful LaTeX-body characters and study-ready, with sections for Chinese, English, and Japanese. For every important example include natural wording, meaning, full tone-marked pinyin, pronunciation where it materially helps, Japanese kanji plus at least four accurate ruby expressions and Latin-letter romaji, explicit grammar and vocabulary sections, realistic common mistakes, and exercises with explained answers. Compare how the same idea is naturally expressed across the three languages. Proofread every inflection and reading character by character. Add depth through usage contrasts, register, collocations, pronunciation, and answer explanations rather than repetition. Include a short review and practice section. Do not write a shallow chat summary.
 Use Unicode IPA directly. Do not use \\textipa, Markdown code fences, a document preamble, or any undeclared LaTeX command.
 
-Previous-day EchoMind source material:
+Previous-day EchoMind source material ({len(source_messages)} readable exact-chat messages):
 {history}
 
 Longitudinal learner signals from the complete exact-chat history (use only to
 clarify recurring needs and terminology; do not replace the previous-day source):
 {longitudinal}
 """
-    result = run_agent_session(prompt, backend=select_agent_backend(config), chat_name="EchoMind", role="daily_language_pdf", model="gpt-5.6-sol", reasoning_effort="medium", sandbox="read-only", timeout_seconds=900, reuse=True, backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})})
-    body = normalize_latex_body(str(result.get("message") or ""))
-    if not body:
+    result = run_agent_session(prompt, backend=select_agent_backend(config), chat_name="EchoMind", role="daily_language_pdf", model=DAILY_PDF_MODEL, reasoning_effort=DAILY_PDF_EFFORT, sandbox="read-only", timeout_seconds=900, reuse=False, backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})})
+    draft = normalize_latex_body(str(result.get("message") or ""))
+    if not draft:
         raise RuntimeError("daily EchoMind PDF agent returned no LaTeX body")
-    out_dir = ROOT / "output" / "wechat_gui_agent" / "echomind_daily" / yesterday
-    out_dir.mkdir(parents=True, exist_ok=True)
-    tex = out_dir / f"echomind-language-review-{yesterday}.tex"
-    pdf = out_dir / f"echomind-language-review-{yesterday}.pdf"
+    (out_dir / f"{artifact_stem}.draft.texbody").write_text(draft, encoding="utf-8")
+    body, editor_result = review_daily_pdf_body(
+        draft,
+        report_date=yesterday,
+        history=history,
+        config=config,
+        source_messages=source_messages,
+    )
+    if not body:
+        raise RuntimeError("daily EchoMind PDF editor returned no LaTeX body")
+    (out_dir / f"{artifact_stem}.reviewed.texbody").write_text(body, encoding="utf-8")
+    issues = daily_pdf_contract_issues(body, source_messages=source_messages)
+    repair_result: dict[str, Any] = {}
+    if issues:
+        body, repair_result = repair_daily_pdf_body(
+            body,
+            report_date=yesterday,
+            history=history,
+            config=config,
+            source_messages=source_messages,
+            issues=issues,
+        )
+        (out_dir / f"{artifact_stem}.repaired.texbody").write_text(body, encoding="utf-8")
+        issues = daily_pdf_contract_issues(body, source_messages=source_messages)
+    quality = {
+        "schema": "labcanvas.echomind.daily_pdf_quality.v1",
+        "status": "content_rejected" if issues else "content_accepted_pending_compile",
+        "report_date": yesterday,
+        "source_message_count": len(source_messages),
+        "source": (
+            "wechat_mirror"
+            if any(int(message.source_id) < 0 for message in source_messages)
+            else "wechat_memory"
+        ),
+        "draft_backend": result.get("backend", ""),
+        "draft_model": result.get("model", DAILY_PDF_MODEL),
+        "editor_backend": editor_result.get("backend", ""),
+        "editor_model": editor_result.get("model", DAILY_PDF_EDITOR_MODEL),
+        "repair_backend": repair_result.get("backend", ""),
+        "repair_model": repair_result.get("model", ""),
+        "contract_issues": issues,
+        "body_chars": len(body),
+    }
+    quality_path.write_text(
+        json.dumps(quality, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if issues:
+        raise RuntimeError(
+            "daily EchoMind PDF failed content quality contract: " + ",".join(issues)
+        )
     tex.write_text(daily_pdf_document(yesterday, body), encoding="utf-8")
     pdf.unlink(missing_ok=True)
     engine = os.environ.get("ECHOMIND_LATEX_ENGINE", "xelatex")
@@ -484,6 +824,12 @@ clarify recurring needs and terminology; do not replace the previous-day source)
     if proc.returncode != 0 or not pdf.is_file() or pdf.stat().st_size <= 0:
         diagnostics = "\n".join([proc.stdout or "", proc.stderr or ""]).strip()
         raise RuntimeError(f"daily EchoMind PDF compilation failed: {diagnostics[-1600:]}")
+    quality["status"] = "accepted"
+    quality["pdf_identity"] = file_transport_identity(pdf)
+    quality_path.write_text(
+        json.dumps(quality, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     state["pending_daily_pdf"] = {
         "date": yesterday,
         "pdf": str(pdf),
@@ -512,7 +858,7 @@ clarify recurring needs and terminology; do not replace the previous-day source)
 
 def daily_pdf_delivery_recorded(config: dict, pdf: Path) -> bool:
     return recorded_outbound_file_identity(
-        DEFAULT_DB,
+        MIRROR_DB,
         str(config.get("chat_name") or "EchoMind"),
         file_transport_identity(pdf),
         window_seconds=48 * 60 * 60,
@@ -804,7 +1150,7 @@ def periodic_lesson_delivery_recorded(config: dict, pending: dict) -> bool:
     except ValueError:
         source_epoch = 0
     return recorded_outbound_echo(
-        DEFAULT_DB,
+        MIRROR_DB,
         str(config.get("chat_name") or "EchoMind"),
         str(pending.get("message") or ""),
         source_epoch=source_epoch,
