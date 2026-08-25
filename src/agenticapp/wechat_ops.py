@@ -956,6 +956,8 @@ def selftest_contract_for_suite(suite: str) -> list[str]:
             "GUI navigation ignores unrelated avatar OCR grouped onto the exact chat-title line",
             "GUI file sends re-verify the exact chat after the native picker and before submission",
             "Android file delivery retries exact mixed-language titles with coordinate-safe enhanced OCR",
+            "Android share search cannot mistake the typed query for a recipient row",
+            "Android share delivery taps the matched recent-recipient tile instead of a neighboring chat",
             "a committed Android file share is not downgraded by post-send chat restoration",
             "send_retrying rows are not reclaimed before the active GUI sender timeout plus grace",
             "exact-task media resolution rejects files associated only by modification time",
@@ -1130,6 +1132,14 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         {
             "id": "android_mixed_title_enhanced_ocr",
             "test": android_prefix + "test_find_target_line_retries_with_enhanced_ocr",
+        },
+        {
+            "id": "android_share_query_not_recipient",
+            "test": android_prefix + "test_share_search_result_does_not_select_query_text",
+        },
+        {
+            "id": "android_share_uses_matched_tile",
+            "test": android_prefix + "test_share_recipient_tap_uses_matched_horizontal_tile",
         },
         {
             "id": "android_committed_file_not_downgraded",

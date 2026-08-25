@@ -64,6 +64,10 @@ class OcrLine:
     def center_y(self) -> int:
         return int((self.top + self.bottom) / 2)
 
+    @property
+    def center_x(self) -> int:
+        return int((self.left + self.right) / 2)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -509,19 +513,22 @@ class AndroidWechatSender:
         )
         time.sleep(1.3)
         chooser = self.screenshot("file-share-targets")
-        target_line = self.find_target_line(chooser)
+        target_line = self.find_share_target_line(chooser)
         if target_line is None:
             target_line = self.search_share_target(chooser)
         if target_line is None:
             raise AndroidWechatError(f"exact share target {self.chat!r} was not found")
-        self.shell(["input", "tap", "500", str(target_line.center_y)])
+        self.tap_share_target(target_line)
         time.sleep(1.0)
         confirmation = self.screenshot("file-share-confirm")
         if not self.share_confirmation_matches_target(confirmation):
             self.shell(["input", "keyevent", "4"], check=False)
             raise AndroidWechatError("share confirmation did not name the exact target")
         action_point = green_action_center(confirmation, min_y_ratio=0.65)
-        if action_point is None:
+        action = find_action_line(ocr_lines(confirmation), ("发送", "傳送", "Send"))
+        if action_point is None and (
+            action is None or action.center_y < int(image_size(confirmation)[1] * 0.65)
+        ):
             self.shell(["input", "keyevent", "4"], check=False)
             raise AndroidWechatError("share confirmation action was not visible")
         self.mark_component(
@@ -531,7 +538,11 @@ class AndroidWechatSender:
         )
         committed = False
         try:
-            self.shell(["input", "tap", str(action_point[0]), str(action_point[1])])
+            if action_point is not None:
+                self.shell(["input", "tap", str(action_point[0]), str(action_point[1])])
+            else:
+                assert action is not None
+                self.shell(["input", "tap", str(action.right - 5), str(action.center_y)])
             committed = True
             time.sleep(2.5)
             after = self.screenshot("file-shared")
@@ -555,9 +566,18 @@ class AndroidWechatSender:
 
     def share_confirmation_matches_target(self, screenshot: Path) -> bool:
         """Verify the selected recipient using full-screen and focused OCR."""
-        if any(text_matches_alias(line.text, self.aliases) for line in ocr_lines(screenshot)):
+        lines = ocr_lines(screenshot)
+        _, height = image_size(screenshot)
+        cancel = find_action_line(lines, ("取消", "Cancel"))
+        if cancel is None or cancel.center_y < int(height * 0.70):
+            return False
+        if any(
+            line.center_y >= int(height * 0.48)
+            and text_matches_alias(line.text, self.aliases)
+            for line in lines
+        ):
             return True
-        width, height = image_size(screenshot)
+        width, _ = image_size(screenshot)
         crop = screenshot.with_name(f"{screenshot.stem}-target-title.png")
         run_checked(
             [
@@ -575,10 +595,58 @@ class AndroidWechatSender:
             ],
             timeout=20,
         )
+        if any(
+            text_matches_alias(line.text, self.aliases)
+            for line in ocr_lines(crop)
+        ):
+            return True
         return any(
             text_matches_alias(ocr_plain(crop, psm=psm), self.aliases)
             for psm in ("7", "6")
         )
+
+    def find_share_target_line(
+        self,
+        screenshot: Path,
+        *,
+        search_results: bool = False,
+    ) -> OcrLine | None:
+        """Find a recipient row without mistaking the search input for a result."""
+
+        lines = ocr_lines(screenshot)
+        candidates = matching_target_lines(lines, self.aliases)
+        if not candidates:
+            candidates = matching_target_lines(
+                merge_chat_title_fragments(lines), self.aliases
+            )
+        if not candidates:
+            enhanced = enhanced_ocr_lines(screenshot)
+            candidates = matching_target_lines(enhanced, self.aliases)
+            if not candidates:
+                candidates = matching_target_lines(
+                    merge_chat_title_fragments(enhanced), self.aliases
+                )
+        _, height = image_size(screenshot)
+        min_y = int(height * (0.18 if search_results else 0.12))
+        max_y = int(height * 0.92)
+        candidates = [
+            line for line in candidates if min_y <= line.center_y <= max_y
+        ]
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda line: (
+                -max(alias_match_length(line.text, alias) for alias in self.aliases),
+                line.top,
+            )
+        )
+        requested_index = max(0, int(self.target.get("share_result_index") or 0))
+        return candidates[min(requested_index, len(candidates) - 1)]
+
+    def tap_share_target(self, line: OcrLine) -> None:
+        """Tap the matched tile or row instead of a neighboring recent target."""
+
+        self.shell(["input", "tap", str(line.center_x), str(line.center_y)])
 
     def search_share_target(self, screenshot: Path) -> OcrLine | None:
         lines = ocr_lines(screenshot)
@@ -588,11 +656,17 @@ class AndroidWechatSender:
             time.sleep(0.5)
             self.paste_text(str(self.target.get("query") or self.aliases[0]))
             time.sleep(0.8)
-            return self.find_target_line(self.screenshot("file-share-search"))
+            return self.find_share_target_line(
+                self.screenshot("file-share-search"),
+                search_results=True,
+            )
         for page in range(3):
             self.shell(["input", "swipe", "540", "1750", "540", "550", "400"], check=False)
             time.sleep(0.7)
-            match = self.find_target_line(self.screenshot(f"file-share-scroll-{page}"))
+            match = self.find_share_target_line(
+                self.screenshot(f"file-share-scroll-{page}"),
+                search_results=True,
+            )
             if match is not None:
                 return match
         return None

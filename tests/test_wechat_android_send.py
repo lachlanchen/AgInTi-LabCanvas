@@ -277,7 +277,10 @@ class WechatAndroidSendTests(unittest.TestCase):
             with mock.patch.object(
                 module,
                 "ocr_lines",
-                return_value=[module.OcrLine("MEMOS (F—Sa—i# (4A)", 0, 0, 100, 30)],
+                return_value=[
+                    module.OcrLine("MEMOS (F—Sa—i# (4A)", 0, 0, 100, 30),
+                    module.OcrLine("取消", 300, 1850, 400, 1910),
+                ],
             ), mock.patch.object(module, "image_size", return_value=(1080, 2116)), mock.patch.object(
                 module, "run_checked", return_value=mock.MagicMock(stdout="")
             ) as run_checked, mock.patch.object(
@@ -289,6 +292,106 @@ class WechatAndroidSendTests(unittest.TestCase):
 
             self.assertTrue(matched)
             self.assertIn("-crop", run_checked.call_args.args[0])
+
+    def test_share_search_result_does_not_select_query_text(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "lachlanchan", "expected_title": "陈苗"},
+                task_id="task-share-search",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            screen = root / "search.png"
+            screen.write_bytes(b"png")
+            lines = [
+                module.OcrLine("陈苗", 155, 250, 270, 310),
+                module.OcrLine("陈苗", 198, 505, 286, 570),
+                module.OcrLine("陈苗", 198, 657, 286, 721),
+                module.OcrLine("包含: 陈苗", 196, 939, 338, 982),
+            ]
+            with mock.patch.object(module, "ocr_lines", return_value=lines), mock.patch.object(
+                module, "image_size", return_value=(1080, 2160)
+            ):
+                match = sender.find_share_target_line(screen, search_results=True)
+
+            self.assertIsNotNone(match)
+            self.assertEqual(match.center_y, 537)
+
+    def test_share_recipient_tap_uses_matched_horizontal_tile(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "lachlanchan", "expected_title": "陈苗"},
+                task_id="task-share-tile",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            line = module.OcrLine("陈苗", 671, 672, 730, 714)
+            with mock.patch.object(sender, "shell") as shell:
+                sender.tap_share_target(line)
+
+            shell.assert_called_once_with(["input", "tap", "700", "693"])
+
+    def test_share_confirmation_rejects_search_results_screen(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "lachlanchan", "expected_title": "陈苗"},
+                task_id="task-no-false-confirmation",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            screen = root / "search.png"
+            screen.write_bytes(b"png")
+            with mock.patch.object(
+                module,
+                "ocr_lines",
+                return_value=[module.OcrLine("陈苗", 198, 505, 286, 570)],
+            ), mock.patch.object(module, "image_size", return_value=(1080, 2160)):
+                matched = sender.share_confirmation_matches_target(screen)
+
+            self.assertFalse(matched)
+
+    def test_share_confirmation_preserves_exact_short_alias_line_in_crop(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "lachlanchan", "expected_title": "陈苗"},
+                task_id="task-focused-short-alias",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+            screen = root / "confirmation.png"
+            screen.write_bytes(b"png")
+            initial = [module.OcrLine("取消", 300, 1850, 400, 1910)]
+            focused = [
+                module.OcrLine("陈 苗", 140, 143, 410, 409),
+                module.OcrLine("report.pdf", 320, 607, 600, 666),
+            ]
+            with mock.patch.object(
+                module, "ocr_lines", side_effect=[initial, focused]
+            ), mock.patch.object(
+                module, "image_size", return_value=(1080, 2160)
+            ), mock.patch.object(
+                module, "run_checked", return_value=mock.MagicMock(stdout="")
+            ), mock.patch.object(module, "ocr_plain") as plain:
+                matched = sender.share_confirmation_matches_target(screen)
+
+            self.assertTrue(matched)
+            plain.assert_not_called()
 
     def test_wake_and_launch_closes_logged_device_page_before_main_surface(self):
         module = load_sender()
