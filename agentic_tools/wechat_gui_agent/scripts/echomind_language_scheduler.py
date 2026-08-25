@@ -71,8 +71,41 @@ DAILY_PDF_EFFORT = os.environ.get("ECHOMIND_DAILY_PDF_EFFORT", "high")
 DAILY_PDF_EDITOR_MODEL = os.environ.get(
     "ECHOMIND_DAILY_PDF_EDITOR_MODEL", DAILY_PDF_MODEL
 )
+DAILY_PDF_AUDIT_EFFORT = os.environ.get(
+    "ECHOMIND_DAILY_PDF_AUDIT_EFFORT", "xhigh"
+)
 DAILY_PDF_MIN_BODY_CHARS = int(
     os.environ.get("ECHOMIND_DAILY_PDF_MIN_BODY_CHARS", "5000")
+)
+DAILY_PDF_MAX_BODY_CHARS = int(
+    os.environ.get("ECHOMIND_DAILY_PDF_MAX_BODY_CHARS", "13000")
+)
+DAILY_PDF_TARGET_MAX_BODY_CHARS = int(
+    os.environ.get("ECHOMIND_DAILY_PDF_TARGET_MAX_BODY_CHARS", "10000")
+)
+DAILY_PDF_AUDIT_MIN_SCORE = int(
+    os.environ.get("ECHOMIND_DAILY_PDF_AUDIT_MIN_SCORE", "4")
+)
+DAILY_PDF_MAX_REPAIR_PASSES = int(
+    os.environ.get("ECHOMIND_DAILY_PDF_MAX_REPAIR_PASSES", "7")
+)
+DAILY_PDF_AUDIT_DIMENSIONS = (
+    "source_fidelity",
+    "chinese_naturalness",
+    "english_naturalness",
+    "japanese_naturalness",
+    "reading_accuracy",
+    "cross_language_alignment",
+    "pedagogical_value",
+    "concision",
+)
+DAILY_PDF_SECTION_ROLES = (
+    ("lesson_focus", "Lesson Focus"),
+    ("core_examples", "Core Examples"),
+    ("grammar_usage", "Grammar and Usage"),
+    ("vocabulary_pronunciation", "Vocabulary and Pronunciation"),
+    ("common_mistakes", "Common Mistakes"),
+    ("practice_answers", "Practice and Answers"),
 )
 DAILY_PDF_QUALITY_BACKEND = os.environ.get(
     "ECHOMIND_DAILY_PDF_QUALITY_BACKEND", ""
@@ -413,6 +446,182 @@ def normalize_latex_body(raw: str) -> str:
     return body
 
 
+def daily_pdf_outline_contract() -> str:
+    """Return the stable teaching outline shared by writer, editor, and repairer."""
+
+    return r"""Use exactly six top-level sections in this order. Each heading must
+start with the exact English role name shown below; Chinese and Japanese labels may
+follow it in the same heading.
+
+1. \section*{Lesson Focus / 学习重点 / 学習ポイント}
+2. \section*{Core Examples / 核心例句 / 基本例}
+3. \section*{Grammar and Usage / 语法与用法 / 文法と用法}
+4. \section*{Vocabulary and Pronunciation / 词汇与发音 / 語彙と発音}
+5. \section*{Common Mistakes / 常见错误 / よくある間違い}
+6. \section*{Practice and Answers / 练习与答案 / 練習と解答}
+
+Use subsections inside these six sections when needed, but do not create another
+top-level \section. Lesson Focus contains only three or four concise learner
+outcomes; it must not teach forms, repeat examples, or compare constructions. Put
+each full aligned source-derived example only in Core Examples, followed by at most
+one short sentence about its communicative purpose; do not explain grammar there.
+Explain each grammar point once in Grammar and Usage. Vocabulary and Pronunciation
+must contain compact entries rather than another retelling. Common Mistakes is a
+short diagnostic checklist of genuinely new transfer errors, not a second grammar
+lesson. Practice and Answers must use determinate prompts, explicitly accept natural
+alternatives when more than one answer is possible, and keep each answer to the
+answer plus at most one short clarification. Do not repeat the same correction,
+contrast, or explanation across several sections. Distinguish what an expression
+explicitly encodes from what it can pragmatically accomplish in context; do not
+mark a natural context-dependent expression categorically wrong just because a
+more explicit alternative exists."""
+
+
+def _daily_pdf_section_blocks(body: str) -> list[dict[str, Any]]:
+    """Split a LaTeX body into stable top-level section blocks."""
+
+    value = normalize_latex_body(body)
+    pattern = re.compile(r"(?m)^\\section\*?\{[^\n]*\}\s*$")
+    matches = list(pattern.finditer(value))
+    blocks: list[dict[str, Any]] = []
+    for offset, match in enumerate(matches):
+        end = matches[offset + 1].start() if offset + 1 < len(matches) else len(value)
+        blocks.append(
+            {
+                "index": offset + 1,
+                "heading": match.group(0).strip(),
+                "text": value[match.start() : end].strip(),
+                "start": match.start(),
+                "end": end,
+            }
+        )
+    return blocks
+
+
+def daily_pdf_structure_issues(body: str) -> list[str]:
+    """Enforce one concise location for every pedagogical function."""
+
+    blocks = _daily_pdf_section_blocks(body)
+    issues: list[str] = []
+    if len(blocks) != len(DAILY_PDF_SECTION_ROLES):
+        issues.append("noncanonical_top_level_section_count")
+    positions: list[int] = []
+    for role, marker in DAILY_PDF_SECTION_ROLES:
+        matches = [
+            block["index"]
+            for block in blocks
+            if marker.casefold() in str(block["heading"]).casefold()
+        ]
+        if not matches:
+            issues.append(f"missing_section_{role}")
+        elif len(matches) > 1:
+            issues.append(f"duplicate_section_{role}")
+        else:
+            positions.append(matches[0])
+    if len(positions) == len(DAILY_PDF_SECTION_ROLES) and positions != sorted(positions):
+        issues.append("noncanonical_section_order")
+    return issues
+
+
+def indexed_daily_pdf_sections(body: str) -> str:
+    """Expose stable section IDs to a surgical repair turn."""
+
+    return "\n\n".join(
+        f"===== SECTION {block['index']} =====\n{block['text']}"
+        for block in _daily_pdf_section_blocks(body)
+    )
+
+
+def parse_daily_pdf_section_patches(
+    raw: str,
+    *,
+    section_count: int,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Parse bounded whole-section replacements without JSON/LaTeX escaping."""
+
+    value = str(raw or "").strip()
+    if value.startswith("```"):
+        lines = value.splitlines()
+        lines = lines[1:] if lines else lines
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        value = "\n".join(lines).strip()
+    if value.startswith("<patches>") and value.endswith("</patches>"):
+        value = value[len("<patches>") : -len("</patches>")].strip()
+
+    token = re.compile(
+        r'<replace\s+section="(\d+)">\s*(.*?)\s*</replace>'
+        r'|<delete\s+section="(\d+)"\s*/>',
+        flags=re.DOTALL,
+    )
+    patches: list[dict[str, Any]] = []
+    issues: list[str] = []
+    cursor = 0
+    seen: set[int] = set()
+    for match in token.finditer(value):
+        if value[cursor : match.start()].strip():
+            issues.append("repair_patch_contains_unparsed_text")
+        cursor = match.end()
+        section_index = int(match.group(1) or match.group(3))
+        if section_index < 1 or section_index > section_count:
+            issues.append("repair_patch_section_out_of_range")
+            continue
+        if section_index in seen:
+            issues.append("repair_patch_duplicate_section")
+            continue
+        seen.add(section_index)
+        if match.group(1):
+            replacement = str(match.group(2) or "").strip()
+            section_lines = re.findall(
+                r"(?m)^\\section\*?\{[^\n]*\}\s*$",
+                replacement,
+            )
+            if len(section_lines) != 1 or not replacement.startswith("\\section"):
+                issues.append("repair_patch_invalid_replacement_section")
+                continue
+            if "\\begin{document}" in replacement or "\\documentclass" in replacement:
+                issues.append("repair_patch_contains_document_wrapper")
+                continue
+            patches.append(
+                {
+                    "action": "replace",
+                    "section": section_index,
+                    "content": replacement,
+                }
+            )
+        else:
+            patches.append({"action": "delete", "section": section_index})
+    if value[cursor:].strip():
+        issues.append("repair_patch_contains_unparsed_text")
+    if not patches:
+        issues.append("repair_patch_empty")
+    return patches, list(dict.fromkeys(issues))
+
+
+def apply_daily_pdf_section_patches(
+    body: str,
+    patches: list[dict[str, Any]],
+) -> str:
+    """Apply validated section replacements while preserving untouched text."""
+
+    value = normalize_latex_body(body)
+    blocks = _daily_pdf_section_blocks(value)
+    if not blocks:
+        return value
+    patch_map = {int(patch["section"]): patch for patch in patches}
+    prefix = value[: int(blocks[0]["start"])].strip()
+    output = [prefix] if prefix else []
+    for block in blocks:
+        patch = patch_map.get(int(block["index"]))
+        if patch and patch.get("action") == "delete":
+            continue
+        if patch and patch.get("action") == "replace":
+            output.append(str(patch.get("content") or "").strip())
+        else:
+            output.append(str(block["text"]).strip())
+    return "\n\n".join(part for part in output if part).strip()
+
+
 def daily_pdf_quality_backend(config: dict) -> str:
     """Use an explicitly configured specialist editor without changing the writer."""
 
@@ -431,8 +640,12 @@ def daily_pdf_quality_effort(config: dict) -> str:
     return str(config.get("daily_pdf_quality_effort") or DAILY_PDF_EFFORT).strip()
 
 
+def daily_pdf_audit_effort(config: dict) -> str:
+    return str(config.get("daily_pdf_audit_effort") or DAILY_PDF_AUDIT_EFFORT).strip()
+
+
 def _source_lesson_anchors(body: str) -> dict[str, str]:
-    """Extract the authored trilingual examples that a review must preserve."""
+    """Extract authored examples as evidence, not as immutable truth."""
 
     text = " ".join(str(body or "").split())
     patterns = {
@@ -469,21 +682,102 @@ def _plain_anchor_text(value: str, *, japanese: bool = False) -> str:
     ).casefold()
 
 
-def _source_anchor_issues(value: str, source_messages: list) -> list[str]:
-    normalized_body = _plain_anchor_text(value)
-    normalized_japanese_body = _plain_anchor_text(value, japanese=True)
+def _source_coverage_issues(value: str, source_messages: list) -> list[str]:
+    """Require each source lesson to remain represented while allowing corrections."""
+
+    body_terms = lexical_terms(_plain_anchor_text(value, japanese=True))
     issues: list[str] = []
     for index, message in enumerate(source_messages, start=1):
         anchors = _source_lesson_anchors(str(message.body or ""))
-        for name, anchor in anchors.items():
-            normalized_anchor = _plain_anchor_text(
-                anchor,
-                japanese=name == "japanese",
-            )
-            haystack = normalized_japanese_body if name == "japanese" else normalized_body
-            if len(normalized_anchor) >= 5 and normalized_anchor not in haystack:
-                issues.append(f"source_{index}_missing_{name}_anchor")
+        source_text = " ".join(anchors.values()) or str(message.body or "")
+        source_terms = {
+            term
+            for term in lexical_terms(_plain_anchor_text(source_text, japanese=True))
+            if not term.isascii() or len(term) >= 4
+        }
+        required_overlap = min(5, len(source_terms))
+        if required_overlap and len(source_terms & body_terms) < required_overlap:
+            issues.append(f"source_{index}_weak_semantic_coverage")
     return issues
+
+
+def parse_daily_pdf_audit(raw: str) -> dict[str, Any]:
+    """Extract one JSON audit object from a bounded agent response."""
+
+    value = str(raw or "").strip()
+    if value.startswith("```"):
+        lines = value.splitlines()
+        lines = lines[1:] if lines else lines
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        value = "\n".join(lines).strip()
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(value):
+        if character != "{":
+            continue
+        try:
+            payload, _end = decoder.raw_decode(value[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {
+        "accepted": False,
+        "scores": {},
+        "critical_issues": ["The semantic audit did not return valid JSON."],
+        "revision_instructions": ["Run a complete independent linguistic audit."],
+    }
+
+
+def daily_pdf_semantic_audit_issues(audit: dict[str, Any]) -> list[str]:
+    """Fail closed when an independent linguistic audit is weak or incomplete."""
+
+    issues: list[str] = []
+    scores = audit.get("scores")
+    if not isinstance(scores, dict):
+        scores = {}
+    for dimension in DAILY_PDF_AUDIT_DIMENSIONS:
+        score = scores.get(dimension)
+        if not isinstance(score, (int, float)):
+            issues.append(f"semantic_audit_missing_{dimension}")
+        elif score < DAILY_PDF_AUDIT_MIN_SCORE:
+            issues.append(f"semantic_{dimension}_below_standard")
+    critical = audit.get("critical_issues")
+    if isinstance(critical, list) and any(str(item or "").strip() for item in critical):
+        issues.append("semantic_audit_has_critical_issues")
+    elif not isinstance(critical, list):
+        issues.append("semantic_audit_missing_critical_issues")
+    revisions = audit.get("revision_instructions")
+    if isinstance(revisions, list) and any(str(item or "").strip() for item in revisions):
+        issues.append("semantic_audit_has_required_revisions")
+    elif not isinstance(revisions, list):
+        issues.append("semantic_audit_missing_revision_instructions")
+    if audit.get("accepted") is not True:
+        issues.append("semantic_audit_rejected")
+    return list(dict.fromkeys(issues))
+
+
+def cumulative_daily_pdf_audit_feedback(
+    audit_history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Keep earlier defects as regression checks without treating them as all active."""
+
+    if not audit_history:
+        return {"current": {}, "regression_checks": []}
+    checks: list[str] = []
+    for audit in audit_history[:-1]:
+        for key in ("critical_issues", "revision_instructions"):
+            values = audit.get(key)
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                text = " ".join(str(value or "").split())
+                if text and text not in checks:
+                    checks.append(text)
+    return {
+        "current": audit_history[-1],
+        "regression_checks": checks[-16:],
+    }
 
 
 def daily_pdf_contract_issues(
@@ -497,6 +791,8 @@ def daily_pdf_contract_issues(
     issues: list[str] = []
     if len(value) < DAILY_PDF_MIN_BODY_CHARS:
         issues.append("too_shallow")
+    if len(value) > DAILY_PDF_MAX_BODY_CHARS:
+        issues.append("too_verbose")
     required_concepts = {
         "chinese_section": ("Chinese", "中文"),
         "english_section": ("English", "英语", "英文"),
@@ -519,6 +815,9 @@ def daily_pdf_contract_issues(
         issues.append("missing_tone_marked_pinyin")
     if "\\begin{document}" in value or "\\documentclass" in value:
         issues.append("contains_full_document_wrapper")
+    if re.search(r"\\(?:maketitle|title|author|date)\b", value):
+        issues.append("contains_document_title_command")
+    issues.extend(daily_pdf_structure_issues(value))
     if re.search(
         r"(?:no recorded conversation|no source (?:messages|logs)|source logs contain no|"
         r"没有(?:聊天|来源|消息)记录|无(?:聊天|来源|消息)记录)",
@@ -571,8 +870,73 @@ def daily_pdf_contract_issues(
         required_overlap = min(4, len(source_terms))
         if required_overlap and len(source_terms & body_terms) < required_overlap:
             issues.append("weak_previous_day_grounding")
-        issues.extend(_source_anchor_issues(value, messages))
+        issues.extend(_source_coverage_issues(value, messages))
     return list(dict.fromkeys(issues))
+
+
+def audit_daily_pdf_body(
+    body: str,
+    *,
+    report_date: str,
+    history: str,
+    config: dict,
+    source_messages: list,
+) -> tuple[dict[str, Any], dict]:
+    """Independently judge linguistic and teaching quality before compilation."""
+
+    dimensions = ", ".join(DAILY_PDF_AUDIT_DIMENSIONS)
+    outline = daily_pdf_outline_contract()
+    prompt = f"""You are an independent trilingual language-textbook reviewer.
+Audit the EchoMind LaTeX tutorial below for {report_date}. Return ONLY one JSON object.
+
+The previous-day messages are source evidence, not linguistic authority. They may contain awkward wording, mistranslation, incorrect readings, or overconfident explanations. Judge the tutorial independently as a careful native-level Chinese, English, and Japanese editor. A source-derived scenario must remain covered, but a bad source sentence must be corrected and taught, not preserved or defended.
+
+Reject the tutorial for any material problem in:
+- natural Chinese phrasing and complete tone-marked pinyin;
+- natural English grammar, collocations, register, and pronunciation claims;
+- natural Japanese grammar, conjugation, particles, kanji readings, furigana, and Latin-letter romaji;
+- semantic alignment across all three languages;
+- factual and pedagogical accuracy of grammar explanations, contrasts, mistakes, exercises, and answers;
+- source fidelity, unsupported invented dialogue, repetition, padding, or shallow section-filling.
+
+The tutorial also has this editorial structure contract:
+{outline}
+
+Reject padding disguised as depth. In particular, reject a correction that is
+restated in Core Examples, Grammar and Usage, Common Mistakes, Practice, and the
+answer key without adding a distinct learning function. Reject underdetermined
+exercises unless all natural alternatives are accepted and explained.
+
+Score each dimension from 1 to 5: {dimensions}.
+Set accepted=true only when every score is at least {DAILY_PDF_AUDIT_MIN_SCORE}, critical_issues is empty, and the tutorial is publish-ready without further changes. When accepted=true, revision_instructions must also be empty. If any correction is still needed, set accepted=false and give specific revision instructions, quoting only the shortest phrase needed to identify a problem.
+
+Required JSON shape:
+{{
+  "accepted": true,
+  "scores": {{"source_fidelity": 5, "chinese_naturalness": 5, "english_naturalness": 5, "japanese_naturalness": 5, "reading_accuracy": 5, "cross_language_alignment": 5, "pedagogical_value": 5, "concision": 5}},
+  "critical_issues": [],
+  "revision_instructions": []
+}}
+
+Previous-day evidence ({len(source_messages)} exact-chat messages):
+{history}
+
+Tutorial body:
+{body}
+"""
+    result = run_agent_session(
+        prompt,
+        backend=daily_pdf_quality_backend(config),
+        chat_name="EchoMind",
+        role="daily_language_pdf_auditor",
+        model=daily_pdf_quality_model(config),
+        reasoning_effort=daily_pdf_audit_effort(config),
+        sandbox="read-only",
+        timeout_seconds=900,
+        reuse=False,
+        backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})},
+    )
+    return parse_daily_pdf_audit(str(result.get("message") or "")), result
 
 
 def review_daily_pdf_body(
@@ -585,18 +949,22 @@ def review_daily_pdf_body(
 ) -> tuple[str, dict]:
     """Run a source-grounded language-editor pass before compilation."""
 
+    outline = daily_pdf_outline_contract()
     prompt = f"""You are the final senior language editor for an EchoMind daily tutorial.
 Rewrite and proofread the LaTeX body below. Return ONLY the revised LaTeX body, with no preamble or code fence.
 
 Quality contract:
 - The date is {report_date}. Base the lesson on the supplied previous-day evidence, not on a generic unrelated theme.
 - Turn the strongest two to four source-derived expressions into a coherent lesson. Do not narrate the source-recovery process or mention missing logs in the student-facing PDF.
-- Treat every labeled Chinese, Pinyin, English, Japanese, and Romaji source example as an immutable anchor: reproduce it exactly, adding LaTeX ruby around Japanese kanji without changing the sentence. Do not silently replace its tense, wording, reading, or register.
+- Treat source examples as teaching evidence, not immutable truth. Preserve each source-derived scenario and communicative meaning, but independently correct unnatural or inaccurate Chinese, English, Japanese, pinyin, furigana, and romaji. When a correction is pedagogically useful, show the source form briefly as a learner sentence and contrast it with the preferred form; never certify awkward wording merely to preserve it.
 - Preserve useful depth but remove filler and repetitive explanations. Make the comparisons genuinely teach how Chinese, English, and Japanese express the same meanings.
 - Check every Chinese sentence, full tone-marked pinyin line, English phrase, Japanese spelling/conjugation, furigana, and romaji character by character. Repair accidental duplicated kana and mismatched readings.
 - Use at least four accurate \\ruby{{漢字}}{{かな}} expressions. Romaji lines must use Latin letters, never kana. Keep pinyin and romaji distinct and complete.
 - Include explicit Grammar / 语法 / 文法 and Vocabulary / 词汇 / 語彙 sections, realistic common mistakes, and exercises with answers. Examples must be natural and semantically aligned, not literal translations.
-- Keep the body substantial and study-ready (at least {DAILY_PDF_MIN_BODY_CHARS} meaningful LaTeX-body characters). Add depth through usage contrasts, register, collocations, pronunciation, and answer explanations, not filler. Do not add a document preamble, Markdown, private paths, model names, logs, or unsupported dialogue.
+- Aim for {DAILY_PDF_MIN_BODY_CHARS} to {DAILY_PDF_TARGET_MAX_BODY_CHARS} meaningful LaTeX-body characters; {DAILY_PDF_MAX_BODY_CHARS} is a hard ceiling, not a target. Prefer a shorter complete lesson over padding. Add depth through usage contrasts, register, collocations, pronunciation, and answer explanations, not filler. Do not add a document preamble, \maketitle, \title, \author, \date, Markdown, private paths, model names, logs, or unsupported dialogue.
+
+Required editorial outline:
+{outline}
 
 Previous-day evidence ({len(source_messages)} readable exact-chat messages):
 {history}
@@ -627,20 +995,61 @@ def repair_daily_pdf_body(
     config: dict,
     source_messages: list,
     issues: list[str],
+    audit_feedback: dict[str, Any] | None = None,
 ) -> tuple[str, dict]:
-    """Give a failed reviewed draft one bounded, issue-specific repair turn."""
+    """Repair only affected top-level sections of a rejected tutorial."""
 
-    prompt = f"""Repair this EchoMind LaTeX tutorial body for {report_date}.
-Return ONLY the complete repaired LaTeX body without a preamble or code fence.
+    normalized_body = normalize_latex_body(body)
+    blocks = _daily_pdf_section_blocks(normalized_body)
+    target_max_chars = max(
+        DAILY_PDF_MIN_BODY_CHARS,
+        min(DAILY_PDF_TARGET_MAX_BODY_CHARS, DAILY_PDF_MAX_BODY_CHARS),
+    )
+    outline = daily_pdf_outline_contract()
+    prompt = f"""Repair this EchoMind LaTeX tutorial for {report_date} with surgical whole-section patches.
+Return ONLY a <patches> block. Do not return the complete document and do not use a Markdown fence.
 The validator found: {', '.join(issues)}.
+Independent audit feedback:
+{json.dumps(audit_feedback or {}, ensure_ascii=False, indent=2)}
 
-Use the exact previous-day evidence below. Every labeled Chinese, Pinyin, English, Japanese, and Romaji source example is immutable and must be reproduced exactly; only add accurate LaTeX ruby to Japanese kanji. Preserve good material, but make the report source-grounded, substantial (at least {DAILY_PDF_MIN_BODY_CHARS} meaningful characters), linguistically correct, and complete in Chinese, English, and Japanese. Include full tone-marked pinyin, at least four accurate Japanese \\ruby{{漢字}}{{かな}} expressions plus Latin-letter romaji, explicit grammar and vocabulary sections, realistic common mistakes, and exercises with explained answers. Do not discuss source logs or the editing process, and do not pad with repetition.
+Treat the current audit instructions as active requirements. Treat earlier
+regression_checks only as a checklist: preserve a correction when it is already
+fixed, but do not reintroduce the old wording or add another explanation of it.
+
+Replace only sections that must change. Every replacement must contain the complete
+top-level section, beginning with exactly one \\section*{{...}} line. Section IDs are
+stable only for this turn. Use this syntax:
+
+<patches>
+<replace section="3">
+\\section*{{Grammar and Usage / 语法与用法 / 文法と用法}}
+...complete corrected section...
+</replace>
+<delete section="5" />
+</patches>
+
+Use <delete> only for a genuinely duplicate top-level section and only when all six
+required roles still remain elsewhere. Do not insert a seventh section. Make the
+smallest coherent edit that resolves every listed issue and revision instruction.
+Preserve all unpatched sections. Do not add a new scenario, dialogue, time, person,
+fact, vocabulary expansion, exercise, or example unless a listed issue strictly
+requires it. Apply a phrase correction in every affected section, but delete
+repetition instead of restating the correction. The repaired complete document
+must remain between {DAILY_PDF_MIN_BODY_CHARS} and {target_max_chars} meaningful
+characters. It may grow only when a listed correction requires missing pinyin,
+furigana, romaji, or a necessary clarification; offset those additions by removing
+the repetition identified by the audit.
+
+Use the exact previous-day evidence below as topics and learner material, not as unquestionable language authority. Preserve each scenario and intended meaning. Correct awkward or inaccurate source language and explain meaningful corrections instead of reproducing or defending errors. Keep the report linguistically correct and complete in Chinese, English, and Japanese, with full tone-marked pinyin, accurate Japanese \\ruby{{漢字}}{{かな}} plus Latin-letter romaji, grammar and vocabulary, realistic mistakes, and nonduplicative exercises with explained answers. Do not discuss source logs or the editing process, and do not include document-level commands such as \\maketitle, \\title, \\author, or \\date.
+
+Required editorial outline:
+{outline}
 
 Previous-day evidence ({len(source_messages)} readable messages):
 {history}
 
-Body to repair:
-{body}
+Current indexed sections:
+{indexed_daily_pdf_sections(normalized_body)}
 """
     result = run_agent_session(
         prompt,
@@ -654,7 +1063,25 @@ Body to repair:
         reuse=False,
         backend_config={"agent_fallbacks": config.get("agent_fallbacks", {})},
     )
-    return normalize_latex_body(str(result.get("message") or "")), result
+    result = dict(result)
+    patches, patch_issues = parse_daily_pdf_section_patches(
+        str(result.get("message") or ""),
+        section_count=len(blocks),
+    )
+    if not patch_issues:
+        candidate = apply_daily_pdf_section_patches(normalized_body, patches)
+        if candidate == normalized_body:
+            patch_issues.append("repair_patch_no_change")
+        if len(candidate) > target_max_chars:
+            patch_issues.append("repair_patch_exceeds_target_ceiling")
+    else:
+        candidate = normalized_body
+    result["repair_patch_issues"] = list(dict.fromkeys(patch_issues))
+    result["repair_patch_count"] = len(patches)
+    result["repair_candidate_chars"] = len(candidate)
+    if patch_issues:
+        return normalized_body, result
+    return candidate, result
 
 
 def daily_pdf_document(report_date: str, body: str) -> str:
@@ -748,12 +1175,17 @@ def run_daily_pdf(
     tex = out_dir / f"{artifact_stem}.tex"
     pdf = out_dir / f"{artifact_stem}.pdf"
     quality_path = out_dir / f"{artifact_stem}.quality.json"
+    outline = daily_pdf_outline_contract()
     prompt = f"""Create a beautiful previous-day EchoMind language tutorial for {yesterday}.
 Use the source messages and previous lessons below as evidence. Center the report on the strongest two to four expressions actually present rather than substituting an unrelated generic theme. Do not invent dialogue or claim content that is absent, and do not discuss source logs or source availability in the student-facing tutorial.
 Return ONLY the LaTeX body, not a preamble. Use \\ruby{{漢字}}{{かな}} for Japanese furigana where useful.
-Treat every labeled Chinese, Pinyin, English, Japanese, and Romaji source example as an immutable anchor. Reproduce it exactly; only convert Japanese inline readings into accurate LaTeX ruby. Do not silently change tense, wording, reading, or register.
-The report must be at least {DAILY_PDF_MIN_BODY_CHARS} meaningful LaTeX-body characters and study-ready, with sections for Chinese, English, and Japanese. For every important example include natural wording, meaning, full tone-marked pinyin, pronunciation where it materially helps, Japanese kanji plus at least four accurate ruby expressions and Latin-letter romaji, explicit grammar and vocabulary sections, realistic common mistakes, and exercises with explained answers. Compare how the same idea is naturally expressed across the three languages. Proofread every inflection and reading character by character. Add depth through usage contrasts, register, collocations, pronunciation, and answer explanations rather than repetition. Include a short review and practice section. Do not write a shallow chat summary.
-Use Unicode IPA directly. Do not use \\textipa, Markdown code fences, a document preamble, or any undeclared LaTeX command.
+Treat source examples as evidence and learner material, not immutable truth. Preserve each source-derived scenario and intended meaning, but independently correct unnatural Chinese, English, Japanese, pinyin, furigana, or romaji. Explain meaningful corrections as source form versus preferred form when useful; never preserve or defend an error merely because it appeared in the chat.
+Aim for {DAILY_PDF_MIN_BODY_CHARS} to {DAILY_PDF_TARGET_MAX_BODY_CHARS} meaningful LaTeX-body characters; {DAILY_PDF_MAX_BODY_CHARS} is only a hard ceiling. The report must be study-ready, with Chinese, English, and Japanese throughout. For every important example include natural wording, meaning, full tone-marked pinyin, pronunciation where it materially helps, Japanese kanji plus at least four accurate ruby expressions and Latin-letter romaji, explicit grammar and vocabulary sections, realistic common mistakes, and exercises with explained answers. Compare how the same idea is naturally expressed across the three languages. Proofread every inflection and reading character by character. Add depth through usage contrasts, register, collocations, pronunciation, and answer explanations rather than repetition. Do not write a shallow chat summary or pad the report to reach a length target.
+
+Required editorial outline:
+{outline}
+
+Use Unicode IPA directly. Do not use \\textipa, Markdown code fences, a document preamble, \\maketitle, \\title, \\author, \\date, or any undeclared LaTeX command.
 
 Previous-day EchoMind source material ({len(source_messages)} readable exact-chat messages):
 {history}
@@ -777,9 +1209,25 @@ clarify recurring needs and terminology; do not replace the previous-day source)
     if not body:
         raise RuntimeError("daily EchoMind PDF editor returned no LaTeX body")
     (out_dir / f"{artifact_stem}.reviewed.texbody").write_text(body, encoding="utf-8")
-    issues = daily_pdf_contract_issues(body, source_messages=source_messages)
-    repair_result: dict[str, Any] = {}
-    if issues:
+    issues: list[str] = []
+    final_audit: dict[str, Any] = {}
+    final_audit_result: dict[str, Any] = {}
+    audit_history: list[dict[str, Any]] = []
+    repair_results: list[dict[str, Any]] = []
+    for repair_pass in range(DAILY_PDF_MAX_REPAIR_PASSES + 1):
+        issues = daily_pdf_contract_issues(body, source_messages=source_messages)
+        final_audit, final_audit_result = audit_daily_pdf_body(
+            body,
+            report_date=yesterday,
+            history=history,
+            config=config,
+            source_messages=source_messages,
+        )
+        issues.extend(daily_pdf_semantic_audit_issues(final_audit))
+        issues = list(dict.fromkeys(issues))
+        audit_history.append(final_audit)
+        if not issues or repair_pass >= DAILY_PDF_MAX_REPAIR_PASSES:
+            break
         body, repair_result = repair_daily_pdf_body(
             body,
             report_date=yesterday,
@@ -787,9 +1235,15 @@ clarify recurring needs and terminology; do not replace the previous-day source)
             config=config,
             source_messages=source_messages,
             issues=issues,
+            audit_feedback=cumulative_daily_pdf_audit_feedback(audit_history),
         )
-        (out_dir / f"{artifact_stem}.repaired.texbody").write_text(body, encoding="utf-8")
-        issues = daily_pdf_contract_issues(body, source_messages=source_messages)
+        repair_results.append(repair_result)
+        repair_suffix = "repaired" if repair_pass == 0 else f"repaired-{repair_pass + 1}"
+        (out_dir / f"{artifact_stem}.{repair_suffix}.texbody").write_text(
+            body,
+            encoding="utf-8",
+        )
+    repair_result = repair_results[-1] if repair_results else {}
     quality = {
         "schema": "labcanvas.echomind.daily_pdf_quality.v1",
         "status": "content_rejected" if issues else "content_accepted_pending_compile",
@@ -804,8 +1258,20 @@ clarify recurring needs and terminology; do not replace the previous-day source)
         "draft_model": result.get("model", DAILY_PDF_MODEL),
         "editor_backend": editor_result.get("backend", ""),
         "editor_model": editor_result.get("model", DAILY_PDF_EDITOR_MODEL),
+        "audit_backend": final_audit_result.get("backend", ""),
+        "audit_model": final_audit_result.get("model", DAILY_PDF_EDITOR_MODEL),
+        "semantic_audit": final_audit,
+        "semantic_audit_history": audit_history,
+        "repair_patch_history": [
+            {
+                "patch_count": repair.get("repair_patch_count", 0),
+                "issues": repair.get("repair_patch_issues", []),
+            }
+            for repair in repair_results
+        ],
         "repair_backend": repair_result.get("backend", ""),
         "repair_model": repair_result.get("model", ""),
+        "repair_passes": len(repair_results),
         "contract_issues": issues,
         "body_chars": len(body),
     }

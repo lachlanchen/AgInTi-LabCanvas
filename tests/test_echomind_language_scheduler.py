@@ -14,6 +14,7 @@ class EchoMindLanguageSchedulerTests(unittest.TestCase):
     def test_default_interval_is_six_hours(self) -> None:
         self.assertEqual(scheduler.INTERVAL, 21_600)
         self.assertEqual(scheduler.PERIODIC_MODEL, "gpt-5.3-codex-spark")
+        self.assertEqual(scheduler.DAILY_PDF_MAX_REPAIR_PASSES, 7)
 
     def test_restart_waits_for_remaining_interval(self) -> None:
         state = {"last_run_at": "2026-07-22T07:02:37+00:00"}
@@ -139,7 +140,7 @@ The source logs contain no recorded conversation.
         self.assertFalse(agent.call_args.kwargs["reuse"])
         self.assertIn("预约 appointment 予約", agent.call_args.args[0])
 
-    def test_daily_pdf_quality_preserves_every_labeled_source_anchor(self) -> None:
+    def test_daily_pdf_quality_allows_corrections_but_keeps_source_coverage(self) -> None:
         source = mock.Mock(
             body=(
                 "场景：预约。 中文：我喉咙痛，想预约一下明天上午的医生。 "
@@ -164,11 +165,211 @@ Romaji: Nodo ga itai node, ashita no gozen ni isha no yoyaku o shitai desu.
 """ + ("Substantial usage comparison and explained answer. " * 120)
 
         issues = scheduler.daily_pdf_contract_issues(body, source_messages=[source])
-        self.assertFalse(any("missing_" in issue and "anchor" in issue for issue in issues))
+        self.assertNotIn("source_1_weak_semantic_coverage", issues)
 
         altered = body.replace("I have a sore throat", "My throat hurts", 1)
         altered_issues = scheduler.daily_pdf_contract_issues(altered, source_messages=[source])
-        self.assertIn("source_1_missing_english_anchor", altered_issues)
+        self.assertNotIn("source_1_weak_semantic_coverage", altered_issues)
+
+        unrelated = body.replace("我喉咙痛，想预约一下明天上午的医生。", "今天学习天气。")
+        unrelated = unrelated.replace(
+            "Pinyin: Wǒ hóulóng tòng, xiǎng yùyuē yīxià míngtiān shàngwǔ de yīshēng.",
+            "Pinyin: Jīntiān xuéxí tiānqì.",
+        )
+        unrelated = unrelated.replace(
+            "I have a sore throat and I'd like to book a doctor's appointment for tomorrow morning.",
+            "The weather is pleasant today.",
+        )
+        unrelated = unrelated.replace(
+            r"\ruby{喉}{のど}が\ruby{痛}{いた}いので、\ruby{明日}{あした}の\ruby{午前}{ごぜん}に\ruby{医者}{いしゃ}の\ruby{予約}{よやく}をしたいです。",
+            r"\ruby{今日}{きょう}は天気がいいです。",
+        )
+        unrelated = unrelated.replace(
+            "Romaji: Nodo ga itai node, ashita no gozen ni isha no yoyaku o shitai desu.",
+            "Romaji: Kyō wa tenki ga ii desu.",
+        )
+        self.assertIn(
+            "source_1_weak_semantic_coverage",
+            scheduler.daily_pdf_contract_issues(unrelated, source_messages=[source]),
+        )
+
+    def test_daily_pdf_semantic_audit_requires_all_quality_dimensions(self) -> None:
+        accepted = {
+            "accepted": True,
+            "scores": {
+                dimension: 4
+                for dimension in scheduler.DAILY_PDF_AUDIT_DIMENSIONS
+            },
+            "critical_issues": [],
+            "revision_instructions": [],
+        }
+        self.assertEqual(scheduler.daily_pdf_semantic_audit_issues(accepted), [])
+
+        weak = json.loads(json.dumps(accepted))
+        weak["scores"]["japanese_naturalness"] = 3
+        weak["accepted"] = False
+        weak["critical_issues"] = ["The Japanese appointment phrase is unnatural."]
+        issues = scheduler.daily_pdf_semantic_audit_issues(weak)
+        self.assertIn("semantic_japanese_naturalness_below_standard", issues)
+        self.assertIn("semantic_audit_has_critical_issues", issues)
+        self.assertIn("semantic_audit_rejected", issues)
+
+        polish_needed = json.loads(json.dumps(accepted))
+        polish_needed["revision_instructions"] = ["Use the idiomatic collocation."]
+        self.assertIn(
+            "semantic_audit_has_required_revisions",
+            scheduler.daily_pdf_semantic_audit_issues(polish_needed),
+        )
+
+    def test_daily_pdf_repair_keeps_prior_defects_as_regression_checks(self) -> None:
+        feedback = scheduler.cumulative_daily_pdf_audit_feedback(
+            [
+                {
+                    "critical_issues": ["Do not use the awkward Chinese phrase."],
+                    "revision_instructions": ["Use the natural appointment wording."],
+                },
+                {
+                    "critical_issues": ["The exercise is ambiguous."],
+                    "revision_instructions": ["Constrain the exercise."],
+                },
+            ]
+        )
+
+        self.assertEqual(
+            feedback["current"]["critical_issues"],
+            ["The exercise is ambiguous."],
+        )
+        self.assertIn(
+            "Use the natural appointment wording.",
+            feedback["regression_checks"],
+        )
+        self.assertNotIn("Constrain the exercise.", feedback["regression_checks"])
+
+    def test_daily_pdf_contract_rejects_body_level_title_commands(self) -> None:
+        body = r"\maketitle \section{Chinese 中文} Pinyin: yùyuē. English. Japanese 日本語. Grammar 语法 Vocabulary 词汇 Common mistakes 易错 Practice 练习 Romaji. \ruby{予約}{よやく}."
+        body += " Substantial teaching content." * 300
+        self.assertIn(
+            "contains_document_title_command",
+            scheduler.daily_pdf_contract_issues(body),
+        )
+
+    def test_daily_pdf_contract_rejects_padding_beyond_maximum(self) -> None:
+        body = "x" * (scheduler.DAILY_PDF_MAX_BODY_CHARS + 1)
+        self.assertIn("too_verbose", scheduler.daily_pdf_contract_issues(body))
+
+    def test_daily_pdf_audit_uses_xhigh_by_default(self) -> None:
+        self.assertEqual(scheduler.daily_pdf_audit_effort({}), "xhigh")
+        self.assertEqual(
+            scheduler.daily_pdf_audit_effort({"daily_pdf_audit_effort": "high"}),
+            "high",
+        )
+
+    def test_daily_pdf_audit_parser_accepts_fenced_json(self) -> None:
+        payload = scheduler.parse_daily_pdf_audit(
+            '```json\n{"accepted": true, "scores": {}, "critical_issues": []}\n```'
+        )
+        self.assertTrue(payload["accepted"])
+
+    def test_daily_pdf_structure_requires_one_section_per_teaching_role(self) -> None:
+        canonical = "\n\n".join(
+            [
+                r"\section*{Lesson Focus / 学习重点 / 学習ポイント}\nFocus.",
+                r"\section*{Core Examples / 核心例句 / 基本例}\nExamples.",
+                r"\section*{Grammar and Usage / 语法与用法 / 文法と用法}\nGrammar.",
+                r"\section*{Vocabulary and Pronunciation / 词汇与发音 / 語彙と発音}\nVocabulary.",
+                r"\section*{Common Mistakes / 常见错误 / よくある間違い}\nMistakes.",
+                r"\section*{Practice and Answers / 练习与答案 / 練習と解答}\nPractice.",
+            ]
+        ).replace(r"\n", "\n")
+
+        self.assertEqual(scheduler.daily_pdf_structure_issues(canonical), [])
+
+        noncanonical = canonical.replace("Grammar and Usage", "Focused Contrast")
+        self.assertIn(
+            "missing_section_grammar_usage",
+            scheduler.daily_pdf_structure_issues(noncanonical),
+        )
+
+    def test_daily_pdf_section_patch_preserves_unselected_sections(self) -> None:
+        body = "\n\n".join(
+            f"\\section*{{Section {index}}}\nOriginal {index}."
+            for index in range(1, 4)
+        )
+        raw = r"""<patches>
+<replace section="2">
+\section*{Section 2}
+Corrected grammar only.
+</replace>
+</patches>"""
+
+        patches, issues = scheduler.parse_daily_pdf_section_patches(
+            raw,
+            section_count=3,
+        )
+        repaired = scheduler.apply_daily_pdf_section_patches(body, patches)
+
+        self.assertEqual(issues, [])
+        self.assertIn("Original 1.", repaired)
+        self.assertIn("Corrected grammar only.", repaired)
+        self.assertIn("Original 3.", repaired)
+        self.assertNotIn("Original 2.", repaired)
+
+    def test_daily_pdf_section_patch_rejects_multiple_top_level_sections(self) -> None:
+        raw = r"""<patches>
+<replace section="1">
+\section*{One}
+Text.
+\section*{Injected}
+More text.
+</replace>
+</patches>"""
+
+        patches, issues = scheduler.parse_daily_pdf_section_patches(
+            raw,
+            section_count=2,
+        )
+
+        self.assertEqual(patches, [])
+        self.assertIn("repair_patch_invalid_replacement_section", issues)
+        self.assertIn("repair_patch_empty", issues)
+
+    def test_daily_pdf_repair_uses_surgical_section_protocol(self) -> None:
+        body = "\n\n".join(
+            f"\\section*{{Section {index}}}\nOriginal {index}."
+            for index in range(1, 4)
+        )
+        patch_response = r"""<patches>
+<replace section="2">
+\section*{Section 2}
+Corrected section.
+</replace>
+</patches>"""
+        with mock.patch.object(
+            scheduler,
+            "run_agent_session",
+            return_value={
+                "message": patch_response,
+                "backend": "codex",
+                "model": "gpt-5.6-sol",
+            },
+        ) as agent:
+            repaired, result = scheduler.repair_daily_pdf_body(
+                body,
+                report_date="2026-08-24",
+                history="source evidence",
+                config={"agent_fallbacks": {}},
+                source_messages=[mock.Mock(body="source evidence")],
+                issues=["semantic_concision_below_standard"],
+                audit_feedback={"revision_instructions": ["Fix section 2."]},
+            )
+
+        self.assertIn("Original 1.", repaired)
+        self.assertIn("Corrected section.", repaired)
+        self.assertIn("Original 3.", repaired)
+        self.assertEqual(result["repair_patch_issues"], [])
+        prompt = agent.call_args.args[0]
+        self.assertIn("Return ONLY a <patches> block", prompt)
+        self.assertIn("===== SECTION 2 =====", prompt)
 
     def test_periodic_lesson_contract_rejects_clipping_prone_output(self) -> None:
         oversized = ("一句有用的三语课程。" * 300) + "\n\n不应到达这里。"
