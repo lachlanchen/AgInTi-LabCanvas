@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
+import importlib
 import io
 import json
 import os
@@ -16,6 +17,16 @@ from agenticapp import wechat_ops
 
 
 class WeChatOpsHealthTests(unittest.TestCase):
+    def test_production_selftest_targets_resolve(self) -> None:
+        for check in wechat_ops.selftest_checks_for_suite("all"):
+            module_name, class_name, method_name = check["test"].rsplit(".", 2)
+            module = importlib.import_module(module_name)
+            case = getattr(module, class_name)
+            self.assertTrue(
+                hasattr(case, method_name),
+                f"Missing production self-test target: {check['test']}",
+            )
+
     def test_kill_tmux_reaps_captured_detached_children(self) -> None:
         completed = subprocess.CompletedProcess(["tmux"], 0, "", "")
         with (

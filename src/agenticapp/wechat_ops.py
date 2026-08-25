@@ -1416,7 +1416,7 @@ def transport_resume_selftest_checks() -> list[dict[str, str]]:
         },
         {
             "id": "numbered_completion_recovers_exact_task_pdf",
-            "test": worker_prefix + "test_completion_audit_recovers_exact_task_pdf_after_agent_repair_fails",
+            "test": worker_prefix + "test_completion_audit_recovers_exact_task_pdf_before_agent_repair",
         },
         {
             "id": "legacy_numbered_row_recovered",
