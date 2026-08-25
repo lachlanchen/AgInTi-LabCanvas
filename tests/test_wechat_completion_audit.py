@@ -111,7 +111,102 @@ class WeChatCompletionAuditTests(unittest.TestCase):
         previews = packet["candidate_result"]["generated_pdf_content"]
         self.assertEqual(previews[0]["name"], "organoid-review.pdf")
         self.assertIn("main limitation", previews[0]["content_preview"])
+        self.assertEqual(
+            previews[0]["report_vs_chat_signals"]["chat_characters"],
+            len("Directanswer"),
+        )
+        self.assertIn(
+            "report_novel_shingle_fraction",
+            previews[0]["report_vs_chat_signals"],
+        )
         self.assertIn("not covered merely because its file exists", prompt)
+
+    def test_scheduled_report_audit_exposes_full_report_quality_contract(self) -> None:
+        task = self.task()
+        task["route_decision"] = {
+            "route_kind": "research_or_summary",
+            "scheduled_daily_research": True,
+        }
+        task["daily_research"] = {"topics": ["organoid imaging"]}
+        task["execution_contract"] = {
+            "research_evidence": {
+                "required": True,
+                "minimum_traceable_sources": 3,
+                "include_actionable_next_steps": True,
+            },
+            "report_quality": {
+                "chat_role": "executive_summary",
+                "pdf_role": "full_evidence_analysis",
+                "materially_deeper_than_chat": True,
+                "required_dimensions": [
+                    "source_level_methods_results_and_limitations",
+                    "cross_source_synthesis_and_tensions",
+                ],
+                "local_only_provenance": [
+                    "checksums_and_private_paths",
+                ],
+                "reject": ["operational_audit_log_in_reader_pdf"],
+            },
+        }
+
+        prompt = audit.completion_audit_prompt(
+            task,
+            {"message": "A concise executive summary.", "files": ["/tmp/full-review.pdf"]},
+            audit.coverage_items(task),
+        )
+        packet = json.loads(prompt.split("Task packet:\n", 1)[1])
+
+        contract = packet["current_report_contract"]
+        self.assertTrue(contract["scheduled_daily_research"])
+        self.assertEqual(
+            contract["report_quality"]["pdf_role"],
+            "full_evidence_analysis",
+        )
+        self.assertEqual(
+            contract["research_evidence"]["minimum_traceable_sources"],
+            3,
+        )
+        self.assertIn("lightly expanded reflow", prompt)
+        self.assertIn("decision-relevant evidence", prompt)
+        self.assertIn("required_dimensions", prompt)
+        self.assertIn("do not infer", prompt)
+        self.assertIn("local_only_provenance", prompt)
+        self.assertIn("checksums", prompt)
+
+    def test_reader_facing_pdf_audit_uses_medium_reasoning(self) -> None:
+        task = self.task()
+        seen: list[dict[str, object]] = []
+
+        def runner(_prompt: str, **kwargs: object) -> dict:
+            seen.append(kwargs)
+            return {
+                "ok": True,
+                "backend": "aginti",
+                "model": "deepseek-v4-flash",
+                "message": json.dumps(
+                    {
+                        "covered_item_ids": [
+                            "task:parent-101",
+                            "task:child-102",
+                            "task:child-103",
+                        ],
+                        "missing": [],
+                        "legitimate_blocker": False,
+                        "complexity": "medium",
+                        "summary": "checked",
+                    }
+                ),
+            }
+
+        result = audit.run_completion_audit(
+            task,
+            {"message": "Direct answer.", "files": ["/tmp/report.pdf"]},
+            runner=runner,
+        )
+
+        self.assertTrue(result["coverage_complete"])
+        self.assertEqual(seen[0]["reasoning_effort"], "medium")
+        self.assertEqual(seen[0]["fallback_reasoning_effort"], "medium")
 
     def test_semantically_shallow_pdf_can_be_rejected_for_same_session_repair(self) -> None:
         task = self.task()

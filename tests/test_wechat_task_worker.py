@@ -223,7 +223,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
             ["task:parent-1", "task:child-2"],
         )
 
-    def test_completion_audit_recovers_exact_task_pdf_after_agent_repair_fails(self) -> None:
+    def test_completion_audit_recovers_exact_task_pdf_before_agent_repair(self) -> None:
         worker = load_worker()
         first = {
             "status": "unavailable",
@@ -280,7 +280,7 @@ class WeChatTaskWorkerTests(unittest.TestCase):
                 worker,
                 "run_worker_agent_session",
                 return_value='{"message":"unable","files":[],"no_reply":true}',
-            ),
+            ) as repair_agent,
             mock.patch.object(
                 worker,
                 "completion_repair_result_usable",
@@ -307,14 +307,15 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertTrue(task["completion_audit"]["repair_succeeded"])
         self.assertEqual(
             task["completion_audit"]["attempts"][-1]["stage"],
-            "deterministic_artifact_recovery",
+            "deterministic_artifact_recovery_pre_repair",
         )
         recover.assert_called_once_with(
             task,
             "completion audit requires an exact-task PDF artifact",
             force=True,
         )
-        self.assertEqual(quality_gate.call_count, 2)
+        repair_agent.assert_not_called()
+        self.assertEqual(quality_gate.call_count, 1)
         quality_gate.assert_any_call(task, recovered)
 
     def test_completion_audit_does_not_redeliver_recovered_low_quality_pdf(self) -> None:
@@ -3771,6 +3772,223 @@ stderr: noisy internal trace
         self.assertEqual(
             second["stored_contract_repair"]["last_noop_reason"],
             "same_repaired_result_already_sent",
+        )
+
+    def test_repair_stored_result_refuses_rejected_required_pdf(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "shallow-report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            raw = json.dumps(
+                {
+                    "message": "报告已完成。",
+                    "files": [str(report)],
+                    "confirmation": "",
+                },
+                ensure_ascii=False,
+            )
+            queue = root / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "research-repair",
+                        "chat": "LabAgent",
+                        "status": "done",
+                        "request": "请发送完整研究 PDF。",
+                        "routine": {"id": "research_summary"},
+                        "route_decision": {
+                            "route_kind": "research_or_summary",
+                            "require_file_delivery": True,
+                        },
+                        "execution_contract": {
+                            "required_artifacts": ["compiled_pdf"],
+                        },
+                        "result": {
+                            "message": "旧结果。",
+                            "confirmation": "",
+                            "files": [str(report)],
+                            "raw": raw,
+                        },
+                    }
+                ],
+            )
+
+            with mock.patch.object(
+                worker,
+                "reader_facing_pdf_quality_issues",
+                return_value=["orphan_final_pdf_page"],
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit,
+                    "no reader-quality required artifact",
+                ):
+                    worker.repair_stored_result_contract(
+                        queue,
+                        "research-repair",
+                        send=True,
+                        send_targets=root / "targets.json",
+                    )
+
+    def test_repair_stored_result_recovers_host_compiled_pdf_without_agent(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "full-report.pdf"
+            report.write_bytes(b"%PDF-1.4\n% exact task report\n")
+            raw = json.dumps(
+                {
+                    "message": "研究已完成。",
+                    "files": [],
+                    "confirmation": "",
+                },
+                ensure_ascii=False,
+            )
+            queue = root / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "host-pdf-repair",
+                        "chat": "LabAgent",
+                        "status": "done",
+                        "request": "请发送完整研究 PDF。",
+                        "routine": {"id": "research_summary"},
+                        "route_decision": {
+                            "route_kind": "research_or_summary",
+                            "require_file_delivery": True,
+                        },
+                        "execution_contract": {
+                            "required_artifacts": ["compiled_pdf"],
+                        },
+                        "message_coverage": {
+                            "status": "supplement_required",
+                            "expected_item_ids": ["task:host-pdf-repair"],
+                            "covered_item_ids": [],
+                            "unresolved_item_ids": ["task:host-pdf-repair"],
+                            "missing": [
+                                {
+                                    "item_id": "task:host-pdf-repair",
+                                    "requirement": "Create and return the PDF artifact.",
+                                    "kind": "artifact",
+                                }
+                            ],
+                        },
+                        "result": {
+                            "message": "旧结果。",
+                            "confirmation": "",
+                            "files": [],
+                            "raw": raw,
+                        },
+                    }
+                ],
+            )
+            recovered = {
+                "message": "完整研究报告已整理完成。",
+                "confirmation": "",
+                "files": [str(report)],
+                "data": {"require_file_delivery": True},
+            }
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "recover_completed_research_artifacts",
+                    return_value=recovered,
+                ) as recovery,
+                mock.patch.object(
+                    worker,
+                    "reader_facing_pdf_quality_issues",
+                    return_value=[],
+                ),
+                mock.patch.object(
+                    worker,
+                    "run_worker_codex",
+                    side_effect=AssertionError("repair must not invoke the agent"),
+                ),
+            ):
+                repaired = worker.repair_stored_result_contract(
+                    queue,
+                    "host-pdf-repair",
+                )
+
+        recovery.assert_called_once()
+        self.assertEqual(repaired["result"]["files"], [str(report.resolve())])
+        self.assertTrue(
+            repaired["result"]["data"]["stored_result_contract_recovery"]
+        )
+        self.assertEqual(repaired["message_coverage"]["status"], "covered")
+        self.assertFalse(repaired["stored_contract_repair"]["model_invoked"])
+
+    def test_reconcile_repaired_artifact_coverage_keeps_unrelated_gap(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf = Path(tmp) / "full-report.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n% test fixture\n")
+            task = {
+                "id": "report-repair",
+                "request": "Please return a complete PDF report.",
+                "source": {"local_id": 9},
+                "context": [
+                    {"local_id": 9, "content": "Please return a complete PDF report."},
+                    {"local_id": 10, "content": "Also answer the follow-up question."},
+                ],
+                "completion_audit": {
+                    "status": "unavailable",
+                    "attempts": [{"stage": "candidate", "status": "unavailable"}],
+                    "repair_attempted": True,
+                    "repair_succeeded": False,
+                },
+                "message_coverage": {
+                    "status": "supplement_required",
+                    "expected_item_ids": ["msg:9", "msg:10"],
+                    "covered_item_ids": [],
+                    "unresolved_item_ids": ["msg:9", "msg:10"],
+                    "missing": [
+                        {
+                            "item_id": "msg:9",
+                            "requirement": "Return the complete PDF report.",
+                            "kind": "artifact",
+                        },
+                        {
+                            "item_id": "msg:10",
+                            "requirement": "Answer the separate follow-up question.",
+                            "kind": "answer",
+                        },
+                    ],
+                },
+                "skipped_files": [
+                    {
+                        "path": str(pdf),
+                        "reason": "reader-facing-pdf-quality:missing_complete_reference_section",
+                    }
+                ],
+            }
+            result = {
+                "message": "The full report is attached.",
+                "files": [str(pdf)],
+                "data": {"pdf_quality_rejections": []},
+            }
+            with mock.patch.object(
+                worker,
+                "reader_facing_pdf_quality_issues",
+                return_value=[],
+            ):
+                resolved = worker.reconcile_repaired_artifact_coverage(
+                    task,
+                    result,
+                    checked_at="2026-08-25T13:30:00",
+                )
+
+        self.assertEqual(resolved, ["msg:9"])
+        self.assertEqual(task["message_coverage"]["covered_item_ids"], ["msg:9"])
+        self.assertEqual(task["message_coverage"]["unresolved_item_ids"], ["msg:10"])
+        self.assertEqual(task["message_coverage"]["missing"][0]["item_id"], "msg:10")
+        self.assertFalse(task["completion_audit"]["repair_succeeded"])
+        self.assertNotIn("skipped_files", task)
+        self.assertFalse(
+            task["completion_audit"]["attempts"][-1]["model_invoked"]
         )
 
     def test_video_publish_preflight_writes_context_and_uses_exact_message_id(self) -> None:
@@ -12150,6 +12368,398 @@ stderr: noisy internal trace
             ["/usr/bin/pdftotext", "-layout", "-nopgbrk", str(report), "-"],
         )
 
+    def test_pdf_page_quality_extractor_preserves_page_boundaries(self) -> None:
+        worker = load_worker()
+        report = Path("/tmp/reader-report.pdf")
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="First page\fSecond page\f",
+            stderr="",
+        )
+        with (
+            mock.patch.object(worker.shutil, "which", return_value="/usr/bin/pdftotext"),
+            mock.patch.object(worker.subprocess, "run", return_value=completed) as run,
+        ):
+            pages, error = worker.extract_pdf_page_texts_for_quality(report)
+
+        self.assertEqual(pages, ["First page", "Second page"])
+        self.assertEqual(error, "")
+        self.assertEqual(
+            run.call_args.args[0],
+            ["/usr/bin/pdftotext", "-layout", str(report), "-"],
+        )
+
+    def test_pdf_layout_quality_rejects_orphan_final_page(self) -> None:
+        worker = load_worker()
+        pages = [
+            "LABCANVAS RESEARCH BRIEF August 25, 2026\n" + ("A" * 900) + "\n1",
+            "LABCANVAS RESEARCH BRIEF August 25, 2026\n" + ("B" * 1100) + "\n2",
+            "LABCANVAS RESEARCH BRIEF August 25, 2026\n"
+            + ("Evidence boundary note. " * 4)
+            + "\n3",
+        ]
+        with mock.patch.object(
+            worker,
+            "extract_pdf_page_texts_for_quality",
+            return_value=(pages, ""),
+        ):
+            audit = worker.analyze_pdf_layout_for_quality(Path("/tmp/report.pdf"))
+
+        self.assertEqual(audit["page_count"], 3)
+        self.assertIn("orphan_final_pdf_page", audit["issues"])
+        self.assertNotIn("blank_or_nearly_blank_pdf_page", audit["issues"])
+
+    def test_pdf_layout_quality_accepts_substantive_final_page(self) -> None:
+        worker = load_worker()
+        pages = ["A" * 900, "B" * 1100, "C" * 700]
+        with mock.patch.object(
+            worker,
+            "extract_pdf_page_texts_for_quality",
+            return_value=(pages, ""),
+        ):
+            audit = worker.analyze_pdf_layout_for_quality(Path("/tmp/report.pdf"))
+
+        self.assertEqual(audit["issues"], [])
+
+    def test_terminal_report_note_is_relocated_before_references(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.md"
+            report.write_text(
+                "# Report\n\n"
+                "## Evidence boundary\n\nSubstantive discussion.\n\n"
+                "## 参考文献\n\n1. Source A.\n\n2. Source B.\n\n"
+                "**证据边界说明**：该说明应与正文相邻，而不是单独占据末页。\n",
+                encoding="utf-8",
+            )
+
+            first = worker.relocate_terminal_report_note_before_references(report)
+            revised = report.read_text(encoding="utf-8")
+            second = worker.relocate_terminal_report_note_before_references(report)
+
+        self.assertTrue(first["changed"])
+        self.assertLess(revised.index("证据边界说明"), revised.index("## 参考文献"))
+        self.assertIn("1. Source A.", revised)
+        self.assertFalse(second["changed"])
+
+    def test_preferred_research_pdf_rebuilds_stale_exact_sibling(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "report.zh.md"
+            pdf = root / "report.zh.pdf"
+            pdf.write_bytes(b"old-pdf")
+            report.write_text("# 新报告\n", encoding="utf-8")
+            os.utime(pdf, (1, 1))
+
+            def fake_render(_source: Path, output: Path) -> Path:
+                output.write_bytes(b"new-pdf")
+                return output
+
+            with mock.patch.object(
+                worker,
+                "render_markdown_pdf",
+                side_effect=fake_render,
+            ) as render:
+                selected = worker.preferred_research_report_pdf(report, "zh")
+                pdf_bytes = pdf.read_bytes()
+
+        self.assertEqual(selected, pdf)
+        self.assertEqual(pdf_bytes, b"new-pdf")
+        render.assert_called_once_with(report, pdf)
+
+    def test_completion_recovery_repaginates_terminal_note_before_model_repair(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "reader-report.md"
+            report.write_text(
+                "# Report\n\n## Evidence\n\nMethods and results.\n\n"
+                "## References\n\n1. Source A.\n\n2. Source B.\n\n"
+                "**Evidence note**: This short note belongs before the references.\n",
+                encoding="utf-8",
+            )
+            pdf = root / "reader-report.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n")
+            task = {
+                "id": "layout-repair",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "route_decision": {"route_kind": "research_or_summary"},
+                "request": "Create and return the PDF report.",
+            }
+            bad = {
+                "message": "Report ready.",
+                "files": [],
+                "data": {
+                    "report_path": str(report),
+                    "pdf_quality_rejections": [
+                        {
+                            "path": str(pdf),
+                            "issues": ["orphan_final_pdf_page"],
+                        }
+                    ],
+                },
+            }
+            good = {
+                "message": "Report ready.",
+                "files": [str(pdf)],
+                "data": {
+                    "report_path": str(report),
+                    "pdf_quality_rejections": [],
+                },
+            }
+            audit = {
+                "status": "checked",
+                "coverage_complete": True,
+                "covered_item_ids": ["task:layout-repair"],
+                "missing": [],
+                "repair_recommended": False,
+            }
+            attempts: list[dict[str, object]] = []
+            with (
+                mock.patch.object(
+                    worker,
+                    "recover_completed_research_artifacts",
+                    side_effect=[{"files": [str(pdf)]}, {"files": [str(pdf)]}],
+                ) as recover,
+                mock.patch.object(
+                    worker,
+                    "enforce_reader_facing_pdf_quality",
+                    side_effect=[bad, good],
+                ),
+                mock.patch.object(worker, "run_completion_audit", return_value=audit),
+            ):
+                result, recovered_audit, accepted = worker.recover_completion_pdf_artifact(
+                    task,
+                    {"message": "draft", "files": []},
+                    attempts,
+                    stage="deterministic_recovery",
+                )
+
+            revised = report.read_text(encoding="utf-8")
+
+        self.assertTrue(accepted)
+        self.assertEqual(recovered_audit, audit)
+        self.assertIn(str(pdf), result["files"])
+        self.assertEqual(recover.call_count, 2)
+        self.assertLess(revised.index("Evidence note"), revised.index("## References"))
+        self.assertIn(
+            "deterministic_recovery:host_layout_repair",
+            [str(item.get("stage")) for item in attempts],
+        )
+
+    def test_pdf_render_audit_persists_page_previews_and_manifest(self) -> None:
+        worker = load_worker()
+        task = {
+            "execution_contract": {
+                "required_artifacts": ["compiled_pdf", "render_audit"],
+                "report_quality": {"independent_review_before_delivery": True},
+            }
+        }
+        layout = {
+            "status": "checked",
+            "page_count": 2,
+            "page_body_char_counts": [800, 700],
+            "issues": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+
+            def fake_render(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                prefix = Path(command[-1])
+                prefix.with_name(prefix.name + "-1.png").write_bytes(b"png-one")
+                prefix.with_name(prefix.name + "-2.png").write_bytes(b"png-two")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with (
+                mock.patch.object(worker.shutil, "which", return_value="/usr/bin/pdftoppm"),
+                mock.patch.object(worker.subprocess, "run", side_effect=fake_render),
+            ):
+                audit = worker.persist_pdf_render_audit(task, report, layout)
+
+            manifest = Path(audit["manifest_path"])
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["render_status"], "rendered")
+        self.assertEqual(payload["page_count"], 2)
+        self.assertEqual(payload["rendered_pages"], ["page-1.png", "page-2.png"])
+
+    def test_pdf_render_audit_retries_a_cached_failed_render(self) -> None:
+        worker = load_worker()
+        task = {
+            "execution_contract": {
+                "required_artifacts": ["compiled_pdf", "render_audit"],
+            }
+        }
+        layout = {
+            "status": "checked",
+            "page_count": 1,
+            "page_body_char_counts": [800],
+            "issues": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            audit_dir = report.parent / "report-render-audit"
+            audit_dir.mkdir()
+            source = {
+                "filename": report.name,
+                "bytes": report.stat().st_size,
+                "mtime_ns": report.stat().st_mtime_ns,
+            }
+            (audit_dir / "render-audit.json").write_text(
+                json.dumps(
+                    {
+                        "version": worker.PDF_LAYOUT_AUDIT_VERSION,
+                        "source": source,
+                        "page_count": 1,
+                        "render_status": "failed",
+                        "rendered_pages": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def fake_render(
+                command: list[str], **_kwargs: object
+            ) -> subprocess.CompletedProcess[str]:
+                prefix = Path(command[-1])
+                prefix.with_name(prefix.name + "-1.png").write_bytes(b"png")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with (
+                mock.patch.object(worker.shutil, "which", return_value="/usr/bin/pdftoppm"),
+                mock.patch.object(worker.subprocess, "run", side_effect=fake_render) as run,
+            ):
+                audit = worker.persist_pdf_render_audit(task, report, layout)
+
+        self.assertEqual(audit["render_status"], "rendered")
+        self.assertEqual(run.call_count, 1)
+
+    def test_markdown_pdf_retries_compact_layout_for_orphan_final_page(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "report.md"
+            output = root / "report.pdf"
+            source.write_text("# Report\n\nSubstantive content.\n", encoding="utf-8")
+
+            def fake_compile(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                destination = Path(command[command.index("-o") + 1])
+                compact = str(worker.NATURE_REPORT_COMPACT_LATEX_HEADER) in command
+                destination.write_bytes(b"compact-pdf" if compact else b"normal-pdf")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "resolve_markdown_pdf_tool",
+                    return_value="/usr/bin/pandoc",
+                ),
+                mock.patch.object(worker.subprocess, "run", side_effect=fake_compile) as run,
+                mock.patch.object(
+                    worker,
+                    "analyze_pdf_layout_for_quality",
+                    side_effect=[
+                        {"issues": ["orphan_final_pdf_page"]},
+                        {"issues": []},
+                    ],
+                ),
+            ):
+                rendered = worker.render_markdown_pdf(source, output)
+                final_bytes = output.read_bytes()
+
+        self.assertEqual(rendered, output.resolve())
+        self.assertEqual(final_bytes, b"compact-pdf")
+        self.assertEqual(run.call_count, 2)
+        self.assertIn(
+            str(worker.NATURE_REPORT_COMPACT_LATEX_HEADER),
+            run.call_args_list[1].args[0],
+        )
+
+    def test_markdown_pdf_removes_failed_compact_retry(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "report.md"
+            output = root / "report.pdf"
+            source.write_text("# Report\n\nSubstantive content.\n", encoding="utf-8")
+
+            def fake_compile(
+                command: list[str], **_kwargs: object
+            ) -> subprocess.CompletedProcess[str]:
+                destination = Path(command[command.index("-o") + 1])
+                compact = str(worker.NATURE_REPORT_COMPACT_LATEX_HEADER) in command
+                destination.write_bytes(b"compact-pdf" if compact else b"normal-pdf")
+                return subprocess.CompletedProcess(
+                    command,
+                    1 if compact else 0,
+                    "",
+                    "failed",
+                )
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "resolve_markdown_pdf_tool",
+                    return_value="/usr/bin/pandoc",
+                ),
+                mock.patch.object(worker.subprocess, "run", side_effect=fake_compile),
+                mock.patch.object(
+                    worker,
+                    "analyze_pdf_layout_for_quality",
+                    return_value={"issues": ["orphan_final_pdf_page"]},
+                ),
+            ):
+                rendered = worker.render_markdown_pdf(source, output)
+                compact_output = root / "report.compact.tmp.pdf"
+
+            self.assertEqual(rendered, output.resolve())
+            self.assertFalse(compact_output.exists())
+
+    def test_reader_facing_pdf_quality_rejects_orphan_final_page(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Prepare and send a PDF research report.",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "orphan-report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            clean_text = "Research report\n" + ("Verified evidence and analysis. " * 40)
+            layout = {
+                "status": "checked",
+                "page_count": 4,
+                "page_body_char_counts": [900, 850, 1000, 80],
+                "issues": ["orphan_final_pdf_page"],
+            }
+            with (
+                mock.patch.object(
+                    worker,
+                    "extract_pdf_text_for_quality",
+                    return_value=(clean_text, ""),
+                ),
+                mock.patch.object(
+                    worker,
+                    "analyze_pdf_layout_for_quality",
+                    return_value=layout,
+                ),
+            ):
+                result = worker.enforce_reader_facing_pdf_quality(
+                    task,
+                    {"message": "Report ready.", "files": [str(report)]},
+                )
+
+        self.assertEqual(result["files"], [])
+        self.assertIn(
+            "orphan_final_pdf_page",
+            result["data"]["pdf_quality_rejections"][0]["issues"],
+        )
+
     def test_reader_facing_pdf_quality_accepts_substantive_clean_report(self) -> None:
         worker = load_worker()
         task = {
@@ -12204,6 +12814,111 @@ stderr: noisy internal trace
         self.assertIn("missing_reader_evidence_section", issues)
         self.assertIn("missing_uncertainty_or_limitations", issues)
         self.assertIn("missing_actionable_next_steps", issues)
+
+    def test_scheduled_full_report_rejects_polished_summary_reflow(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "scheduled_daily_research": True,
+            },
+            "daily_research": {"topics": ["organoid imaging"]},
+            "execution_contract": {
+                "research_evidence": {
+                    "required": True,
+                    "minimum_traceable_sources": 3,
+                    "state_uncertainty_and_limitations": True,
+                    "include_actionable_next_steps": True,
+                },
+                "report_quality": {
+                    "materially_deeper_than_chat": True,
+                    "required_dimensions": [
+                        "source_level_methods_results_and_limitations",
+                        "cross_source_synthesis_and_tensions",
+                        "evidence_boundaries_and_uncertainty",
+                        "actionable_experiments_or_decisions",
+                        "complete_traceable_references",
+                    ],
+                },
+            },
+            "request": "Prepare the full daily report PDF.",
+        }
+        polished_summary = """
+        每日研究简报
+        三篇论文形成感知、控制、预测的闭环。
+        DOI: 10.1000/source-a DOI: 10.1000/source-b DOI: 10.1000/source-c
+        论文一准确率 70%，论文二活力 95%，论文三减少约 50%。
+        合读与综合分析表明三者互补。
+        局限与不确定性：这些数据尚未独立复现。
+        """ + ("背景信息。" * 180)
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "daily-report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            with mock.patch.object(
+                worker,
+                "extract_pdf_text_for_quality",
+                return_value=(polished_summary, ""),
+            ):
+                issues = worker.reader_facing_pdf_quality_issues(task, report)
+
+        self.assertIn("missing_actionable_next_steps", issues)
+        self.assertIn("missing_source_level_methods_results_limits", issues)
+        self.assertIn("missing_actionable_experiments_or_decisions", issues)
+        self.assertIn("missing_complete_reference_section", issues)
+        self.assertNotIn("missing_cross_source_synthesis", issues)
+
+    def test_scheduled_full_report_accepts_explicit_depth_dimensions(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "execution_contract": {
+                "research_evidence": {
+                    "required": True,
+                    "minimum_traceable_sources": 3,
+                    "state_uncertainty_and_limitations": True,
+                    "include_actionable_next_steps": True,
+                },
+                "report_quality": {
+                    "required_dimensions": [
+                        "source_level_methods_results_and_limitations",
+                        "cross_source_synthesis_and_tensions",
+                        "evidence_boundaries_and_uncertainty",
+                        "actionable_experiments_or_decisions",
+                        "complete_traceable_references",
+                    ]
+                },
+            },
+            "request": "Prepare the full daily report PDF.",
+        }
+        full_report = """
+        # 证据与方法
+        研究设计与实验系统：比较队列、样本、对照组和数据集。
+        主要结果与定量结果：准确率 82%，并报告 AUROC 0.86。
+        DOI: 10.1000/source-a DOI: 10.1000/source-b DOI: 10.1000/source-c
+        # 跨论文综合分析
+        三项研究的一致之处与分歧构成可检验张力。
+        # 证据边界与局限
+        直接证据、间接证据、假设和不确定性分开陈述。
+        # 下一步与建议实验
+        优先实验是独立队列复现，并预注册决策阈值。
+        九、完整可追溯参考文献
+        1. Source A. doi:10.1000/source-a
+        2. Source B. doi:10.1000/source-b
+        3. Source C. doi:10.1000/source-c
+        """ + ("证据解释与决策影响。" * 100)
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "daily-report.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            with mock.patch.object(
+                worker,
+                "extract_pdf_text_for_quality",
+                return_value=(full_report, ""),
+            ):
+                issues = worker.reader_facing_pdf_quality_issues(task, report)
+
+        self.assertEqual(issues, [])
 
     def test_reader_facing_pdf_quality_rejects_corrupt_searchable_text(self) -> None:
         worker = load_worker()

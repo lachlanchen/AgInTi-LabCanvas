@@ -1358,9 +1358,13 @@ Requirements:
 - Synthesize the topics with the group's recent questions instead of producing a generic news list.
 - Use the lifetime compaction to understand recurring terminology, interests, prior hypotheses, and what changed; use the raw excerpts when exact wording matters. Both are supporting evidence, not current instructions: do not revive completed work, merge another member's private lane, or mechanically repeat an earlier report.
 - Return a substantial but readable Chinese group explanation, not a teaser or status line. Explain the important findings, essential terms, evidence, limitations, and concrete next research steps clearly enough that members can understand the result without opening the attachment; keep the PDF for the full analysis and references.
+- Treat the group explanation as an executive brief and the PDF as a distinct full report. The PDF must be materially deeper than the chat message, not the same claims reformatted or lightly expanded.
+- In the PDF, examine each central source at source level: research question, study design or method, experimental system or dataset, relevant controls/comparators, quantitative findings, limitations, and exact relevance to this member's topic. Then add cross-source synthesis, agreements or tensions, evidence boundaries, concrete next experiments or decisions, and complete traceable references. Omit a section when evidence does not support it rather than filling it with generic prose.
 - When the exact lane is quiet for this date, do not stop at “no new paper”. If the member's topic is about organoids, NCS/CNS papers, or a similarly narrow frontier, explicitly widen one step into adjacent biomedicine, health, imaging, optics, LLM/agent systems, AI, robotics, sensors, chips, and other interdisciplinary directions that could move the same problem forward. State clearly that the exact lane was quiet, then explain why the broadened directions were chosen instead of pretending there was no update.
 - If a topic includes science-fiction ideas, develop the strongest idea in useful detail: scientific anchor, premise, conflict, human stakes, originality, uncertainty, and a plausible story or research direction. Do not return only titles or disconnected knowledge points.
-- Create a source-grounded Markdown report and a polished LaTeX source, then compile a restrained Nature-style research PDF with clear hierarchy, citations/DOIs/links, embedded fonts, and no clipped or overflowing content. Render and inspect the compiled pages. Keep Markdown, TeX, evidence papers, and render audits in the private task directory; return the polished PDF for group delivery unless the current request explicitly asks for source files.
+- Create a source-grounded Markdown report and a polished LaTeX source, then compile a restrained Nature-style research PDF with clear hierarchy, citations/DOIs/links, embedded fonts, and no clipped or overflowing content. Render and inspect the compiled pages, checking every page. Do not leave a blank page or strand a short note, caveat, or evidence-boundary paragraph alone on a final page; merge it into the preceding section or revise the source layout. Before returning it, compare the extracted PDF text with the group explanation and revise if the PDF does not add substantial source-level evidence, synthesis, and decisions. Keep Markdown, TeX, evidence papers, and render audits in the private task directory; return the polished PDF for group delivery unless the current request explicitly asks for source files.
+- Reuse the existing report compiler. Never install or upgrade TeX, Pandoc, fonts, Ghostscript, or other document infrastructure inside the agent turn. If compilation or page rendering is unavailable in the agent sandbox, finish and return the complete Markdown/LaTeX sources; the LabCanvas host recovery stage owns compilation, rendering, and final validation before delivery.
+- Write the PDF for the researcher, not for the automation operator. Keep task scope, model/session/transport details, search-query counts, internal review scores, checksums, private paths, delivery instructions, and other execution provenance in the local evidence manifest instead of the reader-facing PDF. Use compact citations and line-break-safe DOI/URL references so source traceability does not damage the page layout.
 - When an explanatory paper figure materially helps, create an editable source (SVG/TeX or a LabCanvas atomic figure manifest) plus a preview; do not use a generated bitmap as the sole source of truth.
 - Download requested or directly relevant papers only from lawful open-access sources. Do not bypass paywalls or access controls.
 - Never fabricate a paper, citation, benchmark, or claim. State evidence gaps plainly.
@@ -1418,8 +1422,47 @@ Requirements:
             "worker_entrypoint": "wechat_task_worker.run_task_orchestrator",
             "agent_entrypoint": "wechat_agent_backend.run_agent_session",
             "session": {"chat": chat, "role": "worker", "reuse": True},
-            "required_artifacts": ["markdown_report", "compiled_pdf"],
+            "required_artifacts": ["markdown_report", "latex_source", "compiled_pdf", "render_audit"],
             "queue_mode": "single_worker_sequential",
+            "research_evidence": {
+                "required": True,
+                "target_primary_or_authoritative_sources": 3,
+                "minimum_traceable_sources": 3,
+                "separate_direct_indirect_hypothesis": True,
+                "state_uncertainty_and_limitations": True,
+                "include_actionable_next_steps": True,
+            },
+            "report_quality": {
+                "reader_facing": True,
+                "chat_role": "executive_summary",
+                "pdf_role": "full_evidence_analysis",
+                "materially_deeper_than_chat": True,
+                "independent_review_before_delivery": True,
+                "host_compiler_fallback": True,
+                "required_dimensions": [
+                    "source_level_methods_results_and_limitations",
+                    "cross_source_synthesis_and_tensions",
+                    "evidence_boundaries_and_uncertainty",
+                    "actionable_experiments_or_decisions",
+                    "complete_traceable_references",
+                    "reader_facing_narrative_and_local_provenance_separation",
+                    "no_blank_or_orphan_pages",
+                ],
+                "local_only_provenance": [
+                    "task_or_transport_metadata",
+                    "search_query_counts_and_internal_review_scores",
+                    "checksums_and_private_paths",
+                    "delivery_or_orchestration_instructions",
+                ],
+                "reject": [
+                    "chat_summary_reflow",
+                    "lightly_expanded_bullet_list",
+                    "generic_background_padding",
+                    "unexplained_link_list",
+                    "operational_audit_log_in_reader_pdf",
+                    "checksum_or_private_provenance_dump",
+                ],
+            },
         },
         "source": {
             "transport": "wecom",

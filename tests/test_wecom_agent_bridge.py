@@ -1759,6 +1759,42 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertIn("LLM/agent systems, AI, robotics, sensors, chips", task["request"])
         self.assertIn("private task directory", task["request"])
         self.assertIn("return the polished PDF", task["request"])
+        self.assertIn("executive brief", task["request"])
+        self.assertIn("materially deeper than the chat message", task["request"])
+        self.assertIn("study design or method", task["request"])
+        self.assertIn("compare the extracted PDF text", task["request"])
+        self.assertIn("Write the PDF for the researcher", task["request"])
+        self.assertIn("checksums", task["request"])
+        self.assertIn("Never install or upgrade TeX", task["request"])
+        evidence = task["execution_contract"]["research_evidence"]
+        self.assertTrue(evidence["required"])
+        self.assertEqual(evidence["minimum_traceable_sources"], 3)
+        self.assertTrue(evidence["include_actionable_next_steps"])
+        report_quality = task["execution_contract"]["report_quality"]
+        self.assertEqual(report_quality["chat_role"], "executive_summary")
+        self.assertEqual(report_quality["pdf_role"], "full_evidence_analysis")
+        self.assertTrue(report_quality["materially_deeper_than_chat"])
+        self.assertTrue(report_quality["host_compiler_fallback"])
+        self.assertIn(
+            "source_level_methods_results_and_limitations",
+            report_quality["required_dimensions"],
+        )
+        self.assertIn(
+            "reader_facing_narrative_and_local_provenance_separation",
+            report_quality["required_dimensions"],
+        )
+        self.assertIn(
+            "no_blank_or_orphan_pages",
+            report_quality["required_dimensions"],
+        )
+        self.assertIn(
+            "checksums_and_private_paths",
+            report_quality["local_only_provenance"],
+        )
+        self.assertEqual(
+            task["execution_contract"]["required_artifacts"],
+            ["markdown_report", "latex_source", "compiled_pdf", "render_audit"],
+        )
         self.assertEqual(task["routine"]["default_effort"], "medium")
         self.assertNotIn("transport sends both", task["request"])
         self.assertTrue(task["route_decision"]["no_fixed_deadline"])

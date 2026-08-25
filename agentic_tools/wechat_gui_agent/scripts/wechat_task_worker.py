@@ -87,6 +87,13 @@ WECOM_NATIVE_ARTICLE_RECOVERY_SCRIPT = (
 NATURE_REPORT_LATEX_HEADER = (
     ROOT / "agentic_tools" / "wechat_gui_agent" / "templates" / "nature_research_report_header.tex"
 )
+NATURE_REPORT_COMPACT_LATEX_HEADER = (
+    ROOT
+    / "agentic_tools"
+    / "wechat_gui_agent"
+    / "templates"
+    / "nature_research_report_compact_header.tex"
+)
 EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max", "ultra"]
 CLAIMED_STATUS = "in_progress"
 SEND_DEFERRED_LOCKED_STATUS = "send_deferred_locked"
@@ -492,6 +499,171 @@ def stored_result_repair_fingerprint(result: dict[str, Any], raw_text: str) -> s
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def reconcile_repaired_artifact_coverage(
+    task: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    checked_at: str,
+) -> list[str]:
+    """Clear only stale artifact gaps proven by the repaired result itself."""
+    coverage = (
+        task.get("message_coverage")
+        if isinstance(task.get("message_coverage"), dict)
+        else {}
+    )
+    missing = [
+        dict(item)
+        for item in coverage.get("missing") or []
+        if isinstance(item, dict)
+    ]
+
+    rejected_paths = {
+        str(Path(str(item.get("path") or "")).expanduser().resolve())
+        for item in result_delivery_data(result).get("pdf_quality_rejections") or []
+        if isinstance(item, dict) and str(item.get("path") or "").strip()
+    }
+    passing_pdf_paths: list[Path] = []
+    for raw in result.get("files") or []:
+        path = Path(str(raw)).expanduser().resolve()
+        if (
+            path.suffix.casefold() == ".pdf"
+            and str(path) not in rejected_paths
+            and path.is_file()
+            and not reader_facing_pdf_quality_issues(task, path)
+        ):
+            passing_pdf_paths.append(path)
+    if not passing_pdf_paths:
+        return []
+    passing_pdf_path_set = {str(path) for path in passing_pdf_paths}
+    remaining_skipped = [
+        item
+        for item in task.get("skipped_files") or []
+        if not (
+            isinstance(item, dict)
+            and str(Path(str(item.get("path") or "")).expanduser().resolve())
+            in passing_pdf_path_set
+            and str(item.get("reason") or "").startswith(
+                "reader-facing-pdf-quality:"
+            )
+        )
+    ]
+    if remaining_skipped:
+        task["skipped_files"] = remaining_skipped
+    else:
+        task.pop("skipped_files", None)
+    if not missing:
+        return []
+
+    resolved_ids: list[str] = []
+    unresolved_missing: list[dict[str, Any]] = []
+    for item in missing:
+        requirement = str(item.get("requirement") or "")
+        item_id = str(item.get("item_id") or "")
+        is_pdf_artifact = (
+            str(item.get("kind") or "").casefold() == "artifact"
+            and bool(re.search(r"(?:\bpdf\b|\.pdf\b)", requirement, flags=re.I))
+        )
+        if is_pdf_artifact and item_id:
+            resolved_ids.append(item_id)
+        else:
+            unresolved_missing.append(item)
+    if not resolved_ids:
+        return []
+
+    stored_expected_ids = unique_strings(
+        str(value) for value in coverage.get("expected_item_ids") or []
+    )
+    expected_ids = stored_expected_ids or completion_expected_item_ids(task)
+    covered_ids = unique_strings(
+        [
+            *(str(value) for value in coverage.get("covered_item_ids") or []),
+            *resolved_ids,
+        ]
+    )
+    covered_id_set = set(covered_ids)
+    unresolved_ids = [
+        item_id for item_id in expected_ids if item_id not in covered_id_set
+    ]
+    task["message_coverage"] = {
+        **coverage,
+        "status": "covered" if not unresolved_ids else "supplement_required",
+        "checked_at": checked_at,
+        "expected_item_ids": expected_ids,
+        "covered_item_ids": covered_ids,
+        "unresolved_item_ids": unresolved_ids,
+        "missing": unresolved_missing,
+        "repair_attempted": True,
+        "repair_succeeded": not unresolved_ids,
+    }
+
+    audit = (
+        dict(task.get("completion_audit"))
+        if isinstance(task.get("completion_audit"), dict)
+        else {}
+    )
+    attempts = [
+        *(
+            dict(item)
+            for item in audit.get("attempts") or []
+            if isinstance(item, dict)
+        ),
+        {
+            "stage": "stored_contract_revalidation",
+            "status": "artifact_requirements_revalidated",
+            "resolved_item_ids": resolved_ids,
+            "verified_files": [str(path) for path in passing_pdf_paths],
+            "model_invoked": False,
+        },
+    ]
+    task["completion_audit"] = {
+        **audit,
+        "status": "contract_revalidated" if not unresolved_ids else str(
+            audit.get("status") or "partially_revalidated"
+        ),
+        "attempts": attempts,
+        "repair_attempted": True,
+        "repair_succeeded": not unresolved_ids,
+    }
+    return resolved_ids
+
+
+def recover_stored_result_required_files(
+    task: dict[str, Any],
+    result: dict[str, Any],
+    raw_text: str,
+) -> dict[str, Any]:
+    """Adopt a host-built exact-task report without rerunning its agent turn."""
+    if not (
+        result_requires_file_delivery(task, result)
+        or task_contract_requires_file_delivery(task)
+    ):
+        return result
+    if required_delivery_file_paths(result, task):
+        return result
+    recovered = recover_completed_research_artifacts(
+        task,
+        "stored result is missing its required reader-facing artifact",
+        force=True,
+    )
+    if not isinstance(recovered, dict):
+        return result
+    recovered["raw"] = raw_text
+    recovered = prepare_result_files(recovered, raw_text, task=task)
+    recovered = enforce_reader_facing_pdf_quality(task, recovered)
+    if not required_delivery_file_paths(recovered, task):
+        return result
+    data = (
+        recovered.get("data")
+        if isinstance(recovered.get("data"), dict)
+        else {}
+    )
+    recovered["data"] = {
+        **data,
+        "stored_result_contract_recovery": True,
+    }
+    return recovered
+
+
 def repair_stored_result_contract(
     queue: Path,
     task_id: str,
@@ -528,8 +700,25 @@ def repair_stored_result_contract(
         repaired = parse_worker_result(raw_text)
         repaired = enforce_worker_result_contract(task, repaired, raw_text)
         repaired = prepare_result_files(repaired, raw_text, task=task)
+        repaired = enforce_reader_facing_pdf_quality(task, repaired)
+        repaired = recover_stored_result_required_files(task, repaired, raw_text)
+        resolved_coverage_ids = reconcile_repaired_artifact_coverage(
+            task,
+            repaired,
+            checked_at=now_text,
+        )
         if not worker_result_has_delivery_content(repaired):
             raise SystemExit(f"Task {task_id} raw result has no repairable delivery content")
+        if (
+            (
+                result_requires_file_delivery(task, repaired)
+                or task_contract_requires_file_delivery(task)
+            )
+            and not required_delivery_file_paths(repaired, task)
+        ):
+            raise SystemExit(
+                f"Task {task_id} has no reader-quality required artifact to deliver"
+            )
 
         fingerprint = stored_result_repair_fingerprint(repaired, raw_text)
         existing = (
@@ -576,6 +765,12 @@ def repair_stored_result_contract(
             "delivery_status": "prepared",
             "model_invoked": False,
             "external_task_action_invoked": False,
+            "revalidated_coverage_item_ids": unique_strings(
+                [
+                    *(existing.get("revalidated_coverage_item_ids") or []),
+                    *resolved_coverage_ids,
+                ]
+            ),
         }
         task.pop("worker_error", None)
         task.pop("send_suppressed_reason", None)
@@ -3563,6 +3758,8 @@ def strip_markdown_fence(text: str) -> str:
 
 
 def render_markdown_pdf(source: Path, output: Path) -> Path | None:
+    source = source.expanduser().resolve()
+    output = output.expanduser().resolve()
     pandoc = resolve_markdown_pdf_tool(
         "WECHAT_MARKDOWN_PDF_PANDOC",
         "pandoc",
@@ -3575,34 +3772,124 @@ def render_markdown_pdf(source: Path, output: Path) -> Path | None:
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp_output = output.with_name(f"{output.stem}.tmp.pdf")
     tmp_output.unlink(missing_ok=True)
-    command = [
-        pandoc,
-        str(source),
-        "-o",
-        str(tmp_output),
-        "--standalone",
-        "--pdf-engine",
-        os.environ.get("WECHAT_MARKDOWN_PDF_ENGINE", "xelatex"),
-        "-V",
-        f"mainfont={os.environ.get('WECHAT_MARKDOWN_PDF_MAINFONT', 'Noto Serif CJK SC')}",
-        "-V",
-        f"CJKmainfont={os.environ.get('WECHAT_MARKDOWN_PDF_CJKFONT', 'Noto Serif CJK SC')}",
-        "-V",
-        f"sansfont={os.environ.get('WECHAT_MARKDOWN_PDF_SANSFONT', 'Noto Sans CJK SC')}",
-        "-V",
-        f"monofont={os.environ.get('WECHAT_MARKDOWN_PDF_MONOFONT', 'DejaVu Sans Mono')}",
-        "-V",
-        os.environ.get("WECHAT_MARKDOWN_PDF_GEOMETRY", "geometry:margin=18mm"),
-    ]
-    if NATURE_REPORT_LATEX_HEADER.is_file():
-        command.extend(["--include-in-header", str(NATURE_REPORT_LATEX_HEADER)])
     timeout = int(os.environ.get("WECHAT_MARKDOWN_PDF_TIMEOUT_SECONDS", "120"))
-    proc = subprocess.run(command, cwd=str(source.parent), capture_output=True, text=True, timeout=timeout, check=False)
-    if proc.returncode != 0 or not tmp_output.is_file() or tmp_output.stat().st_size <= 0:
+
+    def compile_once(destination: Path, *, compact: bool = False) -> bool:
+        destination.unlink(missing_ok=True)
+        command = [
+            pandoc,
+            str(source),
+            "-o",
+            str(destination),
+            "--standalone",
+            "--pdf-engine",
+            os.environ.get("WECHAT_MARKDOWN_PDF_ENGINE", "xelatex"),
+            "-V",
+            f"mainfont={os.environ.get('WECHAT_MARKDOWN_PDF_MAINFONT', 'Noto Serif CJK SC')}",
+            "-V",
+            f"CJKmainfont={os.environ.get('WECHAT_MARKDOWN_PDF_CJKFONT', 'Noto Serif CJK SC')}",
+            "-V",
+            f"sansfont={os.environ.get('WECHAT_MARKDOWN_PDF_SANSFONT', 'Noto Sans CJK SC')}",
+            "-V",
+            f"monofont={os.environ.get('WECHAT_MARKDOWN_PDF_MONOFONT', 'DejaVu Sans Mono')}",
+            "-V",
+            os.environ.get("WECHAT_MARKDOWN_PDF_GEOMETRY", "geometry:margin=18mm"),
+        ]
+        if NATURE_REPORT_LATEX_HEADER.is_file():
+            command.extend(["--include-in-header", str(NATURE_REPORT_LATEX_HEADER)])
+        if compact and NATURE_REPORT_COMPACT_LATEX_HEADER.is_file():
+            command.extend(
+                ["--include-in-header", str(NATURE_REPORT_COMPACT_LATEX_HEADER)]
+            )
+        proc = subprocess.run(
+            command,
+            cwd=str(source.parent),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return (
+            proc.returncode == 0
+            and destination.is_file()
+            and destination.stat().st_size > 0
+        )
+
+    if not compile_once(tmp_output):
         tmp_output.unlink(missing_ok=True)
         return None
+    normal_layout = analyze_pdf_layout_for_quality(tmp_output)
+    if "orphan_final_pdf_page" in set(normal_layout.get("issues") or []):
+        compact_output = output.with_name(f"{output.stem}.compact.tmp.pdf")
+        try:
+            if compile_once(compact_output, compact=True):
+                compact_layout = analyze_pdf_layout_for_quality(compact_output)
+                if not set(compact_layout.get("issues") or []):
+                    compact_output.replace(tmp_output)
+        finally:
+            compact_output.unlink(missing_ok=True)
     tmp_output.replace(output)
     return output
+
+
+TERMINAL_REPORT_NOTE_RE = re.compile(
+    r"(?:\*\*)?(?:证据边界说明|證據邊界說明|证据说明|證據說明|"
+    r"evidence\s+boundary|evidence\s+note|caveat|note)(?:\*\*)?\s*[:：]",
+    flags=re.I,
+)
+REFERENCE_HEADING_RE = re.compile(
+    r"(?m)^#{1,3}\s+(?:参考文献|參考文獻|References?|Bibliography)\s*$",
+    flags=re.I,
+)
+
+
+def relocate_terminal_report_note_before_references(source: Path) -> dict[str, Any]:
+    """Move one short labelled terminal note ahead of references for pagination."""
+    try:
+        original = source.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"changed": False, "reason": f"source_read_failed:{type(exc).__name__}"}
+    stripped = original.rstrip()
+    separators = list(re.finditer(r"\n[ \t]*\n", stripped))
+    if not separators:
+        return {"changed": False, "reason": "no_terminal_block"}
+    terminal_separator = separators[-1]
+    note_start = terminal_separator.end()
+    note = stripped[note_start:].strip()
+    if (
+        not TERMINAL_REPORT_NOTE_RE.search(note)
+        or len(note) > 600
+        or len(note.splitlines()) > 8
+        or re.search(r"(?m)^#{1,6}\s+", note)
+    ):
+        return {"changed": False, "reason": "terminal_block_not_short_labelled_note"}
+    headings = [
+        match
+        for match in REFERENCE_HEADING_RE.finditer(stripped)
+        if match.start() < note_start
+    ]
+    if not headings:
+        return {"changed": False, "reason": "reference_heading_not_found"}
+    heading = headings[-1]
+    before_references = stripped[: heading.start()].rstrip()
+    references = stripped[heading.start() : note_start].rstrip()
+    if not before_references or not references:
+        return {"changed": False, "reason": "invalid_reference_partition"}
+    revised = f"{before_references}\n\n{note}\n\n{references}\n"
+    if revised == original:
+        return {"changed": False, "reason": "already_relocated"}
+    before_sha256 = hashlib.sha256(original.encode("utf-8")).hexdigest()
+    after_sha256 = hashlib.sha256(revised.encode("utf-8")).hexdigest()
+    tmp_source = source.with_suffix(source.suffix + ".tmp")
+    tmp_source.write_text(revised, encoding="utf-8")
+    tmp_source.replace(source)
+    return {
+        "changed": True,
+        "reason": "short_terminal_note_moved_before_references",
+        "filename": source.name,
+        "before_sha256": before_sha256,
+        "after_sha256": after_sha256,
+    }
 
 
 def resolve_markdown_pdf_tool(env_name: str, default: str, *fallbacks: Path) -> str:
@@ -3797,8 +4084,15 @@ def recover_exact_task_pdf_without_markdown(
 def preferred_research_report_pdf(report: Path, language: str) -> Path | None:
     """Reuse an agent-rendered PDF before invoking the generic compiler."""
     exact_sibling = report.with_suffix(".pdf")
-    if exact_sibling.is_file() and exact_sibling.stat().st_size > 0:
-        return exact_sibling.resolve()
+    try:
+        if (
+            exact_sibling.is_file()
+            and exact_sibling.stat().st_size > 0
+            and exact_sibling.stat().st_mtime >= report.stat().st_mtime
+        ):
+            return exact_sibling.resolve()
+    except OSError:
+        pass
     return ensure_markdown_pdf_companion_for_language(report, language)
 
 
@@ -3852,12 +4146,67 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
             "证据边界",
         )
     )
+    has_methods_detail = bool(
+        re.search(
+            r"(?:研究设计|實驗設計|实验设计|研究方法|方法学|方法學|样本|樣本|"
+            r"数据集|資料集|队列|隊列|对照组|對照組|比较组|比較組|"
+            r"methods?|study\s+design|experimental\s+system|dataset|cohort|"
+            r"samples?|controls?|comparators?)",
+            text,
+            flags=re.I,
+        )
+    )
+    has_results_detail = bool(
+        re.search(
+            r"(?:主要结果|主要結果|关键结果|關鍵結果|定量结果|定量結果|"
+            r"效应量|效應量|准确率|準確率|灵敏度|靈敏度|特异度|特異度|"
+            r"results?|quantitative|effect\s+size|accuracy|AUROC|AUC|"
+            r"sensitivity|specificity)",
+            text,
+            flags=re.I,
+        )
+    )
+    has_cross_source_synthesis = bool(
+        re.search(
+            r"(?:跨(?:论文|來源|来源|研究).{0,12}(?:综合|綜合|比较|比較)|"
+            r"合读|合讀|综合分析|綜合分析|一致(?:之处|之處|性)?|"
+            r"分歧|张力|張力|矛盾|cross[-\s]?source|synthesis|"
+            r"agreement|tension|contradiction)",
+            text,
+            flags=re.I,
+        )
+    )
+    has_actionable_next_steps = bool(
+        re.search(
+            r"(?:next\s+steps?|recommended\s+(?:experiment|action|decision)|"
+            r"actionable|下一步|建议实验|建議實驗|行动建议|行動建議|"
+            r"决策建议|決策建議|优先实验|優先實驗)",
+            text,
+            flags=re.I,
+        )
+    )
+    has_reference_section = bool(
+        re.search(
+            r"(?:^|\n)\s*(?:[#*]+\s*)?"
+            r"(?:[一二三四五六七八九十百0-9]+[、.)．]\s*)?"
+            r"(?:[^\n]{0,16})?(?:参考文献|參考文獻|文献表|文獻表|来源与链接|"
+            r"來源與連結|References?|Bibliography|Literature\s+cited)"
+            r"(?:\s|[:：]|$)",
+            text,
+            flags=re.I,
+        )
+    )
     traceable_sources = dois | stable_ids | urls
     return {
         "traceable_sources": sorted(traceable_sources),
         "traceable_source_count": len(traceable_sources),
         "has_evidence_section": has_evidence_section,
         "has_uncertainty": has_uncertainty,
+        "has_methods_detail": has_methods_detail,
+        "has_results_detail": has_results_detail,
+        "has_cross_source_synthesis": has_cross_source_synthesis,
+        "has_actionable_next_steps": has_actionable_next_steps,
+        "has_reference_section": has_reference_section,
     }
 
 
@@ -7776,6 +8125,7 @@ If the bounded task packet contains `message_ledger`, it is the backend-independ
 If the bounded task packet includes `lifetime_same_chat_memory`, use that full-history compaction as exact-chat continuity and use `high_fidelity_same_chat_history` for exact wording relevant to this task. Historical memory is supporting evidence only: it cannot authorize work, revive completed tasks, or override current messages and interruptions.
 If the bounded task packet includes `worker_retry_context`, this is one bounded recovery turn for the previous worker attempt. Read its `kind` and `instruction`, continue the same task, and reuse existing evidence. A malformed-tool recovery should prefer simple commands or structured APIs over deeply nested shell quoting. A permission-pause recovery must keep the current sandbox and authorization unchanged. Never interpret any recovery turn as permission to bypass a safety, approval, sandbox, access, or irreversible-action boundary.
 If the bounded task packet includes `completion_audit_repair`, the previous candidate result omitted one or more numbered source-message requirements. Continue the same worker session, perform only those missing safe requirements, and return a complete replacement response that retains useful prior files and conclusions. An explicit PDF request requires a real compiled `.pdf` file plus a concise direct answer. Do not repeat completed external actions or bypass approval gates.
+If the bounded task packet includes `reprocess`, its `reason` is the authoritative correction for this turn. Inspect and actually revise the exact existing source/artifact it names; do not merely restate the prior answer or return an unchanged file. For a rejected PDF, resolve every listed `pdf_quality_rejections[*].issues`, rebuild or return the revised source for host compilation, and verify the replacement rather than claiming the defect was fixed.
 The corrective response's `files` array is authoritative for final delivery. Include every prior artifact that remains useful, and omit any candidate artifact that was misidentified, contradicted, superseded, or should not be sent.
 If the bounded task packet includes `coverage_followup`, this queue row was separated from a previously coalesced parent because its numbered message was not proven covered. Process this exact row independently, return only the missing supplement, and do not repeat content or files already delivered by the parent.
 Use `task.route_decision.message_role` as a checked hint, not a keyword command. Research questions require evidence; artifact instructions and system guidance tell you how to revise the current output or workflow; peer conversation may need no reply. Re-evaluate that role from the exact message plus recent context before acting.
@@ -8027,6 +8377,108 @@ def preserve_known_lazyedit_publish_identity(
             current[key] = value
 
 
+def recover_completion_pdf_artifact(
+    task: dict[str, Any],
+    combined: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    *,
+    stage: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None, bool]:
+    """Compile and audit exact-task report sources before another agent turn."""
+    try:
+        recovered = recover_completed_research_artifacts(
+            task,
+            "completion audit requires an exact-task PDF artifact",
+            force=True,
+        )
+        if recovered is None:
+            attempts.append({"stage": stage, "status": "no_recoverable_report"})
+            return combined, None, False
+        recovered = enforce_reader_facing_pdf_quality(task, recovered)
+        rejections = list(
+            result_delivery_data(recovered).get("pdf_quality_rejections") or []
+        )
+        rejection_issues = {
+            str(issue)
+            for item in rejections
+            if isinstance(item, dict)
+            for issue in item.get("issues") or []
+        }
+        if "orphan_final_pdf_page" in rejection_issues:
+            recovered_data = result_delivery_data(recovered)
+            report_raw = str(recovered_data.get("report_path") or "").strip()
+            report_path = Path(report_raw).expanduser().resolve() if report_raw else None
+            artifact_root = Path(
+                str(task.get("artifact_dir") or worker_artifact_dir(task))
+            ).expanduser().resolve()
+            if (
+                report_path is not None
+                and report_path.is_file()
+                and report_path.is_relative_to(artifact_root)
+            ):
+                layout_repair = relocate_terminal_report_note_before_references(
+                    report_path
+                )
+                task["pdf_layout_repair"] = {
+                    **layout_repair,
+                    "at": datetime.now().isoformat(timespec="seconds"),
+                }
+                attempts.append(
+                    {
+                        "stage": f"{stage}:host_layout_repair",
+                        "status": (
+                            "source_revised"
+                            if layout_repair.get("changed")
+                            else "not_applicable"
+                        ),
+                        "reason": str(layout_repair.get("reason") or ""),
+                    }
+                )
+                if layout_repair.get("changed"):
+                    recovered_again = recover_completed_research_artifacts(
+                        task,
+                        "host layout repair rebuilt the exact-task PDF",
+                        force=True,
+                    )
+                    if recovered_again is not None:
+                        recovered = enforce_reader_facing_pdf_quality(
+                            task,
+                            recovered_again,
+                        )
+        if not any(
+            Path(str(raw)).suffix.casefold() == ".pdf"
+            for raw in recovered.get("files") or []
+        ):
+            attempts.append(
+                {
+                    "stage": stage,
+                    "status": "recovered_pdf_failed_reader_quality",
+                    "quality_rejections": list(
+                        result_delivery_data(recovered).get(
+                            "pdf_quality_rejections"
+                        )
+                        or []
+                    ),
+                }
+            )
+            return combined, None, False
+        merged = merge_completion_results(combined, recovered)
+        recovered_audit = run_completion_audit(task, merged)
+        attempts.append(
+            completion_audit_record(recovered_audit, stage=stage)
+        )
+        return merged, recovered_audit, not bool(recovered_audit.get("missing"))
+    except Exception as exc:
+        attempts.append(
+            {
+                "stage": stage,
+                "status": "recovery_failed",
+                "error": f"{type(exc).__name__}: {str(exc)[:500]}",
+            }
+        )
+        return combined, None, False
+
+
 def audit_and_repair_worker_completion(
     task: dict[str, Any],
     result: dict[str, Any],
@@ -8060,19 +8512,33 @@ def audit_and_repair_worker_completion(
     attempts = [completion_audit_record(first, stage="candidate")]
     repaired = False
     combined = result
-    if bool(first.get("repair_recommended")):
-        correction_policy = completion_repair_policy(task, first)
+    final = first
+    pre_recovery_attempted = completion_audit_missing_pdf_artifact(final)
+    if pre_recovery_attempted:
+        combined, recovered_audit, recovered_ok = recover_completion_pdf_artifact(
+            task,
+            combined,
+            attempts,
+            stage="deterministic_artifact_recovery_pre_repair",
+        )
+        if recovered_audit is not None:
+            final = recovered_audit
+            repaired = repaired or recovered_ok
+
+    correction_attempted = bool(final.get("repair_recommended"))
+    if correction_attempted:
+        correction_policy = completion_repair_policy(task, final)
         task["completion_audit_repair"] = {
-            "missing": first.get("missing") or [],
-            "expected_item_ids": first.get("expected_item_ids")
+            "missing": final.get("missing") or [],
+            "expected_item_ids": final.get("expected_item_ids")
             or completion_expected_item_ids(task),
-            "missing_items": completion_missing_source_items(task, first),
+            "missing_items": completion_missing_source_items(task, final),
             "previous_result": {
-                "message": collapse_context_text(result.get("message"), max_len=6000),
+                "message": collapse_context_text(combined.get("message"), max_len=6000),
                 "confirmation": collapse_context_text(
-                    result.get("confirmation"), max_len=1600
+                    combined.get("confirmation"), max_len=1600
                 ),
-                "files": list(result.get("files") or [])[:20],
+                "files": list(combined.get("files") or [])[:20],
             },
             "instruction": (
                 "Complete every missing numbered-message requirement in one bounded turn. "
@@ -8099,7 +8565,7 @@ def audit_and_repair_worker_completion(
             )
             correction = enforce_reader_facing_pdf_quality(task, correction)
             if completion_repair_result_usable(correction):
-                combined = merge_completion_results(result, correction)
+                combined = merge_completion_results(combined, correction)
                 repaired = True
                 second = run_completion_audit(task, combined)
                 attempts.append(
@@ -8107,7 +8573,6 @@ def audit_and_repair_worker_completion(
                 )
                 final = second
             else:
-                final = first
                 attempts.append(
                     {
                         "stage": "corrected",
@@ -8115,7 +8580,6 @@ def audit_and_repair_worker_completion(
                     }
                 )
         except Exception as exc:
-            final = first
             attempts.append(
                 {
                     "stage": "corrected",
@@ -8125,57 +8589,23 @@ def audit_and_repair_worker_completion(
             )
         finally:
             task.pop("completion_audit_repair", None)
-    else:
-        final = first
-    if completion_audit_missing_pdf_artifact(final):
-        try:
-            recovered = recover_completed_research_artifacts(
-                task,
-                "completion audit requires an exact-task PDF artifact",
-                force=True,
-            )
-            if recovered is not None:
-                recovered = enforce_reader_facing_pdf_quality(task, recovered)
-                if any(
-                    Path(str(raw)).suffix.casefold() == ".pdf"
-                    for raw in recovered.get("files") or []
-                ):
-                    combined = merge_completion_results(combined, recovered)
-                    recovered_audit = run_completion_audit(task, combined)
-                    attempts.append(
-                        completion_audit_record(
-                            recovered_audit,
-                            stage="deterministic_artifact_recovery",
-                        )
-                    )
-                    final = recovered_audit
-                    repaired = repaired or not bool(recovered_audit.get("missing"))
-                else:
-                    attempts.append(
-                        {
-                            "stage": "deterministic_artifact_recovery",
-                            "status": "recovered_pdf_failed_reader_quality",
-                            "quality_rejections": list(
-                                result_delivery_data(recovered).get(
-                                    "pdf_quality_rejections"
-                                )
-                                or []
-                            ),
-                        }
-                    )
-        except Exception as exc:
-            attempts.append(
-                {
-                    "stage": "deterministic_artifact_recovery",
-                    "status": "recovery_failed",
-                    "error": f"{type(exc).__name__}: {str(exc)[:500]}",
-                }
-            )
+    if completion_audit_missing_pdf_artifact(final) and (
+        not pre_recovery_attempted or correction_attempted
+    ):
+        combined, recovered_audit, recovered_ok = recover_completion_pdf_artifact(
+            task,
+            combined,
+            attempts,
+            stage="deterministic_artifact_recovery_post_repair",
+        )
+        if recovered_audit is not None:
+            final = recovered_audit
+            repaired = repaired or recovered_ok
     coverage = completion_message_coverage(task, final, attempts, repaired=repaired)
     task["completion_audit"] = {
         "status": str(final.get("status") or ""),
         "attempts": attempts,
-        "repair_attempted": bool(first.get("repair_recommended")),
+        "repair_attempted": pre_recovery_attempted or correction_attempted,
         "repair_succeeded": repaired,
     }
     task["message_coverage"] = coverage
@@ -16751,7 +17181,7 @@ Link/read-later summary reports:
 
 Artifact return contract:
 - Include files in JSON `files` only when the user requested them, the routine requires delivery, or the artifact is genuinely useful to send back. Saving a local note is not enough reason to attach it to WeChat.
-- When the user requests a research report or PDF, produce an actual LaTeX source and compile a polished scholarly PDF rather than renaming Markdown or returning plain text alone. Use restrained Nature-style typography, a clear information hierarchy, source-grounded citations/DOIs/links, embedded fonts, and sensible page geometry. Render and inspect the compiled pages for missing glyphs, blank pages, clipping, overflow, and unreadably dense text before listing the PDF for delivery.
+- When the user requests a research report or PDF, produce an actual LaTeX source and compile a polished scholarly PDF rather than renaming Markdown or returning plain text alone. Use restrained Nature-style typography, a clear information hierarchy, source-grounded citations/DOIs/links, embedded fonts, and sensible page geometry. Render and inspect every compiled page for missing glyphs, blank pages, clipping, overflow, unreadably dense text, and a short note stranded alone on the final page. Move such a note into the preceding section and rebuild before listing the PDF for delivery.
 - For generated videos, CAD/PCB/renders, requested downloads, requested PDFs, requested source files, and publish outputs, return artifacts as files when safe: story Markdown, LaTeX/source files, compiled PDFs, image previews, renders, CAD/PCB exports, manifests, archives, video/audio, and any requested downloadable file.
 - For ordinary link summaries, avoid listing Markdown, PDF, or image files by default. Do not send a low-quality image/thumbnail just because one was scraped; only send an image when the user asked for it or it is a high-value figure/screenshot that you actually inspected and need to discuss.
 - Prefer PNG/JPG/SVG/PDF/MD/TEX/MP4/MOV/audio/STEP/STL/3MF/DXF/ZIP/SCAD/Blend/KiCad/Gerber files. Do not include decrypted WeChat DBs, private config, cookies, tokens, browser profiles, or chat logs.
@@ -17853,6 +18283,9 @@ PDF_INTERNAL_TRANSPORT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 PDF_BROKEN_TEXT_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]")
+PDF_LAYOUT_AUDIT_VERSION = 1
+PDF_FINAL_PAGE_MIN_BODY_CHARS = 220
+PDF_PREVIOUS_PAGE_MIN_BODY_CHARS = 600
 
 
 def task_expects_reader_facing_pdf(task: dict[str, Any]) -> bool:
@@ -17889,7 +18322,200 @@ def extract_pdf_text_for_quality(path: Path) -> tuple[str, str]:
     return completed.stdout, ""
 
 
-def reader_facing_pdf_quality_issues(task: dict[str, Any], path: Path) -> list[str]:
+def extract_pdf_page_texts_for_quality(path: Path) -> tuple[list[str], str]:
+    """Extract page-preserving text for conservative layout checks."""
+    executable = shutil.which("pdftotext")
+    if not executable:
+        return [], "pdftotext_unavailable"
+    try:
+        completed = subprocess.run(
+            [executable, "-layout", str(path), "-"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [], f"pdftotext_pages_failed:{type(exc).__name__}"
+    if completed.returncode != 0:
+        return [], "pdftotext_pages_failed"
+    pages = completed.stdout.split("\f")
+    while pages and not pages[-1].strip():
+        pages.pop()
+    return pages, ""
+
+
+def pdf_page_body_text(page_text: str) -> str:
+    """Remove the known running header/footer before measuring page substance."""
+    body_lines: list[str] = []
+    for raw_line in page_text.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            continue
+        if "LABCANVAS RESEARCH BRIEF" in line:
+            continue
+        if re.fullmatch(r"\d{1,4}", line):
+            continue
+        if re.fullmatch(
+            r"(?:January|February|March|April|May|June|July|August|September|"
+            r"October|November|December)\s+\d{1,2},\s+\d{4}",
+            line,
+            flags=re.I,
+        ):
+            continue
+        body_lines.append(line)
+    return "\n".join(body_lines)
+
+
+def analyze_pdf_layout_for_quality(path: Path) -> dict[str, Any]:
+    """Detect blank pages and tiny terminal pages without imposing page counts."""
+    pages, error = extract_pdf_page_texts_for_quality(path)
+    if error:
+        return {
+            "version": PDF_LAYOUT_AUDIT_VERSION,
+            "status": "unavailable",
+            "error": error,
+            "page_count": 0,
+            "page_body_char_counts": [],
+            "issues": [],
+        }
+    body_char_counts = [
+        len(re.sub(r"\s+", "", pdf_page_body_text(page)))
+        for page in pages
+    ]
+    issues: list[str] = []
+    if any(count < 24 for count in body_char_counts):
+        issues.append("blank_or_nearly_blank_pdf_page")
+    if (
+        len(body_char_counts) >= 3
+        and body_char_counts[-1] < PDF_FINAL_PAGE_MIN_BODY_CHARS
+        and body_char_counts[-2] >= PDF_PREVIOUS_PAGE_MIN_BODY_CHARS
+        and body_char_counts[-1] * 3 < body_char_counts[-2]
+    ):
+        issues.append("orphan_final_pdf_page")
+    return {
+        "version": PDF_LAYOUT_AUDIT_VERSION,
+        "status": "checked",
+        "error": "",
+        "page_count": len(pages),
+        "page_body_char_counts": body_char_counts,
+        "issues": unique_strings(issues),
+    }
+
+
+def task_requires_pdf_render_audit(task: dict[str, Any]) -> bool:
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    report_quality = (
+        execution.get("report_quality")
+        if isinstance(execution.get("report_quality"), dict)
+        else {}
+    )
+    required = {
+        str(item or "").strip().casefold()
+        for item in execution.get("required_artifacts") or []
+        if str(item or "").strip()
+    }
+    return bool(report_quality.get("independent_review_before_delivery")) or (
+        "render_audit" in required
+    )
+
+
+def persist_pdf_render_audit(
+    task: dict[str, Any],
+    path: Path,
+    layout: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist page previews and a private audit manifest for generated reports."""
+    if (
+        not task_requires_pdf_render_audit(task)
+        or not path.is_file()
+        or path.stat().st_size <= 0
+    ):
+        return {}
+    audit_dir = path.parent / f"{path.stem}-render-audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = audit_dir / "render-audit.json"
+    source_signature = {
+        "filename": path.name,
+        "bytes": path.stat().st_size,
+        "mtime_ns": path.stat().st_mtime_ns,
+    }
+    try:
+        existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        existing = {}
+    if (
+        isinstance(existing, dict)
+        and existing.get("version") == PDF_LAYOUT_AUDIT_VERSION
+        and existing.get("source") == source_signature
+        and existing.get("render_status") == "rendered"
+        and len(existing.get("rendered_pages") or [])
+        == int(existing.get("page_count") or 0)
+        and bool(existing.get("rendered_pages"))
+        and all(
+            (audit_dir / str(name)).is_file()
+            for name in existing.get("rendered_pages") or []
+        )
+    ):
+        return {**existing, "manifest_path": str(manifest_path.resolve())}
+
+    for stale in audit_dir.glob("page-*.png"):
+        stale.unlink(missing_ok=True)
+    rendered_pages: list[str] = []
+    render_status = "unavailable"
+    render_error = "pdftoppm_unavailable"
+    renderer = shutil.which("pdftoppm")
+    if renderer:
+        prefix = audit_dir / "page"
+        try:
+            completed = subprocess.run(
+                [renderer, "-png", "-r", "110", str(path), str(prefix)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+            rendered_pages = [item.name for item in sorted(audit_dir.glob("page-*.png"))]
+            if completed.returncode == 0 and len(rendered_pages) == int(layout.get("page_count") or 0):
+                render_status = "rendered"
+                render_error = ""
+            else:
+                render_status = "failed"
+                render_error = "pdftoppm_failed"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            render_status = "failed"
+            render_error = f"pdftoppm_failed:{type(exc).__name__}"
+    manifest = {
+        "version": PDF_LAYOUT_AUDIT_VERSION,
+        "source": source_signature,
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+        "layout_status": str(layout.get("status") or ""),
+        "page_count": int(layout.get("page_count") or 0),
+        "page_body_char_counts": list(layout.get("page_body_char_counts") or []),
+        "issues": list(layout.get("issues") or []),
+        "render_status": render_status,
+        "render_error": render_error,
+        "rendered_pages": rendered_pages,
+    }
+    tmp_manifest = manifest_path.with_suffix(".tmp")
+    tmp_manifest.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    tmp_manifest.replace(manifest_path)
+    return {**manifest, "manifest_path": str(manifest_path.resolve())}
+
+
+def reader_facing_pdf_quality_issues(
+    task: dict[str, Any],
+    path: Path,
+    *,
+    layout_audit: dict[str, Any] | None = None,
+) -> list[str]:
     """Reject generated reports that are unreadable or expose orchestration internals."""
     if not task_expects_reader_facing_pdf(task):
         return []
@@ -17904,6 +18530,8 @@ def reader_facing_pdf_quality_issues(task: dict[str, Any], path: Path) -> list[s
         issues.append("insufficient_reader_facing_content")
     if PDF_BROKEN_TEXT_RE.search(text):
         issues.append("broken_text_extraction")
+    layout = layout_audit or analyze_pdf_layout_for_quality(path)
+    issues.extend(str(item) for item in layout.get("issues") or [])
     for pattern, label in PDF_INTERNAL_TRANSPORT_PATTERNS:
         if pattern.search(text):
             issues.append(label)
@@ -17917,6 +18545,7 @@ def reader_facing_pdf_quality_issues(task: dict[str, Any], path: Path) -> list[s
         if isinstance(execution.get("research_evidence"), dict)
         else {}
     )
+    evidence: dict[str, Any] = {}
     if bool(evidence_contract.get("required")):
         if len(compact) < 900:
             issues.append("insufficient_substantive_research_content")
@@ -17933,13 +18562,52 @@ def reader_facing_pdf_quality_issues(task: dict[str, Any], path: Path) -> list[s
             "has_uncertainty"
         ]:
             issues.append("missing_uncertainty_or_limitations")
-        if bool(evidence_contract.get("include_actionable_next_steps")) and not re.search(
-            r"(?:next\s+steps?|recommended\s+(?:experiment|action)|actionable|"
-            r"下一步|建议实验|建議實驗|行动建议|行動建議)",
-            text,
-            flags=re.I,
-        ):
+        if bool(evidence_contract.get("include_actionable_next_steps")) and not evidence[
+            "has_actionable_next_steps"
+        ]:
             issues.append("missing_actionable_next_steps")
+    report_quality = (
+        execution.get("report_quality")
+        if isinstance(execution.get("report_quality"), dict)
+        else {}
+    )
+    required_dimensions = {
+        str(item or "").strip().casefold()
+        for item in report_quality.get("required_dimensions") or []
+        if str(item or "").strip()
+    }
+    if required_dimensions:
+        if not evidence:
+            evidence = research_report_evidence_summary(text)
+        if (
+            "source_level_methods_results_and_limitations" in required_dimensions
+            and not (
+                evidence["has_methods_detail"]
+                and evidence["has_results_detail"]
+                and evidence["has_uncertainty"]
+            )
+        ):
+            issues.append("missing_source_level_methods_results_limits")
+        if (
+            "cross_source_synthesis_and_tensions" in required_dimensions
+            and not evidence["has_cross_source_synthesis"]
+        ):
+            issues.append("missing_cross_source_synthesis")
+        if (
+            "evidence_boundaries_and_uncertainty" in required_dimensions
+            and not evidence["has_uncertainty"]
+        ):
+            issues.append("missing_evidence_boundaries")
+        if (
+            "actionable_experiments_or_decisions" in required_dimensions
+            and not evidence["has_actionable_next_steps"]
+        ):
+            issues.append("missing_actionable_experiments_or_decisions")
+        if (
+            "complete_traceable_references" in required_dimensions
+            and not evidence["has_reference_section"]
+        ):
+            issues.append("missing_complete_reference_section")
     return unique_strings(issues)
 
 
@@ -17951,12 +18619,21 @@ def enforce_reader_facing_pdf_quality(
         return result
     kept: list[str] = []
     rejected: list[dict[str, Any]] = []
+    render_audits: list[dict[str, Any]] = []
     for raw in result.get("files") or []:
         path = Path(str(raw)).expanduser().resolve()
         if path.suffix.casefold() != ".pdf":
             kept.append(str(path))
             continue
-        issues = reader_facing_pdf_quality_issues(task, path)
+        layout = analyze_pdf_layout_for_quality(path)
+        issues = reader_facing_pdf_quality_issues(
+            task,
+            path,
+            layout_audit=layout,
+        )
+        render_audit = persist_pdf_render_audit(task, path, layout)
+        if render_audit:
+            render_audits.append(render_audit)
         if issues:
             rejected.append(
                 {
@@ -17970,7 +18647,11 @@ def enforce_reader_facing_pdf_quality(
     guarded = dict(result)
     guarded["files"] = unique_strings(kept)
     data = guarded.get("data") if isinstance(guarded.get("data"), dict) else {}
-    guarded["data"] = {**data, "pdf_quality_rejections": rejected}
+    guarded["data"] = {
+        **data,
+        "pdf_quality_rejections": rejected,
+        "pdf_render_audits": render_audits,
+    }
     if rejected:
         task["pdf_quality_rejections"] = rejected
         skipped = list(guarded.get("skipped_files") or [])

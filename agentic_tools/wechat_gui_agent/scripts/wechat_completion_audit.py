@@ -370,7 +370,7 @@ def generated_pdf_content_previews(
     result: dict[str, Any],
     *,
     limit: int = 2,
-    max_chars: int = 7600,
+    max_chars: int = 16000,
 ) -> list[dict[str, Any]]:
     """Expose bounded text from exact-task generated PDFs to the completion auditor.
 
@@ -429,11 +429,66 @@ def generated_pdf_content_previews(
                 "name": path.name,
                 "extracted_characters": len(text),
                 "content_preview": preview,
+                "report_vs_chat_signals": report_vs_chat_signals(
+                    text,
+                    "\n\n".join(
+                        str(result.get(field) or "").strip()
+                        for field in ("message", "confirmation")
+                        if str(result.get(field) or "").strip()
+                    ),
+                ),
             }
         )
         if len(previews) >= max(1, limit):
             break
     return previews
+
+
+def report_vs_chat_signals(report_text: str, chat_text: str) -> dict[str, Any]:
+    """Describe duplication without turning one arbitrary length into quality."""
+    normalize = lambda value: re.sub(
+        r"[^\w\u3400-\u9fff]+", "", str(value or "").casefold()
+    )[:50000]
+    report = normalize(report_text)
+    chat = normalize(chat_text)
+
+    def shingles(value: str, width: int = 5) -> set[str]:
+        if len(value) < width:
+            return {value} if value else set()
+        return {value[index : index + width] for index in range(len(value) - width + 1)}
+
+    report_shingles = shingles(report)
+    chat_shingles = shingles(chat)
+    shared = len(report_shingles & chat_shingles)
+    traceable_sources = {
+        match.rstrip(".,;:)]}").casefold()
+        for match in re.findall(
+            r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+|"
+            r"\b(?:PMID\s*:?\s*\d+|PMC\d+|arXiv\s*:?\s*\d{4}\.\d{4,5}(?:v\d+)?)\b|"
+            r"https?://[^\s)>\]}]+",
+            report_text,
+            flags=re.IGNORECASE,
+        )
+    }
+    return {
+        "chat_characters": len(chat),
+        "report_characters": len(report),
+        "report_to_chat_character_ratio": round(
+            len(report) / max(1, len(chat)), 3
+        ),
+        "chat_shingle_containment_in_report": round(
+            shared / max(1, len(chat_shingles)), 3
+        ),
+        "report_novel_shingle_fraction": round(
+            max(0, len(report_shingles) - shared) / max(1, len(report_shingles)),
+            3,
+        ),
+        "traceable_source_count": len(traceable_sources),
+        "interpretation": (
+            "These are duplication and evidence signals, not pass/fail thresholds. "
+            "Inspect the visible report text against every required dimension."
+        ),
+    }
 
 
 def deterministic_missing_requirements(
@@ -692,6 +747,7 @@ def run_completion_audit_batch(
 ) -> dict[str, Any]:
     """Audit a bounded numbered slice without dropping rows from long bursts."""
     prompt = completion_audit_prompt(task, result, items)
+    reasoning_effort = completion_audit_reasoning_effort(task, result, items)
     try:
         response = runner(
             prompt,
@@ -699,7 +755,7 @@ def run_completion_audit_batch(
             chat_name=str(task.get("chat") or "wechat-chat"),
             role="completion_audit",
             model=os.environ.get("WECHAT_COMPLETION_AUDIT_MODEL", DEFAULT_MODEL),
-            reasoning_effort="low",
+            reasoning_effort=reasoning_effort,
             sandbox="read-only",
             timeout_seconds=int(
                 os.environ.get(
@@ -713,7 +769,7 @@ def run_completion_audit_batch(
                 "WECHAT_COMPLETION_AUDIT_FALLBACK_MODEL",
                 DEFAULT_FALLBACK_MODEL,
             ),
-            fallback_reasoning_effort="low",
+            fallback_reasoning_effort=reasoning_effort,
             backend_config={
                 "agent_fallbacks": {
                     "fallback_to_aginti": True,
@@ -781,6 +837,37 @@ def run_completion_audit_batch(
         "complexity": normalize_complexity(payload.get("complexity")),
         "summary": bounded_text(payload.get("summary"), max_chars=600),
     }
+
+
+def completion_audit_reasoning_effort(
+    task: dict[str, Any],
+    result: dict[str, Any],
+    items: list[dict[str, Any]],
+) -> str:
+    """Use a real editorial pass for reader-facing reports, cheap checks otherwise."""
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    route = (
+        task.get("route_decision")
+        if isinstance(task.get("route_decision"), dict)
+        else {}
+    )
+    has_pdf = any(
+        Path(str(path)).suffix.casefold() == ".pdf"
+        for path in result.get("files") or []
+    )
+    report_contract = execution.get("report_quality")
+    scheduled_report = bool(route.get("scheduled_daily_research")) or isinstance(
+        task.get("daily_research"), dict
+    )
+    return "medium" if has_pdf and (
+        isinstance(report_contract, dict)
+        or scheduled_report
+        or explicit_pdf_requested(items)
+    ) else "low"
 
 
 def ground_model_missing_requirements(
@@ -875,6 +962,21 @@ def completion_audit_prompt(
     items: list[dict[str, Any]],
 ) -> str:
     route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    report_quality = (
+        execution.get("report_quality")
+        if isinstance(execution.get("report_quality"), dict)
+        else {}
+    )
+    research_evidence = (
+        execution.get("research_evidence")
+        if isinstance(execution.get("research_evidence"), dict)
+        else {}
+    )
     payload = {
         "task_id": str(task.get("id") or ""),
         "chat": str(task.get("chat") or ""),
@@ -890,6 +992,12 @@ def completion_audit_prompt(
             "requester_publish_override": bool(
                 route.get("requester_publish_override")
             ),
+        },
+        "current_report_contract": {
+            "scheduled_daily_research": bool(route.get("scheduled_daily_research"))
+            or isinstance(task.get("daily_research"), dict),
+            "report_quality": report_quality,
+            "research_evidence": research_evidence,
         },
         "request_items": items,
         "candidate_result": {
@@ -934,6 +1042,30 @@ Rules:
   fit rather than demanding arbitrary length. If it fails, mark the exact PDF
   request item missing with `kind=artifact` and require a rebuilt reader-facing
   report from the exact-task sources.
+- When `current_report_contract.report_quality` is present, audit that contract
+  directly. In particular, an executive chat brief and a full PDF have different
+  jobs: a PDF marked `materially_deeper_than_chat` must add source-level methods,
+  study systems or datasets, quantitative findings, limitations, cross-source
+  synthesis or tensions, evidence boundaries, actionable experiments or
+  decisions, and traceable references where the evidence supports them. A
+  lightly expanded reflow of the group message is missing even when it is clean,
+  attractive, and correctly cited. Do not reward repetitive padding or demand an
+  arbitrary page count; judge whether the report adds decision-relevant evidence
+  and reasoning.
+- Treat every entry in `current_report_contract.report_quality.required_dimensions`
+  as mandatory when the contract provides it. Before passing, locate explicit
+  substantive passages for each dimension in `generated_pdf_content`; do not infer
+  methods, controls, tensions, experiments, or references merely from a heading,
+  topic name, or plausible domain knowledge. Use `report_vs_chat_signals` only as
+  evidence of possible summary reflow, not as a numerical pass/fail threshold. If
+  the visible report does not explicitly support every required dimension, mark
+  the PDF artifact missing and request a source-grounded rebuild.
+- Treat `current_report_contract.report_quality.local_only_provenance` and
+  `reject` as binding editorial constraints. Operational task scope, model or
+  transport metadata, query counts, internal review scores, checksums, private
+  paths, delivery instructions, and similar execution evidence belong in the
+  private manifest, not in a reader-facing research PDF, unless the human's
+  research question explicitly makes that material part of the subject.
 - Treat only `request_items[*].text` as human requirements. Words such as PDF,
   Markdown, publication, or artifacts in candidate explanations, route labels,
   system policies, or task-local filenames do not create a request.

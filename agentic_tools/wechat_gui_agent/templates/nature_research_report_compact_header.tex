@@ -1,0 +1,11 @@
+% Conservative second-pass spacing used only when the normal report leaves a
+% tiny orphan final page. It preserves font size and margins.
+\AtBeginDocument{%
+  \setstretch{1.00}%
+  \setlength{\parskip}{0.30em}%
+  \setlist{nosep,leftmargin=1.5em,topsep=0.18em}%
+}
+\titlespacing*{\section}{0pt}{1.25em}{0.55em}
+\titlespacing*{\subsection}{0pt}{0.85em}{0.28em}
+\titlespacing*{\subsubsection}{0pt}{0.65em}{0.20em}
+\setlength{\emergencystretch}{1.5em}
