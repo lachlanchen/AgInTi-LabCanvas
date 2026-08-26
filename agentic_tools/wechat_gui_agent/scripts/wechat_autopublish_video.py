@@ -66,6 +66,59 @@ class VideoMessage:
     message_db: str = ""
 
 
+def ensure_visual_match_runtime() -> None:
+    """Re-exec with a configured OpenCV-capable Python for guarded GUI matching."""
+    try:
+        import cv2  # noqa: F401
+    except ImportError:
+        pass
+    else:
+        return
+
+    if os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_VISUAL_REEXEC") == "1":
+        raise RuntimeError(
+            "The configured visual-match Python cannot import cv2. "
+            "Set WECHAT_AUTOPUBLISH_VIDEO_VISUAL_PYTHON to a Python with OpenCV."
+        )
+
+    candidates = [
+        os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_VISUAL_PYTHON", ""),
+        str(Path.home() / "miniconda3" / "bin" / "python"),
+        str(Path.home() / "anaconda3" / "bin" / "python"),
+    ]
+    current = Path(sys.executable).resolve()
+    for raw_candidate in candidates:
+        if not raw_candidate:
+            continue
+        candidate = Path(raw_candidate).expanduser()
+        if not candidate.is_file() or candidate.resolve() == current:
+            continue
+        try:
+            probe = subprocess.run(
+                [str(candidate), "-c", "import cv2"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=8,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode != 0:
+            continue
+        env = dict(os.environ)
+        env["WECHAT_AUTOPUBLISH_VIDEO_VISUAL_REEXEC"] = "1"
+        os.execve(
+            str(candidate),
+            [str(candidate), str(Path(__file__).resolve()), *sys.argv[1:]],
+            env,
+        )
+
+    raise RuntimeError(
+        "Exact WeChat video recovery needs OpenCV for guarded thumbnail matching. "
+        "Set WECHAT_AUTOPUBLISH_VIDEO_VISUAL_PYTHON to a Python that can import cv2."
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--chat", action="append", default=[], help="Chat/group name to search. Repeatable. Defaults to all mirrored chats.")
@@ -94,6 +147,13 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+    if args.fetch_gui:
+        try:
+            ensure_visual_match_runtime()
+        except RuntimeError as exc:
+            payload = {"ok": False, "status": "visual-match-runtime-unavailable", "error": str(exc)}
+            print(json.dumps(payload, ensure_ascii=False, indent=2) if args.json else payload["error"])
+            return 1
     message_refs = parse_message_refs(args.message_ref)
 
     if args.sync:
@@ -502,25 +562,52 @@ def fetch_latest_video_via_gui(
     click_points = video_clicks or default_video_clicks()
     per_click_wait = max(2.0, float(os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_CLICK_WAIT_SECONDS", "12")))
     strict_identity = bool(message_local_ids or message_refs)
+    exact_attempt_limit = max(
+        1,
+        int(os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_EXACT_CLICK_ATTEMPTS", "2" if strict_identity else "1")),
+    )
     try:
         with exclusive_gui_lock(GUI_LOCK, timeout_seconds=max(1.0, deadline - time.monotonic())):
-            try:
-                matched_attempts = open_chat_and_click_exact_video(
+            matched_attempts: list[dict[str, object]] = []
+            exact_error = ""
+            for exact_attempt in range(exact_attempt_limit):
+                if time.monotonic() >= deadline:
+                    break
+                try:
+                    current_attempts = open_chat_and_click_exact_video(
+                        message,
+                        display=display,
+                        deadline=deadline,
+                    )
+                except RuntimeError as exc:
+                    exact_error = str(exc)
+                    break
+                for current in current_attempts:
+                    current["attempt"] = exact_attempt + 1
+                attempts.extend(current_attempts)
+                matched_attempts.extend(current_attempts)
+                if not current_attempts:
+                    break
+                click_deadline = min(deadline, time.monotonic() + per_click_wait)
+                match = wait_for_matching_video(
                     message,
-                    display=display,
-                    deadline=deadline,
+                    since_minutes=since_minutes,
+                    started_at=start,
+                    deadline=click_deadline,
+                    strict_identity=strict_identity,
                 )
-            except RuntimeError as exc:
-                return {"ok": False, "chat": message.chat_name, "error": str(exc), "attempts": attempts}
-            attempts.extend(matched_attempts)
-            if not matched_attempts and strict_identity:
-                return {
-                    "ok": False,
-                    "chat": message.chat_name,
-                    "error": "exact source video thumbnail was not visible in the guarded chat history",
-                    "attempts": attempts,
-                }
-            if not matched_attempts and not strict_identity:
+                if match:
+                    return fetched_payload(message, match, attempts)
+
+            if strict_identity:
+                error = exact_error or (
+                    "exact source video was clicked but its verified cache did not appear"
+                    if matched_attempts
+                    else "exact source video thumbnail was not visible in the guarded chat history"
+                )
+                return {"ok": False, "chat": message.chat_name, "error": error, "attempts": attempts}
+
+            if not matched_attempts:
                 for click_point in click_points:
                     if time.monotonic() >= deadline:
                         break
@@ -536,16 +623,6 @@ def fetch_latest_video_via_gui(
                     )
                     if match:
                         return fetched_payload(message, match, attempts)
-            elif matched_attempts:
-                match = wait_for_matching_video(
-                    message,
-                    since_minutes=since_minutes,
-                    started_at=start,
-                    deadline=deadline,
-                    strict_identity=strict_identity,
-                )
-                if match:
-                    return fetched_payload(message, match, attempts)
     except TimeoutError as exc:
         return {"ok": False, "chat": message.chat_name, "error": str(exc), "attempts": attempts}
     return {"ok": False, "chat": message.chat_name, "error": "video cache did not appear before timeout", "attempts": attempts}
@@ -851,6 +928,8 @@ def open_chat_and_click_exact_video(
     if not window:
         raise RuntimeError(f"No visible WeChat window found on DISPLAY={display}")
     open_chat(message.chat_name, env=env, window=window)
+    scroll_chat_history_to_bottom(env, window)
+    time.sleep(0.45)
     evidence_dir = (
         ROOT
         / "output"
@@ -860,8 +939,9 @@ def open_chat_and_click_exact_video(
     )
     evidence_dir.mkdir(parents=True, exist_ok=True)
     max_pages = max(1, int(os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_SCAN_PAGES", "10")))
-    threshold = float(os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_TEMPLATE_THRESHOLD", "0.52"))
+    threshold = float(os.environ.get("WECHAT_AUTOPUBLISH_VIDEO_TEMPLATE_THRESHOLD", "0.40"))
     best_score = 0.0
+    best_match: dict[str, object] | None = None
     for page in range(max_pages):
         if time.monotonic() >= deadline:
             break
@@ -877,23 +957,42 @@ def open_chat_and_click_exact_video(
             if not match:
                 continue
             best_score = max(best_score, float(match["score"]))
-            if float(match["score"]) < threshold:
-                continue
-            point = (int(match["center_x"]), int(match["center_y"]))
+            if best_match is None or float(match["score"]) > float(best_match["score"]):
+                best_match = {
+                    **match,
+                    "thumbnail_path": thumbnail,
+                    "page": page,
+                    "screenshot": screenshot_path,
+                }
+        scroll_chat_history_up(env, window)
+        time.sleep(0.65)
+    if best_match is not None and float(best_match["score"]) >= threshold:
+        scroll_chat_history_to_bottom(env, window)
+        for _ in range(int(best_match["page"])):
+            scroll_chat_history_up(env, window)
+            time.sleep(0.65)
+        selected_screenshot = evidence_dir / "selected.png"
+        capture_window(env, window, selected_screenshot)
+        selected = match_thumbnail_in_chat(
+            selected_screenshot,
+            Path(best_match["thumbnail_path"]),
+            window_width=window[3],
+            window_height=window[4],
+        )
+        if selected is not None and float(selected["score"]) >= threshold:
+            point = (int(selected["center_x"]), int(selected["center_y"]))
             click(env, window[1] + point[0], window[2] + point[1])
             return [
                 {
                     "click": point,
                     "method": "exact-thumbnail-template",
-                    "score": round(float(match["score"]), 4),
-                    "thumbnail": thumbnail.name,
-                    "page": page,
-                    "screenshot": str(screenshot_path),
+                    "score": round(float(selected["score"]), 4),
+                    "thumbnail": Path(best_match["thumbnail_path"]).name,
+                    "page": int(best_match["page"]),
+                    "screenshot": str(selected_screenshot),
                     "at": datetime.now().isoformat(timespec="seconds"),
                 }
             ]
-        scroll_chat_history_up(env, window)
-        time.sleep(0.65)
     raise RuntimeError(
         "exact source video thumbnail was not found after guarded history scan "
         f"(best template score {best_score:.3f})"
@@ -962,6 +1061,27 @@ def scroll_chat_history_up(env: dict[str, str], window: tuple[str, int, int, int
             "--delay",
             "70",
             "4",
+        ],
+        env=env,
+    )
+
+
+def scroll_chat_history_to_bottom(env: dict[str, str], window: tuple[str, int, int, int, int]) -> None:
+    """Reset history scans so repeated fetch attempts always start at newest messages."""
+    x = window[1] + int(window[3] * 0.68)
+    y = window[2] + int(window[4] * 0.42)
+    run(
+        [
+            "xdotool",
+            "mousemove",
+            str(x),
+            str(y),
+            "click",
+            "--repeat",
+            "80",
+            "--delay",
+            "20",
+            "5",
         ],
         env=env,
     )

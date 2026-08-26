@@ -556,6 +556,12 @@ candidate videos and `--source /path/to/video.mp4` for an explicit file. If a
 video message is visible in WeChat but no MP4 has been cached yet, use
 `--sync --fetch-gui`; the tool opens the chat, clicks the latest visible video,
 waits for the official client to cache the MP4, then copies the matched file.
+For exact `--message-ref`/`--message-local-id` requests, the GUI path starts at
+the newest messages, scans a bounded history, selects the strongest exact
+thumbnail match, and retries one lost cache click. Set
+`WECHAT_AUTOPUBLISH_VIDEO_VISUAL_PYTHON` only when the automatically discovered
+OpenCV-capable Python is not the desired runtime. The downloaded MP4 still has
+to satisfy the exact source row's identity or byte-length contract.
 
 ## LazyEdit Platform Publishing
 

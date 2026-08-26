@@ -1491,6 +1491,15 @@ the worker resolves the source in this order:
    messages as obsolete context, not evidence;
 8. run LazyEdit and verify local plus remote publish queues.
 
+The guarded GUI cache stage is restart-safe. Before every exact scan it returns
+the chat to the newest messages, scans the bounded history window, chooses the
+best exact-thumbnail match across all scanned pages, and retries the same
+verified bubble once when the first cache click is lost. It automatically
+re-executes with `WECHAT_AUTOPUBLISH_VIDEO_VISUAL_PYTHON` (or the discovered
+local Conda Python) when the worker Python lacks OpenCV. A click is never source
+proof: the resulting MP4 must still match the exact message's identity token or
+declared byte length before it can enter LazyEdit.
+
 Publication consent is contextual, not a universal extra gate:
 
 - A direct or subjectless question to the agent, such as `你能发布今天的视频吗` or

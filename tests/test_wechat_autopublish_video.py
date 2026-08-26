@@ -437,6 +437,104 @@ class WeChatAutoPublishVideoTests(unittest.TestCase):
         self.assertEqual(candidates[0].path, send_temp.resolve())
         self.assertEqual(candidates[0].size_bytes, len(b"original-video-bytes"))
 
+    def test_exact_gui_scan_resets_to_bottom_and_selects_best_page(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        message = wechat_autopublish_video.VideoMessage(
+            chat_name="My devices",
+            local_id=96,
+            create_time=int(time.time()),
+            stems=("exact",),
+            sizes=(9323047,),
+            message_db="message_1.db",
+        )
+
+        def fake_match(screenshot: Path, _thumbnail: Path, **_kwargs: object) -> dict[str, float | int]:
+            if screenshot.name == "page-00.png":
+                return {"score": 0.41, "center_x": 400, "center_y": 300}
+            return {"score": 0.55, "center_x": 510, "center_y": 217}
+
+        with mock.patch.dict(os.environ, {"WECHAT_AUTOPUBLISH_VIDEO_SCAN_PAGES": "2"}):
+            with mock.patch.object(wechat_autopublish_video, "message_thumbnail_files", return_value=[Path("thumb.jpg")]):
+                with mock.patch.object(wechat_autopublish_video, "gui_environment", return_value={}):
+                    with mock.patch.object(wechat_autopublish_video, "find_wechat_window", return_value=("7", 10, 20, 1020, 739)):
+                        with mock.patch.object(wechat_autopublish_video, "open_chat"):
+                            with mock.patch.object(wechat_autopublish_video, "capture_window"):
+                                with mock.patch.object(wechat_autopublish_video, "match_thumbnail_in_chat", side_effect=fake_match):
+                                    with mock.patch.object(wechat_autopublish_video, "scroll_chat_history_to_bottom") as bottom:
+                                        with mock.patch.object(wechat_autopublish_video, "scroll_chat_history_up") as up:
+                                            with mock.patch.object(wechat_autopublish_video, "click") as click:
+                                                attempts = wechat_autopublish_video.open_chat_and_click_exact_video(
+                                                    message,
+                                                    display=":97",
+                                                    deadline=time.monotonic() + 30,
+                                                )
+
+        self.assertEqual(attempts[0]["page"], 1)
+        self.assertEqual(attempts[0]["click"], (510, 217))
+        self.assertEqual(bottom.call_count, 2)
+        self.assertGreaterEqual(up.call_count, 3)
+        click.assert_called_once_with({}, 520, 237)
+
+    def test_exact_gui_fetch_retries_same_verified_thumbnail_after_cache_miss(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "exact.mp4"
+            video.write_bytes(b"exact-video")
+            message = wechat_autopublish_video.VideoMessage(
+                chat_name="My devices",
+                local_id=98,
+                create_time=int(time.time()),
+                stems=("exact",),
+                sizes=(video.stat().st_size,),
+                message_db="message_1.db",
+            )
+            lock = mock.MagicMock()
+            with mock.patch.object(wechat_autopublish_video, "recent_video_messages", return_value=[message]):
+                with mock.patch.object(wechat_autopublish_video, "matching_video_files", return_value=[]):
+                    with mock.patch.object(wechat_autopublish_video, "exclusive_gui_lock", return_value=lock):
+                        with mock.patch.object(
+                            wechat_autopublish_video,
+                            "open_chat_and_click_exact_video",
+                            side_effect=[
+                                [{"method": "exact-thumbnail-template"}],
+                                [{"method": "exact-thumbnail-template"}],
+                            ],
+                        ) as click_exact:
+                            with mock.patch.object(
+                                wechat_autopublish_video,
+                                "wait_for_matching_video",
+                                side_effect=[None, video],
+                            ) as wait_for_video:
+                                payload = wechat_autopublish_video.fetch_latest_video_via_gui(
+                                    chats=[message.chat_name],
+                                    since_minutes=240,
+                                    display=":97",
+                                    timeout=60,
+                                    video_clicks=[],
+                                    message_refs=[("message_1.db", 98)],
+                                )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["path"], str(video))
+        self.assertEqual(click_exact.call_count, 2)
+        self.assertEqual(wait_for_video.call_count, 2)
+        self.assertEqual([attempt["attempt"] for attempt in payload["attempts"]], [1, 2])
+
+    def test_scroll_to_bottom_uses_bounded_downward_wheel_events(self) -> None:
+        sys.path.insert(0, str(SCRIPT.parent))
+        import wechat_autopublish_video
+
+        with mock.patch.object(wechat_autopublish_video, "run") as run:
+            wechat_autopublish_video.scroll_chat_history_to_bottom({}, ("7", 10, 20, 1000, 700))
+
+        command = run.call_args.args[0]
+        self.assertIn("80", command)
+        self.assertEqual(command[-1], "5")
+
     def test_parse_clicks_accepts_fallback_points(self) -> None:
         sys.path.insert(0, str(SCRIPT.parent))
         import wechat_autopublish_video
