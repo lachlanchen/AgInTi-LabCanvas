@@ -29,6 +29,57 @@ def load_sessions():
 
 
 class WeChatCodexSessionTests(unittest.TestCase):
+    def test_worker_session_rotates_after_bounded_turn_count(self) -> None:
+        sessions = load_sessions()
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "sessions.local.json"
+            key = sessions.session_key("LabAgent", "worker")
+            registry.write_text(
+                json.dumps(
+                    {
+                        key: {
+                            "thread_id": "old-thread",
+                            "chat_name": "LabAgent",
+                            "role": "worker",
+                            "turn_count": 96,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                sessions.registered_session_exceeds_turn_limit(
+                    registry,
+                    key,
+                    "worker",
+                )
+            )
+
+    def test_new_codex_thread_resets_registry_turn_count(self) -> None:
+        sessions = load_sessions()
+        key = sessions.session_key("LabAgent", "worker")
+        registry = {
+            key: {
+                "thread_id": "old-thread",
+                "created_at": "2026-01-01T00:00:00",
+                "turn_count": 346,
+            }
+        }
+        sessions.update_registry(
+            registry,
+            key,
+            "LabAgent",
+            "worker",
+            {"thread_id": "fresh-thread", "resumed": False},
+            "gpt-5.6-sol",
+            "medium",
+            "danger-full-access",
+            ROOT,
+        )
+        self.assertEqual(registry[key]["thread_id"], "fresh-thread")
+        self.assertEqual(registry[key]["turn_count"], 1)
+        self.assertNotEqual(registry[key]["created_at"], "2026-01-01T00:00:00")
+
     def test_parse_thread_id_from_json_events(self) -> None:
         sessions = load_sessions()
         events = '{"type":"thread.started","thread_id":"abc"}\n{"type":"turn.completed"}\n'
@@ -449,6 +500,29 @@ class WeChatCodexSessionTests(unittest.TestCase):
 
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
         killpg.assert_called_once_with(1234, sessions.signal.SIGTERM)
+        proc.wait.assert_called_once()
+
+    def test_process_group_parent_interruption_terminates_agent_descendants(self) -> None:
+        sessions = load_sessions()
+        proc = mock.Mock()
+        proc.pid = 4321
+        proc.poll.return_value = None
+        proc.communicate.side_effect = KeyboardInterrupt()
+        proc.wait.return_value = -15
+
+        with mock.patch.object(sessions.subprocess, "Popen", return_value=proc), mock.patch.object(
+            sessions.os, "getpgid", return_value=4321
+        ), mock.patch.object(sessions.os, "killpg") as killpg:
+            with self.assertRaises(KeyboardInterrupt):
+                sessions.run_process_group(
+                    ["aginti", "resume"],
+                    input="prompt",
+                    cwd=ROOT,
+                    timeout=30,
+                    env={},
+                )
+
+        killpg.assert_called_once_with(4321, sessions.signal.SIGTERM)
         proc.wait.assert_called_once()
 
     def test_route_session_does_not_enable_web_search_by_default(self) -> None:

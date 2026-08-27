@@ -26,7 +26,11 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 from file_lock import fcntl_compat as fcntl
-from wechat_agent_backend import run_agent_session as run_codex_session, select_agent_backend
+from wechat_agent_backend import (
+    aginti_provider_chain,
+    run_agent_session as run_codex_session,
+    select_agent_backend,
+)
 from wechat_chat_profiles import profile_for_chat
 from wechat_history_rag import build_history_context, build_wecom_history_context
 from wechat_completion_audit import (
@@ -891,6 +895,10 @@ def reprocess_task(
         for index, task in enumerate(tasks):
             if str(task.get("id") or "") != str(task_id):
                 continue
+            preserved_pdf_rejections = task_pdf_quality_rejections(
+                task,
+                rediscover=True,
+            )
             stored_result = task.get("result") if isinstance(task.get("result"), dict) else {}
             if artifact_recovery_only:
                 # The recovery reason is the current operator authorization.
@@ -914,9 +922,13 @@ def reprocess_task(
             result = task.get("result") if isinstance(task.get("result"), dict) else {}
             if result:
                 previous["previous_result_message_excerpt"] = collapse_context_text(result.get("message"), max_len=500)
+            if preserved_pdf_rejections:
+                previous["pdf_quality_rejections"] = preserved_pdf_rejections
             task.setdefault("reprocess_history", []).append(previous)
             for field in stale_fields:
                 task.pop(field, None)
+            if preserved_pdf_rejections:
+                task["pdf_quality_rejections"] = preserved_pdf_rejections
             repair_explicit_research_task_contract(task)
             task["status"] = "pending"
             route_decision = (
@@ -1277,6 +1289,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
     persist_task_progress(task)
     target_chat = str(task.get("chat") or chat)
     has_delivery_content = worker_result_has_delivery_content(result)
+    required_artifact_missing = required_artifact_missing_from_result(task, result)
     if private_failure:
         task["worker_error"] = {
             "type": str(private_failure.get("kind") or "BackendExecutionFailed"),
@@ -1296,13 +1309,18 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         send
         and (not task.get("worker_error") or bool(terminal_failure_feedback))
         and has_delivery_content
+        and not required_artifact_missing
         and should_send_worker_result(task, result)
     )
     if send and not send_now:
         task["send_suppressed_reason"] = (
             "agent_no_reply"
             if result_is_no_reply(result)
-            else "nonterminal_routine_status"
+            else (
+                "required_artifact_missing"
+                if required_artifact_missing
+                else "nonterminal_routine_status"
+            )
         )
         task["send_suppressed_at"] = datetime.now().isoformat(timespec="seconds")
     send_errors = send_result_with_retries(result, target_chat, send_targets, task=task) if send_now else []
@@ -1501,6 +1519,19 @@ def apply_send_outcome(task: dict[str, Any], result: dict[str, Any], errors: lis
             task.pop("last_progress_send_errors", None)
         schedule_generated_video_poll(task, result)
         return
+    if required_artifact_missing_from_result(task, result):
+        task["status"] = "worker_failed"
+        task["worker_error"] = {
+            "type": "RequiredArtifactMissing",
+            "message": (
+                "The worker completion gate withheld or did not produce a required "
+                "task artifact; the task remains eligible for bounded coverage repair."
+            ),
+        }
+        task["required_artifact_missing_at"] = datetime.now().isoformat(
+            timespec="seconds"
+        )
+        return
     if errors:
         task["send_errors"] = errors
         task["last_send_attempt_at"] = datetime.now().isoformat(timespec="seconds")
@@ -1598,6 +1629,8 @@ def result_requires_file_delivery(task: dict[str, Any] | None, result: dict[str,
     if task_forbids_chat_artifact_delivery(task):
         return False
     if task is not None and task_is_grant_proposal(task):
+        return True
+    if task is not None and task_contract_requires_file_delivery(task):
         return True
     if not result.get("files"):
         return False
@@ -1868,9 +1901,25 @@ def required_delivery_file_paths(
 def required_file_delivery_complete(task: dict[str, Any] | None, result: dict[str, Any]) -> bool:
     required = {str(path) for path in required_delivery_file_paths(result, task)}
     if not required:
-        return True
+        return not bool(
+            isinstance(task, dict)
+            and task_contract_requires_file_delivery(task)
+            and not task_forbids_chat_artifact_delivery(task)
+        )
     sent = {str(Path(str(path)).expanduser().resolve()) for path in (task or {}).get("sent_file_paths", [])}
     return required.issubset(sent)
+
+
+def required_artifact_missing_from_result(
+    task: dict[str, Any], result: dict[str, Any]
+) -> bool:
+    """Keep a required artifact omission from becoming a successful chat turn."""
+
+    return bool(
+        task_contract_requires_file_delivery(task)
+        and not task_forbids_chat_artifact_delivery(task)
+        and not required_delivery_file_paths(result, task)
+    )
 
 
 def generated_video_poststage_from_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -2887,12 +2936,7 @@ def task_memory_model(task: dict[str, Any]) -> str:
     if backend != "aginti":
         return str(policy.get("model") or worker_model(str(policy.get("reasoning_effort") or "medium")))
     backend_config = worker_backend_config(task, "aginti")
-    raw_chain = backend_config.get("provider_chain") or "deepseek,localllm"
-    providers = (
-        [str(item).strip() for item in raw_chain if str(item).strip()]
-        if isinstance(raw_chain, list)
-        else [item.strip() for item in str(raw_chain).split(",") if item.strip()]
-    )
+    providers = aginti_provider_chain(backend_config)
     provider = providers[0] if providers else "deepseek"
     provider_models = (
         backend_config.get("provider_models")
@@ -3953,7 +3997,12 @@ def recover_completed_research_artifacts(
     language = detect_markdown_primary_language(read_text_prefix(report, limit=24000))
     report_pdf = preferred_research_report_pdf(report, language)
     if report_pdf is None or not report_pdf.is_file() or report_pdf.stat().st_size <= 0:
-        return None
+        return recover_exact_task_pdf_without_markdown(
+            task,
+            artifact_dir,
+            failure_text=failure_text,
+            force=force,
+        )
 
     files = [report_pdf]
     request_text = task_focus_text(task).casefold()
@@ -4024,11 +4073,15 @@ def recover_exact_task_pdf_without_markdown(
     failure_text: str = "",
     force: bool = False,
 ) -> dict[str, Any] | None:
-    """Recover one unambiguous compiled PDF from the exact task directory."""
-    if not force or not task.get("artifact_recovery_only"):
-        return None
+    """Recover one unambiguous reader-facing PDF from the exact task directory.
+
+    Explicit artifact-only repair may adopt the sole exact-task PDF and lets the
+    normal delivery quality gate inspect it next. Automatic failure recovery is
+    stricter: the PDF must already pass the task's reader-facing quality rules.
+    """
     if not task_contract_requires_file_delivery(task):
         return None
+    artifact_recovery_only = bool(task.get("artifact_recovery_only"))
     required_suffixes = task_required_artifact_suffixes(task)
     if required_suffixes and ".pdf" not in required_suffixes:
         return None
@@ -4049,6 +4102,8 @@ def recover_exact_task_pdf_without_markdown(
             if path.read_bytes()[:5] != b"%PDF-":
                 continue
         except OSError:
+            continue
+        if not artifact_recovery_only and reader_facing_pdf_quality_issues(task, path):
             continue
         candidates.append(path.resolve())
     candidates = unique_paths(candidates)
@@ -7489,6 +7544,14 @@ def worker_agent_task_view(task: dict[str, Any]) -> dict[str, Any]:
             "reason": sanitize_worker_agent_text(task.get("reprocess_reason"), max_len=1200),
             "reuse_existing_exact_task_artifacts": True,
         }
+    pdf_quality_rejections = task_pdf_quality_rejections(
+        task,
+        rediscover=bool(task.get("reprocess_requested_at") or task.get("reprocess_reason")),
+    )
+    if pdf_quality_rejections:
+        view["pdf_quality_rejections"] = compact_worker_agent_value(
+            pdf_quality_rejections, key="pdf_quality_rejections"
+        )
     recent_context: list[dict[str, Any]] = []
     for row in (task.get("context") or [])[-12:]:
         if not isinstance(row, dict):
@@ -7708,6 +7771,8 @@ def aginti_worker_task_view(task: dict[str, Any]) -> dict[str, Any]:
         "completion_audit_repair",
         "coverage_followup",
         "worker_retry_context",
+        "reprocess",
+        "pdf_quality_rejections",
         "generated_video_monitor",
         "generated_video_submit_probe",
         "generated_video_poststage",
@@ -7729,6 +7794,58 @@ def bound_aginti_worker_packet(
     packet: dict[str, Any], *, max_chars: int = 52000
 ) -> dict[str, Any]:
     """Keep LocalLLM fallback input bounded while preserving current intent."""
+
+    repair_focused = bool(
+        packet.get("completion_audit_repair") or packet.get("reprocess")
+    )
+    if repair_focused:
+        # A completion repair must stay focused on the exact rejected artifact.
+        # Old chat memory remains useful for the original turn, but retaining it
+        # here can both crowd the repair contract out of the bounded packet and
+        # make historical filenames look like current output requirements.
+        packet = dict(packet)
+        packet.pop("lifetime_same_chat_memory", None)
+        packet.pop("high_fidelity_same_chat_history", None)
+        packet.pop("history_compaction", None)
+        current_request = str(packet.get("current_request") or "")
+        for marker in (
+            "\nRecent same-group discussion:",
+            " Recent same-group discussion:",
+            "\nRecent history:",
+            "\nSame-chat reference media/context rows:",
+        ):
+            if marker in current_request:
+                current_request = current_request.split(marker, 1)[0].strip()
+        packet["current_request"] = sanitize_worker_agent_text(
+            current_request, max_len=1600
+        )
+        packet.pop("recent_same_chat_context", None)
+        packet.pop("member_memory_summary", None)
+        routine = packet.get("routine") if isinstance(packet.get("routine"), dict) else {}
+        packet["routine"] = {
+            key: routine.get(key)
+            for key in ("id", "title", "purpose", "artifact_policy", "stages")
+            if routine.get(key) not in (None, "", [], {})
+        }
+        route = (
+            packet.get("route_decision")
+            if isinstance(packet.get("route_decision"), dict)
+            else {}
+        )
+        packet["route_decision"] = {
+            key: route.get(key)
+            for key in (
+                "route_kind",
+                "transport",
+                "transport_channel",
+                "scheduled_daily_research",
+                "require_file_delivery",
+                "public_publish_allowed",
+            )
+            if route.get(key) not in (None, "", [], {})
+        }
+        max_chars = min(max_chars, 18000)
+        packet["repair_packet_focused"] = True
 
     serialized = json.dumps(packet, ensure_ascii=False)
     if len(serialized) <= max_chars:
@@ -7785,14 +7902,18 @@ def bound_aginti_worker_packet(
             "routine",
             "routine_contract_files",
             "orchestrator",
+            "response_policy",
             "artifact_dir",
             "public_publish_allowed",
             "recent_same_chat_context",
-            "lifetime_same_chat_memory",
-            "high_fidelity_same_chat_history",
-            "history_compaction",
             "interruptions",
             "preflight",
+            "completion_audit_repair",
+            "coverage_followup",
+            "worker_retry_context",
+            "reprocess",
+            "pdf_quality_rejections",
+            "repair_packet_focused",
         )
         if bounded.get(key) not in (None, "", [], {})
     }
@@ -7807,7 +7928,7 @@ def build_aginti_worker_prompt(task: dict[str, Any]) -> str:
     packet = json.dumps(packet_view, ensure_ascii=False, indent=2)
     evidence_scope_payload = {
         "mode": "task",
-        "request": str(packet_view.get("current_request") or ""),
+        "request": aginti_worker_evidence_scope_request(task, packet_view),
     }
     if packet_view.get("artifact_dir"):
         evidence_scope_payload["artifact_root"] = str(packet_view["artifact_dir"])
@@ -7841,6 +7962,123 @@ Return one strict JSON object and no prose:
 Exact task packet:
 {packet}
 """
+
+
+def aginti_worker_evidence_scope_request(
+    task: dict[str, Any], packet_view: dict[str, Any]
+) -> str:
+    """Return only authoritative current intent for deterministic SCS inference.
+
+    The complete packet still carries same-chat memory and prior results for the
+    model. They must not become exact output paths or mandatory text merely
+    because an old response mentioned a filename or quoted phrase.
+    """
+
+    repair = packet_view.get("completion_audit_repair")
+    if isinstance(repair, dict) and repair:
+        artifact_repair = (
+            repair.get("artifact_repair")
+            if isinstance(repair.get("artifact_repair"), dict)
+            else {}
+        )
+        source_candidates = [
+            str(item.get("workspace_path") or item.get("path") or "").strip()
+            for item in artifact_repair.get("source_candidates") or []
+            if isinstance(item, dict)
+            and str(item.get("workspace_path") or item.get("path") or "").strip()
+        ]
+        rejected = [
+            str(item.get("workspace_path") or item.get("path") or "").strip()
+            for item in artifact_repair.get("rejected_artifacts") or []
+            if isinstance(item, dict)
+            and str(item.get("workspace_path") or item.get("path") or "").strip()
+        ]
+        issues = [
+            str(issue)
+            for item in artifact_repair.get("rejected_artifacts") or []
+            if isinstance(item, dict)
+            for issue in item.get("issues") or []
+            if str(issue).strip()
+        ]
+        target = source_candidates[0] if source_candidates else (
+            rejected[0] if rejected else "the exact task-local report"
+        )
+        issue_text = ", ".join(unique_strings(issues)) or "all listed reader-quality defects"
+        return collapse_context_text(
+            f"Revise the exact existing report source {target}; resolve {issue_text}; "
+            "write a clean reader-facing source in the same task artifact directory, "
+            "compile or enable host compilation of its PDF, inspect the result, and "
+            "return the verified replacement PDF plus a concise direct answer.",
+            max_len=3600,
+        )
+
+    reprocess = packet_view.get("reprocess")
+    if isinstance(reprocess, dict) and reprocess:
+        reason = sanitize_worker_agent_text(reprocess.get("reason"), max_len=1800)
+        issues = [
+            str(issue).strip()
+            for item in packet_view.get("pdf_quality_rejections") or []
+            if isinstance(item, dict)
+            for issue in item.get("issues") or []
+            if str(issue).strip()
+        ]
+        issue_text = ", ".join(unique_strings(issues))
+        return collapse_context_text(
+            " ".join(
+                part
+                for part in (
+                    reason,
+                    f"Resolve these rejected PDF quality issues: {issue_text}."
+                    if issue_text
+                    else "",
+                    "Materially revise a source file inside the exact task artifact directory, "
+                    "rebuild and inspect the replacement PDF, and return that verified new PDF "
+                    "with a concise direct answer; do not return the unchanged artifact.",
+                )
+                if part
+            ),
+            max_len=3600,
+        )
+
+    ledger = packet_view.get("message_ledger")
+    if isinstance(ledger, list):
+        current_items = [
+            sanitize_worker_agent_text(item.get("text"), max_len=1800)
+            for item in ledger
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
+        ]
+        if current_items:
+            return collapse_context_text("\n".join(current_items), max_len=3600)
+
+    daily = task.get("daily_research")
+    if isinstance(daily, dict) and daily:
+        topics = [
+            collapse_context_text(topic, max_len=800)
+            for topic in daily.get("topics") or []
+            if str(topic or "").strip()
+        ]
+        report_date = str(daily.get("report_date") or "").strip()
+        subject = "；".join(topics) or "the enrolled member's research topic"
+        return collapse_context_text(
+            f"Prepare the {report_date or 'current'} daily research briefing for {subject} "
+            "and return the task's required verified reader-facing artifacts.",
+            max_len=2400,
+        )
+
+    original_request = str(task.get("original_request") or "").strip()
+    if original_request:
+        return collapse_context_text(original_request, max_len=3600)
+
+    current = str(packet_view.get("current_request") or "").strip()
+    for marker in (
+        "\nRecent same-group discussion:",
+        " Recent same-group discussion:",
+        "\nRecent history:",
+        "\nSame-chat reference media/context rows:",
+    ):
+        if marker in current:
+            current = current.split(marker, 1)[0].strip()
+    return collapse_context_text(current, max_len=3600)
 
 
 def compact_worker_preflight_for_agent(value: Any) -> dict[str, Any]:
@@ -8377,6 +8615,173 @@ def preserve_known_lazyedit_publish_identity(
             current[key] = value
 
 
+PDF_REPAIR_ISSUE_GUIDANCE: dict[str, str] = {
+    "internal_task_identity": (
+        "Remove task IDs, transport identities, private paths, and orchestration metadata "
+        "from the reader-facing document."
+    ),
+    "transport_identity": (
+        "Remove chat/transport identifiers from the reader-facing document."
+    ),
+    "private_runtime_path": (
+        "Keep local paths and runtime provenance in private evidence files only."
+    ),
+    "agent_output_contract": (
+        "Remove output schemas, delivery instructions, and agent-facing contracts."
+    ),
+    "raw_result_schema": (
+        "Replace raw result JSON with normal reader-facing prose."
+    ),
+    "missing_reader_evidence_section": (
+        "Add a clearly titled evidence/source section with traceable identifiers or URLs."
+    ),
+    "missing_source_level_methods_results_limits": (
+        "For each central source, state the study method or dataset, concrete result, and limitation."
+    ),
+    "missing_complete_reference_section": (
+        "Add a complete references section with enough metadata and DOI/URL to trace every central source."
+    ),
+    "missing_cross_source_synthesis": (
+        "Explain agreements, tensions, and what follows only from combining the sources."
+    ),
+    "missing_evidence_boundaries": (
+        "Separate direct evidence, inference, uncertainty, and unverified hypotheses."
+    ),
+    "missing_actionable_experiments_or_decisions": (
+        "Add concrete next experiments or decisions tied to the evidence."
+    ),
+    "blank_or_nearly_blank_pdf_page": (
+        "Repaginate the report so every page contains substantive reader-facing content."
+    ),
+    "orphan_final_pdf_page": (
+        "Move the short terminal note before the references or repaginate it onto a substantive page."
+    ),
+}
+
+
+def task_local_agent_path(path: Path, artifact_root: Path) -> dict[str, str]:
+    """Describe one exact task-local path without making nearby files eligible."""
+
+    resolved = path.expanduser().resolve()
+    if not resolved.is_relative_to(artifact_root):
+        return {}
+    try:
+        workspace_path = str(resolved.relative_to(ROOT))
+    except ValueError:
+        workspace_path = str(resolved)
+    return {
+        "path": str(resolved),
+        "workspace_path": workspace_path,
+    }
+
+
+def completion_pdf_repair_context(
+    task: dict[str, Any], result: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the exact artifact contract for one reader-PDF repair turn."""
+
+    artifact_root = Path(
+        str(task.get("artifact_dir") or worker_artifact_dir(task))
+    ).expanduser().resolve()
+    data = result_delivery_data(result)
+    raw_rejections = [
+        item
+        for item in (
+            data.get("pdf_quality_rejections")
+            or task.get("pdf_quality_rejections")
+            or []
+        )
+        if isinstance(item, dict)
+    ]
+    rejected_artifacts: list[dict[str, Any]] = []
+    issue_labels: list[str] = []
+    for item in raw_rejections[:8]:
+        raw_path = str(item.get("path") or "").strip()
+        if not raw_path:
+            continue
+        path_info = task_local_agent_path(Path(raw_path), artifact_root)
+        if not path_info:
+            continue
+        issues = unique_strings(str(issue) for issue in item.get("issues") or [])
+        issue_labels.extend(issues)
+        rejected_artifacts.append({**path_info, "issues": issues})
+
+    source_paths: list[Path] = []
+    report_raw = str(data.get("report_path") or "").strip()
+    if report_raw:
+        source_paths.append(Path(report_raw))
+    recovery = (
+        task.get("worker_artifact_recovery")
+        if isinstance(task.get("worker_artifact_recovery"), dict)
+        else {}
+    )
+    recovery_report = str(recovery.get("report") or "").strip()
+    if recovery_report:
+        source_paths.append(Path(recovery_report))
+    for rejected in rejected_artifacts:
+        rejected_path = Path(str(rejected["path"]))
+        for suffix in (".md", ".tex"):
+            sibling = rejected_path.with_suffix(suffix)
+            if sibling.is_file():
+                source_paths.append(sibling)
+    if artifact_root.is_dir():
+        for suffix in ("*.md", "*.tex"):
+            for candidate in artifact_root.glob(suffix):
+                lowered = candidate.name.casefold()
+                if lowered in RESEARCH_REPORT_EXCLUDED_MARKDOWN:
+                    continue
+                if any(
+                    marker in lowered
+                    for marker in ("contract", "cheat_sheet", "manifest", "interruption")
+                ):
+                    continue
+                source_paths.append(candidate)
+
+    source_candidates: list[dict[str, str]] = []
+    seen_sources: set[str] = set()
+    for path in source_paths:
+        path_info = task_local_agent_path(path, artifact_root)
+        absolute = str(path_info.get("path") or "")
+        if not absolute or absolute in seen_sources or not Path(absolute).is_file():
+            continue
+        seen_sources.add(absolute)
+        source_candidates.append(path_info)
+        if len(source_candidates) >= 12:
+            break
+
+    execution = (
+        task.get("execution_contract")
+        if isinstance(task.get("execution_contract"), dict)
+        else {}
+    )
+    issue_labels = unique_strings(issue_labels)
+    return {
+        "artifact_root": str(artifact_root),
+        "rejected_artifacts": rejected_artifacts,
+        "source_candidates": source_candidates,
+        "issue_guidance": {
+            issue: PDF_REPAIR_ISSUE_GUIDANCE.get(
+                issue,
+                "Resolve this reader-facing quality defect and verify the rebuilt PDF.",
+            )
+            for issue in issue_labels
+        },
+        "research_evidence_contract": compact_worker_agent_value(
+            execution.get("research_evidence") or {}, key="research_evidence"
+        ),
+        "report_quality_contract": compact_worker_agent_value(
+            execution.get("report_quality") or {}, key="report_quality"
+        ),
+        "host_compiler_fallback": True,
+        "required_result": (
+            "Revise a task-local reader-facing Markdown or TeX source, compile it when the "
+            "established routine is available, and return the verified replacement PDF. "
+            "If the backend cannot compile, it must still write the corrected source so the "
+            "host compiler can build and revalidate it in this same completion cycle."
+        ),
+    }
+
+
 def recover_completion_pdf_artifact(
     task: dict[str, Any],
     combined: dict[str, Any],
@@ -8528,6 +8933,7 @@ def audit_and_repair_worker_completion(
     correction_attempted = bool(final.get("repair_recommended"))
     if correction_attempted:
         correction_policy = completion_repair_policy(task, final)
+        artifact_repair = completion_pdf_repair_context(task, combined)
         task["completion_audit_repair"] = {
             "missing": final.get("missing") or [],
             "expected_item_ids": final.get("expected_item_ids")
@@ -8540,9 +8946,13 @@ def audit_and_repair_worker_completion(
                 ),
                 "files": list(combined.get("files") or [])[:20],
             },
+            "artifact_repair": artifact_repair,
             "instruction": (
                 "Complete every missing numbered-message requirement in one bounded turn. "
-                "Return a complete replacement response and preserve useful prior artifacts."
+                "For a rejected artifact, read and revise the exact task-local source named "
+                "in artifact_repair, resolve every listed issue, rebuild or enable host "
+                "compilation, inspect the replacement, and return a complete response. "
+                "Preserve useful prior conclusions but never return the rejected file unchanged."
             ),
         }
         orchestrator = (
@@ -8825,6 +9235,10 @@ def worker_backend_config(task: dict[str, Any], backend: str) -> dict[str, Any]:
         config = dict(raw) if isinstance(raw, dict) else {}
     if backend != "aginti":
         return config
+    if os.environ.get("WECHAT_AGINTI_HOST_WORKSPACE", "1") != "0":
+        config.setdefault("permission_mode", "normal")
+        config.setdefault("sandbox_mode", "host")
+        config.setdefault("allow_host_workspace", True)
     config.setdefault(
         "evidence_scope_request",
         task_focus_text(task) or str(task.get("request") or "").strip(),
@@ -18611,6 +19025,108 @@ def reader_facing_pdf_quality_issues(
     return unique_strings(issues)
 
 
+def normalize_pdf_quality_rejections(value: Any) -> list[dict[str, Any]]:
+    """Normalize current and legacy rejection records by exact PDF path."""
+    merged: dict[str, dict[str, Any]] = {}
+    for item in value or []:
+        if not isinstance(item, dict):
+            continue
+        raw_path = str(item.get("path") or item.get("workspace_path") or "").strip()
+        issues = unique_strings(
+            str(issue).strip()
+            for issue in item.get("issues") or []
+            if str(issue).strip()
+        )
+        if not raw_path or not issues:
+            continue
+        path = str(Path(raw_path).expanduser().resolve())
+        current = merged.setdefault(
+            path,
+            {
+                "path": path,
+                "filename": str(item.get("filename") or Path(path).name),
+                "issues": [],
+            },
+        )
+        current["issues"] = unique_strings([*current["issues"], *issues])
+    return list(merged.values())
+
+
+def task_pdf_quality_rejections(
+    task: dict[str, Any],
+    *,
+    rediscover: bool = False,
+) -> list[dict[str, Any]]:
+    """Return durable PDF repair evidence across legacy and failed retries."""
+    candidates: list[dict[str, Any]] = []
+    for item in task.get("pdf_quality_rejections") or []:
+        if isinstance(item, dict):
+            candidates.append(item)
+
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    nested = data.get("data") if isinstance(data.get("data"), dict) else {}
+    for payload in (data, nested):
+        for item in payload.get("pdf_quality_rejections") or []:
+            if isinstance(item, dict):
+                candidates.append(item)
+
+    repair = (
+        task.get("completion_audit_repair")
+        if isinstance(task.get("completion_audit_repair"), dict)
+        else {}
+    )
+    artifact_repair = (
+        repair.get("artifact_repair")
+        if isinstance(repair.get("artifact_repair"), dict)
+        else {}
+    )
+    for item in artifact_repair.get("rejected_artifacts") or []:
+        if isinstance(item, dict):
+            candidates.append(item)
+
+    normalized = normalize_pdf_quality_rejections(candidates)
+    if not rediscover or not task_expects_reader_facing_pdf(task):
+        return normalized
+
+    artifact_root = Path(
+        str(task.get("artifact_dir") or worker_artifact_dir(task))
+    ).expanduser().resolve()
+    if not artifact_root.is_dir():
+        return normalized
+    rediscovered: list[dict[str, Any]] = []
+    inspected: set[Path] = set()
+    for item in normalized:
+        path = Path(str(item.get("path") or "")).expanduser().resolve()
+        if not path.is_file() or not path.is_relative_to(artifact_root):
+            rediscovered.append(item)
+            continue
+        inspected.add(path)
+        issues = reader_facing_pdf_quality_issues(task, path)
+        if issues:
+            rediscovered.append(
+                {
+                    "path": str(path),
+                    "filename": path.name,
+                    "issues": issues,
+                }
+            )
+    for path in sorted(artifact_root.glob("*.pdf")):
+        path = path.resolve()
+        if path in inspected:
+            continue
+        issues = reader_facing_pdf_quality_issues(task, path)
+        if issues:
+            rediscovered.append(
+                {
+                    "path": str(path.resolve()),
+                    "filename": path.name,
+                    "issues": issues,
+                }
+            )
+    return normalize_pdf_quality_rejections(rediscovered)
+
+
 def enforce_reader_facing_pdf_quality(
     task: dict[str, Any], result: dict[str, Any]
 ) -> dict[str, Any]:
@@ -18620,11 +19136,13 @@ def enforce_reader_facing_pdf_quality(
     kept: list[str] = []
     rejected: list[dict[str, Any]] = []
     render_audits: list[dict[str, Any]] = []
+    inspected_pdf = False
     for raw in result.get("files") or []:
         path = Path(str(raw)).expanduser().resolve()
         if path.suffix.casefold() != ".pdf":
             kept.append(str(path))
             continue
+        inspected_pdf = True
         layout = analyze_pdf_layout_for_quality(path)
         issues = reader_facing_pdf_quality_issues(
             task,
@@ -18663,7 +19181,7 @@ def enforce_reader_facing_pdf_quality(
             for item in rejected
         )
         guarded["skipped_files"] = skipped
-    else:
+    elif inspected_pdf:
         task.pop("pdf_quality_rejections", None)
     return guarded
 

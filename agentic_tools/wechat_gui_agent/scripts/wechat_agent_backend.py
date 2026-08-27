@@ -667,17 +667,20 @@ def fallback_to_aginti_enabled(config: dict[str, Any]) -> bool:
     forced_off = str(os.environ.get("WECHAT_AGENT_FORCE_DISABLE_AGINTI") or "").strip()
     if forced_off.casefold() in {"1", "true", "yes", "on"}:
         return False
+    explicit = str(os.environ.get("WECHAT_AGENT_FALLBACK_TO_AGINTI") or "").strip()
+    if explicit:
+        return explicit.casefold() not in {"0", "false", "no", "off"}
     fallback_config = fallback_config_dict(config)
     for key in ("aginti_enabled", "fallback_to_aginti"):
         if key in fallback_config:
             return bool(fallback_config[key])
-    explicit = str(os.environ.get("WECHAT_AGENT_FALLBACK_TO_AGINTI") or "").strip()
-    if explicit:
-        return explicit.casefold() not in {"0", "false", "no", "off"}
     return False
 
 
 def fallback_on_timeout_enabled(config: dict[str, Any]) -> bool:
+    explicit = str(os.environ.get("WECHAT_AGENT_FALLBACK_ON_TIMEOUT") or "").strip()
+    if explicit:
+        return explicit.casefold() not in {"0", "false", "no", "off"}
     fallback_config = fallback_config_dict(config)
     return bool(
         fallback_config.get(
@@ -1157,6 +1160,10 @@ def run_aginti_provider_once(
         expected_prompt=prompt,
         invocation_started_at=invocation_started_at,
     )
+    message = normalize_aginti_strict_json_message(
+        message,
+        expected_prompt=prompt,
+    )
     contract_error = aginti_result_contract_error(message, expected_prompt=prompt) if message else ""
     if contract_error:
         message = ""
@@ -1191,19 +1198,43 @@ def aginti_env_value(suffix: str) -> str:
     normalized = str(suffix or "").strip().upper()
     if not normalized:
         return ""
+    configured_empty = False
     for prefix in ("WECHAT", "WECOM", "LABCANVAS"):
         value = os.environ.get(f"{prefix}_AGINTI_{normalized}")
-        if value is not None:
+        if value is None:
+            continue
+        if str(value).strip():
             return value
+        configured_empty = True
+    if configured_empty:
+        return ""
     return ""
 
 
+def aginti_localllm_complete_marker(
+    backend_config: dict[str, Any],
+) -> Path | None:
+    """Return the optional marker that re-enables LocalLLM after maintenance."""
+
+    raw = str(
+        aginti_env_value("LOCALLLM_COMPLETE_MARKER")
+        or backend_config.get("localllm_complete_marker")
+        or ""
+    ).strip()
+    if not raw:
+        return None
+    marker = Path(raw).expanduser()
+    if not marker.is_absolute():
+        marker = ROOT / marker
+    return marker.resolve()
+
+
 def aginti_provider_chain(backend_config: dict[str, Any]) -> list[str]:
-    raw = (
-        backend_config.get("provider_chain")
-        or backend_config.get("providers")
-        or aginti_env_value("PROVIDER_CHAIN")
-    )
+    # An operator override is authoritative during provider maintenance; task
+    # defaults must not silently re-enable a fenced provider.
+    raw: Any = aginti_env_value("PROVIDER_CHAIN").strip()
+    if not raw:
+        raw = backend_config.get("provider_chain") or backend_config.get("providers")
     if raw is None:
         explicit = str(
             backend_config.get("provider")
@@ -1222,7 +1253,15 @@ def aginti_provider_chain(backend_config: dict[str, Any]) -> list[str]:
         provider = str(value or "").strip().casefold()
         if provider and provider not in providers:
             providers.append(provider)
-    return providers or list(DEFAULT_AGINTI_PROVIDER_CHAIN)
+    providers = providers or list(DEFAULT_AGINTI_PROVIDER_CHAIN)
+    marker = aginti_localllm_complete_marker(backend_config)
+    if marker is not None and not marker.is_file():
+        providers = [provider for provider in providers if provider != "localllm"]
+        # Maintenance must not turn LabCanvas into a silent no-provider system.
+        # DeepSeek remains the online AgInTi route until the marker appears.
+        if not providers:
+            providers = ["deepseek"]
+    return providers
 
 
 def aginti_provider_retry_is_safe(result: dict[str, Any]) -> bool:
@@ -1313,7 +1352,7 @@ def aginti_session_context_oversized(
     session_id: str,
     backend_config: dict[str, Any],
 ) -> bool:
-    """Bound reusable session history before a provider call is attempted."""
+    """Retire an oversized or repeatedly compacted reusable AgInTi session."""
 
     raw_limit = (
         backend_config.get("response_session_max_chars")
@@ -1324,12 +1363,48 @@ def aginti_session_context_oversized(
         limit = max(10000, int(raw_limit))
     except (TypeError, ValueError):
         limit = 400000
+    raw_compaction_limit = (
+        backend_config.get("response_session_max_compactions")
+        or aginti_env_value("RESPONSE_SESSION_MAX_COMPACTIONS")
+        or "24"
+    )
+    raw_stagnation_limit = (
+        backend_config.get("response_session_max_stagnation_epoch")
+        or aginti_env_value("RESPONSE_SESSION_MAX_STAGNATION_EPOCH")
+        or "96"
+    )
+    try:
+        compaction_limit = max(1, int(raw_compaction_limit))
+    except (TypeError, ValueError):
+        compaction_limit = 24
+    try:
+        stagnation_limit = max(8, int(raw_stagnation_limit))
+    except (TypeError, ValueError):
+        stagnation_limit = 96
     for directory in aginti_session_dirs("", backend_config):
         state_path = directory / session_id / "state.json"
         try:
             payload = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        meta = payload.get("meta") if isinstance(payload, dict) else None
+        meta = meta if isinstance(meta, dict) else {}
+        context_budget = meta.get("contextBudget")
+        context_budget = context_budget if isinstance(context_budget, dict) else {}
+        try:
+            compactions = int(context_budget.get("compactions") or 0)
+        except (TypeError, ValueError):
+            compactions = 0
+        if compactions > compaction_limit:
+            return True
+        tool_loop = meta.get("toolLoop")
+        tool_loop = tool_loop if isinstance(tool_loop, dict) else {}
+        try:
+            stagnation_epoch = int(tool_loop.get("stagnationEpoch") or 0)
+        except (TypeError, ValueError):
+            stagnation_epoch = 0
+        if stagnation_epoch > stagnation_limit:
+            return True
         messages = payload.get("messages") if isinstance(payload, dict) else None
         if not isinstance(messages, list):
             continue
@@ -1562,7 +1637,9 @@ def aginti_sandbox_args(
     backend_config: dict[str, Any],
 ) -> list[str]:
     explicit = str(backend_config.get("permission_mode") or "").strip().casefold()
+    explicit_sandbox = str(backend_config.get("sandbox_mode") or "").strip().casefold()
     allow_danger = bool(backend_config.get("allow_dangerous_host", False))
+    allow_host_workspace = bool(backend_config.get("allow_host_workspace", False))
     if explicit == "danger" and not allow_danger:
         explicit = "normal"
     if is_response_only_agent_role(role):
@@ -1582,6 +1659,10 @@ def aginti_sandbox_args(
     else:
         permission = "normal"
     sandbox_mode = "docker-readonly" if permission == "safe" else "docker-workspace"
+    if explicit_sandbox in {"docker-readonly", "docker-workspace"}:
+        sandbox_mode = explicit_sandbox
+    elif explicit_sandbox == "host" and allow_host_workspace:
+        sandbox_mode = "host"
     if permission == "danger" and allow_danger:
         sandbox_mode = "host"
     return ["--permission-mode", permission, "--sandbox-mode", sandbox_mode]
@@ -1699,13 +1780,60 @@ def aginti_result_contract_error(message: str, *, expected_prompt: str) -> str:
     if AGINTI_INTERNAL_OUTPUT_LINE_RE.search(text):
         return "internal_tool_output_rejected"
     if "Return one strict JSON object and no prose" in str(expected_prompt or ""):
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            return "strict_json_contract_rejected"
-        if not isinstance(payload, dict):
+        if extract_aginti_json_object(text) is None:
             return "strict_json_contract_rejected"
     return ""
+
+
+def normalize_aginti_strict_json_message(
+    message: str,
+    *,
+    expected_prompt: str,
+) -> str:
+    """Canonicalize one fenced/wrapped JSON result before worker parsing."""
+
+    text = str(message or "").strip()
+    if "Return one strict JSON object and no prose" not in str(expected_prompt or ""):
+        return text
+    payload = extract_aginti_json_object(text)
+    if payload is None:
+        return text
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def extract_aginti_json_object(text: str) -> dict[str, Any] | None:
+    """Extract one JSON object while rejecting arbitrary unstructured output."""
+
+    stripped = str(text or "").strip()
+    if not stripped:
+        return None
+    candidates = [stripped]
+    candidates.extend(
+        match.group(1).strip()
+        for match in re.finditer(
+            r"```(?:json)?\s*(\{.*?\})\s*```",
+            stripped,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    )
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            return payload
+        for index, char in enumerate(candidate):
+            if char != "{":
+                continue
+            try:
+                payload, _end = decoder.raw_decode(candidate[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+    return None
 
 
 def aginti_state_matches_invocation(

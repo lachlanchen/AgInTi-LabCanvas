@@ -318,6 +318,152 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertEqual(quality_gate.call_count, 1)
         quality_gate.assert_any_call(task, recovered)
 
+    def test_completion_audit_repair_names_rejected_source_and_host_recovers_pdf(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "organoid-evidence-review.md"
+            report.write_text(
+                "# Draft\n\nInternal task record.\n\n## Evidence\n\n10.1000/example\n",
+                encoding="utf-8",
+            )
+            rejected_pdf = root / "organoid-evidence-review.pdf"
+            rejected_pdf.write_bytes(b"%PDF-1.4\nrejected")
+            corrected_pdf = root / "organoid-evidence-review-reader.pdf"
+            corrected_pdf.write_bytes(b"%PDF-1.4\ncorrected")
+            task = {
+                "id": "daily-reader-repair",
+                "chat": "LabAgent",
+                "artifact_dir": str(root),
+                "request": "Prepare and send the daily organoid research PDF.",
+                "daily_research": {
+                    "report_date": "2026-08-27",
+                    "topics": ["organoid evidence"],
+                },
+                "routine": {"id": "research_summary"},
+                "execution_contract": {
+                    "required_artifacts": ["compiled_pdf"],
+                    "research_evidence": {"required": True},
+                    "report_quality": {
+                        "required_dimensions": [
+                            "source_level_methods_results_and_limitations",
+                            "complete_traceable_references",
+                        ]
+                    },
+                },
+                "worker_policy": {
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "medium",
+                    "sandbox": "danger-full-access",
+                    "timeout_seconds": 300,
+                },
+            }
+            first = {
+                "status": "checked",
+                "coverage_complete": False,
+                "expected_item_ids": ["task:daily-reader-repair"],
+                "covered_item_ids": [],
+                "missing": [
+                    {
+                        "item_id": "task:daily-reader-repair",
+                        "requirement": "Rebuild and return the requested PDF.",
+                        "kind": "artifact",
+                    }
+                ],
+                "repair_recommended": True,
+                "complexity": "medium",
+            }
+            still_missing = dict(first)
+            complete = {
+                "status": "checked",
+                "coverage_complete": True,
+                "expected_item_ids": ["task:daily-reader-repair"],
+                "covered_item_ids": ["task:daily-reader-repair"],
+                "missing": [],
+                "repair_recommended": False,
+                "complexity": "low",
+            }
+            candidate = {
+                "message": "The substantive briefing is ready.",
+                "confirmation": "",
+                "files": [],
+                "data": {
+                    "report_path": str(report),
+                    "pdf_quality_rejections": [
+                        {
+                            "path": str(rejected_pdf),
+                            "issues": [
+                                "internal_task_identity",
+                                "missing_complete_reference_section",
+                            ],
+                        }
+                    ],
+                },
+            }
+            recovered = {
+                "message": "The repaired evidence briefing is attached.",
+                "confirmation": "",
+                "files": [str(corrected_pdf)],
+                "data": {
+                    "report_path": str(report),
+                    "pdf_quality_rejections": [],
+                },
+            }
+            repair_packets: list[dict[str, object]] = []
+
+            def repair(current_task: dict, _policy: dict) -> str:
+                repair_packets.append(dict(current_task["completion_audit_repair"]))
+                report.write_text(
+                    "# Reader report\n\n## Evidence and sources\n\n"
+                    "Method, result, and limitation. DOI: 10.1000/example.\n\n"
+                    "## References\n\n1. Example. https://doi.org/10.1000/example\n",
+                    encoding="utf-8",
+                )
+                return json.dumps(
+                    {
+                        "message": "I revised the reader-facing source.",
+                        "files": [str(report)],
+                        "confirmation": "",
+                    }
+                )
+
+            with (
+                mock.patch.object(
+                    worker,
+                    "run_completion_audit",
+                    side_effect=[first, still_missing, complete],
+                ),
+                mock.patch.object(
+                    worker,
+                    "recover_completed_research_artifacts",
+                    side_effect=[None, recovered],
+                ),
+                mock.patch.object(
+                    worker,
+                    "run_worker_agent_session",
+                    side_effect=repair,
+                ),
+                mock.patch.object(
+                    worker,
+                    "enforce_reader_facing_pdf_quality",
+                    side_effect=lambda _task, value: value,
+                ),
+            ):
+                result = worker.audit_and_repair_worker_completion(task, candidate)
+
+        artifact_repair = repair_packets[0]["artifact_repair"]
+        self.assertIn(
+            "internal_task_identity",
+            artifact_repair["rejected_artifacts"][0]["issues"],
+        )
+        self.assertEqual(
+            artifact_repair["source_candidates"][0]["path"],
+            str(report.resolve()),
+        )
+        self.assertEqual(result["files"], [str(corrected_pdf)])
+        self.assertEqual(task["message_coverage"]["status"], "covered")
+        self.assertTrue(task["completion_audit"]["repair_succeeded"])
+
     def test_completion_audit_does_not_redeliver_recovered_low_quality_pdf(self) -> None:
         worker = load_worker()
         first = {
@@ -1370,6 +1516,66 @@ This hypothesis still needs validation.
         self.assertEqual(result["data"]["recovery_source"], "exact_task_single_pdf")
         self.assertEqual(result["message"], "研究报告已完成，PDF 已附上。")
 
+    def test_automatic_recovery_accepts_one_quality_checked_descriptive_pdf(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pdf = root / "2026-08-27-organoid-replay-dataset-briefing.pdf"
+            pdf.write_bytes(b"%PDF-1.4\ncompiled")
+            task = {
+                "id": "descriptive-compiled-only",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "request": "Prepare and send today's organoid research briefing PDF.",
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+            }
+
+            with mock.patch.object(
+                worker,
+                "reader_facing_pdf_quality_issues",
+                return_value=[],
+            ):
+                result = worker.recover_completed_research_artifacts(
+                    task,
+                    "Worker failed via aginti: max_steps_reached",
+                )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["data"]["recovery_source"], "exact_task_single_pdf")
+        self.assertEqual(result["files"], [str(pdf)])
+
+    def test_automatic_recovery_rejects_one_invalid_descriptive_pdf(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "daily-research-briefing.pdf").write_bytes(b"%PDF-1.4\ninvalid")
+            task = {
+                "id": "invalid-compiled-only",
+                "artifact_dir": str(root),
+                "routine": {"id": "research_summary"},
+                "request": "Prepare and send today's research briefing PDF.",
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+            }
+
+            with mock.patch.object(
+                worker,
+                "reader_facing_pdf_quality_issues",
+                return_value=["internal_task_identity"],
+            ):
+                result = worker.recover_completed_research_artifacts(
+                    task,
+                    "Worker failed via aginti: max_steps_reached",
+                )
+
+        self.assertIsNone(result)
+
     def test_research_recovery_rejects_report_without_traceable_sources(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1503,6 +1709,8 @@ stderr: noisy internal trace
         self.assertIn("wechat_worker_guarded_loop.sh", supervisor_text)
         self.assertIn('WORKER_COUNT="${WECHAT_WORKER_COUNT:-2}"', supervisor_text)
         self.assertIn("worker_window_name", supervisor_text)
+        self.assertIn("direct_monitor_command", supervisor_text)
+        self.assertIn('source %q', supervisor_text)
         self.assertIn("wechat selftest --suite all", wrapper_text)
         self.assertIn("wechat_supervisor.local.env", wrapper_text)
         self.assertIn("WECHAT_WORKER_ENV_FILE", wrapper_text)
@@ -2823,6 +3031,19 @@ stderr: noisy internal trace
             config["evidence_scope_artifact_root"],
             "output/wechat_worker/scope-test",
         )
+        self.assertEqual(config["permission_mode"], "normal")
+        self.assertEqual(config["sandbox_mode"], "host")
+        self.assertTrue(config["allow_host_workspace"])
+
+    def test_worker_backend_config_can_disable_aginti_host_workspace(self) -> None:
+        worker = load_worker()
+        with mock.patch.dict(os.environ, {"WECHAT_AGINTI_HOST_WORKSPACE": "0"}):
+            config = worker.worker_backend_config(
+                {"id": "scope-test", "request": "Inspect only."},
+                "aginti",
+            )
+        self.assertNotIn("sandbox_mode", config)
+        self.assertNotIn("allow_host_workspace", config)
 
     def test_worker_backend_config_preserves_explicit_evidence_scope(self) -> None:
         worker = load_worker()
@@ -3115,6 +3336,347 @@ stderr: noisy internal trace
         self.assertIn("2026-08-22-organoid-imaging-review.pdf", prompt)
         self.assertIn('"artifact_root":"/tmp/exact-task/artifacts"', prompt)
         self.assertNotIn("For `task.routine.id=video_publish_existing`", prompt)
+
+    def test_aginti_evidence_scope_excludes_daily_history_from_semantic_gates(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "daily-scope",
+            "chat": "LabAgent",
+            "request": (
+                "Prepare today's briefing. Recent same-group discussion: "
+                "old output report-2026-08-25.md must include `old required term`."
+            ),
+            "daily_research": {
+                "report_date": "2026-08-27",
+                "topics": ["类器官与闭环实验"],
+            },
+            "artifact_dir": "/tmp/daily-scope",
+            "route_decision": {"route_kind": "research_or_summary"},
+            "routine": {"id": "research_summary", "title": "Research"},
+        }
+
+        prompt = worker.build_aginti_worker_prompt(task)
+        scope_line = next(
+            line
+            for line in prompt.splitlines()
+            if line.startswith("AGINTI_EVIDENCE_SCOPE_JSON:")
+        )
+
+        self.assertIn("2026-08-27", scope_line)
+        self.assertIn("类器官与闭环实验", scope_line)
+        self.assertNotIn("report-2026-08-25.md", scope_line)
+        self.assertNotIn("old required term", scope_line)
+        self.assertIn("report-2026-08-25.md", prompt)
+
+    def test_aginti_evidence_scope_prefers_authoritative_message_ledger(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "ledger-scope",
+            "chat": "Shares",
+            "request": "Old wrapper text with stale-output.pdf",
+            "message_ledger": [
+                {"item_id": "message:1", "text": "Read the first article."},
+                {"item_id": "message:2", "text": "Compare it with the second article."},
+            ],
+            "artifact_dir": "/tmp/ledger-scope",
+            "route_decision": {"route_kind": "research_or_summary"},
+            "routine": {"id": "research_summary", "title": "Research"},
+        }
+
+        prompt = worker.build_aginti_worker_prompt(task)
+        scope_line = next(
+            line
+            for line in prompt.splitlines()
+            if line.startswith("AGINTI_EVIDENCE_SCOPE_JSON:")
+        )
+
+        self.assertIn("Read the first article", scope_line)
+        self.assertIn("Compare it with the second article", scope_line)
+        self.assertNotIn("stale-output.pdf", scope_line)
+
+    def test_aginti_completion_repair_survives_compaction_and_drives_scope(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "repair-scope",
+            "chat": "LabAgent",
+            "request": "Prepare today's report.",
+            "daily_research": {
+                "report_date": "2026-08-27",
+                "topics": ["old broad topic"],
+            },
+            "artifact_dir": "/tmp/repair-scope",
+            "route_decision": {"route_kind": "research_or_summary"},
+            "routine": {"id": "research_summary", "title": "Research"},
+            "completion_audit_repair": {
+                "missing": [
+                    {
+                        "item_id": "task:repair-scope",
+                        "requirement": "Return the corrected PDF.",
+                        "kind": "artifact",
+                    }
+                ],
+                "artifact_repair": {
+                    "artifact_root": "/tmp/repair-scope",
+                    "source_candidates": [
+                        {
+                            "path": "/tmp/repair-scope/organoid-review.md",
+                            "workspace_path": "output/repair-scope/organoid-review.md",
+                        }
+                    ],
+                    "rejected_artifacts": [
+                        {
+                            "path": "/tmp/repair-scope/organoid-review.pdf",
+                            "workspace_path": "output/repair-scope/organoid-review.pdf",
+                            "issues": ["missing_complete_reference_section"],
+                        }
+                    ],
+                },
+            },
+        }
+        huge_history = {
+            "full_memory": "historical-noise " * 10000,
+            "exact_excerpts": "stale-output.pdf " * 10000,
+            "manifest": {"represented_messages": 999},
+        }
+
+        with mock.patch.object(
+            worker,
+            "task_long_term_history_context",
+            return_value=huge_history,
+        ):
+            prompt = worker.build_aginti_worker_prompt(task)
+
+        scope_line = next(
+            line
+            for line in prompt.splitlines()
+            if line.startswith("AGINTI_EVIDENCE_SCOPE_JSON:")
+        )
+        self.assertIn("output/repair-scope/organoid-review.md", scope_line)
+        self.assertIn("missing_complete_reference_section", scope_line)
+        self.assertIn('"completion_audit_repair"', prompt)
+        self.assertNotIn("historical-noise", prompt)
+        self.assertNotIn("stale-output.pdf", prompt)
+
+    def test_aginti_reprocess_correction_survives_compaction_and_drives_scope(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "reprocess-scope",
+            "chat": "LabAgent",
+            "request": "Prepare today's report from the enrolled daily topic.",
+            "daily_research": {
+                "report_date": "2026-08-27",
+                "topics": ["old broad topic"],
+            },
+            "artifact_dir": "/tmp/reprocess-scope",
+            "route_decision": {"route_kind": "research_or_summary"},
+            "routine": {"id": "research_summary", "title": "Research"},
+            "reprocess_requested_at": "2026-08-27T12:00:00",
+            "reprocess_reason": (
+                "Repair the exact rejected reader-facing PDF using only this task's "
+                "existing report and evidence."
+            ),
+            "pdf_quality_rejections": [
+                {
+                    "path": "/tmp/reprocess-scope/old.pdf",
+                    "issues": [
+                        "internal_task_identity",
+                        "missing_complete_reference_section",
+                    ],
+                }
+            ],
+        }
+        huge_history = {
+            "full_memory": "historical-noise " * 10000,
+            "exact_excerpts": "stale-output.pdf " * 10000,
+            "manifest": {"represented_messages": 999},
+        }
+
+        with mock.patch.object(
+            worker,
+            "task_long_term_history_context",
+            return_value=huge_history,
+        ):
+            prompt = worker.build_aginti_worker_prompt(task)
+
+        scope_line = next(
+            line
+            for line in prompt.splitlines()
+            if line.startswith("AGINTI_EVIDENCE_SCOPE_JSON:")
+        )
+        self.assertIn("Repair the exact rejected reader-facing PDF", scope_line)
+        self.assertIn("materially revise a source file", scope_line.casefold())
+        self.assertIn("missing_complete_reference_section", scope_line)
+        self.assertIn('"reprocess"', prompt)
+        self.assertIn('"pdf_quality_rejections"', prompt)
+        self.assertNotIn("old broad topic", scope_line)
+        self.assertNotIn("historical-noise", prompt)
+        self.assertNotIn("stale-output.pdf", prompt)
+
+    def test_aginti_reprocess_recovers_legacy_nested_pdf_rejections(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "legacy-rejection-scope",
+            "chat": "LabAgent",
+            "request": "Repair and send the rejected PDF.",
+            "route_decision": {"route_kind": "research_or_summary"},
+            "routine": {"id": "research_summary", "title": "Research"},
+            "reprocess_requested_at": "2026-08-27T12:00:00",
+            "reprocess_reason": "Repair the exact rejected reader-facing PDF.",
+            "result": {
+                "data": {
+                    "pdf_quality_rejections": [
+                        {
+                            "path": "/tmp/legacy-report.pdf",
+                            "issues": [
+                                "internal_task_identity",
+                                "missing_complete_reference_section",
+                            ],
+                        }
+                    ]
+                }
+            },
+        }
+
+        packet = worker.aginti_worker_task_view(task)
+        scope = worker.aginti_worker_evidence_scope_request(task, packet)
+
+        self.assertEqual(
+            packet["pdf_quality_rejections"][0]["issues"],
+            ["internal_task_identity", "missing_complete_reference_section"],
+        )
+        self.assertIn("missing_complete_reference_section", scope)
+
+    def test_aginti_reprocess_refreshes_stale_pdf_rejections_and_focuses_packet(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "organoid-review.pdf"
+            report.write_bytes(b"%PDF-1.4\ncurrent")
+            task = {
+                "id": "current-rejection-scope",
+                "chat": "LabAgent",
+                "request": (
+                    "Prepare today's briefing.\nRecent same-group discussion:\n"
+                    + ("historical-noise " * 4000)
+                ),
+                "artifact_dir": tmp,
+                "route_decision": {
+                    "route_kind": "research_or_summary",
+                    "require_file_delivery": True,
+                },
+                "routine": {
+                    "id": "research_summary",
+                    "title": "Research",
+                    "purpose": "Repair the current report.",
+                    "rules": ["historical-rule " * 2000],
+                },
+                "reprocess_requested_at": "2026-08-27T12:00:00",
+                "reprocess_reason": "Repair only the current PDF layout.",
+                "pdf_quality_rejections": [
+                    {
+                        "path": str(report),
+                        "issues": [
+                            "internal_task_identity",
+                            "missing_complete_reference_section",
+                        ],
+                    }
+                ],
+            }
+            with mock.patch.object(
+                worker,
+                "reader_facing_pdf_quality_issues",
+                return_value=["orphan_final_pdf_page"],
+            ):
+                packet = worker.aginti_worker_task_view(task)
+                prompt = worker.build_aginti_worker_prompt(task)
+
+        self.assertEqual(
+            packet["pdf_quality_rejections"][0]["issues"],
+            ["orphan_final_pdf_page"],
+        )
+        self.assertNotIn("historical-noise", prompt)
+        self.assertNotIn("historical-rule", prompt)
+        self.assertLess(len(prompt), 18000)
+
+    def test_aginti_reprocess_rediscovers_erased_task_local_pdf_rejections(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "organoid-review.pdf"
+            report.write_bytes(b"%PDF-1.4\n")
+            task = {
+                "id": "rediscovered-rejection-scope",
+                "chat": "LabAgent",
+                "request": "Repair and send the rejected PDF.",
+                "artifact_dir": tmp,
+                "route_decision": {"route_kind": "research_or_summary"},
+                "routine": {"id": "research_summary", "title": "Research"},
+                "reprocess_requested_at": "2026-08-27T12:00:00",
+                "reprocess_reason": "Repair the exact rejected reader-facing PDF.",
+                "result": {"message": "Worker failed before returning a file."},
+            }
+            with mock.patch.object(
+                worker,
+                "reader_facing_pdf_quality_issues",
+                return_value=[
+                    "missing_reader_evidence_section",
+                    "missing_source_level_methods_results_limits",
+                ],
+            ):
+                packet = worker.aginti_worker_task_view(task)
+
+        self.assertEqual(
+            packet["pdf_quality_rejections"][0]["issues"],
+            [
+                "missing_reader_evidence_section",
+                "missing_source_level_methods_results_limits",
+            ],
+        )
+
+    def test_pdf_rejection_survives_agent_result_without_pdf(self) -> None:
+        worker = load_worker()
+        task = {
+            "routine": {"id": "research_summary"},
+            "route_decision": {"route_kind": "research_or_summary"},
+            "request": "Repair and send the rejected PDF.",
+            "pdf_quality_rejections": [
+                {
+                    "path": "/tmp/rejected.pdf",
+                    "issues": ["missing_complete_reference_section"],
+                }
+            ],
+        }
+
+        result = worker.enforce_reader_facing_pdf_quality(
+            task,
+            {"message": "Permission required.", "files": []},
+        )
+
+        self.assertEqual(result["data"]["pdf_quality_rejections"], [])
+        self.assertEqual(
+            task["pdf_quality_rejections"][0]["issues"],
+            ["missing_complete_reference_section"],
+        )
+
+    def test_required_artifact_omission_cannot_finish_task(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "missing-required-pdf",
+            "daily_research": {"report_date": "2026-08-27"},
+            "execution_contract": {"required_artifacts": ["compiled_pdf"]},
+        }
+        result = {
+            "message": "The summary is ready but the PDF is missing.",
+            "files": [],
+            "confirmation": "",
+        }
+
+        self.assertTrue(worker.result_requires_file_delivery(task, result))
+        self.assertFalse(worker.required_file_delivery_complete(task, result))
+        self.assertTrue(worker.required_artifact_missing_from_result(task, result))
+
+        worker.apply_send_outcome(task, result, [])
+
+        self.assertEqual(task["status"], "worker_failed")
+        self.assertEqual(task["worker_error"]["type"], "RequiredArtifactMissing")
 
     def test_worker_session_passes_compact_prompt_only_to_aginti(self) -> None:
         worker = load_worker()

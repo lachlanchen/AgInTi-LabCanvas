@@ -55,6 +55,12 @@ def run_codex_session(
     with execution_lock_path.open("w", encoding="utf-8") as execution_lock:
         fcntl.flock(execution_lock, fcntl.LOCK_EX)
         previous_id = read_registered_thread_id(registry_path, key) if reuse else ""
+        session_rotated = bool(
+            previous_id
+            and registered_session_exceeds_turn_limit(registry_path, key, role)
+        )
+        if session_rotated:
+            previous_id = ""
         slot = acquire_codex_concurrency_slot(
             registry_path,
             timeout_seconds=timeout_seconds,
@@ -102,6 +108,7 @@ def run_codex_session(
         else:
             result["resumed"] = bool(previous_id)
             result["fallback_started"] = False
+        result["session_rotated"] = session_rotated
         if result.get("ok") and result.get("thread_id"):
             result["registry_persisted"] = persist_session_result(
                 registry_path,
@@ -283,6 +290,40 @@ def read_registered_thread_id(registry_path: Path, key: str) -> str:
     return thread_id
 
 
+def registered_session_exceeds_turn_limit(
+    registry_path: Path,
+    key: str,
+    role: str,
+) -> bool:
+    """Rotate long-lived Codex threads before resume latency becomes unstable."""
+
+    normalized_role = re.sub(r"[^0-9A-Za-z]+", "_", str(role or "")).strip("_").upper()
+    role_env = f"WECHAT_CODEX_SESSION_MAX_TURNS_{normalized_role}" if normalized_role else ""
+    default_limit = "96" if str(role or "").strip() == "worker" else "192"
+    raw_limit = (os.environ.get(role_env) if role_env else "") or os.environ.get(
+        "WECHAT_CODEX_SESSION_MAX_TURNS",
+        default_limit,
+    )
+    try:
+        limit = max(1, int(raw_limit))
+    except (TypeError, ValueError):
+        limit = int(default_limit)
+    lock_path = registry_lock_path(registry_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as lock:
+        if not acquire_exclusive_lock(lock):
+            return False
+        entry = load_registry(registry_path).get(key, {})
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    if not isinstance(entry, dict):
+        return False
+    try:
+        turn_count = int(entry.get("turn_count") or 0)
+    except (TypeError, ValueError):
+        turn_count = 0
+    return turn_count >= limit
+
+
 def persist_session_result(
     registry_path: Path,
     key: str,
@@ -435,7 +476,7 @@ def run_process_group(
     timeout: int,
     env: dict[str, str],
 ) -> subprocess.CompletedProcess[str]:
-    """Run Codex in its own process group and reap every child on timeout."""
+    """Run an agent in its own process group and never orphan descendants."""
     proc = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -446,6 +487,21 @@ def run_process_group(
         env=env,
         start_new_session=True,
     )
+    previous_handlers: dict[int, Any] = {}
+
+    def terminate_for_parent_signal(signum: int, _frame: Any) -> None:
+        terminate_process_group(proc)
+        raise SystemExit(128 + int(signum))
+
+    for parent_signal in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        try:
+            previous_handlers[parent_signal] = signal.getsignal(parent_signal)
+            signal.signal(parent_signal, terminate_for_parent_signal)
+        except ValueError:
+            # Signal handlers can only be installed by the main thread. The
+            # BaseException cleanup below still protects embedded callers.
+            previous_handlers.clear()
+            break
     try:
         stdout, stderr = proc.communicate(input=input, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
@@ -457,6 +513,12 @@ def run_process_group(
             output=stdout,
             stderr=stderr,
         ) from exc
+    except BaseException:
+        terminate_process_group(proc)
+        raise
+    finally:
+        for parent_signal, previous in previous_handlers.items():
+            signal.signal(parent_signal, previous)
     return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
 
 
@@ -625,6 +687,8 @@ def update_registry(
     workdir: Path,
 ) -> None:
     previous = registry.get(key, {}) if isinstance(registry.get(key), dict) else {}
+    same_thread = str(previous.get("thread_id") or "") == str(result.get("thread_id") or "")
+    now = datetime.now().isoformat(timespec="seconds")
     registry[key] = {
         "thread_id": result["thread_id"],
         "chat_name": chat_name,
@@ -633,9 +697,9 @@ def update_registry(
         "reasoning_effort": reasoning_effort,
         "sandbox": sandbox,
         "workdir": str(workdir),
-        "created_at": previous.get("created_at") or datetime.now().isoformat(timespec="seconds"),
-        "last_used_at": datetime.now().isoformat(timespec="seconds"),
-        "turn_count": int(previous.get("turn_count") or 0) + 1,
+        "created_at": (previous.get("created_at") or now) if same_thread else now,
+        "last_used_at": now,
+        "turn_count": (int(previous.get("turn_count") or 0) + 1) if same_thread else 1,
         "last_resumed": bool(result.get("resumed")),
         "last_fallback_started": bool(result.get("fallback_started")),
     }

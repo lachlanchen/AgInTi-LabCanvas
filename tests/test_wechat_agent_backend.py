@@ -28,6 +28,34 @@ def load_backend():
 
 
 class WeChatAgentBackendTests(unittest.TestCase):
+    def test_aginti_normal_worker_can_use_explicit_host_workspace(self) -> None:
+        backend = load_backend()
+        args = backend.aginti_sandbox_args(
+            role="worker",
+            sandbox="danger-full-access",
+            backend_config={
+                "permission_mode": "normal",
+                "sandbox_mode": "host",
+                "allow_host_workspace": True,
+            },
+        )
+        self.assertEqual(
+            args,
+            ["--permission-mode", "normal", "--sandbox-mode", "host"],
+        )
+
+    def test_aginti_host_workspace_requires_explicit_allowance(self) -> None:
+        backend = load_backend()
+        args = backend.aginti_sandbox_args(
+            role="worker",
+            sandbox="danger-full-access",
+            backend_config={"permission_mode": "normal", "sandbox_mode": "host"},
+        )
+        self.assertEqual(
+            args,
+            ["--permission-mode", "normal", "--sandbox-mode", "docker-workspace"],
+        )
+
     def test_low_normal_quota_prefers_spark_for_cached_lightweight_turn(self) -> None:
         backend = load_backend()
         calls: list[dict[str, object]] = []
@@ -249,6 +277,35 @@ class WeChatAgentBackendTests(unittest.TestCase):
             self.assertFalse(
                 backend.fallback_to_aginti_enabled(
                     {"agent_fallbacks": {"fallback_to_aginti": True}}
+                )
+            )
+
+    def test_operator_environment_enables_aginti_fallback_over_task_default(self) -> None:
+        backend = load_backend()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "WECHAT_AGENT_FALLBACK_TO_AGINTI": "1",
+                "WECHAT_AGENT_FORCE_DISABLE_AGINTI": "",
+            },
+            clear=False,
+        ):
+            self.assertTrue(
+                backend.fallback_to_aginti_enabled(
+                    {"agent_fallbacks": {"fallback_to_aginti": False}}
+                )
+            )
+
+    def test_operator_environment_enables_timeout_fallback_over_task_default(self) -> None:
+        backend = load_backend()
+        with mock.patch.dict(
+            os.environ,
+            {"WECHAT_AGENT_FALLBACK_ON_TIMEOUT": "1"},
+            clear=False,
+        ):
+            self.assertTrue(
+                backend.fallback_on_timeout_enabled(
+                    {"agent_fallbacks": {"fallback_on_timeout": False}}
                 )
             )
 
@@ -1009,6 +1066,16 @@ class WeChatAgentBackendTests(unittest.TestCase):
             stderr="",
         )
         with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "WECHAT_AGINTI_PROVIDER_CHAIN": "",
+                    "WECOM_AGINTI_PROVIDER_CHAIN": "",
+                    "LABCANVAS_AGINTI_PROVIDER_CHAIN": "",
+                    "LABCANVAS_AGINTI_LOCALLLM_COMPLETE_MARKER": "",
+                },
+                clear=False,
+            ),
             mock.patch.object(backend, "resolve_command_executable", return_value="aginti"),
             mock.patch.object(
                 backend,
@@ -1259,6 +1326,64 @@ class WeChatAgentBackendTests(unittest.TestCase):
             expected_session_id="old-session",
         )
 
+    def test_aginti_session_health_rotates_repeatedly_compacted_state(self) -> None:
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as tmp:
+            session_id = "compaction-poisoned-session"
+            state_dir = Path(tmp) / session_id
+            state_dir.mkdir()
+            (state_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "messages": [{"content": "small reusable context"}],
+                        "meta": {
+                            "contextBudget": {"compactions": 25},
+                            "toolLoop": {"stagnationEpoch": 4},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(
+                backend,
+                "aginti_session_dirs",
+                return_value=[Path(tmp)],
+            ):
+                rotate = backend.aginti_session_context_oversized(
+                    session_id,
+                    {"response_session_max_chars": 400000},
+                )
+        self.assertTrue(rotate)
+
+    def test_aginti_session_health_keeps_bounded_productive_state(self) -> None:
+        backend = load_backend()
+        with tempfile.TemporaryDirectory() as tmp:
+            session_id = "productive-session"
+            state_dir = Path(tmp) / session_id
+            state_dir.mkdir()
+            (state_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "messages": [{"content": "useful context" * 100}],
+                        "meta": {
+                            "contextBudget": {"compactions": 2},
+                            "toolLoop": {"stagnationEpoch": 12},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(
+                backend,
+                "aginti_session_dirs",
+                return_value=[Path(tmp)],
+            ):
+                rotate = backend.aginti_session_context_oversized(
+                    session_id,
+                    {"response_session_max_chars": 400000},
+                )
+        self.assertFalse(rotate)
+
     def test_tool_capable_aginti_role_recovers_pre_inference_context_failure(self) -> None:
         backend = load_backend()
         exhausted = {
@@ -1324,6 +1449,87 @@ class WeChatAgentBackendTests(unittest.TestCase):
 
         self.assertEqual(providers, ["localllm", "deepseek"])
         self.assertEqual(workdir, ROOT)
+
+    def test_aginti_provider_environment_overrides_task_default_chain(self) -> None:
+        backend = load_backend()
+
+        with mock.patch.dict(
+            os.environ,
+            {"WECHAT_AGINTI_PROVIDER_CHAIN": "deepseek"},
+            clear=True,
+        ):
+            providers = backend.aginti_provider_chain(
+                {"provider_chain": ["deepseek", "localllm"]}
+            )
+
+        self.assertEqual(providers, ["deepseek"])
+
+    def test_aginti_environment_skips_empty_transport_alias(self) -> None:
+        backend = load_backend()
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "WECHAT_AGINTI_PROVIDER_CHAIN": "",
+                "WECOM_AGINTI_PROVIDER_CHAIN": "deepseek",
+            },
+            clear=True,
+        ):
+            providers = backend.aginti_provider_chain({})
+
+        self.assertEqual(providers, ["deepseek"])
+
+    def test_aginti_missing_maintenance_marker_fences_localllm(self) -> None:
+        backend = load_backend()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            marker = Path(tmpdir) / "COMPLETE.json"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "WECOM_AGINTI_PROVIDER_CHAIN": "localllm,deepseek",
+                    "LABCANVAS_AGINTI_LOCALLLM_COMPLETE_MARKER": str(marker),
+                },
+                clear=True,
+            ):
+                providers = backend.aginti_provider_chain({})
+
+        self.assertEqual(providers, ["deepseek"])
+
+    def test_aginti_completed_maintenance_marker_restores_localllm(self) -> None:
+        backend = load_backend()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            marker = Path(tmpdir) / "COMPLETE.json"
+            marker.write_text("{}\n", encoding="utf-8")
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "WECOM_AGINTI_PROVIDER_CHAIN": "localllm,deepseek",
+                    "LABCANVAS_AGINTI_LOCALLLM_COMPLETE_MARKER": str(marker),
+                },
+                clear=True,
+            ):
+                providers = backend.aginti_provider_chain({})
+
+        self.assertEqual(providers, ["localllm", "deepseek"])
+
+    def test_aginti_only_fenced_provider_keeps_online_route(self) -> None:
+        backend = load_backend()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            marker = Path(tmpdir) / "COMPLETE.json"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "WECHAT_AGINTI_PROVIDER_CHAIN": "localllm",
+                    "LABCANVAS_AGINTI_LOCALLLM_COMPLETE_MARKER": str(marker),
+                },
+                clear=True,
+            ):
+                providers = backend.aginti_provider_chain({})
+
+        self.assertEqual(providers, ["deepseek"])
 
     def test_aginti_does_not_replay_unknown_task_failure_on_another_provider(self) -> None:
         backend = load_backend()
@@ -1457,6 +1663,43 @@ class WeChatAgentBackendTests(unittest.TestCase):
             expected_prompt="Answer the current question.",
         )
         self.assertEqual(tool_reason, "internal_tool_output_rejected")
+
+    def test_aginti_strict_json_contract_normalizes_fenced_object(self) -> None:
+        backend = load_backend()
+        prompt = "Return one strict JSON object and no prose."
+        message = (
+            "The requested artifact is ready.\n\n"
+            "```json\n"
+            '{"message":"完成","files":["output/report.pdf"]}'
+            "\n```"
+        )
+
+        normalized = backend.normalize_aginti_strict_json_message(
+            message,
+            expected_prompt=prompt,
+        )
+
+        self.assertEqual(
+            json.loads(normalized),
+            {"message": "完成", "files": ["output/report.pdf"]},
+        )
+        self.assertEqual(
+            backend.aginti_result_contract_error(
+                normalized,
+                expected_prompt=prompt,
+            ),
+            "",
+        )
+
+    def test_aginti_strict_json_contract_still_rejects_plain_prose(self) -> None:
+        backend = load_backend()
+
+        reason = backend.aginti_result_contract_error(
+            "The artifact is ready but no structured result was returned.",
+            expected_prompt="Return one strict JSON object and no prose.",
+        )
+
+        self.assertEqual(reason, "strict_json_contract_rejected")
 
     def test_codex_quota_retries_once_when_purchased_credits_are_available(self) -> None:
         backend = load_backend()

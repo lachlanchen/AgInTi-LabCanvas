@@ -238,6 +238,13 @@ worker_command() {
     "$ROOT" "$label" "$QUEUE" "$LOG_DIR/supervisor-$label.log"
 }
 
+direct_monitor_command() {
+  local direct_config="$1"
+  local direct_name="$2"
+  printf "cd %q && if [[ -f %q ]]; then set -a; source %q; set +a; fi; agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh %q %q -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config %q --worker-queue %q --loop --send --no-decrypt --poll-seconds %q --catchup-poll-seconds %q >> %q 2>&1" \
+    "$ROOT" "$PRIVATE_ENV" "$PRIVATE_ENV" "direct-chatops-$direct_name" "$PY" "$direct_config" "$QUEUE" "$DIRECT_POLL_SECONDS" "$DIRECT_CATCHUP_POLL_SECONDS" "$LOG_DIR/supervisor-direct-chatops-$direct_name.log"
+}
+
 ensure_runtime_windows() {
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     echo "Session not running: $SESSION" >&2
@@ -256,7 +263,7 @@ ensure_runtime_windows() {
     [[ -n "$direct_config" ]] || continue
     direct_name="$(basename "$direct_config" .json | tr -c 'A-Za-z0-9_.-' '-')"
     start_missing_window "direct-$direct_name" \
-      "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt --poll-seconds '$DIRECT_POLL_SECONDS' --catchup-poll-seconds '$DIRECT_CATCHUP_POLL_SECONDS' >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
+      "$(direct_monitor_command "$direct_config" "$direct_name")"
   done
   for worker_index in $(seq 1 "$WORKER_COUNT"); do
     worker_label="$(worker_window_name "$worker_index")"
@@ -306,7 +313,7 @@ reload_worker_windows() {
     [[ -n "$direct_config" ]] || continue
     direct_name="$(basename "$direct_config" .json | tr -c 'A-Za-z0-9_.-' '-')"
     respawn_or_new_window "direct-$direct_name" \
-      "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt --poll-seconds '$DIRECT_POLL_SECONDS' --catchup-poll-seconds '$DIRECT_CATCHUP_POLL_SECONDS' >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
+      "$(direct_monitor_command "$direct_config" "$direct_name")"
   done
   for worker_index in $(seq 1 "$WORKER_COUNT"); do
     worker_label="$(worker_window_name "$worker_index")"
@@ -335,7 +342,7 @@ reload_monitor_windows() {
     [[ -n "$direct_config" ]] || continue
     direct_name="$(basename "$direct_config" .json | tr -c 'A-Za-z0-9_.-' '-')"
     respawn_or_new_window "direct-$direct_name" \
-      "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt --poll-seconds '$DIRECT_POLL_SECONDS' --catchup-poll-seconds '$DIRECT_CATCHUP_POLL_SECONDS' >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
+      "$(direct_monitor_command "$direct_config" "$direct_name")"
   done
   if [[ "$CHAT_SYNC_WATCHDOG" != "0" ]]; then
     respawn_or_new_window "chat-sync" "$(chat_sync_command)"
@@ -373,7 +380,7 @@ case "$action" in
       [[ -n "$direct_config" ]] || continue
       direct_name="$(basename "$direct_config" .json | tr -c 'A-Za-z0-9_.-' '-')"
       tmux new-window -t "$SESSION" -n "direct-$direct_name" \
-        "cd '$ROOT' && agentic_tools/wechat_gui_agent/scripts/wechat_restart_loop.sh 'direct-chatops-$direct_name' '$PY' -u agentic_tools/wechat_gui_agent/scripts/wechat_direct_chatops.py --config '$direct_config' --worker-queue '$QUEUE' --loop --send --no-decrypt --poll-seconds '$DIRECT_POLL_SECONDS' --catchup-poll-seconds '$DIRECT_CATCHUP_POLL_SECONDS' >> '$LOG_DIR/supervisor-direct-chatops-$direct_name.log' 2>&1"
+        "$(direct_monitor_command "$direct_config" "$direct_name")"
     done
     for worker_index in $(seq 1 "$WORKER_COUNT"); do
       worker_label="$(worker_window_name "$worker_index")"
