@@ -10300,11 +10300,7 @@ def run_audio_intake_transcriber(
                 "read_only": True,
             },
         )
-    python = (
-        os.environ.get("WECHAT_AUDIO_TRANSCRIBE_PYTHON")
-        or os.environ.get("WECHAT_VOICE_TRANSCRIBE_PYTHON")
-        or sys.executable
-    )
+    python = audio_transcribe_python()
     command = [
         python,
         str(WECHAT_AUDIO_INTAKE_SCRIPT),
@@ -10365,6 +10361,28 @@ def run_audio_intake_transcriber(
     result["manifest_json"] = str(manifest_path)
     manifest_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return result
+
+
+def audio_transcribe_python(fallback_selector=None) -> str:
+    configured = str(
+        os.environ.get("WECHAT_AUDIO_TRANSCRIBE_PYTHON")
+        or os.environ.get("WECHAT_VOICE_TRANSCRIBE_PYTHON")
+        or ""
+    ).strip()
+    if configured:
+        return configured
+    if fallback_selector is None:
+        try:
+            from wechat_direct_chatops import voice_transcribe_python
+
+            fallback_selector = voice_transcribe_python
+        except (ImportError, OSError):
+            fallback_selector = None
+    if fallback_selector is not None:
+        selected = str(fallback_selector({}) or "").strip()
+        if selected:
+            return selected
+    return sys.executable
 
 
 def write_audio_intake_manifest(output_dir: Path, result: dict[str, Any]) -> dict[str, Any]:

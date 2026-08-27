@@ -14953,6 +14953,33 @@ stderr: noisy internal trace
         self.assertEqual(result, expected)
         transcribe.assert_called_once_with(video.resolve(), output_dir=root / "audio_intake", source_local_id=91)
 
+    def test_audio_intake_reuses_dedicated_voice_python_selector(self) -> None:
+        worker = load_worker()
+        with mock.patch.dict(
+            worker.os.environ,
+            {
+                "WECHAT_AUDIO_TRANSCRIBE_PYTHON": "",
+                "WECHAT_VOICE_TRANSCRIBE_PYTHON": "",
+            },
+            clear=False,
+        ):
+            selected = worker.audio_transcribe_python(lambda _config: "/opt/whisper/bin/python")
+
+        self.assertEqual(selected, "/opt/whisper/bin/python")
+
+    def test_audio_intake_explicit_python_overrides_fallback_selector(self) -> None:
+        worker = load_worker()
+        selector = mock.Mock(return_value="/opt/whisper/bin/python")
+        with mock.patch.dict(
+            worker.os.environ,
+            {"WECHAT_AUDIO_TRANSCRIBE_PYTHON": "/custom/asr/python"},
+            clear=False,
+        ):
+            selected = worker.audio_transcribe_python(selector)
+
+        self.assertEqual(selected, "/custom/asr/python")
+        selector.assert_not_called()
+
     def test_encoded_file_card_type_still_runs_media_resolution(self) -> None:
         worker = load_worker()
         encoded_type = (51 << 32) | 49
