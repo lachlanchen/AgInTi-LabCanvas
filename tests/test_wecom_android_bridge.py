@@ -1092,6 +1092,50 @@ class WeComAndroidBridgeTests(unittest.TestCase):
 
         self.assertEqual(runtime.adb_shell.call_count, 2)
 
+    def test_prepare_device_bounds_best_effort_tuning_and_runs_it_once(self) -> None:
+        bridge = load_bridge()
+        tuning_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = bridge.AndroidBridge(
+                {
+                    "serial": "test",
+                    "target_groups": ["LabAgent"],
+                    "state_db": str(Path(tmp) / "state.sqlite"),
+                    "staging_dir": str(Path(tmp) / "staging"),
+                    "device_tuning_timeout_seconds": 1.5,
+                }
+            )
+            runtime.disable_host_automount = mock.Mock()
+            runtime.ensure_device_storage = mock.Mock(return_value={})
+            runtime.adb = mock.Mock(
+                return_value=subprocess.CompletedProcess(
+                    [], 0, stdout="device\n", stderr=""
+                )
+            )
+
+            def adb_shell(*args, **kwargs):
+                if args[:3] == ("pm", "list", "packages"):
+                    return "package:com.tencent.wework\n"
+                if args[:2] == ("dumpsys", "window"):
+                    return ""
+                tuning_calls.append((args, kwargs))
+                if args[:3] == ("svc", "power", "stayon"):
+                    raise subprocess.TimeoutExpired(cmd="adb", timeout=kwargs["timeout"])
+                return ""
+
+            runtime.adb_shell = mock.Mock(side_effect=adb_shell)
+
+            runtime.prepare_device()
+            runtime.prepare_device()
+
+        self.assertEqual(len(tuning_calls), 6)
+        self.assertEqual(tuning_calls[-1][0], ("svc", "power", "stayon", "true"))
+        self.assertTrue(
+            all(call_kwargs["timeout"] == 1.5 for _, call_kwargs in tuning_calls)
+        )
+        self.assertTrue(all(call_kwargs["check"] is False for _, call_kwargs in tuning_calls))
+
     def test_prepare_device_trims_caches_and_prunes_only_allowlisted_logs_before_retry(self) -> None:
         bridge = load_bridge()
         with tempfile.TemporaryDirectory() as tmp:

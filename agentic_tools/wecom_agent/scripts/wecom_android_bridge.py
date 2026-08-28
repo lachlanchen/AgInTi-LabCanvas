@@ -1557,6 +1557,10 @@ class AndroidBridge:
         self._outbound_waiter_lock = threading.Lock()
         self._outbound_waiters = 0
         self._passive_control = threading.local()
+        self.device_tuning_timeout_seconds = bounded_float(
+            config.get("device_tuning_timeout_seconds"), 3.0, 1.0, 10.0
+        )
+        self._device_tuning_attempted = False
         self.surface_recovery_cooldown_seconds = bounded_float(
             config.get("surface_recovery_cooldown_seconds"), 300.0, 30.0, 3600.0
         )
@@ -1956,19 +1960,40 @@ class AndroidBridge:
         self.disable_host_automount()
         if self.adb("get-state", timeout=10).stdout.strip() != "device":
             raise BridgeError("configured Android device is not authorized")
-        packages = self.adb_shell("pm", "list", "packages", self.package)
+        packages = self.adb_shell(
+            "pm", "list", "packages", self.package, timeout=10
+        )
         if f"package:{self.package}" not in packages:
             raise BridgeError("official WeCom package is not installed on the device")
         self.ensure_device_storage()
         keyguard = self.adb_shell("dumpsys", "window", timeout=20, check=False)
         if "isStatusBarKeyguard=true" in keyguard:
             raise BridgeError("Android keyguard is locked")
-        for key in ("window_animation_scale", "transition_animation_scale", "animator_duration_scale"):
-            self.adb_shell("settings", "put", "global", key, "0", check=False)
-        # Keep hierarchy bounds stable even when the physical phone is moved.
-        self.adb_shell("settings", "put", "system", "accelerometer_rotation", "0", check=False)
-        self.adb_shell("settings", "put", "system", "user_rotation", "0", check=False)
-        self.adb_shell("svc", "power", "stayon", "true", check=False)
+        if self._device_tuning_attempted:
+            return
+
+        # These idempotent settings improve GUI stability but are not chat
+        # readiness gates. Apply them once per relay lifetime with a short
+        # deadline so a slow Android shell cannot monopolize the exact-chat
+        # lock and silence inbound polling or artifact delivery.
+        self._device_tuning_attempted = True
+        commands = [
+            ("settings", "put", "global", "window_animation_scale", "0"),
+            ("settings", "put", "global", "transition_animation_scale", "0"),
+            ("settings", "put", "global", "animator_duration_scale", "0"),
+            ("settings", "put", "system", "accelerometer_rotation", "0"),
+            ("settings", "put", "system", "user_rotation", "0"),
+            ("svc", "power", "stayon", "true"),
+        ]
+        for command in commands:
+            try:
+                self.adb_shell(
+                    *command,
+                    timeout=self.device_tuning_timeout_seconds,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                break
 
     def current_package(self) -> str:
         output = self.adb_shell("dumpsys", "window", "windows", timeout=20, check=False)
