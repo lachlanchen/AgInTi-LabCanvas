@@ -1,0 +1,630 @@
+{
+  "design": "openhi_4f_jh042_same_lens",
+  "lens": {
+    "key": "jh042",
+    "label": "JH042 cemented doublet",
+    "kind": "cemented_doublet",
+    "diameter_mm": 22.0,
+    "center_thickness_mm": 8.5,
+    "focal_length_mm": 27.48499,
+    "coating": "880-920 nm",
+    "materials": [
+      "ZF6",
+      "ZF13"
+    ],
+    "radii_mm": [
+      0.0,
+      18.867,
+      -31.801
+    ],
+    "element_center_thicknesses_mm": [
+      2.5,
+      6.0
+    ],
+    "edge_thickness_mm": null,
+    "back_focal_length_mm": null,
+    "bevel_mm": 0.0,
+    "prescription_status": "mechanically-constrained-assumption",
+    "source_note": "Catalog gives total thickness and three radius magnitudes but not signed radii or the two element center thicknesses. Signs and the 2.5/6.0 mm split are explicit mechanical reconstruction assumptions."
+  },
+  "lens_model": {
+    "inward_edge_z_mm": 0.0,
+    "mechanical_inward_contact_z_mm": 0.0,
+    "mechanical_outward_contact_z_mm": 6.802839,
+    "mechanical_support_radius_mm": 10.25,
+    "outward_edge_z_mm": 6.536956,
+    "mechanical_edge_thickness_mm": 6.536956,
+    "modeled_edge_thickness_mm": 6.536956,
+    "element_1_edge_thickness_mm": 6.038475,
+    "element_2_edge_thickness_mm": 0.498481,
+    "holder_axial_envelope_mm": 6.802839
+  },
+  "optical_layout": {
+    "beam_splitter_center_mm": [
+      255.0,
+      210.0,
+      600.0
+    ],
+    "catalog_efl_mm": 27.48499,
+    "a_holder_contact_plane_z_mm": 572.51501,
+    "b_holder_contact_plane_z_mm": 627.48499,
+    "c_holder_contact_plane_x_assembly_mm": 282.48499,
+    "a_to_b_nominal_2f_mm": 54.96998,
+    "a_to_c_nominal_2f_mm": 54.96998,
+    "plano_faces_toward_beam_splitter": false,
+    "manufacturer_bfl_mm": null,
+    "thick_lens_bfl_minus_efl_mm": null,
+    "datum_policy": "Catalog EFL is used as the source-compatible holder contact distance. Manufacturer BFL is retained as a physical tuning datum for thick plano-convex lenses.",
+    "lens_to_mechanical_interference_mm3": {
+      "A_holder": 0.0,
+      "A_cap": 0.0,
+      "B_holder": 0.0,
+      "B_cap": 0.0,
+      "C_holder": 0.0,
+      "C_cap": 0.0
+    },
+    "thread_engagement_mm": {
+      "A": 6.725,
+      "B": 7.025,
+      "C": 7.025
+    },
+    "focal_datum_error_mm": {
+      "A_to_B_2f": 0.0,
+      "BS_to_A_f": 0.0,
+      "BS_to_B_f": 0.0,
+      "BS_to_C_f": 0.0
+    },
+    "protected_beam_splitter_region_difference_mm3": 0.0
+  },
+  "arms": {
+    "A": {
+      "seat_mm": 572.51501,
+      "contact_mm": 565.512171,
+      "thread_min_mm": 553.987171,
+      "thread_max_mm": 561.737171,
+      "outer_end_mm": 548.887171,
+      "aperture_mm": 20.5,
+      "pocket_mm": 22.25
+    },
+    "B": {
+      "seat_mm": 627.48499,
+      "contact_mm": 634.487829,
+      "thread_min_mm": 638.262829,
+      "thread_max_mm": 646.012829,
+      "outer_end_mm": 651.112829,
+      "aperture_mm": 20.5,
+      "pocket_mm": 22.25,
+      "optical_axis_x_mm": 255.0,
+      "preserved_outer_skin_axis_x_mm": 254.633
+    },
+    "C": {
+      "seat_mm": 302.48499,
+      "contact_mm": 309.487829,
+      "thread_min_mm": 313.26282899999995,
+      "thread_max_mm": 321.01282899999995,
+      "outer_end_mm": 326.112829,
+      "aperture_mm": 20.5,
+      "pocket_mm": 22.25,
+      "assembly_translation_x_mm": -20.0,
+      "legacy_male_root_mm": 29.8,
+      "legacy_male_fuse_diameter_mm": 29.81
+    }
+  },
+  "source_files": {
+    "USE_THIS_OpenHI_A_exact_current_geometry.step": {
+      "path": "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/USE_THIS_OpenHI_A_exact_current_geometry.step",
+      "sha256": "793fcfe6f733b08251f174da27e29ae38634ff5be4222575197e959d1dc453c1"
+    },
+    "USE_THIS_OpenHI_B_exact_current_geometry.step": {
+      "path": "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/USE_THIS_OpenHI_B_exact_current_geometry.step",
+      "sha256": "e52e605372bbfc5b1f015fc88a52370c6fee3a22bec69336926278790d7a025d"
+    },
+    "USE_THIS_OpenHI_C_exact_current_geometry.step": {
+      "path": "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/USE_THIS_OpenHI_C_exact_current_geometry.step",
+      "sha256": "fab6a77cebd3efd0542a13dfdbab0dc5bb1c2d3132518a7ac71d5e7619faaa2b"
+    },
+    "USE_THIS_openhi_a_c_bs_a29p8_c29p6_female_pivots.step": {
+      "path": "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_a_c_bs_dual_female_29p6_pivot/USE_THIS_openhi_a_c_bs_a29p8_c29p6_female_pivots.step",
+      "sha256": "7c3909c1eda22d71ff728bd3ef8659cd02fd0b0559d5faa87769fe778ed6def9"
+    },
+    "USE_THIS_openhi_lens_b_holder_upper_female_29p8_pivot.step": {
+      "path": "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_lens_b_holder_upper_female_29p8_pivot/USE_THIS_openhi_lens_b_holder_upper_female_29p8_pivot.step",
+      "sha256": "4a96f0341cc0033572d3c166d52b90e91158a37129819072a05108d2732148ed"
+    },
+    "USE_THIS_openhi_lens_c_holder_right_female_29p8_pivot.step": {
+      "path": "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_lens_c_holder_right_female_29p8_pivot/USE_THIS_openhi_lens_c_holder_right_female_29p8_pivot.step",
+      "sha256": "ca87185604057fab88f3e19f565f5a1bb1609f93eaf9da8926b8941f9a5e3316"
+    },
+    "OpenHI.shapr": {
+      "path": "/home/lachlan/ProjectsLFS/AgenticApp/cad/extracted/OpenHI.shapr",
+      "sha256": "f0d1dd3c06bae3a82ceebc902fa4e8084dd132dfdb8ffda300d613008f62e104"
+    }
+  },
+  "lens_source_evidence": [
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7166.png",
+      "relative_path": "images/IMG_7166.png",
+      "size_bytes": 510634,
+      "sha256": "d2997cc0e1dcca85c3ef4cf675004c636e26cab7d48ef7322415743d03cee10c"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7167.jpeg",
+      "relative_path": "images/IMG_7167.jpeg",
+      "size_bytes": 69027,
+      "sha256": "3dfa0dd7365e8e13b28bb49d3d7c89afc35ddf2fbc503b51680bf1584b970d66"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7168.jpeg",
+      "relative_path": "images/IMG_7168.jpeg",
+      "size_bytes": 380175,
+      "sha256": "d6ded867da83d323f1f167444ca18aa0c113cb5309828be4647874d25e1fda26"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7169.jpeg",
+      "relative_path": "images/IMG_7169.jpeg",
+      "size_bytes": 368004,
+      "sha256": "b4d7ecaeb7c4271c121ed16f18a5bb81ba76c9551785607b9a564665c2a0658b"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7170.jpeg",
+      "relative_path": "images/IMG_7170.jpeg",
+      "size_bytes": 249682,
+      "sha256": "e051e7b2b881652a532c30a3dd772785dbcdbf59cbe85f3752b0ca21d2b25296"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7171.jpeg",
+      "relative_path": "images/IMG_7171.jpeg",
+      "size_bytes": 68885,
+      "sha256": "928936d0907ad2a142996391501698529d6e7a56d93005544fe06a3826958890"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7173(1).png",
+      "relative_path": "images/IMG_7173(1).png",
+      "size_bytes": 487074,
+      "sha256": "654a877f6ce6ba23c08840b22c1803ef0675ffee8e6c25230f9f9ec2d68d2b6b"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7174(1).jpeg",
+      "relative_path": "images/IMG_7174(1).jpeg",
+      "size_bytes": 66557,
+      "sha256": "9f945daff7d3626abb156e9ef8f8f96c11bae2dc5ffb3575f017b7a424b29d4f"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7175(1).jpeg",
+      "relative_path": "images/IMG_7175(1).jpeg",
+      "size_bytes": 112578,
+      "sha256": "d8e2dcf0d485267dd75cf50f928c29108d2a76f4a05eb412886dea00cfcd0ae1"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7176(2).jpeg",
+      "relative_path": "images/IMG_7176(2).jpeg",
+      "size_bytes": 117342,
+      "sha256": "8b91c64817c32dd0b15b6a3433865938fe26183e389252dae47630bb5d77ad98"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7177(1).jpeg",
+      "relative_path": "images/IMG_7177(1).jpeg",
+      "size_bytes": 555240,
+      "sha256": "0ebd2f996d4f2efc80d04e15cbcb9849a9be118743de5c3eb847f7e2544ed496"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7177(2).jpeg",
+      "relative_path": "images/IMG_7177(2).jpeg",
+      "size_bytes": 555240,
+      "sha256": "0ebd2f996d4f2efc80d04e15cbcb9849a9be118743de5c3eb847f7e2544ed496"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/images/IMG_7177(3).jpeg",
+      "relative_path": "images/IMG_7177(3).jpeg",
+      "size_bytes": 555240,
+      "sha256": "0ebd2f996d4f2efc80d04e15cbcb9849a9be118743de5c3eb847f7e2544ed496"
+    },
+    {
+      "path": "/home/lachlan/Downloads/lens_images_and_analysis/lens_analysis.md",
+      "relative_path": "lens_analysis.md",
+      "size_bytes": 8702,
+      "sha256": "ffa7acf7ae521af0da2e29316bab5bf17e18b3f9654a6299afec94b187e4821d"
+    }
+  ],
+  "parts": {
+    "A": {
+      "step": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_A.step",
+      "stl": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_A.stl",
+      "3mf": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_A.3mf",
+      "step_validation": {
+        "solid_count": 1,
+        "face_count": 18,
+        "bbox": {
+          "min": [
+            235.0,
+            190.0,
+            479.8
+          ],
+          "max": [
+            275.0,
+            230.0,
+            529.8
+          ],
+          "size": [
+            40.0,
+            40.0,
+            50.0
+          ]
+        },
+        "volume_mm3": 31726.813804,
+        "occt_valid": true
+      },
+      "mesh_validation": {
+        "vertices": 6650,
+        "faces": 13300,
+        "watertight": true,
+        "winding_consistent": true,
+        "components": 1,
+        "bounds_mm": [
+          [
+            0.0,
+            0.006216,
+            0.0
+          ],
+          [
+            40.0,
+            39.993782,
+            50.0
+          ]
+        ]
+      },
+      "sha256": {
+        "step": "fde57c62ae569b6821d54ef1a69773ddb1c79611ffcdf05eb258ae95e454f815",
+        "stl": "6f2d0a7642b39e265216c8c5a639f77a99f7de54490cf526fe1038515aaef11b",
+        "3mf": "94f9a73f024b6de10deab2d443f8ac246af8a0ff3270dd85919118d808809970"
+      }
+    },
+    "A_C_BS": {
+      "step": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_A_C_BS.step",
+      "stl": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_A_C_BS.stl",
+      "3mf": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_A_C_BS.3mf",
+      "step_validation": {
+        "solid_count": 1,
+        "face_count": 76,
+        "bbox": {
+          "min": [
+            235.0,
+            190.0,
+            548.887171
+          ],
+          "max": [
+            275.0,
+            230.0,
+            620.0
+          ],
+          "size": [
+            40.0,
+            40.0,
+            71.112829
+          ]
+        },
+        "volume_mm3": 37033.606851,
+        "occt_valid": true
+      },
+      "mesh_validation": {
+        "vertices": 12876,
+        "faces": 25752,
+        "watertight": true,
+        "winding_consistent": true,
+        "components": 1,
+        "bounds_mm": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            40.0,
+            40.0,
+            71.112831
+          ]
+        ]
+      },
+      "sha256": {
+        "step": "e5a335f0bb50240235cd46af370cc64455b54d4d9cb671a5bf8a14dd2447d83e",
+        "stl": "e2b0ec7ca51b47fdaa47e2911bc4df82ab21730e8441e7707a4cb064110e4fc5",
+        "3mf": "cf8e46e135858f7d4fd9a76945a01b858eebd13226b4d97c91a09d1b45542daf"
+      }
+    },
+    "B": {
+      "step": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_B.step",
+      "stl": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_B.stl",
+      "3mf": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_B.3mf",
+      "step_validation": {
+        "solid_count": 1,
+        "face_count": 34,
+        "bbox": {
+          "min": [
+            235.0,
+            190.0,
+            670.0
+          ],
+          "max": [
+            275.0,
+            230.0,
+            724.4
+          ],
+          "size": [
+            40.0,
+            40.0,
+            54.4
+          ]
+        },
+        "volume_mm3": 34951.759257,
+        "occt_valid": true
+      },
+      "mesh_validation": {
+        "vertices": 114753,
+        "faces": 229506,
+        "watertight": true,
+        "winding_consistent": true,
+        "components": 1,
+        "bounds_mm": [
+          [
+            0.0,
+            0.006216,
+            0.0
+          ],
+          [
+            40.0,
+            39.993782,
+            54.0
+          ]
+        ]
+      },
+      "sha256": {
+        "step": "e97d1d577e3d3b148a83f661cbaa63a56b5e43649b42a873d4485fea824f3d7b",
+        "stl": "c6d37a6a95e8bf0f796c9540172d6e3a1e25723456b8a1bab74b01dbfbdf9051",
+        "3mf": "de885ba779c27be5a6eeb62f2aee89ebebd111e979cdb4f1b91fecfd5108e531"
+      }
+    },
+    "C": {
+      "step": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_C.step",
+      "stl": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_C.stl",
+      "3mf": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_C.3mf",
+      "step_validation": {
+        "solid_count": 1,
+        "face_count": 27,
+        "bbox": {
+          "min": [
+            375.0,
+            190.0,
+            580.0
+          ],
+          "max": [
+            429.0,
+            230.0,
+            620.0
+          ],
+          "size": [
+            54.0,
+            40.0,
+            40.0
+          ]
+        },
+        "volume_mm3": 34952.567717,
+        "occt_valid": true
+      },
+      "mesh_validation": {
+        "vertices": 9166,
+        "faces": 18332,
+        "watertight": true,
+        "winding_consistent": true,
+        "components": 1,
+        "bounds_mm": [
+          [
+            0.0,
+            0.006216,
+            0.0
+          ],
+          [
+            54.0,
+            39.993782,
+            40.0
+          ]
+        ]
+      },
+      "sha256": {
+        "step": "e7d6d9c9c8bc1a379a72b0883ac8a3dc20165a998d56d1a2943768ed7d502967",
+        "stl": "9a6be9a69ba75921412b99a419812f56eddcd59842c6161500694a336f525cd0",
+        "3mf": "5cc5fd7dcf0d21ca923e447d9c13d6b10e6f26abc17cfe3b632a864a993f3359"
+      }
+    },
+    "Lens_B_holder": {
+      "step": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_Lens_B_holder.step",
+      "stl": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_Lens_B_holder.stl",
+      "3mf": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_Lens_B_holder.3mf",
+      "step_validation": {
+        "solid_count": 1,
+        "face_count": 38,
+        "bbox": {
+          "min": [
+            234.266,
+            189.633,
+            580.0
+          ],
+          "max": [
+            275.0,
+            230.367,
+            651.112829
+          ],
+          "size": [
+            40.734,
+            40.734,
+            71.112829
+          ]
+        },
+        "volume_mm3": 37079.817048,
+        "occt_valid": true
+      },
+      "mesh_validation": {
+        "vertices": 8385,
+        "faces": 16782,
+        "watertight": true,
+        "winding_consistent": true,
+        "components": 1,
+        "bounds_mm": [
+          [
+            -0.0,
+            7.7e-05,
+            0.0
+          ],
+          [
+            40.734001,
+            40.733925,
+            71.112831
+          ]
+        ]
+      },
+      "sha256": {
+        "step": "509e176fe856baed23956ee90e0c661eb3e40dfa452d6ccf30903f4219ecf06b",
+        "stl": "37e0a4601e353fb09fdd1196220d0462be04b40309acc14fd62754445ad46e35",
+        "3mf": "683f8cdccbdff81f145e237795a3b64aed5cf34be11c18a7be955e63ff2c5c1b"
+      }
+    },
+    "Lens_C_holder": {
+      "step": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_Lens_C_holder.step",
+      "stl": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_Lens_C_holder.stl",
+      "3mf": "cad/designs/openhi_4f_jh042_same_lens/artifacts/parts/openhi_Lens_C_holder.3mf",
+      "step_validation": {
+        "solid_count": 1,
+        "face_count": 22,
+        "bbox": {
+          "min": [
+            289.999983,
+            190.0,
+            580.0
+          ],
+          "max": [
+            326.112829,
+            230.0,
+            620.0
+          ],
+          "size": [
+            36.112846,
+            40.0,
+            40.0
+          ]
+        },
+        "volume_mm3": 20706.524888,
+        "occt_valid": true
+      },
+      "mesh_validation": {
+        "vertices": 5167,
+        "faces": 10334,
+        "watertight": true,
+        "winding_consistent": true,
+        "components": 1,
+        "bounds_mm": [
+          [
+            1.7e-05,
+            0.006216,
+            0.0
+          ],
+          [
+            36.112846,
+            39.993782,
+            40.0
+          ]
+        ]
+      },
+      "sha256": {
+        "step": "103d1b1fba144427a3738cf9bb28f29539298015cac3a8d7c08464aae282af4e",
+        "stl": "fdfe8c86c58bfb94f4a61477d8f55632f84b01ec1d5c8b45e79c772896b97aa9",
+        "3mf": "85b6f12fe27bcdd1d5874c0527238e1b07745ee834b3d8b0f6571fc12ac29e75"
+      }
+    }
+  },
+  "lens_outputs": {
+    "step": "cad/designs/openhi_4f_jh042_same_lens/artifacts/jh042_lens.step",
+    "stl": "cad/designs/openhi_4f_jh042_same_lens/artifacts/jh042_lens.stl",
+    "3mf": "cad/designs/openhi_4f_jh042_same_lens/artifacts/jh042_lens.3mf",
+    "step_validation": {
+      "solid_count": 2,
+      "face_count": 291,
+      "bbox": {
+        "min": [
+          -11.0,
+          -11.0,
+          0.0
+        ],
+        "max": [
+          11.0,
+          11.0,
+          8.5
+        ],
+        "size": [
+          22.0,
+          22.0,
+          8.5
+        ]
+      },
+      "volume_mm3": 2861.965842,
+      "occt_valid": true
+    },
+    "mesh_validation": {
+      "vertices": 29485,
+      "faces": 58966,
+      "watertight": true,
+      "winding_consistent": true,
+      "components": 1,
+      "bounds_mm": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          22.0,
+          22.0,
+          8.5
+        ]
+      ]
+    }
+  },
+  "assembly": {
+    "step": "cad/designs/openhi_4f_jh042_same_lens/artifacts/jh042_openhi_4f_assembly.step",
+    "use_this_step": "cad/designs/openhi_4f_jh042_same_lens/USE_THIS_jh042_openhi_4f_assembly.step",
+    "validation": {
+      "solid_count": 13,
+      "face_count": 1094,
+      "bbox": {
+        "min": [
+          234.266,
+          189.633,
+          515.512171
+        ],
+        "max": [
+          343.487829,
+          230.367,
+          688.887829
+        ],
+        "size": [
+          109.221829,
+          40.734,
+          173.375658
+        ]
+      },
+      "volume_mm3": 205687.027134,
+      "occt_valid": true
+    }
+  },
+  "checks": {
+    "all_part_steps_valid": true,
+    "all_part_meshes_watertight": true,
+    "lens_step_valid": true,
+    "lens_mesh_watertight": true,
+    "assembly_step_valid": true,
+    "three_identical_lens_copies": true,
+    "nominal_4f_spacing_matches_catalog_efl": true,
+    "source_beam_splitter_geometry_preserved": true,
+    "lens_to_mechanical_interference_is_zero": true,
+    "minimum_thread_engagement_is_at_least_5mm": true,
+    "all_optical_axes_centered": true
+  }
+}

@@ -1,0 +1,4 @@
+__pycache__/
+USE_THIS_*.step
+artifacts/*
+!artifacts/manifest.json
