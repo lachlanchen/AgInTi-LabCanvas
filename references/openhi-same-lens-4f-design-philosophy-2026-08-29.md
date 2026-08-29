@@ -8,8 +8,10 @@ The authoritative mechanical geometry is the flattened OpenHI STEP family and
 the matching `OpenHI.shapr` assembly. The Shapr archive records these parts
 mostly as imported B-reps, so it is useful for assembly intent and naming but
 does not expose a complete native feature history. The checked STEP B-reps are
-therefore preserved for the beam-splitter center, central interfaces, cap
-geometry, and thread families.
+therefore preserved for the beam-splitter center, central interfaces, source
+datums, and thread families. A/B/C cap lengths are regenerated because keeping
+the original ST018 caps would violate the physical end-to-end 4f length for a
+different focal length.
 
 Lens evidence comes from:
 
@@ -33,10 +35,33 @@ The six reusable mechanical roles are:
 6. `Lens C holder`: lateral bridge from the beam-splitter body to lens C.
 
 The exploded STEP coordinates hide the assembly logic. In the source assembly,
-`A` moves +20 mm in Z, `B` moves -20 mm in Z, `C` moves -50 mm in X, and
-`Lens C holder` moves -20 mm in X. After those transforms, all three original
-ST018 lens contact planes are 50 mm from the beam-splitter center
-`(255, 210, 600) mm`.
+`A` moves +20 mm in Z, `B` moves -20 mm in Z, and `Lens C holder` moves -20 mm
+in X. The raw C cap reaches its assembly frame with a cumulative -70 mm X
+translation; descriptions that quote -50 mm are relative to an already shifted
+intermediate frame. After those transforms, all three original ST018 lens
+contact planes are 50 mm from the beam-splitter center `(255, 210, 600) mm`.
+
+The B branch is intentionally not coaxial with A in X. Repeated cylindrical and
+threaded faces in `Lens B holder.step` are centered at `X = 254.633 mm`, while
+the beam-splitter/A datum is `X = 255.000 mm`. The complete B optical chain must
+preserve this `-0.367 mm` source offset; moving only the outer skin or
+recentering the lens would change the accepted beam-splitter output geometry.
+
+## Measured Physical Length Contract
+
+The accepted ST018 assembly supplies the seat allowance instead of an arbitrary
+new value:
+
+- source focal length: `f = 50.0 mm`;
+- A outer end to lens-A seat: `50.2 mm = f + 0.2 mm`;
+- lens-B seat to B outer end: `54.4 mm = f + 4.4 mm`;
+- full A outer end to B outer end: `204.6 mm = 4f + 4.6 mm`.
+
+The rebuilt same-lens systems therefore enforce the same full path on both
+outputs: `A -> B = A -> C = 4f + 4.6 mm`. The A cap contributes `f + 0.2 mm`
+and each B/C cap contributes `f + 4.4 mm`. The mating thread is an overlapping
+interface inside that envelope, not extra axial length. Source thread evidence
+spans about `7.55-7.95 mm`, so the coordinated bounded interval is `7.75 mm`.
 
 ## Optical Design Rule
 
@@ -73,9 +98,9 @@ Do not scale the complete STEP and do not move the beam-splitter pocket.
 Instead:
 
 1. Preserve the exact central B-rep at the beam splitter.
-2. Preserve the proven A/B/C cap bodies and male threads.
-3. Regenerate only each straight arm from the central datum to the new lens
-   plane.
+2. Rebuild A/B/C cap lengths so both complete outer-end paths equal
+   `4f + 4.6 mm`.
+3. Regenerate each straight arm from the central datum to the new lens plane.
 4. Use the measured 40 mm outer envelope and 24 mm optical bore.
 5. Give the lens pocket 0.25 mm diametric clearance.
 6. Leave a real annular shoulder between the clear aperture and lens pocket.
@@ -88,9 +113,9 @@ Instead:
     land to A/B/C rather than leaving it unsupported in the 24 mm bore.
 11. Seat a curved lens at the actual annular shoulder radius. Do not use its
     optical vertex or extreme outer edge as a generic mechanical datum.
-12. Center the B aperture, pocket, transition, and thread on X = 255 mm even
-    though the accepted B holder's outer skin is offset to X = 254.633 mm.
-    Exterior asymmetry must not move the optical axis.
+12. Preserve the complete B aperture, pocket, lens, transition, lens thread,
+    and camera thread on `X = 254.633 mm`. The `-0.367 mm` offset from A is an
+    accepted optical/mechanical datum, not an outer-skin defect.
 13. Fuse the legacy tangent-only thread bodies only in the printable export.
     The Lens C male tooth receives a 0.005 mm radial overlap below print
     resolution; its 29.8 mm root and 30.6 mm crest envelope is preserved.
@@ -157,6 +182,8 @@ Every generated family must contain:
 - zero lens-to-holder/cap interference at all three locations;
 - at least 5 mm of calculated thread engagement on A, B, and C;
 - zero measured focal-datum error within numerical tolerance;
+- A-B and A-C complete end paths equal to `4f + 4.6 mm`;
+- the complete B optical chain remains on `X = 254.633 mm`;
 - zero geometric difference in the protected beam-splitter B-rep region;
 - a descriptive `USE_THIS_*_assembly.step` at the design root;
 - a clean Nutstore copy under `Projects/LabCanvas/<design>/`.

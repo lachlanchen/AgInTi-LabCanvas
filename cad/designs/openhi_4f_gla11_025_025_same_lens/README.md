@@ -11,6 +11,8 @@
 
 All three arms use the same `GLA11-025-025-A plano-convex lens` lens. The beam-splitter center is the fixed datum `(255, 210, 600) mm`. The CAD places the A, B, and C holder contact planes one catalog EFL from that datum: `25.40000 mm`. Therefore A-B and A-C nominal principal-plane separations are `2f = 50.80000 mm` under the source OpenHI thin-lens convention. Manufacturer BFL: `17.680 mm`.
 
+The complete physical A-to-B and A-to-C outer-end paths are both `106.20000 mm = 4f + 4.6 mm`. The `4.6 mm` allowance is measured from the accepted ST018 assembly, not guessed: the A outer end contributes `f + 0.2 mm` and each output end contributes `f + 4.4 mm`. Thread length overlaps its receiver and is not added again to this path.
+
 For the plano-convex variants, all plane faces point inward toward the beam splitter, as requested. The manifest records the BFL-versus-EFL difference so a bench test can tune the final axial position rather than hiding a thick-lens assumption.
 
 ## Lens Fit
@@ -21,11 +23,13 @@ For the plano-convex variants, all plane faces point inward toward the beam spli
 - modeled mechanical edge thickness: `2.500 mm`;
 - retaining axial envelope at the actual support radius: `4.367 mm`;
 - axial pocket allowance: `0.200 mm`;
-- female threads: `29.8/30.6 mm`, pitch `0.8 mm`, bounded at both ends.
+- female threads: `29.8/30.6 mm`, pitch `0.8 mm`, `7.75 mm` bounded engagement;
+- matching male lens threads: `29.6/30.4 mm` root/crest;
+- B optical axis: `X = 254.633 mm`, intentionally `-0.367 mm` from the A/beam-splitter datum.
 
 The holder side supplies the flat locating shoulder. A/B/C retain from the opposite side. The 45-degree diameter transition is on the A/B/C-facing receiver side, preserving the original OpenHI design philosophy.
 
-All optical pockets are centered at X/Y = `255/210 mm`. The B holder keeps its source outer-skin offset at X = `254.633 mm`, but that exterior asymmetry no longer shifts the lens, aperture, transition, or thread.
+The A and C axes use the beam-splitter datum. The complete B chain, including holder bore, pocket, lens, retainer, and camera thread, preserves the accepted source axis at `X = 254.633 mm`; it must not be recentered to `255 mm`.
 
 ## Prescription Status
 

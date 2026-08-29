@@ -88,7 +88,13 @@ def main():
             polygon.use_smooth = path.stem.startswith("lens_")
 
     f = float(manifest["optical_layout"]["catalog_efl_mm"])
-    add_axis_curve("A-B optical axis", [(255, 210, 600 - f - 18), (255, 210, 600 + f + 18)], axis_mat)
+    b_axis_x = float(manifest["optical_layout"]["b_axis_x_mm"])
+    add_axis_curve("A optical axis", [(255, 210, 600 - f - 18), (255, 210, 600)], axis_mat)
+    add_axis_curve(
+        "B optical axis",
+        [(b_axis_x, 210, 600), (b_axis_x, 210, 600 + f + 18)],
+        axis_mat,
+    )
     add_axis_curve("C optical axis", [(255, 210, 600), (255 + f + 32, 210, 600)], axis_mat)
 
     bpy.ops.mesh.primitive_plane_add(size=320, location=(255, 210, 475))
