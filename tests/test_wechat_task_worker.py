@@ -2736,7 +2736,11 @@ stderr: noisy internal trace
             }
 
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(worker, "run_shipinhao_media_transcriber", side_effect=fake_transcriber):
+            with mock.patch.dict(
+                os.environ,
+                {"WECHAT_SHIPINHAO_TRANSCRIBE_PYTHON": "/opt/miniconda3/envs/whisper/bin/python"},
+                clear=False,
+            ), mock.patch.object(worker, "run_shipinhao_media_transcriber", side_effect=fake_transcriber):
                 result = worker.prepare_shipinhao_media_transcript_preflight(task, Path(tmp))
 
         self.assertTrue(worker.should_prepare_shipinhao_media_transcript(task))
