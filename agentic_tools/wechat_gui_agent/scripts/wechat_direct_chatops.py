@@ -3908,6 +3908,7 @@ def fallback_route_decision(
     lowered = str(text or "").lower()
     permission_question = is_publish_permission_question(lowered)
     publish_allowed = has_public_publish_intent(lowered)
+    shipinhao_source_task = is_shipinhao_source_reference(text)
     link_inbox_summary_task = is_link_inbox_default_summary_task(config, row, text, focus_rows=focus_rows)
     contextual_media_task = is_contextual_media_task(config, text, row, context_rows, focus_rows=focus_rows) or (
         is_quote_reply_message(row) and references_recent_media(text)
@@ -3920,6 +3921,8 @@ def fallback_route_decision(
         route_kind = "file_download_or_save"
     elif is_bare_file_intake_request(row, text) or is_bare_image_intake_request(row, text):
         route_kind = "file_intake"
+    elif shipinhao_source_task and not publish_allowed:
+        route_kind = "file_download_or_save"
     elif link_inbox_summary_task:
         route_kind = "research_or_summary"
     elif is_grant_proposal_task(text):
@@ -4009,7 +4012,26 @@ def fallback_route_decision(
         "route_agent_model": "fallback",
     }
     if route_kind == "file_download_or_save":
-        route["delivery_mode"] = "passive_cache" if bare_video_intake else file_download_delivery_mode(text)
+        route["delivery_mode"] = (
+            "passive_cache"
+            if bare_video_intake
+            else "chat_attachment"
+            if shipinhao_source_task
+            else file_download_delivery_mode(text)
+        )
+    if shipinhao_source_task and not publish_allowed:
+        route.update(
+            {
+                "project": "generic",
+                "worker_needed": True,
+                "needs_recent_media": False,
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+                "external_action_allowed": True,
+                "source_policy": "current_plus_explicit_refs",
+                "reason": "exact Shipinhao source: resolve, transcribe, summarize, and return the verified media without public publication",
+            }
+        )
     if bare_video_intake:
         route.update(
             {
@@ -4125,6 +4147,7 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
             route_kind = "story_or_script"
     permission_question = is_publish_permission_question(current_request)
     publish_allowed = has_public_publish_intent(current_request)
+    shipinhao_source_task = is_shipinhao_source_reference(current_request) and not publish_allowed
     needs_recent_media = bool(parsed.get("needs_recent_media"))
     if permission_question:
         route_kind = "publish_video"
@@ -4137,6 +4160,9 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         needs_recent_media = False
     if route_kind == "file_intake" or passive_video_intake:
         needs_recent_media = True
+    if shipinhao_source_task:
+        route_kind = "file_download_or_save"
+        needs_recent_media = False
     project = str(parsed.get("project") or fallback.get("project") or "unknown")
     fallback_project = str(fallback.get("project") or "")
     if route_kind == fallback_kind and fallback_project not in {"", "unknown"}:
@@ -4155,7 +4181,29 @@ def enforce_route_safety(parsed: dict[str, Any], current_request: str, fallback:
         }
     )
     if route_kind == "file_download_or_save":
-        parsed["delivery_mode"] = "passive_cache" if passive_video_intake else file_download_delivery_mode(current_request)
+        parsed["delivery_mode"] = (
+            "passive_cache"
+            if passive_video_intake
+            else "chat_attachment"
+            if shipinhao_source_task
+            else file_download_delivery_mode(current_request)
+        )
+    if shipinhao_source_task:
+        parsed.update(
+            {
+                "project": "generic",
+                "worker_needed": True,
+                "needs_recent_media": False,
+                "public_publish_intent": False,
+                "public_publish_allowed": False,
+                "external_action_allowed": True,
+                "source_policy": "current_plus_explicit_refs",
+                "reason": (
+                    str(parsed.get("reason") or fallback.get("reason") or "")
+                    + " | bare Shipinhao source kept on verified download/transcription delivery route"
+                ).strip(),
+            }
+        )
     if passive_video_intake:
         parsed.update(
             {
@@ -5185,6 +5233,20 @@ def is_file_download_or_save_task(text: str) -> bool:
     return any(term in lowered for term in media_terms) and any(term in lowered for term in action_terms)
 
 
+def is_shipinhao_source_reference(text: str) -> bool:
+    """Recognize an exact Finder source without treating its platform as an action."""
+    lowered = str(text or "").casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "weixin.qq.com/sph/",
+            "channels.weixin.qq.com",
+            "<finderfeed",
+            "[wechat video channel]",
+        )
+    )
+
+
 def file_download_delivery_mode(text: str) -> str:
     """Distinguish a local save from returning an attachment to the chat."""
     lowered = collapse_text(str(text or "")).casefold()
@@ -5607,7 +5669,28 @@ def has_public_publish_intent(text: str) -> bool:
         return False
     if is_publish_permission_question(lowered):
         return False
-    return public_publish_marker_present(lowered)
+    return explicit_publication_action_present(lowered)
+
+
+def explicit_publication_action_present(text: str) -> bool:
+    """Require a publication verb; a platform name or URL is not authorization."""
+    lowered = collapse_text(str(text or "")).casefold()
+    if re.search(r"\b(?:publish|re-publish|republish|pub)\b", lowered):
+        return True
+    if re.search(r"\bpost\s+(?:this|it|the|my|our|a|an|video|file)\b", lowered):
+        return True
+    if re.search(r"\bpost\s+(?:to|on)\s+", lowered):
+        return True
+    if any(marker in lowered for marker in ("发布", "發布", "投稿", "公开发布", "公開發布")):
+        return True
+    if re.search(
+        r"\b(?:upload|send)\s+(?:this\s+|the\s+|my\s+|our\s+|it\s+)?(?:video\s+|file\s+)?(?:to|on)\s+(?:youtube|instagram|shipinhao|wechat\s+channel|sph|y2b|ytb|ins)\b",
+        lowered,
+    ):
+        return True
+    if re.search(r"(?:上传|上傳|发到|發到|发上|發上).{0,24}(?:视频号|視頻號|youtube|instagram|平台)", lowered):
+        return True
+    return False
 
 
 def video_publish_context_bundle(

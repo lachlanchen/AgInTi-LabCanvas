@@ -2405,6 +2405,369 @@ stderr: noisy internal trace
         self.assertNotIn(wrong_url, str(captured["source_text"]))
         self.assertEqual(captured["profile"]["object_id"], "exact-object-123")
 
+    def test_shipinhao_download_route_promotes_exact_card_video_for_delivery(self) -> None:
+        worker = load_worker()
+        exact_card = (
+            "<finderFeed><objectId><![CDATA[14947210711380400704]]></objectId>"
+            "<nickname><![CDATA[Hui世界]]></nickname>"
+            "<desc><![CDATA[徒步天堂马德拉群岛]]></desc>"
+            "<mediaList><media><videoPlayDuration><![CDATA[63]]></videoPlayDuration>"
+            "<url><![CDATA[http://wxapp.tc.qq.com/video?id=exact-download]]></url>"
+            "</media></mediaList></finderFeed>"
+        )
+        task = {
+            "id": "shipinhao-download",
+            "chat": "🍓My devices",
+            "source": {"local_id": 146, "kind": "text", "local_type": 1},
+            "routine": {"id": "file_download_save"},
+            "route_decision": {
+                "route_kind": "file_download_or_save",
+                "delivery_mode": "agent_decide",
+                "public_publish_allowed": False,
+            },
+            "request": "Current coalesced request:\nCan you download this Shipinhao for me?",
+            "context": [{"local_id": 145, "content": exact_card}],
+        }
+
+        def fake_transcriber(command, *, output_dir, timeout, profile):
+            media = output_dir / "private-cache-source.mp4"
+            media.write_bytes(b"verified-video")
+            return {
+                "status": "transcribed",
+                "input_kind": "card_media_url",
+                "media_path": str(media),
+                "profile": profile,
+                "agent_context_path": str(output_dir / "shipinhao-audio-transcript.md"),
+                "read_only": True,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "shipinhao_media_transcript"
+            with mock.patch.object(worker, "run_shipinhao_media_transcriber", side_effect=fake_transcriber):
+                result = worker.prepare_shipinhao_media_transcript_preflight(task, Path(tmp))
+            task["preflight"] = {"shipinhao_media_transcript": result}
+            delivery_files = worker.shipinhao_auto_delivery_files(task)
+
+        self.assertTrue(worker.should_prepare_shipinhao_media_transcript(task))
+        self.assertEqual(result["download_delivery"]["status"], "ready")
+        self.assertEqual(len(delivery_files), 1)
+        self.assertIn("Hui世界-徒步天堂马德拉群岛", Path(delivery_files[0]).name)
+        self.assertFalse(task["route_decision"]["public_publish_allowed"])
+
+    def test_shipinhao_delivery_adds_recipient_safe_timestamped_transcript(self) -> None:
+        worker = load_worker()
+        task = {
+            "request": "Current coalesced request:\nhttps://weixin.qq.com/sph/Ae2UMH6gqr",
+            "route_decision": {
+                "route_kind": "file_download_or_save",
+                "delivery_mode": "chat_attachment",
+                "public_publish_allowed": False,
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "shipinhao_media_transcript"
+            output_dir.mkdir(parents=True)
+            media = output_dir / "source.mp4"
+            media.write_bytes(b"verified-video")
+            context = output_dir / "shipinhao-audio-transcript.md"
+            context.write_text(
+                "# Shipinhao Audio Transcript\n\n"
+                "- Model: `large-v2`\n"
+                "- Input: `exact_sph_share_link`\n\n"
+                "## Timestamped Transcript\n\n"
+                "[00:00.00-00:02.00] 阿拉斯加是美国面积最大的州\n",
+                encoding="utf-8",
+            )
+            result = worker.promote_shipinhao_download_for_delivery(
+                task,
+                output_dir,
+                {
+                    "status": "transcribed",
+                    "input_kind": "exact_sph_share_link",
+                    "media_path": str(media),
+                    "agent_context_path": str(context),
+                    "duration_seconds": 80.13,
+                    "content_identity_verified": True,
+                    "profile": {
+                        "object_id": "sph-Ae2UMH6gqr",
+                        "title": "美国最后的边疆阿拉斯加",
+                        "author": "Hui世界",
+                    },
+                },
+            )
+            task["preflight"] = {"shipinhao_media_transcript": result}
+            files = worker.shipinhao_auto_delivery_files(task)
+            transcript_path = Path(result["delivery_transcript_path"])
+            transcript = transcript_path.read_text(encoding="utf-8")
+
+        self.assertEqual(len(files), 2)
+        self.assertTrue(any(Path(path).suffix == ".mp4" for path in files))
+        self.assertTrue(any(Path(path).suffix == ".txt" for path in files))
+        self.assertIn("时间戳转写", transcript)
+        self.assertIn("阿拉斯加是美国面积最大的州", transcript)
+        self.assertNotIn("large-v2", transcript)
+        self.assertNotIn("exact_sph_share_link", transcript)
+
+    def test_verified_shipinhao_delivery_uses_bounded_agent_and_survives_backend_failure(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            media = root / "alaska.mp4"
+            transcript = root / "alaska-transcript.txt"
+            context = root / "context.md"
+            media.write_bytes(b"verified-video")
+            transcript.write_text("时间戳转写\n[00:00] 阿拉斯加是美国面积最大的州\n", encoding="utf-8")
+            context.write_text(
+                "## Timestamped Transcript\n\n[00:00] 阿拉斯加是美国面积最大的州。\n",
+                encoding="utf-8",
+            )
+            task = {
+                "id": "shipinhao-bounded-delivery",
+                "chat": "🍓My devices",
+                "request": (
+                    "stale publish instructions " * 300
+                    + "\nCurrent coalesced request:\nhttps://weixin.qq.com/sph/Ae2UMH6gqr"
+                ),
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "delivery_mode": "chat_attachment",
+                    "public_publish_allowed": False,
+                },
+                "preflight": {
+                    "shipinhao_media_transcript": {
+                        "status": "cached",
+                        "input_kind": "exact_sph_share_link",
+                        "content_identity_verified": True,
+                        "duration_seconds": 80.13,
+                        "agent_context_path": str(context),
+                        "delivery_media_path": str(media),
+                        "delivery_transcript_path": str(transcript),
+                        "download_delivery": {"verified": True},
+                        "profile": {
+                            "object_id": "sph-Ae2UMH6gqr",
+                            "title": "美国最后的边疆阿拉斯加",
+                            "author": "Hui世界",
+                        },
+                    }
+                },
+            }
+            calls: list[dict[str, object]] = []
+
+            def unavailable(prompt: str, **kwargs: object) -> dict[str, object]:
+                calls.append({"prompt": prompt, **kwargs})
+                return {"ok": False, "message": "timeout", "backend": "aginti"}
+
+            with mock.patch.object(worker, "run_codex_session", side_effect=unavailable):
+                raw = worker.run_verified_shipinhao_delivery_synthesis(
+                    task,
+                    {
+                        "model": "gpt-5.6-sol",
+                        "reasoning_effort": "medium",
+                        "sandbox": "danger-full-access",
+                    },
+                )
+
+        self.assertIsNotNone(raw)
+        payload = json.loads(raw or "{}")
+        self.assertEqual(calls[0]["role"], "chat-shipinhao-summary")
+        self.assertLess(len(str(calls[0]["prompt"])), 5000)
+        self.assertNotIn("stale publish instructions", str(calls[0]["prompt"]))
+        self.assertIn("阿拉斯加", payload["message"])
+        self.assertIn("没有公开发布", payload["message"])
+        self.assertEqual(set(payload["files"]), {str(media), str(transcript)})
+        self.assertFalse(payload["no_reply"])
+        self.assertFalse(task["worker_result_exhausted"])
+        self.assertEqual([call["backend"] for call in calls], ["aginti"])
+
+    def test_verified_shipinhao_delivery_falls_back_from_codex_to_aginti(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            media = root / "alaska.mp4"
+            transcript = root / "alaska-transcript.txt"
+            media.write_bytes(b"verified-video")
+            transcript.write_text("时间戳转写\n[00:00] 阿拉斯加\n", encoding="utf-8")
+            task = {
+                "id": "shipinhao-backend-handoff",
+                "chat": "Shares鏈接",
+                "agent_backend": "codex",
+                "request": "Current coalesced request:\nhttps://weixin.qq.com/sph/Ae2UMH6gqr",
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "delivery_mode": "chat_attachment",
+                    "public_publish_allowed": False,
+                },
+                "preflight": {
+                    "shipinhao_media_transcript": {
+                        "status": "cached",
+                        "input_kind": "exact_sph_share_link",
+                        "content_identity_verified": True,
+                        "duration_seconds": 80.13,
+                        "text_preview": "阿拉斯加是美国面积最大的州。",
+                        "delivery_media_path": str(media),
+                        "delivery_transcript_path": str(transcript),
+                        "download_delivery": {"verified": True},
+                        "profile": {
+                            "object_id": "sph-Ae2UMH6gqr",
+                            "title": "美国最后的边疆阿拉斯加",
+                            "author": "Hui世界",
+                        },
+                    }
+                },
+            }
+            calls: list[str] = []
+
+            def backend_handoff(prompt: str, **kwargs: object) -> dict[str, object]:
+                requested = str(kwargs.get("backend") or "")
+                calls.append(requested)
+                if requested == "codex":
+                    return {"ok": False, "message": "quota unavailable", "backend": "codex"}
+                return {
+                    "ok": True,
+                    "message": json.dumps(
+                        {
+                            "message": "这段视频介绍阿拉斯加的地理、历史和自然景观；视频与时间戳转写已附上。",
+                            "files": [],
+                            "confirmation": "",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "backend": "aginti",
+                }
+
+            with mock.patch.object(worker, "run_codex_session", side_effect=backend_handoff):
+                raw = worker.run_verified_shipinhao_delivery_synthesis(
+                    task,
+                    {
+                        "model": "gpt-5.6-sol",
+                        "reasoning_effort": "medium",
+                        "sandbox": "danger-full-access",
+                    },
+                )
+
+        payload = json.loads(raw or "{}")
+        self.assertEqual(calls, ["codex", "aginti"])
+        self.assertIn("地理、历史和自然景观", payload["message"])
+        self.assertEqual(
+            [item["backend"] for item in task["shipinhao_delivery_synthesis"]["backend_attempts"]],
+            ["codex", "aginti"],
+        )
+        self.assertEqual(task["shipinhao_delivery_synthesis"]["status"], "agent_completed")
+
+    def test_verified_shipinhao_artifact_recovers_from_generic_worker_no_reply(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            media = Path(tmp) / "alaska.mp4"
+            media.write_bytes(b"verified-video")
+            task = {
+                "request": "Current coalesced request:\nhttps://weixin.qq.com/sph/Ae2UMH6gqr",
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "delivery_mode": "chat_attachment",
+                    "public_publish_allowed": False,
+                },
+                "preflight": {
+                    "shipinhao_media_transcript": {
+                        "status": "cached",
+                        "input_kind": "exact_sph_share_link",
+                        "content_identity_verified": True,
+                        "text_preview": "阿拉斯加是美国面积最大的州。",
+                        "delivery_media_path": str(media),
+                        "download_delivery": {"verified": True},
+                        "profile": {
+                            "object_id": "sph-Ae2UMH6gqr",
+                            "title": "美国最后的边疆阿拉斯加",
+                            "author": "Hui世界",
+                        },
+                    }
+                },
+                "worker_result_exhausted": True,
+            }
+            recovered = worker.recover_verified_shipinhao_delivery_result(
+                task,
+                {
+                    "message": "",
+                    "confirmation": "",
+                    "files": [],
+                    "no_reply": True,
+                    "private_failure": {"kind": "backend_execution_failed"},
+                },
+            )
+
+        self.assertFalse(recovered["no_reply"])
+        self.assertNotIn("private_failure", recovered)
+        self.assertEqual(recovered["files"], [str(media)])
+        self.assertIn("没有公开发布", recovered["message"])
+        self.assertFalse(task["worker_result_exhausted"])
+
+    def test_shipinhao_short_link_runs_resolver_pipeline_with_whisper_environment(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "shipinhao-short-link",
+            "chat": "Shares鏈接",
+            "source": {"local_id": 152, "kind": "text", "local_type": 1},
+            "routine": {"id": "file_download_save"},
+            "route_decision": {
+                "route_kind": "file_download_or_save",
+                "delivery_mode": "chat_attachment",
+                "public_publish_allowed": False,
+            },
+            "request": "Current coalesced request:\nhttps://weixin.qq.com/sph/Ae2UMH6gqr",
+            "context": [],
+        }
+        captured = {}
+
+        def fake_transcriber(command, *, output_dir, timeout, profile):
+            captured["command"] = command
+            media = output_dir / "source.mp4"
+            media.write_bytes(b"verified-video")
+            return {
+                "status": "transcribed",
+                "input_kind": "exact_sph_share_link",
+                "media_path": str(media),
+                "profile": {
+                    "object_id": "sph-Ae2UMH6gqr",
+                    "author": "Hui世界",
+                    "title": "美国最后的边疆阿拉斯加",
+                },
+                "agent_context_path": str(output_dir / "shipinhao-audio-transcript.md"),
+                "content_identity_verified": True,
+                "read_only": True,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(worker, "run_shipinhao_media_transcriber", side_effect=fake_transcriber):
+                result = worker.prepare_shipinhao_media_transcript_preflight(task, Path(tmp))
+
+        self.assertTrue(worker.should_prepare_shipinhao_media_transcript(task))
+        self.assertTrue(str(captured["command"][0]).endswith("/envs/whisper/bin/python"))
+        self.assertEqual(result["download_delivery"]["status"], "ready")
+        self.assertTrue(result["content_identity_verified"])
+
+    def test_worker_repairs_stale_publish_route_for_bare_shipinhao_link(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "stale-route",
+            "request": "Current coalesced request:\nhttps://weixin.qq.com/sph/Ae2UMH6gqr",
+            "route_decision": {
+                "route_kind": "publish_video",
+                "public_publish_intent": True,
+                "public_publish_allowed": True,
+            },
+            "routine": {"id": "video_publish_existing"},
+        }
+
+        changed = worker.enforce_current_task_route_safety(task)
+
+        self.assertTrue(changed)
+        self.assertEqual(task["route_decision"]["route_kind"], "file_download_or_save")
+        self.assertEqual(task["route_decision"]["delivery_mode"], "chat_attachment")
+        self.assertFalse(task["route_decision"]["needs_recent_media"])
+        self.assertFalse(task["route_decision"]["public_publish_allowed"])
+        self.assertNotIn("routine", task)
+        self.assertFalse(worker.has_public_publish_intent("https://weixin.qq.com/sph/Ae2UMH6gqr"))
+        self.assertTrue(worker.has_public_publish_intent("Publish this video to Shipinhao"))
+
     def test_shipinhao_media_preflight_automatically_captures_after_signed_url_failure(self) -> None:
         worker = load_worker()
         exact_card = (

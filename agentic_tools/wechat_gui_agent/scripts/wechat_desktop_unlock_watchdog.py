@@ -120,7 +120,15 @@ def main() -> int:
         print(json.dumps(event, ensure_ascii=False, sort_keys=True), flush=True)
         if not args.loop:
             return 0 if event.get("ok", False) else 1
-        time.sleep(max(args.interval, 5.0))
+        time.sleep(watchdog_sleep_seconds(args, event))
+
+
+def watchdog_sleep_seconds(args: argparse.Namespace, event: dict[str, Any]) -> float:
+    try:
+        retry_after = float(event.get("retry_after_seconds") or 0.0)
+    except (TypeError, ValueError):
+        retry_after = 0.0
+    return max(float(getattr(args, "interval", 20.0)), retry_after, 5.0)
 
 
 def watchdog_once(args: argparse.Namespace) -> dict[str, Any]:
@@ -151,6 +159,8 @@ def watchdog_once(args: argparse.Namespace) -> dict[str, Any]:
         if mobile_confirmation is not None:
             payload["action"] = "enter_weixin_and_confirm_phone"
             payload["mobile_confirmation"] = mobile_confirmation
+            if mobile_confirmation.get("retry_after_seconds"):
+                payload["retry_after_seconds"] = mobile_confirmation["retry_after_seconds"]
         payload["ok"] = bool(entered.get("ok")) and after.get("status") not in {"locked", "entry_required", "no_window"}
         if payload["ok"] and args.flush_deferred:
             payload["flush_deferred"] = flush_deferred_once()
@@ -242,7 +252,7 @@ def confirm_desktop_entry_from_mobile(args: argparse.Namespace) -> dict[str, Any
                     break
                 time.sleep(2.0)
         mobile_unlock: dict[str, Any] | None = None
-        if after.get("status") == "locked":
+        if after.get("status") in {"locked", "entry_required"}:
             mobile_unlock = unlock_desktop_from_mobile(
                 args.adb,
                 serial,
@@ -252,7 +262,17 @@ def confirm_desktop_entry_from_mobile(args: argparse.Namespace) -> dict[str, Any
             )
             time.sleep(2.0)
             after = desktop_lock_state(args.display, args.output_dir)
-        return {
+        retry_after_seconds = 0
+        if (
+            isinstance(mobile_unlock, dict)
+            and mobile_unlock.get("reason") == "mobile_desktop_device_page_not_visible"
+            and after.get("status") == "entry_required"
+        ):
+            retry_after_seconds = max(
+                60,
+                int(os.environ.get("WECHAT_UNLOCK_ENROLLMENT_RETRY_SECONDS", "300")),
+            )
+        result = {
             "ok": bool(foregrounded)
             and after.get("status") not in {"locked", "entry_required", "no_window"},
             "serial": redact_serial(serial),
@@ -261,6 +281,9 @@ def confirm_desktop_entry_from_mobile(args: argparse.Namespace) -> dict[str, Any
             "mobile_unlock": mobile_unlock,
             "after": after,
         }
+        if retry_after_seconds:
+            result["retry_after_seconds"] = retry_after_seconds
+        return result
     finally:
         if package_before == "com.tencent.wework":
             restore_android_package(args.adb, serial, package_before)
@@ -369,15 +392,39 @@ def unlock_desktop_from_mobile(
         adb_shell(adb, serial, ["input", "tap", str(banner_tap[0]), str(banner_tap[1])])
         time.sleep(1.0)
     focus_device_page = focused_window(adb, serial)
+    chat_list_recovery = False
+    if "WebWXLogoutUI" not in focus_device_page and "com.tencent.mm" in focus_device_page:
+        # LauncherUI is shared by the chat list and an open conversation. One
+        # bounded Back returns an open conversation to the list so the desktop
+        # device banner has a stable tap target.
+        adb_shell(adb, serial, ["input", "keyevent", "4"], check=False)
+        time.sleep(1.0)
+        focus_after_back = focused_window(adb, serial)
+        if "com.tencent.mm" in focus_after_back:
+            chat_list_recovery = True
+            adb_shell(
+                adb,
+                serial,
+                ["input", "tap", str(banner_tap[0]), str(banner_tap[1])],
+                check=False,
+            )
+            time.sleep(1.0)
+            focus_device_page = focused_window(adb, serial)
     if "WebWXLogoutUI" not in focus_device_page:
         return {
             "ok": False,
             "reason": "mobile_desktop_device_page_not_visible",
             "focus_before": focus_before,
             "focus_after_banner": focus_device_page,
+            "chat_list_recovery": chat_list_recovery,
             "before_screenshot": str(before),
         }
-    state_before = mobile_desktop_lock_state(adb, serial, screenshot_path=before)
+    device_page_screenshot = mobile_screenshot(adb, serial, output_dir, "device-page")
+    state_before = mobile_desktop_lock_state(
+        adb,
+        serial,
+        screenshot_path=device_page_screenshot,
+    )
     if state_before == "locked":
         tap_count = 1
     elif state_before == "unlocked":
@@ -411,10 +458,12 @@ def unlock_desktop_from_mobile(
         "ok": final_state == "unlocked",
         "focus_before": focus_before,
         "focus_after_banner": focus_device_page,
+        "chat_list_recovery": chat_list_recovery,
         "after_focus": focused_window(adb, serial),
         "state_before": state_before,
         "states_after_tap": states_after_tap,
         "before_screenshot": str(before),
+        "device_page_screenshot": str(device_page_screenshot),
         "after_screenshot": str(after),
     }
 
@@ -503,8 +552,19 @@ def mobile_screenshot(adb: str, serial: str, output_dir: Path, label: str) -> Pa
 
 
 def focused_window(adb: str, serial: str) -> str:
-    proc = adb_shell(adb, serial, ["dumpsys", "window"], check=False)
-    lines = [line.strip() for line in proc.stdout.splitlines() if "mCurrentFocus" in line or "mFocusedApp" in line]
+    proc = adb_shell(adb, serial, ["dumpsys", "window", "displays"], check=False)
+    lines = [
+        line.strip()
+        for line in proc.stdout.splitlines()
+        if "mCurrentFocus" in line or "mFocusedApp" in line
+    ]
+    if not lines:
+        proc = adb_shell(adb, serial, ["dumpsys", "window"], check=False)
+        lines = [
+            line.strip()
+            for line in proc.stdout.splitlines()
+            if "mCurrentFocus" in line or "mFocusedApp" in line
+        ]
     return " | ".join(lines)[:1000]
 
 

@@ -41,6 +41,93 @@ def card_xml(url: str = "http://wxapp.tc.qq.com/video?id=exact-token") -> str:
 
 
 class ShipinhaoMediaTranscribeTests(unittest.TestCase):
+    def test_profile_recognizes_exact_sph_share_link_without_publication_semantics(self) -> None:
+        module = load_module()
+
+        profile = module.extract_shipinhao_media_profile("https://weixin.qq.com/sph/Ae2UMH6gqr")
+
+        self.assertTrue(profile["detected"])
+        self.assertEqual(profile["source_kind"], "sph_share_link")
+        self.assertEqual(profile["share_token"], "Ae2UMH6gqr")
+        self.assertEqual(profile["object_id"], "sph-Ae2UMH6gqr")
+        self.assertEqual(profile["media_urls"], [])
+
+    def test_current_share_link_is_not_cross_matched_to_older_finder_xml(self) -> None:
+        module = load_module()
+        source = (
+            "Current coalesced request:\nhttps://weixin.qq.com/sph/Ae2UMH6gqr\n\n"
+            "Older context:\n" + card_xml()
+        )
+
+        profile = module.extract_shipinhao_media_profile(source)
+
+        self.assertEqual(profile["source_kind"], "sph_share_link")
+        self.assertEqual(profile["object_id"], "sph-Ae2UMH6gqr")
+        self.assertNotEqual(profile["object_id"], "14712921966547245212")
+        self.assertEqual(profile["media_urls"], [])
+
+    def test_pipeline_resolves_downloads_and_transcribes_exact_sph_share_link(self) -> None:
+        module = load_module()
+        resolved = {
+            "detected": True,
+            "source_kind": "sph_share_link",
+            "share_url": "https://weixin.qq.com/sph/Ae2UMH6gqr",
+            "share_token": "Ae2UMH6gqr",
+            "object_id": "sph-Ae2UMH6gqr",
+            "identity_key": "sph-Ae2UMH6gqr",
+            "title": "美国最后的边疆阿拉斯加",
+            "author": "Hui世界",
+            "duration_seconds": 0,
+            "media_type": "4",
+            "media_urls": ["https://finder.video.qq.com/video?signed=1"],
+            "cover_urls": [],
+            "content_identity_verified": True,
+        }
+
+        def fake_download(url, target, *, max_bytes, timeout):
+            target.write_bytes(b"video")
+            return {"bytes": 5, "sha256": "a" * 64, "source_url_sha256": "b" * 64}
+
+        def fake_extract(source, target, *, timeout, end_seconds=None):
+            target.write_bytes(b"RIFF" + b"\0" * 128)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                mock.patch.object(module, "resolve_sph_share_profile", return_value=resolved),
+                mock.patch.object(module, "download_media", side_effect=fake_download),
+                mock.patch.object(
+                    module,
+                    "probe_media",
+                    return_value={"duration_seconds": 22.0, "audio_stream_count": 1, "video_stream_count": 1},
+                ),
+                mock.patch.object(module, "extract_audio", side_effect=fake_extract),
+                mock.patch.object(
+                    module,
+                    "transcribe_audio",
+                    return_value={
+                        "text": "阿拉斯加是美国最后的边疆。",
+                        "segments": [{"start": 0.0, "end": 2.0, "text": "阿拉斯加是美国最后的边疆。"}],
+                        "model": "medium",
+                        "backend": "whisper",
+                        "language": "zh",
+                    },
+                ),
+                mock.patch.object(module, "resolve_whisper_model", return_value="medium"),
+            ):
+                result = module.run_pipeline(
+                    "https://weixin.qq.com/sph/Ae2UMH6gqr",
+                    root / "out",
+                    cache_root=root / "cache",
+                    public_mirror_recovery=False,
+                )
+
+        self.assertEqual(result["status"], "transcribed")
+        self.assertEqual(result["input_kind"], "exact_sph_share_link")
+        self.assertEqual(result["profile"]["title"], "美国最后的边疆阿拉斯加")
+        self.assertEqual(result["profile"]["author"], "Hui世界")
+        self.assertTrue(result["content_identity_verified"])
+
     def test_profile_extracts_exact_media_identity_and_url(self) -> None:
         module = load_module()
 
@@ -63,6 +150,25 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
             module.validate_media_url("https://example.com/video.mp4")
         with self.assertRaises(ValueError):
             module.validate_media_url("http://127.0.0.1/private.mp4")
+
+    def test_media_dns_accepts_proxy_fake_ip_only_beside_public_address(self) -> None:
+        module = load_module()
+        fake_info = [
+            (2, 1, 6, "", ("198.18.0.45", 443)),
+            (10, 1, 6, "", ("240d:c010:164:1::1b", 443, 0, 0)),
+        ]
+
+        with mock.patch.object(module.socket, "getaddrinfo", return_value=fake_info):
+            module.reject_nonpublic_host("wxapp.tc.qq.com")
+
+        with mock.patch.object(module.socket, "getaddrinfo", return_value=fake_info[:1]):
+            with self.assertRaisesRegex(ValueError, "no public addresses"):
+                module.reject_nonpublic_host("wxapp.tc.qq.com")
+
+        private_info = [(2, 1, 6, "", ("192.168.1.20", 443))]
+        with mock.patch.object(module.socket, "getaddrinfo", return_value=private_info):
+            with self.assertRaisesRegex(ValueError, "non-public"):
+                module.reject_nonpublic_host("wxapp.tc.qq.com")
 
     def test_pipeline_writes_agent_context_without_signed_url(self) -> None:
         module = load_module()

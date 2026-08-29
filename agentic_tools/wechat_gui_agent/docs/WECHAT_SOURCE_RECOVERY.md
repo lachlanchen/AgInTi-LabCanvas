@@ -5,7 +5,9 @@
 Read Gongzhonghao (`mp.weixin.qq.com`) articles and gather useful Shipinhao
 evidence without asking the owner to complete a verification page. This is a
 read-only research path: it does not focus the GUI, open a browser, post a
-comment, like, follow, or invoke Yuanbao.
+comment, like, follow, or send a Yuanbao chat prompt. Exact `weixin.qq.com/sph`
+links may use an already logged-in local Yuanbao session only as a private
+read-only URL parser.
 
 ## Article Pipeline
 
@@ -40,15 +42,36 @@ python agentic_tools/wechat_gui_agent/scripts/wechat_source_recovery.py \
 The source-recovery packet isolates title, author, object ID, and nonce ID from
 the current Finder card. Media evidence runs before comment intelligence:
 
-1. `shipinhao_media_transcribe.py` tries the exact card's allowlisted Tencent
+1. For an exact `https://weixin.qq.com/sph/...` source,
+   `shipinhao_share_link_resolver.py` reads the existing local Yuanbao cookie
+   through localhost CDP and starts `ltaoo/wx_channels_download` as a bounded,
+   non-root, parse-only provider. The generated private config explicitly
+   disables TUN, system proxy, proxy serving, MCP, certificate installation,
+   and unrelated download interception. The provider is stopped in `finally`.
+2. The resolver verifies the exact share token, author/title returned for that
+   link, and an allowlisted Tencent video URL. Signed URLs and cookies remain
+   private; only the verified MP4 and safe evidence enter the worker task.
+3. `shipinhao_media_transcribe.py` tries the exact card's allowlisted Tencent
    media URL with bounded download and SSRF checks.
-2. If the signed URL expired, the agent opens the exact card in native WeChat
+4. If the signed URL expired, the agent opens the exact card in native WeChat
    and runs `shipinhao_gui_audio_capture.py` with distinctive title/author terms.
-3. The capture helper binds to the active `WeChatAppEx` PipeWire stream, verifies
+5. The capture helper binds to the active `WeChatAppEx` PipeWire stream, verifies
    visible identity, stops on feed auto-advance, and writes a private
    object-ID/hash manifest.
-4. The worker discovers that manifest, validates it, transcribes the source-only
+6. The worker discovers that manifest, validates it, transcribes the source-only
    audio, and writes `task.preflight.shipinhao_media_transcript`.
+
+Never run `wx_channels_download` as a permanent root/TUN interceptor. A
+long-lived TUN provider can replace normal routes, break WeChat networking, and
+intercept unrelated desktop traffic. The supported LabCanvas path is one exact
+share link, one short-lived parse-only process, no GUI focus, and verified
+cleanup (`wx_video_download` absent and `tun0` absent) after every request.
+
+An exact Shipinhao card or `sph` link defaults to source intake: download the
+verified MP4, transcribe readable audio, return the MP4 plus one concise natural
+summary/transcript, and stop. A platform name or source URL is not publication
+authorization; public posting still requires an explicit current-message
+publish/post/upload action.
 
 Comment intelligence then checks:
 
@@ -104,6 +127,9 @@ human approval boundaries.
   comment exports (MIT; Windows runtime).
 - `qiye45/wechatVideoDownload`: Channels media URL capture reference; it does
   not provide comment intelligence.
+- `ltaoo/wx_channels_download`: exact `sph` share-link parsing through Yuanbao
+  and Finder Preview APIs. LabCanvas reuses only its bounded parse endpoint;
+  its TUN/system-proxy modes are explicitly disabled.
 
 Do not copy private article bodies, comment exports, cookies, chat rows, or
 source URLs into git.

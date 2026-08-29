@@ -1,8 +1,30 @@
 # WeChat Shipinhao Audio Transcription Workflow
 
+## Exact Share-Link Fast Path
+
+When the current source is `https://weixin.qq.com/sph/<token>`, use
+`agentic_tools/wechat_gui_agent/scripts/shipinhao_share_link_resolver.py` before
+native GUI capture. It reuses the logged-in localhost Yuanbao CDP cookie and a
+short-lived `ltaoo/wx_channels_download` parse-only subprocess. It must run as
+the normal user with `proxy.enabled=false`, `proxy.system=false`, `tun=false`,
+`skipInstallRootCert=true`, and MCP disabled. The process is always terminated
+after one result. Do not install a root certificate, change policy routes, or
+leave `wx_video_download` resident.
+
+The exact share token is the stable source identity when Finder does not expose
+an object ID. Prefer the returned H.264 URL, validate its Tencent host, download
+with byte/time limits, and require `ffprobe` to confirm readable video/audio
+streams. Keep cookies and signed URLs private. Run Whisper in the dedicated
+`~/miniconda3/envs/whisper` environment (GPU 1 by workstation default), then
+pass the safe transcript context to the resumed exact-chat agent.
+
+For a bare exact card/link, deliver the verified MP4 and one concise natural
+summary/transcript to the source chat. Do not call LazyEdit or any public
+platform unless the current message explicitly asks to process or publish.
+
 ## Purpose
 
-This workflow lets a LabCanvas worker read a WeChat Channels/Shipinhao share as source material, transcribe its actual audio, summarize it with the chat's resumed agent session, and return the answer to the originating chat. It is read-only: opening the shared card and recording local playback does not like, follow, comment, repost, or invoke Yuanbao.
+This workflow lets a LabCanvas worker read a WeChat Channels/Shipinhao share as source material, transcribe its actual audio, summarize it with the chat's resumed agent session, and return the answer to the originating chat. It is read-only: opening the shared card and recording local playback does not like, follow, comment, repost, or send a Yuanbao chat prompt. The exact-share fast path may reuse Yuanbao's authenticated parser endpoint without producing a public action.
 
 ## Evidence Pipeline
 

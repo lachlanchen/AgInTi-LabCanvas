@@ -3450,6 +3450,44 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertFalse(route["public_publish_allowed"])
         self.assertTrue(route["requires_third_party_publish_confirmation"])
 
+    def test_bare_shipinhao_share_link_downloads_and_returns_media_without_publication(self) -> None:
+        text = "https://weixin.qq.com/sph/Ae2UMH6gqr"
+        config = self.backend_chat_config("Shares鏈接")
+        row = self.row(text)
+
+        route = direct_chatops.fallback_route_decision(config, text, row, [row])
+        guarded = direct_chatops.enforce_route_safety(
+            {
+                **route,
+                "route_kind": "publish_video",
+                "public_publish_intent": True,
+                "public_publish_allowed": True,
+                "reason": "model mistook the platform marker for authorization",
+            },
+            text,
+            route,
+        )
+
+        self.assertEqual(route["route_kind"], "file_download_or_save")
+        self.assertEqual(route["delivery_mode"], "chat_attachment")
+        self.assertFalse(route["needs_recent_media"])
+        self.assertFalse(route["public_publish_allowed"])
+        self.assertEqual(guarded["route_kind"], "file_download_or_save")
+        self.assertEqual(guarded["delivery_mode"], "chat_attachment")
+        self.assertFalse(guarded["needs_recent_media"])
+        self.assertFalse(guarded["public_publish_allowed"])
+
+    def test_explicit_shipinhao_publication_verb_remains_publish_authorization(self) -> None:
+        text = "Publish this video to Shipinhao."
+        config = self.backend_chat_config("🍓My devices")
+        row = self.row(text)
+
+        route = direct_chatops.fallback_route_decision(config, text, row, [row])
+
+        self.assertTrue(direct_chatops.has_public_publish_intent(text))
+        self.assertEqual(route["route_kind"], "publish_video")
+        self.assertTrue(route["public_publish_allowed"])
+
     def test_direct_publish_question_is_authorization_without_third_party_wait(self) -> None:
         config = self.backend_chat_config("懒人科研")
         for text in ("你能发布今天的视频吗", "可以发布吗"):
@@ -4422,7 +4460,7 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertNotIn("create Markdown and a PDF report", route["task"])
         self.assertIn("local_id=77", route["task"])
 
-    def test_web_clip_inbox_routes_shipinhao_card_to_comment_aware_summary(self) -> None:
+    def test_web_clip_inbox_routes_shipinhao_card_to_download_transcribe_and_summary(self) -> None:
         config = self.backend_chat_config("鏈接", "web_clip_inbox")
         row = self.row(
             "<msg><appmsg><type>51</type><title>视频号分享</title>"
@@ -4439,12 +4477,12 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
         self.assertIsNotNone(route)
         assert route is not None
         self.assertEqual(route["ack"], "")
-        self.assertEqual(route["route_decision"]["route_kind"], "research_or_summary")
+        self.assertEqual(route["route_decision"]["route_kind"], "file_download_or_save")
+        self.assertEqual(route["route_decision"]["delivery_mode"], "chat_attachment")
+        self.assertFalse(route["route_decision"]["public_publish_allowed"])
         self.assertIn("Shipinhao/视频号/Finder", route["task"])
-        self.assertIn("Yuanbao/transcript/summary comments", route["task"])
-        self.assertIn("one concise, natural chat summary", route["task"])
-        self.assertIn("explicitly asks for a PDF/report", route["task"])
-        self.assertNotIn("create Markdown and a PDF report", route["task"])
+        self.assertIn("download and verify the MP4", route["task"])
+        self.assertIn("never infer public publication permission", route["task"])
 
     def test_personal_organizer_routes_publish_platform_shorthand(self) -> None:
         config = self.base_config()

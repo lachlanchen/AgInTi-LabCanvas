@@ -522,9 +522,45 @@ def task_source_text(task: dict[str, Any]) -> str:
             continue
         if source_id is not None and safe_int(row.get("local_id")) == source_id:
             source_rows.append(str(row.get("content") or ""))
+    adjacent_references = adjacent_source_references(task, source, source_id)
     route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
     route_values = [str(route.get(key) or "") for key in ("url", "source_url", "object_id", "nonce_id", "title", "author")]
-    return "\n".join(value for value in [focus, reference_section, *source_rows, *route_values] if value).strip()
+    return "\n".join(
+        value
+        for value in [focus, reference_section, *adjacent_references, *source_rows, *route_values]
+        if value
+    ).strip()
+
+
+def adjacent_source_references(
+    task: dict[str, Any],
+    source: dict[str, Any],
+    source_id: int | None,
+) -> list[str]:
+    """Return only an exact attachment immediately preceding a text command."""
+    if source_id is None or str(source.get("kind") or "").casefold() != "text":
+        return []
+    source_time = safe_int(source.get("create_time"))
+    source_sender = str(source.get("sender") or "").strip()
+    references: list[str] = []
+    for row in task.get("context") or []:
+        if not isinstance(row, dict) or safe_int(row.get("local_id")) != source_id - 1:
+            continue
+        row_kind = str(row.get("kind") or "").casefold()
+        row_type = safe_int(row.get("local_type"))
+        if row_kind == "text" or row_type == 1:
+            continue
+        row_time = safe_int(row.get("create_time"))
+        if source_time is not None and row_time is not None:
+            if row_time > source_time or source_time - row_time > 120:
+                continue
+        row_sender = str(row.get("sender") or "").strip()
+        if source_sender and row_sender and source_sender != row_sender:
+            continue
+        content = str(row.get("content") or "").strip()
+        if content:
+            references.append(content)
+    return references
 
 
 def extract_current_request(request: str) -> str:

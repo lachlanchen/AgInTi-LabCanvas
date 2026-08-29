@@ -341,6 +341,7 @@ ROUTINES: dict[str, RoutineDefinition] = {
             "Never use nearby media if exact local_id/token matching fails.",
             "Passive cache or background intake stays silent; only an explicit local-save request gets a completion receipt.",
             "A bare video attachment authorizes exact-source caching only. Transcription, LazyEdit processing, return delivery, and public publication require a separate same-chat text instruction.",
+            "An exact Shipinhao card or weixin.qq.com/sph share link is source material rather than a bare uploaded video: resolve the exact identity, download and verify the MP4, transcribe readable audio, return the MP4 plus a concise natural summary/transcript once, and never infer public publication permission from the platform or URL.",
             "Use browser assist for login/CAPTCHA/download consent instead of bypassing the site.",
         ),
     ),

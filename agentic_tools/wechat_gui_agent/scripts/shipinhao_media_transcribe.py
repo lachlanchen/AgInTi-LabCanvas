@@ -37,6 +37,7 @@ ALLOWED_MEDIA_HOST_SUFFIXES = (
     "myqcloud.com",
     "weixin.qq.com",
 )
+PROXY_FAKE_IP_NETWORKS = (ipaddress.ip_network("198.18.0.0/15"),)
 SUCCESS_STATUSES = {"transcribed", "cached"}
 PUBLIC_MIRROR_RECOVERY_DEFAULT = os.environ.get("WECHAT_SHIPINHAO_PUBLIC_MIRROR_RECOVERY", "1") != "0"
 PUBLIC_MIRROR_SEARCH_LIMIT = 12
@@ -44,11 +45,21 @@ PUBLIC_MIRROR_QUERY_LIMIT = 8
 PUBLIC_MIRROR_CANDIDATE_LIMIT = 16
 PUBLIC_MIRROR_MAX_SOURCE_SECONDS = 900.0
 PUBLIC_MIRROR_RESOLVER_VERSION = 2
+SPH_SHARE_URL_PATTERN = re.compile(
+    r"https?://weixin\.qq\.com/sph/(?P<token>[A-Za-z0-9_-]{4,128})(?:[^\s<>\"']*)?",
+    flags=re.I,
+)
 
 
 def extract_shipinhao_media_profile(text: str) -> dict[str, Any]:
     """Extract only Finder identity and media fields from the supplied card."""
-    blocks = re.findall(r"<finderFeed(?:\s[^>]*)?>(.*?)</finderFeed>", str(text or ""), flags=re.I | re.S)
+    source_text = str(text or "")
+    share_urls = extract_sph_share_urls(source_text)
+    first_share = SPH_SHARE_URL_PATTERN.search(source_text)
+    first_finder = re.search(r"<finderFeed(?:\s[^>]*)?>", source_text, flags=re.I)
+    if first_share and (first_finder is None or first_share.start() < first_finder.start()):
+        return sph_share_profile(share_urls[0])
+    blocks = re.findall(r"<finderFeed(?:\s[^>]*)?>(.*?)</finderFeed>", source_text, flags=re.I | re.S)
     candidates: list[dict[str, Any]] = []
     for block in blocks:
         media_blocks = re.findall(r"<media(?:\s[^>]*)?>(.*?)</media>", block, flags=re.I | re.S)
@@ -74,6 +85,8 @@ def extract_shipinhao_media_profile(text: str) -> dict[str, Any]:
         }
         candidates.append(profile)
     if not candidates:
+        if share_urls:
+            return sph_share_profile(share_urls[0])
         return {"detected": False, "media_urls": []}
     candidates.sort(
         key=lambda item: (
@@ -87,6 +100,82 @@ def extract_shipinhao_media_profile(text: str) -> dict[str, Any]:
     result["title"] = compact_text(result.get("title"), 300)
     result["author"] = compact_text(result.get("author"), 160)
     return result
+
+
+def sph_share_profile(url: str) -> dict[str, Any]:
+    token = str(url).rsplit("/", 1)[-1]
+    return {
+        "detected": True,
+        "source_kind": "sph_share_link",
+        "share_url": url,
+        "share_token": token,
+        "object_id": f"sph-{token}",
+        "identity_key": f"sph-{token}",
+        "title": "",
+        "author": "",
+        "duration_seconds": 0.0,
+        "media_urls": [],
+        "cover_urls": [],
+    }
+
+
+def extract_sph_share_urls(text: str) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for match in SPH_SHARE_URL_PATTERN.finditer(str(text or "")):
+        url = f"https://weixin.qq.com/sph/{match.group('token')}"
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def resolve_sph_share_profile(url: str) -> dict[str, Any]:
+    """Load the bounded resolver lazily so the transcriber stays standalone."""
+    module_path = Path(__file__).with_name("shipinhao_share_link_resolver.py")
+    spec = importlib.util.spec_from_file_location("shipinhao_share_link_resolver_runtime", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Shipinhao share-link resolver could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return dict(module.resolve_share_link(url))
+
+
+def merge_resolved_share_profile(card: dict[str, Any], resolved: dict[str, Any]) -> dict[str, Any]:
+    """Merge only the same exact share identity and reject conflicting labels."""
+    expected_token = str(card.get("share_token") or "").strip()
+    observed_token = str(resolved.get("share_token") or "").strip()
+    if not expected_token or observed_token != expected_token:
+        raise ValueError("resolved Shipinhao share token does not match the exact source")
+    for field in ("title", "author"):
+        expected = normalize_identity(card.get(field))
+        observed = normalize_identity(resolved.get(field))
+        if expected and observed and expected != observed:
+            raise ValueError(f"resolved Shipinhao {field} does not match the exact source card")
+    merged = dict(card)
+    for field in (
+        "source_kind",
+        "share_url",
+        "share_token",
+        "object_id",
+        "identity_key",
+        "title",
+        "author",
+        "duration_seconds",
+        "media_type",
+        "resolved_at",
+        "resolver",
+        "content_identity_verified",
+    ):
+        if resolved.get(field) not in (None, "", [], {}):
+            merged[field] = resolved[field]
+    merged["media_urls"] = unique_strings(
+        [*(resolved.get("media_urls") or []), *(card.get("media_urls") or [])]
+    )
+    merged["cover_urls"] = unique_strings(
+        [*(resolved.get("cover_urls") or []), *(card.get("cover_urls") or [])]
+    )
+    return merged
 
 
 def extract_xml_values(text: str, tag: str) -> list[str]:
@@ -141,10 +230,18 @@ def reject_nonpublic_host(host: str) -> None:
         raise ValueError(f"media host resolution failed: {exc}") from exc
     if not addresses:
         raise ValueError("media host resolved to no addresses")
+    has_public_address = False
     for address in addresses:
         ip = ipaddress.ip_address(address)
+        if ip.is_global:
+            has_public_address = True
+            continue
+        if any(ip in network for network in PROXY_FAKE_IP_NETWORKS):
+            continue
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
             raise ValueError("media host resolved to a non-public address")
+    if not has_public_address:
+        raise ValueError("media host resolved to no public addresses")
 
 
 class AllowlistedRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -1325,6 +1422,13 @@ def run_pipeline(
     cache_root = cache_root.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     profile = extract_shipinhao_media_profile(source_text)
+    share_resolution_warning = ""
+    share_url = str(profile.get("share_url") or "").strip()
+    if share_url:
+        try:
+            profile = merge_resolved_share_profile(profile, resolve_sph_share_profile(share_url))
+        except Exception as exc:
+            share_resolution_warning = f"exact share-link resolution was unavailable: {type(exc).__name__}: {str(exc)[:300]}"
     public_profile = {key: value for key, value in profile.items() if key not in {"media_urls", "cover_urls"}}
     result: dict[str, Any] = {
         "status": "no_media_url",
@@ -1334,6 +1438,8 @@ def run_pipeline(
         "profile": public_profile,
         "warnings": [],
     }
+    if share_resolution_warning:
+        result["warnings"].append(share_resolution_warning)
     raw_urls = profile.get("media_urls") if isinstance(profile.get("media_urls"), list) else []
     safe_urls: list[str] = []
     for raw_url in raw_urls:
@@ -1366,7 +1472,7 @@ def run_pipeline(
         return write_result(result, output_dir)
 
     source_url = safe_urls[0] if safe_urls else ""
-    identity = str(profile.get("object_id") or sha256_text(source_url or source_text)[:24])
+    identity = str(profile.get("identity_key") or profile.get("object_id") or sha256_text(source_url or source_text)[:24])
     cache_dir = cache_root / safe_component(identity)
     cache_dir.mkdir(parents=True, exist_ok=True)
     result["cache_key"] = safe_component(identity)
@@ -1497,6 +1603,16 @@ def process_locked(
         result["pipeline_stage"] = "media_resolution" if public_mirror_attempted else ("download" if direct_media_error else "media_resolution")
         detail = f" ({direct_media_error})" if direct_media_error else ""
         raise RuntimeError(f"no verified Shipinhao media was available{detail}")
+    input_kind = "card_media_url"
+    if captured_audio:
+        input_kind = "verified_gui_audio_capture" if capture_metadata else "operator_supplied_gui_audio_capture"
+    elif public_mirror.get("status") == "verified":
+        input_kind = "content_verified_public_mirror"
+    elif str(profile.get("source_kind") or "") == "sph_share_link":
+        input_kind = "exact_sph_share_link"
+    content_identity_verified = bool(
+        profile.get("content_identity_verified") or public_mirror.get("status") == "verified"
+    )
     duration = safe_float(media_probe.get("duration_seconds")) or safe_float(profile.get("duration_seconds")) or 0
     if duration > max_duration_seconds:
         raise RuntimeError(f"Shipinhao video duration {duration:.1f}s exceeds configured limit {max_duration_seconds:.1f}s")
@@ -1507,6 +1623,8 @@ def process_locked(
             verified_silent_media=True,
             media_probe=media_probe,
             media_path=str(media_path),
+            input_kind=input_kind,
+            content_identity_verified=content_identity_verified,
             error="the verified Shipinhao video has no audio stream",
         )
         return result
@@ -1526,11 +1644,6 @@ def process_locked(
         device=device,
         language=language,
     )
-    input_kind = "card_media_url"
-    if captured_audio:
-        input_kind = "verified_gui_audio_capture" if capture_metadata else "operator_supplied_gui_audio_capture"
-    elif public_mirror.get("status") == "verified":
-        input_kind = "content_verified_public_mirror"
     transcript.update(
         {
             "object_id": str(profile.get("object_id") or ""),
@@ -1545,7 +1658,7 @@ def process_locked(
             "visual_identity_verified": bool(capture_metadata),
             "capture_manifest_sha256": str(capture_metadata.get("manifest_sha256") or ""),
             "identity_terms": list(capture_metadata.get("identity_terms") or []),
-            "content_identity_verified": bool(public_mirror.get("status") == "verified"),
+            "content_identity_verified": content_identity_verified,
             "public_mirror_validation": dict(public_mirror.get("validation") or {}),
             "public_mirror_resolver_version": (
                 PUBLIC_MIRROR_RESOLVER_VERSION if public_mirror.get("status") == "verified" else 0
@@ -1580,7 +1693,7 @@ def process_locked(
             "media_probe": media_probe,
             "input_kind": input_kind,
             "visual_identity_verified": bool(capture_metadata),
-            "content_identity_verified": bool(public_mirror.get("status") == "verified"),
+            "content_identity_verified": content_identity_verified,
             "public_mirror_validation": dict(public_mirror.get("validation") or {}),
             "download": {key: value for key, value in download.items() if key != "source_url"},
         }
@@ -1593,7 +1706,11 @@ def cached_result(cached: dict[str, Any], cache_dir: Path, output_dir: Path) -> 
     context = write_transcript_context(cached, output_dir / "shipinhao-audio-transcript.md")
     media_filename = str(cached.get("media_filename") or "")
     if not media_filename:
-        media_filename = "source.mp4" if cached.get("input_kind") == "card_media_url" else "captured-source.wav"
+        media_filename = (
+            "source.mp4"
+            if cached.get("input_kind") in {"card_media_url", "exact_sph_share_link"}
+            else "captured-source.wav"
+        )
     media_path = cache_dir / media_filename
     capture_sha256 = str(cached.get("source_capture_sha256") or "")
     audio_filename = str(cached.get("audio_filename") or "")

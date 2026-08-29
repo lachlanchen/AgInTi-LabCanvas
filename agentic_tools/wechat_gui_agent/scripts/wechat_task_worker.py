@@ -1257,6 +1257,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         result = enforce_worker_result_contract(task, result, result_text)
         result = attach_audio_transcript_reference(task, result)
         result = prepare_result_files(result, result_text, task=task)
+        result = recover_verified_shipinhao_delivery_result(task, result)
         result = enforce_reader_facing_pdf_quality(task, result)
         result = audit_and_repair_worker_completion(task, result)
     except Exception as exc:
@@ -7219,6 +7220,7 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
     repair-oriented, or tool-heavy work falls through to the resumed per-chat
     Codex worker session below.
     """
+    enforce_current_task_route_safety(task)
     artifact_dir = worker_artifact_dir(task)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     task.setdefault("artifact_dir", str(artifact_dir))
@@ -7275,6 +7277,12 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
     if preflight:
         task["preflight"] = preflight
         persist_task_progress(task)
+    shipinhao_delivery = run_verified_shipinhao_delivery_synthesis(task, policy)
+    if shipinhao_delivery is not None:
+        task["orchestrator"]["last_action"] = "deliver_verified_shipinhao_source"
+        task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
+        persist_task_progress(task)
+        return shipinhao_delivery
     if should_agent_supervise_existing_video_publish(task):
         publish_policy = existing_video_publish_agent_policy(policy)
         task["orchestrator"]["last_action"] = "resume_publish_agent_session"
@@ -7311,6 +7319,42 @@ def run_task_orchestrator(task: dict[str, Any], policy: dict[str, Any]) -> str:
     task["orchestrator"]["last_action"] = "resume_codex_worker_session"
     task["orchestrator"]["last_action_at"] = datetime.now().isoformat(timespec="seconds")
     return run_worker_agent_session(task, policy)
+
+
+def enforce_current_task_route_safety(task: dict[str, Any]) -> bool:
+    """Repair stale/model routes when an exact Finder source is not a publish command."""
+    current_request = task_focus_text(task)
+    if "weixin.qq.com/sph/" not in current_request.casefold() or has_public_publish_intent(current_request):
+        return False
+    route = dict(task_route_decision(task))
+    changed = str(route.get("route_kind") or "") != "file_download_or_save" or bool(
+        route.get("public_publish_allowed")
+    )
+    route.update(
+        {
+            "route_kind": "file_download_or_save",
+            "project": "generic",
+            "worker_needed": True,
+            "needs_recent_media": False,
+            "delivery_mode": "chat_attachment",
+            "public_publish_intent": False,
+            "public_publish_allowed": False,
+            "external_action_allowed": True,
+            "source_policy": "current_plus_explicit_refs",
+            "reason": "exact Shipinhao share link resolved as source material; publication requires an explicit current action verb",
+        }
+    )
+    task["route_decision"] = route
+    instruction = dict(task.get("instruction_contract") or {})
+    instruction["route_kind"] = "file_download_or_save"
+    instruction["irreversible_actions_require_current_message_intent"] = True
+    task["instruction_contract"] = instruction
+    if changed:
+        task.pop("routine", None)
+        task.pop("routine_contract", None)
+        task["route_repaired_at"] = datetime.now().isoformat(timespec="seconds")
+        task["route_repair_reason"] = "exact_shipinhao_source_without_publish_action"
+    return changed
 
 
 def recover_verified_publish_delivery_result(
@@ -8927,6 +8971,22 @@ def audit_and_repair_worker_completion(
     result: dict[str, Any],
 ) -> dict[str, Any]:
     """Check every numbered source row and run at most one corrective turn."""
+    if verified_shipinhao_delivery_result_complete(task, result):
+        expected = completion_expected_item_ids(task)
+        task["completion_audit"] = {
+            "status": "verified_source_delivery",
+            "attempts": [],
+            "repair_attempted": False,
+            "repair_succeeded": False,
+        }
+        task["message_coverage"] = {
+            "status": "covered",
+            "expected_item_ids": expected,
+            "covered_item_ids": expected,
+            "unresolved_item_ids": [],
+            "missing": [],
+        }
+        return result
     if task.get("artifact_recovery_only"):
         task["completion_audit"] = {
             "status": "skipped_delivery_recovery",
@@ -9802,10 +9862,396 @@ def should_prepare_shipinhao_comment_intel(task: dict[str, Any]) -> bool:
 
 
 def should_prepare_shipinhao_media_transcript(task: dict[str, Any]) -> bool:
-    if not task_is_research_summary(task):
+    if not (task_is_research_summary(task) or shipinhao_download_delivery_requested(task)):
         return False
     profile = extract_shipinhao_media_profile(source_recovery_task_text(task))
     return bool(profile.get("detected") and profile.get("object_id"))
+
+
+def shipinhao_download_delivery_requested(task: dict[str, Any] | None) -> bool:
+    if not isinstance(task, dict):
+        return False
+    route = task_route_decision(task)
+    if str(route.get("route_kind") or "") != "file_download_or_save":
+        return False
+    profile = extract_shipinhao_media_profile(source_recovery_task_text(task))
+    return bool(
+        profile.get("detected")
+        and profile.get("object_id")
+        and (
+            request_explicitly_asks_for_file_delivery(task_focus_text(task))
+            or str(route.get("delivery_mode") or "") == "chat_attachment"
+        )
+    )
+
+
+def shipinhao_delivery_filename(profile: dict[str, Any], suffix: str = ".mp4") -> str:
+    identity = str(profile.get("object_id") or "")[-20:]
+    label = "-".join(
+        value for value in (
+            str(profile.get("author") or "").strip(),
+            str(profile.get("title") or "").strip(),
+        )
+        if value
+    )
+    label = re.sub(r"[^\w.-]+", "-", label, flags=re.UNICODE).strip("-._")[:96]
+    stem = label or "shipinhao-video"
+    if identity and identity not in stem:
+        stem = f"{stem}-{identity}"
+    return f"{stem}{suffix if suffix.startswith('.') else f'.{suffix}'}"
+
+
+def promote_shipinhao_download_for_delivery(
+    task: dict[str, Any],
+    output_dir: Path,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    if not shipinhao_download_delivery_requested(task):
+        return result
+    if str(result.get("status") or "") not in {"transcribed", "cached", "no_audio"}:
+        return result
+    if str(result.get("input_kind") or "") not in {"card_media_url", "exact_sph_share_link"}:
+        result["download_delivery"] = {
+            "status": "source_not_exact_binary",
+            "verified": False,
+        }
+        return result
+    source = Path(str(result.get("media_path") or "")).expanduser()
+    if not source.is_file() or source.suffix.lower() not in VIDEO_SUFFIXES:
+        result["download_delivery"] = {
+            "status": "verified_media_missing",
+            "verified": False,
+        }
+        return result
+    delivery_dir = output_dir / "downloaded_media"
+    delivery_dir.mkdir(parents=True, exist_ok=True)
+    destination = delivery_dir / shipinhao_delivery_filename(
+        result.get("profile") if isinstance(result.get("profile"), dict) else {},
+        source.suffix.lower(),
+    )
+    if source.resolve() != destination.resolve():
+        shutil.copy2(source, destination)
+    result["delivery_media_path"] = str(destination.resolve())
+    result["download_delivery"] = {
+        "status": "ready",
+        "verified": destination.is_file() and destination.stat().st_size > 0,
+        "path": str(destination.resolve()),
+        "size_bytes": destination.stat().st_size if destination.is_file() else 0,
+        "source_kind": str(result.get("input_kind") or "exact_finder_card_media_url"),
+    }
+    transcript_path = write_shipinhao_delivery_transcript(result, delivery_dir)
+    if transcript_path is not None:
+        result["delivery_transcript_path"] = str(transcript_path.resolve())
+        result["transcript_delivery"] = {
+            "status": "ready",
+            "verified": transcript_path.is_file() and transcript_path.stat().st_size > 0,
+            "path": str(transcript_path.resolve()),
+            "size_bytes": transcript_path.stat().st_size if transcript_path.is_file() else 0,
+        }
+    return result
+
+
+def write_shipinhao_delivery_transcript(
+    result: dict[str, Any],
+    delivery_dir: Path,
+) -> Path | None:
+    """Write a recipient-safe transcript beside an exact downloaded video."""
+
+    if str(result.get("status") or "") not in {"transcribed", "cached"}:
+        return None
+    context_path = Path(str(result.get("agent_context_path") or "")).expanduser()
+    body = ""
+    if context_path.is_file():
+        try:
+            source = context_path.read_text(encoding="utf-8")
+        except OSError:
+            source = ""
+        marker = "## Timestamped Transcript"
+        body = source.split(marker, 1)[1].strip() if marker in source else ""
+    if not body:
+        body = str(result.get("text_preview") or "").strip()
+    if not body:
+        return None
+
+    profile = result.get("profile") if isinstance(result.get("profile"), dict) else {}
+    title = sanitize_worker_agent_text(profile.get("title") or "视频号视频", max_len=160)
+    author = sanitize_worker_agent_text(profile.get("author") or "", max_len=100)
+    duration = float(result.get("duration_seconds") or 0.0)
+    metadata = [f"标题：{title}"]
+    if author:
+        metadata.append(f"作者：{author}")
+    if duration > 0:
+        metadata.append(f"时长：{duration:.1f} 秒")
+    transcript_text = "\n".join(metadata + ["", "时间戳转写：", body]).strip() + "\n"
+    stem = Path(shipinhao_delivery_filename(profile)).stem
+    destination = delivery_dir / f"{stem}-音频转写.txt"
+    destination.write_text(transcript_text, encoding="utf-8")
+    return destination
+
+
+def shipinhao_auto_delivery_files(task: dict[str, Any] | None) -> list[str]:
+    if not shipinhao_download_delivery_requested(task):
+        return []
+    preflight = task.get("preflight") if isinstance(task, dict) and isinstance(task.get("preflight"), dict) else {}
+    finder = preflight.get("shipinhao_media_transcript") if isinstance(preflight.get("shipinhao_media_transcript"), dict) else {}
+    candidates = [
+        Path(str(finder.get("delivery_media_path") or "")).expanduser(),
+        Path(str(finder.get("delivery_transcript_path") or "")).expanduser(),
+    ]
+    return unique_strings(
+        [str(candidate.resolve()) for candidate in candidates if candidate.is_file()]
+    )
+
+
+def verified_shipinhao_delivery_record(task: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return one exact, readable Finder source that is ready for chat delivery."""
+
+    if not shipinhao_download_delivery_requested(task):
+        return None
+    preflight = task.get("preflight") if isinstance(task, dict) and isinstance(task.get("preflight"), dict) else {}
+    finder = preflight.get("shipinhao_media_transcript") if isinstance(preflight.get("shipinhao_media_transcript"), dict) else {}
+    status = str(finder.get("status") or "")
+    input_kind = str(finder.get("input_kind") or "")
+    delivery = finder.get("download_delivery") if isinstance(finder.get("download_delivery"), dict) else {}
+    profile = finder.get("profile") if isinstance(finder.get("profile"), dict) else {}
+    media_path = Path(str(finder.get("delivery_media_path") or "")).expanduser()
+    exact_identity = bool(
+        profile.get("object_id")
+        and (
+            input_kind == "card_media_url"
+            or bool(finder.get("content_identity_verified"))
+            or bool(profile.get("content_identity_verified"))
+        )
+    )
+    if (
+        status not in {"transcribed", "cached", "no_audio"}
+        or input_kind not in {"card_media_url", "exact_sph_share_link"}
+        or not exact_identity
+        or delivery.get("verified") is not True
+        or not media_path.is_file()
+    ):
+        return None
+    if status == "no_audio" and finder.get("verified_silent_media") is not True:
+        return None
+    return finder
+
+
+def shipinhao_transcript_for_agent(finder: dict[str, Any]) -> str:
+    if str(finder.get("status") or "") not in {"transcribed", "cached"}:
+        return ""
+    context_path = Path(str(finder.get("agent_context_path") or "")).expanduser()
+    text = ""
+    if context_path.is_file():
+        try:
+            source = context_path.read_text(encoding="utf-8")
+        except OSError:
+            source = ""
+        marker = "## Timestamped Transcript"
+        text = source.split(marker, 1)[1].strip() if marker in source else ""
+    if not text:
+        text = str(finder.get("text_preview") or "")
+    return sanitize_worker_agent_text(text, max_len=14_000)
+
+
+def fallback_shipinhao_delivery_message(
+    finder: dict[str, Any],
+    delivery_files: list[str],
+) -> str:
+    """Build an evidence-only receipt when all language-model backends fail."""
+
+    profile = finder.get("profile") if isinstance(finder.get("profile"), dict) else {}
+    title = sanitize_worker_agent_text(profile.get("title") or "这条视频号视频", max_len=160)
+    author = sanitize_worker_agent_text(profile.get("author") or "", max_len=100)
+    duration = float(finder.get("duration_seconds") or 0.0)
+    source_label = f"《{title}》"
+    if author:
+        source_label += f"（{author}）"
+    if duration > 0:
+        source_label += f"，约 {duration:.0f} 秒"
+    if str(finder.get("status") or "") == "no_audio":
+        return (
+            f"已下载并核验{source_label}，视频文件已附上。该文件经媒体探测确认没有音轨，"
+            "因此没有生成转写；这次没有公开发布。"
+        )
+    transcript = shipinhao_transcript_for_agent(finder)
+    excerpt = re.sub(r"\[[0-9:. -]+\]", "", transcript)
+    excerpt = collapse_context_text(excerpt, max_len=110).strip("，。；; ")
+    transcript_attached = any(Path(path).suffix.casefold() == ".txt" for path in delivery_files)
+    attachment_note = "视频和完整时间戳转写已附上" if transcript_attached else "视频已附上"
+    excerpt_note = f"转写开头是：“{excerpt}”。" if excerpt else "音频转写已经完成。"
+    return f"已下载并核验{source_label}。{excerpt_note}{attachment_note}；这次没有公开发布。"
+
+
+def run_verified_shipinhao_delivery_synthesis(
+    task: dict[str, Any],
+    policy: dict[str, Any],
+) -> str | None:
+    """Use a bounded agent turn for an exact Finder download, then fail useful."""
+
+    finder = verified_shipinhao_delivery_record(task)
+    if finder is None:
+        return None
+    delivery_files = shipinhao_auto_delivery_files(task)
+    if not delivery_files:
+        return None
+    profile = finder.get("profile") if isinstance(finder.get("profile"), dict) else {}
+    packet = {
+        "current_request": sanitize_worker_agent_text(task_focus_text(task), max_len=1000),
+        "source": {
+            "title": sanitize_worker_agent_text(profile.get("title") or "", max_len=160),
+            "author": sanitize_worker_agent_text(profile.get("author") or "", max_len=100),
+            "duration_seconds": round(float(finder.get("duration_seconds") or 0.0), 2),
+            "audio_status": str(finder.get("status") or ""),
+        },
+        "transcript": shipinhao_transcript_for_agent(finder),
+        "delivery": {
+            "video_ready": any(Path(path).suffix.casefold() in VIDEO_SUFFIXES for path in delivery_files),
+            "transcript_ready": any(Path(path).suffix.casefold() == ".txt" for path in delivery_files),
+            "public_publish_allowed": False,
+        },
+    }
+    prompt = f"""You are the source-grounded response step for one exact Shipinhao video shared in a LabCanvas chat.
+The deterministic routine has already resolved, downloaded, probed, and transcribed the exact source. Do not use tools, search for another source, publish anything, or ask for login. Read only the bounded packet below.
+
+Write one concise, natural reply in the requester's language. Identify the video, summarize the actual speech in one or two useful sentences, and say that the requested video and timestamped transcript are attached when those delivery flags are true. Do not mention models, private paths, IDs, checksums, internal routing, or diagnostics. Do not claim public publication; this task is read-only download and content understanding.
+
+Bounded exact-source packet:
+```json
+{json.dumps(packet, ensure_ascii=False, indent=2)}
+```
+
+Return JSON only: {{"message":"...","files":[],"confirmation":""}}.
+"""
+    backend = select_agent_backend(task)
+    low_policy = load_worker_model_policy("low")
+    timeout_seconds = max(
+        30,
+        int(os.environ.get("WECHAT_SHIPINHAO_SUMMARY_TIMEOUT_SECONDS", "120")),
+    )
+    message = ""
+    backend_attempts: list[dict[str, Any]] = []
+    candidate_backends = [backend]
+    if backend != "aginti":
+        candidate_backends.append("aginti")
+    for candidate_backend in candidate_backends:
+        agent_result = run_codex_session(
+            prompt,
+            backend=candidate_backend,
+            chat_name=str(task.get("session_scope") or task.get("chat") or "wechat-chat"),
+            role="chat-shipinhao-summary",
+            model=str(low_policy.get("model") or policy.get("model") or DEFAULT_WORKER_MODEL),
+            reasoning_effort="low",
+            sandbox=str(policy.get("sandbox") or worker_sandbox()),
+            timeout_seconds=timeout_seconds,
+            workdir=ROOT,
+            reuse=True,
+            backend_config=worker_backend_config(task, candidate_backend),
+            fallback_model=str(low_policy.get("fallback_model") or "gpt-5.6-sol"),
+            fallback_reasoning_effort=str(low_policy.get("fallback_reasoning_effort") or "low"),
+            backend_prompts={"aginti": prompt},
+        )
+        backend_attempts.append(
+            {
+                "backend": candidate_backend,
+                "ok": bool(agent_result.get("ok")),
+                "actual_backend": str(agent_result.get("backend") or candidate_backend),
+            }
+        )
+        if not agent_result.get("ok"):
+            continue
+        parsed = parse_worker_result(str(agent_result.get("message") or ""))
+        candidate = str(parsed.get("message") or parsed.get("confirmation") or "").strip()
+        if candidate and not result_is_no_reply(parsed) and not worker_result_is_explicit_failure(candidate):
+            message = candidate
+            break
+    used_fallback = not bool(message)
+    if used_fallback:
+        message = fallback_shipinhao_delivery_message(finder, delivery_files)
+    task["shipinhao_delivery_synthesis"] = {
+        "status": "evidence_fallback" if used_fallback else "agent_completed",
+        "source_identity_verified": True,
+        "delivery_file_count": len(delivery_files),
+        "public_actions": False,
+        "backend_attempts": backend_attempts,
+        "completed_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    task["worker_result_exhausted"] = False
+    return json.dumps(
+        {
+            "message": message,
+            "confirmation": "",
+            "files": delivery_files,
+            "no_reply": False,
+            "data": {
+                "shipinhao_delivery": {
+                    "status": "ready",
+                    "source_identity_verified": True,
+                    "public_actions": False,
+                }
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
+def recover_verified_shipinhao_delivery_result(
+    task: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Never discard an exact requested MP4 because a response backend failed."""
+
+    finder = verified_shipinhao_delivery_record(task)
+    if finder is None:
+        return result
+    delivery_files = shipinhao_auto_delivery_files(task)
+    if not delivery_files:
+        return result
+    guarded = dict(result)
+    current_files = guarded.get("files") if isinstance(guarded.get("files"), list) else []
+    guarded["files"] = unique_strings([*delivery_files, *[str(path) for path in current_files]])
+    unusable_message = (
+        result_is_no_reply(guarded)
+        or bool(guarded.get("private_failure"))
+        or not str(guarded.get("message") or guarded.get("confirmation") or "").strip()
+    )
+    if unusable_message:
+        guarded["message"] = fallback_shipinhao_delivery_message(finder, delivery_files)
+        guarded["confirmation"] = ""
+        guarded["no_reply"] = False
+        guarded.pop("private_failure", None)
+        data = guarded.get("data") if isinstance(guarded.get("data"), dict) else {}
+        guarded["data"] = {
+            **data,
+            "shipinhao_delivery": {
+                "status": "ready_after_backend_failure",
+                "source_identity_verified": True,
+                "public_actions": False,
+            },
+        }
+        task["worker_result_exhausted"] = False
+        task["shipinhao_delivery_recovered_at"] = datetime.now().isoformat(timespec="seconds")
+    return guarded
+
+
+def verified_shipinhao_delivery_result_complete(
+    task: dict[str, Any],
+    result: dict[str, Any],
+) -> bool:
+    finder = verified_shipinhao_delivery_record(task)
+    if finder is None or result_is_no_reply(result):
+        return False
+    if not str(result.get("message") or result.get("confirmation") or "").strip():
+        return False
+    delivered = {
+        str(Path(str(path)).expanduser().resolve())
+        for path in result.get("files") or []
+        if str(path).strip()
+    }
+    required = {
+        str(Path(path).expanduser().resolve())
+        for path in shipinhao_auto_delivery_files(task)
+    }
+    return bool(required and required.issubset(delivered))
 
 
 def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_dir: Path) -> dict[str, Any]:
@@ -9828,7 +10274,7 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
     source_path.write_text(source_text, encoding="utf-8")
     source_path.chmod(0o600)
     command = [
-        os.environ.get("WECHAT_SHIPINHAO_TRANSCRIBE_PYTHON", sys.executable),
+        shipinhao_transcribe_python(),
         str(SHIPINHAO_MEDIA_TRANSCRIBE_SCRIPT),
         "--source-text-file",
         str(source_path),
@@ -9842,7 +10288,7 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
         command.extend(["--capture-manifest", str(capture_manifest)])
     command.append("--json")
     timeout = max(60, int_or_none(os.environ.get("WECHAT_SHIPINHAO_PIPELINE_TIMEOUT_SECONDS")) or 2100)
-    if profile.get("media_urls") or profile.get("cover_urls") or capture_manifest:
+    if profile.get("media_urls") or profile.get("cover_urls") or profile.get("share_url") or capture_manifest:
         result = run_shipinhao_media_transcriber(command, output_dir=output_dir, timeout=timeout, profile=public_profile)
     else:
         result = write_shipinhao_media_transcript_manifest(
@@ -9888,7 +10334,16 @@ def prepare_shipinhao_media_transcript_preflight(task: dict[str, Any], artifact_
         result["capture_tool"] = str(SHIPINHAO_GUI_AUDIO_CAPTURE_SCRIPT)
         write_shipinhao_media_transcript_manifest(output_dir, result)
     result["source_text_file"] = str(source_path)
-    return finalize_shipinhao_media_transcript_preflight(output_dir, result)
+    finalized = finalize_shipinhao_media_transcript_preflight(output_dir, result)
+    return promote_shipinhao_download_for_delivery(task, output_dir, finalized)
+
+
+def shipinhao_transcribe_python() -> str:
+    configured = os.environ.get("WECHAT_SHIPINHAO_TRANSCRIBE_PYTHON", "").strip()
+    if configured:
+        return configured
+    whisper_python = Path.home() / "miniconda3" / "envs" / "whisper" / "bin" / "python"
+    return str(whisper_python) if whisper_python.is_file() else sys.executable
 
 
 def native_shipinhao_capture_needed(result: dict[str, Any], profile: dict[str, Any]) -> bool:
@@ -9994,8 +10449,20 @@ def run_shipinhao_media_transcriber(
     timeout: int,
     profile: dict[str, Any],
 ) -> dict[str, Any]:
+    transcriber_env = os.environ.copy()
+    configured_gpu = transcriber_env.get("WECHAT_SHIPINHAO_CUDA_DEVICE", "1").strip()
+    if configured_gpu and not transcriber_env.get("CUDA_VISIBLE_DEVICES"):
+        transcriber_env["CUDA_VISIBLE_DEVICES"] = configured_gpu
     try:
-        proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False, timeout=timeout)
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            env=transcriber_env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
     except subprocess.TimeoutExpired:
         result = {
             "status": "failed",
@@ -13785,7 +14252,7 @@ def task_route_decision(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def has_public_publish_intent(text: str) -> bool:
-    lowered = str(text or "").lower()
+    lowered = collapse_context_text(text, max_len=10000).casefold()
     negative_markers = [
         "no need to publish",
         "do not publish",
@@ -13825,28 +14292,20 @@ def has_public_publish_intent(text: str) -> bool:
     ]
     if any(marker in lowered for marker in negative_markers):
         return False
-    explicit_markers = [
-        "publish",
-        "re-publish",
-        "republish",
-        "post",
-        "shipinhao",
-        "wechat channel",
-        "视频号",
-        "視頻號",
-        "youtube",
-        "instagram",
-        "发布",
-        "發布",
-        "投稿",
-    ]
-    if any(marker in lowered for marker in explicit_markers):
+    if re.search(r"\b(?:publish|re-publish|republish|pub)\b", lowered):
         return True
-    if re.search(r"\b(?:sph|y2b|ytb|ins)\b", lowered):
+    if re.search(r"\bpost\s+(?:this|it|the|my|our|a|an|video|file)\b", lowered):
         return True
-    if re.search(r"\b(?:upload|send)\s+to\s+(?:youtube|instagram|shipinhao|sph|y2b|ytb|ins)\b", lowered):
+    if re.search(r"\bpost\s+(?:to|on)\s+", lowered):
         return True
-    if re.search(r"上传.*(?:视频号|youtube|instagram|平台)", lowered):
+    if any(marker in lowered for marker in ("发布", "發布", "投稿", "公开发布", "公開發布")):
+        return True
+    if re.search(
+        r"\b(?:upload|send)\s+(?:this\s+|the\s+|my\s+|our\s+|it\s+)?(?:video\s+|file\s+)?(?:to|on)\s+(?:youtube|instagram|shipinhao|wechat\s+channel|sph|y2b|ytb|ins)\b",
+        lowered,
+    ):
+        return True
+    if re.search(r"(?:上传|上傳|发到|發到|发上|發上).{0,24}(?:视频号|視頻號|youtube|instagram|平台)", lowered):
         return True
     return False
 
@@ -18699,7 +19158,12 @@ def prepare_result_files(
     if not isinstance(raw_files, list):
         raw_files = [raw_files]
     auto_files = [] if suppress_auto_artifact_extraction(result) else extract_artifact_paths(raw_text)
-    candidates = unique_strings([*grant_auto_delivery_files(task), *raw_files, *auto_files])
+    candidates = unique_strings([
+        *grant_auto_delivery_files(task),
+        *shipinhao_auto_delivery_files(task),
+        *raw_files,
+        *auto_files,
+    ])
     files: list[str] = []
     skipped: list[dict[str, str]] = []
     local_saved_paths: list[Path] = []
