@@ -2454,6 +2454,77 @@ stderr: noisy internal trace
         self.assertIn("Hui世界-徒步天堂马德拉群岛", Path(delivery_files[0]).name)
         self.assertFalse(task["route_decision"]["public_publish_allowed"])
 
+    def test_shipinhao_research_summary_promotes_video_and_transcript_by_default(self) -> None:
+        worker = load_worker()
+        exact_card = (
+            "<finderFeed><objectId><![CDATA[14947210711380400704]]></objectId>"
+            "<nickname><![CDATA[Hui世界]]></nickname>"
+            "<desc><![CDATA[徒步天堂马德拉群岛]]></desc>"
+            "<mediaList><media><videoPlayDuration><![CDATA[63]]></videoPlayDuration>"
+            "<url><![CDATA[http://wxapp.tc.qq.com/video?id=exact-download]]></url>"
+            "</media></mediaList></finderFeed>"
+        )
+        task = {
+            "id": "shipinhao-summary-default-delivery",
+            "chat": "Shares鏈接",
+            "source": {"local_id": 146, "kind": "file/link"},
+            "routine": {"id": "research_summary"},
+            "route_decision": {
+                "route_kind": "research_or_summary",
+                "public_publish_allowed": False,
+            },
+            "request": "Current coalesced request:\nSummarize this source.",
+            "context": [{"local_id": 146, "kind": "file/link", "content": exact_card}],
+        }
+
+        def fake_transcriber(command, *, output_dir, timeout, profile):
+            media = output_dir / "private-cache-source.mp4"
+            media.write_bytes(b"verified-video")
+            context = output_dir / "shipinhao-audio-transcript.md"
+            context.write_text(
+                "## Timestamped Transcript\n\n[00:00.00-00:02.00] 马德拉群岛\n",
+                encoding="utf-8",
+            )
+            return {
+                "status": "transcribed",
+                "input_kind": "card_media_url",
+                "media_path": str(media),
+                "profile": profile,
+                "agent_context_path": str(context),
+                "content_identity_verified": True,
+                "read_only": True,
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(worker, "run_shipinhao_media_transcriber", side_effect=fake_transcriber):
+                result = worker.prepare_shipinhao_media_transcript_preflight(task, Path(tmp))
+            task["preflight"] = {"shipinhao_media_transcript": result}
+            files = worker.shipinhao_auto_delivery_files(task)
+
+        self.assertTrue(worker.should_prepare_shipinhao_media_transcript(task))
+        self.assertEqual(result["download_delivery"]["status"], "ready")
+        self.assertEqual({Path(path).suffix for path in files}, {".mp4", ".txt"})
+        self.assertFalse(task["route_decision"]["public_publish_allowed"])
+
+    def test_shipinhao_transcriber_is_pinned_to_configured_gpu(self) -> None:
+        worker = load_worker()
+        completed = mock.Mock(returncode=1, stdout="", stderr="failed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(
+                worker.os.environ,
+                {"CUDA_VISIBLE_DEVICES": "0", "WECHAT_SHIPINHAO_CUDA_DEVICE": "1"},
+                clear=False,
+            ), mock.patch.object(worker.subprocess, "run", return_value=completed) as run:
+                worker.run_shipinhao_media_transcriber(
+                    ["python", "transcribe.py"],
+                    output_dir=Path(tmp),
+                    timeout=30,
+                    profile={"object_id": "exact-object"},
+                )
+
+        self.assertEqual(run.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"], "1")
+
     def test_shipinhao_delivery_adds_recipient_safe_timestamped_transcript(self) -> None:
         worker = load_worker()
         task = {

@@ -525,9 +525,21 @@ def task_source_text(task: dict[str, Any]) -> str:
     adjacent_references = adjacent_source_references(task, source, source_id)
     route = task.get("route_decision") if isinstance(task.get("route_decision"), dict) else {}
     route_values = [str(route.get(key) or "") for key in ("url", "source_url", "object_id", "nonce_id", "title", "author")]
+    source_kind = str(source.get("kind") or "").casefold()
+    if source_rows:
+        # A file/link/card row is the authoritative source. Older coalesced
+        # references and generic handling instructions must not make a later
+        # article look like an earlier Finder card (or vice versa).
+        scoped_values = [*source_rows]
+        if source_kind == "text":
+            scoped_values.insert(0, focus)
+    elif adjacent_references:
+        scoped_values = [focus, *adjacent_references]
+    else:
+        scoped_values = [focus, reference_section]
     return "\n".join(
         value
-        for value in [focus, reference_section, *adjacent_references, *source_rows, *route_values]
+        for value in [*scoped_values, *route_values]
         if value
     ).strip()
 

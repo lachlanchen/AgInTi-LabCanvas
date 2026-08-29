@@ -231,16 +231,21 @@ def reject_nonpublic_host(host: str) -> None:
     if not addresses:
         raise ValueError("media host resolved to no addresses")
     has_public_address = False
+    has_proxy_fake_address = False
     for address in addresses:
         ip = ipaddress.ip_address(address)
         if ip.is_global:
             has_public_address = True
             continue
         if any(ip in network for network in PROXY_FAKE_IP_NETWORKS):
+            has_proxy_fake_address = True
             continue
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
             raise ValueError("media host resolved to a non-public address")
-    if not has_public_address:
+    # Transparent proxy DNS commonly maps remote hosts into RFC 2544 space.
+    # The caller already restricts the hostname to Tencent-owned suffixes, so
+    # an all-synthetic answer remains bounded without permitting private hosts.
+    if not has_public_address and not has_proxy_fake_address:
         raise ValueError("media host resolved to no public addresses")
 
 

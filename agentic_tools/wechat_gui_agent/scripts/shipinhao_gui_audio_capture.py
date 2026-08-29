@@ -401,9 +401,13 @@ def jump_to_latest_message(
         screenshot_path=screenshot_path,
         crop_path=crop_path,
     )
+    visual_candidate = latest_message_button_candidate(screenshot_path, region=region)
     candidates = ocr_line_candidates(tsv, ["Go to the latest message", "最新消息"])
     clicked_button = False
-    if candidates:
+    if visual_candidate:
+        click_x = int(visual_candidate["center_x"])
+        click_y = int(visual_candidate["center_y"])
+    elif candidates:
         candidate = candidates[0]
         click_x = region["left"] + int(candidate["center_x"])
         click_y = region["top"] + int(candidate["center_y"])
@@ -457,9 +461,9 @@ def jump_to_latest_message(
             str(region["top"] + region["height"] // 2),
             "click",
             "--repeat",
-            "40",
+            "120",
             "--delay",
-            "20",
+            "12",
             "5",
         ],
         env=env,
@@ -467,6 +471,64 @@ def jump_to_latest_message(
     )
     time.sleep(1.0)
     return clicked_button or fallback.returncode == 0
+
+
+def latest_message_button_candidate(
+    screenshot_path: Path,
+    *,
+    region: dict[str, int],
+) -> dict[str, float] | None:
+    """Find WeChat's green-on-white latest-message control without OCR."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+    image = cv2.imread(str(screenshot_path), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    blue, green, red = cv2.split(image)
+    channel_max = np.maximum.reduce([blue, green, red])
+    channel_min = np.minimum.reduce([blue, green, red])
+    white = (
+        (blue > 225)
+        & (green > 225)
+        & (red > 225)
+        & ((channel_max.astype(np.int16) - channel_min.astype(np.int16)) < 18)
+    )
+    green_ink = (
+        (green.astype(np.int16) > red.astype(np.int16) + 22)
+        & (green.astype(np.int16) > blue.astype(np.int16) + 12)
+        & (green > 100)
+    )
+    local_white = cv2.boxFilter(white.astype(np.float32), -1, (15, 15), normalize=True)
+    mask = (green_ink & (local_white > 0.45)).astype(np.uint8) * 255
+
+    left = max(0, int(region["left"] + float(region["width"]) * 0.52))
+    right = min(image.shape[1], int(region["left"] + region["width"]))
+    top = max(0, int(region["top"] + region["height"] - 90))
+    bottom = min(image.shape[0], int(region["top"] + region["height"]) + 8)
+    bounded = np.zeros_like(mask)
+    bounded[top:bottom, left:right] = mask[top:bottom, left:right]
+    bounded = cv2.morphologyEx(
+        bounded,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (21, 7)),
+    )
+    count, _, stats, centers = cv2.connectedComponentsWithStats(bounded)
+    candidates: list[dict[str, float]] = []
+    for index in range(1, count):
+        x, y, width, height, area = [int(value) for value in stats[index]]
+        if width < 80 or width > 280 or height < 5 or height > 42 or area < 100:
+            continue
+        candidates.append(
+            {
+                "center_x": float(centers[index][0]),
+                "center_y": float(centers[index][1]),
+                "score": float(width * 10 + area - abs(bottom - (y + height)) * 2),
+            }
+        )
+    return max(candidates, key=lambda item: item["score"], default=None)
 
 
 def message_pane_region(window: Any) -> dict[str, int]:

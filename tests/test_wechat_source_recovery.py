@@ -78,6 +78,28 @@ class WeChatSourceRecoveryTests(unittest.TestCase):
 
         self.assertEqual(recovery.extract_mp_weixin_urls(recovery.task_source_text(task)), [referenced])
 
+    def test_exact_file_link_row_excludes_older_coalesced_source_references(self) -> None:
+        recovery = load_recovery()
+        current = "https://mp.weixin.qq.com/s/current-token"
+        old = "https://mp.weixin.qq.com/s/old-token"
+        task = {
+            "source": {"local_id": 44, "kind": "file/link"},
+            "request": (
+                "Current coalesced request:\nHandle this source. Finder and Shipinhao are supported.\n\n"
+                f"Same-chat reference media/context rows:\n- local_id=41 content={old}\n\n"
+                "Automatic media sync:\n(not run)"
+            ),
+            "context": [
+                {"local_id": 41, "kind": "file/link", "content": f"old {old} <finderFeed></finderFeed>"},
+                {"local_id": 44, "kind": "file/link", "content": f"current {current}"},
+            ],
+        }
+
+        source_text = recovery.task_source_text(task)
+        self.assertEqual(recovery.extract_mp_weixin_urls(source_text), [current])
+        self.assertNotIn("finderFeed", source_text)
+        self.assertFalse(recovery.build_shipinhao_recovery_packet(source_text)["detected"])
+
     def test_article_urls_deduplicate_tracking_variants_by_identity(self) -> None:
         recovery = load_recovery()
         first = "https://mp.weixin.qq.com/s?__biz=biz&mid=123&idx=1&sn=abc&scene=1"

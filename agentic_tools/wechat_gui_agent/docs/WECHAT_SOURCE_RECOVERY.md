@@ -42,23 +42,28 @@ python agentic_tools/wechat_gui_agent/scripts/wechat_source_recovery.py \
 The source-recovery packet isolates title, author, object ID, and nonce ID from
 the current Finder card. Media evidence runs before comment intelligence:
 
-1. For an exact `https://weixin.qq.com/sph/...` source,
+1. A native Finder card already contains its exact object identity and a signed
+   Tencent media URL. LabCanvas consumes that card directly; it must not ask the
+   sender to copy a separate `sph` link while the card URL is usable.
+2. For an exact `https://weixin.qq.com/sph/...` source,
    `shipinhao_share_link_resolver.py` reads the existing local Yuanbao cookie
    through localhost CDP and starts `ltaoo/wx_channels_download` as a bounded,
    non-root, parse-only provider. The generated private config explicitly
    disables TUN, system proxy, proxy serving, MCP, certificate installation,
    and unrelated download interception. The provider is stopped in `finally`.
-2. The resolver verifies the exact share token, author/title returned for that
+3. The resolver verifies the exact share token, author/title returned for that
    link, and an allowlisted Tencent video URL. Signed URLs and cookies remain
    private; only the verified MP4 and safe evidence enter the worker task.
-3. `shipinhao_media_transcribe.py` tries the exact card's allowlisted Tencent
+4. `shipinhao_media_transcribe.py` tries the exact card's allowlisted Tencent
    media URL with bounded download and SSRF checks.
-4. If the signed URL expired, the agent opens the exact card in native WeChat
+5. If the signed URL expired, the agent opens the exact card in native WeChat
    and runs `shipinhao_gui_audio_capture.py` with distinctive title/author terms.
-5. The capture helper binds to the active `WeChatAppEx` PipeWire stream, verifies
+   The history navigator recognizes the visible latest-message control by its
+   green-on-white visual structure rather than depending on English OCR.
+6. The capture helper binds to the active `WeChatAppEx` PipeWire stream, verifies
    visible identity, stops on feed auto-advance, and writes a private
    object-ID/hash manifest.
-6. The worker discovers that manifest, validates it, transcribes the source-only
+7. The worker discovers that manifest, validates it, transcribes the source-only
    audio, and writes `task.preflight.shipinhao_media_transcript`.
 
 Never run `wx_channels_download` as a permanent root/TUN interceptor. A

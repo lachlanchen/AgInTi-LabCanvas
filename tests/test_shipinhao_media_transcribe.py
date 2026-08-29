@@ -151,7 +151,7 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             module.validate_media_url("http://127.0.0.1/private.mp4")
 
-    def test_media_dns_accepts_proxy_fake_ip_only_beside_public_address(self) -> None:
+    def test_media_dns_accepts_proxy_fake_ip_for_allowlisted_remote_host(self) -> None:
         module = load_module()
         fake_info = [
             (2, 1, 6, "", ("198.18.0.45", 443)),
@@ -162,8 +162,7 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
             module.reject_nonpublic_host("wxapp.tc.qq.com")
 
         with mock.patch.object(module.socket, "getaddrinfo", return_value=fake_info[:1]):
-            with self.assertRaisesRegex(ValueError, "no public addresses"):
-                module.reject_nonpublic_host("wxapp.tc.qq.com")
+            module.reject_nonpublic_host("wxapp.tc.qq.com")
 
         private_info = [(2, 1, 6, "", ("192.168.1.20", 443))]
         with mock.patch.object(module.socket, "getaddrinfo", return_value=private_info):

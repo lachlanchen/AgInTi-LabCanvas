@@ -9872,16 +9872,18 @@ def shipinhao_download_delivery_requested(task: dict[str, Any] | None) -> bool:
     if not isinstance(task, dict):
         return False
     route = task_route_decision(task)
-    if str(route.get("route_kind") or "") != "file_download_or_save":
-        return False
     profile = extract_shipinhao_media_profile(source_recovery_task_text(task))
+    if not (profile.get("detected") and profile.get("object_id")):
+        return False
+    route_kind = str(route.get("route_kind") or "")
+    delivery_mode = str(route.get("delivery_mode") or "")
+    if route_kind == "research_or_summary":
+        return True
+    if route_kind != "file_download_or_save" or delivery_mode in {"local_save", "passive_cache"}:
+        return False
     return bool(
-        profile.get("detected")
-        and profile.get("object_id")
-        and (
-            request_explicitly_asks_for_file_delivery(task_focus_text(task))
-            or str(route.get("delivery_mode") or "") == "chat_attachment"
-        )
+        delivery_mode == "chat_attachment"
+        or request_explicitly_asks_for_file_delivery(task_focus_text(task))
     )
 
 
@@ -10451,7 +10453,7 @@ def run_shipinhao_media_transcriber(
 ) -> dict[str, Any]:
     transcriber_env = os.environ.copy()
     configured_gpu = transcriber_env.get("WECHAT_SHIPINHAO_CUDA_DEVICE", "1").strip()
-    if configured_gpu and not transcriber_env.get("CUDA_VISIBLE_DEVICES"):
+    if configured_gpu:
         transcriber_env["CUDA_VISIBLE_DEVICES"] = configured_gpu
     try:
         proc = subprocess.run(

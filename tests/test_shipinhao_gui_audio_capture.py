@@ -160,6 +160,40 @@ class ShipinhaoGuiAudioCaptureTests(unittest.TestCase):
         self.assertAlmostEqual(candidates[0]["center_x"], 95.0, delta=3.0)
         self.assertAlmostEqual(candidates[0]["center_y"], 160.0, delta=3.0)
 
+    def test_latest_message_button_is_detected_without_ocr(self) -> None:
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            self.skipTest("OpenCV is not installed")
+        module = load_module()
+        image = np.full((700, 1000, 3), 242, dtype=np.uint8)
+        region = {"left": 350, "top": 60, "width": 640, "height": 520}
+        # A green outgoing bubble is a decoy. Its background is not white, so
+        # it must not be mistaken for the latest-message control.
+        image[455:525, 650:940] = (92, 225, 140)
+        cv2.rectangle(image, (805, 540), (980, 575), (255, 255, 255), thickness=-1)
+        cv2.putText(
+            image,
+            "Go to latest message",
+            (820, 563),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (80, 190, 40),
+            1,
+            cv2.LINE_AA,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            screenshot = Path(tmp) / "latest.png"
+            cv2.imwrite(str(screenshot), image)
+            candidate = module.latest_message_button_candidate(screenshot, region=region)
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertAlmostEqual(candidate["center_x"], 890, delta=50)
+        self.assertAlmostEqual(candidate["center_y"], 557, delta=20)
+
     def test_play_control_preserves_tesseract_reading_order_across_baselines(self) -> None:
         module = load_module()
         tsv = (
