@@ -1724,6 +1724,62 @@ class WeChatDirectChatopsPolicyTests(unittest.TestCase):
             "self_outbound_echo",
         )
 
+    def test_android_file_ledger_suppresses_transcoded_video_by_original_source_md5(self) -> None:
+        config = self.base_config()
+        config["allow_human_self_messages"] = True
+        config["self_message_policy"] = "human_commands"
+        config["self_messages_text_only"] = False
+        android_db = Path(self._tmpdir.name) / "wechat_android_send.sqlite"
+        config["android_send_state_db"] = str(android_db)
+        now = int(time.time())
+        source_md5 = "f947f9e2041b60466621c890736e1d40"
+        with sqlite3.connect(android_db) as conn:
+            conn.execute(
+                "CREATE TABLE components (component_key TEXT PRIMARY KEY, task_id TEXT, "
+                "chat TEXT, kind TEXT, value_hash TEXT, status TEXT, details_json TEXT, "
+                "updated_at TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO components VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    "video-component",
+                    "task-video",
+                    "EchoMind",
+                    "file",
+                    "ca8de1b7f2c2725036096772b2853039f27bc43695ca96a05a3512fdf178a180",
+                    "sent",
+                    json.dumps(
+                        {
+                            "file_identity": {
+                                "name": "returned-video.mp4",
+                                "size_bytes": 7980814,
+                                "md5": source_md5,
+                                "sha256": "ca8de1b7f2c2725036096772b2853039f27bc43695ca96a05a3512fdf178a180",
+                            }
+                        }
+                    ),
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+        content = (
+            '<msg><videomsg length="3438613" '
+            'md5="158e0000000000000000000000000000" '
+            'newmd5="a45e0000000000000000000000000000" '
+            f'originsourcemd5="{source_md5}"/></msg>'
+        )
+        row = self.row(content, sender="self", local_type=43, create_time=now)
+
+        self.assertEqual(
+            direct_chatops.response_skip_reason(config, {}, row),
+            "self_outbound_file_echo",
+        )
+        wrong = dict(row)
+        wrong["content"] = content.replace(source_md5, "0" * 32)
+        self.assertFalse(direct_chatops.is_recorded_outbound_file_echo(config, wrong))
+        old = dict(row)
+        old["create_time"] = now - 7201
+        self.assertFalse(direct_chatops.is_recorded_outbound_file_echo(config, old))
+
     def test_recorded_outbound_file_is_not_reprocessed_as_a_self_attachment(self) -> None:
         config = self.base_config()
         config["allow_human_self_messages"] = True

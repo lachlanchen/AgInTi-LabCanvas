@@ -28,6 +28,7 @@ if str(ANDROID_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(ANDROID_SCRIPTS))
 
 from android_control_lease import priority_android_control
+from wechat_message_policy import file_transport_identity
 
 
 DEFAULT_TARGETS = PRIVATE / "wechat_send_targets.local.json"
@@ -199,11 +200,13 @@ class AndroidWechatSender:
         resolved = path.expanduser().resolve()
         if not resolved.is_file():
             raise AndroidWechatError(f"outbound file does not exist: {resolved}")
-        digest = sha256_file(resolved)
+        identity = file_transport_identity(resolved)
+        digest = str(identity["sha256"])
         return {
             "kind": "file",
             "path": resolved,
             "value_hash": digest,
+            "file_identity": identity,
             "key": component_key(self.task_id, self.chat, "file", digest),
         }
 
@@ -223,6 +226,8 @@ class AndroidWechatSender:
     ) -> None:
         safe_details = dict(details or {})
         safe_details.pop("message", None)
+        if component.get("kind") == "file" and isinstance(component.get("file_identity"), dict):
+            safe_details["file_identity"] = dict(component["file_identity"])
         with sqlite3.connect(self.state_db) as conn:
             conn.execute(
                 "INSERT INTO components(component_key,task_id,chat,kind,value_hash,status,details_json,updated_at) "

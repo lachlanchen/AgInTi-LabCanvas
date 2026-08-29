@@ -8000,6 +8000,66 @@ stderr: noisy internal trace
         self.assertEqual(payload["files"], [])
         self.assertEqual(payload["data"]["passive_video_intake"]["status"], "cached")
         self.assertFalse(payload["data"]["passive_video_intake"]["publication_authorized"])
+        self.assertFalse(payload["data"]["passive_video_intake"]["lazyedit_authorized"])
+
+    def test_passive_video_contract_discards_agent_publish_claims_and_files(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "video-passive",
+            "route_decision": {
+                "route_kind": "file_download_or_save",
+                "passive_video_intake": True,
+                "public_publish_allowed": False,
+            },
+            "source": {"local_id": 64, "local_type": 43},
+        }
+        malformed = {
+            "message": "Published through LazyEdit.",
+            "files": ["output/private-evidence.json", "output/video.mp4"],
+            "confirmation": "Approve publication",
+            "data": {"require_file_delivery": True},
+        }
+
+        guarded = worker.enforce_worker_result_contract(task, malformed, json.dumps(malformed))
+        prepared = worker.prepare_result_files(guarded, json.dumps(malformed), task=task)
+
+        self.assertTrue(prepared["no_reply"])
+        self.assertEqual(prepared["message"], "")
+        self.assertEqual(prepared["confirmation"], "")
+        self.assertEqual(prepared["files"], [])
+        self.assertFalse(prepared["data"]["require_file_delivery"])
+        self.assertFalse(prepared["data"]["passive_video_intake"]["publication_authorized"])
+        self.assertFalse(worker.should_send_worker_result(task, prepared))
+        self.assertTrue(worker.task_forbids_chat_artifact_delivery(task))
+
+    def test_passive_video_uses_private_cache_and_cannot_write_autopublish(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.mp4"
+            source.write_bytes(b"exact-video")
+            artifact_dir = root / "task"
+            task = {
+                "id": "video-passive",
+                "artifact_dir": str(artifact_dir),
+                "request": "old internal words mention LazyEdit publication",
+                "route_decision": {
+                    "route_kind": "file_download_or_save",
+                    "passive_video_intake": True,
+                    "public_publish_allowed": False,
+                },
+                "source": {"local_id": 64, "local_type": 43},
+            }
+
+            self.assertEqual(
+                worker.nonpublish_video_preflight_dest(task),
+                artifact_dir / "source_media",
+            )
+            cached = worker.copy_exact_video_artifact_to_private_cache(source, task)
+            self.assertEqual(cached.parent, artifact_dir / "source_media")
+            self.assertEqual(cached.read_bytes(), source.read_bytes())
+            with self.assertRaisesRegex(RuntimeError, "cannot write to AutoPublish"):
+                worker.copy_exact_video_artifact_to_autopublish(source, task)
 
     def test_passive_video_intake_missing_source_retries_without_chat_message(self) -> None:
         worker = load_worker()
@@ -10640,6 +10700,32 @@ stderr: noisy internal trace
 
         self.assertEqual(prepared["files"], [])
         self.assertEqual(prepared["skipped_files"][0]["reason"], "private-path")
+
+    def test_worker_result_never_delivers_internal_routine_evidence(self) -> None:
+        worker = load_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = []
+            for name in (
+                "routine_contract.md",
+                "routine_contract.json",
+                "same_chat_interruptions.json",
+                "finder_feed_request.private.json",
+            ):
+                path = root / name
+                path.write_text("private worker evidence", encoding="utf-8")
+                paths.append(str(path))
+
+            prepared = worker.prepare_result_files(
+                {"message": "done", "confirmation": "", "files": paths},
+                "",
+            )
+
+        self.assertEqual(prepared["files"], [])
+        self.assertEqual(
+            {item["reason"] for item in prepared["skipped_files"]},
+            {"internal-evidence"},
+        )
 
     def test_bare_file_intake_does_not_send_the_uploaded_source_back(self) -> None:
         worker = load_worker()

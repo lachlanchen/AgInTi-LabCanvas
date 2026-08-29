@@ -96,6 +96,36 @@ class WechatAndroidSendTests(unittest.TestCase):
                 )
             self.assertNotIn("message", details)
 
+    def test_file_component_persists_content_identity_for_echo_suppression(self):
+        module = load_sender()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "returned-video.mp4"
+            source.write_bytes(b"exact outbound video bytes")
+            sender = module.AndroidWechatSender(
+                adb="adb",
+                serial="device",
+                target={"name": "My Devices", "expected_title": "My Devices"},
+                task_id="task-video",
+                state_db=root / "state.sqlite",
+                output_dir=root / "output",
+            )
+
+            component = sender.file_component(source)
+            sender.mark_component(component, "sent", {"filename": source.name})
+
+            with sqlite3.connect(sender.state_db) as conn:
+                value_hash, details_json = conn.execute(
+                    "SELECT value_hash, details_json FROM components WHERE component_key = ?",
+                    (component["key"],),
+                ).fetchone()
+            details = json.loads(details_json)
+            identity = details["file_identity"]
+            self.assertEqual(identity["name"], source.name)
+            self.assertEqual(identity["size_bytes"], source.stat().st_size)
+            self.assertEqual(identity["sha256"], value_hash)
+            self.assertEqual(len(identity["md5"]), 32)
+
     def test_ensure_exact_chat_taps_only_matching_ocr_row_and_verifies_header(self):
         module = load_sender()
         with tempfile.TemporaryDirectory() as tmp:

@@ -35,6 +35,7 @@ from wechat_memory import organize_messages
 from wechat_message_policy import (
     is_no_reply_control,
     recorded_android_outbound_echo,
+    recorded_android_outbound_file_echo,
     recorded_outbound_echo,
     recorded_outbound_file_echo,
 )
@@ -1905,13 +1906,24 @@ def is_recorded_outbound_echo(config: dict[str, Any], row: dict[str, Any]) -> bo
 
 
 def is_recorded_outbound_file_echo(config: dict[str, Any], row: dict[str, Any]) -> bool:
-    return recorded_outbound_file_echo(
+    window_seconds = int(config.get("self_outbound_file_echo_window_seconds", 7200))
+    lookup_limit = int(config.get("self_outbound_file_echo_lookup_limit", 240))
+    if recorded_outbound_file_echo(
         Path(config.get("mirror_db", DEFAULT_DB)),
         str(config.get("chat_name") or ""),
         str(row.get("content") or ""),
         source_epoch=float(row.get("create_time") or 0),
-        window_seconds=int(config.get("self_outbound_file_echo_window_seconds", 7200)),
-        limit=int(config.get("self_outbound_file_echo_lookup_limit", 240)),
+        window_seconds=window_seconds,
+        limit=lookup_limit,
+    ):
+        return True
+    return recorded_android_outbound_file_echo(
+        Path(config.get("android_send_state_db") or PRIVATE / "wechat_android_send.sqlite"),
+        str(config.get("chat_name") or ""),
+        str(row.get("content") or ""),
+        source_epoch=float(row.get("create_time") or 0),
+        window_seconds=window_seconds,
+        limit=lookup_limit,
     )
 
 

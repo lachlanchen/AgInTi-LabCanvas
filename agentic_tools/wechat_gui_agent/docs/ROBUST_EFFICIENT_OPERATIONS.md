@@ -1466,6 +1466,21 @@ references the cached `local_id`. Split legacy rows are reconciled into this
 single task before claim, and every claimable status is serialized per exact
 chat so two workers cannot process intake and publication concurrently.
 
+This boundary is enforced three times: routing sets `passive_video_intake`, the
+preflight forces any exact-source copy into the task's ignored `source_media/`
+directory, and result preparation canonicalizes the outcome to `NO_REPLY` with
+no files. Passive tasks are structurally forbidden from calling the AutoPublish
+copy helper even when stale context contains words such as "publish" or
+"LazyEdit". Worker contracts, interruption manifests, private Finder requests,
+and other internal evidence files are never eligible outbound artifacts.
+
+When Android returns a video to a chat, WeChat can transcode the bytes and
+change the visible `length`, `md5`, and `newmd5`. The original submitted hash is
+retained as `originsourcemd5`. The Android sender therefore records a private
+file identity before/after delivery, and direct chatops matches that original
+hash inside the same-chat time window before any attachment routing. A match is
+`self_outbound_file_echo`, never a new passive task.
+
 If the MP4 cannot be sent, do not import to LazyEdit or publish. Leave the task
 in `send_deferred_artifact` or `send_deferred_locked`.
 

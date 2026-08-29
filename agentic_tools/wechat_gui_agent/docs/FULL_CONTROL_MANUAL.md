@@ -193,6 +193,15 @@ that passed recipient confirmation and native Send remains delivered even when
 restoring the chat surface afterward would fail. Any following text component
 performs its own exact-chat guard.
 
+An ordinary inbound video attachment is save-only. Its source-local-id task may
+copy the exact MP4 into the ignored task `source_media/` directory, but it must
+remain silent and cannot enter LazyEdit, AutoPublish, transcription, return-file
+delivery, or public posting without a separate current same-chat text request.
+The Android sender stores the submitted file name, size, MD5, and SHA-256 in its
+private component ledger. If WeChat transcodes a returned video, the monitor
+matches XML `originsourcemd5` against that ledger and suppresses the row before
+routing. This prevents a returned MP4 from recursively creating new work.
+
 The serialized desktop Linux file chooser remains a preflight fallback only
 when Android proves its exact-title guard failed before sharing began. It uses
 clipboard path paste (`Ctrl+L`, paste absolute path, `Enter`). Uncertain Android

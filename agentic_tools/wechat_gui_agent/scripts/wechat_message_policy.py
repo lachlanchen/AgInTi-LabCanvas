@@ -186,9 +186,9 @@ def attachment_transport_identity(text: str) -> dict[str, object]:
             r"(?i)\b(?:size_bytes|filesize|totallen|length)\s*=\s*[\"']?(\d+)",
         ),
         "md5": (
-            r"(?im)^\s*(?:md5|filemd5|rawmd5|newmd5)\s*[:：]\s*([0-9a-f]{32})\s*$",
-            r"(?i)\b(?:md5|filemd5|rawmd5|newmd5)\s*=\s*[\"']([0-9a-f]{32})[\"']",
-            r"(?i)<(?:md5|filemd5|rawmd5|newmd5)>\s*([0-9a-f]{32})\s*</",
+            r"(?im)^\s*(?:originsourcemd5|md5|filemd5|rawmd5|newmd5)\s*[:：]\s*([0-9a-f]{32})\s*$",
+            r"(?i)\b(?:originsourcemd5|md5|filemd5|rawmd5|newmd5)\s*=\s*[\"']([0-9a-f]{32})[\"']",
+            r"(?i)<(?:originsourcemd5|md5|filemd5|rawmd5|newmd5)>\s*([0-9a-f]{32})\s*</",
         ),
         "sha256": (
             r"(?im)^\s*sha-?256\s*[:：]\s*([0-9a-f]{64})\s*$",
@@ -203,15 +203,36 @@ def attachment_transport_identity(text: str) -> dict[str, object]:
             value = match.group(1).strip()
             identity[key] = int(value) if key == "size_bytes" else value.lower() if key in {"md5", "sha256"} else value
             break
+    md5_values = {
+        match.lower()
+        for match in re.findall(
+            r"(?i)(?:originsourcemd5|md5|filemd5|rawmd5|newmd5)"
+            r"(?:\s*[:：=]\s*[\"']?|>\s*)([0-9a-f]{32})",
+            source,
+        )
+    }
+    if md5_values:
+        identity["md5_values"] = sorted(md5_values)
     return identity
+
+
+def identity_hash_values(identity: dict[str, object], key: str) -> set[str]:
+    values: set[str] = set()
+    scalar = str(identity.get(key) or "").strip().lower()
+    if scalar:
+        values.add(scalar)
+    plural = identity.get(f"{key}_values")
+    if isinstance(plural, (list, tuple, set)):
+        values.update(str(value).strip().lower() for value in plural if str(value).strip())
+    return values
 
 
 def file_identities_match(left: dict[str, object], right: dict[str, object]) -> bool:
     """Require a strong content hash, or an exact name-and-size fallback."""
     for key in ("sha256", "md5"):
-        first = str(left.get(key) or "").lower()
-        second = str(right.get(key) or "").lower()
-        if first and second and first == second:
+        first = identity_hash_values(left, key)
+        second = identity_hash_values(right, key)
+        if first and second and first.intersection(second):
             return True
     first_name = Path(str(left.get("name") or "")).name
     second_name = Path(str(right.get("name") or "")).name
@@ -369,3 +390,64 @@ def recorded_outbound_file_echo(
         limit=limit,
         allow_transcoded_video_size_match="<videomsg" in source,
     )
+
+
+def recorded_android_outbound_file_echo(
+    state_db: Path,
+    chat_name: str,
+    text: str,
+    *,
+    source_epoch: int | float = 0,
+    window_seconds: int = 7200,
+    limit: int = 240,
+) -> bool:
+    """Match a self-authored attachment to Android's verified send ledger.
+
+    Android delivery can reach WeChat before the parent worker records the
+    outbound mirror event. WeChat may transcode a video, but its XML preserves
+    the submitted file hash as ``originsourcemd5``; matching that hash closes
+    the crash window without treating unrelated same-sized media as an echo.
+    """
+    identity = attachment_transport_identity(text)
+    if not identity or not chat_name or not state_db.exists():
+        return False
+    try:
+        with sqlite3.connect(state_db) as conn:
+            rows = conn.execute(
+                """
+                SELECT value_hash, details_json, updated_at
+                FROM components
+                WHERE chat = ?
+                  AND kind = 'file'
+                  AND status = 'sent'
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (chat_name, max(1, int(limit))),
+            ).fetchall()
+    except sqlite3.Error:
+        return False
+    source_time = float(source_epoch or 0)
+    max_delta = max(1, int(window_seconds))
+    for value_hash, details_json, updated_at in rows:
+        try:
+            details = json.loads(str(details_json or "{}"))
+        except json.JSONDecodeError:
+            details = {}
+        candidate = details.get("file_identity") if isinstance(details, dict) else {}
+        if not isinstance(candidate, dict):
+            candidate = {}
+        candidate = dict(candidate)
+        if value_hash and not candidate.get("sha256"):
+            candidate["sha256"] = str(value_hash).strip().lower()
+        if not file_identities_match(identity, candidate):
+            continue
+        if source_time <= 0:
+            return True
+        try:
+            sent_time = datetime.fromisoformat(str(updated_at)).timestamp()
+        except (TypeError, ValueError):
+            continue
+        if abs(source_time - sent_time) <= max_delta:
+            return True
+    return False

@@ -1680,6 +1680,8 @@ def task_forbids_chat_artifact_delivery(task: dict[str, Any] | None) -> bool:
     """Honor structural no-artifact contracts over model-authored result flags."""
     if not isinstance(task, dict):
         return False
+    if is_passive_video_intake_task(task):
+        return True
     route = task_route_decision(task)
     execution = (
         task.get("execution_contract")
@@ -2340,6 +2342,8 @@ def send_deferred_reason_from_errors(errors: list[str]) -> str:
 
 
 def should_send_worker_result(task: dict[str, Any], result: dict[str, Any]) -> bool:
+    if is_passive_video_intake_task(task):
+        return False
     if result_is_no_reply(result) and not result.get("files"):
         return False
     if result.get("confirmation"):
@@ -4981,6 +4985,40 @@ def is_passive_video_intake_task(task: dict[str, Any]) -> bool:
             "passive exact-source video intake",
         )
     )
+
+
+def canonical_passive_video_intake_result(
+    task: dict[str, Any],
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the only allowed result shape for attachment-only videos."""
+    source_result = result if isinstance(result, dict) else {}
+    source_data = source_result.get("data") if isinstance(source_result.get("data"), dict) else {}
+    passive = task.get("passive_video_intake") if isinstance(task.get("passive_video_intake"), dict) else {}
+    if not passive and isinstance(source_data.get("passive_video_intake"), dict):
+        passive = source_data["passive_video_intake"]
+    passive = {
+        **passive,
+        "status": str(passive.get("status") or "guarded"),
+        "publication_authorized": False,
+        "lazyedit_authorized": False,
+    }
+    guarded: dict[str, Any] = {
+        "message": "",
+        "confirmation": "",
+        "files": [],
+        "no_reply": True,
+        "data": {
+            "passive_video_intake": passive,
+            "require_file_delivery": False,
+        },
+        "contract_guard": "passive_video_save_only",
+    }
+    retry = source_result.get("publish_poststage_retry")
+    if isinstance(retry, dict):
+        guarded["publish_poststage_retry"] = retry
+        guarded["data"]["publish_poststage_retry"] = retry
+    return guarded
 
 
 def primary_source_video_local_id(task: dict[str, Any]) -> int | None:
@@ -13580,6 +13618,8 @@ def worker_result_claims_lazyedit_action(result: dict[str, Any]) -> bool:
 
 
 def enforce_worker_result_contract(task: dict[str, Any], result: dict[str, Any], raw_text: str) -> dict[str, Any]:
+    if is_passive_video_intake_task(task):
+        return canonical_passive_video_intake_result(task, result)
     if result_is_no_reply(result):
         return result
     if task_is_grant_proposal(task):
@@ -14171,6 +14211,9 @@ def run_autopublish_video_preflight(task: dict[str, Any]) -> dict[str, Any]:
 
 def nonpublish_video_preflight_dest(task: dict[str, Any]) -> Path | None:
     route = task_route_decision(task)
+    if is_passive_video_intake_task(task):
+        artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task))).expanduser()
+        return artifact_dir / "source_media"
     text = task_focus_text(task)
     if bool(route.get("public_publish_allowed")) or has_public_publish_intent(text) or wants_lazyedit_import(text):
         return None
@@ -14217,10 +14260,15 @@ def resolve_exact_video_artifact_preflight(task: dict[str, Any], original_prefli
             "queue": str(queue_path),
         }
     match = matches[0]
-    target = copy_exact_video_artifact_to_autopublish(match["path"], task)
+    passive = is_passive_video_intake_task(task)
+    target = (
+        copy_exact_video_artifact_to_private_cache(match["path"], task)
+        if passive
+        else copy_exact_video_artifact_to_autopublish(match["path"], task)
+    )
     return {
         "ok": True,
-        "status": "artifact-ledger-match",
+        "status": "passive-artifact-ledger-match" if passive else "artifact-ledger-match",
         "target": str(target),
         "target_name": target.name,
         "source_path": str(match["path"]),
@@ -14232,7 +14280,11 @@ def resolve_exact_video_artifact_preflight(task: dict[str, Any], original_prefli
         "refs": refs,
         "queue": str(queue_path),
         "wechat_cache_preflight": original_preflight,
-        "rule": "Exact same-chat artifact fallback: WeChat cache miss was recovered by md5/length match against prior generated/sent task output.",
+        "rule": (
+            "Exact same-chat artifact fallback saved privately; no LazyEdit or public publication is authorized."
+            if passive
+            else "Exact same-chat artifact fallback: WeChat cache miss was recovered by md5/length match against prior generated/sent task output."
+        ),
     }
 
 
@@ -14594,6 +14646,8 @@ def video_stem_tokens(path: Path) -> set[str]:
 
 
 def copy_exact_video_artifact_to_autopublish(source: Path, task: dict[str, Any]) -> Path:
+    if is_passive_video_intake_task(task):
+        raise RuntimeError("passive video intake cannot write to AutoPublish")
     dest_dir = Path(os.environ.get("LABCANVAS_AUTOPUBLISH_DIR") or str(DEFAULT_AUTOPUBLISH_DIR)).expanduser()
     dest_dir.mkdir(parents=True, exist_ok=True)
     stem = safe_slug(source.stem)
@@ -14608,6 +14662,25 @@ def copy_exact_video_artifact_to_autopublish(source: Path, task: dict[str, Any])
             pass
         suffix = safe_slug(str(task.get("id") or datetime.now().strftime("%Y%m%d%H%M%S")))
         target = dest_dir / f"{stem}_{suffix}{source.suffix.lower()}"
+    shutil.copy2(source, target)
+    return target
+
+
+def copy_exact_video_artifact_to_private_cache(source: Path, task: dict[str, Any]) -> Path:
+    """Persist an exact video under its ignored task directory without side effects."""
+    source = source.expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    artifact_dir = Path(str(task.get("artifact_dir") or worker_artifact_dir(task))).expanduser()
+    dest_dir = artifact_dir / "source_media"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stem = safe_slug(source.stem) or "source-video"
+    suffix = source.suffix.lower() if source.suffix.lower() in VIDEO_SUFFIXES else ".mp4"
+    target = dest_dir / f"{stem}{suffix}"
+    if target.exists():
+        if target.stat().st_size == source.stat().st_size and file_md5(target) == file_md5(source):
+            return target
+        target = dest_dir / f"{stem}-{file_md5(source)[:10]}{suffix}"
     shutil.copy2(source, target)
     return target
 
@@ -14875,20 +14948,9 @@ def deterministic_passive_video_intake_result(task: dict[str, Any]) -> str | Non
                 "message_refs": list(autopub.get("message_refs") or []),
                 "cached_at": datetime.now().isoformat(timespec="seconds"),
                 "publication_authorized": False,
+                "lazyedit_authorized": False,
             }
-            return json.dumps(
-                {
-                    "message": "",
-                    "confirmation": "",
-                    "files": [],
-                    "no_reply": True,
-                    "data": {
-                        "passive_video_intake": task["passive_video_intake"],
-                        "require_file_delivery": False,
-                    },
-                },
-                ensure_ascii=False,
-            )
+            return json.dumps(canonical_passive_video_intake_result(task), ensure_ascii=False)
     message_local_ids = list(autopub.get("message_local_ids") or [])
     if not message_local_ids:
         return None
@@ -14910,21 +14972,13 @@ def deterministic_passive_video_intake_result(task: dict[str, Any]) -> str | Non
             "error": str(autopub.get("error") or "exact source video is not cached"),
         },
     }
+    task["passive_video_intake"] = {
+        "status": "waiting_source_media",
+        "publication_authorized": False,
+        "lazyedit_authorized": False,
+    }
     return json.dumps(
-        {
-            "message": "",
-            "confirmation": "",
-            "files": [],
-            "no_reply": True,
-            "publish_poststage_retry": retry,
-            "data": {
-                "publish_poststage_retry": retry,
-                "passive_video_intake": {
-                    "status": "waiting_source_media",
-                    "publication_authorized": False,
-                },
-            },
-        },
+        canonical_passive_video_intake_result(task, {"publish_poststage_retry": retry}),
         ensure_ascii=False,
     )
 
@@ -15114,6 +15168,18 @@ def naturalize_legacy_image_read(text: str) -> str:
 
 
 def resolved_video_artifact_result(task: dict[str, Any], resolved: dict[str, Any]) -> str | None:
+    if is_passive_video_intake_task(task):
+        source_raw = str(resolved.get("source_path") or "")
+        if source_raw and Path(source_raw).expanduser().is_file():
+            cached = copy_exact_video_artifact_to_private_cache(Path(source_raw), task)
+            task["passive_video_intake"] = {
+                "status": "cached",
+                "saved_path": str(cached),
+                "bytes": cached.stat().st_size,
+                "publication_authorized": False,
+                "lazyedit_authorized": False,
+            }
+        return json.dumps(canonical_passive_video_intake_result(task), ensure_ascii=False)
     source_raw = str(resolved.get("source_path") or "")
     if not source_raw:
         return None
@@ -18613,6 +18679,21 @@ def materialize_upstream_feedback(
 def prepare_result_files(
     result: dict[str, Any], raw_text: str, *, task: dict[str, Any] | None = None
 ) -> dict[str, Any]:
+    if task is not None and is_passive_video_intake_task(task):
+        guarded = canonical_passive_video_intake_result(task, result)
+        raw_files = result.get("files") or []
+        if not isinstance(raw_files, list):
+            raw_files = [raw_files]
+        rejected = unique_strings(
+            [str(value) for value in raw_files if str(value).strip()]
+            + extract_artifact_paths(raw_text)
+        )
+        if rejected:
+            guarded["skipped_files"] = [
+                {"path": value, "reason": "passive-video-save-only"}
+                for value in rejected
+            ]
+        return guarded
     result = materialize_upstream_feedback(result, task=task)
     raw_files = result.get("files") or []
     if not isinstance(raw_files, list):
@@ -19630,6 +19711,18 @@ def is_safe_outbound_file(path: Path) -> tuple[bool, str]:
         return False, "unsupported-suffix"
     if ".private" in resolved.parts or resolved == PRIVATE or PRIVATE in resolved.parents:
         return False, "private-path"
+    lower_name = resolved.name.casefold()
+    internal_evidence_names = {
+        "routine_contract.json",
+        "routine_contract.md",
+        "same_chat_interruptions.json",
+        "media_resolution_manifest.json",
+        "file_intake_manifest.json",
+        "finder_feed_request.private.json",
+        "finder_network_capture.private.json",
+    }
+    if lower_name in internal_evidence_names or ".private." in lower_name:
+        return False, "internal-evidence"
     private_markers = {"wechat_decrypt", "xwechat_files", "cookies", "session", "tokens", "keys"}
     if any(marker in part.lower() for part in resolved.parts for marker in private_markers):
         return False, "sensitive-path"
