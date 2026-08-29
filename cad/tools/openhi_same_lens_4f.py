@@ -1076,6 +1076,7 @@ def write_readme(
 - `artifacts/parts/`: separate STEP, STL, and 3MF files for A, A+C+BS, B, C, Lens B holder, and Lens C holder.
 - `artifacts/{spec.key}_lens.step`: standalone lens model.
 - `artifacts/manifest.json`: dimensions, source identity, assembly transforms, focal datums, and validation.
+- `artifacts/renders/openhi_4f_spatial_exploded.png`: spatial view with all mechanical parts, lenses, and beam splitter separated along their mating directions.
 
 ## Optical Layout
 
@@ -1096,6 +1097,8 @@ For the plano-convex variants, all plane faces point inward toward the beam spli
 - female threads: `{FEMALE_PIVOT_MM:.1f}/{FEMALE_GROOVE_MM:.1f} mm`, pitch `{PITCH_MM:.1f} mm`, `{THREAD_LENGTH_MM:.2f} mm` bounded engagement;
 - matching male lens threads: `{MALE_LENS_ROOT_MM:.1f}/{MALE_LENS_ROOT_MM + 2.0 * TOOTH_RADIAL_HEIGHT_MM:.1f} mm` root/crest;
 - B optical axis: `X = {B_AXIS_X:.3f} mm`, intentionally `{B_AXIS_X - BS_X:.3f} mm` from the A/beam-splitter datum.
+
+The central interface map is deliberately not uniform: the preserved A+C+BS side/C female remains `29.6/30.4 mm`; its lower/A female is `29.8/30.6 mm`; both regenerated B/C lens-side females are `29.8/30.6 mm`; and the Lens C holder beam-splitter-side male remains the unchanged source `29.8/30.6 mm` root/crest.
 
 The holder side supplies the flat locating shoulder. A/B/C retain from the opposite side. The 45-degree diameter transition is on the A/B/C-facing receiver side, preserving the original OpenHI design philosophy.
 
@@ -1343,6 +1346,44 @@ def build_system(spec_key: str, design_dir: Path, *, sync: bool = True) -> dict[
         "optical_layout": optical,
         "arms": {"A": a_info, "B": b_info, "C": c_info},
         "caps": cap_info,
+        "thread_interfaces": {
+            "a_c_bs_lower_a_female": {
+                "pivot_mm": FEMALE_PIVOT_MM,
+                "groove_mm": FEMALE_GROOVE_MM,
+                "status": "regenerated",
+            },
+            "a_c_bs_side_c_female": {
+                "pivot_mm": 29.6,
+                "groove_mm": 30.4,
+                "status": "preserved source interface",
+            },
+            "lens_b_holder_lens_side_female": {
+                "pivot_mm": FEMALE_PIVOT_MM,
+                "groove_mm": FEMALE_GROOVE_MM,
+                "status": "regenerated",
+            },
+            "lens_c_holder_lens_side_female": {
+                "pivot_mm": FEMALE_PIVOT_MM,
+                "groove_mm": FEMALE_GROOVE_MM,
+                "status": "regenerated",
+            },
+            "lens_c_holder_beam_splitter_side_male": {
+                "root_mm": LEGACY_MALE_ROOT_MM,
+                "crest_mm": round(
+                    LEGACY_MALE_ROOT_MM + 2.0 * TOOTH_RADIAL_HEIGHT_MM,
+                    6,
+                ),
+                "status": "preserved source interface",
+            },
+            "a_b_c_lens_retainer_males": {
+                "root_mm": MALE_LENS_ROOT_MM,
+                "crest_mm": round(
+                    MALE_LENS_ROOT_MM + 2.0 * TOOTH_RADIAL_HEIGHT_MM,
+                    6,
+                ),
+                "status": "regenerated",
+            },
+        },
         "source_files": {
             path.name: {"path": str(path), "sha256": sha256(path)}
             for path in (SOURCE_A, SOURCE_B, SOURCE_C, SOURCE_AC_BS, SOURCE_B_HOLDER, SOURCE_C_HOLDER, SOURCE_SHAPR)

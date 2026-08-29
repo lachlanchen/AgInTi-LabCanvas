@@ -6,6 +6,7 @@
 - `artifacts/parts/`: separate STEP, STL, and 3MF files for A, A+C+BS, B, C, Lens B holder, and Lens C holder.
 - `artifacts/gla11_025_050_lens.step`: standalone lens model.
 - `artifacts/manifest.json`: dimensions, source identity, assembly transforms, focal datums, and validation.
+- `artifacts/renders/openhi_4f_spatial_exploded.png`: spatial view with all mechanical parts, lenses, and beam splitter separated along their mating directions.
 
 ## Optical Layout
 
@@ -26,6 +27,8 @@ For the plano-convex variants, all plane faces point inward toward the beam spli
 - female threads: `29.8/30.6 mm`, pitch `0.8 mm`, `7.75 mm` bounded engagement;
 - matching male lens threads: `29.6/30.4 mm` root/crest;
 - B optical axis: `X = 254.633 mm`, intentionally `-0.367 mm` from the A/beam-splitter datum.
+
+The central interface map is deliberately not uniform: the preserved A+C+BS side/C female remains `29.6/30.4 mm`; its lower/A female is `29.8/30.6 mm`; both regenerated B/C lens-side females are `29.8/30.6 mm`; and the Lens C holder beam-splitter-side male remains the unchanged source `29.8/30.6 mm` root/crest.
 
 The holder side supplies the flat locating shoulder. A/B/C retain from the opposite side. The 45-degree diameter transition is on the A/B/C-facing receiver side, preserving the original OpenHI design philosophy.
 

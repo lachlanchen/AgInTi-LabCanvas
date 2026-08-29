@@ -171,6 +171,38 @@
       "retainer_aperture_mm": 23.4
     }
   },
+  "thread_interfaces": {
+    "a_c_bs_lower_a_female": {
+      "pivot_mm": 29.8,
+      "groove_mm": 30.6,
+      "status": "regenerated"
+    },
+    "a_c_bs_side_c_female": {
+      "pivot_mm": 29.6,
+      "groove_mm": 30.4,
+      "status": "preserved source interface"
+    },
+    "lens_b_holder_lens_side_female": {
+      "pivot_mm": 29.8,
+      "groove_mm": 30.6,
+      "status": "regenerated"
+    },
+    "lens_c_holder_lens_side_female": {
+      "pivot_mm": 29.8,
+      "groove_mm": 30.6,
+      "status": "regenerated"
+    },
+    "lens_c_holder_beam_splitter_side_male": {
+      "root_mm": 29.8,
+      "crest_mm": 30.6,
+      "status": "preserved source interface"
+    },
+    "a_b_c_lens_retainer_males": {
+      "root_mm": 29.6,
+      "crest_mm": 30.4,
+      "status": "regenerated"
+    }
+  },
   "source_files": {
     "USE_THIS_OpenHI_A_exact_current_geometry.step": {
       "path": "/home/lachlan/ProjectsLFS/AgenticApp/cad/designs/openhi_abc_exact_parametric_baseline/USE_THIS_OpenHI_A_exact_current_geometry.step",
@@ -335,9 +367,9 @@
         ]
       },
       "sha256": {
-        "step": "a0a3d02cb8a94e27797efb9aaacf493ec15d07d958b4f8d43cf30dd992a30805",
+        "step": "f553cc64b57804f3882901d40c36d2052cc235ed50a1d9100a8e1f3c1e118249",
         "stl": "8442d467db5861f830aaa8c24146d1380a991116a2a1c619ab05ff4e52dac73c",
-        "3mf": "b6c95e4fbd4f257b3b9316a8554401d4d4b3c15883428e4a487438d4224fbf00"
+        "3mf": "5ea499d8a8754466ead6e95132023ec365524ce2cdd5cdc20e016f5a2654184e"
       }
     },
     "A_C_BS": {
@@ -387,9 +419,9 @@
         ]
       },
       "sha256": {
-        "step": "c6cfdcbb85a947061dde8324a2fda7cd835c2b6af50edb00e84e843ddab2f7f9",
+        "step": "bfc381506e12519799bd3f694cfaa4ad10295aeb58c5204f49dbc0a87af4374c",
         "stl": "d1d4baca4bab80bc7a43e5aa6d5d28cb1be262cb17cb1e854e3dd1a7e73b36e2",
-        "3mf": "a7d316cf96b165698291cf3ea41a35f7870ed2db4510c9de4f2e54870e64510f"
+        "3mf": "fae9098479b7c37b3989d4a94edbe2d92fcfef53f3ac7c75f704f85541abcc52"
       }
     },
     "B": {
@@ -439,9 +471,9 @@
         ]
       },
       "sha256": {
-        "step": "b574d2bb35eed06c76379d21dc960c03374479fcbd9ec9e55ab57c43324da986",
+        "step": "a06a655e846743f1617836e30a03d65213651a79c80e76a3cd6f614ff410028e",
         "stl": "584b966aaad879ed8c2c60bd6d3b2f5daffe877828761a982eb4e828307ba06b",
-        "3mf": "76e23d014a83e05cfb0b0ffcb9f24f1e93e1f0d769542ee53dffa0254cdad161"
+        "3mf": "fe6d0f264d19486a615c2bed9e546878a571c9db393dd25573a9eca6ee51e846"
       }
     },
     "C": {
@@ -491,9 +523,9 @@
         ]
       },
       "sha256": {
-        "step": "9b35fac48d647bd2d88a9fc98089b86a4e8b58af14f0460c2fd74287c0d5c63e",
+        "step": "a1e3f8bbabfafda4c0bd495e349ec5b9b22a1deb0357d2665a5e5eb685e0fce5",
         "stl": "c3d00c25cf8e60b82d403c1f6660f1d8098d0fc7b8e4180dfccd07e7b076671e",
-        "3mf": "5cf9dff9841eb66a04706d430a4a173bbde019159e1628ba95bc6d3ebfddd645"
+        "3mf": "150a4a832f6b979fc25bf0411a93898aa64938e67b49948827171811035dea31"
       }
     },
     "Lens_B_holder": {
@@ -543,9 +575,9 @@
         ]
       },
       "sha256": {
-        "step": "51d04271541a7d8f6d0d99968769437995518de6b9e820f5b5d2eaeaba6c258b",
+        "step": "7d5e5743eaf7b4aa05d9b4a4442e4436eefbd7dc14f45d27d111f4f9620d53fa",
         "stl": "78f4c12b3b204c1ab9ba94bb0be39f76c824d10cf66775d5e45772648f1d80e3",
-        "3mf": "a261f6764c5af7578e2579d35e3b4bd5cd11e19395c6a7201e5e915eeb828eae"
+        "3mf": "fe03a43ff4c8e9bb016e3ee1dc981ef53ef15c0b92011dd85d226f0d1d59d600"
       }
     },
     "Lens_C_holder": {
@@ -595,9 +627,9 @@
         ]
       },
       "sha256": {
-        "step": "180091078023ed894a39cc8e087d5f1e86edd372061b60b936c488aeaf515548",
+        "step": "364a241d09031bdd6b719c31c22d7b2763ef838acea9199773589fbdfa601b87",
         "stl": "6392269ba72ca571c17f39ae95e487fb18da710b7041970a45b40c8cf2e33224",
-        "3mf": "f357f8fa19c8c870d528460d44d3259767316dfb45ac38d4c1e8cc7cf531166b"
+        "3mf": "d2d4eb6b399df2212f7e3e4e997683e910a31388e43c853638d5f2f4b35c8596"
       }
     }
   },

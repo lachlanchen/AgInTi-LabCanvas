@@ -67,6 +67,27 @@ class OpenHISameLens4fManifestTests(unittest.TestCase):
                     "Lens_C_holder",
                 })
 
+    def test_thread_interface_map_preserves_tight_fit_variants(self):
+        expected = {
+            "a_c_bs_lower_a_female": ("pivot_mm", 29.8, "groove_mm", 30.6),
+            "a_c_bs_side_c_female": ("pivot_mm", 29.6, "groove_mm", 30.4),
+            "lens_b_holder_lens_side_female": (
+                "pivot_mm", 29.8, "groove_mm", 30.6
+            ),
+            "lens_c_holder_lens_side_female": (
+                "pivot_mm", 29.8, "groove_mm", 30.6
+            ),
+            "lens_c_holder_beam_splitter_side_male": (
+                "root_mm", 29.8, "crest_mm", 30.6
+            ),
+        }
+        for design_name in DESIGN_NAMES:
+            with self.subTest(design=design_name):
+                interfaces = self.load_manifest(design_name)["thread_interfaces"]
+                for name, (root_key, root, crest_key, crest) in expected.items():
+                    self.assertAlmostEqual(interfaces[name][root_key], root, places=7)
+                    self.assertAlmostEqual(interfaces[name][crest_key], crest, places=7)
+
 
 if __name__ == "__main__":
     unittest.main()

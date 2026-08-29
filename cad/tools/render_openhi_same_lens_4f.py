@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render an assembled same-lens OpenHI 4f design with Blender."""
+"""Render assembled, optical-axis, and exploded OpenHI 4f views."""
 
 from __future__ import annotations
 
@@ -48,6 +48,49 @@ def add_axis_curve(name: str, points: list[tuple[float, float, float]], mat):
     obj = bpy.data.objects.new(name, curve)
     bpy.context.collection.objects.link(obj)
     obj.data.materials.append(mat)
+    return obj
+
+
+def object_bounds(objects):
+    corners = [
+        obj.matrix_world @ Vector(corner)
+        for obj in objects
+        for corner in obj.bound_box
+    ]
+    lower = Vector((
+        min(point.x for point in corners),
+        min(point.y for point in corners),
+        min(point.z for point in corners),
+    ))
+    upper = Vector((
+        max(point.x for point in corners),
+        max(point.y for point in corners),
+        max(point.z for point in corners),
+    ))
+    return lower, upper
+
+
+def fit_orthographic_camera(camera, objects, aspect, margin=1.45):
+    bpy.context.view_layer.update()
+    world_corners = [
+        obj.matrix_world @ Vector(corner)
+        for obj in objects
+        for corner in obj.bound_box
+    ]
+    world_to_camera = camera.matrix_world.inverted()
+    camera_corners = [world_to_camera @ point for point in world_corners]
+    width = max(point.x for point in camera_corners) - min(
+        point.x for point in camera_corners
+    )
+    height = max(point.y for point in camera_corners) - min(
+        point.y for point in camera_corners
+    )
+    camera.data.ortho_scale = max(height * margin, width * margin / aspect)
+
+
+def set_material_color(mat, color):
+    mat.diffuse_color = color
+    mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = color
 
 
 def main():
@@ -74,6 +117,7 @@ def main():
     bs_glass = material("Beam splitter", (0.78, 0.90, 1.0, 0.30), roughness=0.08)
     axis_mat = material("Optical axes", (0.95, 0.20, 0.08, 1.0), roughness=0.25)
 
+    component_objects = {}
     for path in sorted((artifact_dir / "assembly_components").glob("*.stl")):
         bpy.ops.wm.stl_import(filepath=str(path))
         obj = bpy.context.object
@@ -86,20 +130,32 @@ def main():
             obj.data.materials.append(body_mats[path.stem])
         for polygon in obj.data.polygons:
             polygon.use_smooth = path.stem.startswith("lens_")
+        component_objects[path.stem] = obj
 
     f = float(manifest["optical_layout"]["catalog_efl_mm"])
     b_axis_x = float(manifest["optical_layout"]["b_axis_x_mm"])
-    add_axis_curve("A optical axis", [(255, 210, 600 - f - 18), (255, 210, 600)], axis_mat)
-    add_axis_curve(
-        "B optical axis",
-        [(b_axis_x, 210, 600), (b_axis_x, 210, 600 + f + 18)],
-        axis_mat,
-    )
-    add_axis_curve("C optical axis", [(255, 210, 600), (255 + f + 32, 210, 600)], axis_mat)
+    axis_objects = [
+        add_axis_curve(
+            "A optical axis",
+            [(255, 210, 600 - f - 18), (255, 210, 600)],
+            axis_mat,
+        ),
+        add_axis_curve(
+            "B optical axis",
+            [(b_axis_x, 210, 600), (b_axis_x, 210, 600 + f + 18)],
+            axis_mat,
+        ),
+        add_axis_curve(
+            "C optical axis",
+            [(255, 210, 600), (255 + f + 32, 210, 600)],
+            axis_mat,
+        ),
+    ]
 
     bpy.ops.mesh.primitive_plane_add(size=320, location=(255, 210, 475))
     floor = bpy.context.object
-    floor.data.materials.append(material("Floor", (0.055, 0.065, 0.075, 1.0), roughness=0.72))
+    floor_mat = material("Floor", (0.055, 0.065, 0.075, 1.0), roughness=0.72)
+    floor.data.materials.append(floor_mat)
 
     world = bpy.context.scene.world
     if world is None:
@@ -142,6 +198,84 @@ def main():
     look_at(camera, Vector((285, 210, 600)))
     camera.data.ortho_scale = 235
     scene.render.filepath = str(render_dir / "openhi_4f_optical_axis.png")
+    bpy.ops.render.render(write_still=True)
+
+    # Explode only for this final view. Every part remains on its true mating
+    # axis, while the beam-splitter proxy moves toward the viewer so it is not
+    # hidden inside the two central bodies.
+    gap = max(18.0, min(28.0, f * 0.45))
+    exploded_offsets = {
+        "A": (0.0, 0.0, -1.65 * gap),
+        "lens_A": (0.0, 0.0, -0.85 * gap),
+        "A_C_BS": (0.0, 0.0, 0.0),
+        "Lens_B_holder": (0.0, 0.0, 0.45 * gap),
+        "lens_B": (0.0, 0.0, 1.05 * gap),
+        "B": (0.0, 0.0, 1.70 * gap),
+        "Lens_C_holder": (0.45 * gap, 0.0, 0.0),
+        "lens_C": (1.05 * gap, 0.0, 0.0),
+        "C": (1.70 * gap, 0.0, 0.0),
+        "beam_splitter_reference": (0.0, -1.05 * gap, 0.0),
+    }
+    for name, offset in exploded_offsets.items():
+        component_objects[name].location += Vector(offset)
+    bpy.context.view_layer.update()
+    for obj in axis_objects:
+        obj.hide_render = True
+    exploded_axes = [
+        add_axis_curve(
+            "Exploded A guide",
+            [(255, 210, 600 - f - 18 - 1.85 * gap), (255, 210, 600)],
+            axis_mat,
+        ),
+        add_axis_curve(
+            "Exploded B guide",
+            [(b_axis_x, 210, 600), (b_axis_x, 210, 600 + f + 18 + 1.90 * gap)],
+            axis_mat,
+        ),
+        add_axis_curve(
+            "Exploded C guide",
+            [(255, 210, 600), (255 + f + 32 + 1.90 * gap, 210, 600)],
+            axis_mat,
+        ),
+    ]
+    for obj in exploded_axes:
+        obj.data.bevel_depth = 0.32
+
+    lower, upper = object_bounds(component_objects.values())
+    center = (lower + upper) / 2.0
+    span = upper - lower
+    floor.location.x = center.x
+    floor.location.y = center.y
+    floor.location.z = lower.z - 18.0
+    floor.scale = (
+        max(1.0, (span.x + 120.0) / 320.0),
+        max(1.0, (span.y + 160.0) / 320.0),
+        1.0,
+    )
+    set_material_color(floor_mat, (0.075, 0.09, 0.11, 1.0))
+    background.inputs["Color"].default_value = (0.12, 0.15, 0.19, 1.0)
+    background.inputs["Strength"].default_value = 0.62
+
+    view_direction = Vector((1.15, -1.30, 1.05)).normalized()
+    camera.location = center + view_direction * 520.0
+    look_at(camera, center)
+    aspect = scene.render.resolution_x / scene.render.resolution_y
+    fit_orthographic_camera(
+        camera,
+        [*component_objects.values(), *exploded_axes],
+        aspect,
+    )
+    floor.hide_render = True
+    scene.render.engine = "BLENDER_WORKBENCH"
+    scene.display.shading.light = "STUDIO"
+    scene.display.shading.color_type = "MATERIAL"
+    scene.display.shading.show_shadows = True
+    scene.display.shading.show_cavity = True
+    scene.display.shading.cavity_type = "BOTH"
+    scene.display.shading.show_specular_highlight = True
+    scene.display.shading.background_type = "VIEWPORT"
+    scene.display.shading.background_color = (0.055, 0.07, 0.09)
+    scene.render.filepath = str(render_dir / "openhi_4f_spatial_exploded.png")
     bpy.ops.render.render(write_still=True)
 
 

@@ -105,8 +105,11 @@ Instead:
 5. Give the lens pocket 0.25 mm diametric clearance.
 6. Leave a real annular shoulder between the clear aperture and lens pocket.
 7. Put the 45-degree transition on the A/B/C-facing receiver side.
-8. Reuse the 29.8 mm female pivot, 30.6 mm groove, 0.8 mm pitch, and 0.4 mm
-   radial tooth depth.
+8. Use the accepted interface map rather than flattening every thread to one
+   diameter: A+C+BS lower/A female `29.8/30.6 mm`; preserved A+C+BS side/C
+   female `29.6/30.4 mm`; regenerated B/C lens-side females `29.8/30.6 mm`;
+   and the unchanged Lens C holder beam-splitter-side male `29.8/30.6 mm`
+   root/crest. Pitch remains `0.8 mm` and radial tooth depth `0.4 mm`.
 9. Generate each helix beyond both ends and clip it back to the exact threaded
    interval so no thread enters the lens pocket, mouth, or central body.
 10. For a lens smaller than the original 25 mm class, add an integral retainer
@@ -177,7 +180,8 @@ Every generated family must contain:
 - an assembly STEP with three identical lens copies and a beam-splitter
   reference;
 - a machine-readable manifest;
-- an assembled render and optical-axis render;
+- an assembled render, optical-axis render, and spatial exploded render with
+  each mechanical part and lens separated along its true mating axis;
 - STEP round-trip validity and mesh watertightness checks;
 - zero lens-to-holder/cap interference at all three locations;
 - at least 5 mm of calculated thread engagement on A, B, and C;
