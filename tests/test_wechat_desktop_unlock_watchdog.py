@@ -42,6 +42,46 @@ def args(tmp: str) -> argparse.Namespace:
 
 
 class WeChatDesktopUnlockWatchdogTests(unittest.TestCase):
+    def test_qr_login_screen_never_touches_the_phone(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(watchdog, "apply_desktop_keep_awake"),
+            mock.patch.object(
+                watchdog,
+                "desktop_lock_state",
+                return_value={
+                    "ok": True,
+                    "status": "entry_required",
+                    "login_mode": "qr",
+                },
+            ),
+            mock.patch.object(watchdog, "enter_weixin_on_desktop") as enter,
+            mock.patch.object(watchdog, "require_serial") as require_serial,
+        ):
+            result = watchdog.watchdog_once(args(tmp))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "awaiting_qr_login")
+        self.assertEqual(result["retry_after_seconds"], 300)
+        enter.assert_not_called()
+        require_serial.assert_not_called()
+
+    def test_small_login_window_classifies_qr_ocr(self) -> None:
+        window = mock.Mock(width=291, height=396, x=814, y=341)
+        completed = [
+            subprocess.CompletedProcess([], 0, "", ""),
+            subprocess.CompletedProcess([], 0, "Scan to log in\n", ""),
+        ]
+        with mock.patch.object(watchdog, "run", side_effect=completed):
+            mode = watchdog.classify_small_login_window(
+                {},
+                window,
+                Path("/tmp/desktop.png"),
+                Path("/tmp/login-crop.png"),
+            )
+
+        self.assertEqual(mode, "qr")
+
     def test_explicit_android_priority_preempts_unlock_watchdog_lease(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
             watchdog,

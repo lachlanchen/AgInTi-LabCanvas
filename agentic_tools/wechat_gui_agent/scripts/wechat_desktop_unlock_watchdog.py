@@ -143,6 +143,18 @@ def watchdog_once(args: argparse.Namespace) -> dict[str, Any]:
         "action": "noop",
     }
     if lock_state.get("status") == "entry_required":
+        if lock_state.get("login_mode") == "qr":
+            payload.update(
+                {
+                    "ok": False,
+                    "action": "awaiting_qr_login",
+                    "retry_after_seconds": max(
+                        60,
+                        int(os.environ.get("WECHAT_UNLOCK_QR_RETRY_SECONDS", "300")),
+                    ),
+                }
+            )
+            return payload
         if args.dry_run:
             payload["action"] = "would_enter_weixin"
             return payload
@@ -306,9 +318,16 @@ def desktop_lock_state(display: str, output_dir: Path) -> dict[str, Any]:
     except Exception as exc:
         return {"ok": False, "status": "detect_failed", "error": str(exc)[:500]}
     if window.width < 500 or window.height < 500:
+        login_mode = classify_small_login_window(
+            env,
+            window,
+            shot,
+            output_dir / "unlock-watchdog-desktop-current-entry-crop.png",
+        )
         return {
             "ok": True,
             "status": "entry_required",
+            "login_mode": login_mode,
             "window": {"x": window.x, "y": window.y, "width": window.width, "height": window.height},
             "screenshot": str(shot),
             "lock_crop": str(crop),
@@ -333,6 +352,68 @@ def desktop_lock_state(display: str, output_dir: Path) -> dict[str, Any]:
         "lock_crop": str(evidence_crop),
         "ocr_text": ocr_text,
     }
+
+
+def classify_small_login_window(
+    env: dict[str, str],
+    window: Any,
+    screenshot_path: Path,
+    crop_path: Path,
+) -> str:
+    """Distinguish a reusable account entry button from a QR-only login."""
+    converted = run(
+        [
+            "convert",
+            str(screenshot_path),
+            "-crop",
+            f"{window.width}x{window.height}+{window.x}+{window.y}",
+            "-resize",
+            "180%",
+            "-colorspace",
+            "Gray",
+            "-contrast-stretch",
+            "1%x1%",
+            str(crop_path),
+        ],
+        env=env,
+        check=False,
+        timeout=15,
+    )
+    if converted.returncode != 0:
+        return "unknown"
+    ocr = run(
+        [
+            "tesseract",
+            str(crop_path),
+            "stdout",
+            "-l",
+            "chi_sim+eng",
+            "--psm",
+            "11",
+        ],
+        env=env,
+        check=False,
+        timeout=15,
+    ).stdout.casefold()
+    compact = "".join(ocr.split())
+    qr_markers = (
+        "scantologin",
+        "scanqrcode",
+        "扫码登录",
+        "扫描二维码",
+        "二维码登录",
+    )
+    if any(marker in compact for marker in qr_markers):
+        return "qr"
+    entry_markers = (
+        "enterweixin",
+        "enterwechat",
+        "进入微信",
+        "登录微信",
+    )
+    if any(marker in compact for marker in entry_markers):
+        return "account_entry"
+    return "unknown"
 
 
 def enter_weixin_on_desktop(display: str, lock_state: dict[str, Any]) -> dict[str, Any]:
