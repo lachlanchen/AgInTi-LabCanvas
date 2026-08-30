@@ -37,6 +37,7 @@
     "modeled_edge_thickness_mm": 6.536956,
     "element_1_edge_thickness_mm": 6.038475,
     "element_2_edge_thickness_mm": 0.498481,
+    "analytic_spherical_faces": true,
     "holder_axial_envelope_mm": 6.802839
   },
   "optical_layout": {
@@ -68,6 +69,12 @@
       "B": 0.0,
       "C": 0.0
     },
+    "central_source_style_mating_interference_mm3": {
+      "generated_a_c_bs_to_lens_b_holder": 0.002020248,
+      "source_a_c_bs_to_lens_b_holder": 0.0,
+      "generated_a_c_bs_to_lens_c_holder": 85.195119629,
+      "source_a_c_bs_to_lens_c_holder": 84.847943735
+    },
     "thread_engagement_mm": {
       "A": 7.75,
       "B": 7.75,
@@ -97,6 +104,84 @@
     "end_path_error_mm": {
       "A_to_B": 0.0,
       "A_to_C": 0.0
+    }
+  },
+  "final_dimensional_audit": {
+    "lens_fit": {
+      "nominal_diameter_mm": 22.0,
+      "pocket_diameter_mm": 22.25,
+      "diametric_clearance_mm": 0.25,
+      "radial_clearance_each_side_mm": 0.125,
+      "clear_aperture_mm": 20.5,
+      "holder_support_land_radial_mm": 0.875,
+      "cap_retainer_land_radial_mm": 0.75,
+      "minimum_holder_wall_radial_mm": 8.875,
+      "retainer_tightening_travel_mm": 0.2
+    },
+    "receiver_chamfers": {
+      "lens_pocket_to_female_pivot": {
+        "from_diameter_mm": 22.25,
+        "to_diameter_mm": 29.8,
+        "axial_length_mm": 3.775,
+        "angle_deg": 45.0
+      },
+      "male_retainer_to_lens": {
+        "from_diameter_mm": 29.6,
+        "to_diameter_mm": 22.0,
+        "axial_length_mm": 3.775,
+        "angle_deg": 45.189094
+      },
+      "outer_mouth_to_thread": {
+        "holder_angle_deg": 45.0,
+        "cap_angle_deg": 45.0,
+        "axial_length_mm": 5.1
+      }
+    },
+    "lens_retainer_thread_fit": {
+      "pitch_mm": 0.8,
+      "radial_tooth_height_mm": 0.4,
+      "bounded_length_mm": 7.75,
+      "female_pivot_mm": 29.8,
+      "female_groove_mm": 30.6,
+      "male_root_mm": 29.6,
+      "male_crest_mm": 30.4,
+      "root_radial_clearance_mm": 0.1,
+      "crest_radial_clearance_mm": 0.1,
+      "construction_runout_mm": 0.4,
+      "runout_clipped_to_parent_length": true
+    },
+    "central_c_source_style_fit": {
+      "female_pivot_mm": 29.6,
+      "female_groove_mm": 30.4,
+      "male_root_mm": 29.8,
+      "male_crest_mm": 30.6,
+      "nominal_diametric_interference_mm": 0.2,
+      "classification": "preserved tight printed source interface, not a CAD clearance fit"
+    },
+    "camera_output_thread": {
+      "root_mm": 24.4,
+      "crest_mm": 25.2,
+      "pitch_mm": 0.8,
+      "bounded_length_mm": 4.7,
+      "classification": "source OpenHI printed C-mount-like profile",
+      "standard_1in_32_major_mm": 25.4,
+      "standard_1in_32_pitch_mm": 0.79375
+    },
+    "optical_distance_chain": {
+      "beam_splitter_to_nominal_seat_mm": 27.48499,
+      "beam_splitter_to_inward_axis_vertex_mm": 27.48499,
+      "beam_splitter_to_outward_axis_vertex_mm": 35.98499,
+      "a_to_b_nominal_seat_spacing_2f_mm": 54.96998,
+      "a_to_c_nominal_seat_spacing_2f_mm": 54.96998,
+      "a_seat_to_outer_end_mm": 27.68499,
+      "b_seat_to_outer_end_mm": 31.88499,
+      "c_seat_to_outer_end_mm": 31.88499,
+      "a_outer_end_to_beam_splitter_mm": 55.16998,
+      "beam_splitter_to_b_outer_end_mm": 59.36998,
+      "beam_splitter_to_c_outer_end_mm": 59.36998,
+      "a_to_b_complete_outer_end_path_mm": 114.53996,
+      "a_to_c_complete_outer_end_path_mm": 114.53996,
+      "reference_plane_note": "The nominal f datum is the inward annular lens seat, matching the source OpenHI convention; it is not a certified thick-lens principal plane."
     }
   },
   "arms": {
@@ -367,9 +452,9 @@
         ]
       },
       "sha256": {
-        "step": "fc15b07fd775dc92e259ce0a3cf58ec54dafa5a055299ae625408b8d561b12ff",
+        "step": "983b96d11e95da2721e3055acb283916191837dc24e5ad6e26081e80326c70a6",
         "stl": "4b2a858ce6da0f03ed0f03312f5455c789a7152c33a9fa7b5d13bdea820ab26e",
-        "3mf": "0d3db5544ae0b682f194172140d75dca9776d591bba56e7d51a1bc8de83aef10"
+        "3mf": "1148b893192132cb73d8898c5ec1f9ca95ca37fe32ae0cf0bf69eb1f9220da0d"
       }
     },
     "A_C_BS": {
@@ -419,9 +504,9 @@
         ]
       },
       "sha256": {
-        "step": "c3ea95d6398ab507cf5d34961be603989ea3649c7a858d3b98856a90caa95650",
+        "step": "4d99c40d3c112e604c30c9c52afd0643d85c0c9cbdc7f88224f7c1e059493748",
         "stl": "e2b0ec7ca51b47fdaa47e2911bc4df82ab21730e8441e7707a4cb064110e4fc5",
-        "3mf": "a242f1e196293b677323008909e5b3021e151cbdb2d64607b6d6c1d45453f215"
+        "3mf": "4604fa24248eb34c5128a2fff81a8e68db94728d92c30614106e7932520a860f"
       }
     },
     "B": {
@@ -471,9 +556,9 @@
         ]
       },
       "sha256": {
-        "step": "01ae6b778791b317f12c4d0aa4112567d289e7254452ed11c6d8992544521d2a",
+        "step": "005e4894edf9bf27117981a93ac8cf391fe00735a66c96463b8f055772f83a07",
         "stl": "84b3126cf2bf8be7a5073a2ab3d87f159943de98475d3d950d61a6d46f1f9cce",
-        "3mf": "8e9d4a0b13e354feab3d940513f6a42ceb9b5fb620c9d7029de447dd79276e08"
+        "3mf": "cd4de2dde59b81173068c6efdbaa2488e3618bbdee934056056acd5961b2d7ec"
       }
     },
     "C": {
@@ -523,9 +608,9 @@
         ]
       },
       "sha256": {
-        "step": "a270cdf15793c04ff2b69bfc7d253eca6232b32774018e08394b5ee984113181",
+        "step": "40e4b171d7b8b125d42d45bb678acdbc96e9d7d26609b5fff01c20c7e649acdc",
         "stl": "50c550bcd5c4930d73ff88e535b3970f01d8138b828b8807243a80392e27738e",
-        "3mf": "196313a9cd5cf7b21f7da8de53294e9ba6823a6bc36f645931be7933c38ef033"
+        "3mf": "f0dd32dd3cefa18f81a0dec7301105f78a23cdb5738f3091da36f1957b9bdd24"
       }
     },
     "Lens_B_holder": {
@@ -575,9 +660,9 @@
         ]
       },
       "sha256": {
-        "step": "1b2b4aa9268e4937fccacd699f6cd77c665a217b54ac4e38614ef31e4dee5d50",
+        "step": "81a77411ec30097b85a3b315c62e20c2d3d3e6a2cf71f0db8756964002f62a14",
         "stl": "324a9b0c044dcfe792fb3711504bd02586f5b6697dbd9ccd500e357cc1d471c9",
-        "3mf": "1a6e459fd495d81a0b82312c31c1beaffb99fb83656cd0c76f62cb97c3091f8e"
+        "3mf": "86ce6e0c64d83c345efd882a3fa48f04c914df8b16d88b896dc654b05314b227"
       }
     },
     "Lens_C_holder": {
@@ -627,9 +712,9 @@
         ]
       },
       "sha256": {
-        "step": "a9cbee4c97ee6835c58b854e31357ad165f344f4ba425460a6cfe852ef745845",
+        "step": "1de77815894a11b9b5f0b10afc4e2ff242399d7da87db2bc50ac161d7334b3e2",
         "stl": "ca9ea8444a41299e3b0dee2984c496d041ef386e5dc2dccaf006d77165ad0f5c",
-        "3mf": "f08df0e3a3cf4c8bfd250481aac9818ef755b78b243a65e01cfe03b3fc2f1434"
+        "3mf": "2572bfbf7dcaa86fd751418f5769f6074017d52c4b27bed41644fdd9db4da032"
       }
     }
   },
@@ -639,7 +724,7 @@
     "3mf": "cad/designs/openhi_4f_jh042_same_lens/artifacts/jh042_lens.3mf",
     "step_validation": {
       "solid_count": 2,
-      "face_count": 291,
+      "face_count": 6,
       "bbox": {
         "min": [
           -11.0,
@@ -657,12 +742,12 @@
           8.5
         ]
       },
-      "volume_mm3": 2861.965842,
+      "volume_mm3": 2861.980225,
       "occt_valid": true
     },
     "mesh_validation": {
-      "vertices": 29485,
-      "faces": 58966,
+      "vertices": 2307,
+      "faces": 4610,
       "watertight": true,
       "winding_consistent": true,
       "components": 1,
@@ -685,7 +770,7 @@
     "use_this_step": "cad/designs/openhi_4f_jh042_same_lens/USE_THIS_jh042_openhi_4f_assembly.step",
     "validation": {
       "solid_count": 13,
-      "face_count": 1092,
+      "face_count": 237,
       "bbox": {
         "min": [
           234.266,
@@ -703,7 +788,7 @@
           114.53996
         ]
       },
-      "volume_mm3": 132778.077464,
+      "volume_mm3": 132775.763827,
       "occt_valid": true
     }
   },
@@ -720,6 +805,12 @@
     "mating_part_interference_is_zero": true,
     "minimum_thread_engagement_is_at_least_5mm": true,
     "end_paths_equal_4f_plus_measured_seat": true,
-    "b_axis_shift_preserved": true
+    "b_axis_shift_preserved": true,
+    "lens_model_uses_analytic_optical_surfaces": true,
+    "lens_radial_clearance_is_positive": true,
+    "lens_support_lands_are_at_least_0p7mm": true,
+    "receiver_chamfers_are_manufacturable": true,
+    "lens_retainer_threads_have_0p1mm_radial_clearance": true,
+    "central_source_style_fit_matches_reference": true
   }
 }

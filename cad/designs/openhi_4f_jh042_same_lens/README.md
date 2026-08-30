@@ -10,7 +10,9 @@
 
 ## Optical Layout
 
-All three arms use the same `JH042 cemented doublet` lens. The beam-splitter center is the fixed datum `(255, 210, 600) mm`. The CAD places the A, B, and C holder contact planes one catalog EFL from that datum: `27.48499 mm`. Therefore A-B and A-C nominal principal-plane separations are `2f = 54.96998 mm` under the source OpenHI thin-lens convention. The catalog does not provide BFL/principal-plane locations.
+All three arms use the same `JH042 cemented doublet` lens. The beam-splitter center is the fixed datum `(255, 210, 600) mm`. The CAD places the A, B, and C holder contact planes one catalog EFL from that datum: `27.48499 mm`. Therefore A-B and A-C nominal mechanical-seat separations are `2f = 54.96998 mm` under the source OpenHI thin-lens convention. The catalog does not provide BFL/principal-plane locations.
+
+Here "nominal lens plane" means the inward annular mechanical seat used by the original OpenHI assembly. The inward optical-axis vertex is `27.48499 mm` from the beam splitter in this modeled geometry. Depending on the inward surface, that vertex and the annular seat may differ. Neither datum should be called a certified thick-lens principal plane without the complete vendor prescription.
 
 The complete physical A-to-B and A-to-C outer-end paths are both `114.53996 mm = 4f + 4.6 mm`. The `4.6 mm` allowance is measured from the accepted ST018 assembly, not guessed: the A outer end contributes `f + 0.2 mm` and each output end contributes `f + 4.4 mm`. Thread length overlaps its receiver and is not added again to this path.
 
@@ -20,15 +22,21 @@ For the plano-convex variants, all plane faces point inward toward the beam spli
 
 - nominal lens diameter: `22.000 mm`;
 - holder pocket: `22.250 mm`;
+- radial pocket clearance per side: `0.125 mm`;
 - clear aperture: `20.500 mm`;
+- holder/cap support lands: `0.875/0.750 mm` radial;
+- minimum holder wall beside the lens pocket: `8.875 mm`;
 - modeled mechanical edge thickness: `6.537 mm`;
 - retaining axial envelope at the actual support radius: `6.803 mm`;
-- axial pocket allowance: `0.200 mm`;
+- retainer tightening travel: `0.200 mm`;
 - female threads: `29.8/30.6 mm`, pitch `0.8 mm`, `7.75 mm` bounded engagement;
 - matching male lens threads: `29.6/30.4 mm` root/crest;
+- root and crest radial thread clearance: `0.100/0.100 mm`;
 - B optical axis: `X = 254.633 mm`, intentionally `-0.367 mm` from the A/beam-splitter datum.
 
-The central interface map is deliberately not uniform: the preserved A+C+BS side/C female remains `29.6/30.4 mm`; its lower/A female is `29.8/30.6 mm`; both regenerated B/C lens-side females are `29.8/30.6 mm`; and the Lens C holder beam-splitter-side male remains the unchanged source `29.8/30.6 mm` root/crest.
+The central interface map is deliberately not uniform: the preserved A+C+BS side/C female remains `29.6/30.4 mm`; its lower/A female is `29.8/30.6 mm`; both regenerated B/C lens-side females are `29.8/30.6 mm`; and the Lens C holder beam-splitter-side male remains the unchanged source `29.8/30.6 mm` root/crest. The central C pair therefore has `0.2 mm` nominal diametric interference. It is a preserved tight printed source fit, not a zero-clearance CAD pair. The three newly regenerated lens-retainer pairs are the clearance fits.
+
+The output thread also preserves the source OpenHI printed profile (`24.4 mm` root, `25.2 mm` crest, `0.8 mm` pitch). It is intentionally not relabeled as exact standard `1"-32 UN` C-mount (`25.4 mm`, `0.79375 mm` pitch).
 
 The holder side supplies the flat locating shoulder. A/B/C retain from the opposite side. The 45-degree diameter transition is on the A/B/C-facing receiver side, preserving the original OpenHI design philosophy.
 

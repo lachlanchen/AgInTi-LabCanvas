@@ -194,3 +194,19 @@ Every generated family must contain:
 
 This makes the optical assumption, mechanical fit, source provenance, and
 print handoff independently inspectable.
+
+## Final Analytic-Surface Audit
+
+The 2026-08-30 final audit replaced the first faceted lens proxies with exact
+analytic spherical B-reps. The two GLA rims now use true `0.2 mm` CAD
+chamfers, so a steep short-focus convex surface cannot be accidentally
+overbuilt by an ad hoc 45-degree profile. This correction changes only the
+lens proxy bodies; all 24 mechanical parts retained identical solid counts,
+bounding boxes, and volumes.
+
+The final dimensions, thread-fit distinction, support-land checks, and optical
+distance table are recorded in
+`references/openhi-same-lens-4f-final-mechanical-optical-audit-2026-08-30.md`.
+In particular, the regenerated A/B/C retainer threads are `0.1 mm` radial
+clearance fits, while the preserved central C pair remains a deliberate
+`0.2 mm` diametric interference fit from the accepted printed source geometry.
