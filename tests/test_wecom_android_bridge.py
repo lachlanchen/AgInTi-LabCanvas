@@ -60,6 +60,61 @@ def load_ingest():
 
 
 class WeComAndroidBridgeTests(unittest.TestCase):
+    def test_resumed_component_is_scoped_to_exact_display(self) -> None:
+        bridge = load_bridge()
+        payload = """
+Display #0 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{a u0 com.tencent.mm/.ui.LauncherUI t1}
+Display #11 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{b u0 com.tencent.wework/.launch.WwMainActivity t2}
+"""
+
+        self.assertEqual(
+            bridge.resumed_component_on_display(payload, 0),
+            "com.tencent.mm/.ui.LauncherUI",
+        )
+        self.assertEqual(
+            bridge.resumed_component_on_display(payload, 11),
+            "com.tencent.wework/.launch.WwMainActivity",
+        )
+        self.assertEqual(bridge.resumed_component_on_display(payload, 12), "")
+
+    def test_dual_virtual_health_rejects_blank_launcher_surface(self) -> None:
+        bridge = load_bridge()
+        payload = """
+Display #0 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{a u0 com.tencent.wework/.launch.WwMainActivity t1}
+Display #11 (activities from top to bottom):
+    mResumedActivity: ActivityRecord{b u0 com.miui.home/.launcher.SecondaryDisplayLauncher t2}
+"""
+        runtime = object.__new__(bridge.AndroidBridge)
+        runtime.package = bridge.PACKAGE
+        runtime.adb_shell = mock.Mock(return_value=payload)
+
+        self.assertFalse(runtime.dual_virtual_wecom_drawn(11))
+
+    def test_start_wecom_targets_virtual_display_in_dual_mode(self) -> None:
+        bridge = load_bridge()
+        runtime = object.__new__(bridge.AndroidBridge)
+        runtime.config = {}
+        runtime.package = bridge.PACKAGE
+        runtime.dual_virtual_display_id = mock.Mock(return_value=11)
+        runtime.adb_shell = mock.Mock(return_value="")
+
+        runtime.start_wecom_component()
+
+        runtime.adb_shell.assert_called_once_with(
+            "am",
+            "start",
+            "--display",
+            "11",
+            "-f",
+            "0x04000000",
+            "-n",
+            "com.tencent.wework/.launch.LaunchSplashActivity",
+            timeout=30,
+        )
+
     def test_long_text_is_split_at_readable_numbered_boundaries(self) -> None:
         bridge = load_bridge()
         text = "".join(f"研究段落{index:03d}。" for index in range(100))
@@ -621,6 +676,8 @@ class WeComAndroidBridgeTests(unittest.TestCase):
             runtime.prepare_device = mock.Mock()
             runtime.dump_hierarchy = mock.Mock(side_effect=[foreign, foreign, wecom])
             runtime.current_package = mock.Mock(return_value="com.tencent.mm")
+            runtime.dual_layout_requested = mock.Mock(return_value=False)
+            runtime.dual_virtual_display_id = mock.Mock(return_value=None)
             runtime.adb_shell = mock.Mock(return_value="")
             runtime.record_recovery = mock.Mock()
 

@@ -839,6 +839,26 @@ def sequence_delta(previous: list[str], current: list[str]) -> tuple[list[str], 
     return current, 0
 
 
+def resumed_component_on_display(payload: str, display_id: int) -> str:
+    """Return the exact resumed component for one Android display."""
+    marker = re.search(rf"(?m)^Display #{int(display_id)}\b[^\n]*$", payload)
+    if marker is None:
+        return ""
+    section = payload[marker.end() :]
+    next_display = re.search(r"(?m)^Display #\d+\b[^\n]*$", section)
+    if next_display is not None:
+        section = section[: next_display.start()]
+    for pattern in (
+        r"mResumedActivity:.*?\su\d+\s+([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
+        r"topResumedActivity=.*?\su\d+\s+([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
+        r"ResumedActivity:.*?\su\d+\s+([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
+    ):
+        match = re.search(pattern, section)
+        if match:
+            return match.group(1)
+    return ""
+
+
 def coalesce_sender_records(
     records: list[dict[str, str]],
 ) -> list[list[dict[str, str]]]:
@@ -1838,17 +1858,10 @@ class AndroidBridge:
 
     def dual_virtual_wecom_drawn(self, display_id: int) -> bool:
         output = self.adb_shell(
-            "dumpsys", "window", "displays", timeout=15, check=False
+            "dumpsys", "activity", "activities", timeout=15, check=False
         )
-        marker = f"Display: mDisplayId={display_id}"
-        start = output.find(marker)
-        if start < 0:
-            return False
-        section = output[start + len(marker) :]
-        next_display = section.find("Display: mDisplayId=")
-        if next_display >= 0:
-            section = section[:next_display]
-        return self.package in section
+        component = resumed_component_on_display(output, display_id)
+        return component.partition("/")[0] == self.package
 
     def request_dual_mirror_refresh(self) -> None:
         with self._dual_refresh_lock:
@@ -2145,6 +2158,13 @@ class AndroidBridge:
                 break
 
     def current_package(self) -> str:
+        virtual_display = self.dual_virtual_display_id()
+        if virtual_display is not None:
+            activities = self.adb_shell(
+                "dumpsys", "activity", "activities", timeout=20, check=False
+            )
+            component = resumed_component_on_display(activities, virtual_display)
+            return component.partition("/")[0]
         output = self.adb_shell("dumpsys", "window", "windows", timeout=20, check=False)
         match = re.search(r"mCurrentFocus=.*?\s([A-Za-z0-9_.]+)/", output)
         if not match:
@@ -2162,6 +2182,9 @@ class AndroidBridge:
                 "dumpsys", "activity", "activities", timeout=20, check=False
             )
         )
+        virtual_display = self.dual_virtual_display_id()
+        if virtual_display is not None:
+            return resumed_component_on_display(output, virtual_display)
         for pattern in (
             r"mResumedActivity:.*?\s([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
             r"topResumedActivity=.*?\s([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
@@ -2196,6 +2219,8 @@ class AndroidBridge:
 
     def wecom_is_foreground(self, root: ET.Element | None = None) -> bool:
         """Use the focused Android activity when UIAutomator metadata is stale."""
+        if self.dual_layout_requested():
+            return self.current_package() == self.package
         if root is not None and self.package in hierarchy_packages(root):
             return True
         return self.current_package() == self.package
@@ -2221,7 +2246,14 @@ class AndroidBridge:
             self.config.get("launch_component")
             or f"{self.package}/{WECOM_LAUNCH_COMPONENT}"
         )
-        self.adb_shell("am", "start", "-n", component, timeout=30)
+        command = ["am", "start"]
+        virtual_display = self.dual_virtual_display_id()
+        if virtual_display is not None:
+            command.extend(
+                ["--display", str(virtual_display), "-f", "0x04000000"]
+            )
+        command.extend(["-n", component])
+        self.adb_shell(*command, timeout=30)
 
     def launch_wecom(self) -> None:
         self.prepare_device()
@@ -2449,11 +2481,7 @@ class AndroidBridge:
         self.ensure_device_storage()
         self.adb_shell("am", "force-stop", self.package, check=False)
         time.sleep(1.0)
-        component = str(
-            self.config.get("launch_component")
-            or f"{self.package}/{WECOM_LAUNCH_COMPONENT}"
-        )
-        self.adb_shell("am", "start", "-n", component, timeout=30)
+        self.start_wecom_component()
         deadline = time.monotonic() + 20.0
         while time.monotonic() < deadline:
             try:
@@ -2470,7 +2498,7 @@ class AndroidBridge:
             if self.dismiss_recovered_low_storage_dialog(root):
                 continue
             self.ensure_navigation_allowed(root)
-            if self.package in hierarchy_packages(root):
+            if self.wecom_is_foreground(root):
                 self.record_recovery(f"app_restart:{reason}")
                 return root
             time.sleep(0.6)

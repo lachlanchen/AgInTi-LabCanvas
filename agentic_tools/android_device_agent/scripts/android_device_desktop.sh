@@ -221,6 +221,33 @@ dual_process_live() {
     >/dev/null 2>&1
 }
 
+dual_activity_state() {
+  local serial="$1"
+  adb -s "$serial" shell dumpsys activity activities 2>/dev/null |
+    python3 -c '
+import re
+import sys
+
+payload = sys.stdin.read()
+markers = list(re.finditer(r"(?m)^Display #(\d+)\b[^\n]*$", payload))
+components = {}
+for index, marker in enumerate(markers):
+    display_id = int(marker.group(1))
+    end = markers[index + 1].start() if index + 1 < len(markers) else len(payload)
+    section = payload[marker.end():end]
+    match = re.search(
+        r"mResumedActivity:.*?\su\d+\s+([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)",
+        section,
+    )
+    components[display_id] = match.group(1) if match else ""
+virtual_ids = [display_id for display_id in components if display_id > 0]
+virtual_id = max(virtual_ids) if virtual_ids else -1
+physical_package = components.get(0, "").partition("/")[0]
+virtual_package = components.get(virtual_id, "").partition("/")[0]
+print("|".join((physical_package, str(virtual_id), virtual_package)))
+'
+}
+
 window_id_by_title() {
   local title="$1"
   DISPLAY="$DISPLAY_ID" xdotool search --name "^$(regex_escape "$title")$" 2>/dev/null |
@@ -333,7 +360,7 @@ ensure_single_layout() {
 }
 
 status() {
-  local layout serial=""
+  local dual_state="" layout serial=""
   local power_state=""
   layout="$(stored_layout)"
   echo "tmux session: $SESSION"
@@ -347,7 +374,12 @@ status() {
   serial="$(known_serial 2>/dev/null || true)"
   if [[ "$layout" == "dual" ]] && tmux has-session -t "$SESSION" 2>/dev/null &&
     tmux_window_exists "$DUAL_WINDOW_NAME" && dual_process_live "$serial"; then
-    echo "dual displays: online (WeChat physical, WeCom virtual)"
+    dual_state="$(dual_activity_state "$serial" 2>/dev/null || true)"
+    if [[ "$dual_state" =~ ^com\.tencent\.mm\|[1-9][0-9]*\|com\.tencent\.wework$ ]]; then
+      echo "dual displays: online (WeChat physical, WeCom virtual)"
+    else
+      echo "dual displays: waiting for app restore (${dual_state:-unreadable})"
+    fi
   elif [[ "$layout" == "dual" ]]; then
     echo "dual displays: waiting for restore"
   else
