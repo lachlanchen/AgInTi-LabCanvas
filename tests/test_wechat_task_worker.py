@@ -89,6 +89,42 @@ class WeChatTaskWorkerTests(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertGreater(second[2], first[2])
 
+    def test_compact_worker_stdout_omits_prompt_context_and_result_text(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "task-compact",
+            "chat": "LabAgent",
+            "status": "done",
+            "request": "private full prompt",
+            "context": [{"text": "private chat history"}],
+            "result": {
+                "message": "reader-facing answer",
+                "confirmation": "",
+                "files": ["/tmp/report.pdf"],
+            },
+            "scheduled_recovery_count": 1,
+        }
+        output = io.StringIO()
+        with (
+            mock.patch.dict(
+                worker.os.environ,
+                {"WECHAT_WORKER_COMPACT_STDOUT": "1"},
+                clear=False,
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            worker.print_worker_task_result(task)
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["worker_task"], "task-compact")
+        self.assertEqual(payload["status"], "done")
+        self.assertEqual(payload["file_count"], 1)
+        self.assertTrue(payload["has_message"])
+        self.assertEqual(payload["scheduled_recovery_count"], 1)
+        self.assertNotIn("private full prompt", output.getvalue())
+        self.assertNotIn("private chat history", output.getvalue())
+        self.assertNotIn("reader-facing answer", output.getvalue())
+
     def test_idle_loop_wakes_immediately_after_queue_append(self) -> None:
         worker = load_worker()
 
@@ -1731,6 +1767,9 @@ stderr: noisy internal trace
         self.assertIn("SELFTEST_SIGNATURE", wrapper_text)
         self.assertIn("worker-selftest.lock", wrapper_text)
         self.assertIn("flock 9", wrapper_text)
+        self.assertIn("WECHAT_WORKER_COMPACT_STDOUT", wrapper_text)
+        self.assertIn("--extra-root", supervisor_text)
+        self.assertIn("output/wecom", supervisor_text)
         self.assertIn("-u WECHAT_AGENT_FORCE_BACKEND", wrapper_text)
         self.assertIn("-u WECHAT_AGENT_FORCE_DISABLE_AGINTI", wrapper_text)
         self.assertIn("-u WECHAT_WORKER_DISABLE_GUI_FILE_DOWNLOAD", wrapper_text)
@@ -13561,6 +13600,32 @@ stderr: noisy internal trace
         self.assertIn("transport_identity", issues)
         self.assertIn("agent_output_contract", issues)
 
+    def test_reader_facing_pdf_allows_reproducible_tmp_example_but_rejects_private_paths(self) -> None:
+        worker = load_worker()
+        patterns = worker.PDF_INTERNAL_TRANSPORT_PATTERNS
+
+        example_issues = {
+            label
+            for pattern, label in patterns
+            if pattern.search("Create an isolated environment at /tmp/venvcheck.")
+        }
+        private_issues = {
+            label
+            for pattern, label in patterns
+            if pattern.search(
+                "/home/lachlan/ProjectsLFS/AgenticApp/output/wecom/private-report.pdf"
+            )
+        }
+        temporary_worker_issues = {
+            label
+            for pattern, label in patterns
+            if pattern.search("/tmp/labcanvas-task-123/report.md")
+        }
+
+        self.assertNotIn("private_runtime_path", example_issues)
+        self.assertIn("private_runtime_path", private_issues)
+        self.assertIn("private_runtime_path", temporary_worker_issues)
+
     def test_pdf_quality_extractor_reads_pdftotext_from_stdout(self) -> None:
         worker = load_worker()
         report = Path("/tmp/reader-report.pdf")
@@ -14135,6 +14200,51 @@ stderr: noisy internal trace
 
         self.assertEqual(issues, [])
 
+    def test_standards_report_accepts_methods_mechanism_facts_and_qualified_references(self) -> None:
+        worker = load_worker()
+        report = """
+        ## 证据与方法
+        2. 方法
+        对 Python 官方文档、PEP 405 和 PEP 668 做来源核查，并比较规范边界。
+
+        3. 来源一
+        机制事实：虚拟环境通过独立解释器前缀隔离项目依赖。
+        https://docs.python.org/3/library/venv.html
+
+        4. 来源二
+        规范事实：PEP 405 定义 pyvenv.cfg 与解释器前缀行为。
+        https://peps.python.org/pep-0405/
+
+        5. 来源三
+        核查结果：PEP 668 区分外部管理的系统环境和项目环境。
+        https://peps.python.org/pep-0668/
+
+        ## 跨来源综合分析
+        三个来源的一致之处是将系统包管理与项目依赖分离，张力在于工具责任边界。
+
+        ## 证据边界与局限
+        规范事实不等同于所有 Linux 发行版的实测行为，仍有不确定性。
+
+        ## 下一步
+        在目标发行版运行 /tmp/venvcheck，并记录解释器与 pip 前缀作为验证。
+
+        7. 参考文献（可追溯）
+        1. Python venv documentation. https://docs.python.org/3/library/venv.html
+        2. PEP 405. https://peps.python.org/pep-0405/
+        3. PEP 668. https://peps.python.org/pep-0668/
+        """
+
+        evidence = worker.research_report_evidence_summary(report)
+
+        self.assertEqual(evidence["traceable_source_count"], 3)
+        self.assertTrue(evidence["has_evidence_section"])
+        self.assertTrue(evidence["has_methods_detail"])
+        self.assertTrue(evidence["has_results_detail"])
+        self.assertTrue(evidence["has_cross_source_synthesis"])
+        self.assertTrue(evidence["has_uncertainty"])
+        self.assertTrue(evidence["has_actionable_next_steps"])
+        self.assertTrue(evidence["has_reference_section"])
+
     def test_reader_facing_pdf_quality_rejects_corrupt_searchable_text(self) -> None:
         worker = load_worker()
         task = {
@@ -14692,6 +14802,322 @@ stderr: noisy internal trace
         self.assertIn("worker_id", first)
         self.assertIsNone(second)
         self.assertEqual(rows[0]["status"], "in_progress")
+
+    def test_claim_next_pending_recovers_new_read_only_schedule_once(self) -> None:
+        worker = load_worker()
+        now = datetime.now()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "scheduled-retry",
+                        "chat": "wecom:default:group:labagent",
+                        "request": "Prepare one scheduled inspiration.",
+                        "status": "worker_failed",
+                        "created_at": (now - timedelta(minutes=5)).isoformat(timespec="seconds"),
+                        "completed_at": (now - timedelta(minutes=2)).isoformat(timespec="seconds"),
+                        "source": {"local_type": "scheduled_group_inspiration"},
+                        "route_decision": {"public_publish_allowed": False},
+                        "scheduled_recovery": {
+                            "version": 1,
+                            "kind": "group_inspiration",
+                            "read_only": True,
+                            "max_attempts": 1,
+                            "delay_seconds": 0,
+                            "max_age_seconds": 3600,
+                        },
+                        "agent_session": {
+                            "backend": "aginti",
+                            "provider": "deepseek",
+                            "failure_kind": "transient_backend_unavailable",
+                        },
+                        "completion_audit": {"status": "incomplete"},
+                        "worker_error": {"type": "BackendExecutionFailed"},
+                        "result": {"message": "stale failure", "files": []},
+                    }
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            stored = worker.read_tasks(queue)[0]
+            duplicate = worker.claim_next_pending(queue)
+
+        self.assertIsNotNone(claimed)
+        assert claimed is not None
+        self.assertEqual(claimed["id"], "scheduled-retry")
+        self.assertEqual(claimed["status"], "in_progress")
+        self.assertEqual(claimed["scheduled_recovery_count"], 1)
+        self.assertEqual(len(claimed["scheduled_recovery_history"]), 1)
+        self.assertEqual(
+            claimed["scheduled_recovery_history"][0]["backend"],
+            "aginti",
+        )
+        self.assertNotIn("result", claimed)
+        self.assertNotIn("worker_error", claimed)
+        self.assertNotIn("agent_session", claimed)
+        self.assertEqual(stored["status"], "in_progress")
+        self.assertIsNone(duplicate)
+
+    def test_claim_next_pending_never_replays_legacy_or_delivered_schedule_failure(self) -> None:
+        worker = load_worker()
+        now = datetime.now()
+        base = {
+            "chat": "wecom:default:group:labagent",
+            "request": "Prepare one scheduled inspiration.",
+            "status": "worker_failed",
+            "created_at": (now - timedelta(minutes=5)).isoformat(timespec="seconds"),
+            "completed_at": (now - timedelta(minutes=2)).isoformat(timespec="seconds"),
+            "source": {"local_type": "scheduled_group_inspiration"},
+            "route_decision": {"public_publish_allowed": False},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {**base, "id": "legacy-failure"},
+                    {
+                        **base,
+                        "id": "delivered-failure",
+                        "sent_at": now.isoformat(timespec="seconds"),
+                        "scheduled_recovery": {
+                            "version": 1,
+                            "read_only": True,
+                            "max_attempts": 1,
+                            "delay_seconds": 0,
+                            "max_age_seconds": 3600,
+                        },
+                    },
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            stored = worker.read_tasks(queue)
+
+        self.assertIsNone(claimed)
+        self.assertEqual([task["status"] for task in stored], ["worker_failed", "worker_failed"])
+        self.assertTrue(all("scheduled_recovery_count" not in task for task in stored))
+
+    def test_claim_next_pending_never_replays_partially_delivered_schedule_failure(self) -> None:
+        worker = load_worker()
+        now = datetime.now()
+        base = {
+            "chat": "wecom:default:group:labagent",
+            "request": "Prepare one scheduled inspiration.",
+            "status": "worker_failed",
+            "created_at": (now - timedelta(minutes=5)).isoformat(timespec="seconds"),
+            "completed_at": (now - timedelta(minutes=2)).isoformat(timespec="seconds"),
+            "source": {"local_type": "scheduled_group_inspiration"},
+            "route_decision": {"public_publish_allowed": False},
+            "scheduled_recovery": {
+                "version": 1,
+                "read_only": True,
+                "max_attempts": 1,
+                "delay_seconds": 0,
+                "max_age_seconds": 3600,
+            },
+        }
+        tasks = [
+            {**base, "id": "partial-text", "sent_message_part_hashes": ["part-1"]},
+            {**base, "id": "partial-file", "sent_file_paths": ["/tmp/report.pdf"]},
+            {
+                **base,
+                "id": "partial-wecom",
+                "wecom_delivery": {
+                    "status": "partial",
+                    "sent_messages": ["Research is in progress."],
+                    "sent_file_count": 0,
+                },
+            },
+            {
+                **base,
+                "id": "android-fallback",
+                "android_text_fallback_send": {
+                    "sent_at": now.isoformat(timespec="seconds"),
+                },
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(queue, tasks)
+
+            claimed = worker.claim_next_pending(queue)
+            stored = worker.read_tasks(queue)
+
+        self.assertIsNone(claimed)
+        self.assertTrue(all(task["status"] == "worker_failed" for task in stored))
+        self.assertTrue(all("scheduled_recovery_count" not in task for task in stored))
+
+    def test_claim_next_pending_does_not_replay_schedule_superseded_in_same_lane(self) -> None:
+        worker = load_worker()
+        now = datetime.now()
+        policy = {
+            "version": 1,
+            "read_only": True,
+            "max_attempts": 1,
+            "delay_seconds": 0,
+            "max_age_seconds": 3600,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "old-daily-failure",
+                        "chat": "wecom:default:group:labagent",
+                        "request": "Old daily task.",
+                        "status": "worker_failed",
+                        "created_at": (now - timedelta(minutes=5)).isoformat(
+                            timespec="seconds"
+                        ),
+                        "completed_at": (now - timedelta(minutes=4)).isoformat(
+                            timespec="seconds"
+                        ),
+                        "source": {"local_type": "scheduled_daily_research"},
+                        "daily_research": {"member_key": "member-a"},
+                        "route_decision": {"public_publish_allowed": False},
+                        "scheduled_recovery": policy,
+                    },
+                    {
+                        "id": "new-daily-result",
+                        "chat": "wecom:default:group:labagent",
+                        "request": "New daily task.",
+                        "status": "done",
+                        "created_at": (now - timedelta(minutes=2)).isoformat(
+                            timespec="seconds"
+                        ),
+                        "source": {"local_type": "scheduled_daily_research"},
+                        "daily_research": {"member_key": "member-a"},
+                    },
+                ],
+            )
+
+            claimed = worker.claim_next_pending(queue)
+            stored = worker.read_tasks(queue)
+
+        self.assertIsNone(claimed)
+        self.assertEqual(stored[0]["status"], "worker_failed")
+        self.assertNotIn("scheduled_recovery_count", stored[0])
+
+    def test_scheduled_worker_failure_retries_same_task_and_delivers_once(self) -> None:
+        worker = load_worker()
+        now = datetime.now()
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.jsonl"
+            worker.write_tasks(
+                queue,
+                [
+                    {
+                        "id": "scheduled-e2e",
+                        "chat": "wecom:default:group:labagent",
+                        "request": "Share one concise research inspiration.",
+                        "status": "pending",
+                        "created_at": (now - timedelta(minutes=1)).isoformat(timespec="seconds"),
+                        "source": {"local_type": "scheduled_group_inspiration"},
+                        "route_decision": {
+                            "route_kind": "other_worker",
+                            "public_publish_allowed": False,
+                        },
+                        "scheduled_recovery": {
+                            "version": 1,
+                            "kind": "group_inspiration",
+                            "read_only": True,
+                            "max_attempts": 1,
+                            "delay_seconds": 0,
+                            "max_age_seconds": 3600,
+                        },
+                    }
+                ],
+            )
+            passthrough = lambda _task, result, *_args, **_kwargs: result
+            with (
+                mock.patch.dict(
+                    worker.os.environ,
+                    {"WECHAT_WORKER_COMPACT_STDOUT": "1"},
+                    clear=False,
+                ),
+                mock.patch.object(
+                    worker,
+                    "run_worker_codex",
+                    side_effect=[
+                        "Worker failed via aginti: Temporary failure in name resolution",
+                        json.dumps(
+                            {
+                                "message": "A source-grounded inspiration.",
+                                "confirmation": "",
+                                "files": [],
+                            }
+                        ),
+                    ],
+                ) as backend,
+                mock.patch.object(
+                    worker,
+                    "enforce_worker_result_contract",
+                    side_effect=passthrough,
+                ),
+                mock.patch.object(
+                    worker,
+                    "attach_audio_transcript_reference",
+                    side_effect=lambda _task, result: result,
+                ),
+                mock.patch.object(
+                    worker,
+                    "prepare_result_files",
+                    side_effect=lambda result, *_args, **_kwargs: result,
+                ),
+                mock.patch.object(
+                    worker,
+                    "recover_verified_shipinhao_delivery_result",
+                    side_effect=lambda _task, result: result,
+                ),
+                mock.patch.object(
+                    worker,
+                    "enforce_reader_facing_pdf_quality",
+                    side_effect=lambda _task, result: result,
+                ),
+                mock.patch.object(
+                    worker,
+                    "audit_and_repair_worker_completion",
+                    side_effect=lambda _task, result: result,
+                ),
+                mock.patch.object(worker, "record_event"),
+                mock.patch.object(
+                    worker,
+                    "send_result_with_retries",
+                    return_value=[],
+                ) as sender,
+            ):
+                first = worker.process_one(
+                    queue,
+                    "wecom",
+                    send=True,
+                    send_targets=Path(tmp) / "targets.json",
+                    log_idle=False,
+                )
+                failed = worker.find_task(queue, "scheduled-e2e")
+                second = worker.process_one(
+                    queue,
+                    "wecom",
+                    send=True,
+                    send_targets=Path(tmp) / "targets.json",
+                    log_idle=False,
+                )
+                completed = worker.find_task(queue, "scheduled-e2e")
+
+        self.assertTrue(first)
+        self.assertEqual(failed["status"], "worker_failed")
+        self.assertTrue(second)
+        self.assertEqual(completed["status"], "done")
+        self.assertEqual(completed["scheduled_recovery_count"], 1)
+        self.assertEqual(backend.call_count, 2)
+        sender.assert_called_once()
+        self.assertEqual(
+            sender.call_args.args[0]["message"],
+            "A source-grounded inspiration.",
+        )
 
     def test_claim_next_pending_expires_old_backlog_without_running_it(self) -> None:
         worker = load_worker()

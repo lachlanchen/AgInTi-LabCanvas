@@ -58,4 +58,5 @@ if [[ "${WECHAT_WORKER_SKIP_SELFTEST:-0}" != "1" ]]; then
 fi
 
 export WECHAT_WORKER_EXPIRE_LEGACY_QUEUE="${WECHAT_WORKER_EXPIRE_LEGACY_QUEUE:-1}"
+export WECHAT_WORKER_COMPACT_STDOUT="${WECHAT_WORKER_COMPACT_STDOUT:-1}"
 exec python3 -u "$ROOT/agentic_tools/wechat_gui_agent/scripts/wechat_task_worker.py" "$@"

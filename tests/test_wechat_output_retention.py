@@ -103,6 +103,34 @@ class WeChatOutputRetentionTests(unittest.TestCase):
         self.assertEqual(result["removed_files"], 0)
         self.assertTrue(unrelated.exists())
 
+    def test_multiple_roots_share_log_policy_without_removing_other_artifacts(self) -> None:
+        second_root = Path(self.temp_dir.name) / "wecom"
+        second_root.mkdir()
+        first_log = self.root / "worker.log"
+        second_log = second_root / "transport-health.log"
+        paper = second_root / "member_knowledge" / "paper.pdf"
+        paper.parent.mkdir(parents=True)
+        first_log.write_bytes(b"first-line\n" * 30)
+        second_log.write_bytes(b"second-line\n" * 30)
+        paper.write_bytes(b"research-paper")
+
+        result = self.module.maintain_outputs(
+            [self.root, second_root, self.root],
+            max_log_bytes=100,
+            keep_log_bytes=40,
+            log_retention_seconds=14 * 86400,
+            attempt_retention_seconds=86400,
+            sent_retention_seconds=30 * 86400,
+            diagnostic_retention_seconds=14 * 86400,
+            now=self.now,
+        )
+
+        self.assertEqual(len(result["roots"]), 2)
+        self.assertEqual(result["trimmed_logs"], 2)
+        self.assertLessEqual(first_log.stat().st_size, 40)
+        self.assertLessEqual(second_log.stat().st_size, 40)
+        self.assertEqual(paper.read_bytes(), b"research-paper")
+
 
 if __name__ == "__main__":
     unittest.main()

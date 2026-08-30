@@ -226,8 +226,8 @@ chat_sync_command() {
 }
 
 log_maintenance_command() {
-  printf "cd %q && python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_output_retention.py --root %q --interval %q --loop" \
-    "$ROOT" "$ROOT/output/wechat_gui_agent" "$LOG_MAINTENANCE_INTERVAL"
+  printf "cd %q && python3 -u agentic_tools/wechat_gui_agent/scripts/wechat_output_retention.py --root %q --extra-root %q --interval %q --loop" \
+    "$ROOT" "$ROOT/output/wechat_gui_agent" "$ROOT/output/wecom" "$LOG_MAINTENANCE_INTERVAL"
 }
 
 worker_window_name() {

@@ -110,6 +110,11 @@ EXISTING_VIDEO_PUBLISH_PENDING_STATUS = "publish_poststage_pending"
 DEFAULT_STALE_IN_PROGRESS_SECONDS = 60 * 60
 DEFAULT_DEAD_WORKER_RECOVERY_MAX_AGE_SECONDS = 2 * 60 * 60
 DEFAULT_DEAD_WORKER_RECOVERY_LIMIT = 1
+SCHEDULED_RECOVERY_SOURCE_TYPES = {
+    "immediate_daily_research",
+    "scheduled_daily_research",
+    "scheduled_group_inspiration",
+}
 DEFAULT_DEFERRED_SEND_BACKOFF_SECONDS = 5 * 60
 DEFAULT_PENDING_TASK_TTL_SECONDS = 15 * 60
 DEFAULT_DEFERRED_SEND_TTL_SECONDS = 30 * 60
@@ -1379,7 +1384,7 @@ def process_one(queue: Path, chat: str, *, send: bool, send_targets: Path = DEFA
         db_path=DEFAULT_DB,
         metadata=task,
     )
-    print(json.dumps(task, ensure_ascii=False, indent=2))
+    print_worker_task_result(task)
     log_worker_event(task["status"], task)
     return True
 
@@ -1422,7 +1427,7 @@ def flush_one_deferred_send(
         db_path=DEFAULT_DB,
         metadata=task,
     )
-    print(json.dumps(task, ensure_ascii=False, indent=2))
+    print_worker_task_result(task)
     log_worker_event(str(task.get("status") or "unknown"), task)
     return True
 
@@ -4209,18 +4214,24 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
     has_methods_detail = bool(
         re.search(
             r"(?:研究设计|實驗設計|实验设计|研究方法|方法学|方法學|样本|樣本|"
+            r"(?:^|\n)\s*(?:[#*]+\s*)?(?:[0-9一二三四五六七八九十]+[、.)．]\s*)?方法(?:\s|[:：（(]|$)|"
+            r"检索方法|檢索方法|资料来源|資料來源|证据收集|證據收集|来源核查|來源核查|"
             r"数据集|資料集|队列|隊列|对照组|對照組|比较组|比較組|"
-            r"methods?|study\s+design|experimental\s+system|dataset|cohort|"
+            r"methods?|source\s+(?:review|audit|verification)|evidence\s+collection|"
+            r"study\s+design|experimental\s+system|dataset|cohort|"
             r"samples?|controls?|comparators?)",
             text,
-            flags=re.I,
+            flags=re.I | re.M,
         )
     )
     has_results_detail = bool(
         re.search(
             r"(?:主要结果|主要結果|关键结果|關鍵結果|定量结果|定量結果|"
+            r"机制事实|機制事實|规范事实|規範事實|核查结果|核查結果|"
+            r"核心条款|核心條款|核心发现|核心發現|主要结论|主要結論|"
             r"效应量|效應量|准确率|準確率|灵敏度|靈敏度|特异度|特異度|"
-            r"results?|quantitative|effect\s+size|accuracy|AUROC|AUC|"
+            r"results?|findings?|verified\s+(?:facts?|claims?)|mechanism\s+facts?|"
+            r"specification\s+(?:facts?|requirements?)|quantitative|effect\s+size|accuracy|AUROC|AUC|"
             r"sensitivity|specificity)",
             text,
             flags=re.I,
@@ -4251,7 +4262,7 @@ def research_report_evidence_summary(text: str) -> dict[str, Any]:
             r"(?:[一二三四五六七八九十百0-9]+[、.)．]\s*)?"
             r"(?:[^\n]{0,16})?(?:参考文献|參考文獻|文献表|文獻表|来源与链接|"
             r"來源與連結|References?|Bibliography|Literature\s+cited)"
-            r"(?:\s|[:：]|$)",
+            r"(?:\s|[:：（(]|$)",
             text,
             flags=re.I,
         )
@@ -5669,6 +5680,11 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
         }
         for index, task in enumerate(tasks):
             status = str(task.get("status") or "")
+            if scheduled_failure_retry_ready(task, tasks, index, now):
+                prepare_scheduled_failure_retry(task, now_text)
+                status = "pending"
+                tasks[index] = task
+                changed = True
             superseding_generation = newer_delivered_generation_task(task, tasks, index)
             if superseding_generation is not None:
                 mark_generation_superseded_by_delivery(
@@ -5773,6 +5789,159 @@ def claim_next_pending(path: Path) -> dict[str, Any] | None:
         tasks[index] = task
         write_tasks(path, tasks)
         return task
+
+
+def scheduled_recovery_lane(task: dict[str, Any]) -> tuple[str, str, str]:
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    source_type = str(source.get("local_type") or source.get("kind") or "")
+    job = task.get("daily_research") if isinstance(task.get("daily_research"), dict) else {}
+    lane = str(job.get("job_key") or job.get("member_key") or "")
+    return str(task.get("chat") or ""), source_type, lane
+
+
+def scheduled_task_has_delivery_evidence(task: dict[str, Any]) -> bool:
+    feedback = (
+        task.get("terminal_failure_feedback")
+        if isinstance(task.get("terminal_failure_feedback"), dict)
+        else {}
+    )
+    wecom_delivery = (
+        task.get("wecom_delivery")
+        if isinstance(task.get("wecom_delivery"), dict)
+        else {}
+    )
+    android_delivery = (
+        task.get("android_text_fallback_send")
+        if isinstance(task.get("android_text_fallback_send"), dict)
+        else {}
+    )
+    return bool(
+        task.get("sent_at")
+        or task.get("delivery_verified_at")
+        or task.get("send_completed_at")
+        or task.get("sent_file_paths")
+        or task.get("sent_message_part_hashes")
+        or task.get("wecom_history_recorded_message_hashes")
+        or wecom_delivery.get("sent_messages")
+        or wecom_delivery.get("sent_file_count")
+        or android_delivery.get("sent_at")
+        or str(feedback.get("status") or "") == "sent"
+    )
+
+
+def scheduled_failure_retry_ready(
+    task: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    index: int,
+    now: datetime,
+) -> bool:
+    """Allow one delayed retry only for newly contracted read-only schedules."""
+
+    if str(task.get("status") or "") != "worker_failed":
+        return False
+    policy = (
+        task.get("scheduled_recovery")
+        if isinstance(task.get("scheduled_recovery"), dict)
+        else {}
+    )
+    if int(policy.get("version") or 0) != 1 or not policy.get("read_only"):
+        return False
+    chat, source_type, lane = scheduled_recovery_lane(task)
+    if source_type not in SCHEDULED_RECOVERY_SOURCE_TYPES or not chat:
+        return False
+    route = task_route_decision(task)
+    if route.get("public_publish_allowed") or scheduled_task_has_delivery_evidence(task):
+        return False
+    maximum = max(0, int(policy.get("max_attempts") or 0))
+    if int(task.get("scheduled_recovery_count") or 0) >= maximum:
+        return False
+    created_at = parse_iso_datetime(str(task.get("created_at") or ""))
+    completed_at = parse_iso_datetime(
+        str(
+            task.get("completed_at")
+            or task.get("worker_result_ready_at")
+            or task.get("failed_at")
+            or ""
+        )
+    )
+    if created_at is None or completed_at is None:
+        return False
+    max_age = max(0, int(policy.get("max_age_seconds") or 0))
+    if max_age and (now - created_at).total_seconds() > max_age:
+        return False
+    delay = max(0, int(policy.get("delay_seconds") or 0))
+    if (now - completed_at).total_seconds() < delay:
+        return False
+    for other_index, other in enumerate(tasks):
+        if other_index == index or scheduled_recovery_lane(other) != (chat, source_type, lane):
+            continue
+        other_created = parse_iso_datetime(str(other.get("created_at") or ""))
+        if other_created is not None and other_created > created_at:
+            return False
+    return True
+
+
+def prepare_scheduled_failure_retry(task: dict[str, Any], now_text: str) -> None:
+    """Reset transient execution state while preserving bounded attribution."""
+
+    agent_session = (
+        task.get("agent_session")
+        if isinstance(task.get("agent_session"), dict)
+        else {}
+    )
+    worker_error = (
+        task.get("worker_error")
+        if isinstance(task.get("worker_error"), dict)
+        else {}
+    )
+    completion = (
+        task.get("completion_audit")
+        if isinstance(task.get("completion_audit"), dict)
+        else {}
+    )
+    history = [
+        *(
+            dict(item)
+            for item in task.get("scheduled_recovery_history") or []
+            if isinstance(item, dict)
+        ),
+        {
+            "at": now_text,
+            "prior_status": str(task.get("status") or ""),
+            "worker_error_type": str(worker_error.get("type") or ""),
+            "backend": str(agent_session.get("backend") or ""),
+            "provider": str(agent_session.get("provider") or ""),
+            "failure_kind": str(agent_session.get("failure_kind") or ""),
+            "completion_status": str(completion.get("status") or ""),
+        },
+    ]
+    task["scheduled_recovery_history"] = history[-4:]
+    task["scheduled_recovery_count"] = int(
+        task.get("scheduled_recovery_count") or 0
+    ) + 1
+    task["scheduled_recovery_at"] = now_text
+    task["scheduled_recovery_reason"] = "bounded_read_only_worker_retry"
+    task["status"] = "pending"
+    for key in (
+        "agent_session",
+        "codex_session",
+        "claimed_at",
+        "completed_at",
+        "completion_audit",
+        "message_coverage",
+        "required_artifact_missing_at",
+        "result",
+        "send_suppressed_at",
+        "send_suppressed_reason",
+        "skipped_files",
+        "terminal_failure_feedback",
+        "worker_attempts",
+        "worker_error",
+        "worker_id",
+        "worker_result_exhausted",
+        "worker_result_ready_at",
+    ):
+        task.pop(key, None)
 
 
 def newer_delivered_generation_task(
@@ -7053,6 +7222,38 @@ def log_worker_event(status: str, task: dict[str, Any]) -> None:
         "at": datetime.now().isoformat(timespec="seconds"),
     }
     print(json.dumps(payload, ensure_ascii=False), flush=True)
+
+
+def print_worker_task_result(task: dict[str, Any]) -> None:
+    """Keep supervisor logs compact without changing one-shot CLI diagnostics."""
+    if os.environ.get("WECHAT_WORKER_COMPACT_STDOUT", "0") != "1":
+        print(json.dumps(task, ensure_ascii=False, indent=2))
+        return
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    worker_error = (
+        task.get("worker_error")
+        if isinstance(task.get("worker_error"), dict)
+        else {}
+    )
+    payload = {
+        "worker_task": str(task.get("id") or ""),
+        "status": str(task.get("status") or ""),
+        "chat": str(task.get("chat") or ""),
+        "file_count": len(result.get("files") or []),
+        "has_message": bool(str(result.get("message") or "").strip()),
+        "confirmation_required": bool(
+            str(result.get("confirmation") or "").strip()
+        ),
+        "scheduled_recovery_count": int(
+            task.get("scheduled_recovery_count") or 0
+        ),
+        "worker_error_type": str(worker_error.get("type") or ""),
+        "send_error_count": len(task.get("send_errors") or []),
+    }
+    print(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        flush=True,
+    )
 
 
 def run_worker_codex(task: dict[str, Any]) -> str:
@@ -19326,7 +19527,15 @@ PDF_INTERNAL_TRANSPORT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "internal_task_identity",
     ),
     (
-        re.compile(r"/(?:home|workspace|tmp|var/tmp)/[^\s<>]+", re.I),
+        re.compile(r"/(?:home|workspace|var/tmp)/[^\s<>]+", re.I),
+        "private_runtime_path",
+    ),
+    (
+        re.compile(
+            r"/tmp/(?:agenticapp|aginti|labcanvas|we(?:chat|com)|codex|task[-_]|"
+            r"tmp[0-9A-Za-z_-]{6,})[^\s<>]*",
+            re.I,
+        ),
         "private_runtime_path",
     ),
     (

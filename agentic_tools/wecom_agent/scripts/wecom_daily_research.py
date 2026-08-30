@@ -93,6 +93,34 @@ DEFAULT_HISTORY_MODEL = os.environ.get(
 )
 
 
+def scheduled_recovery_contract(
+    kind: str,
+    *,
+    max_age_seconds: int,
+) -> dict[str, Any]:
+    """Describe one bounded retry for a new read-only scheduled task."""
+
+    return {
+        "version": 1,
+        "kind": kind,
+        "read_only": True,
+        "max_attempts": max(
+            0,
+            int(os.environ.get("WECOM_SCHEDULE_WORKER_RETRY_LIMIT", "1")),
+        ),
+        "delay_seconds": max(
+            0,
+            int(
+                os.environ.get(
+                    "WECOM_SCHEDULE_WORKER_RETRY_DELAY_SECONDS",
+                    "300",
+                )
+            ),
+        ),
+        "max_age_seconds": max(0, int(max_age_seconds)),
+    }
+
+
 def group_history_retrieval(
     path: Path,
     chat: str,
@@ -1156,6 +1184,10 @@ Requirements:
                 else inspiration_context_max_age_seconds()
             ),
         },
+        "scheduled_recovery": scheduled_recovery_contract(
+            "group_inspiration",
+            max_age_seconds=max(interval_seconds, 6 * 60 * 60),
+        ),
         "transport_preflight": {},
         "queue_path": str(queue),
     }
@@ -1494,6 +1526,10 @@ Requirements:
             "serialized": True,
             "history_retrieval": history_manifest or {},
         },
+        "scheduled_recovery": scheduled_recovery_contract(
+            "daily_research",
+            max_age_seconds=48 * 60 * 60,
+        ),
         "transport_preflight": {},
         "queue_path": str(queue),
     }

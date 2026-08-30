@@ -25,6 +25,13 @@ ATTEMPT_SCREENSHOT = re.compile(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument(
+        "--extra-root",
+        type=Path,
+        action="append",
+        default=[],
+        help="Additional generated-output root whose logs use the same bounds.",
+    )
     parser.add_argument("--max-log-mib", type=float, default=16.0)
     parser.add_argument("--keep-log-mib", type=float, default=8.0)
     parser.add_argument("--log-retention-days", type=float, default=14.0)
@@ -37,8 +44,8 @@ def main() -> int:
     args = parser.parse_args()
 
     while True:
-        result = maintain_output(
-            args.root,
+        result = maintain_outputs(
+            [args.root, *args.extra_root],
             max_log_bytes=max(1, int(args.max_log_mib * 1024 * 1024)),
             keep_log_bytes=max(1, int(args.keep_log_mib * 1024 * 1024)),
             log_retention_seconds=max(0.0, args.log_retention_days * 86400),
@@ -51,6 +58,26 @@ def main() -> int:
         if not args.loop:
             return 0 if not result["errors"] else 1
         time.sleep(max(30.0, args.interval))
+
+
+def maintain_outputs(
+    roots: list[Path],
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Apply one policy to distinct roots while preserving single-root output."""
+    unique_roots = list(dict.fromkeys(Path(root) for root in roots))
+    results = [maintain_output(root, **kwargs) for root in unique_roots]
+    if len(results) == 1:
+        return results[0]
+    return {
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+        "roots": results,
+        "removed_files": sum(int(item["removed_files"]) for item in results),
+        "removed_bytes": sum(int(item["removed_bytes"]) for item in results),
+        "trimmed_logs": sum(int(item["trimmed_logs"]) for item in results),
+        "trimmed_bytes": sum(int(item["trimmed_bytes"]) for item in results),
+        "errors": [error for item in results for error in item["errors"]],
+    }
 
 
 def maintain_output(

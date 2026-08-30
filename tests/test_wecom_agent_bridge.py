@@ -1124,6 +1124,11 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertFalse(tasks[0]["route_decision"]["scheduled_daily_research"])
         self.assertTrue(tasks[0]["route_decision"]["no_fixed_deadline"])
         self.assertTrue(tasks[0]["daily_research"]["initial_run"])
+        self.assertEqual(
+            tasks[0]["scheduled_recovery"]["kind"],
+            "daily_research",
+        )
+        self.assertTrue(tasks[0]["scheduled_recovery"]["read_only"])
 
     def test_interest_directive_queues_immediate_group_inspiration(self) -> None:
         ingest = load_ingest()
@@ -1204,6 +1209,13 @@ class WeComAgentBridgeTests(unittest.TestCase):
             f"{chat}::scheduled-group-inspiration",
         )
         self.assertIn("substantive content", captured[0]["request"])
+        recovery = captured[0]["scheduled_recovery"]
+        self.assertEqual(recovery["version"], 1)
+        self.assertEqual(recovery["kind"], "group_inspiration")
+        self.assertTrue(recovery["read_only"])
+        self.assertEqual(recovery["max_attempts"], 1)
+        self.assertEqual(recovery["delay_seconds"], 300)
+        self.assertEqual(recovery["max_age_seconds"], 6 * 60 * 60)
 
     def test_group_inspiration_uses_only_exact_chat_durable_interests(self) -> None:
         daily = load_daily()
@@ -1800,6 +1812,13 @@ class WeComAgentBridgeTests(unittest.TestCase):
         self.assertTrue(task["route_decision"]["no_fixed_deadline"])
         self.assertFalse(task["agent_backend_config"]["agent_fallbacks"]["fallback_on_timeout"])
         self.assertEqual(task["agent_backend"], "aginti")
+        recovery = task["scheduled_recovery"]
+        self.assertEqual(recovery["version"], 1)
+        self.assertEqual(recovery["kind"], "daily_research")
+        self.assertTrue(recovery["read_only"])
+        self.assertEqual(recovery["max_attempts"], 1)
+        self.assertEqual(recovery["delay_seconds"], 300)
+        self.assertEqual(recovery["max_age_seconds"], 48 * 60 * 60)
 
     def test_daily_scheduler_keeps_member_jobs_separate_and_serialized(self) -> None:
         daily = load_daily()

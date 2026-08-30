@@ -747,6 +747,42 @@ The first P0 correction is implemented and locally verified:
   regression suite passed, and the full repository suite passed 1,615 tests.
   The previous storage and health commit also passed GitHub Actions run
   `33293139708`.
+- A real isolated scheduled-daily task then ran through AgInTi with DeepSeek and
+  produced a substantive three-page report, Markdown source, three rendered
+  page previews, and a clean render audit. The agent turn itself succeeded, but
+  the worker rejected the PDF because its biomedical-oriented evidence gate did
+  not recognize documentation/standards language such as `方法`, `机制事实`, or
+  `参考文献（可追溯）`, and treated the reproducible example path
+  `/tmp/venvcheck` as private orchestration data.
+- The report gate now accepts source-audit methods, verified mechanism or
+  specification facts, and qualified reference headings while still rejecting
+  `/home`, `/workspace`, `/var/tmp`, and known LabCanvas/AgInTi/WeChat worker
+  paths under `/tmp`. Re-evaluating the exact generated PDF now returns no
+  quality issues and all required evidence dimensions are present.
+- Newly created read-only daily and idle-inspiration tasks carry a bounded
+  recovery contract. A failed task may retry once after a delay under the same
+  task ID only when it is recent, unsent, non-public, and not superseded by a
+  newer task in the same member/group lane. Legacy failures, delivered rows,
+  publication tasks, and old queue history are never replayed by this path.
+  Any partial text, file, WeCom-ledger, or Android-fallback delivery also closes
+  the automatic retry gate, preventing duplicate visible output.
+- An end-to-end regression proves a scheduled infrastructure failure sends
+  nothing, retries the same task once, succeeds, and delivers exactly once.
+  Scheduler builders also have explicit assertions for retry count, delay, age
+  bound, idempotency, and per-member serialization.
+- Long-running guarded workers now use compact stdout records that omit full
+  prompts, chat context, result prose, and private paths. Explicit one-shot
+  operator commands retain detailed output. This reduces ongoing write load in
+  addition to the 16 MiB log cap and retention cleanup.
+- The same retention loop now covers `output/wecom` logs while leaving member
+  papers, reports, and other research artifacts untouched. One bounded cleanup
+  removed 80 closed obsolete logs and trimmed five oversized logs, reclaiming
+  about 567 MB and reducing `output/wecom` from 1.1 GB to 494 MB.
+- The combined worker and WeCom scheduler suite passed 632 tests after these
+  changes. A full repository run had previously passed 1,626 tests; the latest
+  dirty-worktree run reached 1,627 and its only failure was an unrelated CAD
+  manifest being revised concurrently, so clean GitHub CI remains the final
+  repository-wide gate for this checkpoint.
 
 This does not yet prove live end-to-end operation. The remaining human gate is
 one QR login, followed by bounded reconciliation of recent exact rows and one
