@@ -1743,9 +1743,22 @@ def _recent_inbound_group_context(
     bounded = max(1, min(maximum_limit, int(limit)))
     try:
         with sqlite3.connect(path) as conn:
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+            }
+            if "sender_display" in columns and "sender" in columns:
+                sender_expression = "COALESCE(sender_display, sender, '')"
+            elif "sender_display" in columns:
+                sender_expression = "COALESCE(sender_display, '')"
+            elif "sender" in columns:
+                sender_expression = "COALESCE(sender, '')"
+            else:
+                sender_expression = "''"
             rows = conn.execute(
-                """
-                SELECT direction, body, create_time
+                f"""
+                SELECT direction, body, create_time,
+                       {sender_expression} AS sender_display
                 FROM messages
                 WHERE chat = ?
                   AND direction = 'inbound'
@@ -1762,8 +1775,14 @@ def _recent_inbound_group_context(
     except sqlite3.Error:
         return []
     return [
-        {"direction": direction, "content": body, "create_time": create_time or 0, "kind": "text"}
-        for direction, body, create_time in reversed(rows)
+        {
+            "direction": direction,
+            "content": body,
+            "create_time": create_time or 0,
+            "kind": "text",
+            "sender_display": sender_display or "",
+        }
+        for direction, body, create_time, sender_display in reversed(rows)
         if str(body or "").strip()
     ]
 

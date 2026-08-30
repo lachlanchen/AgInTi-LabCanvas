@@ -1278,10 +1278,17 @@ def ensure_daily_research_runtime_contract(task: dict[str, Any]) -> bool:
             for topic in daily.get("topics") or []
             if str(topic or "").strip()
         ) or "- No enrolled topic was preserved."
-        context_text = "\n".join(
-            f"- {collapse_context_text(item.get('content'), max_len=800)}"
-            for item in active_context[-12:]
-        ) or "- No additional recent inbound human discussion."
+        context_lines: list[str] = []
+        for item in active_context[-12:]:
+            sender = collapse_context_text(
+                item.get("sender_display") or item.get("sender"),
+                max_len=120,
+            )
+            content = collapse_context_text(item.get("content"), max_len=800)
+            context_lines.append(f"- {sender}: {content}" if sender else f"- {content}")
+        context_text = "\n".join(context_lines) or (
+            "- No additional recent inbound human discussion."
+        )
         rebuilt = (
             f"Prepare the {str(daily.get('report_date') or 'current')} daily "
             "research briefing for one exact member-scoped job in this WeCom "

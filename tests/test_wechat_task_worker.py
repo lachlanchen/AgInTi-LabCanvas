@@ -5542,6 +5542,33 @@ stderr: noisy internal trace
         self.assertIn("- Use primary sources.", task["request"])
         self.assertTrue(task["daily_research"]["legacy_request_compacted"])
 
+    def test_daily_runtime_contract_labels_recent_context_by_sender(self) -> None:
+        worker = load_worker()
+        task = {
+            "id": "daily-attribution",
+            "chat": "wecom:group:labagent",
+            "request": (
+                "Prepare the briefing.\n\nRecent same-group discussion:\n"
+                "- legacy context\n\nRequirements:\n- Verify evidence."
+            ),
+            "context": [
+                {
+                    "direction": "inbound",
+                    "sender_display": "Prof Ma",
+                    "content": "Compare the two mechanisms.",
+                }
+            ],
+            "daily_research": {
+                "report_date": "2026-08-30",
+                "job_key": "member-a",
+                "topics": ["organoid mechanics"],
+            },
+            "execution_contract": {},
+        }
+
+        self.assertTrue(worker.ensure_daily_research_runtime_contract(task))
+        self.assertIn("- Prof Ma: Compare the two mechanisms.", task["request"])
+
     def test_reprocess_task_clears_stale_result_and_preserves_source_context(self) -> None:
         worker = load_worker()
         with tempfile.TemporaryDirectory() as tmp:

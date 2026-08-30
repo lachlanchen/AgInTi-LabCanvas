@@ -1485,6 +1485,54 @@ class WeComAgentBridgeTests(unittest.TestCase):
             ["current human research direction"],
         )
 
+    def test_daily_context_preserves_sender_attribution_when_available(self) -> None:
+        daily = load_daily()
+        timezone = ZoneInfo("Asia/Hong_Kong")
+        now = datetime(2026, 7, 29, 12, 0, tzinfo=timezone)
+        chat = "wecom:default:group:labagent"
+        with tempfile.TemporaryDirectory() as tmp:
+            history = Path(tmp) / "history.sqlite"
+            with sqlite3.connect(history) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE messages (
+                        id INTEGER PRIMARY KEY,
+                        chat TEXT,
+                        direction TEXT,
+                        sender TEXT,
+                        sender_display TEXT,
+                        body TEXT,
+                        create_time INTEGER,
+                        created_at TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO messages(
+                        chat, direction, sender, sender_display, body,
+                        create_time, created_at
+                    ) VALUES (?, 'inbound', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        chat,
+                        "member-1",
+                        "Prof Ma",
+                        "Preserve this attribution",
+                        int(datetime(2026, 7, 29, 10, 0, tzinfo=timezone).timestamp()),
+                        "2026-07-29T10:00:00+08:00",
+                    ),
+                )
+
+            context = daily.recent_group_daily_context(
+                history,
+                chat,
+                now=now,
+                max_age_seconds=48 * 3600,
+            )
+
+        self.assertEqual(context[0]["sender_display"], "Prof Ma")
+
     def test_group_inspiration_defers_while_exact_chat_has_active_work(self) -> None:
         daily = load_daily()
         with tempfile.TemporaryDirectory() as tmp:
