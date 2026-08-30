@@ -64,6 +64,24 @@ class WeChatSourceRecoveryTests(unittest.TestCase):
 
         self.assertEqual(recovery.extract_mp_weixin_urls(recovery.task_source_text(task)), [current])
 
+    def test_task_source_scope_ignores_compacted_history_article_cards(self) -> None:
+        recovery = load_recovery()
+        task = {
+            "request": (
+                "Prepare today's scheduled scholarly briefing.\n\n"
+                "Model-budgeted lifetime memory from the complete exact-group history, followed\n"
+                "by raw excerpts selected for this research lane:\n"
+                "# Lifetime memory compaction\n"
+                "- old correction: 公众号文章卡片 "
+                "<title>Chat History for sunnyyty的聊天记录</title>"
+            )
+        }
+
+        source_text = recovery.task_source_text(task)
+        self.assertEqual(source_text, "Prepare today's scheduled scholarly briefing.")
+        self.assertFalse(recovery.task_needs_source_recovery(task))
+        self.assertEqual(recovery.extract_article_card_profile(source_text)["title"], "")
+
     def test_task_source_scope_includes_explicit_reference_section(self) -> None:
         recovery = load_recovery()
         referenced = "https://mp.weixin.qq.com/s/referenced-token"

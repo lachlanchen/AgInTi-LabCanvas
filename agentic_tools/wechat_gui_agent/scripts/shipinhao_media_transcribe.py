@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 from typing import Any, Iterator
@@ -38,6 +39,7 @@ ALLOWED_MEDIA_HOST_SUFFIXES = (
     "weixin.qq.com",
 )
 PROXY_FAKE_IP_NETWORKS = (ipaddress.ip_network("198.18.0.0/15"),)
+SYSTEM_CA_BUNDLE = Path("/etc/ssl/certs/ca-certificates.crt")
 SUCCESS_STATUSES = {"transcribed", "cached"}
 PUBLIC_MIRROR_RECOVERY_DEFAULT = os.environ.get("WECHAT_SHIPINHAO_PUBLIC_MIRROR_RECOVERY", "1") != "0"
 PUBLIC_MIRROR_SEARCH_LIMIT = 12
@@ -256,6 +258,24 @@ class AllowlistedRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, safe_target)
 
 
+def verified_ssl_context() -> ssl.SSLContext:
+    """Use the host trust store so the installed WeChat proxy CA is honored."""
+    candidates = [
+        os.environ.get("WECHAT_SHIPINHAO_CA_BUNDLE", ""),
+        str(SYSTEM_CA_BUNDLE),
+        os.environ.get("SSL_CERT_FILE", ""),
+    ]
+    for candidate in unique_strings(candidates):
+        path = Path(candidate).expanduser()
+        if not path.is_file():
+            continue
+        try:
+            return ssl.create_default_context(cafile=str(path))
+        except (OSError, ssl.SSLError):
+            continue
+    return ssl.create_default_context()
+
+
 def download_media(url: str, target: Path, *, max_bytes: int, timeout: float) -> dict[str, Any]:
     safe_url = validate_media_url(url, resolve_host=True)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -271,7 +291,10 @@ def download_media(url: str, target: Path, *, max_bytes: int, timeout: float) ->
             "Accept": "video/mp4,video/*;q=0.9,audio/*;q=0.8,*/*;q=0.5",
         },
     )
-    opener = urllib.request.build_opener(AllowlistedRedirectHandler())
+    opener = urllib.request.build_opener(
+        AllowlistedRedirectHandler(),
+        urllib.request.HTTPSHandler(context=verified_ssl_context()),
+    )
     written = 0
     digest = hashlib.sha256()
     try:

@@ -169,6 +169,24 @@ class ShipinhaoMediaTranscribeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "non-public"):
                 module.reject_nonpublic_host("wxapp.tc.qq.com")
 
+    def test_verified_ssl_context_prefers_host_ca_bundle(self) -> None:
+        module = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            host_bundle = Path(tmp) / "host-ca.crt"
+            conda_bundle = Path(tmp) / "conda-ca.crt"
+            host_bundle.write_text("host", encoding="utf-8")
+            conda_bundle.write_text("conda", encoding="utf-8")
+            context = object()
+            with (
+                mock.patch.object(module, "SYSTEM_CA_BUNDLE", host_bundle),
+                mock.patch.dict(module.os.environ, {"SSL_CERT_FILE": str(conda_bundle)}, clear=False),
+                mock.patch.object(module.ssl, "create_default_context", return_value=context) as create_context,
+            ):
+                result = module.verified_ssl_context()
+
+        self.assertIs(result, context)
+        create_context.assert_called_once_with(cafile=str(host_bundle))
+
     def test_pipeline_writes_agent_context_without_signed_url(self) -> None:
         module = load_module()
         signed_url = "http://wxapp.tc.qq.com/video?id=private-signed-token"

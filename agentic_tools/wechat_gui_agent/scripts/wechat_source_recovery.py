@@ -582,7 +582,23 @@ def extract_current_request(request: str) -> str:
         text,
         flags=re.S,
     )
-    return match.group("body").strip() if match else text
+    body = match.group("body") if match else text
+    return strip_non_current_memory_sections(body)
+
+
+def strip_non_current_memory_sections(text: str) -> str:
+    """Keep source detection on the current request, not compacted history."""
+    value = str(text or "")
+    boundaries = (
+        "\n\nModel-budgeted lifetime memory from the complete exact-group history",
+        "\n\n# Lifetime memory compaction",
+        "\n\n# High-fidelity query excerpts",
+    )
+    indexes = [value.find(marker) for marker in boundaries]
+    indexes = [index for index in indexes if index >= 0]
+    if indexes:
+        value = value[: min(indexes)]
+    return value.strip()
 
 
 def extract_reference_section(request: str) -> str:
